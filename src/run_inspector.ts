@@ -73,6 +73,20 @@ class InspectorView implements vscode.WebviewViewProvider {
     }, REFRESH_INTERVAL_MS);
   }
 
+  postIterationRecord(rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
+    if (!this.view) return; // ok to drop iter records if not visible — image stream is the canonical signal
+    this.view.webview.postMessage({
+      type: "iteration",
+      iter:      rec.iter,
+      f_val:     rec.f_val,
+      kkt_error: rec.inf_du,
+      eq_viol:   rec.inf_pr,
+      ineq_viol: 0,
+      rho:       1.0,
+      t_post:    Date.now(),
+    });
+  }
+
   reveal(): void {
     // Force materialize the view via its auto-registered .focus command.
     // Unconditional — without an existing view, this is what creates one.
