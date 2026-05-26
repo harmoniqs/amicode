@@ -19,6 +19,8 @@ class InspectorView implements vscode.WebviewViewProvider {
 
   private pendingRefresh?: { fsPath: string; iter: number; isFinal: boolean };
   private refreshTimer?: NodeJS.Timeout;
+  /** Set BEFORE the webview is materialized — replayed in resolveWebviewView. */
+  private bufferedImage?: { fsPath: string; iter: number; isFinal: boolean };
 
   constructor(private readonly ctx: vscode.ExtensionContext) {}
 
@@ -38,12 +40,26 @@ class InspectorView implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.renderHtml(view.webview);
     view.onDidDispose(() => { this.view = undefined; this.clearTimer(); });
+
+    // Replay the most recent pending image once the webview is alive.
+    if (this.bufferedImage) {
+      this.pendingRefresh = this.bufferedImage;
+      this.bufferedImage = undefined;
+      this.flushRefresh();
+    }
   }
 
-  // -------- public surface used by FileWatcher + IterParser --------
+  // -------- public surface used by RunsRootWatcher --------
 
   setImageSource(fsPath: string, iter: number, isFinal: boolean = false): void {
-    if (!this.view) return;
+    if (!this.view) {
+      // Webview not materialized yet — keep only the most recent frame and
+      // ask VS Code to open the panel. resolveWebviewView will replay it.
+      this.bufferedImage = { fsPath, iter, isFinal };
+      vscode.commands.executeCommand("amicode.runInspector.focus")
+        .then(undefined, () => undefined);
+      return;
+    }
     this.pendingRefresh = { fsPath, iter, isFinal };
     if (isFinal) {
       this.clearTimer();
@@ -57,25 +73,11 @@ class InspectorView implements vscode.WebviewViewProvider {
     }, REFRESH_INTERVAL_MS);
   }
 
-  postIterationRecord(rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
-    if (!this.view) return;
-    this.view.webview.postMessage({
-      type: "iteration",
-      iter:       rec.iter,
-      f_val:      rec.f_val,
-      kkt_error:  rec.inf_du,
-      eq_viol:    rec.inf_pr,
-      ineq_viol:  0,
-      rho:        1.0,
-      t_post:     Date.now(),
-    });
-  }
-
   reveal(): void {
-    if (this.view) {
-      // VS Code auto-registers <viewId>.focus
-      vscode.commands.executeCommand("amicode.runInspector.focus");
-    }
+    // Force materialize the view via its auto-registered .focus command.
+    // Unconditional — without an existing view, this is what creates one.
+    vscode.commands.executeCommand("amicode.runInspector.focus")
+      .then(undefined, () => undefined);
   }
 
   // -------- internal --------

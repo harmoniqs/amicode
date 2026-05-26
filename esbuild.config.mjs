@@ -28,36 +28,12 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
-  // amico-mcp standalone server (spawned by opencode)
-  {
-    entryPoints: ["mcp/index.ts"],
-    bundle: true,
-    platform: "node",
-    target: "node20",
-    format: "cjs",
-    outfile: "dist/amico-mcp.js",
-    sourcemap: true,
-    minify: false,
-    logLevel: "info",
-  },
-  // opencode plugin (loaded inside the opencode runtime)
-  {
-    entryPoints: ["plugin/index.ts"],
-    bundle: true,
-    platform: "node",
-    target: "node20",
-    format: "esm",
-    outfile: "dist/amicode-plugin.mjs",
-    sourcemap: true,
-    minify: false,
-    logLevel: "info",
-  },
 ];
 
 if (watch) {
   const ctxs = await Promise.all(targets.map((t) => context(t)));
   await Promise.all(ctxs.map((c) => c.watch()));
-  console.log("[esbuild] watching all four bundles…");
+  console.log("[esbuild] watching both bundles…");
 } else {
   await Promise.all(targets.map((t) => build(t)));
 }

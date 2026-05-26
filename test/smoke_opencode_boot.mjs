@@ -56,18 +56,18 @@ if (!fs.existsSync(configPath)) {
 }
 console.log("[smoke] OK: config.json written");
 
-const cfgRaw = fs.readFileSync(configPath, "utf8");
-const cfg = JSON.parse(cfgRaw);
-if (!cfg.mcp?.amico) { console.error("[smoke] FAIL: mcp.amico missing in config"); process.exit(14); }
-console.log("[smoke] OK: mcp.amico registered in config");
-
-// Also confirm plugin symlink resolves
-const pluginPath = path.join(projectDir, "plugin", "amicode-plugin.mjs");
-if (!fs.existsSync(pluginPath)) {
-  console.error("[smoke] FAIL: plugin/amicode-plugin.mjs missing");
+// v2 CLI-direct: no MCP, no plugin. Just AGENTS.md.
+const agentsPath = path.join(projectDir, "AGENTS.md");
+if (!fs.existsSync(agentsPath)) {
+  console.error("[smoke] FAIL: AGENTS.md missing at " + agentsPath);
   process.exit(15);
 }
-console.log("[smoke] OK: plugin symlink resolves");
+const agentsTxt = fs.readFileSync(agentsPath, "utf8");
+if (!/amico-run/.test(agentsTxt)) {
+  console.error("[smoke] FAIL: AGENTS.md does not mention amico-run");
+  process.exit(16);
+}
+console.log("[smoke] OK: AGENTS.md present and references amico-run");
 
 // Pick a free port for opencode.
 const port = await new Promise((resolve, reject) => {

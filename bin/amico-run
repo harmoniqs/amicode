@@ -1,0 +1,133 @@
+#!/usr/bin/env bash
+# ============================================================================
+# amico-run — CLI wrapper around spike_solve.jl for opencode's `bash` tool.
+#
+# Why: the v2 architecture went CLI-direct (no MCP, no callback HTTP). The
+# LLM picks bash + amico-run, julia writes to a deterministic dir, and the
+# VS Code extension watches that dir via fs.watch. One process boundary
+# instead of three, no env propagation across them.
+#
+# Usage:
+#   amico-run --system <qubit|transmon>
+#             --gate <X|Y|Z|H|S|T|CNOT|CZ|SWAP|iSWAP>
+#             --pulse <zero-order|linear-spline>
+#             [--T-ns <float>]
+#             [--omega-cap <float>]
+#             [--max-iter <int>]
+#             [--seed <int>]
+#             [--solver ipopt]
+#
+# Side effects:
+#   1. Creates /tmp/amicode-runs/<runId>/  (timestamp + random hex)
+#   2. Updates /tmp/amicode-runs/latest -> <runId>
+#   3. Spawns stdbuf + julia, streaming AMICODE_ITER lines to stdout.
+#   4. On exit, prints a one-line summary the LLM can quote back.
+# ============================================================================
+set -euo pipefail
+
+# --help short-circuit: don't fire julia just because someone probed.
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help|help)
+      cat <<'EOF'
+amico-run — Amicode quantum optimal-control solve runner.
+
+USAGE
+  amico-run --system <qubit|transmon> --gate <X|Y|Z|H|S|T|CNOT|CZ|SWAP|iSWAP>
+            --pulse <zero-order|linear-spline>
+            [--T-ns <float>] [--omega-cap <float>] [--max-iter <int>]
+            [--seed <int>] [--solver ipopt]
+
+EXAMPLES
+  amico-run --system transmon --gate X    --pulse zero-order   --T-ns 24
+  amico-run --system qubit    --gate H    --pulse zero-order
+  amico-run --system transmon --gate CNOT --pulse linear-spline --T-ns 200
+
+OUTPUT
+  /tmp/amicode-runs/<runId>/    per-run dir (PNGs, formulation.md, result.toml)
+  /tmp/amicode-runs/latest      symlink to most recent run dir
+
+The VS Code extension's Run Inspector watches /tmp/amicode-runs/latest/.
+EOF
+      exit 0
+      ;;
+  esac
+done
+
+# Locate spike_solve.jl relative to this script.
+SCRIPT="$(realpath "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT")"
+# amicode-v2/bin/amico-run  →  amicode/julia/spike_solve.jl  (sibling tree)
+JULIA_SCRIPT_DEFAULT="$(realpath "$SCRIPT_DIR/../../amicode/julia/spike_solve.jl")"
+JULIA_PROJECT_DEFAULT="/tmp/amicode-spike-julia"
+
+JULIA_SCRIPT="${AMICO_JULIA_SCRIPT:-$JULIA_SCRIPT_DEFAULT}"
+JULIA_PROJECT="${AMICO_JULIA_PROJECT:-$JULIA_PROJECT_DEFAULT}"
+
+if [[ ! -f "$JULIA_SCRIPT" ]]; then
+  echo "amico-run: julia script not found at $JULIA_SCRIPT" >&2
+  echo "amico-run: set AMICO_JULIA_SCRIPT or place spike_solve.jl at that location." >&2
+  exit 64
+fi
+if [[ ! -d "$JULIA_PROJECT" ]]; then
+  echo "amico-run: julia project not found at $JULIA_PROJECT" >&2
+  echo "amico-run: set AMICO_JULIA_PROJECT to your dev'd Piccolissimo env." >&2
+  exit 64
+fi
+
+# Generate a runId, prep the output dir, swing the 'latest' symlink.
+RUNS_ROOT="${AMICO_RUNS_ROOT:-/tmp/amicode-runs}"
+mkdir -p "$RUNS_ROOT"
+RUN_ID="r$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 2 2>/dev/null || printf '%04x' $RANDOM)"
+OUT_DIR="$RUNS_ROOT/$RUN_ID"
+mkdir -p "$OUT_DIR"
+
+# Atomic-ish symlink swap.
+ln -sfn "$OUT_DIR" "$RUNS_ROOT/.latest.tmp" && mv -Tf "$RUNS_ROOT/.latest.tmp" "$RUNS_ROOT/latest"
+
+# Emit a one-line start record (the extension's file watcher picks this up
+# as soon as the .start file lands in latest/).
+{
+  printf 'runId=%s\n' "$RUN_ID"
+  printf 'outputDir=%s\n' "$OUT_DIR"
+  printf 'started=%s\n' "$(date -Iseconds)"
+} > "$OUT_DIR/.start"
+
+# Build the julia argv. We pass --output-dir explicitly; all other args
+# go through as-is. spike_solve.jl silently swallows unknown flags.
+JULIA_ARGS=( "--project=$JULIA_PROJECT" "$JULIA_SCRIPT" "--output-dir" "$OUT_DIR" "$@" )
+
+# stdbuf -oL -eL bypasses Ipopt's C-side stdout buffering on Linux. Without
+# it, AMICODE_ITER lines spool until program exit.
+EXE="julia"; PRE=()
+if command -v stdbuf >/dev/null 2>&1; then
+  PRE=( "stdbuf" "-oL" "-eL" )
+fi
+
+echo "amico-run: spawning $EXE ${JULIA_ARGS[*]}" >&2
+echo "amico-run: output dir = $OUT_DIR" >&2
+echo "amico-run: latest symlink -> $RUNS_ROOT/latest" >&2
+
+# Tee julia stdout to both our stdout (for the LLM) and a log file (for
+# the extension, in case the LLM truncates).
+set +e
+"${PRE[@]}" "$EXE" "${JULIA_ARGS[@]}" 2>&1 | tee "$OUT_DIR/run.log"
+JULIA_RC=${PIPESTATUS[0]}
+set -e
+
+# Final summary. The extension also reads result.toml; this is for the LLM.
+if [[ -f "$OUT_DIR/result.toml" ]]; then
+  FID=$(grep -E '^fidelity\s*=' "$OUT_DIR/result.toml" | head -1 | awk -F= '{gsub(/ /,"",$2); print $2}')
+  ITERS=$(grep -E '^iterations\s*=' "$OUT_DIR/result.toml" | head -1 | awk -F= '{gsub(/ /,"",$2); print $2}')
+  WALL=$(grep -E '^wall_time_s\s*=' "$OUT_DIR/result.toml" | head -1 | awk -F= '{gsub(/ /,"",$2); print $2}')
+  echo
+  echo "amico-run: DONE  runId=$RUN_ID  F=$FID  iter=$ITERS  wall=${WALL}s  outputDir=$OUT_DIR"
+else
+  echo
+  echo "amico-run: FAILED  runId=$RUN_ID  rc=$JULIA_RC  outputDir=$OUT_DIR (no result.toml)"
+fi
+
+# Mark completion so the extension's watcher knows to read result.toml.
+touch "$OUT_DIR/FINISHED"
+
+exit "$JULIA_RC"

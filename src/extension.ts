@@ -3,34 +3,34 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { ChatPanel } from "./chat_panel";
-import { CallbackServer } from "./callback_server";
 import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject } from "./opencode_config";
 import { OpencodeEventClient } from "./sse_client";
+import { RunsRootWatcher } from "./file_watcher";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
 //   1. Register UI surfaces (trees, inspector, status bar, commands)
-//   2. Spawn CallbackServer (Channel 2) on a free port — we need the URL
-//      before launching opencode so we can pass it via env to amico-mcp
-//   3. Write a workspace-scoped .opencode/config.json with mcp.amico pointed
-//      at dist/amico-mcp.js and AMICODE_EXTENSION_URL set
-//   4. Spawn ServerManager (opencode serve) with cwd=<that project dir>
-//   5. When ready, expose the URL to the chat panel command
+//   2. Start watching /tmp/amicode-runs/latest/ for new runs
+//   3. Write per-session opencode project dir with AGENTS.md
+//   4. Spawn `opencode serve` with PATH augmented to find amico-run
+//   5. SSE-subscribe once opencode is healthy
 // ============================================================================
 
 let serverManager: ServerManager | undefined;
-let callbackServer: CallbackServer | undefined;
 let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
+let watcher: RunsRootWatcher | undefined;
 let opencodeReadyUrl: URL | undefined;
+
+const DEFAULT_RUNS_ROOT = "/tmp/amicode-runs";
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
-  const callbackChannel = vscode.window.createOutputChannel("Amicode — callback");
-  ctx.subscriptions.push(opencodeChannel, callbackChannel);
+  const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
+  ctx.subscriptions.push(opencodeChannel, runsChannel);
 
   // 1. UI surfaces
   registerTrees(ctx);
@@ -38,30 +38,36 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
-  // 2. Callback HTTP server — must be up before opencode starts.
-  callbackServer = new CallbackServer({ channel: callbackChannel });
-  const callbackUrl = await callbackServer.start();
-  ctx.subscriptions.push(callbackServer);
+  // 2. Start watching the runs root immediately — solves may already exist
+  // from prior dev-host sessions, and watchers are cheap.
+  const runsRoot = vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", DEFAULT_RUNS_ROOT);
+  fs.mkdirSync(runsRoot, { recursive: true });
+  watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
+  watcher.start();
+  ctx.subscriptions.push(watcher);
 
-  // 3. opencode project bootstrap — write config + symlink plugin
-  const distDir = path.join(ctx.extensionPath, "dist");
+  // 3. opencode project bootstrap
+  const binDir = path.resolve(ctx.extensionPath, "bin");
+  const agentsSrc = path.resolve(ctx.extensionPath, "AGENTS.md");
+  const opencodeProject = prepareOpencodeProject({ binDir, agentsSrc });
+  opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
+  opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
+
+  // 4. Spawn opencode. PATH=binDir:$PATH so `amico-run` resolves; env vars
+  // also tell amico-run where to find julia+script in case the user has
+  // multiple checkouts.
+  const binary = vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "opencode");
   const juliaScript = resolveJuliaScript(ctx);
   const juliaProject = resolveJuliaProject();
-  const opencodeProject = prepareOpencodeProject({
-    distDir,
-    extensionCallbackUrl: callbackUrl,
-    juliaScriptPath: juliaScript,
-    juliaProject,
-  });
-  opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
-  opencodeChannel.appendLine(`[boot] config: ${opencodeProject.configPath}`);
-
-  // 4. Spawn opencode
-  const binary = vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "opencode");
   serverManager = new ServerManager({
     binary,
     cwd: opencodeProject.projectDir,
-    env: { AMICODE_EXTENSION_URL: callbackUrl },
+    env: {
+      PATH: `${binDir}:${process.env.PATH ?? ""}`,
+      AMICO_JULIA_SCRIPT:  juliaScript,
+      AMICO_JULIA_PROJECT: juliaProject,
+      AMICO_RUNS_ROOT:     runsRoot,
+    },
     channel: opencodeChannel,
   });
   ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
@@ -74,13 +80,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeReadyUrl = url;
     statusBar?.setServerReady(true);
     sseClient?.connect(url);
-    // Optional: auto-open chat once on first ready. Disabled to avoid
-    // hijacking the user's editor space at activation.
-    // ChatPanel.openOrReveal(ctx, url);
   });
 
-  // Don't fail activation if opencode boot fails — surface the error and
-  // let the user retry via the restart command.
   serverManager.start().catch((err) => {
     vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
     opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
@@ -111,13 +112,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
 
-  opencodeChannel.appendLine(`[boot] activated; callbackUrl=${callbackUrl}`);
+  opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; binDir=${binDir}`);
 }
 
 export function deactivate(): void {
   sseClient?.dispose();
   serverManager?.stop();
-  callbackServer?.dispose();
+  watcher?.dispose();
   statusBar?.dispose();
 }
 
@@ -126,14 +127,9 @@ export function deactivate(): void {
 function resolveJuliaScript(ctx: vscode.ExtensionContext): string {
   const fromCfg = vscode.workspace.getConfiguration("amicode").get<string>("juliaScript", "");
   if (fromCfg && fs.existsSync(fromCfg)) return fromCfg;
-
-  // Convention: amicode-v2/ sits beside amicode/. spike_solve.jl is in amicode/julia/.
   const sibling = path.resolve(ctx.extensionPath, "..", "amicode", "julia", "spike_solve.jl");
   if (fs.existsSync(sibling)) return sibling;
-
-  // Fallback to bundled path (we might bundle the script under dist/julia/ later).
-  const bundled = path.join(ctx.extensionPath, "dist", "julia", "spike_solve.jl");
-  return bundled;
+  return path.join(ctx.extensionPath, "dist", "julia", "spike_solve.jl");
 }
 
 function resolveJuliaProject(): string {

@@ -3,76 +3,58 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 // ============================================================================
-// Writes a workspace-scoped .opencode/config.json registering:
-//   - amico-mcp as a local stdio MCP server (node dist/amico-mcp.js)
-//   - the amicode-plugin (relative file URL into dist/amicode-plugin.mjs)
+// Prepare a per-session opencode project directory.
 //
-// AMICODE_EXTENSION_URL is injected into the MCP server's env so it can
-// POST run-state and iter updates back to the extension's CallbackServer.
+// Architecture: opencode invokes amico-run via its built-in `bash` tool — no
+// MCP, no callback HTTP. We just need to make sure opencode (a) has context
+// about how to use amico-run, and (b) finds it on PATH.
 //
-// Strategy: don't pollute the user's workspace with config — we write to
-// a per-session temp dir and tell opencode `serve --project=<tempdir>`.
-// (opencode treats --project / cwd as the project root; our config lives
-// there alongside auto-discovered plugin/ files.)
+// Layout written:
+//   <projectDir>/AGENTS.md                  ← LLM context (auto-loaded)
+//   <projectDir>/.opencode/opencode.json    ← optional config tweaks
+//
+// PATH augmentation happens at spawn time (ServerManager env), not here.
 // ============================================================================
 
 export interface OpencodeConfigOptions {
-  /** Absolute path to the dist directory containing amico-mcp.js + amicode-plugin.mjs. */
-  distDir: string;
-  /** URL of the extension's callback HTTP server (Channel 2). */
-  extensionCallbackUrl: string;
-  /** Absolute path to spike_solve.jl. */
-  juliaScriptPath: string;
-  /** Julia project root (--project=...) the MCP will pass to spike_solve.jl. */
-  juliaProject: string;
+  /** Absolute path to amicode-v2/bin/ — added to PATH so `amico-run` resolves. */
+  binDir: string;
+  /** Absolute path to amicode-v2/AGENTS.md to copy into the project dir. */
+  agentsSrc: string;
 }
 
 export interface OpencodeProject {
-  /** Directory we tell opencode to use as its project root. */
   projectDir: string;
-  /** Absolute path to the config file we wrote. */
-  configPath: string;
+  agentsPath: string;
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-v2-"));
   const opencodeDir = path.join(projectDir, ".opencode");
-  const pluginDir   = path.join(projectDir, "plugin");
   fs.mkdirSync(opencodeDir, { recursive: true });
-  fs.mkdirSync(pluginDir,   { recursive: true });
 
-  // Copy/symlink the plugin into the project's plugin/ dir so opencode's
-  // auto-discovery picks it up (matches `{plugin,plugins}/*.{ts,js}` glob).
-  const pluginSrc = path.join(opts.distDir, "amicode-plugin.mjs");
-  const pluginDst = path.join(pluginDir, "amicode-plugin.mjs");
-  if (fs.existsSync(pluginSrc)) {
-    try { fs.unlinkSync(pluginDst); } catch {}
-    fs.symlinkSync(pluginSrc, pluginDst);
+  // Copy AGENTS.md into the project dir. opencode auto-loads it as system
+  // context for any session it spawns from this dir.
+  const agentsPath = path.join(projectDir, "AGENTS.md");
+  if (fs.existsSync(opts.agentsSrc)) {
+    fs.copyFileSync(opts.agentsSrc, agentsPath);
+  } else {
+    // Fallback minimal stub so opencode has *something* to anchor on.
+    fs.writeFileSync(
+      agentsPath,
+      "# Amicode\nInvoke `amico-run --help` via bash to see the solver CLI.\n",
+      "utf8",
+    );
   }
 
-  // opencode loads plugins via `config.plugin: string[]`. We point at our
-  // bundled ESM file directly — opencode resolves it as a file URL.
-  const pluginRef = "file://" + pluginDst;
-
-  const config = {
-    $schema: "https://opencode.ai/config.json",
-    plugin: [pluginRef],
-    mcp: {
-      amico: {
-        type: "local",
-        command: ["node", path.join(opts.distDir, "amico-mcp.js")],
-        environment: {
-          AMICODE_EXTENSION_URL: opts.extensionCallbackUrl,
-          AMICODE_JULIA_SCRIPT:  opts.juliaScriptPath,
-          AMICODE_JULIA_PROJECT: opts.juliaProject,
-        },
-        enabled: true,
-      },
-    },
-  };
-
+  // Empty/minimal opencode config — we no longer need MCP or plugin entries.
+  // Leaving the file behind so opencode treats this dir as its project root.
   const configPath = path.join(opencodeDir, "opencode.json");
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
+  fs.writeFileSync(
+    configPath,
+    JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2),
+    "utf8",
+  );
 
-  return { projectDir, configPath };
+  return { projectDir, agentsPath };
 }
