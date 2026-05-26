@@ -50,8 +50,13 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     fs.symlinkSync(pluginSrc, pluginDst);
   }
 
+  // opencode loads plugins via `config.plugin: string[]`. We point at our
+  // bundled ESM file directly — opencode resolves it as a file URL.
+  const pluginRef = "file://" + pluginDst;
+
   const config = {
     $schema: "https://opencode.ai/config.json",
+    plugin: [pluginRef],
     mcp: {
       amico: {
         type: "local",
@@ -66,7 +71,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     },
   };
 
-  const configPath = path.join(opencodeDir, "config.json");
+  const configPath = path.join(opencodeDir, "opencode.json");
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2), "utf8");
 
   return { projectDir, configPath };

@@ -8,6 +8,7 @@ import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject } from "./opencode_config";
+import { OpencodeEventClient } from "./sse_client";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -23,6 +24,7 @@ import { prepareOpencodeProject } from "./opencode_config";
 let serverManager: ServerManager | undefined;
 let callbackServer: CallbackServer | undefined;
 let statusBar: StatusBarManager | undefined;
+let sseClient: OpencodeEventClient | undefined;
 let opencodeReadyUrl: URL | undefined;
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
@@ -64,9 +66,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
 
+  // SSE event channel — opens once opencode is healthy.
+  sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
+  ctx.subscriptions.push(sseClient);
+
   serverManager.onReady((url) => {
     opencodeReadyUrl = url;
     statusBar?.setServerReady(true);
+    sseClient?.connect(url);
     // Optional: auto-open chat once on first ready. Disabled to avoid
     // hijacking the user's editor space at activation.
     // ChatPanel.openOrReveal(ctx, url);
@@ -108,6 +115,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function deactivate(): void {
+  sseClient?.dispose();
   serverManager?.stop();
   callbackServer?.dispose();
   statusBar?.dispose();
