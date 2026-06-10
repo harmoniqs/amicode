@@ -1,85 +1,10 @@
 {
-  "name": "amicode-v2",
-  "displayName": "Amicode v2",
-  "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
-  "version": "0.0.1",
-  "publisher": "harmoniqs",
-  "license": "Apache-2.0",
+  "name": "amicode-workspace",
   "private": true,
-  "engines": {
-    "vscode": "^1.95.0"
-  },
-  "categories": ["Other"],
-  "activationEvents": [
-    "onCommand:amicode.openChat",
-    "onCommand:amicode.openInspector",
-    "onView:amicode.runInspector",
-    "onView:amicode.vault",
-    "onStartupFinished"
-  ],
-  "main": "./dist/extension.js",
-  "contributes": {
-    "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "amicode",
-          "title": "Amicode",
-          "icon": "media/amico.svg"
-        }
-      ],
-      "panel": [
-        {
-          "id": "amicode-panel",
-          "title": "Amicode",
-          "icon": "media/amico.svg"
-        }
-      ]
-    },
-    "views": {
-      "amicode": [
-        { "id": "amicode.vault",    "name": "Vault",    "type": "tree" },
-        { "id": "amicode.catalog",  "name": "Catalog",  "type": "tree" },
-        { "id": "amicode.armonia",  "name": "Armonia",  "type": "tree" }
-      ],
-      "amicode-panel": [
-        { "id": "amicode.runInspector", "name": "Run Inspector", "type": "webview" }
-      ]
-    },
-    "commands": [
-      { "command": "amicode.openChat",      "title": "Amicode: Open Chat" },
-      { "command": "amicode.openInspector", "title": "Amicode: Open Run Inspector" },
-      { "command": "amicode.restartServer", "title": "Amicode: Restart opencode server" }
-    ],
-    "configuration": {
-      "title": "Amicode",
-      "properties": {
-        "amicode.opencodeBinary": {
-          "type": "string",
-          "default": "opencode",
-          "description": "Path or command name for the opencode CLI."
-        },
-        "amicode.juliaProject": {
-          "type": "string",
-          "default": "/tmp/amicode-spike-julia",
-          "description": "Julia project root (--project=...) the run_julia tool will use."
-        },
-        "amicode.juliaScript": {
-          "type": "string",
-          "default": "",
-          "description": "Absolute path to spike_solve.jl. If empty, looks up via the extensionPath/../amicode/julia/spike_solve.jl convention."
-        }
-      }
-    }
-  },
   "scripts": {
-    "build":     "node esbuild.config.mjs",
-    "watch":     "node esbuild.config.mjs --watch",
-    "typecheck": "tsc --noEmit"
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test"
   },
-  "devDependencies": {
-    "@types/node":   "^22.0.0",
-    "@types/vscode": "^1.95.0",
-    "esbuild":       "^0.24.0",
-    "typescript":    "^5.6.0"
-  }
+  "packageManager": "pnpm@9.15.9"
 }
