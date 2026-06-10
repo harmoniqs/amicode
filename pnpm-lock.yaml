@@ -28,6 +28,9 @@ importers:
 
   packages/extension:
     devDependencies:
+      '@amicode/amico-run':
+        specifier: workspace:*
+        version: link:../amico-run
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.19

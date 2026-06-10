@@ -78,6 +78,7 @@
     "test":      "echo 'extension: spike smoke tests in test/ need opencode+julia (not headless); skipped'"
   },
   "devDependencies": {
+    "@amicode/amico-run": "workspace:*",
     "@types/node":   "^22.0.0",
     "@types/vscode": "^1.95.0",
     "esbuild":       "^0.24.0",
