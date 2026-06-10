@@ -75,13 +75,16 @@
     "build":     "node esbuild.config.mjs",
     "watch":     "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test":      "echo 'extension: spike smoke tests in test/ need opencode+julia (not headless); skipped'"
+    "test":      "vitest run --passWithNoTests",
+    "test:smoke": "node test/boot_smoke.mjs",
+    "fetch:opencode": "node scripts/fetch_opencode.mjs"
   },
   "devDependencies": {
     "@amicode/amico-run": "workspace:*",
     "@types/node":   "^22.0.0",
     "@types/vscode": "^1.95.0",
     "esbuild":       "^0.24.0",
-    "typescript":    "^5.6.0"
+    "typescript":    "^5.6.0",
+    "vitest":        "^2.1.0"
   }
 }
