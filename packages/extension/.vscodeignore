@@ -1,0 +1,11 @@
+# This file's EXISTENCE stops vsce falling back to .gitignore (which excludes vendor/).
+# The explicit negation keeps the vendored opencode shipping even if a future
+# exclusion pattern would otherwise swallow it — that's the trap β.2 exists to kill.
+!vendor/**
+src/**
+test/**
+scripts/**
+node_modules/**
+esbuild.config.mjs
+tsconfig.json
+**/*.map
