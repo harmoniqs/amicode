@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
+import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
@@ -53,39 +54,60 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
 
-  // 4. Spawn opencode. PATH=binDir:$PATH so `amico-run` resolves; env vars
-  // also tell amico-run where to find julia+script in case the user has
-  // multiple checkouts.
-  const binary = vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "opencode");
-  const juliaScript = resolveJuliaScript(ctx);
-  const juliaProject = resolveJuliaProject();
-  serverManager = new ServerManager({
-    binary,
-    cwd: opencodeProject.projectDir,
-    env: {
-      PATH: `${binDir}:${process.env.PATH ?? ""}`,
-      AMICO_JULIA_SCRIPT:  juliaScript,
-      AMICO_JULIA_PROJECT: juliaProject,
-      AMICO_RUNS_ROOT:     runsRoot,
-    },
-    channel: opencodeChannel,
-  });
-  ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
+  // 4. Spawn opencode — the VENDORED binary by default (spec §4; S35, kills
+  // Assumption 4). Config override is a dev-only escape hatch. On a missing
+  // binary, chat is disabled but the rest of the extension (inspector,
+  // watcher, commands) still activates.
+  let binary: string | undefined;
+  try {
+    const resolved = resolveOpencodeBinary(
+      ctx.extensionPath,
+      vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
+    );
+    binary = resolved.path;
+    opencodeChannel.appendLine(
+      resolved.source === "config-override"
+        ? `[boot] OVERRIDE: amicode.opencodeBinary = ${binary}`
+        : `[boot] vendored opencode: ${binary}`,
+    );
+  } catch (e) {
+    if (e instanceof OpencodeMissingError) {
+      opencodeChannel.appendLine(`[boot] ${e.message} — chat disabled`);
+      void vscode.window.showErrorMessage(`Amicode: ${e.message}`);
+    } else throw e;
+  }
 
-  // SSE event channel — opens once opencode is healthy.
-  sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
-  ctx.subscriptions.push(sseClient);
+  if (binary !== undefined) {
+    const juliaScript = resolveJuliaScript(ctx);
+    const juliaProject = resolveJuliaProject();
+    serverManager = new ServerManager({
+      binary,
+      cwd: opencodeProject.projectDir,
+      env: {
+        PATH: `${binDir}:${process.env.PATH ?? ""}`,
+        AMICO_JULIA_SCRIPT:  juliaScript,
+        AMICO_JULIA_PROJECT: juliaProject,
+        AMICO_RUNS_ROOT:     runsRoot,
+      },
+      channel: opencodeChannel,
+    });
+    ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
 
-  serverManager.onReady((url) => {
-    opencodeReadyUrl = url;
-    statusBar?.setServerReady(true);
-    sseClient?.connect(url);
-  });
+    // SSE event channel — opens once opencode is healthy.
+    sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
+    ctx.subscriptions.push(sseClient);
 
-  serverManager.start().catch((err) => {
-    vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
-    opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
-  });
+    serverManager.onReady((url) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      sseClient?.connect(url);
+    });
+
+    serverManager.start().catch((err) => {
+      vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
+      opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
+    });
+  }
 
   // 5. Commands
   ctx.subscriptions.push(

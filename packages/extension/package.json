@@ -55,8 +55,8 @@
       "properties": {
         "amicode.opencodeBinary": {
           "type": "string",
-          "default": "opencode",
-          "description": "Path or command name for the opencode CLI."
+          "default": "",
+          "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
         },
         "amicode.juliaProject": {
           "type": "string",
