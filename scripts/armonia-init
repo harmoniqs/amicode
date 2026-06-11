@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# armonia-init <name> [--kind personal|project|engagement] [--no-github] [--root DIR]
+# Creates harmoniqs/armonia-<name> from armonia-template, clones it into the
+# vaults root, stamps the kind marker, installs the sync timer, and prints the
+# profile 'vault:' line. 'armonia-init doctor' validates the local setup.
+set -euo pipefail
+ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"; KIND=personal; GH=1
+NAME="$1"; shift
+while [ $# -gt 0 ]; do case "$1" in
+  --kind) KIND="$2"; shift 2;; --no-github) GH=0; shift;;
+  --root) ROOT="$2"; shift 2;; *) echo "unknown arg $1" >&2; exit 64;; esac; done
+REPO="armonia-${NAME}"; DEST="$ROOT/$REPO"
+[ -e "$DEST" ] && { echo "$DEST already exists" >&2; exit 64; }
+mkdir -p "$ROOT"
+if [ "$GH" = 1 ]; then
+  if gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
+    # clone-only path: member machine, repo already provisioned centrally
+    git clone "git@github.com:harmoniqs/$REPO.git" "$DEST"
+  else
+    gh repo create "harmoniqs/$REPO" --private --template harmoniqs/armonia-template
+    for i in 1 2 3 4 5; do  # template copy is async — retry the clone
+      git clone "git@github.com:harmoniqs/$REPO.git" "$DEST" 2>/dev/null && break
+      sleep 3; [ "$i" = 5 ] && { echo "clone failed after retries" >&2; exit 1; }
+    done
+    printf 'kind = "%s"\nname = "%s"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
+    git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
+    git -C "$DEST" push -q
+  fi
+else  # test mode: copy a local template
+  cp -r "${AMICO_TEMPLATE_PATH:?--no-github needs AMICO_TEMPLATE_PATH}" "$DEST"
+  git -C "$DEST" init -q && git -C "$DEST" add -A && git -C "$DEST" commit -qm init
+  printf 'kind = "%s"\nname = "%s"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
+  git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
+fi
+if [ "$KIND" = personal ] && command -v systemctl >/dev/null && [ "${AMICO_NO_TIMER:-0}" != 1 ]; then
+  mkdir -p ~/.config/systemd/user ~/.local/bin
+  cp "$DEST"/scripts/armonia-sync-once ~/.local/bin/ 2>/dev/null || true
+  cp "$DEST"/systemd/armonia-sync.* ~/.config/systemd/user/ 2>/dev/null || true
+  systemctl --user daemon-reload && systemctl --user enable --now armonia-sync.timer || true
+fi
+echo "Mounted: $DEST (kind=$KIND)"
+echo "Add to your team profile:  vault: harmoniqs/$REPO"

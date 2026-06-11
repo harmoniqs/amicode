@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# armonia-sync-once — the ONE sync implementation.
+# Invoked by the 15-min systemd timer (armonia-sync.service) AND by the
+# plugin's post-write debounce (systemd-run --unit=armonia-debounce).
+# For each mounted vault: pull --rebase --autostash; if the vault's marker
+# says kind == personal, commit + push local changes. Clears .sync-pending.
+set -uo pipefail
+
+VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"
+
+shopt -s nullglob
+for d in "$VAULTS_ROOT"/*/; do
+  [ -d "$d/.git" ] || continue
+  git -C "$d" pull --rebase --autostash || true
+  kind=""
+  if [ -f "$d/.amico-vault.toml" ]; then
+    kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" | sed -E 's/.*=\s*"?([a-z]+)"?.*/\1/')
+  fi
+  if [ "$kind" = "personal" ]; then
+    git -C "$d" add -A
+    git -C "$d" commit -m "auto: sync $(date -Iseconds)" || true
+    git -C "$d" push || true
+  fi
+done
+
+# Clear the pending-sync flag set by the post-write hook.
+rm -f "$HOME/.amico/.sync-pending" 2>/dev/null || true

@@ -1,0 +1,11 @@
+[Unit]
+Description=Armonia vault sync every 15 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=armonia-sync.service
+
+[Install]
+WantedBy=timers.target
