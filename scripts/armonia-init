@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # armonia-init <name> [--kind personal|project|engagement] [--no-github] [--root DIR]
-# Creates harmoniqs/armonia-<name> from armonia-template, clones it into the
-# vaults root, stamps the kind marker, installs the sync timer, and prints the
-# profile 'vault:' line. 'armonia-init doctor' validates the local setup.
+# One-command Armonia onboarding. Creates harmoniqs/armonia-<name> from
+# armonia-template (or clones it if already provisioned), stamps the kind
+# marker, installs the sync timer, mounts the company vault (armonissima) and
+# armonia-issimo where you have access, and creates the visible workspace
+# symlink ~/harmoniqs/armonia -> vaults root (spec §3 / Q4, resolved 2026-06-11).
 set -euo pipefail
 ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"; KIND=personal; GH=1
 NAME="$1"; shift
@@ -32,6 +34,26 @@ else  # test mode: copy a local template
   printf 'kind = "%s"\nname = "%s"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
   git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
 fi
+# ── Shared mounts: company vault always; issimo where granted ──────────────
+if [ "$GH" = 1 ] && [ "$KIND" = personal ]; then
+  if [ ! -d "$ROOT/armonissima" ]; then
+    git clone "git@github.com:harmoniqs/armonissima.git" "$ROOT/armonissima" \
+      && echo "Mounted: $ROOT/armonissima (kind=team)" \
+      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmoniqs/armonissima.git $ROOT/armonissima"
+  fi
+  if [ ! -d "$ROOT/armonia-issimo" ]; then
+    if git clone -q "git@github.com:harmoniqs/armonia-issimo.git" "$ROOT/armonia-issimo" 2>/dev/null; then
+      echo "Mounted: $ROOT/armonia-issimo (kind=project)"
+    else
+      echo "(armonia-issimo not mounted — no access or not granted yet; rerun later if needed)"
+    fi
+  fi
+fi
+# ── Visible workspace view (never the canonical state) ─────────────────────
+if [ -d "$HOME/harmoniqs" ] && [ ! -e "$HOME/harmoniqs/armonia" ]; then
+  ln -sn "$ROOT" "$HOME/harmoniqs/armonia" && echo "View: ~/harmoniqs/armonia -> $ROOT"
+fi
+# ── Sync timer (personal machines) ──────────────────────────────────────────
 if [ "$KIND" = personal ] && command -v systemctl >/dev/null && [ "${AMICO_NO_TIMER:-0}" != 1 ]; then
   mkdir -p ~/.config/systemd/user ~/.local/bin
   cp "$DEST"/scripts/armonia-sync-once ~/.local/bin/ 2>/dev/null || true
@@ -39,4 +61,8 @@ if [ "$KIND" = personal ] && command -v systemctl >/dev/null && [ "${AMICO_NO_TI
   systemctl --user daemon-reload && systemctl --user enable --now armonia-sync.timer || true
 fi
 echo "Mounted: $DEST (kind=$KIND)"
-echo "Add to your team profile:  vault: harmoniqs/$REPO"
+echo ""
+echo "Next steps:"
+echo "  1. Fill your profile: $ROOT/armonissima/team/${NAME}.md (slack_handle + TODOs; add 'personal' to brief_sections)"
+echo "  2. Add the vaults to VS Code:  code --add $ROOT"
+echo "  3. Update the plugin:  /plugin update  (inside Claude Code)"
