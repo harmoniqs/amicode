@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import { inspectorResourceRootDirs } from "./opencode_paths";
 
 // ============================================================================
 // Run Inspector — bottom-panel webview that shows the live pulse-plot stream
@@ -22,15 +23,14 @@ class InspectorView implements vscode.WebviewViewProvider {
   /** Set BEFORE the webview is materialized — replayed in resolveWebviewView. */
   private bufferedImage?: { fsPath: string; iter: number; isFinal: boolean };
 
-  constructor(private readonly ctx: vscode.ExtensionContext) {}
+  constructor(private readonly ctx: vscode.ExtensionContext, private readonly runsRoot: string) {}
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
-    const resourceRoots: vscode.Uri[] = [
-      vscode.Uri.joinPath(this.ctx.extensionUri, "dist"),
-      vscode.Uri.joinPath(this.ctx.extensionUri, "media"),
-      vscode.Uri.file("/tmp"),
-    ];
+    // Q69: include the runs-root, else iter_*.png under ~/.amico/runs/... is
+    // CSP-blocked → permanently blank inspector.
+    const resourceRoots: vscode.Uri[] = inspectorResourceRootDirs(this.ctx.extensionUri.fsPath, this.runsRoot)
+      .map((d) => vscode.Uri.file(d));
     for (const f of vscode.workspace.workspaceFolders ?? []) {
       resourceRoots.push(f.uri);
     }
@@ -178,8 +178,8 @@ function newNonce(): string {
   return s;
 }
 
-export function registerRunInspector(ctx: vscode.ExtensionContext): InspectorView {
-  INSPECTOR = new InspectorView(ctx);
+export function registerRunInspector(ctx: vscode.ExtensionContext, runsRoot: string): InspectorView {
+  INSPECTOR = new InspectorView(ctx, runsRoot);
   ctx.subscriptions.push(
     vscode.window.registerWebviewViewProvider("amicode.runInspector", INSPECTOR, {
       webviewOptions: { retainContextWhenHidden: true },

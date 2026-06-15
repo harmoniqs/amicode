@@ -44,8 +44,19 @@ export class StatusBarManager {
       return;
     }
     if (this.run && this.run.status === "completed") {
-      this.item.text = "$(check) Amicode · last F=" + (this.run.latestIter ?? "—");
+      const f = this.run.fidelity;
+      this.item.text = `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`;
       this.item.tooltip = `Last solve completed in ${this.run.outputDir}`;
+      return;
+    }
+    if (this.run && this.run.status === "failed") {
+      this.item.text = "$(error) Amicode · solve failed";
+      this.item.tooltip = `Solve failed in ${this.run.outputDir} — see run.log`;
+      return;
+    }
+    if (this.run && this.run.status === "aborted") {
+      this.item.text = "$(circle-slash) Amicode · aborted";
+      this.item.tooltip = `Solve aborted in ${this.run.outputDir}`;
       return;
     }
     this.item.text = "$(comment-discussion) Amicode";

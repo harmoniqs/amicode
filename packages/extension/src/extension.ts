@@ -33,15 +33,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
   ctx.subscriptions.push(opencodeChannel, runsChannel);
 
+  // Runs root (resolved early — the inspector needs it for its CSP resource roots).
+  const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
+
   // 1. UI surfaces
   registerTrees(ctx);
-  registerRunInspector(ctx);
+  registerRunInspector(ctx, runsRoot);
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // 2. Start watching the runs root immediately — solves may already exist
   // from prior dev-host sessions, and watchers are cheap.
-  const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
   fs.mkdirSync(runsRoot, { recursive: true });
   watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
   watcher.start();
