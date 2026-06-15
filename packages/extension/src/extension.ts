@@ -49,10 +49,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 3. opencode project bootstrap
   const binDir = path.resolve(ctx.extensionPath, "bin");
-  const agentsSrc = path.resolve(ctx.extensionPath, "AGENTS.md");
-  const opencodeProject = prepareOpencodeProject({ binDir, agentsSrc });
+  const opencodeProject = prepareOpencodeProject({
+    agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
+    templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
+    juliaProject: vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+  });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
+  opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
 
   // 4. Spawn opencode — the VENDORED binary by default (spec §4; S35, kills
   // Assumption 4). Config override is a dev-only escape hatch. On a missing
