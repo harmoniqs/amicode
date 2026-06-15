@@ -8,7 +8,7 @@ import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject } from "./opencode_config";
-import { resolveAmicoRunBinDir } from "./opencode_paths";
+import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
 
@@ -27,7 +27,6 @@ let sseClient: OpencodeEventClient | undefined;
 let watcher: RunsRootWatcher | undefined;
 let opencodeReadyUrl: URL | undefined;
 
-const DEFAULT_RUNS_ROOT = "/tmp/amicode-runs";
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -42,7 +41,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 2. Start watching the runs root immediately — solves may already exist
   // from prior dev-host sessions, and watchers are cheap.
-  const runsRoot = vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", DEFAULT_RUNS_ROOT);
+  const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
   fs.mkdirSync(runsRoot, { recursive: true });
   watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
   watcher.start();
