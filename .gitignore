@@ -4,3 +4,4 @@ dist/
 .vscode-test/
 *.log
 packages/extension/vendor/
+packages/extension/bin/

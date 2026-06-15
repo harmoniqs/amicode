@@ -87,13 +87,13 @@
         },
         "amicode.juliaProject": {
           "type": "string",
-          "default": "/tmp/amicode-spike-julia",
-          "description": "Julia project root (--project=...) the run_julia tool will use."
+          "default": "",
+          "description": "Julia project (--project) the agent passes to amico-run. Empty = agent omits --project."
         },
-        "amicode.juliaScript": {
+        "amicode.runsRoot": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to spike_solve.jl. If empty, looks up via the extensionPath/../amicode/julia/spike_solve.jl convention."
+          "description": "Runs root the inspector watches. Empty = ~/.amico/runs/default (must match where amico-run writes)."
         }
       }
     }
