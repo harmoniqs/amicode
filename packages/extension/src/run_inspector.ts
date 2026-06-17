@@ -170,7 +170,7 @@ class InspectorView implements vscode.WebviewViewProvider {
     * { box-sizing: border-box; }
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground);
            padding: 14px; font-size: 12px; display: flex; flex-direction: column; gap: 12px;
-           height: 100vh; }
+           height: 100vh; overflow-y: auto; }
     /* ---- top bar ---- */
     .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
     .brand { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; }
@@ -190,7 +190,9 @@ class InspectorView implements vscode.WebviewViewProvider {
     .badge.failed  { color: var(--amico-fail); }
     @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
     /* ---- plot hero ---- */
-    .image-host { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative;
+    /* min-height keeps the pulse plot a real plot, not a thin bar, when the
+       bottom panel is short; body scrolls if the panel can't fit it all. */
+    .image-host { flex: 1 1 240px; min-height: 240px; min-width: 0; position: relative;
                   background: var(--vscode-editor-background);
                   border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 6px;
                   display: grid; place-items: stretch; overflow: hidden; }
@@ -228,7 +230,7 @@ class InspectorView implements vscode.WebviewViewProvider {
     </div>
   </div>
   <div class="metrics">
-    <div class="card hero"><div class="k">objective</div><div class="v" id="m-obj">–</div></div>
+    <div class="card hero"><div class="k" id="m-obj-k">objective</div><div class="v" id="m-obj">–</div></div>
     <div class="card"><div class="k">iteration</div><div class="v" id="m-iter">–</div></div>
     <div class="card"><div class="k">feasibility</div><div class="v" id="m-pr">–</div></div>
     <div class="card"><div class="k">optimality</div><div class="v" id="m-du">–</div></div>

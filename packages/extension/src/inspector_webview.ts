@@ -28,6 +28,7 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "iteration": {
+      $("m-obj-k").textContent = "objective";
       $("m-iter").textContent = String(msg.iter);
       $("m-obj").textContent = (msg.f_val as number).toExponential(4);
       $("m-pr").textContent = (msg.eq_viol as number).toExponential(2);
@@ -39,6 +40,11 @@ window.addEventListener("message", (e) => {
       // Authoritative terminal state from the watcher (FINISHED on disk).
       const ok = msg.status === "completed";
       setBadge(ok ? "done" : "failed", ok ? "converged" : String(msg.status));
+      // Promote the hero card to the final fidelity — the number that matters.
+      if (ok && typeof msg.fidelity === "number") {
+        $("m-obj-k").textContent = "fidelity";
+        $("m-obj").textContent = (msg.fidelity as number).toFixed(5);
+      }
       break;
     }
     case "refresh": {
