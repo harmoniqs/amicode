@@ -48,18 +48,13 @@ function cb_log(optimizer, st; kwargs...)
     return true
 end
 
-# Cheap per-iter plot: control amplitudes vs time (no rollout — keeps the live
-# solve fast). callback_update_trajectory_factory keeps prob.trajectory current.
+# Per-iter pulse plot via Piccolo's canonical `plot_pulse` (no rollout — keeps
+# the live solve fast). `bounds=true` shades the drive bounds; the QCP method
+# reads the current optimizer iterate, which callback_update_trajectory_factory
+# keeps in sync. Returns a Makie Figure we save as the run-dir frame.
 function save_control_plot(k::Int)
     try
-        u = prob.trajectory[:u]                 # (n_drives × N) control amplitudes
-        fig = Figure(size = (640, 360))
-        ax = Axis(fig[1, 1], xlabel = "timestep", ylabel = "drive amplitude (GHz)",
-                  title = @sprintf("iter %d", k))
-        for d in 1:size(u, 1)
-            lines!(ax, 1:size(u, 2), vec(u[d, :]), label = "u$(d)")
-        end
-        axislegend(ax; position = :rt)
+        fig = plot_pulse(qcp; bounds = true, title = @sprintf("iter %d", k))
         CairoMakie.save(@sprintf("iter_%04d.png", k), fig)
     catch e
         @warn "iter plot failed" exception = e   # never let plotting kill the solve
