@@ -9,6 +9,15 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
     expect(AGENTS).toMatch(/solve_template\.jl/)
     expect(AGENTS).toMatch(/amico-run .*solve\.jl/)   // the actual invocation it teaches
   })
+  it('teaches the portable detached launch (nohup + & in a subshell + watch inspector), not setsid', () => {
+    expect(AGENTS).toMatch(/nohup/)
+    expect(AGENTS).toMatch(/&\s*\)/)              // backgrounded inside a subshell
+    expect(AGENTS).toMatch(/Run Inspector/)
+    expect(AGENTS).not.toMatch(/setsid/)          // Linux-only; would silently break the macOS demo
+  })
+  it('does not tell the agent to block on the solve', () => {
+    expect(AGENTS).not.toMatch(/wait for (the )?solve to finish/i)
+  })
   it('documents the run-dir contract the script must emit', () => {
     expect(AGENTS).toMatch(/AMICODE_ITER/)
     expect(AGENTS).toMatch(/iter_.*\.png/)
