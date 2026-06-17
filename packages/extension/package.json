@@ -76,6 +76,10 @@
       {
         "command": "amicode.restartServer",
         "title": "Amicode: Restart opencode server"
+      },
+      {
+        "command": "amicode.replayDemo",
+        "title": "Amicode: Replay demo run"
       }
     ],
     "configuration": {

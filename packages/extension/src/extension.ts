@@ -11,6 +11,7 @@ import { prepareOpencodeProject } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
+import { stageDemoRun } from "./demo_replay";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -137,6 +138,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         await serverManager?.start();
       } catch (err) {
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
+      }
+    }),
+    // On-site fallback (β.6): stage the bundled pre-baked solve into the runs
+    // root. The watcher already running on runsRoot follows `latest` →
+    // ingestRunDir replays the converged solve — no Julia, no opencode, no creds.
+    vscode.commands.registerCommand("amicode.replayDemo", async () => {
+      const demoDir = path.join(ctx.extensionPath, "demo", "run");
+      if (!fs.existsSync(path.join(demoDir, "FINISHED"))) {
+        void vscode.window.showErrorMessage("Amicode: demo run not bundled — reinstall the VSIX.");
+        return;
+      }
+      try {
+        const runDir = stageDemoRun(demoDir, runsRoot);
+        runsChannel.appendLine(`[demo] replayed → ${runDir}`);
+        await vscode.commands.executeCommand("amicode.runInspector.focus");
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Amicode: replay failed — ${(e as Error).message}`);
       }
     }),
   );
