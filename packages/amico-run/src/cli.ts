@@ -72,4 +72,11 @@ export async function main(argv: string[]): Promise<number> {
   return f.exitCode === 0 ? 1 : f.exitCode
 }
 
-main(process.argv.slice(2)).then(c => { process.exitCode = c })
+main(process.argv.slice(2)).then(
+  c => { process.exitCode = c },
+  e => {
+    // Any unexpected throw is an orchestrator fault, not a solve failure → 64.
+    console.error(`amico-run: unexpected error: ${e instanceof Error ? e.stack ?? e.message : e}`)
+    process.exitCode = 64
+  },
+)

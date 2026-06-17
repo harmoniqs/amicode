@@ -4,17 +4,14 @@
 #   - AMICODE_ITER key=value lines on stdout, flushed per iteration
 #   - result.toml written atomically (temp + rename)
 #   - final DONE line
-# Written against Piccolo 0.11 (QuantumCollocation/DirectTrajOpt 0.8 stack).
+# Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today).
 using Piccolo
 using JLD2
 using TOML
 
-# Per-iter callback machinery lives in DirectTrajOpt's internal IpoptSolverExt
-# module (not re-exported by Piccolo); reach it through the solve! method table.
-const IpoptSolverExt = first(filter(
-    m -> string(m.module) == "DirectTrajOpt.IpoptSolverExt",
-    collect(methods(solve!)))).module
-const Callbacks = IpoptSolverExt.Callbacks
+# Per-iter callbacks via Piccolo's PUBLIC `Callbacks` module (Piccolo 1.19) —
+# no `methods(solve!)` reach-through into solver internals.
+const Callbacks = Piccolo.Callbacks
 
 # Toy single-qubit system (matches the Piccolo docs intro + the frozen spike).
 sys = QuantumSystem(0.5 * PAULIS[:Z], [PAULIS[:X], PAULIS[:Y]], [1.0, 1.0])

@@ -61,4 +61,11 @@ describe('writers', () => {
     updateLatest(root, 'r2')
     expect(readlinkSync(join(root, 'latest'))).toBe('r2')
   })
+  it('sanitizes tab/newline in the script path so the TSV index stays one line per run', () => {
+    const root = tmpRoot()
+    appendIndex(root, 'r1', 't1', '/weird\tpath\nwith/ctrl.jl')
+    const lines = readFileSync(join(root, 'index'), 'utf8').trimEnd().split('\n')
+    expect(lines).toHaveLength(1)                         // not corrupted into multiple rows
+    expect(lines[0].split('\t')).toHaveLength(3)          // exactly runId/createdAt/path fields
+  })
 })

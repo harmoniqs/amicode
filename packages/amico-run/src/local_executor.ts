@@ -14,7 +14,8 @@ import {
   type RunStatus, type SubmitOpts,
 } from './types.js'
 
-const ORCHESTRATOR_VERSION = '0.1.0'
+import pkg from '../package.json' with { type: 'json' }
+const ORCHESTRATOR_VERSION = pkg.version   // single source of truth (esbuild inlines the JSON)
 
 function resolveExecutable(bin: string): void {
   const candidates = bin.includes('/')

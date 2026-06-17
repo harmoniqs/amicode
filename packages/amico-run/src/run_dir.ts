@@ -75,11 +75,17 @@ export function writeFinished(runDir: string, status: RunStatus, exitCode: numbe
 }
 
 export function appendIndex(runsRoot: string, runId: string, createdAt: string, scriptPath: string): void {
-  appendFileSync(join(runsRoot, 'index'), `${runId}\t${createdAt}\t${scriptPath}\n`)
+  // The index is a tab-separated, one-line-per-run log; a tab/newline in the
+  // (last-field) script path would corrupt it. Sanitize control chars to a
+  // space — manifest.toml holds the canonical, TOML-escaped script_path.
+  const safePath = scriptPath.replace(/[\t\r\n]/g, ' ')
+  appendFileSync(join(runsRoot, 'index'), `${runId}\t${createdAt}\t${safePath}\n`)
 }
 
 export function updateLatest(runsRoot: string, runId: string): void {
-  const tmp = join(runsRoot, '.latest.tmp')
+  // Scope the temp name to runId so concurrent same-lab submits don't race on
+  // a shared `.latest.tmp` (one would unlink the other's in-flight temp).
+  const tmp = join(runsRoot, `.latest.${runId}.tmp`)
   rmSync(tmp, { force: true })
   symlinkSync(runId, tmp)
   renameSync(tmp, join(runsRoot, 'latest'))

@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "strict": true,
     "noEmit": true,
+    "resolveJsonModule": true,
     "types": ["node"]
   },
   "include": ["src", "test"]
