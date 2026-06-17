@@ -6,7 +6,8 @@ and the Run Inspector renders the live solve.
 
 ## Workflow (this is the whole job)
 
-1. Read the bundled template `solve_template.jl` in this project dir.
+1. Read the bundled template `solve_template.jl` at its absolute path:
+   `{{TEMPLATE_PATH}}`.
 2. Copy it to a working file (e.g. `solve.jl`) and fill in the `# FILL IN`
    parameter block from the user's request: transmon frequency `ω` (GHz),
    anharmonicity `δ` (GHz), `levels`, the target gate, gate time `T` (ns),
@@ -55,8 +56,7 @@ correct loader in this Piccolo.
 ## Julia project
 
 <!-- AMICO_JULIA_PROJECT --> The Julia project to pass as `--project` is:
-**{{JULIA_PROJECT}}**. Always pass it. If it reads `UNSET`, omit `--project`
-and tell the user `amicode.juliaProject` is not configured.
+**{{JULIA_PROJECT}}**. Always pass it.
 
 ## Style
 

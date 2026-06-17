@@ -7,7 +7,7 @@ import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
-import { prepareOpencodeProject } from "./opencode_config";
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
@@ -55,7 +55,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
-    juliaProject: vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+    juliaProject: resolveJuliaProject(
+      vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+    ),
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
@@ -96,6 +98,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       cwd: opencodeProject.projectDir,
       env: {
         PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
+        // Inject the amico solve workflow as opencode `instructions` (loaded for
+        // every session regardless of its cwd) — merges over the user's global
+        // config, so the model/provider are preserved. This is what makes the
+        // chat actually author + run solves instead of behaving like vanilla
+        // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath),
       },
       channel: opencodeChannel,
     });
