@@ -134,36 +134,77 @@ class InspectorView implements vscode.WebviewViewProvider {
              script-src 'nonce-${nonce}';
              style-src ${webview.cspSource} 'unsafe-inline';">
   <style>
-    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 12px; font-size: 12px;
-           display: flex; flex-direction: column; gap: 10px; height: 100vh; box-sizing: border-box; }
-    h2 { margin: 0; font-size: 13px; }
-    .stat { font-family: var(--vscode-editor-font-family, monospace); }
-    .header-row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
-    .stats-row  { display: flex; gap: 24px; flex-wrap: wrap; font-size: 11px; opacity: 0.85; }
+    :root {
+      --amico-accent: #a78bfa;            /* amico violet */
+      --amico-run: #f0a500;               /* running amber */
+      --amico-ok: #3fb950;                /* converged green */
+      --amico-fail: #f85149;              /* failed red */
+    }
+    * { box-sizing: border-box; }
+    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground);
+           padding: 14px; font-size: 12px; display: flex; flex-direction: column; gap: 12px;
+           height: 100vh; }
+    /* ---- top bar ---- */
+    .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .brand { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; }
+    .mark { font-family: var(--vscode-editor-font-family, monospace); color: var(--amico-accent);
+            letter-spacing: 1px; font-weight: 700;
+            border: 1px solid color-mix(in srgb, var(--amico-accent) 55%, transparent);
+            border-radius: 6px; padding: 1px 7px; font-size: 12px; }
+    .runlabel { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; opacity: 0.6; }
+    .badge { margin-left: auto; font-size: 10.5px; font-weight: 600; letter-spacing: 0.5px;
+             text-transform: uppercase; padding: 3px 10px; border-radius: 999px;
+             border: 1px solid currentColor; display: inline-flex; align-items: center; gap: 6px; }
+    .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .badge.idle    { color: var(--vscode-descriptionForeground); opacity: 0.7; }
+    .badge.running { color: var(--amico-run); }
+    .badge.running::before { animation: pulse 1.1s ease-in-out infinite; }
+    .badge.done    { color: var(--amico-ok); }
+    .badge.failed  { color: var(--amico-fail); }
+    @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
+    /* ---- plot hero ---- */
     .image-host { flex: 1 1 auto; min-height: 0; min-width: 0; position: relative;
-                  background: var(--vscode-editor-background); border: 1px solid var(--vscode-panel-border); padding: 4px;
+                  background: var(--vscode-editor-background);
+                  border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 6px;
                   display: grid; place-items: stretch; overflow: hidden; }
     img.preview { grid-column: 1; grid-row: 1; width: 100%; height: 100%;
-                  object-fit: contain; image-rendering: auto; display: block;
-                  transition: opacity 50ms linear; }
-    .placeholder { opacity: 0.5; font-style: italic; place-self: center; }
+                  object-fit: contain; display: block; transition: opacity 120ms ease; }
+    .placeholder { place-self: center; text-align: center; opacity: 0.55; display: flex;
+                   flex-direction: column; align-items: center; gap: 10px; }
+    .placeholder .mark { font-size: 20px; padding: 4px 12px; opacity: 0.8; }
+    .placeholder .hint { font-style: italic; max-width: 240px; line-height: 1.5; }
+    /* ---- metric cards ---- */
+    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
+    .card { background: color-mix(in srgb, var(--vscode-panel-border) 25%, transparent);
+            border: 1px solid var(--vscode-panel-border); border-radius: 7px; padding: 8px 10px;
+            display: flex; flex-direction: column; gap: 3px; }
+    .card .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.6px;
+               opacity: 0.55; font-weight: 600; }
+    .card .v { font-family: var(--vscode-editor-font-family, monospace); font-size: 14px; }
+    .card.hero { border-color: color-mix(in srgb, var(--amico-accent) 45%, var(--vscode-panel-border)); }
+    .card.hero .k { color: var(--amico-accent); opacity: 0.85; }
+    .card.hero .v { font-size: 17px; font-weight: 600; }
   </style>
 </head>
 <body>
-  <div class="header-row">
-    <h2>Run Inspector</h2>
-    <div class="stat">status: <span id="status">idle</span></div>
-    <div class="stat">frame: <span id="img-iter">–</span></div>
-    <div class="stat">last load: <span id="img-load">–</span></div>
+  <div class="topbar">
+    <div class="brand"><span class="mark">&lt;0||0&gt;</span> Run Inspector</div>
+    <span id="runlabel" class="runlabel"></span>
+    <span id="badge" class="badge idle">idle</span>
   </div>
   <div class="image-host">
     <img id="preview-a" class="preview" alt="frame preview A" style="opacity:0" />
     <img id="preview-b" class="preview" alt="frame preview B" style="opacity:0" />
-    <div id="placeholder" class="placeholder">No solve in progress — fire one from the Amicode chat.</div>
+    <div id="placeholder" class="placeholder">
+      <span class="mark">&lt;0||0&gt;</span>
+      <span class="hint">No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.</span>
+    </div>
   </div>
-  <div class="stats-row">
-    <span id="ping">opencode-backed</span>
-    <span>iter stream: <span id="iter">0</span> recv · <span id="hz">–</span> Hz · <span id="rec">–</span> · post→recv <span id="lat">–</span></span>
+  <div class="metrics">
+    <div class="card hero"><div class="k">objective</div><div class="v" id="m-obj">–</div></div>
+    <div class="card"><div class="k">iteration</div><div class="v" id="m-iter">–</div></div>
+    <div class="card"><div class="k">feasibility</div><div class="v" id="m-pr">–</div></div>
+    <div class="card"><div class="k">optimality</div><div class="v" id="m-du">–</div></div>
   </div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
