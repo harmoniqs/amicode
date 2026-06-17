@@ -1,0 +1,25 @@
+import { describe, it, expect } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+
+const VSIX = join(__dirname, '..', 'amicode.vsix')
+const REQUIRED = [
+  'extension/bin/dist/amico-run.js',
+  'extension/bin/launcher/amico-run',
+  'extension/templates/solve_template.jl',
+  'extension/julia/Project.toml',
+  'extension/julia/Manifest.toml',
+  'extension/AGENTS.md',
+]
+
+// Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback
+// trap, generalized). Inert without a built .vsix so CI stays green; run after
+// `pnpm --filter amicode-v2 package`.
+describe.skipIf(!existsSync(VSIX))('packaged VSIX contains runtime assets', () => {
+  it('includes amico-run, template, julia project, AGENTS.md + a vendored opencode', () => {
+    const listing = execFileSync('unzip', ['-Z1', VSIX], { encoding: 'utf8' })
+    for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p)
+    expect(/extension\/vendor\/opencode\/.+\/opencode/.test(listing), 'missing vendored opencode').toBe(true)
+  })
+})
