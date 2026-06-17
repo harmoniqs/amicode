@@ -22,6 +22,10 @@ class InspectorView implements vscode.WebviewViewProvider {
   private refreshTimer?: NodeJS.Timeout;
   /** Set BEFORE the webview is materialized — replayed in resolveWebviewView. */
   private bufferedImage?: { fsPath: string; iter: number; isFinal: boolean };
+  /** Terminal state that arrived before the webview existed (e.g. on launch the
+   *  watcher follows `latest` → a finished run completes before the panel is
+   *  opened). Replayed after the buffered image so the badge isn't stuck "running". */
+  private bufferedCompletion?: { status: string; fidelity?: number };
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly runsRoot: string) {}
 
@@ -46,6 +50,13 @@ class InspectorView implements vscode.WebviewViewProvider {
       this.pendingRefresh = this.bufferedImage;
       this.bufferedImage = undefined;
       this.flushRefresh();
+    }
+    // Then replay a terminal state if the run already finished — after the
+    // image so "converged"/"failed" wins over the replayed frame's "running".
+    if (this.bufferedCompletion) {
+      const c = this.bufferedCompletion;
+      this.bufferedCompletion = undefined;
+      view.webview.postMessage({ type: "completed", status: c.status, fidelity: c.fidelity });
     }
   }
 
@@ -93,7 +104,11 @@ class InspectorView implements vscode.WebviewViewProvider {
    *  AND when switching to an already-finished run. Flush any pending frame
    *  first so this is the last word the webview hears for the run. */
   postCompletion(status: string, fidelity?: number): void {
-    if (!this.view) return;
+    if (!this.view) {
+      // Panel not open yet — stash; resolveWebviewView replays it after the image.
+      this.bufferedCompletion = { status, fidelity };
+      return;
+    }
     this.clearTimer();
     this.flushRefresh();
     this.view.webview.postMessage({ type: "completed", status, fidelity });
