@@ -32,7 +32,13 @@ window.addEventListener("message", (e) => {
       $("m-obj").textContent = (msg.f_val as number).toExponential(4);
       $("m-pr").textContent = (msg.eq_viol as number).toExponential(2);
       $("m-du").textContent = (msg.kkt_error as number).toExponential(2);
-      setBadge(msg.isFinal ? "done" : "running", msg.isFinal ? "converged" : "running");
+      setBadge("running", "running");
+      break;
+    }
+    case "completed": {
+      // Authoritative terminal state from the watcher (FINISHED on disk).
+      const ok = msg.status === "completed";
+      setBadge(ok ? "done" : "failed", ok ? "converged" : String(msg.status));
       break;
     }
     case "refresh": {
@@ -60,7 +66,7 @@ window.addEventListener("message", (e) => {
           handleLoaded();
         });
       }
-      setBadge(msg.isFinal ? "done" : "running", msg.isFinal ? "converged" : "running");
+      setBadge("running", "running");   // a new frame means a live solve; completion arrives via "completed"
       break;
     }
   }

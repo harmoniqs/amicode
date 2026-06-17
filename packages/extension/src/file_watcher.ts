@@ -59,6 +59,10 @@ class LiveRunSink implements RunSink {
     });
   }
   run(c: RunCompletion): void {
+    // Tell the inspector the run is terminal so the badge leaves "running".
+    // Fires on live finish (onFinished) AND replay of an already-finished run
+    // (ingestRunDir) — both route through this sink.
+    getInspector()?.postCompletion(c.status, c.fidelity);
     this.opts.statusBar?.setRun({
       runId: c.runId, outputDir: c.runDir, startedAt: 0,
       status: c.status, latestIter: this.latestIter >= 0 ? this.latestIter : undefined,

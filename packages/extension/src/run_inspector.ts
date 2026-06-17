@@ -87,6 +87,18 @@ class InspectorView implements vscode.WebviewViewProvider {
     });
   }
 
+  /** Terminal-state signal so the badge stops saying "running". The watcher
+   *  streams frames without an isFinal marker (it can't know which frame is
+   *  last mid-solve), so completion is delivered separately — on live finish
+   *  AND when switching to an already-finished run. Flush any pending frame
+   *  first so this is the last word the webview hears for the run. */
+  postCompletion(status: string, fidelity?: number): void {
+    if (!this.view) return;
+    this.clearTimer();
+    this.flushRefresh();
+    this.view.webview.postMessage({ type: "completed", status, fidelity });
+  }
+
   reveal(): void {
     // Force materialize the view via its auto-registered .focus command.
     // Unconditional — without an existing view, this is what creates one.
@@ -135,8 +147,8 @@ class InspectorView implements vscode.WebviewViewProvider {
              style-src ${webview.cspSource} 'unsafe-inline';">
   <style>
     :root {
-      --amico-accent: #a78bfa;            /* amico violet */
-      --amico-run: #f0a500;               /* running amber */
+      --amico-accent: #FFF676;            /* amico yellow */
+      --amico-run: #FFF676;               /* running — brand yellow */
       --amico-ok: #3fb950;                /* converged green */
       --amico-fail: #f85149;              /* failed red */
     }
