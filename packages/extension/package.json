@@ -6,6 +6,7 @@
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "private": true,
+  "repository": { "type": "git", "url": "https://github.com/harmoniqs/amicode" },
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -105,12 +106,15 @@
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
     "test:slow": "vitest run test/slow",
     "test:smoke": "node test/boot_smoke.mjs",
-    "fetch:opencode": "node scripts/fetch_opencode.mjs"
+    "fetch:opencode": "node scripts/fetch_opencode.mjs",
+    "healthcheck": "node scripts/healthcheck.mjs",
+    "package": "pnpm run build && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix"
   },
   "devDependencies": {
     "@amicode/amico-run": "workspace:*",
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.2.0",
     "esbuild": "^0.24.0",
     "smol-toml": "^1.3.0",
     "typescript": "^5.6.0",

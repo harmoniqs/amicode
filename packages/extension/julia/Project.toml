@@ -1,0 +1,5 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
