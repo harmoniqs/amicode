@@ -13,4 +13,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
       - run: pnpm -r run typecheck
-      - run: pnpm --filter @amicode/amico-run test   # includes the S31 grep-rule test
+      - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite
+  boot-smoke:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14]   # linux-x64 + darwin-arm64 — both pins machine-gated (spec §5)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter amicode-v2 fetch:opencode
+      - run: pnpm --filter amicode-v2 test:smoke
