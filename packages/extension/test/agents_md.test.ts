@@ -22,6 +22,15 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
   it('does not tell the agent to block on the solve', () => {
     expect(AGENTS).not.toMatch(/wait for (the )?solve to finish/i)
   })
+  it('scopes the agent to single-qubit and declines multi-qubit (no hallucinated coupled systems)', () => {
+    expect(AGENTS).toMatch(/single[- ]qubit/i)
+    expect(AGENTS).toMatch(/not supported|isn.t supported/i)
+    expect(AGENTS).toMatch(/multi-qubit|two-qubit|2-qubit|CNOT/i)
+  })
+  it('gives regime guidance (level cap + scale N with gate time)', () => {
+    expect(AGENTS).toMatch(/levels/i)
+    expect(AGENTS).toMatch(/steps\/ns|timesteps/i)
+  })
   it('documents the run-dir contract the script must emit', () => {
     expect(AGENTS).toMatch(/AMICODE_ITER/)
     expect(AGENTS).toMatch(/iter_.*\.png/)
