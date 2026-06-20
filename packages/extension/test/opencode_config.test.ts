@@ -29,6 +29,12 @@ describe('buildOpencodeConfigContent', () => {
     const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md'))
     expect(cfg.instructions).toEqual(['/abs/AGENTS.md'])
   })
+  it('auto-allows the permissions the solve workflow needs (no external_directory hang)', () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md'))
+    expect(cfg.permission.external_directory).toBe('allow')  // reads the bundled template + /tmp scratch
+    expect(cfg.permission.bash).toBe('allow')                // runs amico-run
+    expect(cfg.permission.edit).toBe('allow')                // writes solve.jl
+  })
 })
 
 describe('prepareOpencodeProject', () => {

@@ -32,13 +32,28 @@ export function resolveJuliaProject(configValue: string): string {
 }
 
 /** Build the OPENCODE_CONFIG_CONTENT value: a config object that injects the
- *  amico AGENTS.md as a top-level `instructions` entry. opencode MERGES this
- *  over the user's global config (model/provider preserved) for every session,
- *  independent of the session's working directory. */
+ *  amico AGENTS.md as a top-level `instructions` entry AND auto-allows the
+ *  permissions the solve workflow needs. opencode MERGES this over the user's
+ *  global config (model/provider preserved) for every session, independent of
+ *  the session's working directory.
+ *
+ *  Why the `permission` block: the agent reads the bundled template at an
+ *  absolute path *outside* the session's working dir and writes scratch to
+ *  /tmp/amicode-work, then runs amico-run via bash. opencode defaults
+ *  `external_directory` to "ask" — which, with no interactive approver, makes
+ *  the turn hang forever (headless) and nags the user on every solve (GUI).
+ *  This is a controlled, single-purpose assistant, so we auto-allow the classes
+ *  it needs rather than prompt each time. */
 export function buildOpencodeConfigContent(agentsPath: string): string {
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
+    permission: {
+      bash: "allow",
+      edit: "allow",
+      webfetch: "allow",
+      external_directory: "allow",
+    },
   });
 }
 
