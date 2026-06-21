@@ -25,5 +25,8 @@ export function resolveRunsRoot(configValue: string): string {
 /** Local resource roots the inspector webview may load images from. Includes
  *  the runs-root so live iter_*.png under ~/.amico/runs/... are not CSP-blocked (Q69). */
 export function inspectorResourceRootDirs(extensionRoot: string, runsRoot: string): string[] {
-  return [join(extensionRoot, "dist"), join(extensionRoot, "media"), runsRoot, "/tmp"];
+  // dist + media (extension assets) and runsRoot (live iter_*.png). No "/tmp":
+  // the inspector only renders run-dir frames under runsRoot, so a blanket /tmp
+  // root needlessly broadened the webview's allowed file roots.
+  return [join(extensionRoot, "dist"), join(extensionRoot, "media"), runsRoot];
 }

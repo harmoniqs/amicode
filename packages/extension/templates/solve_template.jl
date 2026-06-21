@@ -84,9 +84,15 @@ fid   = unitary_fidelity(Uroll, op.operator; subspace = op.subspace)
 # ensure at least one PNG even if the solve stopped before PLOT_EVERY
 isfile(@sprintf("iter_%04d.png", iters[])) || save_control_plot(iters[])
 
-JLD2.save("pulse.jld2", "trajectory", prob.trajectory)
+JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` can reload it (warm-start)
 open("result.toml.tmp", "w") do io
-    TOML.print(io, Dict("fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall))
+    # Record the regime each run actually solved (scalar FILL-IN params), so the
+    # result is self-describing — not just fidelity/iterations.
+    TOML.print(io, Dict(
+        "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,
+        "params" => Dict("delta" => δ, "levels" => levels, "T" => T, "N" => N,
+                         "drive_max" => drive_max, "max_iter" => max_iter),
+    ))
 end
 mv("result.toml.tmp", "result.toml"; force = true)
 println("DONE fidelity=$(fid)"); flush(stdout)

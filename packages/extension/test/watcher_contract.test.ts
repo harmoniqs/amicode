@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ingestRunDir } from '../src/run_dir_reader'   // pure β.1-contract reader (vscode-free)
+import { ingestRunDir, AMICODE_ITER_RE, parseAmicoNum } from '../src/run_dir_reader'   // pure β.1-contract reader (vscode-free)
 
 function stageRun(opts: { status: string; exit: number; iters: number[]; fidelity?: number }): string {
   const root = mkdtempSync(join(tmpdir(), 'runs-'))
@@ -44,5 +44,23 @@ describe('ingestRunDir — β.1 contract reading (replay)', () => {
     const sink = fakeSink()
     ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.5 }), sink)
     expect(sink.promote).not.toHaveBeenCalled()
+  })
+  it('returns the run.log byte offset (so the live tailer attaches without skipping iters)', () => {
+    const sink = fakeSink()
+    const bytes = ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1, 2], fidelity: 0.999 }), sink)
+    expect(bytes).toBeGreaterThan(0)   // = byte length of run.log consumed during replay
+  })
+})
+
+describe('AMICODE_ITER parsing — Inf/NaN are kept, not dropped', () => {
+  it('matches blow-up / stagnation iters (Inf, -Inf, NaN), matching amico-run', () => {
+    expect(AMICODE_ITER_RE.test('AMICODE_ITER iter=3 f=Inf inf_pr=NaN inf_du=-Inf')).toBe(true)
+    expect(AMICODE_ITER_RE.test('AMICODE_ITER iter=4 f=1.2e-03 inf_pr=5e-9 inf_du=2.3')).toBe(true)
+  })
+  it('parseAmicoNum maps Julia Inf/NaN to JS values', () => {
+    expect(parseAmicoNum('Inf')).toBe(Infinity)
+    expect(parseAmicoNum('-Inf')).toBe(-Infinity)
+    expect(Number.isNaN(parseAmicoNum('NaN'))).toBe(true)
+    expect(parseAmicoNum('1.5e-3')).toBeCloseTo(0.0015)
   })
 })
