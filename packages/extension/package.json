@@ -108,7 +108,7 @@
     "test:smoke": "node test/boot_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs",
     "healthcheck": "node scripts/healthcheck.mjs",
-    "package": "pnpm run build && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix"
+    "package": "pnpm --filter @amicode/amico-run build && pnpm run build && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix"
   },
   "devDependencies": {
     "@amicode/amico-run": "workspace:*",

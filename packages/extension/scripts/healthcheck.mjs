@@ -46,12 +46,21 @@ function probeAmicorun() {
   }
   return { ok: false, reason: 'amico-run launcher not found', fix: 'pnpm -r build (stages bin/) or check the VSIX' }
 }
+// Strip JSONC comments before JSON.parse — string-aware so `//` inside a string
+// (e.g. the "$schema": "https://…" URL, or a model id) is preserved, and a
+// `"model"` mentioned inside a real // or /* */ comment can't false-pass.
+function stripJsonc(s) {
+  return s.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str) => str ?? '')
+}
+
 function probeCreds() {
   // config-level only (spec §4): opencode config resolves a model+provider; for
   // amazon-bedrock, AWS creds findable in env or ~/.aws. Not a paid LLM call.
   const cfgPath = [join(homedir(), '.config', 'opencode', 'opencode.jsonc'), join(homedir(), '.config', 'opencode', 'opencode.json')].find(existsSync)
   if (!cfgPath) return { ok: false, reason: 'no opencode config', fix: 'create ~/.config/opencode/opencode.jsonc with a model' }
-  const model = /"model"\s*:\s*"([^"]+)"/.exec(readFileSync(cfgPath, 'utf8'))?.[1]
+  let cfg
+  try { cfg = JSON.parse(stripJsonc(readFileSync(cfgPath, 'utf8'))) } catch { return { ok: false, reason: 'opencode config not parseable', fix: 'fix the JSON(C) in your opencode config' } }
+  const model = typeof cfg.model === 'string' ? cfg.model : undefined
   if (!model) return { ok: false, reason: 'no model in opencode config', fix: 'set "model" in opencode config' }
   if (model.startsWith('amazon-bedrock')) {
     const awsEnv = process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE || process.env.AWS_BEARER_TOKEN_BEDROCK
