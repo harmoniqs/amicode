@@ -100,6 +100,14 @@ export class RunsRootWatcher implements vscode.Disposable {
    *  promote prompt fires at most once per run, never re-popping on re-switch /
    *  launch-follows-latest. */
   private readonly promotedRuns = new Set<string>();
+  /** Polling backstop. macOS fs.watch (FSEvents) coalesces and silently drops
+   *  events — especially under load — so the symlink-follow + per-frame watches
+   *  miss `latest` swings and `iter_*.png` creations, leaving the inspector
+   *  stuck (no live frames). A cheap periodic rescan guarantees delivery; the
+   *  fs.watch paths stay for low latency. All sinks are idempotent (frame dedup
+   *  by iter, finishedSeen, log byte-offset), so double-delivery is harmless. */
+  private poll?: NodeJS.Timeout;
+  private static readonly POLL_MS = 700;
 
   constructor(private readonly opts: RunsRootWatcherOptions) {}
 
@@ -110,10 +118,33 @@ export class RunsRootWatcher implements vscode.Disposable {
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "latest") this.followLatest();
     });
-    this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot}`);
+    this.poll = setInterval(() => this.tick(), RunsRootWatcher.POLL_MS);
+    this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot} (fs.watch + ${RunsRootWatcher.POLL_MS}ms poll)`);
+  }
+
+  /** fs.watch backstop: re-resolve `latest`, then rescan the active run for new
+   *  frames / FINISHED and drain the log — catching anything FSEvents dropped. */
+  private tick(): void {
+    try {
+      if (fs.existsSync(path.join(this.opts.runsRoot, "latest"))) this.followLatest();
+      const runDir = this.activeRunDir;
+      if (!runDir || !this.sink) return;
+      let newest = -1, newestPath: string | undefined;
+      for (const f of fs.readdirSync(runDir)) {
+        const m = ITER_PNG_RE.exec(f);
+        if (m) { const k = parseInt(m[1], 10); if (k > newest) { newest = k; newestPath = path.join(runDir, f); } }
+      }
+      if (newestPath) this.sink.image(newestPath, newest);            // deduped by latestIter
+      if (!this.finishedSeen && fs.existsSync(path.join(runDir, "FINISHED"))) {
+        this.finishedSeen = true; this.onFinished(runDir);
+      }
+      this.logTailer?.poke();                                          // drain appended AMICODE_ITER lines
+    } catch { /* transient fs race — next tick retries */ }
   }
 
   dispose(): void {
+    if (this.poll) clearInterval(this.poll);
+    this.poll = undefined;
     try { this.rootWatcher?.close(); } catch { /* noop */ }
     try { this.activeRunWatcher?.close(); } catch { /* noop */ }
     this.logTailer?.dispose();
@@ -212,8 +243,15 @@ class LogTailer implements vscode.Disposable {
   private buf = "";
   private pollTimer?: NodeJS.Timeout;
   private disposed = false;
+  private attached = false;
 
   constructor(private readonly opts: LogTailerOptions) {}
+
+  /** Backstop drain (called by the watcher's poll). No-op until attach() has set
+   *  the start offset, so it never re-reads lines ingestRunDir already replayed. */
+  poke(): void {
+    if (this.attached && !this.disposed) this.drain();
+  }
 
   start(): void {
     const tryAttach = () => {
@@ -236,6 +274,7 @@ class LogTailer implements vscode.Disposable {
     // Start where ingestRunDir stopped reading (startOffset), not at current EOF —
     // otherwise lines appended between the replay read and this attach are lost.
     this.offset = this.opts.startOffset ?? 0;
+    this.attached = true;
     try {
       this.watcher = fs.watch(this.opts.path, { persistent: false }, (event) => {
         if (event === "change") this.drain();
