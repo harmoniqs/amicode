@@ -27,6 +27,10 @@ window.addEventListener("message", (e) => {
       vscodeApi.postMessage({ type: "pong", seq: msg.seq, t0: msg.t0 });
       break;
     }
+    case "runlabel": {
+      $("runlabel").textContent = String(msg.text ?? "");
+      break;
+    }
     case "iteration": {
       $("m-obj-k").textContent = "objective";
       $("m-iter").textContent = String(msg.iter);
@@ -47,7 +51,7 @@ window.addEventListener("message", (e) => {
       const ph = document.getElementById("placeholder");
       const hint = document.getElementById("m-hint");
       if (hint) hint.textContent = "Julia warming up — compiling the solver + plotter (~1–2 min). Frames will stream here.";
-      if (ph) ph.hidden = false;
+      if (ph) ph.style.display = "flex";   // explicit: [hidden] is overridden by .placeholder{display:flex}
       setBadge("running", "warming up");
       break;
     }
@@ -64,7 +68,7 @@ window.addEventListener("message", (e) => {
     }
     case "refresh": {
       const placeholder = document.getElementById("placeholder");
-      if (placeholder) placeholder.hidden = true;
+      if (placeholder) placeholder.style.display = "none";   // explicit hide (see warming note)
 
       // Double-buffer image swap — preload into hidden buffer, flip opacity on decode.
       const incomingBuffer = visibleBuffer === "a" ? "b" : "a";

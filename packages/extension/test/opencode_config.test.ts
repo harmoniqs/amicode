@@ -22,6 +22,10 @@ describe('resolveJuliaProject', () => {
     expect(resolveJuliaProject('/opt/piccolo')).toBe('/opt/piccolo')
     expect(resolveJuliaProject('  /opt/p  ')).toBe('/opt/p')
   })
+  it('expands a leading ~ (parity with resolveRunsRoot)', () => {
+    expect(resolveJuliaProject('~')).toBe(homedir())
+    expect(resolveJuliaProject('~/foo/bar')).toBe(join(homedir(), 'foo', 'bar'))
+  })
 })
 
 describe('buildOpencodeConfigContent', () => {

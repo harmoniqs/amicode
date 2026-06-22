@@ -6,7 +6,7 @@ import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ITER_PNG_RE, ingestRunDir, readTomlSafe, parseAmicoNum,
+  AMICODE_ITER_RE, ITER_PNG_RE, ingestRunDir, readTomlSafe, parseAmicoNum, SinkDedup,
   type IterRecord, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -34,7 +34,9 @@ export interface RunsRootWatcherOptions {
 /** Live sink: routes to the Inspector + status bar, carrying newest-wins and
  *  promote-once guards so replay-then-incremental never double-fires. */
 class LiveRunSink implements RunSink {
-  private latestIter = -1;
+  /** Newest-wins guard: frame display vs log-line iters tracked separately so the
+   *  log high-water mark can't suppress lagging frames (see SinkDedup). */
+  private readonly dedup = new SinkDedup();
   constructor(
     private readonly opts: RunsRootWatcherOptions,
     private readonly runId: string,
@@ -44,12 +46,11 @@ class LiveRunSink implements RunSink {
   ) {}
 
   image(fsPath: string, iter: number): void {
-    if (iter <= this.latestIter) return;
-    this.latestIter = iter;
+    if (!this.dedup.acceptFrame(iter)) return;   // dedup on FRAMES only — see SinkDedup
     getInspector()?.setImageSource(fsPath, iter);
   }
   iter(rec: IterRecord): void {
-    if (rec.iter > this.latestIter) this.latestIter = rec.iter;
+    this.dedup.noteIter(rec.iter);
     getInspector()?.postIterationRecord(rec);
     // Live status-bar update — show "running · iter N" as it solves, not only at
     // completion (#5 AC3).
@@ -65,7 +66,7 @@ class LiveRunSink implements RunSink {
     getInspector()?.postCompletion(c.status, c.fidelity);
     this.opts.statusBar?.setRun({
       runId: c.runId, outputDir: c.runDir, startedAt: 0,
-      status: c.status, latestIter: this.latestIter >= 0 ? this.latestIter : undefined,
+      status: c.status, latestIter: this.dedup.high >= 0 ? this.dedup.high : undefined,
       fidelity: c.fidelity,
     });
     this.opts.channel.appendLine(`[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`);
@@ -114,7 +115,17 @@ export class RunsRootWatcher implements vscode.Disposable {
   start(): void {
     fs.mkdirSync(this.opts.runsRoot, { recursive: true });
     const latest = path.join(this.opts.runsRoot, "latest");
-    if (fs.existsSync(latest)) this.followLatest();
+    if (fs.existsSync(latest)) {
+      // On launch, stay IDLE for a previous, already-finished run — don't re-display
+      // its last plot. Only resume a still-running run. A run that starts AFTER
+      // launch is picked up normally (idle → warming → frames). To baseline a
+      // finished run we set activeRunDir WITHOUT a sink, so the poll won't render it.
+      try {
+        const target = fs.realpathSync(latest);
+        if (fs.existsSync(path.join(target, "FINISHED"))) { this.activeRunDir = target; this.finishedSeen = true; }
+        else this.followLatest();
+      } catch { /* noop */ }
+    }
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "latest") this.followLatest();
     });
@@ -134,7 +145,7 @@ export class RunsRootWatcher implements vscode.Disposable {
         const m = ITER_PNG_RE.exec(f);
         if (m) { const k = parseInt(m[1], 10); if (k > newest) { newest = k; newestPath = path.join(runDir, f); } }
       }
-      if (newestPath) this.sink.image(newestPath, newest);            // deduped by latestIter
+      if (newestPath) this.sink.image(newestPath, newest);            // deduped by lastFrameIter
       if (!this.finishedSeen && fs.existsSync(path.join(runDir, "FINISHED"))) {
         this.finishedSeen = true; this.onFinished(runDir);
       }
@@ -177,6 +188,7 @@ export class RunsRootWatcher implements vscode.Disposable {
 
     this.sink = new LiveRunSink(this.opts, runId, runDir, this.promotedRuns);
     getInspector()?.reveal();
+    getInspector()?.setRunLabel(runId);
 
     // Replay everything already on disk (late-join safe). Returns the run.log
     // bytes consumed so the tailer attaches exactly there (no skipped iters).

@@ -39,6 +39,31 @@ export interface RunSink {
   promote(info: PromoteInfo): void;
 }
 
+/** Newest-wins guard for the live sink. Frame display and log-line iters are
+ *  tracked SEPARATELY on purpose: run.log `AMICODE_ITER` lines arrive once per
+ *  iteration and race ahead of the PNG frames (the solver logs `iter=k`, *then*
+ *  writes `iter_k.png`). If frame dedup shared the log high-water mark, every
+ *  frame would test `k <= high` and be dropped — leaving the inspector blank
+ *  for the whole solve. So frames dedup only against prior FRAMES.
+ *  Pure + vscode-free so it's unit-testable (LiveRunSink delegates to it). */
+export class SinkDedup {
+  private lastFrameIter = -1;
+  private latestIter = -1;
+  /** True if this frame is newer than the last DISPLAYED frame (→ forward it). */
+  acceptFrame(iter: number): boolean {
+    if (iter <= this.lastFrameIter) return false;
+    this.lastFrameIter = iter;
+    if (iter > this.latestIter) this.latestIter = iter;
+    return true;
+  }
+  /** Record a log-line iter — advances the high-water mark only, never frames. */
+  noteIter(iter: number): void {
+    if (iter > this.latestIter) this.latestIter = iter;
+  }
+  /** Highest iter seen from any source (drives the status bar / completion). */
+  get high(): number { return this.latestIter; }
+}
+
 export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   try { return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>; }
   catch { return undefined; }

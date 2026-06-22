@@ -29,6 +29,9 @@ class InspectorView implements vscode.WebviewViewProvider {
   /** A run started but hasn't emitted its first frame yet (Julia warming up).
    *  Buffered so the warming state shows even if the panel opens late. */
   private bufferedWarming = false;
+  /** Run label (runId) for the topbar — buffered so it shows even if the panel
+   *  opens after the run was selected. */
+  private bufferedRunLabel?: string;
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly runsRoot: string) {}
 
@@ -48,6 +51,11 @@ class InspectorView implements vscode.WebviewViewProvider {
     view.webview.html = this.renderHtml(view.webview);
     view.onDidDispose(() => { this.view = undefined; this.clearTimer(); });
 
+    // Topbar run label — replay first so it's set regardless of run state.
+    if (this.bufferedRunLabel) {
+      view.webview.postMessage({ type: "runlabel", text: this.bufferedRunLabel });
+      this.bufferedRunLabel = undefined;
+    }
     // A run is warming up (no frame yet) — show that until the first frame.
     if (this.bufferedWarming && !this.bufferedImage) {
       this.bufferedWarming = false;
@@ -132,6 +140,12 @@ class InspectorView implements vscode.WebviewViewProvider {
       return;
     }
     this.view.webview.postMessage({ type: "warming" });
+  }
+
+  /** Set the topbar run label (runId). Buffered until the webview materializes. */
+  setRunLabel(label: string): void {
+    if (!this.view) { this.bufferedRunLabel = label; return; }
+    this.view.webview.postMessage({ type: "runlabel", text: label });
   }
 
   reveal(): void {
