@@ -40,6 +40,17 @@ export async function main(argv: string[]): Promise<number> {
   if (!script) { console.error(`amico-run: no script given\n${USAGE}`); return 64 }
   if (executor !== 'local') { console.error(`amico-run: only --executor local is supported in β`); return 64 }
 
+  // Auto-detect a prebuilt sysimage next to the project when one wasn't passed.
+  // A sysimage with Piccolo + CairoMakie baked in collapses the ~100s cold start
+  // (Julia/Piccolo load + Makie's first-plot compile) to a few seconds. install.sh
+  // builds it at `<project>/amico-sysimage.{dylib,so}`; agents need no flag change.
+  if (!opts.julia!.sysimage && opts.julia!.project) {
+    for (const ext of ['dylib', 'so']) {
+      const cand = join(opts.julia!.project, `amico-sysimage.${ext}`)
+      if (existsSync(cand)) { opts.julia!.sysimage = cand; break }
+    }
+  }
+
   let handle
   try {
     handle = await new LocalExecutor().submit(script, opts)

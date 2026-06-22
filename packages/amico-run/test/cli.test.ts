@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { execFileSync, execFile } from 'node:child_process'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpRoot, fakeJulia } from './helpers.js'
 
@@ -46,6 +47,17 @@ describe('amico-run CLI', () => {
     const r = run([fakeJulia(root, 's.jl', ''), '--gates', 'X'])
     expect(r.code).toBe(64)
     expect(r.stderr).toMatch(/unknown flag/)
+  })
+  it('auto-detects a sysimage beside --project (no --sysimage flag) → manifest records it', () => {
+    const root = tmpRoot()
+    const project = join(root, 'proj'); mkdirSync(project, { recursive: true })
+    const sysimg = join(project, 'amico-sysimage.dylib'); writeFileSync(sysimg, 'FAKE')
+    const julia = fakeJulia(root, 'j', `console.log('DONE f=0.99')`)
+    const script = fakeJulia(root, 's.jl', '')
+    const runsRoot = join(root, 'runs')
+    const r = run([script, '--runs-root', runsRoot, '--julia', julia, '--project', project])
+    expect(r.code).toBe(0)
+    expect(readFileSync(join(runsRoot, 'latest', 'manifest.toml'), 'utf8')).toContain(sysimg)
   })
   it('--executor remote → 64 (only local in β)', () => {
     const root = tmpRoot()
