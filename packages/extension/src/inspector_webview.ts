@@ -36,6 +36,16 @@ window.addEventListener("message", (e) => {
       setBadge("running", "running");
       break;
     }
+    case "warming": {
+      // A run started but Julia/Makie are still compiling — show that instead of
+      // an idle panel, so the cold start doesn't read as frozen.
+      const ph = document.getElementById("placeholder");
+      const hint = document.getElementById("m-hint");
+      if (hint) hint.textContent = "Julia warming up — the first solve compiles Piccolo + the plotter (~1–2 min). Frames will stream here.";
+      if (ph) ph.hidden = false;
+      setBadge("running", "warming up");
+      break;
+    }
     case "completed": {
       // Authoritative terminal state from the watcher (FINISHED on disk).
       const ok = msg.status === "completed";

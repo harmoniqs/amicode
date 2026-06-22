@@ -44,7 +44,7 @@ function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k
     @printf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e\n", k, st.obj_value, st.inf_pr, st.inf_du)
     flush(stdout)
-    (k % PLOT_EVERY == 0) && save_control_plot(k)
+    (k > 0 && k % PLOT_EVERY == 0) && save_control_plot(k)   # skip iter-0 (just the random init; defers Makie's first-plot compile off the first iter)
     return true
 end
 

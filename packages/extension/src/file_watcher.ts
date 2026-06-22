@@ -154,6 +154,11 @@ export class RunsRootWatcher implements vscode.Disposable {
     catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
     this.finishedSeen = finishedAtSwitch;
 
+    // Fresh run (manifest but no frames/FINISHED yet) → Julia/Makie warming up;
+    // show that instead of an idle panel so the ~minute cold start isn't read as frozen.
+    const hasFrame = fs.readdirSync(runDir).some((f) => ITER_PNG_RE.test(f));
+    if (!finishedAtSwitch && !hasFrame) getInspector()?.setWarmingUp();
+
     // Incremental: new iter PNGs + FINISHED.
     this.activeRunWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
       if (!filename) return;
