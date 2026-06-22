@@ -13,6 +13,7 @@ const REQUIRED = [
   'extension/AGENTS.md',
   'extension/demo/run/manifest.toml',
   'extension/demo/run/FINISHED',
+  'extension/demo/run/run.log',   // inspector reads run.log for the demo's stats row; *.log-gitignored so easy to drop
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback
