@@ -41,7 +41,7 @@ window.addEventListener("message", (e) => {
       // an idle panel, so the cold start doesn't read as frozen.
       const ph = document.getElementById("placeholder");
       const hint = document.getElementById("m-hint");
-      if (hint) hint.textContent = "Julia warming up — the first solve compiles Piccolo + the plotter (~1–2 min). Frames will stream here.";
+      if (hint) hint.textContent = "Julia warming up — compiling the solver + plotter (~1–2 min). Frames will stream here.";
       if (ph) ph.hidden = false;
       setBadge("running", "warming up");
       break;
