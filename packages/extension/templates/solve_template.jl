@@ -38,7 +38,7 @@ prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 # (e.g. `LivePulsePlotCallback`), which fires `(primal, iter)` across backends.
 const CB = Piccolo.Callbacks
 
-const PLOT_EVERY = 10
+const PLOT_EVERY = 6    # plot every 6 iters (more frequent live frames)
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k

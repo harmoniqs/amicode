@@ -37,8 +37,13 @@ window.addEventListener("message", (e) => {
       break;
     }
     case "warming": {
-      // A run started but Julia/Makie are still compiling — show that instead of
-      // an idle panel, so the cold start doesn't read as frozen.
+      // A NEW run started but has no frame yet — clear the PREVIOUS run's plot +
+      // stats and show the warming message, so the old iter-N image doesn't linger
+      // on screen while the new solve compiles/warms up.
+      (document.getElementById("preview-a") as HTMLImageElement).style.opacity = "0";
+      (document.getElementById("preview-b") as HTMLImageElement).style.opacity = "0";
+      for (const id of ["m-obj", "m-iter", "m-pr", "m-du"]) $(id).textContent = "–";
+      $("m-obj-k").textContent = "objective";
       const ph = document.getElementById("placeholder");
       const hint = document.getElementById("m-hint");
       if (hint) hint.textContent = "Julia warming up — compiling the solver + plotter (~1–2 min). Frames will stream here.";
