@@ -40,16 +40,12 @@ export async function main(argv: string[]): Promise<number> {
   if (!script) { console.error(`amico-run: no script given\n${USAGE}`); return 64 }
   if (executor !== 'local') { console.error(`amico-run: only --executor local is supported in β`); return 64 }
 
-  // Auto-detect a prebuilt sysimage next to the project when one wasn't passed.
-  // A sysimage with Piccolo + CairoMakie baked in collapses the ~100s cold start
-  // (Julia/Piccolo load + Makie's first-plot compile) to a few seconds. install.sh
-  // builds it at `<project>/amico-sysimage.{dylib,so}`; agents need no flag change.
-  if (!opts.julia!.sysimage && opts.julia!.project) {
-    for (const ext of ['dylib', 'so']) {
-      const cand = join(opts.julia!.project, `amico-sysimage.${ext}`)
-      if (existsSync(cand)) { opts.julia!.sysimage = cand; break }
-    }
-  }
+  // NOTE: `--sysimage <path>` is honored (passed through to the Julia process and
+  // recorded in the manifest) but amicode does NOT build one — the local
+  // PackageCompiler build (~25-50 min, CairoMakie-dominated) wasn't worth it. The
+  // intended fast-path is a prebuilt sysimage distributed like Piccolissimo's
+  // (CI build on self-hosted runners → R2 → manifest → download), pointed at via
+  // this flag. Until that exists, solves pay the cold start (inspector warms up).
 
   let handle
   try {
