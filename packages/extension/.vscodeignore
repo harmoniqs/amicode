@@ -10,3 +10,4 @@ esbuild.config.mjs
 tsconfig.json
 **/*.map
 !bin/**
+!julia/**

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Amicode one-lab installer (idempotent). Run from the repo:
+#   bash packages/extension/scripts/install.sh
+set -euo pipefail
+EXT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+JULIA_PROJECT="$HOME/.amico/julia"        # absolute — '~' does not expand inside flags
+VSIX="${VSIX:-$EXT_ROOT/amicode.vsix}"
+LAB_TOML="$HOME/.amico/lab.toml"
+
+say() { printf '\033[1;35m[amicode]\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m[amicode] %s\033[0m\n' "$*" >&2; exit 1; }
+
+# 1. Julia present?
+command -v julia >/dev/null 2>&1 || die "Julia not found. Install: curl -fsSL https://install.julialang.org | sh  (then re-run)"
+say "julia: $(julia --version)"
+
+# 2. Instantiate the pinned project (deterministic; ~5-10 min first time)
+mkdir -p "$JULIA_PROJECT"
+cp "$EXT_ROOT/julia/Project.toml"  "$JULIA_PROJECT/Project.toml"
+cp "$EXT_ROOT/julia/Manifest.toml" "$JULIA_PROJECT/Manifest.toml"
+say "instantiating Piccolo project at $JULIA_PROJECT (first run precompiles - be patient)..."
+julia --project="$JULIA_PROJECT" -e 'using Pkg; Pkg.instantiate()' || die "Pkg.instantiate failed (see Julia error above)"
+
+# 3. Install the VSIX
+if command -v code >/dev/null 2>&1; then
+  [ -f "$VSIX" ] || die "VSIX not found at $VSIX - build it: pnpm --filter amicode-v2 package"
+  code --install-extension "$VSIX" || die "code --install-extension failed"
+  say "installed VSIX: $VSIX"
+else
+  say "WARNING: 'code' CLI not on PATH. Install it (VS Code: Shell Command: Install 'code' command), then: code --install-extension $VSIX"
+fi
+
+# 4. Starter lab.toml
+if [ ! -f "$LAB_TOML" ]; then cp "$EXT_ROOT/scripts/lab.toml.example" "$LAB_TOML"; say "wrote starter $LAB_TOML"; fi
+
+# 5. Next steps
+say "done. Next: (a) set Bedrock creds (see RUNBOOK.md), (b) run: node $EXT_ROOT/scripts/healthcheck.mjs"
