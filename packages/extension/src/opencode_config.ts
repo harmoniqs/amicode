@@ -42,17 +42,39 @@ export function resolveJuliaProject(configValue: string): string {
  *  /tmp/amicode-work, then runs amico-run via bash. opencode defaults
  *  `external_directory` to "ask" — which, with no interactive approver, makes
  *  the turn hang forever (headless) and nags the user on every solve (GUI).
- *  This is a controlled, single-purpose assistant, so we auto-allow the classes
- *  it needs rather than prompt each time. */
-export function buildOpencodeConfigContent(agentsPath: string): string {
+ *
+ *  `external_directory` is the only load-bearing line, and it's SCOPED (least
+ *  privilege) to the two roots the agent's file tools actually touch:
+ *    - the bundled templates dir — the agent READS the solve template there;
+ *    - /tmp/amicode-work — the scratch dir it WRITES solve.jl into.
+ *  (amico-run's own writes to ~/.amico/runs|julia are the subprocess's, not the
+ *  agent's file tools, so they need no grant.) The path-scoped object form is
+ *  accepted by opencode 1.17.3 (verified via `opencode debug config`).
+ *
+ *  Merge safety: opencode DEEP-merges this `permission` object over the user's
+ *  global config — verified against 1.17.3 (a global `permission.doom_loop`
+ *  survives alongside our injected keys; see opencode_config.test.ts). So we ADD
+ *  keys, we don't replace the user's permission settings.
+ *
+ *  `bash`/`edit` are left at "allow" (both already default to allow; bash runs
+ *  the compound `mkdir … && nohup amico-run …` launch, not worth scoping).
+ *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
+const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
+
+export function buildOpencodeConfigContent(agentsPath: string, templatePath: string): string {
+  const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
     permission: {
       bash: "allow",
       edit: "allow",
-      webfetch: "allow",
-      external_directory: "allow",
+      external_directory: {
+        [templatePath]: "allow",            // exact template file the agent reads
+        [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
+        [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
+        [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
+      },
     },
   });
 }
