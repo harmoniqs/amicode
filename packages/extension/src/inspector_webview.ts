@@ -1,8 +1,7 @@
 // Run Inspector webview script — runs inside the sandboxed Chromium webview.
-// Ported from amicode/src/spikes/inspector_webview.ts with no semantic changes:
 //   - double-buffer image swap (zero flicker between iter frames at 5 Hz)
-//   - canonical Ipopt-format stats row (iter, f, inf_pr, inf_du, lat)
-//   - Date.now() for cross-process timestamp (performance.now origins differ).
+//   - status badge (idle / running / converged) + researcher metric cards
+//     (objective, iteration, feasibility, optimality) driven by AMICODE_ITER.
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
@@ -11,38 +10,41 @@ declare function acquireVsCodeApi(): {
 const vscodeApi = acquireVsCodeApi();
 const $ = (id: string) => document.getElementById(id) as HTMLElement;
 
-let iterCount = 0;
-let lastIterAt = performance.now();
-let smoothedHz = 0;
 let visibleBuffer: "a" | "b" = "a";
+
+function setBadge(state: "idle" | "running" | "done" | "failed", text: string): void {
+  const badge = $("badge");
+  badge.className = "badge " + state;
+  badge.textContent = text;
+}
 
 window.addEventListener("message", (e) => {
   const msg = e.data;
   if (!msg || typeof msg !== "object") return;
-  const recv = performance.now();
 
   switch (msg.type) {
     case "ping": {
       vscodeApi.postMessage({ type: "pong", seq: msg.seq, t0: msg.t0 });
-      $("status").textContent = "pinging";
       break;
     }
     case "iteration": {
-      iterCount++;
-      const dt = recv - lastIterAt;
-      lastIterAt = recv;
-      const instHz = dt > 0 ? 1000 / dt : 0;
-      smoothedHz = smoothedHz === 0 ? instHz : 0.9 * smoothedHz + 0.1 * instHz;
-      const lat = Date.now() - msg.t_post;
-      $("iter").textContent = String(iterCount);
-      $("hz").textContent = smoothedHz.toFixed(1);
-      $("rec").textContent =
-        `iter=${String(msg.iter).padStart(4, "0")}` +
-        ` f=${(msg.f_val as number).toExponential(6)}` +
-        ` inf_pr=${(msg.eq_viol as number).toExponential(3)}` +
-        ` inf_du=${(msg.kkt_error as number).toExponential(3)}`;
-      $("lat").textContent = `${lat.toFixed(0)}ms`;
-      $("status").textContent = msg.isFinal ? "final frame" : "streaming";
+      $("m-obj-k").textContent = "objective";
+      $("m-iter").textContent = String(msg.iter);
+      $("m-obj").textContent = (msg.f_val as number).toExponential(4);
+      $("m-pr").textContent = (msg.eq_viol as number).toExponential(2);
+      $("m-du").textContent = (msg.kkt_error as number).toExponential(2);
+      setBadge("running", "running");
+      break;
+    }
+    case "completed": {
+      // Authoritative terminal state from the watcher (FINISHED on disk).
+      const ok = msg.status === "completed";
+      setBadge(ok ? "done" : "failed", ok ? "converged" : String(msg.status));
+      // Promote the hero card to the final fidelity — the number that matters.
+      if (ok && typeof msg.fidelity === "number") {
+        $("m-obj-k").textContent = "fidelity";
+        $("m-obj").textContent = (msg.fidelity as number).toFixed(5);
+      }
       break;
     }
     case "refresh": {
@@ -53,15 +55,12 @@ window.addEventListener("message", (e) => {
       const incomingBuffer = visibleBuffer === "a" ? "b" : "a";
       const incomingImg = $("preview-" + incomingBuffer) as HTMLImageElement;
       const outgoingImg = $("preview-" + visibleBuffer) as HTMLImageElement;
-      const tPost = msg.t_post as number;
 
       const handleLoaded = () => {
-        const loadedAt = Date.now();
         incomingImg.style.opacity = "1";
         outgoingImg.style.opacity = "0";
         visibleBuffer = incomingBuffer;
-        $("img-iter").textContent = String(msg.iter);
-        $("img-load").textContent = `${(loadedAt - tPost).toFixed(0)}ms`;
+        $("m-iter").textContent = String(msg.iter);
       };
 
       incomingImg.src = msg.url;
@@ -73,7 +72,7 @@ window.addEventListener("message", (e) => {
           handleLoaded();
         });
       }
-      $("status").textContent = msg.isFinal ? "final frame" : "streaming";
+      setBadge("running", "running");   // a new frame means a live solve; completion arrives via "completed"
       break;
     }
   }
