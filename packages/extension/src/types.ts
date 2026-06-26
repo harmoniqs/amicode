@@ -15,13 +15,17 @@ export interface QuickPickReply {
   choice: string | null;
 }
 
+/** Terminal + in-flight run statuses. */
+export type RunStatus = "starting" | "running" | "completed" | "failed" | "aborted";
+
 /** Solve run state tracked by the extension. */
 export interface RunState {
   runId: string;
   outputDir: string;
   startedAt: number;
-  status: "starting" | "running" | "completed" | "failed";
+  status: RunStatus;
   latestIter?: number;
+  fidelity?: number;
 }
 
 /** Parsed AMICODE_ITER line from spike_solve.jl stdout. */

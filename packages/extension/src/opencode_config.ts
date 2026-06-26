@@ -5,56 +5,50 @@ import * as os from "node:os";
 // ============================================================================
 // Prepare a per-session opencode project directory.
 //
-// Architecture: opencode invokes amico-run via its built-in `bash` tool — no
-// MCP, no callback HTTP. We just need to make sure opencode (a) has context
-// about how to use amico-run, and (b) finds it on PATH.
-//
-// Layout written:
-//   <projectDir>/AGENTS.md                  ← LLM context (auto-loaded)
-//   <projectDir>/.opencode/opencode.json    ← optional config tweaks
-//
-// PATH augmentation happens at spawn time (ServerManager env), not here.
+// opencode invokes amico-run via its built-in `bash` tool — no MCP, no
+// callback HTTP. We deliver into the session: (a) AGENTS.md (auto-loaded LLM
+// context, with the Julia project path substituted in), and (b) the vetted
+// solve_template.jl the agent copies + fills in. PATH augmentation (so
+// `amico-run` resolves) happens at spawn time in extension.ts.
 // ============================================================================
 
 export interface OpencodeConfigOptions {
-  /** Absolute path to amicode-v2/bin/ — added to PATH so `amico-run` resolves. */
-  binDir: string;
-  /** Absolute path to amicode-v2/AGENTS.md to copy into the project dir. */
+  /** Absolute path to packages/extension/AGENTS.md to copy into the project dir. */
   agentsSrc: string;
+  /** Absolute path to the vetted solve_template.jl to copy into the project dir. */
+  templateSrc: string;
+  /** Julia project (--project) the agent should use; substituted into AGENTS.md.
+   *  undefined → "UNSET" (AGENTS.md tells the agent to omit --project). */
+  juliaProject: string | undefined;
 }
 
 export interface OpencodeProject {
   projectDir: string;
   agentsPath: string;
+  templatePath: string;
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
   const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-v2-"));
-  const opencodeDir = path.join(projectDir, ".opencode");
-  fs.mkdirSync(opencodeDir, { recursive: true });
+  fs.mkdirSync(path.join(projectDir, ".opencode"), { recursive: true });
 
-  // Copy AGENTS.md into the project dir. opencode auto-loads it as system
-  // context for any session it spawns from this dir.
+  // AGENTS.md: read → substitute {{JULIA_PROJECT}} → write (auto-loaded by opencode).
   const agentsPath = path.join(projectDir, "AGENTS.md");
-  if (fs.existsSync(opts.agentsSrc)) {
-    fs.copyFileSync(opts.agentsSrc, agentsPath);
-  } else {
-    // Fallback minimal stub so opencode has *something* to anchor on.
-    fs.writeFileSync(
-      agentsPath,
-      "# Amicode\nInvoke `amico-run --help` via bash to see the solver CLI.\n",
-      "utf8",
-    );
-  }
+  const raw = fs.existsSync(opts.agentsSrc)
+    ? fs.readFileSync(opts.agentsSrc, "utf8")
+    : "# Amicode\nRead solve_template.jl, fill params, run `amico-run <script>`.\n";
+  fs.writeFileSync(agentsPath, raw.replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? "UNSET"), "utf8");
 
-  // Empty/minimal opencode config — we no longer need MCP or plugin entries.
-  // Leaving the file behind so opencode treats this dir as its project root.
-  const configPath = path.join(opencodeDir, "opencode.json");
+  // The vetted template the agent copies and fills in.
+  const templatePath = path.join(projectDir, "solve_template.jl");
+  if (fs.existsSync(opts.templateSrc)) fs.copyFileSync(opts.templateSrc, templatePath);
+
+  // Minimal opencode config so it treats this dir as a project root.
   fs.writeFileSync(
-    configPath,
+    path.join(projectDir, ".opencode", "opencode.json"),
     JSON.stringify({ $schema: "https://opencode.ai/config.json" }, null, 2),
     "utf8",
   );
 
-  return { projectDir, agentsPath };
+  return { projectDir, agentsPath, templatePath };
 }

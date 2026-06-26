@@ -1,55 +1,109 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { validateFinished, validateResult } from "@amicode/amico-run";
 import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
+import type { RunStatus } from "./types";
+import {
+  AMICODE_ITER_RE, ITER_PNG_RE, ingestRunDir, readTomlSafe, parseAmicoNum,
+  type IterRecord, type RunCompletion, type PromoteInfo, type RunSink,
+} from "./run_dir_reader";
 
 // ============================================================================
-// RunsRootWatcher — the heart of the v2 CLI-direct architecture.
+// RunsRootWatcher — watches the β.1 run-dir contract and drives the Inspector
+// + status bar. Follows the `latest` symlink; for the active run it reads:
+//   manifest.toml  → run identity (run_id, lab_id), written FIRST
+//   iter_<N>.png   → live plot frames (unbounded digits)
+//   run.log        → AMICODE_ITER lines → live stats row
+//   result.toml    → fidelity (display + promote gate), atomic
+//   FINISHED       → authoritative terminal signal {status, exit_code}
 //
-// Sits on /tmp/amicode-runs/ and watches for:
-//   - new run subdirs (created by amico-run via mkdir + symlink swap)
-//   - the `latest` symlink target changing
-//   - per-run files inside the active run dir:
-//        .start              → run lifecycle begin
-//        iter_NNNN.png       → push to Run Inspector
-//        formulation.md      → auto-open markdown side preview
-//        result.toml         → final fidelity → promote-to-catalog QuickPick
-//        FINISHED            → release the run dir watcher
-//
-// We follow the `latest` symlink — when amico-run swings it, we re-target.
-// This keeps the watcher logic stateless w.r.t. who told us about the run;
-// no callback HTTP, no MCP, no event propagation across process boundaries.
+// Completion keys on FINISHED (not result.toml). The contract-reading logic is
+// the pure `ingestRunDir` in run_dir_reader.ts (replay/late-join, unit-tested);
+// the live path here adds incremental fs.watch + run.log tailing.
 // ============================================================================
 
 export interface RunsRootWatcherOptions {
   runsRoot: string;
   channel: vscode.OutputChannel;
   statusBar?: StatusBarManager;
-  /** Fidelity threshold (≥) at which to prompt promotion. Default 0.99. */
   promoteThreshold?: number;
 }
 
-const AMICODE_ITER_RE = /^AMICODE_ITER\s+iter=(\d+)\s+f=(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+inf_pr=(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s+inf_du=(-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)\s*$/;
+/** Live sink: routes to the Inspector + status bar, carrying newest-wins and
+ *  promote-once guards so replay-then-incremental never double-fires. */
+class LiveRunSink implements RunSink {
+  private latestIter = -1;
+  constructor(
+    private readonly opts: RunsRootWatcherOptions,
+    private readonly runId: string,
+    private readonly runDir: string,
+    /** Shared across run-switches so a run promotes at most once (no re-pop). */
+    private readonly promotedRuns: Set<string>,
+  ) {}
+
+  image(fsPath: string, iter: number): void {
+    if (iter <= this.latestIter) return;
+    this.latestIter = iter;
+    getInspector()?.setImageSource(fsPath, iter);
+  }
+  iter(rec: IterRecord): void {
+    if (rec.iter > this.latestIter) this.latestIter = rec.iter;
+    getInspector()?.postIterationRecord(rec);
+    // Live status-bar update — show "running · iter N" as it solves, not only at
+    // completion (#5 AC3).
+    this.opts.statusBar?.setRun({
+      runId: this.runId, outputDir: this.runDir, startedAt: 0,
+      status: "running", latestIter: rec.iter,
+    });
+  }
+  run(c: RunCompletion): void {
+    this.opts.statusBar?.setRun({
+      runId: c.runId, outputDir: c.runDir, startedAt: 0,
+      status: c.status, latestIter: this.latestIter >= 0 ? this.latestIter : undefined,
+      fidelity: c.fidelity,
+    });
+    this.opts.channel.appendLine(`[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`);
+    if (c.status !== "completed") {
+      this.opts.channel.appendLine(`[runs] see ${path.join(c.runDir, "run.log")}`);
+    }
+  }
+  promote(info: PromoteInfo): void {
+    if (this.promotedRuns.has(info.runId)) return;
+    this.promotedRuns.add(info.runId);
+    void (async () => {
+      const choice = await vscode.window.showInformationMessage(
+        `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Promote pulse to catalog?`,
+        "Yes — promote", "No — keep local only",
+      );
+      if (choice === "Yes — promote") {
+        vscode.window.showInformationMessage(`Amicode: promotion stub — would catalog ${info.runId}.`);
+        await vscode.commands.executeCommand("amicode.catalog.refresh").then(undefined, () => undefined);
+      }
+    })();
+  }
+}
 
 export class RunsRootWatcher implements vscode.Disposable {
   private rootWatcher?: fs.FSWatcher;
   private activeRunDir?: string;
   private activeRunWatcher?: fs.FSWatcher;
   private logTailer?: LogTailer;
-  private latestIter = -1;
-  private formulationOpened = false;
-  private promotedForRun = false;
+  private sink?: LiveRunSink;
+  private finishedSeen = false;
+  /** Runs already promoted (or already-finished when first switched to) — so the
+   *  promote prompt fires at most once per run, never re-popping on re-switch /
+   *  launch-follows-latest. */
+  private readonly promotedRuns = new Set<string>();
 
   constructor(private readonly opts: RunsRootWatcherOptions) {}
 
   start(): void {
     fs.mkdirSync(this.opts.runsRoot, { recursive: true });
-    // Pick up an in-progress or just-completed run if `latest` already exists.
     const latest = path.join(this.opts.runsRoot, "latest");
     if (fs.existsSync(latest)) this.followLatest();
-
-    this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_event, filename) => {
+    this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "latest") this.followLatest();
     });
     this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot}`);
@@ -64,17 +118,10 @@ export class RunsRootWatcher implements vscode.Disposable {
     this.logTailer = undefined;
   }
 
-  // ---------------------------------------------------------------------
-
   private followLatest(): void {
-    const latest = path.join(this.opts.runsRoot, "latest");
     let target: string | undefined;
-    try {
-      target = fs.realpathSync(latest);
-    } catch (err) {
-      this.opts.channel.appendLine(`[runs] latest unresolved: ${(err as Error).message}`);
-      return;
-    }
+    try { target = fs.realpathSync(path.join(this.opts.runsRoot, "latest")); }
+    catch (err) { this.opts.channel.appendLine(`[runs] latest unresolved: ${(err as Error).message}`); return; }
     if (target === this.activeRunDir) return;
     this.opts.channel.appendLine(`[runs] active run -> ${target}`);
     this.switchToRun(target);
@@ -84,138 +131,71 @@ export class RunsRootWatcher implements vscode.Disposable {
     try { this.activeRunWatcher?.close(); } catch { /* noop */ }
     this.logTailer?.dispose();
     this.activeRunDir = runDir;
-    this.latestIter = -1;
-    this.formulationOpened = false;
-    this.promotedForRun = false;
 
-    // Reveal the inspector so the user sees the new run start.
+    const runId = String(readTomlSafe(path.join(runDir, "manifest.toml"))?.run_id ?? path.basename(runDir));
+    // If the run was ALREADY finished when we switched to it (e.g. launch follows
+    // `latest` to a prior completed run, or the user switches back), don't pop the
+    // promote prompt — only a FRESH live completion promotes. Pre-marking the run
+    // suppresses the replay-driven promote below.
+    const finishedAtSwitch = fs.existsSync(path.join(runDir, "FINISHED"));
+    if (finishedAtSwitch) this.promotedRuns.add(runId);
+
+    this.sink = new LiveRunSink(this.opts, runId, runDir, this.promotedRuns);
     getInspector()?.reveal();
-    this.opts.statusBar?.setRun({
-      runId: path.basename(runDir),
-      outputDir: runDir,
-      startedAt: Date.now(),
-      status: "running",
-    });
 
-    // Replay any files that already exist (we may be late to the run).
-    try {
-      for (const f of fs.readdirSync(runDir)) {
-        this.handle(f, path.join(runDir, f));
-      }
-    } catch (err) {
-      this.opts.channel.appendLine(`[runs] readdir failed: ${(err as Error).message}`);
-    }
+    // Replay everything already on disk (late-join safe). Returns the run.log
+    // bytes consumed so the tailer attaches exactly there (no skipped iters).
+    let logBytes = 0;
+    try { logBytes = ingestRunDir(runDir, this.sink, this.opts.promoteThreshold ?? 0.99); }
+    catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
+    this.finishedSeen = finishedAtSwitch;
 
-    this.activeRunWatcher = fs.watch(runDir, { persistent: false }, (_event, filename) => {
+    // Incremental: new iter PNGs + FINISHED.
+    this.activeRunWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
       if (!filename) return;
       const fp = path.join(runDir, filename);
       if (!fs.existsSync(fp)) return;
-      this.handle(filename, fp);
+      const m = ITER_PNG_RE.exec(filename);
+      if (m) { this.sink?.image(fp, parseInt(m[1], 10)); return; }
+      if (filename === "FINISHED" && !this.finishedSeen) { this.finishedSeen = true; this.onFinished(runDir); }
     });
 
-    // Tail run.log for AMICODE_ITER records → drives the Inspector stats row.
+    // Incremental: appended AMICODE_ITER lines — start at the ingest offset so a
+    // line written between the replay read and this attach isn't skipped.
     this.logTailer = new LogTailer({
       path: path.join(runDir, "run.log"),
+      startOffset: logBytes,
       channel: this.opts.channel,
-      onLine: (line) => this.onLogLine(line),
+      onLine: (line) => {
+        const m = AMICODE_ITER_RE.exec(line);
+        if (m) this.sink?.iter({ iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) });
+      },
     });
     this.logTailer.start();
   }
 
-  private onLogLine(line: string): void {
-    const m = AMICODE_ITER_RE.exec(line);
-    if (!m) return;
-    getInspector()?.postIterationRecord({
-      iter:   parseInt(m[1], 10),
-      f_val:  parseFloat(m[2]),
-      inf_pr: parseFloat(m[3]),
-      inf_du: parseFloat(m[4]),
-    });
-  }
-
-  private handle(filename: string, fp: string): void {
-    const iterMatch = /^iter_(\d{4})\.png$/.exec(filename);
-    if (iterMatch) {
-      const iter = parseInt(iterMatch[1], 10);
-      if (iter <= this.latestIter) return;
-      this.latestIter = iter;
-      getInspector()?.setImageSource(fp, iter);
-      this.opts.statusBar?.setRun({
-        runId: path.basename(this.activeRunDir!),
-        outputDir: this.activeRunDir!,
-        startedAt: 0,
-        status: "running",
-        latestIter: iter,
-      });
-      return;
+  private onFinished(runDir: string): void {
+    const finished = readTomlSafe(path.join(runDir, "FINISHED"));
+    if (!finished || !validateFinished(finished).ok) return;
+    const status = finished.status as RunStatus;
+    const runId = String(readTomlSafe(path.join(runDir, "manifest.toml"))?.run_id ?? path.basename(runDir));
+    let fidelity: number | undefined;
+    if (status === "completed") {
+      const result = readTomlSafe(path.join(runDir, "result.toml"));
+      if (result && validateResult(result).ok) fidelity = result.fidelity as number;
     }
-    if (filename === "final.png") {
-      getInspector()?.setImageSource(fp, this.latestIter + 1, /*final*/ true);
-      return;
+    this.sink?.run({ runId, runDir, status, fidelity });
+    if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
+      this.sink?.promote({ runId, runDir, fidelity });
     }
-    if (filename === "formulation.md" && !this.formulationOpened) {
-      this.formulationOpened = true;
-      vscode.commands
-        .executeCommand("markdown.showPreviewToSide", vscode.Uri.file(fp))
-        .then(undefined, (err) => this.opts.channel.appendLine(`[runs] preview failed: ${err}`));
-      return;
-    }
-    if (filename === "result.toml") {
-      this.onResult(fp);
-      return;
-    }
-  }
-
-  private onResult(resultPath: string): void {
-    if (this.promotedForRun) return;
-    let txt = "";
-    try { txt = fs.readFileSync(resultPath, "utf8"); }
-    catch { return; }
-    const fid = parseFloat(((txt.match(/fidelity\s*=\s*([\d.eE+-]+)/) ?? [])[1] ?? ""));
-    if (!Number.isFinite(fid)) return;
-
-    this.opts.statusBar?.setRun({
-      runId: path.basename(this.activeRunDir!),
-      outputDir: this.activeRunDir!,
-      startedAt: 0,
-      status: "completed",
-      latestIter: this.latestIter,
-    });
-    this.opts.channel.appendLine(`[runs] result.toml: F=${fid.toFixed(6)}`);
-
-    const threshold = this.opts.promoteThreshold ?? 0.99;
-    if (fid < threshold) return;
-    this.promotedForRun = true;
-
-    void (async () => {
-      const choice = await vscode.window.showInformationMessage(
-        `Amicode: solve converged (F=${fid.toFixed(4)}). Promote pulse to catalog?`,
-        { modal: false },
-        "Yes — promote",
-        "No — keep local only",
-      );
-      if (choice === "Yes — promote") {
-        // Catalog write isn't wired yet — toast for now.
-        vscode.window.showInformationMessage(
-          `Amicode: promotion stub — would copy ${path.basename(this.activeRunDir!)} to catalog.`,
-        );
-        await vscode.commands.executeCommand("amicode.catalog.refresh").then(undefined, () => undefined);
-      }
-    })();
   }
 }
 
 // ===========================================================================
-// LogTailer — follows run.log as julia appends to it, emits each new line via
-// onLine. Uses fs.watch + fs.read at the persisted offset; survives the file
-// not existing yet (amico-run touches it lazily via tee).
+// LogTailer — follows run.log as julia appends, emitting each new line.
 // ===========================================================================
 
-interface LogTailerOptions {
-  path: string;
-  channel: vscode.OutputChannel;
-  onLine: (line: string) => void;
-}
+interface LogTailerOptions { path: string; channel: vscode.OutputChannel; onLine: (line: string) => void; startOffset?: number }
 
 class LogTailer implements vscode.Disposable {
   private watcher?: fs.FSWatcher;
@@ -227,15 +207,10 @@ class LogTailer implements vscode.Disposable {
   constructor(private readonly opts: LogTailerOptions) {}
 
   start(): void {
-    // The log file may not exist yet (amico-run creates it via `tee`). Poll
-    // for it briefly; once it appears, switch to fs.watch.
     const tryAttach = () => {
       if (this.disposed) return;
-      if (fs.existsSync(this.opts.path)) {
-        this.attach();
-      } else {
-        this.pollTimer = setTimeout(tryAttach, 250);
-      }
+      if (fs.existsSync(this.opts.path)) this.attach();
+      else this.pollTimer = setTimeout(tryAttach, 250);
     };
     tryAttach();
   }
@@ -249,32 +224,27 @@ class LogTailer implements vscode.Disposable {
 
   private attach(): void {
     if (this.disposed) return;
+    // Start where ingestRunDir stopped reading (startOffset), not at current EOF —
+    // otherwise lines appended between the replay read and this attach are lost.
+    this.offset = this.opts.startOffset ?? 0;
     try {
       this.watcher = fs.watch(this.opts.path, { persistent: false }, (event) => {
         if (event === "change") this.drain();
       });
     } catch (err) {
       this.opts.channel.appendLine(`[runs] log tail attach failed: ${(err as Error).message}`);
-      return;
     }
-    // Initial read in case content already exists.
+    // Drain immediately to catch lines already written past startOffset.
     this.drain();
   }
 
   private drain(): void {
     if (this.disposed) return;
     let fd: number;
+    try { fd = fs.openSync(this.opts.path, "r"); } catch { return; }
     try {
-      fd = fs.openSync(this.opts.path, "r");
-    } catch { return; }
-    try {
-      const stat = fs.fstatSync(fd);
-      const size = stat.size;
-      if (size < this.offset) {
-        // File was truncated (or replaced by a newer run somehow).
-        this.offset = 0;
-        this.buf = "";
-      }
+      const size = fs.fstatSync(fd).size;
+      if (size < this.offset) { this.offset = 0; this.buf = ""; }
       if (size === this.offset) return;
       const chunk = Buffer.allocUnsafe(size - this.offset);
       const read = fs.readSync(fd, chunk, 0, chunk.length, this.offset);
@@ -284,8 +254,7 @@ class LogTailer implements vscode.Disposable {
       while ((nl = this.buf.indexOf("\n")) >= 0) {
         const line = this.buf.slice(0, nl);
         this.buf = this.buf.slice(nl + 1);
-        try { this.opts.onLine(line); }
-        catch (e) { this.opts.channel.appendLine(`[runs] onLine threw: ${String(e)}`); }
+        try { this.opts.onLine(line); } catch (e) { this.opts.channel.appendLine(`[runs] onLine threw: ${String(e)}`); }
       }
     } finally {
       try { fs.closeSync(fd); } catch { /* noop */ }

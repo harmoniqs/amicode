@@ -9,7 +9,9 @@
   "engines": {
     "vscode": "^1.95.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onCommand:amicode.openChat",
     "onCommand:amicode.openInspector",
@@ -37,18 +39,43 @@
     },
     "views": {
       "amicode": [
-        { "id": "amicode.vault",    "name": "Vault",    "type": "tree" },
-        { "id": "amicode.catalog",  "name": "Catalog",  "type": "tree" },
-        { "id": "amicode.armonia",  "name": "Armonia",  "type": "tree" }
+        {
+          "id": "amicode.vault",
+          "name": "Vault",
+          "type": "tree"
+        },
+        {
+          "id": "amicode.catalog",
+          "name": "Catalog",
+          "type": "tree"
+        },
+        {
+          "id": "amicode.armonia",
+          "name": "Armonia",
+          "type": "tree"
+        }
       ],
       "amicode-panel": [
-        { "id": "amicode.runInspector", "name": "Run Inspector", "type": "webview" }
+        {
+          "id": "amicode.runInspector",
+          "name": "Run Inspector",
+          "type": "webview"
+        }
       ]
     },
     "commands": [
-      { "command": "amicode.openChat",      "title": "Amicode: Open Chat" },
-      { "command": "amicode.openInspector", "title": "Amicode: Open Run Inspector" },
-      { "command": "amicode.restartServer", "title": "Amicode: Restart opencode server" }
+      {
+        "command": "amicode.openChat",
+        "title": "Amicode: Open Chat"
+      },
+      {
+        "command": "amicode.openInspector",
+        "title": "Amicode: Open Run Inspector"
+      },
+      {
+        "command": "amicode.restartServer",
+        "title": "Amicode: Restart opencode server"
+      }
     ],
     "configuration": {
       "title": "Amicode",
@@ -60,31 +87,33 @@
         },
         "amicode.juliaProject": {
           "type": "string",
-          "default": "/tmp/amicode-spike-julia",
-          "description": "Julia project root (--project=...) the run_julia tool will use."
+          "default": "",
+          "description": "Julia project (--project) the agent passes to amico-run. Empty = agent omits --project."
         },
-        "amicode.juliaScript": {
+        "amicode.runsRoot": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to spike_solve.jl. If empty, looks up via the extensionPath/../amicode/julia/spike_solve.jl convention."
+          "description": "Runs root the inspector watches. Empty = ~/.amico/runs/default (must match where amico-run writes)."
         }
       }
     }
   },
   "scripts": {
-    "build":     "node esbuild.config.mjs",
-    "watch":     "node esbuild.config.mjs --watch",
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
     "typecheck": "tsc --noEmit",
-    "test":      "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
+    "test:slow": "vitest run test/slow",
     "test:smoke": "node test/boot_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs"
   },
   "devDependencies": {
     "@amicode/amico-run": "workspace:*",
-    "@types/node":   "^22.0.0",
+    "@types/node": "^22.0.0",
     "@types/vscode": "^1.95.0",
-    "esbuild":       "^0.24.0",
-    "typescript":    "^5.6.0",
-    "vitest":        "^2.1.0"
+    "esbuild": "^0.24.0",
+    "smol-toml": "^1.3.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
   }
 }

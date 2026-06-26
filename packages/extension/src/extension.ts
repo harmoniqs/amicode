@@ -8,6 +8,7 @@ import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject } from "./opencode_config";
+import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
 
@@ -26,33 +27,38 @@ let sseClient: OpencodeEventClient | undefined;
 let watcher: RunsRootWatcher | undefined;
 let opencodeReadyUrl: URL | undefined;
 
-const DEFAULT_RUNS_ROOT = "/tmp/amicode-runs";
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
   ctx.subscriptions.push(opencodeChannel, runsChannel);
 
+  // Runs root (resolved early — the inspector needs it for its CSP resource roots).
+  const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
+
   // 1. UI surfaces
   registerTrees(ctx);
-  registerRunInspector(ctx);
+  registerRunInspector(ctx, runsRoot);
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // 2. Start watching the runs root immediately — solves may already exist
   // from prior dev-host sessions, and watchers are cheap.
-  const runsRoot = vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", DEFAULT_RUNS_ROOT);
   fs.mkdirSync(runsRoot, { recursive: true });
   watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
   watcher.start();
   ctx.subscriptions.push(watcher);
 
   // 3. opencode project bootstrap
-  const binDir = path.resolve(ctx.extensionPath, "bin");
-  const agentsSrc = path.resolve(ctx.extensionPath, "AGENTS.md");
-  const opencodeProject = prepareOpencodeProject({ binDir, agentsSrc });
+  const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);
+  const opencodeProject = prepareOpencodeProject({
+    agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
+    templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
+    juliaProject: vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+  });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
+  opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
 
   // 4. Spawn opencode — the VENDORED binary by default (spec §4; S35, kills
   // Assumption 4). Config override is a dev-only escape hatch. On a missing
@@ -78,16 +84,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   }
 
   if (binary !== undefined) {
-    const juliaScript = resolveJuliaScript(ctx);
-    const juliaProject = resolveJuliaProject();
+    // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37). The agent
+    // gets the Julia project from AGENTS.md (substituted at session-copy time)
+    // and passes it as `--project`. PATH just needs to resolve the launcher.
+    if (amicoRunBinDir === undefined) {
+      opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
+    }
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
       env: {
-        PATH: `${binDir}:${process.env.PATH ?? ""}`,
-        AMICO_JULIA_SCRIPT:  juliaScript,
-        AMICO_JULIA_PROJECT: juliaProject,
-        AMICO_RUNS_ROOT:     runsRoot,
+        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
       },
       channel: opencodeChannel,
     });
@@ -134,7 +141,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
 
-  opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; binDir=${binDir}`);
+  opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; amicoRunBinDir=${amicoRunBinDir ?? "(none)"}`);
 }
 
 export function deactivate(): void {
@@ -144,16 +151,3 @@ export function deactivate(): void {
   statusBar?.dispose();
 }
 
-// ---------------------------------------------------------------------------
-
-function resolveJuliaScript(ctx: vscode.ExtensionContext): string {
-  const fromCfg = vscode.workspace.getConfiguration("amicode").get<string>("juliaScript", "");
-  if (fromCfg && fs.existsSync(fromCfg)) return fromCfg;
-  const sibling = path.resolve(ctx.extensionPath, "..", "amicode", "julia", "spike_solve.jl");
-  if (fs.existsSync(sibling)) return sibling;
-  return path.join(ctx.extensionPath, "dist", "julia", "spike_solve.jl");
-}
-
-function resolveJuliaProject(): string {
-  return vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "/tmp/amicode-spike-julia");
-}
