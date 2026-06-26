@@ -18,4 +18,12 @@ the dominant cost is the first Julia precompile.
 - `✗ amico-run` → `pnpm -r build` (stages `bin/`) or reinstall the VSIX.
 - `✗ LLM creds` → fix the opencode model/provider + AWS creds, then re-run.
 
-> Actual timings are recorded during the β.6 demo dry-run.
+## Fallback (live solve or creds fail on-site)
+
+If the live solve stalls, or Bedrock creds / opencode are unavailable at demo
+time, run **Command Palette → "Amicode: Replay demo run"**. It stages a bundled
+pre-baked converged solve into the runs root and the Run Inspector renders it
+(iteration frames + final fidelity + promote prompt) — with **no Julia, no
+opencode, and no credentials**. Arm it first (see `DEMO_CHECKLIST.md`).
+
+> Actual timings are recorded during the β.6 demo dry-run (see `DEMO_CHECKLIST.md`).

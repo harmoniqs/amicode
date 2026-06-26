@@ -11,6 +11,8 @@ const REQUIRED = [
   'extension/julia/Project.toml',
   'extension/julia/Manifest.toml',
   'extension/AGENTS.md',
+  'extension/demo/run/manifest.toml',
+  'extension/demo/run/FINISHED',
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback

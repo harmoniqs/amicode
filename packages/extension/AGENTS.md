@@ -12,12 +12,21 @@ and the Run Inspector renders the live solve.
    anharmonicity `δ` (GHz), `levels`, the target gate, gate time `T` (ns),
    timesteps `N`, `max_iter`. **Parameters live in the script — never in this
    file.** If the user gives a `lab.toml` path, read it in the script.
-3. Run it via the `bash` tool:  `amico-run --project <JULIA_PROJECT> solve.jl`
-   (use the project path provided below). `amico-run` takes only a script path
-   and runner flags — it parses **no** physics options; all the physics lives
-   in the script you wrote.
-4. When it finishes, quote the final `DONE fidelity=…` line. If F ≥ 0.99 the
-   extension prompts promotion automatically — don't ask.
+3. Run it **detached** so the chat doesn't block on the ~minutes-long solve:
+   ```bash
+   mkdir -p /tmp/amicode-work
+   ( nohup amico-run --project <JULIA_PROJECT> /tmp/amicode-work/solve.jl \
+       > /tmp/amicode-work/solve.log 2>&1 < /dev/null & )
+   ```
+   (use the project path provided below). The outer subshell returns in <1s.
+   `amico-run` takes only a script path and runner flags — it parses **no**
+   physics options; all the physics lives in the script you wrote. Then
+   immediately tell the user: **"Solve launched — watch the Run Inspector
+   (first run may take a few minutes while Julia warms up)."**
+4. Do **not** block on the solve. The Run Inspector streams iterations + the
+   final fidelity from the run directory, and prompts promotion itself when
+   F ≥ 0.99 — don't ask. If asked for the result later, read the latest run's
+   `FINISHED` + `result.toml` under `~/.amico/runs/<lab>/<runId>/`.
 
 There is **no MCP server**. The only tool is `amico-run` via bash.
 `amico-run --help` prints usage.

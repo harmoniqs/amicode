@@ -1,0 +1,11 @@
+schema_version = "1"
+run_id = "r20260617-161814Z-e8cb"
+script_path = "/Users/raghavchari/amicode/packages/extension/templates/solve_template.jl"
+lab = "default"
+lab_id = "default"
+created_at = "2026-06-17T16:18:14.159Z"
+orchestrator_version = "0.1.0"
+
+[julia]
+binary = "julia"
+project = "/Users/raghavchari/.amico/julia"
