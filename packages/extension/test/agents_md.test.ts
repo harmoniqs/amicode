@@ -9,6 +9,10 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
     expect(AGENTS).toMatch(/solve_template\.jl/)
     expect(AGENTS).toMatch(/amico-run .*solve\.jl/)   // the actual invocation it teaches
   })
+  it('references the template by absolute path (substituted at session prep), not "in this project dir"', () => {
+    expect(AGENTS).toMatch(/\{\{TEMPLATE_PATH\}\}/)   // session cwd is the workspace, not the temp dir
+    expect(AGENTS).not.toMatch(/in this project dir/)
+  })
   it('teaches the portable detached launch (nohup + & in a subshell + watch inspector), not setsid', () => {
     expect(AGENTS).toMatch(/nohup/)
     expect(AGENTS).toMatch(/&\s*\)/)              // backgrounded inside a subshell

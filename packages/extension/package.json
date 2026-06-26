@@ -93,7 +93,7 @@
         "amicode.juliaProject": {
           "type": "string",
           "default": "",
-          "description": "Julia project (--project) the agent passes to amico-run. Empty = agent omits --project."
+          "description": "Julia project (--project) the agent passes to amico-run. Empty = defaults to ~/.amico/julia (the provisioned project)."
         },
         "amicode.runsRoot": {
           "type": "string",
