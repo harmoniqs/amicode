@@ -32,6 +32,27 @@ and the Run Inspector renders the live solve.
 There is **no MCP server**. The only tool is `amico-run` via bash.
 `amico-run --help` prints usage.
 
+## Scope & parameter guidance
+
+**Single qubit only.** The bundled template builds ONE `TransmonSystem` (scalar
+`ω`/`δ`) and embeds a single-qubit target. Supported: X, Y, Z, H, S, T, √X, and
+arbitrary single-qubit unitaries. **Multi-qubit gates (CNOT, CZ, iSWAP, …) are
+out of scope for this single-lab build** — don't build a coupled multi-transmon
+system (Piccolo's `MultiTransmonSystem` exists and would construct, but it's not
+what this template or lab is set up for). If the user asks for a 2-qubit-or-larger
+gate, tell them plainly it isn't supported yet and stop.
+
+**Choose parameters for the regime** (the defaults converge to F > 0.999):
+- `levels`: 3 (default) or 4 for more leakage realism. **Avoid 5+** — added
+  levels worsen conditioning and leakage and inflate solve cost, so convergence
+  degrades; if the user insists, warn it may not converge.
+- `N` (timesteps): keep ~5–10 steps/ns so the pulse is resolved. `N=50` suits
+  `T ≈ 10 ns`; for **longer** gates scale N up (e.g. `T = 30 ns` → `N ≈ 200`),
+  else the pulse is under-resolved and fidelity drops silently. For **short/fast**
+  gates raise N too and consider a larger `drive_max` (more amplitude to act fast).
+- `max_iter`: 60 near the default regime; bump to ~150–200 for harder cases
+  (short T, more levels).
+
 ## The run-dir contract your script MUST emit
 
 `amico-run` writes `manifest.toml` (first) and `FINISHED` (last) itself. Your

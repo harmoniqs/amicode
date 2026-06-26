@@ -103,7 +103,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath),
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath),
       },
       channel: opencodeChannel,
     });

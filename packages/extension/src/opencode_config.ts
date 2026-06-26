@@ -32,13 +32,50 @@ export function resolveJuliaProject(configValue: string): string {
 }
 
 /** Build the OPENCODE_CONFIG_CONTENT value: a config object that injects the
- *  amico AGENTS.md as a top-level `instructions` entry. opencode MERGES this
- *  over the user's global config (model/provider preserved) for every session,
- *  independent of the session's working directory. */
-export function buildOpencodeConfigContent(agentsPath: string): string {
+ *  amico AGENTS.md as a top-level `instructions` entry AND auto-allows the
+ *  permissions the solve workflow needs. opencode MERGES this over the user's
+ *  global config (model/provider preserved) for every session, independent of
+ *  the session's working directory.
+ *
+ *  Why the `permission` block: the agent reads the bundled template at an
+ *  absolute path *outside* the session's working dir and writes scratch to
+ *  /tmp/amicode-work, then runs amico-run via bash. opencode defaults
+ *  `external_directory` to "ask" — which, with no interactive approver, makes
+ *  the turn hang forever (headless) and nags the user on every solve (GUI).
+ *
+ *  `external_directory` is the only load-bearing line, and it's SCOPED (least
+ *  privilege) to the two roots the agent's file tools actually touch:
+ *    - the bundled templates dir — the agent READS the solve template there;
+ *    - /tmp/amicode-work — the scratch dir it WRITES solve.jl into.
+ *  (amico-run's own writes to ~/.amico/runs|julia are the subprocess's, not the
+ *  agent's file tools, so they need no grant.) The path-scoped object form is
+ *  accepted by opencode 1.17.3 (verified via `opencode debug config`).
+ *
+ *  Merge safety: opencode DEEP-merges this `permission` object over the user's
+ *  global config — verified against 1.17.3 (a global `permission.doom_loop`
+ *  survives alongside our injected keys; see opencode_config.test.ts). So we ADD
+ *  keys, we don't replace the user's permission settings.
+ *
+ *  `bash`/`edit` are left at "allow" (both already default to allow; bash runs
+ *  the compound `mkdir … && nohup amico-run …` launch, not worth scoping).
+ *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
+const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
+
+export function buildOpencodeConfigContent(agentsPath: string, templatePath: string): string {
+  const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
+    permission: {
+      bash: "allow",
+      edit: "allow",
+      external_directory: {
+        [templatePath]: "allow",            // exact template file the agent reads
+        [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
+        [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
+        [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
+      },
+    },
   });
 }
 
