@@ -238,7 +238,14 @@ export class RunsRootWatcher implements vscode.Disposable {
     let fidelity: number | undefined;
     if (status === "completed") {
       const result = readTomlSafe(path.join(runDir, "result.toml"));
-      if (result && validateResult(result).ok) fidelity = result.fidelity as number;
+      if (result) {
+        const v = validateResult(result);
+        if (v.ok) fidelity = result.fidelity as number;
+        // Don't silently drop fidelity + skip promote on a present-but-invalid
+        // result.toml — say why (S4). e.g. a pre-0.1a result.toml with no
+        // schema_version, or a fidelity gross-out-of-range.
+        else this.opts.channel.appendLine(`[runs] result.toml present but invalid: ${v.errors.join("; ")}`);
+      }
     }
     this.sink?.run({ runId, runDir, status, fidelity });
     if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {

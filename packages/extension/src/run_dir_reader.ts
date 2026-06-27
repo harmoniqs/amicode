@@ -107,7 +107,14 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   let fidelity: number | undefined;
   if (status === "completed") {
     const result = readTomlSafe(path.join(runDir, "result.toml"));
-    if (result && validateResult(result).ok) fidelity = result.fidelity as number;
+    if (result) {
+      const v = validateResult(result);
+      if (v.ok) fidelity = result.fidelity as number;
+      // Present-but-nonconforming result.toml: surface WHY rather than silently
+      // dropping fidelity + skipping promote (S4). console.warn keeps this reader
+      // vscode-free; the live watcher logs to its channel too.
+      else console.warn(`[amico] result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
+    }
   }
   sink.run({ runId, runDir, status, fidelity });
   if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {

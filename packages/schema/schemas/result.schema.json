@@ -8,7 +8,7 @@
   "required": ["schema_version", "fidelity", "iterations"],
   "properties": {
     "schema_version": { "enum": ["1"] },
-    "fidelity": { "type": "number", "minimum": 0, "maximum": 1, "description": "subspace gate fidelity in [0,1] (rollout-based; <=1 by construction)" },
+    "fidelity": { "type": "number", "minimum": 0, "maximum": 1.0001, "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)" },
     "iterations": { "type": "integer", "minimum": 0 },
     "wall_seconds": { "type": "number", "minimum": 0 },
     "params": {

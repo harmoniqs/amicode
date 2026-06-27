@@ -68,15 +68,30 @@ export function validateFile(filePath: string, kind: SchemaKind): Validation {
   let parsed: unknown;
   try { parsed = extname(filePath).toLowerCase() === ".json" ? JSON.parse(raw) : parseToml(raw); }
   catch (e) { return { ok: false, errors: [`${filePath}: parse error — ${(e as Error).message}`] }; }
-  return validate(parsed, kind);
+  return validate(normalizeDates(parsed), kind);
+}
+
+/** smol-toml parses an UNQUOTED TOML datetime (`created_at = 2026-…Z`) into a Date
+ *  object, which fails our `type: string` (`format: date-time`) fields. Coerce any
+ *  Date back to its ISO-8601 string so quoted and unquoted datetimes validate
+ *  identically — important for the cross-language schemas (a Julia TOML.print of a
+ *  DateTime emits unquoted). Shallow + one level of nesting covers our shapes. */
+function normalizeDates(v: unknown): unknown {
+  if (v instanceof Date) return v.toISOString();
+  if (v && typeof v === "object" && !Array.isArray(v)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, val] of Object.entries(v as Record<string, unknown>)) out[k] = normalizeDates(val);
+    return out;
+  }
+  return v;
 }
 
 function formatError(e: ErrorObject): string {
   const where = e.instancePath === "" ? "(root)" : e.instancePath;
-  // The schema_version carrier gets a version-specific message regardless of how
-  // it fails (S14, #16 AC5 / #17 AC3). An ABSENT version fails as `required` on
-  // the parent (handled below); an UNRECOGNIZED version fails `enum` here.
-  if (e.instancePath === "/schema_version" && (e.keyword === "enum" || e.keyword === "const")) {
+  // The schema_version carrier gets a version-specific message (S14, #16 AC5 /
+  // #17 AC3). An ABSENT version fails as `required` on the parent (handled below);
+  // an UNRECOGNIZED version fails `enum` here.
+  if (e.instancePath === "/schema_version" && e.keyword === "enum") {
     return `/schema_version: unrecognized version (supported: ${SUPPORTED_SCHEMA_VERSIONS.join(", ")})`;
   }
   switch (e.keyword) {
@@ -86,7 +101,7 @@ function formatError(e: ErrorObject): string {
       return `${where}: unknown key "${(e.params as { additionalProperty: string }).additionalProperty}"`;
     case "enum": {
       const allowed = (e.params as { allowedValues?: unknown[] }).allowedValues ?? [];
-      return `${where}: ${e.message} (${allowed.join(", ")})`;
+      return `${where}: must be one of (${allowed.join(", ")})`;
     }
     default:
       return `${where}: ${e.message ?? "invalid"}`;
