@@ -9,6 +9,7 @@ import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
+import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
 import { stageDemoRun } from "./demo_replay";
@@ -49,6 +50,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
   watcher.start();
   ctx.subscriptions.push(watcher);
+
+  // Validate lab.toml on load (0.1b / S17). A malformed hardware profile would
+  // otherwise silently solve against the wrong hardware or fail opaquely mid-solve.
+  // Field-precise: the error names the offending key + path. Non-fatal — the rest
+  // of the extension still activates; a partner can fix the config and reload.
+  const labPath = resolveLabTomlPath(vscode.workspace.getConfiguration("amicode").get<string>("labToml", ""));
+  const lab = checkLabToml(labPath);
+  if (lab.state === "invalid") {
+    runsChannel.appendLine(`[lab] ${lab.path} is INVALID:`);
+    for (const e of lab.errors) runsChannel.appendLine(`  ${e}`);
+    void vscode.window.showErrorMessage(
+      `Amicode: lab.toml is invalid — ${lab.errors[0]}` +
+        (lab.errors.length > 1 ? ` (+${lab.errors.length - 1} more; see "Amicode — runs" output)` : ""),
+    );
+  } else if (lab.state === "valid") {
+    runsChannel.appendLine(`[lab] validated ${lab.path}`);
+  }
 
   // 3. opencode project bootstrap
   const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);

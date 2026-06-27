@@ -99,6 +99,11 @@
           "type": "string",
           "default": "",
           "description": "Runs root the inspector watches. Empty = ~/.amico/runs/default (must match where amico-run writes)."
+        },
+        "amicode.labToml": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the lab.toml hardware profile, validated on load. Empty = ~/.amico/lab.toml (where install.sh writes the starter)."
         }
       }
     }
