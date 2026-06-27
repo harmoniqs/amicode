@@ -46,6 +46,13 @@ const KINDS = ["manifest", "result", "lab", "solvespec", "catalog-entry", "finis
         end
     end
 
+    @testset "the real bundled demo run dir (emitted golden) validates" begin
+        demo = normpath(joinpath(@__DIR__, "..", "..", "extension", "demo", "run"))
+        @test validate_file(joinpath(demo, "manifest.toml"), "manifest") === nothing
+        @test validate_file(joinpath(demo, "result.toml"), "result") === nothing
+        @test validate_file(joinpath(demo, "FINISHED"), "finished") === nothing
+    end
+
     @testset "single source of truth (anti-drift, #18 AC6)" begin
         # The Julia validator reads the SAME files the TS validator imports — the
         # package's schemas/ dir — not a copy. Mutating one would flip both sides.

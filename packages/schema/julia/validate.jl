@@ -24,7 +24,19 @@ kind_for_filename(path) = begin
     b == "FINISHED"      ? "finished"  : nothing
 end
 
-load_schema(kind) = Schema(read(joinpath(SCHEMA_DIR, "$(kind).schema.json"), String))
+schema_path(kind) = joinpath(SCHEMA_DIR, "$(kind).schema.json")
+load_schema(kind) = Schema(read(schema_path(kind), String))
+
+# Allowed property names at a JSON-pointer path within the schema — so the
+# additionalProperties shim can NAME the offending extra key (JSONSchema.jl only
+# reports `false`, not which key), matching the TS validator.
+function allowed_props(schema, parts)
+    node = schema
+    for p in parts
+        node = get(get(node, "properties", Dict{String,Any}()), p, Dict{String,Any}())
+    end
+    Set(string.(keys(get(node, "properties", Dict{String,Any}()))))
+end
 
 # TOML → JSON-compatible: an UNQUOTED TOML datetime parses to a Dates type, which
 # would fail `type: string` (format: date-time). Coerce to ISO-8601 so quoted and
@@ -38,23 +50,32 @@ jsonify(t::Dates.TimeType) = string(t)
 # TS side ("/path/to/key: reason"). Its `path` is like "[a][b]" or "" (root);
 # `reason` is the failing keyword; `x` is the failing instance; `val` the schema
 # fragment. For `required`/`enum` we reconstruct the offending key from x/val.
-function format_issue(iss)
-    p = replace(iss.path, "[" => "/", "]" => "")
-    where = isempty(p) ? "(root)" : p
-    if iss.reason == "required"
-        missing = try
-            present = Set(string.(keys(iss.x)))
-            String[string(k) for k in iss.val if !(string(k) in present)]
-        catch; String[]; end
-        keys_txt = isempty(missing) ? "a required key" : join(["\"$k\"" for k in missing], ", ")
-        return "$where: missing required key $keys_txt"
-    elseif iss.reason == "additionalProperties"
-        return "$where: unknown key"
-    elseif iss.reason == "enum"
+function format_issue(iss, schema)
+    parts = [String(p) for p in split(iss.path, ['[', ']']) if !isempty(p)]
+    where = isempty(parts) ? "(root)" : "/" * join(parts, "/")
+    r = iss.reason
+    if r == "required"
+        present = try Set(string.(keys(iss.x))) catch; Set{String}() end
+        missing = String[string(k) for k in iss.val if !(string(k) in present)]
+        return "$where: missing required key " * (isempty(missing) ? "(unknown)" : join(["\"$k\"" for k in missing], ", "))
+    elseif r == "additionalProperties"
+        extra = try String[string(k) for k in keys(iss.x) if !(string(k) in allowed_props(schema, parts))] catch; String[]; end
+        return "$where: unknown key " * (isempty(extra) ? "(unexpected)" : join(["\"$k\"" for k in extra], ", "))
+    elseif r == "enum"
         endswith(where, "schema_version") && return "/schema_version: unrecognized version"
-        return "$where: must be one of the allowed values"
+        return "$where: must be one of (" * join(string.(iss.val), ", ") * ")"
+    elseif r == "type"
+        return "$where: must be $(iss.val)"
+    elseif r == "maximum"
+        return "$where: must be <= $(iss.val)"
+    elseif r == "minimum"
+        return "$where: must be >= $(iss.val)"
+    elseif r == "exclusiveMinimum"
+        return "$where: must be > $(iss.val)"
+    elseif r == "minLength"
+        return "$where: must be a non-empty string"
     else
-        return "$where: $(iss.reason)"   # type, maximum, minimum, …
+        return "$where: $r"
     end
 end
 
@@ -63,7 +84,8 @@ Returns `nothing` if valid, else a field-precise error String."""
 function validate_file(path::AbstractString, kind::AbstractString)
     data = jsonify(TOML.parsefile(path))
     iss = JSONSchema.validate(load_schema(kind), data)
-    iss === nothing ? nothing : format_issue(iss)
+    iss === nothing && return nothing
+    format_issue(iss, JSON.parsefile(schema_path(kind)))
 end
 
 function main(args)
