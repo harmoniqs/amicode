@@ -36,7 +36,7 @@ describe('writers', () => {
       created_at: '2026-06-10T10:12:45Z', orchestrator_version: '0.1.0',
       julia: { binary: 'julia', project: '/proj' },
     })
-    const m = readToml(join(root, 'manifest.toml'))
+    const m = readToml(join(root, 'run.toml'))
     expect(m.schema_version).toBe('1')
     expect(m.lab_id).toBe('x')
     expect((m.julia as Record<string, unknown>).project).toBe('/proj')

@@ -67,7 +67,7 @@ export function writeManifest(runDir: string, m: Manifest): void {
     ...(m.julia.project ? [`project = ${ts(m.julia.project)}`] : []),
     ...(m.julia.sysimage ? [`sysimage = ${ts(m.julia.sysimage)}`] : []),
   ]
-  atomicWriteFile(runDir, 'manifest.toml', lines.join('\n') + '\n')
+  atomicWriteFile(runDir, 'run.toml', lines.join('\n') + '\n')
 }
 
 export function writeFinished(runDir: string, status: RunStatus, exitCode: number): void {
@@ -77,7 +77,7 @@ export function writeFinished(runDir: string, status: RunStatus, exitCode: numbe
 export function appendIndex(runsRoot: string, runId: string, createdAt: string, scriptPath: string): void {
   // The index is a tab-separated, one-line-per-run log; a tab/newline in the
   // (last-field) script path would corrupt it. Sanitize control chars to a
-  // space — manifest.toml holds the canonical, TOML-escaped script_path.
+  // space — run.toml holds the canonical, TOML-escaped script_path.
   const safePath = scriptPath.replace(/[\t\r\n]/g, ' ')
   appendFileSync(join(runsRoot, 'index'), `${runId}\t${createdAt}\t${safePath}\n`)
 }

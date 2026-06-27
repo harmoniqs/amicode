@@ -11,7 +11,7 @@ const REQUIRED = [
   'extension/julia/Project.toml',
   'extension/julia/Manifest.toml',
   'extension/AGENTS.md',
-  'extension/demo/run/manifest.toml',
+  'extension/demo/run/run.toml',
   'extension/demo/run/FINISHED',
   'extension/demo/run/run.log',   // inspector reads run.log for the demo's stats row; *.log-gitignored so easy to drop
 ]

@@ -9,7 +9,7 @@ import { parse as parseToml } from "smol-toml";
 import { Ajv, type ErrorObject, type ValidateFunction } from "ajv";
 import addFormatsDefault from "ajv-formats";
 
-import manifestSchema from "../schemas/manifest.schema.json" with { type: "json" };
+import runSchema from "../schemas/run.schema.json" with { type: "json" };
 import finishedSchema from "../schemas/finished.schema.json" with { type: "json" };
 import resultSchema from "../schemas/result.schema.json" with { type: "json" };
 import labSchema from "../schemas/lab.schema.json" with { type: "json" };
@@ -25,7 +25,7 @@ const addFormats = (typeof addFormatsDefault === "function"
 // The registry IS the schema set. Adding a schema = one import + one entry; the
 // SchemaKind type and the CI conformance loop derive from it automatically.
 const SCHEMAS = {
-  manifest: manifestSchema,
+  run: runSchema,
   finished: finishedSchema,
   result: resultSchema,
   lab: labSchema,

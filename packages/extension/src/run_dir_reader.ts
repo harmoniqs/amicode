@@ -75,7 +75,7 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
  *  consumed, so the live tailer can attach exactly there — no gap (lines
  *  appended after the read are tailed) and no overlap (already-replayed lines). */
 export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0.99): number {
-  const manifest = readTomlSafe(path.join(runDir, "manifest.toml"));
+  const manifest = readTomlSafe(path.join(runDir, "run.toml"));
   if (!manifest || !validateManifest(manifest).ok) return 0;   // no valid manifest → not a run dir yet
   const runId = String(manifest.run_id);
 

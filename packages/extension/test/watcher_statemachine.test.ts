@@ -28,7 +28,7 @@ import { RunsRootWatcher } from "../src/file_watcher";
 const channel = { appendLine() {}, append() {} } as never;
 
 function writeManifest(dir: string, runId: string): void {
-  writeFileSync(join(dir, "manifest.toml"),
+  writeFileSync(join(dir, "run.toml"),
     `schema_version = "1"\nrun_id = "${runId}"\nscript_path = "/s.jl"\nlab = "default"\n` +
     `lab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`);
 }

@@ -20,7 +20,7 @@ function solveAndValidate(script: string): void {
   expect(stdout).toMatch(/AMICODE_ITER iter=/)
   expect(stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0 runDir=(.+)/)
   const runDir = stdout.match(/runDir=(.+)/)![1].trim()
-  expect(validateManifest(readToml(join(runDir, 'manifest.toml'))).ok).toBe(true)
+  expect(validateManifest(readToml(join(runDir, 'run.toml'))).ok).toBe(true)
   expect(validateFinished(readToml(join(runDir, 'FINISHED'))).ok).toBe(true)
   const result = readToml(join(runDir, 'result.toml'))
   expect(validateResult(result).ok).toBe(true)

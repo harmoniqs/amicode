@@ -28,7 +28,7 @@ describe("valid golden fixtures validate clean", () => {
 describe("schema set + exports", () => {
   it("exposes all five versioned schemas + the FINISHED sub-shape", () => {
     expect(new Set(SCHEMA_KINDS)).toEqual(
-      new Set(["manifest", "result", "lab", "solvespec", "catalog-entry", "finished"]),
+      new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished"]),
     );
   });
   it("SUPPORTED_SCHEMA_VERSIONS is the v1 instantiation of a version SET", () => {
@@ -44,7 +44,7 @@ describe("schema set + exports", () => {
 // ── schema_version policy (S5/S6, #15 AC3, #16 AC5, #17 AC3) ──
 describe("schema_version policy", () => {
   it("ABSENT version → field-precise missing-required (the five versioned schemas)", () => {
-    for (const kind of ["manifest", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
+    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
       const obj = load(kind); delete obj.schema_version;
       const r = validate(obj, kind);
       expect(r.ok).toBe(false);
@@ -52,7 +52,7 @@ describe("schema_version policy", () => {
     }
   });
   it("UNRECOGNIZED version → distinct version-specific error (all five versioned schemas)", () => {
-    for (const kind of ["manifest", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
+    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
       const obj = load(kind); obj.schema_version = "99";
       const r = validate(obj, kind);
       expect(r.ok).toBe(false);
@@ -61,7 +61,7 @@ describe("schema_version policy", () => {
   });
   it("every versioned schema's enum is in sync with SUPPORTED_SCHEMA_VERSIONS (no drift seam)", () => {
     const schemasDir = join(here, "..", "schemas");
-    for (const kind of ["manifest", "result", "lab", "solvespec", "catalog-entry"]) {
+    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"]) {
       const schema = JSON.parse(readFileSync(join(schemasDir, `${kind}.schema.json`), "utf8"));
       expect(schema.properties.schema_version.enum, `${kind} enum drift`).toEqual([...SUPPORTED_SCHEMA_VERSIONS]);
     }
@@ -77,10 +77,10 @@ describe("schema_version policy", () => {
 // ── field-precise negative matrix (#15 AC2, #16/#17 AC, #18 AC2/3) ──
 describe("field-precise negative matrix", () => {
   it("missing required key → names the absent key + path (top-level + nested)", () => {
-    const m = load("manifest"); delete m.run_id;
-    expect(hasErr(validate(m, "manifest").errors, 'missing required key "run_id"')).toBe(true);
-    const j = load("manifest"); delete (j.julia as Record<string, unknown>).binary;
-    expect(hasErr(validate(j, "manifest").errors, '/julia: missing required key "binary"')).toBe(true);
+    const m = load("run"); delete m.run_id;
+    expect(hasErr(validate(m, "run").errors, 'missing required key "run_id"')).toBe(true);
+    const j = load("run"); delete (j.julia as Record<string, unknown>).binary;
+    expect(hasErr(validate(j, "run").errors, '/julia: missing required key "binary"')).toBe(true);
   });
   it("wrong-type and out-of-range are reported DISTINCTLY + field-precise (#18 AC3)", () => {
     const wrong = load("result"); wrong.fidelity = "high";
@@ -108,6 +108,16 @@ describe("field-precise negative matrix", () => {
     const s2 = load("solvespec"); s2.unexpected = 1;
     expect(hasErr(validate(s2, "solvespec").errors, 'unknown key "unexpected"')).toBe(true);
   });
+  it("lab hardware range bounds + name minLength are field-precise (#29)", () => {
+    const hi = load("lab"); (hi.transmon as Record<string, unknown>).omega_GHz = 999;
+    expect(hasErr(validate(hi, "lab").errors, "/transmon/omega_GHz: must be <= 100")).toBe(true);
+    const dm = load("lab"); (dm.transmon as Record<string, unknown>).drive_max_GHz = 50;
+    expect(hasErr(validate(dm, "lab").errors, "/transmon/drive_max_GHz: must be <= 10")).toBe(true);
+    const d = load("lab"); (d.transmon as Record<string, unknown>).delta_GHz = 25;   // garbage anharmonicity
+    expect(hasErr(validate(d, "lab").errors, "/transmon/delta_GHz: must be <= 2")).toBe(true);
+    const nm = load("lab"); (nm.lab as Record<string, unknown>).name = "";
+    expect(hasErr(validate(nm, "lab").errors, "/lab/name")).toBe(true);   // minLength
+  });
   it("FINISHED bad status → field-precise enum error", () => {
     const r = validate({ status: "halfway", exit_code: 0 }, "finished");
     expect(r.ok).toBe(false);
@@ -130,7 +140,7 @@ describe("formalize-don't-fork: real beta.1 artifacts validate under the closed 
       lab: "default", lab_id: "default", created_at: "2026-01-01T00:00:00.000Z",
       orchestrator_version: "0.1.0", julia: { binary: "julia", project: "/p", sysimage: "/img.so" },
     };
-    expect(validate(m, "manifest")).toEqual({ ok: true, errors: [] });
+    expect(validate(m, "run")).toEqual({ ok: true, errors: [] });
   });
   it("a beta.1 result.toml WITHOUT schema_version is now rejected (the documented migration: 0.1a adds the emit)", () => {
     const old = { fidelity: 0.9999, iterations: 60, wall_seconds: 12.3, params: { levels: 3 } };
@@ -145,12 +155,12 @@ describe("formalize-don't-fork: real beta.1 artifacts validate under the closed 
 describe("validateFile tolerates unquoted TOML datetimes", () => {
   it("an unquoted created_at validates identically to a quoted one", () => {
     const dir = mkdtempSync(join(tmpdir(), "labfx-"));
-    const f = join(dir, "manifest.toml");
+    const f = join(dir, "run.toml");
     writeFileSync(f,
       'schema_version = "1"\nrun_id = "r1"\nscript_path = "/s.jl"\nlab = "default"\n' +
       'lab_id = "default"\ncreated_at = 2026-06-15T00:00:00Z\norchestrator_version = "0.1.0"\n' +
       '[julia]\nbinary = "julia"\n');                              // NOTE: unquoted datetime
-    expect(validateFile(f, "manifest").errors).toEqual([]);
+    expect(validateFile(f, "run").errors).toEqual([]);
   });
 });
 
@@ -158,8 +168,8 @@ describe("validateFile tolerates unquoted TOML datetimes", () => {
 // closed schemas — it's a shipped artifact the inspector reads (M4).
 describe("bundled demo run dir conforms", () => {
   const demoDir = join(here, "..", "..", "extension", "demo", "run");
-  it("manifest.toml, FINISHED, result.toml all validate", () => {
-    expect(validateFile(join(demoDir, "manifest.toml"), "manifest").errors).toEqual([]);
+  it("run.toml, FINISHED, result.toml all validate", () => {
+    expect(validateFile(join(demoDir, "run.toml"), "run").errors).toEqual([]);
     expect(validateFile(join(demoDir, "FINISHED"), "finished").errors).toEqual([]);
     expect(validateFile(join(demoDir, "result.toml"), "result").errors).toEqual([]);
   });

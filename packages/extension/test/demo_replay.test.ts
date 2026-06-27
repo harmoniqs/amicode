@@ -8,7 +8,7 @@ import { stageDemoRun } from '../src/demo_replay'
 
 function fakeDemo(): string {
   const d = mkdtempSync(join(tmpdir(), 'demo-'))
-  writeFileSync(join(d, 'manifest.toml'),
+  writeFileSync(join(d, 'run.toml'),
     `schema_version = "1"\nrun_id = "rDEMO"\nscript_path = "/demo.jl"\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-06-17T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`)
   writeFileSync(join(d, 'run.log'), 'AMICODE_ITER iter=10 f=0.1 inf_pr=1e-8 inf_du=1e-6\n')
   writeFileSync(join(d, 'iter_0010.png'), 'PNG')
@@ -25,7 +25,7 @@ describe('stageDemoRun', () => {
     const runId = runDir.split('/').pop()!
     expect(runId).toMatch(/^r\d{8}-\d{6}Z-[0-9a-f]{4}$/)            // β.1 runId format
     expect(existsSync(join(runDir, 'iter_0010.png'))).toBe(true)
-    const m = parse(readFileSync(join(runDir, 'manifest.toml'), 'utf8')) as Record<string, unknown>
+    const m = parse(readFileSync(join(runDir, 'run.toml'), 'utf8')) as Record<string, unknown>
     expect(validateManifest(m).ok).toBe(true)
     expect(m.run_id).toBe(runId)                                    // rewritten to match the dir
     expect(validateFinished(parse(readFileSync(join(runDir, 'FINISHED'), 'utf8'))).ok).toBe(true)

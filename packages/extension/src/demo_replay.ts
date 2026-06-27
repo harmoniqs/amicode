@@ -4,7 +4,7 @@ import { generateRunId, appendIndex, updateLatest } from "@amicode/amico-run";
 
 /**
  * Copy a bundled demo run-dir into the runs root under a fresh β.1 runId,
- * rewrite manifest.toml's `run_id` to match the new directory, append the
+ * rewrite run.toml's `run_id` to match the new directory, append the
  * index, and swing `latest` to it. Reuses the β.1 run-dir primitives so the
  * staged run is byte-for-byte contract-identical and the existing
  * RunsRootWatcher renders it exactly like a live solve.
@@ -18,7 +18,7 @@ export function stageDemoRun(demoDir: string, runsRoot: string): string {
   const runDir = join(runsRoot, runId);
   mkdirSync(runDir);
   for (const f of readdirSync(demoDir)) {
-    if (f === "manifest.toml") {
+    if (f === "run.toml") {
       const m = readFileSync(join(demoDir, f), "utf8").replace(
         /run_id\s*=\s*"[^"]*"/,
         `run_id = ${JSON.stringify(runId)}`,

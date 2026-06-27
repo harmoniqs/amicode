@@ -28,7 +28,7 @@ describe('LocalExecutor happy path', () => {
     })
 
     // manifest observable before events finish — submit() resolved, so it must exist NOW
-    const manifest = readToml(join(h.runDir, 'manifest.toml'))
+    const manifest = readToml(join(h.runDir, 'run.toml'))
     expect(validateManifest(manifest).ok).toBe(true)
     expect(manifest.lab_id).toBe('testlab')
 

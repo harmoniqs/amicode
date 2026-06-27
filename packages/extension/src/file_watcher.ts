@@ -13,7 +13,7 @@ import {
 // ============================================================================
 // RunsRootWatcher — watches the β.1 run-dir contract and drives the Inspector
 // + status bar. Follows the `latest` symlink; for the active run it reads:
-//   manifest.toml  → run identity (run_id, lab_id), written FIRST
+//   run.toml  → run identity (run_id, lab_id), written FIRST
 //   iter_<N>.png   → live plot frames (unbounded digits)
 //   run.log        → AMICODE_ITER lines → live stats row
 //   result.toml    → fidelity (display + promote gate), atomic
@@ -182,7 +182,7 @@ export class RunsRootWatcher implements vscode.Disposable {
     this.logTailer?.dispose();
     this.activeRunDir = runDir;
 
-    const runId = String(readTomlSafe(path.join(runDir, "manifest.toml"))?.run_id ?? path.basename(runDir));
+    const runId = String(readTomlSafe(path.join(runDir, "run.toml"))?.run_id ?? path.basename(runDir));
     // If the run was ALREADY finished when we switched to it (e.g. launch follows
     // `latest` to a prior completed run, or the user switches back), don't pop the
     // promote prompt — only a FRESH live completion promotes. Pre-marking the run
@@ -234,7 +234,7 @@ export class RunsRootWatcher implements vscode.Disposable {
     const finished = readTomlSafe(path.join(runDir, "FINISHED"));
     if (!finished || !validateFinished(finished).ok) return;
     const status = finished.status as RunStatus;
-    const runId = String(readTomlSafe(path.join(runDir, "manifest.toml"))?.run_id ?? path.basename(runDir));
+    const runId = String(readTomlSafe(path.join(runDir, "run.toml"))?.run_id ?? path.basename(runDir));
     let fidelity: number | undefined;
     if (status === "completed") {
       const result = readTomlSafe(path.join(runDir, "result.toml"));

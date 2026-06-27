@@ -10,7 +10,7 @@ import { validate, type Validation } from "@amicode/schema";
 export type { Validation };
 
 export function validateManifest(v: unknown): Validation {
-  return validate(v, "manifest");
+  return validate(v, "run");
 }
 
 export function validateFinished(v: unknown): Validation {
