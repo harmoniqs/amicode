@@ -5,6 +5,7 @@
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "bin": { "amico-validate": "./dist/amico-validate.js" },
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "node esbuild.config.mjs",

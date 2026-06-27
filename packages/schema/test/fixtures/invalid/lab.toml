@@ -1,0 +1,8 @@
+schema_version = "1"
+[lab]
+name = "x"
+[transmon]
+omega_GHz = 5.0
+delta_GHz = 0.2
+levels = 99
+drive_max_GHz = 0.2
