@@ -3,5 +3,6 @@ dist/
 *.vsix
 .vscode-test/
 *.log
+!packages/extension/demo/run/run.log
 packages/extension/vendor/
 packages/extension/bin/

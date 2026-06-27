@@ -21,7 +21,9 @@ export interface ServerOptions {
   binary: string;
   /** cwd for opencode — opencode reads project config from here. */
   cwd: string;
-  /** env vars to inject (e.g. AMICODE_EXTENSION_URL for plugin/MCP callback). */
+  /** env vars to inject into the opencode process (e.g. OPENCODE_CONFIG_CONTENT
+   *  for the instructions/permission merge, and PATH augmentation so amico-run
+   *  resolves). */
   env: Record<string, string>;
   /** OutputChannel for opencode stdout/stderr capture. */
   channel: vscode.OutputChannel;

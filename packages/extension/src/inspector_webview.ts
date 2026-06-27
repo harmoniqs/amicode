@@ -27,6 +27,10 @@ window.addEventListener("message", (e) => {
       vscodeApi.postMessage({ type: "pong", seq: msg.seq, t0: msg.t0 });
       break;
     }
+    case "runlabel": {
+      $("runlabel").textContent = String(msg.text ?? "");
+      break;
+    }
     case "iteration": {
       $("m-obj-k").textContent = "objective";
       $("m-iter").textContent = String(msg.iter);
@@ -34,6 +38,21 @@ window.addEventListener("message", (e) => {
       $("m-pr").textContent = (msg.eq_viol as number).toExponential(2);
       $("m-du").textContent = (msg.kkt_error as number).toExponential(2);
       setBadge("running", "running");
+      break;
+    }
+    case "warming": {
+      // A NEW run started but has no frame yet — clear the PREVIOUS run's plot +
+      // stats and show the warming message, so the old iter-N image doesn't linger
+      // on screen while the new solve compiles/warms up.
+      (document.getElementById("preview-a") as HTMLImageElement).style.opacity = "0";
+      (document.getElementById("preview-b") as HTMLImageElement).style.opacity = "0";
+      for (const id of ["m-obj", "m-iter", "m-pr", "m-du"]) $(id).textContent = "–";
+      $("m-obj-k").textContent = "objective";
+      const ph = document.getElementById("placeholder");
+      const hint = document.getElementById("m-hint");
+      if (hint) hint.textContent = "Julia warming up — compiling the solver + plotter (~1–2 min). Frames will stream here.";
+      if (ph) ph.style.display = "flex";   // explicit: [hidden] is overridden by .placeholder{display:flex}
+      setBadge("running", "warming up");
       break;
     }
     case "completed": {
@@ -49,7 +68,7 @@ window.addEventListener("message", (e) => {
     }
     case "refresh": {
       const placeholder = document.getElementById("placeholder");
-      if (placeholder) placeholder.hidden = true;
+      if (placeholder) placeholder.style.display = "none";   // explicit hide (see warming note)
 
       // Double-buffer image swap — preload into hidden buffer, flip opacity on decode.
       const incomingBuffer = visibleBuffer === "a" ? "b" : "a";

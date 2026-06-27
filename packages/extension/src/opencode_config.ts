@@ -25,10 +25,15 @@ import * as os from "node:os";
 /** Resolve the Julia project (--project) the agent should pass. A configured,
  *  non-empty value wins (trimmed); otherwise default to the β.4-provisioned
  *  project at ~/.amico/julia. (The VS Code config default is "", which `??`
- *  does NOT catch — hence an explicit empty check rather than a nullish one.) */
+ *  does NOT catch — hence an explicit empty check rather than a nullish one.)
+ *  A leading `~` is expanded, mirroring resolveRunsRoot — so `~/foo` doesn't
+ *  reach `--project` literally. */
 export function resolveJuliaProject(configValue: string): string {
   const v = configValue.trim();
-  return v === "" ? path.join(os.homedir(), ".amico", "julia") : v;
+  if (v === "") return path.join(os.homedir(), ".amico", "julia");
+  if (v === "~") return os.homedir();
+  if (v.startsWith("~/")) return path.join(os.homedir(), v.slice(2));
+  return v;
 }
 
 /** Build the OPENCODE_CONFIG_CONTENT value: a config object that injects the

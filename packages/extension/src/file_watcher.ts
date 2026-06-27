@@ -6,7 +6,7 @@ import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ITER_PNG_RE, ingestRunDir, readTomlSafe, parseAmicoNum,
+  AMICODE_ITER_RE, ITER_PNG_RE, ingestRunDir, readTomlSafe, parseAmicoNum, SinkDedup,
   type IterRecord, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -34,7 +34,9 @@ export interface RunsRootWatcherOptions {
 /** Live sink: routes to the Inspector + status bar, carrying newest-wins and
  *  promote-once guards so replay-then-incremental never double-fires. */
 class LiveRunSink implements RunSink {
-  private latestIter = -1;
+  /** Newest-wins guard: frame display vs log-line iters tracked separately so the
+   *  log high-water mark can't suppress lagging frames (see SinkDedup). */
+  private readonly dedup = new SinkDedup();
   constructor(
     private readonly opts: RunsRootWatcherOptions,
     private readonly runId: string,
@@ -44,12 +46,11 @@ class LiveRunSink implements RunSink {
   ) {}
 
   image(fsPath: string, iter: number): void {
-    if (iter <= this.latestIter) return;
-    this.latestIter = iter;
+    if (!this.dedup.acceptFrame(iter)) return;   // dedup on FRAMES only — see SinkDedup
     getInspector()?.setImageSource(fsPath, iter);
   }
   iter(rec: IterRecord): void {
-    if (rec.iter > this.latestIter) this.latestIter = rec.iter;
+    this.dedup.noteIter(rec.iter);
     getInspector()?.postIterationRecord(rec);
     // Live status-bar update — show "running · iter N" as it solves, not only at
     // completion (#5 AC3).
@@ -65,7 +66,7 @@ class LiveRunSink implements RunSink {
     getInspector()?.postCompletion(c.status, c.fidelity);
     this.opts.statusBar?.setRun({
       runId: c.runId, outputDir: c.runDir, startedAt: 0,
-      status: c.status, latestIter: this.latestIter >= 0 ? this.latestIter : undefined,
+      status: c.status, latestIter: this.dedup.high >= 0 ? this.dedup.high : undefined,
       fidelity: c.fidelity,
     });
     this.opts.channel.appendLine(`[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`);
@@ -100,20 +101,65 @@ export class RunsRootWatcher implements vscode.Disposable {
    *  promote prompt fires at most once per run, never re-popping on re-switch /
    *  launch-follows-latest. */
   private readonly promotedRuns = new Set<string>();
+  /** Polling backstop. macOS fs.watch (FSEvents) coalesces and silently drops
+   *  events — especially under load — so the symlink-follow + per-frame watches
+   *  miss `latest` swings and `iter_*.png` creations, leaving the inspector
+   *  stuck (no live frames). A cheap periodic rescan guarantees delivery; the
+   *  fs.watch paths stay for low latency. All sinks are idempotent (frame dedup
+   *  by iter, finishedSeen, log byte-offset), so double-delivery is harmless. */
+  private poll?: NodeJS.Timeout;
+  private static readonly POLL_MS = 700;
 
   constructor(private readonly opts: RunsRootWatcherOptions) {}
 
   start(): void {
     fs.mkdirSync(this.opts.runsRoot, { recursive: true });
     const latest = path.join(this.opts.runsRoot, "latest");
-    if (fs.existsSync(latest)) this.followLatest();
+    if (fs.existsSync(latest)) {
+      // On launch, stay IDLE for a previous, already-finished run — don't re-display
+      // its last plot. Only resume a still-running run. A run that starts AFTER
+      // launch is picked up normally (idle → warming → frames). To baseline a
+      // finished run we set activeRunDir WITHOUT a sink, so the poll won't render it.
+      try {
+        const target = fs.realpathSync(latest);
+        if (fs.existsSync(path.join(target, "FINISHED"))) { this.activeRunDir = target; this.finishedSeen = true; }
+        else this.followLatest();
+      } catch { /* noop */ }
+    }
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "latest") this.followLatest();
     });
-    this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot}`);
+    this.poll = setInterval(() => this.tick(), RunsRootWatcher.POLL_MS);
+    this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot} (fs.watch + ${RunsRootWatcher.POLL_MS}ms poll)`);
+  }
+
+  /** fs.watch backstop: re-resolve `latest`, then rescan the active run for new
+   *  frames / FINISHED and drain the log — catching anything FSEvents dropped. */
+  private tick(): void {
+    try {
+      if (fs.existsSync(path.join(this.opts.runsRoot, "latest"))) this.followLatest();
+      const runDir = this.activeRunDir;
+      if (!runDir || !this.sink) return;
+      // Deliver only the NEWEST frame this tick — frames produced between two
+      // ticks are intentionally skipped. The inspector shows the latest pulse,
+      // not an animation, so a coalesced frame is no loss (and the fs.watch path
+      // still catches most frames at low latency). Not a dropped-frame bug.
+      let newest = -1, newestPath: string | undefined;
+      for (const f of fs.readdirSync(runDir)) {
+        const m = ITER_PNG_RE.exec(f);
+        if (m) { const k = parseInt(m[1], 10); if (k > newest) { newest = k; newestPath = path.join(runDir, f); } }
+      }
+      if (newestPath) this.sink.image(newestPath, newest);            // deduped by lastFrameIter
+      if (!this.finishedSeen && fs.existsSync(path.join(runDir, "FINISHED"))) {
+        this.finishedSeen = true; this.onFinished(runDir);
+      }
+      this.logTailer?.poke();                                          // drain appended AMICODE_ITER lines
+    } catch { /* transient fs race — next tick retries */ }
   }
 
   dispose(): void {
+    if (this.poll) clearInterval(this.poll);
+    this.poll = undefined;
     try { this.rootWatcher?.close(); } catch { /* noop */ }
     try { this.activeRunWatcher?.close(); } catch { /* noop */ }
     this.logTailer?.dispose();
@@ -146,6 +192,7 @@ export class RunsRootWatcher implements vscode.Disposable {
 
     this.sink = new LiveRunSink(this.opts, runId, runDir, this.promotedRuns);
     getInspector()?.reveal();
+    getInspector()?.setRunLabel(runId);
 
     // Replay everything already on disk (late-join safe). Returns the run.log
     // bytes consumed so the tailer attaches exactly there (no skipped iters).
@@ -153,6 +200,11 @@ export class RunsRootWatcher implements vscode.Disposable {
     try { logBytes = ingestRunDir(runDir, this.sink, this.opts.promoteThreshold ?? 0.99); }
     catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
     this.finishedSeen = finishedAtSwitch;
+
+    // Fresh run (manifest but no frames/FINISHED yet) → Julia/Makie warming up;
+    // show that instead of an idle panel so the ~minute cold start isn't read as frozen.
+    const hasFrame = fs.readdirSync(runDir).some((f) => ITER_PNG_RE.test(f));
+    if (!finishedAtSwitch && !hasFrame) getInspector()?.setWarmingUp();
 
     // Incremental: new iter PNGs + FINISHED.
     this.activeRunWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
@@ -207,8 +259,15 @@ class LogTailer implements vscode.Disposable {
   private buf = "";
   private pollTimer?: NodeJS.Timeout;
   private disposed = false;
+  private attached = false;
 
   constructor(private readonly opts: LogTailerOptions) {}
+
+  /** Backstop drain (called by the watcher's poll). No-op until attach() has set
+   *  the start offset, so it never re-reads lines ingestRunDir already replayed. */
+  poke(): void {
+    if (this.attached && !this.disposed) this.drain();
+  }
 
   start(): void {
     const tryAttach = () => {
@@ -231,6 +290,7 @@ class LogTailer implements vscode.Disposable {
     // Start where ingestRunDir stopped reading (startOffset), not at current EOF —
     // otherwise lines appended between the replay read and this attach are lost.
     this.offset = this.opts.startOffset ?? 0;
+    this.attached = true;
     try {
       this.watcher = fs.watch(this.opts.path, { persistent: false }, (event) => {
         if (event === "change") this.drain();

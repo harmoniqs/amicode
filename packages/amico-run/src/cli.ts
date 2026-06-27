@@ -40,6 +40,13 @@ export async function main(argv: string[]): Promise<number> {
   if (!script) { console.error(`amico-run: no script given\n${USAGE}`); return 64 }
   if (executor !== 'local') { console.error(`amico-run: only --executor local is supported in β`); return 64 }
 
+  // NOTE: `--sysimage <path>` is honored (passed through to the Julia process and
+  // recorded in the manifest) but amicode does NOT build one — the local
+  // PackageCompiler build (~25-50 min, CairoMakie-dominated) wasn't worth it. The
+  // intended fast-path is a prebuilt sysimage distributed like Piccolissimo's
+  // (CI build on self-hosted runners → R2 → manifest → download), pointed at via
+  // this flag. Until that exists, solves pay the cold start (inspector warms up).
+
   let handle
   try {
     handle = await new LocalExecutor().submit(script, opts)

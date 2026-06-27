@@ -8,18 +8,22 @@ and the Run Inspector renders the live solve.
 
 1. Read the bundled template `solve_template.jl` at its absolute path:
    `{{TEMPLATE_PATH}}`.
-2. Copy it to a working file (e.g. `solve.jl`) and fill in the `# FILL IN`
-   parameter block from the user's request: transmon frequency `ω` (GHz),
-   anharmonicity `δ` (GHz), `levels`, the target gate, gate time `T` (ns),
-   timesteps `N`, `max_iter`. **Parameters live in the script — never in this
-   file.** If the user gives a `lab.toml` path, read it in the script.
+2. Copy it to `/tmp/amicode-work/solve.jl` (the exact path step 3 runs) and fill
+   in the `# FILL IN` parameter block from the user's request: transmon frequency
+   `ω` (GHz), anharmonicity `δ` (GHz), `levels`, the target gate, gate time `T`
+   (ns), timesteps `N`, `max_iter`. **Parameters live in the script — never in
+   this file.** If the user gives a `lab.toml` path, read it in the script.
+   ```bash
+   mkdir -p /tmp/amicode-work && cp {{TEMPLATE_PATH}} /tmp/amicode-work/solve.jl
+   # …edit /tmp/amicode-work/solve.jl's FILL IN block…
+   ```
 3. Run it **detached** so the chat doesn't block on the ~minutes-long solve:
    ```bash
-   mkdir -p /tmp/amicode-work
-   ( nohup amico-run --project <JULIA_PROJECT> /tmp/amicode-work/solve.jl \
+   ( nohup amico-run --project <JULIA_PROJECT> --lab default /tmp/amicode-work/solve.jl \
        > /tmp/amicode-work/solve.log 2>&1 < /dev/null & )
    ```
-   (use the project path provided below). The outer subshell returns in <1s.
+   (use the project path provided below; `--lab default` tags the run's lab so
+   it's recorded under `~/.amico/runs/default/`). The outer subshell returns in <1s.
    `amico-run` takes only a script path and runner flags — it parses **no**
    physics options; all the physics lives in the script you wrote. Then
    immediately tell the user: **"Solve launched — watch the Run Inspector

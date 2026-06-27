@@ -26,6 +26,12 @@ class InspectorView implements vscode.WebviewViewProvider {
    *  watcher follows `latest` → a finished run completes before the panel is
    *  opened). Replayed after the buffered image so the badge isn't stuck "running". */
   private bufferedCompletion?: { status: string; fidelity?: number };
+  /** A run started but hasn't emitted its first frame yet (Julia warming up).
+   *  Buffered so the warming state shows even if the panel opens late. */
+  private bufferedWarming = false;
+  /** Run label (runId) for the topbar — buffered so it shows even if the panel
+   *  opens after the run was selected. */
+  private bufferedRunLabel?: string;
 
   constructor(private readonly ctx: vscode.ExtensionContext, private readonly runsRoot: string) {}
 
@@ -45,6 +51,16 @@ class InspectorView implements vscode.WebviewViewProvider {
     view.webview.html = this.renderHtml(view.webview);
     view.onDidDispose(() => { this.view = undefined; this.clearTimer(); });
 
+    // Topbar run label — replay first so it's set regardless of run state.
+    if (this.bufferedRunLabel) {
+      view.webview.postMessage({ type: "runlabel", text: this.bufferedRunLabel });
+      this.bufferedRunLabel = undefined;
+    }
+    // A run is warming up (no frame yet) — show that until the first frame.
+    if (this.bufferedWarming && !this.bufferedImage) {
+      this.bufferedWarming = false;
+      view.webview.postMessage({ type: "warming" });
+    }
     // Replay the most recent pending image once the webview is alive.
     if (this.bufferedImage) {
       this.pendingRefresh = this.bufferedImage;
@@ -112,6 +128,24 @@ class InspectorView implements vscode.WebviewViewProvider {
     this.clearTimer();
     this.flushRefresh();
     this.view.webview.postMessage({ type: "completed", status, fidelity });
+  }
+
+  /** A run started but has no frame yet (Julia/Makie warming up) — show that
+   *  instead of an idle panel, so a ~minute of cold start doesn't read as frozen.
+   *  Replaced by the first frame (the refresh handler hides the placeholder). */
+  setWarmingUp(): void {
+    if (!this.view) {
+      this.bufferedWarming = true;
+      vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
+      return;
+    }
+    this.view.webview.postMessage({ type: "warming" });
+  }
+
+  /** Set the topbar run label (runId). Buffered until the webview materializes. */
+  setRunLabel(label: string): void {
+    if (!this.view) { this.bufferedRunLabel = label; return; }
+    this.view.webview.postMessage({ type: "runlabel", text: label });
   }
 
   reveal(): void {
@@ -226,7 +260,7 @@ class InspectorView implements vscode.WebviewViewProvider {
     <img id="preview-b" class="preview" alt="frame preview B" style="opacity:0" />
     <div id="placeholder" class="placeholder">
       <span class="mark">&lt;0||0&gt;</span>
-      <span class="hint">No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.</span>
+      <span class="hint" id="m-hint">No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.</span>
     </div>
   </div>
   <div class="metrics">
