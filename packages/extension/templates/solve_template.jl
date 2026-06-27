@@ -38,7 +38,11 @@ prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 # (e.g. `LivePulsePlotCallback`), which fires `(primal, iter)` across backends.
 const CB = Piccolo.Callbacks
 
-const PLOT_EVERY = 6    # plot every 6 iters (more frequent live frames)
+# Plot every 6 iters (frequent live frames), skipping iter-0. Edge case: a solve
+# that converges in <6 iters emits no per-iter frame — the inspector shows
+# "warming up" until the end-of-solve guarantee frame below. Acceptable: the
+# warming-up state covers it, and sub-6-iter solves are rare in this regime.
+const PLOT_EVERY = 6
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k

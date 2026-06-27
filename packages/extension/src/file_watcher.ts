@@ -140,6 +140,10 @@ export class RunsRootWatcher implements vscode.Disposable {
       if (fs.existsSync(path.join(this.opts.runsRoot, "latest"))) this.followLatest();
       const runDir = this.activeRunDir;
       if (!runDir || !this.sink) return;
+      // Deliver only the NEWEST frame this tick — frames produced between two
+      // ticks are intentionally skipped. The inspector shows the latest pulse,
+      // not an animation, so a coalesced frame is no loss (and the fs.watch path
+      // still catches most frames at low latency). Not a dropped-frame bug.
       let newest = -1, newestPath: string | undefined;
       for (const f of fs.readdirSync(runDir)) {
         const m = ITER_PNG_RE.exec(f);
