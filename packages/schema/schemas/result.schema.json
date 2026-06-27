@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/result/v1",
+  "title": "amico run-dir result.toml",
+  "description": "Solve outcome written atomically by the bundled solve env. Carries schema_version (added when the contract was formalized; 0.1d enforces it on the Julia emit side).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "fidelity", "iterations"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "fidelity": { "type": "number", "minimum": 0, "maximum": 1, "description": "subspace gate fidelity in [0,1] (rollout-based; <=1 by construction)" },
+    "iterations": { "type": "integer", "minimum": 0 },
+    "wall_seconds": { "type": "number", "minimum": 0 },
+    "params": {
+      "type": "object",
+      "description": "The regime the run actually solved (self-describing). Lenient by design — solve params vary by system/platform; the run-dir contract pins only fidelity + iterations.",
+      "additionalProperties": true
+    }
+  }
+}

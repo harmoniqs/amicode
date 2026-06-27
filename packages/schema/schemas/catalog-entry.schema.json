@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/catalog-entry/v1",
+  "title": "amico catalog-entry",
+  "description": "A promote-shaped record: what the CatalogStore (Phase 3) will persist when a converged solve is promoted. The STORE/consumer is Phase 3; only the SCHEMA is defined here, exercised via a committed fixture (#15 AC8). Fields anchored to the live promote path (PromoteInfo = {runId, runDir, fidelity}, promote-on-fidelity>=threshold).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "lab_id", "fidelity", "pulse_path"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "run_id": { "type": "string", "minLength": 1 },
+    "lab_id": { "type": "string", "minLength": 1 },
+    "gate": { "type": "string", "description": "target gate label, if recorded" },
+    "fidelity": { "type": "number", "minimum": 0, "maximum": 1 },
+    "pulse_path": { "type": "string", "minLength": 1, "description": "path/ref to the promoted pulse artifact (e.g. pulse.jld2)" },
+    "created_at": { "type": "string", "minLength": 1, "format": "date-time" },
+    "params": { "type": "object", "additionalProperties": true, "description": "the regime solved (self-describing), copied from result.toml" }
+  }
+}

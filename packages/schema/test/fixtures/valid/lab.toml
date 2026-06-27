@@ -1,0 +1,8 @@
+schema_version = "1"
+name = "schuster-transmon"
+
+[qubit]
+frequency_ghz = 5.0
+anharmonicity_ghz = 0.2
+levels = 3
+drive_max_ghz = 0.2

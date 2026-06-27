@@ -83,7 +83,7 @@ describe("RunsRootWatcher state machine", () => {
     expect(inspector.setImageSource).toHaveBeenLastCalledWith(expect.stringContaining("iter_18.png"), 18);
 
     // FINISHED + result → terminal completion delivered once
-    writeFileSync(join(run, "result.toml"), "fidelity = 0.9999\niterations = 18\n");
+    writeFileSync(join(run, "result.toml"), 'schema_version = "1"\nfidelity = 0.9999\niterations = 18\n');
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     tick(w);
     expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);

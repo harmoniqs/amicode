@@ -12,7 +12,7 @@ function fakeDemo(): string {
     `schema_version = "1"\nrun_id = "rDEMO"\nscript_path = "/demo.jl"\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-06-17T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`)
   writeFileSync(join(d, 'run.log'), 'AMICODE_ITER iter=10 f=0.1 inf_pr=1e-8 inf_du=1e-6\n')
   writeFileSync(join(d, 'iter_0010.png'), 'PNG')
-  writeFileSync(join(d, 'result.toml'), 'fidelity = 0.9999\niterations = 10\n')
+  writeFileSync(join(d, 'result.toml'), 'schema_version = "1"\nfidelity = 0.9999\niterations = 10\n')
   writeFileSync(join(d, 'FINISHED'), 'status = "completed"\nexit_code = 0\n')
   return d
 }

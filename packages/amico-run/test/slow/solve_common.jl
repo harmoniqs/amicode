@@ -50,9 +50,10 @@ JLD2.save("pulse.jld2", "trajectory", dto_prob.trajectory)
 
 open("result.toml.tmp", "w") do io
     TOML.print(io, Dict(
-        "fidelity"     => fid,
-        "iterations"   => iters[],
-        "wall_seconds" => wall,
+        "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
+        "fidelity"       => fid,
+        "iterations"     => iters[],
+        "wall_seconds"   => wall,
     ))
 end
 mv("result.toml.tmp", "result.toml"; force = true)

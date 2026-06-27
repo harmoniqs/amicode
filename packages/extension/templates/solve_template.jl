@@ -88,6 +88,7 @@ open("result.toml.tmp", "w") do io
     # Record the regime each run actually solved (scalar FILL-IN params), so the
     # result is self-describing — not just fidelity/iterations.
     TOML.print(io, Dict(
+        "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
         "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,
         "params" => Dict("delta" => δ, "levels" => levels, "T" => T, "N" => N,
                          "drive_max" => drive_max, "max_iter" => max_iter),

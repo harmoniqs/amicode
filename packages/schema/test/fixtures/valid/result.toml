@@ -1,0 +1,12 @@
+schema_version = "1"
+fidelity = 0.99995
+iterations = 60
+wall_seconds = 88.5
+
+[params]
+delta = 0.2
+levels = 3
+T = 10.0
+N = 50
+drive_max = 0.2
+max_iter = 60
