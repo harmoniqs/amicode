@@ -14,13 +14,20 @@ jobs:
       - run: pnpm -r run build
       - run: pnpm -r run typecheck
       - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite + @amicode/schema conformance
-      - name: amico-validate — shipped configs conform (0.1c gate)
+      - name: amico-validate — shipped configs conform + linked bin works (0.1c gate)
         run: |
-          V="node packages/schema/dist/amico-validate.js"
+          # Exercise the LINKED bin via a dependent (the bin links into amico-run /
+          # extension, not the root) so a broken bin entry reds. (Jack's #30.)
+          pnpm --filter amicode-v2 exec amico-validate --help
+          # File validations via the launcher (root-relative paths, real bin target).
+          V="packages/schema/launcher/amico-validate"
           $V packages/extension/scripts/lab.toml.example --schema lab
-          $V packages/extension/demo/run/manifest.toml
+          $V packages/extension/demo/run/run.toml
           $V packages/extension/demo/run/result.toml
           $V packages/extension/demo/run/FINISHED
+          # the non-filename schemas (AC5: all five) via --schema
+          $V packages/schema/test/fixtures/valid/solvespec.toml --schema solvespec
+          $V packages/schema/test/fixtures/valid/catalog-entry.toml --schema catalog-entry
   boot-smoke:
     strategy:
       matrix:

@@ -5,7 +5,7 @@
 import { validateFile, kindForFilename, SCHEMA_KINDS, type SchemaKind } from "./index.js";
 
 const USAGE = `usage: amico-validate <file> [--schema <kind>]
-  <file> role is inferred from its name (manifest.toml, result.toml, lab.toml, FINISHED);
+  <file> role is inferred from its name (run.toml, result.toml, lab.toml, FINISHED);
   pass --schema for solvespec / catalog-entry or any non-standard filename.
   kinds: ${SCHEMA_KINDS.join(", ")}
 exit: 0 valid · 64 invalid or usage error`;

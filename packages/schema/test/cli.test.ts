@@ -10,7 +10,7 @@ const pkg = join(here, "..");
 const BUNDLE = join(pkg, "dist", "amico-validate.js");
 const validDir = join(here, "fixtures", "valid");
 const invalidDir = join(here, "fixtures", "invalid");
-const KINDS = ["manifest", "result", "lab", "solvespec", "catalog-entry", "finished"];
+const KINDS = ["run", "result", "lab", "solvespec", "catalog-entry", "finished"];
 
 beforeAll(() => { execFileSync("node", [join(pkg, "esbuild.config.mjs")], { cwd: pkg }); });
 
@@ -38,8 +38,13 @@ describe("amico-validate CLI", () => {
       expect(r.stderr).toContain("INVALID");
     }
   });
+  it("a committed WRONG-TYPE fixture fails field-precise (AC7 class matrix is self-contained)", () => {
+    const r = run([join(invalidDir, "result-wrongtype.toml"), "--schema", "result"]);
+    expect(r.code).toBe(64);
+    expect(r.stderr).toContain("/fidelity: must be number");
+  });
   it("file-role resolution by basename for the fixed-filename schemas (no --schema)", () => {
-    expect(run([join(validDir, "manifest.toml")]).code).toBe(0);
+    expect(run([join(validDir, "run.toml")]).code).toBe(0);
     expect(run([join(validDir, "result.toml")]).code).toBe(0);
     expect(run([join(invalidDir, "result.toml")]).code).toBe(64);   // missing schema_version
   });

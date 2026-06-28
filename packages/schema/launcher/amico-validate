@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Thin launcher: resolve node, exec the bundled validator. Committed (exists at
+# install time) so the `amico-validate` bin links on a clean install — the dist
+# bundle is built by `pnpm run build`, not present until then. Mirrors amico-run.
+set -euo pipefail
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do                       # resolve symlink chains (node_modules/.bin)
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "amico-validate: node >= 20 not found on PATH (install node or fix PATH)" >&2
+  exit 64
+fi
+BUNDLE="$DIR/../dist/amico-validate.js"
+if [ ! -f "$BUNDLE" ]; then
+  echo "amico-validate: bundle missing ($BUNDLE) — run 'pnpm --filter @amicode/schema build'" >&2
+  exit 64
+fi
+exec node "$BUNDLE" "$@"
