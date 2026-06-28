@@ -5,7 +5,7 @@
 # the cross-language anti-drift guarantee real: mutate a schema → both sides flip).
 #
 # Usage:  julia --project=packages/schema/julia validate.jl <file> [kind]
-#   kind inferred from basename for manifest.toml/result.toml/lab.toml/FINISHED.
+#   kind inferred from basename for run.toml/result.toml/lab.toml/FINISHED.
 # Exit:   0 valid · 64 invalid or usage error (mirrors amico-validate / amico-run).
 module AmicoValidate
 
@@ -18,7 +18,7 @@ const SCHEMA_DIR = normpath(joinpath(@__DIR__, "..", "schemas"))
 
 kind_for_filename(path) = begin
     b = basename(path)
-    b == "manifest.toml" ? "manifest" :
+    b == "run.toml" ? "run" :
     b == "result.toml"   ? "result"   :
     b == "lab.toml"      ? "lab"       :
     b == "FINISHED"      ? "finished"  : nothing
