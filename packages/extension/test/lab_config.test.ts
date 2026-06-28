@@ -51,15 +51,41 @@ describe("checkLabToml", () => {
   it("unrecognized schema_version → version-specific error", () =>
     expect(has(errs(VALID.replace('schema_version = "1"', 'schema_version = "9"')), "/schema_version: unrecognized version")).toBe(true));
 
-  it("parity: checkLabToml uses the SAME validator as @amicode/schema directly (no second path)", () => {
-    const p = writeLab(VALID.replace("levels = 3", "levels = 99"));
-    const c = checkLabToml(p);
-    expect(c.state).toBe("invalid");
-    expect((c as { errors: string[] }).errors).toEqual(validateFile(p, "lab").errors);
+  it("hardware range bounds are field-precise (#29: omega/drive_max/delta) + name minLength", () => {
+    expect(has(errs(VALID.replace("omega_GHz = 5.0", "omega_GHz = 999")), "/transmon/omega_GHz: must be <= 100")).toBe(true);
+    expect(has(errs(VALID.replace("drive_max_GHz = 0.2", "drive_max_GHz = 50")), "/transmon/drive_max_GHz: must be <= 10")).toBe(true);
+    expect(has(errs(VALID.replace("delta_GHz = 0.2", "delta_GHz = 25")), "/transmon/delta_GHz: must be <= 2")).toBe(true);   // garbage anharmonicity
+    expect(has(errs(VALID.replace('name = "demo-lab"', 'name = ""')), "/lab/name")).toBe(true);                              // minLength
+  });
+
+  it("parity over a corpus: checkLabToml === @amicode/schema.validateFile on every input (no second path) [#16]", () => {
+    const corpus = [
+      VALID,                                                  // valid
+      VALID.replace("drive_max_GHz = 0.2\n", ""),             // missing required
+      VALID.replace("levels = 3", 'levels = "three"'),        // wrong type
+      VALID.replace("levels = 3", "levels = 99"),             // out of range
+      VALID.replace("delta_GHz = 0.2", "delta_GHz = 25"),     // out of range (delta)
+      VALID + "rogue = 1\n",                                  // unknown key
+      VALID.replace('schema_version = "1"\n', ""),            // absent version
+      VALID.replace('schema_version = "1"', 'schema_version = "9"'), // unrecognized version
+    ];
+    for (const content of corpus) {
+      const p = writeLab(content);
+      const c = checkLabToml(p);
+      const direct = validateFile(p, "lab");
+      expect(c.state === "valid" ? [] : (c as { errors: string[] }).errors).toEqual(direct.errors);
+    }
   });
 });
 
-describe("the shipped starter lab.toml.example conforms", () => {
-  it("scripts/lab.toml.example validates clean", () =>
+describe("valid lab profiles conform (demo + Schuster)", () => {
+  it("scripts/lab.toml.example (the shipped starter) validates clean", () =>
     expect(validateFile(join(__dirname, "..", "scripts", "lab.toml.example"), "lab").errors).toEqual([]));
+  it("a Schuster-profile lab (negative-convention δ, 4 levels) validates clean", () => {
+    // Distinct from demo-lab: negative anharmonicity convention + a 4-level model,
+    // exercising the schema's range tolerance on a second real-shaped profile.
+    const schuster = 'schema_version = "1"\n[lab]\nname = "schuster-transmon"\n' +
+      "[transmon]\nomega_GHz = 4.8\ndelta_GHz = -0.33\nlevels = 4\ndrive_max_GHz = 0.1\n";
+    expect(checkLabToml(writeLab(schuster)).state).toBe("valid");
+  });
 });
