@@ -59,7 +59,7 @@ gate, tell them plainly it isn't supported yet and stop.
 
 ## The run-dir contract your script MUST emit
 
-`amico-run` writes `manifest.toml` (first) and `FINISHED` (last) itself. Your
+`amico-run` writes `run.toml` (first) and `FINISHED` (last) itself. Your
 script, running with cwd = the run dir, must emit:
 
 - `AMICODE_ITER iter=<n> f=<obj> inf_pr=<…> inf_du=<…>` to stdout, flushed,

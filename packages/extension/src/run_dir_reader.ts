@@ -75,7 +75,7 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
  *  consumed, so the live tailer can attach exactly there — no gap (lines
  *  appended after the read are tailed) and no overlap (already-replayed lines). */
 export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0.99): number {
-  const manifest = readTomlSafe(path.join(runDir, "manifest.toml"));
+  const manifest = readTomlSafe(path.join(runDir, "run.toml"));
   if (!manifest || !validateManifest(manifest).ok) return 0;   // no valid manifest → not a run dir yet
   const runId = String(manifest.run_id);
 
@@ -107,7 +107,14 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   let fidelity: number | undefined;
   if (status === "completed") {
     const result = readTomlSafe(path.join(runDir, "result.toml"));
-    if (result && validateResult(result).ok) fidelity = result.fidelity as number;
+    if (result) {
+      const v = validateResult(result);
+      if (v.ok) fidelity = result.fidelity as number;
+      // Present-but-nonconforming result.toml: surface WHY rather than silently
+      // dropping fidelity + skipping promote (S4). console.warn keeps this reader
+      // vscode-free; the live watcher logs to its channel too.
+      else console.warn(`[amico] result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
+    }
   }
   sink.run({ runId, runDir, status, fidelity });
   if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {

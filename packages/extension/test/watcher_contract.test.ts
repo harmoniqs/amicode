@@ -8,11 +8,11 @@ function stageRun(opts: { status: string; exit: number; iters: number[]; fidelit
   const root = mkdtempSync(join(tmpdir(), 'runs-'))
   const runId = 'r20260615-000000Z-ab12'
   const dir = join(root, runId); mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, 'manifest.toml'),
+  writeFileSync(join(dir, 'run.toml'),
     `schema_version = "1"\nrun_id = "${runId}"\nscript_path = "/s.jl"\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`)
   for (const k of opts.iters) writeFileSync(join(dir, `iter_${k}.png`), 'PNG')
   writeFileSync(join(dir, 'run.log'), opts.iters.map(k => `AMICODE_ITER iter=${k} f=0.1 inf_pr=1e-8 inf_du=1e-6`).join('\n') + '\n')
-  if (opts.fidelity !== undefined) writeFileSync(join(dir, 'result.toml'), `fidelity = ${opts.fidelity}\niterations = ${Math.max(...opts.iters, 0)}\n`)
+  if (opts.fidelity !== undefined) writeFileSync(join(dir, 'result.toml'), `schema_version = "1"\nfidelity = ${opts.fidelity}\niterations = ${Math.max(...opts.iters, 0)}\n`)
   writeFileSync(join(dir, 'FINISHED'), `status = "${opts.status}"\nexit_code = ${opts.exit}\n`)
   return dir
 }

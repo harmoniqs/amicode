@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/finished",
+  "title": "amico run-dir FINISHED sentinel",
+  "description": "Terminal sentinel written LAST by amico-run. A SUB-SHAPE of the run-dir contract — it carries no schema_version of its own; the run's version lives in run.toml.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "exit_code"],
+  "properties": {
+    "status": { "enum": ["completed", "failed", "aborted"] },
+    "exit_code": { "type": "integer" }
+  }
+}

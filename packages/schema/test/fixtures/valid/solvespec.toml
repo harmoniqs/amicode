@@ -1,0 +1,13 @@
+schema_version = "1"
+script_path = "/tmp/amicode-work/solve.jl"
+lab_id = "default"
+gate = "X"
+
+[params]
+T = 10.0
+N = 50
+max_iter = 60
+
+[julia]
+binary = "julia"
+project = "/Users/researcher/.amico/julia"

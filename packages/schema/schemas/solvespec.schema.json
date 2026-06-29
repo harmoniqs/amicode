@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/solvespec/v1",
+  "title": "amico SolveSpec",
+  "description": "FORWARD-LOOKING. The resolved solve specification a future amico-run would assemble and validate before dispatch. amico-run is argv-only today and emits no SolveSpec, so this schema is authored from the PRD shape and exercised via a committed fixture + `--schema solvespec` only (no emitter to round-trip yet). Its assembler/validate() call is a later slice, NOT 0.1a.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "script_path", "lab_id"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run" },
+    "lab_id": { "type": "string", "minLength": 1, "description": "lab pointer (id or path) — physics params live in the lab.toml/script, not here" },
+    "gate": { "type": "string", "description": "target gate label (e.g. X, H), if known at assembly" },
+    "params": { "type": "object", "additionalProperties": true, "description": "lenient solve-knob block (T, N, max_iter, …)" },
+    "julia": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binary"],
+      "properties": {
+        "binary": { "type": "string", "minLength": 1 },
+        "project": { "type": "string" },
+        "sysimage": { "type": "string" }
+      }
+    }
+  }
+}

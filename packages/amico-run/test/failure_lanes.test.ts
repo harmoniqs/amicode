@@ -20,7 +20,7 @@ describe('§6 failure matrix', () => {
     const h = await sub(root, fakeJulia(root, 'j', 'throw new Error("boom")'), fakeJulia(root, 's.jl', ''))
     const f = await h.finished
     expect(f.status).toBe('failed')
-    expect(readToml(join(h.runDir, 'manifest.toml')).run_id).toBe(h.runId)
+    expect(readToml(join(h.runDir, 'run.toml')).run_id).toBe(h.runId)
   })
 
   it('spawn failure after manifest (X_OK dir → spawn error) → FINISHED{failed, 127}', async () => {
@@ -30,7 +30,7 @@ describe('§6 failure matrix', () => {
     mkdirSync(dirAsJulia, { mode: 0o755 })
     const h = await sub(root, dirAsJulia, fakeJulia(root, 's.jl', ''))
     expect(await h.finished).toEqual({ status: 'failed', exitCode: 127 })
-    expect(readToml(join(h.runDir, 'manifest.toml')).run_id).toBe(h.runId)  // manifest survived
+    expect(readToml(join(h.runDir, 'run.toml')).run_id).toBe(h.runId)  // manifest survived
   })
 
   it('shell exec-failure rc passes through verbatim (wrapper execs missing target)', async () => {
@@ -70,7 +70,7 @@ describe('§6 failure matrix', () => {
   it('manifest is on disk BEFORE julia spawns (script observes it in cwd at startup)', async () => {
     const root = tmpRoot()
     const julia = fakeJulia(root, 'j',
-      `process.exit(require('node:fs').existsSync('manifest.toml') ? 0 : 7)`)
+      `process.exit(require('node:fs').existsSync('run.toml') ? 0 : 7)`)
     const h = await sub(root, julia, fakeJulia(root, 's.jl', ''))
     expect(await h.finished).toEqual({ status: 'completed', exitCode: 0 })
   })

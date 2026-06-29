@@ -1,0 +1,31 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/lab/v1",
+  "title": "amico lab.toml",
+  "description": "A partner lab's hardware profile — the only place hardware params enter a solve. Formalizes the EXACT shape β.4 already ships in lab.toml.example ([lab].name + [transmon] omega/delta/levels/drive_max). Ranged hardware fields give the out-of-range failure class a home (S17).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "lab", "transmon"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "lab": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "lab/profile identifier" }
+      }
+    },
+    "transmon": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["omega_GHz", "delta_GHz", "levels", "drive_max_GHz"],
+      "properties": {
+        "omega_GHz": { "type": "number", "exclusiveMinimum": 0, "maximum": 100, "description": "qubit transition frequency (GHz)" },
+        "delta_GHz": { "type": "number", "minimum": -2, "maximum": 2, "description": "anharmonicity (GHz; positive convention in the beta template). Bounded to catch garbage/sign-flipped values — physical |δ| is ~0.1–0.5 GHz; the sign convention itself isn't enforced." },
+        "levels": { "type": "integer", "minimum": 2, "maximum": 10, "description": "transmon levels modeled (qubit + leakage)" },
+        "drive_max_GHz": { "type": "number", "exclusiveMinimum": 0, "maximum": 10, "description": "per-quadrature drive bound (GHz)" }
+      }
+    }
+  }
+}

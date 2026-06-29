@@ -10,12 +10,12 @@ Phase 0' (the SchemaPackage supersedes the provisional validators below).
 
 A run lives at `~/.amico/runs/<lab-id>/<runId>/`, where `runId` is
 `r<UTC-timestamp>Z-<hex>` (e.g. `r20260617-161814Z-e8cb`). `amico-run` writes
-`manifest.toml` **first** and `FINISHED` **last**; the script (cwd = the run dir)
+`run.toml` **first** and `FINISHED` **last**; the script (cwd = the run dir)
 emits the rest.
 
 | Artifact | Writer | Contents |
 |---|---|---|
-| `manifest.toml` | amico-run (first) | `schema_version = "1"`, snake_case keys: `run_id`, `lab`, `lab_id`, `script_path`, `created_at`, `orchestrator_version`, and a `[julia]` table (`binary`, optional `project`/`sysimage`). |
+| `run.toml` | amico-run (first) | `schema_version = "1"`, snake_case keys: `run_id`, `lab`, `lab_id`, `script_path`, `created_at`, `orchestrator_version`, and a `[julia]` table (`binary`, optional `project`/`sysimage`). |
 | `run.log` | amico-run (stdout tee) | One `AMICODE_ITER iter=<n> f=<obj> inf_pr=<…> inf_du=<…>` line per Ipopt iteration (drives the live stats row), plus a final `DONE fidelity=<…>` line and any Julia traceback. |
 | `iter_<N>.png` | script | Per-iteration pulse/fidelity plot. `N` is the iteration with **unbounded digits** (`iter_0`, `iter_10`, … `iter_0060`). The inspector globs `iter_*.png`. |
 | `result.toml` | script (atomic) | Written `result.toml.tmp` then renamed. At least `fidelity` (float) and `iterations` (int); `wall_seconds` optional. |
