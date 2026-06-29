@@ -42,6 +42,19 @@ export const SUPPORTED_SCHEMA_VERSIONS = ["1"] as const;
 
 export interface Validation { ok: boolean; errors: string[] }
 
+/** Resolve a schema kind from a file's basename, for the fixed-filename artifacts
+ *  (run.toml, result.toml, lab.toml, FINISHED). Returns undefined for files
+ *  with no canonical name (SolveSpec, catalog-entry) — those need an explicit
+ *  --schema. The amico-validate CLI uses this for file-role resolution. */
+export function kindForFilename(filePath: string): SchemaKind | undefined {
+  const base = filePath.replace(/^.*[\\/]/, "");
+  if (base === "run.toml") return "run";
+  if (base === "result.toml") return "result";
+  if (base === "lab.toml") return "lab";
+  if (base === "FINISHED") return "finished";
+  return undefined;
+}
+
 const ajv = new Ajv({ allErrors: true, strict: false });
 addFormats(ajv);
 const compiled = new Map<SchemaKind, ValidateFunction>();
