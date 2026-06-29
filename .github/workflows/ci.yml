@@ -28,6 +28,29 @@ jobs:
           # the non-filename schemas (AC5: all five) via --schema
           $V packages/schema/test/fixtures/valid/solvespec.toml --schema solvespec
           $V packages/schema/test/fixtures/valid/catalog-entry.toml --schema catalog-entry
+  schema-roundtrip:
+    # 0.1d: the Julia round-trip against the SAME packages/schema/schemas/*.json the
+    # TS side uses (cross-language anti-drift). Fast tier — JSONSchema only, NO Piccolo
+    # solve. Three lanes: (1) golden + negative fixtures, (2) a REAL producer lane
+    # (amico-run emits a run-dir → validate it — exercises the producer, not just
+    # fixtures), (3) AC6 drift check (perturb the shared schema → BOTH TS and Julia flip).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - uses: julia-actions/setup-julia@v2
+        with: { version: '1.12' }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r run build   # amico-run + the validate launcher's bundle
+      - run: julia --project=packages/schema/julia -e 'using Pkg; Pkg.instantiate()'
+      - name: round-trip (golden + negative fixtures)
+        run: julia --project=packages/schema/julia packages/schema/julia/runtests.jl
+      - name: producer lane — amico-run emits a run-dir, Julia validates the emitted output
+        run: bash packages/schema/scripts/producer_roundtrip.sh
+      - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia
+        run: bash packages/schema/scripts/ac6_drift_check.sh
   boot-smoke:
     strategy:
       matrix:
