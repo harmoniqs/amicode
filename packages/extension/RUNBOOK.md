@@ -18,6 +18,8 @@ the dominant cost is the first Julia precompile.
 - `✗ amico-run` → `pnpm -r build` (stages `bin/`) or reinstall the VSIX.
 - `✗ LLM creds: LLM creds not configured` → store a key in `~/.amico/llm.json` (step 4a), then re-run.
 - `✗ LLM creds: …malformed` → the `~/.amico/llm.json` JSON or its `provider`/`key` is wrong; fix or remove it.
+- `✗ LLM creds: no (model in) opencode config` → select a model in `~/.config/opencode/opencode.jsonc` (step 4b).
+- `✗ LLM creds: stored provider "X" ≠ opencode model provider "Y"` → make the `provider` in `~/.amico/llm.json` match the opencode model (step 4), or change the model.
 
 ## Fallback (live solve or creds fail on-site)
 

@@ -8,12 +8,14 @@
 //   not a code change. v1 single-user; keychain/file-perm/revocation hardening
 //   and a per-tenant auth seam are LATER phases — named here, not built.)
 //
-// HANDOFF: the secret flows ONLY into the spawned opencode process's env, via
+// HANDOFF: the secret flows into the spawned opencode process's env, via
 //   credSpawnEnv() → the provider's well-known API-key var (e.g.
-//   ANTHROPIC_API_KEY). It is NEVER passed to amico-run (argv-only, S37) and so
-//   can never reach a run-dir artifact (run.toml / result.toml / run.log /
-//   FINISHED). The no-leak invariant is asserted at THIS channel, not at the
-//   run-dir writer (that's β.1's surface).
+//   ANTHROPIC_API_KEY). 0.3 puts the secret in NO other channel it owns: not in
+//   OPENCODE_CONFIG_CONTENT, not in any run-dir artifact. amico-run is argv-only
+//   (S37) so 0.3 never hands it the value either. (The provider key is present
+//   in opencode's child env and inherited by descendants — that's how opencode
+//   resolves the provider — but nothing 0.3 owns persists it to a run-dir file;
+//   a run.log env-dump would be β.1's surface, out of scope here.)
 //
 // Pure ESM (node:fs/os/path only) so the SAME module is importable by the
 // extension (esbuild-bundled, typed via llm_creds.d.mts), by the standalone
@@ -29,18 +31,6 @@ const PROVIDER_ENV = {
   openai: 'OPENAI_API_KEY',
   'amazon-bedrock': 'AWS_BEARER_TOKEN_BEDROCK',
 }
-
-/** Env vars / files that mean "a provider credential is already resolvable"
- *  WITHOUT the canonical store — the β-era "creds happen to be in env" path,
- *  kept for back-compat (notably Bedrock via ~/.aws, which has no single key
- *  to put in the store). */
-const LEGACY_ENV_KEYS = [
-  'ANTHROPIC_API_KEY',
-  'OPENAI_API_KEY',
-  'AWS_BEARER_TOKEN_BEDROCK',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_PROFILE',
-]
 
 /** Absolute path to the canonical credential store. */
 export function credStorePath(home) {
@@ -90,33 +80,90 @@ export function credSpawnEnv(cred) {
   return envVar ? { [envVar]: cred.key } : {}
 }
 
-/** Does the ambient env (or ~/.aws) already carry a usable provider credential? */
-function legacyEnvResolves(home, env) {
-  if (LEGACY_ENV_KEYS.some((k) => env[k])) return true
-  return existsSync(join(home, '.aws', 'credentials')) || existsSync(join(home, '.aws', 'config'))
+// Strip JSONC comments before JSON.parse — string-aware so `//` inside a string
+// (e.g. the "$schema": "https://…" URL, or a model id) is preserved, and a
+// `"model"` mentioned inside a real // or /* */ comment can't false-pass.
+function stripJsonc(s) {
+  return s.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str) => str ?? '')
+}
+
+/**
+ * The model opencode will use, read from ~/.config/opencode/opencode.{jsonc,json}.
+ * opencode merges our OPENCODE_CONFIG_CONTENT OVER this file but preserves its
+ * `model`, so this is where the provider selection lives.
+ *   { model } | { missing:true } | { parseError:true }
+ */
+function readOpencodeModel(home) {
+  const cfgPath = [
+    join(home, '.config', 'opencode', 'opencode.jsonc'),
+    join(home, '.config', 'opencode', 'opencode.json'),
+  ].find(existsSync)
+  if (!cfgPath) return { missing: true }
+  let cfg
+  try {
+    cfg = JSON.parse(stripJsonc(readFileSync(cfgPath, 'utf8')))
+  } catch {
+    return { parseError: true }
+  }
+  return { model: typeof cfg.model === 'string' ? cfg.model : undefined }
+}
+
+/** opencode model ids are `provider/model-id` — the provider is the prefix. */
+function providerOfModel(model) {
+  return model.split('/')[0]
+}
+
+/** Does the ambient env (or ~/.aws) already carry a credential for `provider`? */
+function envResolvesForProvider(provider, home, env) {
+  if (provider === 'amazon-bedrock') {
+    if (env.AWS_ACCESS_KEY_ID || env.AWS_PROFILE || env.AWS_BEARER_TOKEN_BEDROCK) return true
+    return existsSync(join(home, '.aws', 'credentials')) || existsSync(join(home, '.aws', 'config'))
+  }
+  const envVar = PROVIDER_ENV[provider]
+  return !!(envVar && env[envVar])
 }
 
 /**
  * The single configured/missing signal shared by healthcheck.probeCreds and the
- * extension's chat-not-ready gate. Resolution order: canonical store →
- * back-compat env/~/.aws → not configured.
- *   ok:    { ok:true, provider, source:'store'|'env' }
- *   not:   { ok:false, reason, fix }   (one explicit signal — never a silent hang)
+ * extension's chat-not-ready gate. For chat to resolve a provider with no
+ * prompt, ALL must hold: opencode has a `model` selected, a credential for that
+ * model's provider resolves (canonical store → back-compat env/~/.aws), and a
+ * stored provider matches the selected model.
+ *   ok:  { ok:true, provider, source:'store'|'env' }
+ *   not: { ok:false, reason, fix }   (one explicit signal — never a silent hang)
+ *
+ * Precedence: a MALFORMED store is reported first (fail loud on a file the user
+ * clearly intended to use, rather than silently falling back to env creds for a
+ * possibly-different provider).
  */
 export function resolveLlmCreds({ home, env }) {
   const cred = loadLlmCred(home)
   if (cred && cred.error) {
     return { ok: false, reason: `~/.amico/llm.json is malformed (${cred.error})`, fix: 'fix or remove it — {"provider":"anthropic","key":"sk-…"} (RUNBOOK §4)' }
   }
+
+  // opencode must have a model selected — without one, no provider resolves
+  // regardless of stored creds (a Q129 cause).
+  const m = readOpencodeModel(home)
+  if (m.missing) return { ok: false, reason: 'no opencode config (model not selected)', fix: 'create ~/.config/opencode/opencode.jsonc with a "model" (RUNBOOK §4b)' }
+  if (m.parseError) return { ok: false, reason: 'opencode config not parseable', fix: 'fix the JSON(C) in ~/.config/opencode/opencode.{jsonc,json}' }
+  if (!m.model) return { ok: false, reason: 'no model in opencode config', fix: 'set "model" in ~/.config/opencode/opencode.jsonc (RUNBOOK §4b)' }
+  const provider = providerOfModel(m.model)
+
   if (isCred(cred)) {
+    if (cred.provider !== provider) {
+      return { ok: false, reason: `stored provider "${cred.provider}" ≠ opencode model provider "${provider}"`, fix: 'make ~/.amico/llm.json provider match the opencode model, or change the model (RUNBOOK §4)' }
+    }
     return { ok: true, provider: cred.provider, source: 'store' }
   }
-  if (legacyEnvResolves(home, env)) {
-    return { ok: true, provider: 'env', source: 'env' }
+
+  if (envResolvesForProvider(provider, home, env)) {
+    return { ok: true, provider, source: 'env' }
   }
+
   return {
     ok: false,
     reason: 'LLM creds not configured',
-    fix: 'store a provider key in ~/.amico/llm.json — {"provider":"anthropic","key":"sk-…"} (RUNBOOK §4)',
+    fix: `store a ${provider} key in ~/.amico/llm.json — {"provider":"${provider}","key":"…"} (RUNBOOK §4)`,
   }
 }

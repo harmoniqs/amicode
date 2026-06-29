@@ -3,13 +3,13 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import { ServerManager } from "./server_manager";
-import { loadLlmCred, credSpawnEnv, resolveLlmCreds } from "./llm_creds.mjs";
+import { loadLlmCred, resolveLlmCreds } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeSpawnEnv } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
@@ -114,10 +114,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
     }
     // LLM credential handoff (0.3): read the canonical store (~/.amico/llm.json)
-    // and inject the provider key into the opencode child env ONLY. This is the
-    // single channel the secret travels — never to amico-run (argv-only, S37),
-    // so it can never reach a run-dir artifact. Surface ONE explicit boot signal
-    // when no credential resolves (not a silent hang at the chat box, Q129).
+    // and inject the provider key into the opencode child env via the spawn-env
+    // builder (which also carries the amico `instructions`/permission config).
+    // The secret goes into NO other channel 0.3 owns — not run-dir artifacts,
+    // and amico-run is argv-only (S37). Surface ONE explicit boot signal when no
+    // credential resolves (not a silent hang at the chat box, Q129).
     const llmCred = loadLlmCred(os.homedir());
     const credSignal = resolveLlmCreds({ home: os.homedir(), env: process.env });
     opencodeChannel.appendLine(
@@ -128,18 +129,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
-      env: {
-        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
-        // Inject the amico solve workflow as opencode `instructions` (loaded for
-        // every session regardless of its cwd) — merges over the user's global
-        // config, so the model/provider are preserved. This is what makes the
-        // chat actually author + run solves instead of behaving like vanilla
-        // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath),
-        // The stored provider key (if any) — overlays onto the inherited env so
-        // opencode resolves a provider with no per-session prompt (0.3 AC1/AC2).
-        ...credSpawnEnv(llmCred),
-      },
+      env: buildOpencodeSpawnEnv({
+        amicoRunBinDir,
+        basePath: process.env.PATH ?? "",
+        agentsPath: opencodeProject.agentsPath,
+        templatePath: opencodeProject.templatePath,
+        cred: llmCred,
+      }),
       channel: opencodeChannel,
     });
     ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
