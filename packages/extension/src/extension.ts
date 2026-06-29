@@ -1,7 +1,9 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import { ServerManager } from "./server_manager";
+import { loadLlmCred, credSpawnEnv, resolveLlmCreds } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
@@ -111,6 +113,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (amicoRunBinDir === undefined) {
       opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
     }
+    // LLM credential handoff (0.3): read the canonical store (~/.amico/llm.json)
+    // and inject the provider key into the opencode child env ONLY. This is the
+    // single channel the secret travels — never to amico-run (argv-only, S37),
+    // so it can never reach a run-dir artifact. Surface ONE explicit boot signal
+    // when no credential resolves (not a silent hang at the chat box, Q129).
+    const llmCred = loadLlmCred(os.homedir());
+    const credSignal = resolveLlmCreds({ home: os.homedir(), env: process.env });
+    opencodeChannel.appendLine(
+      credSignal.ok
+        ? `[boot] LLM creds: configured (${credSignal.provider}, via ${credSignal.source})`
+        : `[boot] LLM creds: ${credSignal.reason} → ${credSignal.fix}`,
+    );
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -122,6 +136,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
         OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath),
+        // The stored provider key (if any) — overlays onto the inherited env so
+        // opencode resolves a provider with no per-session prompt (0.3 AC1/AC2).
+        ...credSpawnEnv(llmCred),
       },
       channel: opencodeChannel,
     });
@@ -146,6 +163,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 5. Commands
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openChat", () => {
+      // Creds gate FIRST — opencode serves HTTP 200 (→ "ready") even with zero
+      // providers configured, so a missing credential would otherwise sail past
+      // the ready check and silently hang at the chat box (Q129). Use the SAME
+      // signal the healthcheck uses so the cause is named, not hidden.
+      const creds = resolveLlmCreds({ home: os.homedir(), env: process.env });
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
       if (!opencodeReadyUrl) {
         vscode.window.showWarningMessage("Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.");
         return;

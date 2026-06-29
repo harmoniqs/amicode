@@ -2,10 +2,11 @@
 // Amicode healthcheck — exit 0 iff julia+project, opencode /event, amico-run,
 // and LLM creds all resolve; else non-zero with a precise ✗ line per failure.
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveLlmCreds } from '../src/llm_creds.mjs'
 
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const JULIA_PROJECT = join(homedir(), '.amico', 'julia')          // absolute — '~' is NOT expanded in flags
@@ -46,28 +47,12 @@ function probeAmicorun() {
   }
   return { ok: false, reason: 'amico-run launcher not found', fix: 'pnpm -r build (stages bin/) or check the VSIX' }
 }
-// Strip JSONC comments before JSON.parse — string-aware so `//` inside a string
-// (e.g. the "$schema": "https://…" URL, or a model id) is preserved, and a
-// `"model"` mentioned inside a real // or /* */ comment can't false-pass.
-function stripJsonc(s) {
-  return s.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str) => str ?? '')
-}
-
+// LLM creds (0.3): the SAME configured/missing signal the extension's
+// chat-not-ready gate uses — the canonical store ~/.amico/llm.json, with a
+// back-compat env/~/.aws fallback. One source of truth (src/llm_creds.mjs) so
+// the healthcheck and the chat gate can never disagree. Not a paid LLM call.
 function probeCreds() {
-  // config-level only (spec §4): opencode config resolves a model+provider; for
-  // amazon-bedrock, AWS creds findable in env or ~/.aws. Not a paid LLM call.
-  const cfgPath = [join(homedir(), '.config', 'opencode', 'opencode.jsonc'), join(homedir(), '.config', 'opencode', 'opencode.json')].find(existsSync)
-  if (!cfgPath) return { ok: false, reason: 'no opencode config', fix: 'create ~/.config/opencode/opencode.jsonc with a model' }
-  let cfg
-  try { cfg = JSON.parse(stripJsonc(readFileSync(cfgPath, 'utf8'))) } catch { return { ok: false, reason: 'opencode config not parseable', fix: 'fix the JSON(C) in your opencode config' } }
-  const model = typeof cfg.model === 'string' ? cfg.model : undefined
-  if (!model) return { ok: false, reason: 'no model in opencode config', fix: 'set "model" in opencode config' }
-  if (model.startsWith('amazon-bedrock')) {
-    const awsEnv = process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE || process.env.AWS_BEARER_TOKEN_BEDROCK
-    const awsFile = existsSync(join(homedir(), '.aws', 'credentials')) || existsSync(join(homedir(), '.aws', 'config'))
-    if (!awsEnv && !awsFile) return { ok: false, reason: 'bedrock model but no AWS creds (env or ~/.aws)', fix: 'configure AWS creds for Bedrock' }
-  }
-  return { ok: true }
+  return resolveLlmCreds({ home: homedir(), env: process.env })
 }
 
 function main() {
