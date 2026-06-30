@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
+import { readFileSync } from "node:fs";
 import { inspectorResourceRootDirs } from "./opencode_paths";
 
 // ============================================================================
@@ -184,7 +185,33 @@ class InspectorView implements vscode.WebviewViewProvider {
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this.ctx.extensionUri, "dist", "inspector_webview.js"),
     );
+    const styleUri = webview.asWebviewUri(
+      vscode.Uri.joinPath(this.ctx.extensionUri, "media", "inspector.css"),
+    );
     const nonce = newNonce();
+    // The "look" (body markup) lives in media/inspector.html and the "feel"
+    // (styling) in media/inspector.css — both owned by the design lane. This
+    // method owns only the security/wiring shell: the CSP, the nonce, and the
+    // resource URIs. The DOM-id + message contract between that markup and
+    // inspector_webview.ts is pinned by inspector_view_contract.test.ts.
+    //
+    // style-src keeps 'unsafe-inline' deliberately — it is load-bearing for the
+    // static style="opacity:0" attrs on preview-a/b in inspector.html (runtime
+    // .style mutations aren't CSP-governed, so those attrs are the only thing
+    // that needs it). Don't strip it as "dead" now that the stylesheet moved
+    // external; the contract test guards this grant.
+    let body: string;
+    try {
+      body = readFileSync(
+        vscode.Uri.joinPath(this.ctx.extensionUri, "media", "inspector.html").fsPath,
+        "utf8",
+      );
+    } catch (err) {
+      // A corrupt/partial install (media/inspector.html missing) would otherwise
+      // throw out of resolveWebviewView before webview.html is ever set → an
+      // opaque blank panel. Degrade to a readable message instead.
+      return renderFallbackHtml(err);
+    }
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -194,81 +221,10 @@ class InspectorView implements vscode.WebviewViewProvider {
              img-src ${webview.cspSource} data: blob: https:;
              script-src 'nonce-${nonce}';
              style-src ${webview.cspSource} 'unsafe-inline';">
-  <style>
-    :root {
-      --amico-accent: #FFF676;            /* amico yellow */
-      --amico-run: #FFF676;               /* running — brand yellow */
-      --amico-ok: #3fb950;                /* converged green */
-      --amico-fail: #f85149;              /* failed red */
-    }
-    * { box-sizing: border-box; }
-    body { font-family: var(--vscode-font-family); color: var(--vscode-foreground);
-           padding: 14px; font-size: 12px; display: flex; flex-direction: column; gap: 12px;
-           height: 100vh; overflow-y: auto; }
-    /* ---- top bar ---- */
-    .topbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-    .brand { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 600; }
-    .mark { font-family: var(--vscode-editor-font-family, monospace); color: var(--amico-accent);
-            letter-spacing: 1px; font-weight: 700;
-            border: 1px solid color-mix(in srgb, var(--amico-accent) 55%, transparent);
-            border-radius: 6px; padding: 1px 7px; font-size: 12px; }
-    .runlabel { font-family: var(--vscode-editor-font-family, monospace); font-size: 11px; opacity: 0.6; }
-    .badge { margin-left: auto; font-size: 10.5px; font-weight: 600; letter-spacing: 0.5px;
-             text-transform: uppercase; padding: 3px 10px; border-radius: 999px;
-             border: 1px solid currentColor; display: inline-flex; align-items: center; gap: 6px; }
-    .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-    .badge.idle    { color: var(--vscode-descriptionForeground); opacity: 0.7; }
-    .badge.running { color: var(--amico-run); }
-    .badge.running::before { animation: pulse 1.1s ease-in-out infinite; }
-    .badge.done    { color: var(--amico-ok); }
-    .badge.failed  { color: var(--amico-fail); }
-    @keyframes pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
-    /* ---- plot hero ---- */
-    /* min-height keeps the pulse plot a real plot, not a thin bar, when the
-       bottom panel is short; body scrolls if the panel can't fit it all. */
-    .image-host { flex: 1 1 240px; min-height: 240px; min-width: 0; position: relative;
-                  background: var(--vscode-editor-background);
-                  border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 6px;
-                  display: grid; place-items: stretch; overflow: hidden; }
-    img.preview { grid-column: 1; grid-row: 1; width: 100%; height: 100%;
-                  object-fit: contain; display: block; transition: opacity 120ms ease; }
-    .placeholder { place-self: center; text-align: center; opacity: 0.55; display: flex;
-                   flex-direction: column; align-items: center; gap: 10px; }
-    .placeholder .mark { font-size: 20px; padding: 4px 12px; opacity: 0.8; }
-    .placeholder .hint { font-style: italic; max-width: 240px; line-height: 1.5; }
-    /* ---- metric cards ---- */
-    .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); gap: 8px; }
-    .card { background: color-mix(in srgb, var(--vscode-panel-border) 25%, transparent);
-            border: 1px solid var(--vscode-panel-border); border-radius: 7px; padding: 8px 10px;
-            display: flex; flex-direction: column; gap: 3px; }
-    .card .k { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.6px;
-               opacity: 0.55; font-weight: 600; }
-    .card .v { font-family: var(--vscode-editor-font-family, monospace); font-size: 14px; }
-    .card.hero { border-color: color-mix(in srgb, var(--amico-accent) 45%, var(--vscode-panel-border)); }
-    .card.hero .k { color: var(--amico-accent); opacity: 0.85; }
-    .card.hero .v { font-size: 17px; font-weight: 600; }
-  </style>
+  <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
-  <div class="topbar">
-    <div class="brand"><span class="mark">&lt;0||0&gt;</span> Run Inspector</div>
-    <span id="runlabel" class="runlabel"></span>
-    <span id="badge" class="badge idle">idle</span>
-  </div>
-  <div class="image-host">
-    <img id="preview-a" class="preview" alt="frame preview A" style="opacity:0" />
-    <img id="preview-b" class="preview" alt="frame preview B" style="opacity:0" />
-    <div id="placeholder" class="placeholder">
-      <span class="mark">&lt;0||0&gt;</span>
-      <span class="hint" id="m-hint">No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.</span>
-    </div>
-  </div>
-  <div class="metrics">
-    <div class="card hero"><div class="k" id="m-obj-k">objective</div><div class="v" id="m-obj">–</div></div>
-    <div class="card"><div class="k">iteration</div><div class="v" id="m-iter">–</div></div>
-    <div class="card"><div class="k">feasibility</div><div class="v" id="m-pr">–</div></div>
-    <div class="card"><div class="k">optimality</div><div class="v" id="m-du">–</div></div>
-  </div>
+${body.trimEnd()}
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -280,6 +236,26 @@ function newNonce(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
+}
+
+/** Self-contained fallback shown when the view markup can't be read (corrupt or
+ *  partial install). No external resources/scripts so it can't itself fail to
+ *  render; keeps webview.html set so the panel shows a message, not a blank. */
+function renderFallbackHtml(err: unknown): string {
+  const detail = (err instanceof Error ? err.message : String(err))
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+</head>
+<body style="font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 14px; font-size: 12px;">
+  <p>Run Inspector failed to load its view (<code>media/inspector.html</code>).</p>
+  <p style="opacity: 0.7;">This usually means a corrupt or partial install — try reinstalling the extension.</p>
+  <p style="opacity: 0.5; font-family: monospace; font-size: 11px;">${detail}</p>
+</body>
+</html>`;
 }
 
 export function registerRunInspector(ctx: vscode.ExtensionContext, runsRoot: string): InspectorView {

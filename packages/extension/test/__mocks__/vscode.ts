@@ -6,6 +6,7 @@ export const window = {
   showErrorMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
+  registerWebviewViewProvider: () => ({ dispose() {} }),
 };
 export const commands = { executeCommand: () => Promise.resolve(undefined) };
 export const workspace = {
