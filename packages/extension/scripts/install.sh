@@ -34,4 +34,4 @@ fi
 if [ ! -f "$LAB_TOML" ]; then cp "$EXT_ROOT/scripts/lab.toml.example" "$LAB_TOML"; say "wrote starter $LAB_TOML"; fi
 
 # 5. Next steps
-say "done. Next: (a) store your LLM key in ~/.amico/llm.json + select a matching model (RUNBOOK.md step 4), (b) run: node $EXT_ROOT/scripts/healthcheck.mjs"
+say "done. Next: (a) configure an LLM provider for opencode + select a matching model (RUNBOOK.md step 4), (b) run: node $EXT_ROOT/scripts/healthcheck.mjs"

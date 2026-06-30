@@ -1,169 +1,103 @@
 // ============================================================================
-// 0.3 — single-user LLM credential: storage + boot-handoff + the one
-// configured/missing signal shared by the healthcheck and the chat-not-ready
-// gate.
+// 0.3 — the LLM-provider SIGNAL: the one configured / missing / which-provider
+// determination shared by the healthcheck and the chat-not-ready gate (Q129).
 //
-// CANONICAL STORE: ~/.amico/llm.json = { "provider": "<p>", "key": "<secret>" }
-//   (single provider at a time — a different provider/model is a config change,
-//   not a code change. v1 single-user; keychain/file-perm/revocation hardening
-//   and a per-tenant auth seam are LATER phases — named here, not built.)
+// amico does NOT store or inject the credential. opencode owns the secret
+// (its own env / ~/.config/opencode / auth.json); amico only asks opencode —
+// via its live GET /config/providers — whether a provider resolves in the
+// environment the server actually booted with. A live query is authoritative
+// per-environment: the chat gate hits the running extension server (VS Code's
+// env), the healthcheck hits its own boot (shell env), each correct for its
+// context. (We will own the credential when we replace opencode — noted seam
+// D-future; not built now. If GUI-launch env fragility is ever demonstrated, a
+// thin SecretStorage→env shim slots in here — but only then.)
 //
-// HANDOFF: the secret flows into the spawned opencode process's env, via
-//   credSpawnEnv() → the provider's well-known API-key var (e.g.
-//   ANTHROPIC_API_KEY). 0.3 puts the secret in NO other channel it owns: not in
-//   OPENCODE_CONFIG_CONTENT, not in any run-dir artifact. amico-run is argv-only
-//   (S37) so 0.3 never hands it the value either. (The provider key is present
-//   in opencode's child env and inherited by descendants — that's how opencode
-//   resolves the provider — but nothing 0.3 owns persists it to a run-dir file;
-//   a run.log env-dump would be β.1's surface, out of scope here.)
-//
-// Pure ESM (node:fs/os/path only) so the SAME module is importable by the
-// extension (esbuild-bundled, typed via llm_creds.d.mts), by the standalone
-// healthcheck.mjs (raw node), and by the vitest suite — one source of truth for
-// the signal both consumers must agree on.
+// SECURITY: opencode's /config/providers includes the plaintext provider key
+// for env-sourced providers. `stripProviders` discards everything but
+// {id, source} at the parse boundary, and nothing downstream returns or logs a
+// key — so the secret never enters amico's surfaces (no run-dir leak possible:
+// amico never holds the value).
 // ============================================================================
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-/** provider → the env var opencode reads to resolve that provider at boot. */
-const PROVIDER_ENV = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  'amazon-bedrock': 'AWS_BEARER_TOKEN_BEDROCK',
-}
-
-/** Absolute path to the canonical credential store. */
-export function credStorePath(home) {
-  return join(home, '.amico', 'llm.json')
-}
 
 /**
- * Read the canonical store.
- *   - missing file        → null            (not configured via the store)
- *   - present + valid      → {provider,key}
- *   - present + malformed  → {error}         (sentinel — never throws)
- * "Malformed" = unparseable JSON, unknown provider, or an empty/missing key.
- */
-export function loadLlmCred(home) {
-  const p = credStorePath(home)
-  if (!existsSync(p)) return null
-  let raw
-  try {
-    raw = JSON.parse(readFileSync(p, 'utf8'))
-  } catch {
-    return { error: `${p} is not valid JSON` }
-  }
-  const provider = raw && typeof raw.provider === 'string' ? raw.provider : undefined
-  const key = raw && typeof raw.key === 'string' ? raw.key : undefined
-  if (!provider || !(provider in PROVIDER_ENV)) {
-    return { error: `${p}: "provider" must be one of ${Object.keys(PROVIDER_ENV).join(', ')}` }
-  }
-  if (!key) {
-    return { error: `${p}: "key" must be a non-empty string` }
-  }
-  return { provider, key }
-}
-
-/** True iff the value is a valid loaded credential (not null, not a sentinel). */
-function isCred(c) {
-  return !!c && typeof c === 'object' && typeof c.key === 'string' && typeof c.provider === 'string'
-}
-
-/**
- * The injection payload: env vars to overlay onto the opencode spawn so the
- * stored provider resolves with no interactive prompt. Empty for null / a
- * malformed sentinel (nothing to inject — the inherited env stands).
- */
-export function credSpawnEnv(cred) {
-  if (!isCred(cred)) return {}
-  const envVar = PROVIDER_ENV[cred.provider]
-  return envVar ? { [envVar]: cred.key } : {}
-}
-
-// Strip JSONC comments before JSON.parse — string-aware so `//` inside a string
-// (e.g. the "$schema": "https://…" URL, or a model id) is preserved, and a
-// `"model"` mentioned inside a real // or /* */ comment can't false-pass.
-function stripJsonc(s) {
-  return s.replace(/("(?:\\.|[^"\\])*")|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, (_m, str) => str ?? '')
-}
-
-/**
- * The model opencode will use, read from ~/.config/opencode/opencode.{jsonc,json}.
- * opencode merges our OPENCODE_CONFIG_CONTENT OVER this file but preserves its
- * `model`, so this is where the provider selection lives.
- *   { model } | { missing:true } | { parseError:true }
- */
-function readOpencodeModel(home) {
-  const cfgPath = [
-    join(home, '.config', 'opencode', 'opencode.jsonc'),
-    join(home, '.config', 'opencode', 'opencode.json'),
-  ].find(existsSync)
-  if (!cfgPath) return { missing: true }
-  let cfg
-  try {
-    cfg = JSON.parse(stripJsonc(readFileSync(cfgPath, 'utf8')))
-  } catch {
-    return { parseError: true }
-  }
-  return { model: typeof cfg.model === 'string' ? cfg.model : undefined }
-}
-
-/** opencode model ids are `provider/model-id` — the provider is the prefix. */
-function providerOfModel(model) {
-  return model.split('/')[0]
-}
-
-/** Does the ambient env (or ~/.aws) already carry a credential for `provider`? */
-function envResolvesForProvider(provider, home, env) {
-  if (provider === 'amazon-bedrock') {
-    if (env.AWS_ACCESS_KEY_ID || env.AWS_PROFILE || env.AWS_BEARER_TOKEN_BEDROCK) return true
-    return existsSync(join(home, '.aws', 'credentials')) || existsSync(join(home, '.aws', 'config'))
-  }
-  const envVar = PROVIDER_ENV[provider]
-  return !!(envVar && env[envVar])
-}
-
-/**
- * The single configured/missing signal shared by healthcheck.probeCreds and the
- * extension's chat-not-ready gate. For chat to resolve a provider with no
- * prompt, ALL must hold: opencode has a `model` selected, a credential for that
- * model's provider resolves (canonical store → back-compat env/~/.aws), and a
- * stored provider matches the selected model.
- *   ok:  { ok:true, provider, source:'store'|'env' }
+ * PURE signal. `providers` = the stripped /config/providers entries
+ * (`[{id, source}, …]`, key-free); `model` = opencode's configured model
+ * ("provider/id") or undefined.
+ *   ok:  { ok:true, provider, source }
  *   not: { ok:false, reason, fix }   (one explicit signal — never a silent hang)
- *
- * Precedence: a MALFORMED store is reported first (fail loud on a file the user
- * clearly intended to use, rather than silently falling back to env creds for a
- * possibly-different provider).
  */
-export function resolveLlmCreds({ home, env }) {
-  const cred = loadLlmCred(home)
-  if (cred && cred.error) {
-    return { ok: false, reason: `~/.amico/llm.json is malformed (${cred.error})`, fix: 'fix or remove it — {"provider":"anthropic","key":"sk-…"} (RUNBOOK §4)' }
+export function resolveLlmCreds({ providers, model }) {
+  const list = Array.isArray(providers) ? providers.filter((p) => p && p.id) : [];
+  if (list.length === 0) {
+    return {
+      ok: false,
+      reason: "LLM creds not configured (opencode resolves no provider)",
+      fix: "give opencode a provider credential — a provider API key in the env (e.g. ANTHROPIC_API_KEY) or via ~/.config/opencode (RUNBOOK §4)",
+    };
   }
-
-  // opencode must have a model selected — without one, no provider resolves
-  // regardless of stored creds (a Q129 cause).
-  const m = readOpencodeModel(home)
-  if (m.missing) return { ok: false, reason: 'no opencode config (model not selected)', fix: 'create ~/.config/opencode/opencode.jsonc with a "model" (RUNBOOK §4b)' }
-  if (m.parseError) return { ok: false, reason: 'opencode config not parseable', fix: 'fix the JSON(C) in ~/.config/opencode/opencode.{jsonc,json}' }
-  if (!m.model) return { ok: false, reason: 'no model in opencode config', fix: 'set "model" in ~/.config/opencode/opencode.jsonc (RUNBOOK §4b)' }
-  const provider = providerOfModel(m.model)
-
-  if (isCred(cred)) {
-    if (cred.provider !== provider) {
-      return { ok: false, reason: `stored provider "${cred.provider}" ≠ opencode model provider "${provider}"`, fix: 'make ~/.amico/llm.json provider match the opencode model, or change the model (RUNBOOK §4)' }
+  // A configured model selects which provider chat uses; if set, that provider
+  // must be among the resolved ones (else chat picks an unresolved provider and
+  // fails at the box — the mismatch case).
+  if (typeof model === "string" && model.includes("/")) {
+    const want = model.split("/")[0];
+    const hit = list.find((p) => p.id === want);
+    if (!hit) {
+      return {
+        ok: false,
+        reason: `opencode model provider "${want}" has no resolved credentials (resolved: ${list.map((p) => p.id).join(", ")})`,
+        fix: "set creds for that provider, or point the opencode model at a resolved one (RUNBOOK §4)",
+      };
     }
-    return { ok: true, provider: cred.provider, source: 'store' }
+    return { ok: true, provider: hit.id, source: hit.source };
   }
+  const first = list[0];
+  return { ok: true, provider: first.id, source: first.source };
+}
 
-  if (envResolvesForProvider(provider, home, env)) {
-    return { ok: true, provider, source: 'env' }
-  }
+/**
+ * Strip the raw /config/providers JSON to the key-free {id, source} list the
+ * signal needs. THE no-leak boundary — the only place the raw response (which
+ * carries provider keys) is touched; nothing but {id, source} escapes.
+ */
+export function stripProviders(providersJson) {
+  const arr =
+    providersJson && Array.isArray(providersJson.providers) ? providersJson.providers : [];
+  return arr
+    .map((p) => ({ id: p && p.id, source: p && p.source }))
+    .filter((p) => typeof p.id === "string" && p.id.length > 0);
+}
 
-  return {
-    ok: false,
-    reason: 'LLM creds not configured',
-    fix: `store a ${provider} key in ~/.amico/llm.json — {"provider":"${provider}","key":"…"} (RUNBOOK §4)`,
+/**
+ * Async: query a RUNNING opencode server for the provider signal. Fetches
+ * /config/providers (stripped) + /config (model), then the pure resolveLlmCreds.
+ * Used by the chat-not-ready gate (the live extension server) and the boot
+ * probe. A fetch failure yields a not-ok signal (server unreachable) rather
+ * than throwing. `fetchImpl` is injectable so the signal is unit-testable
+ * without a live server.
+ */
+export async function fetchProviderSignal(baseUrl, { fetchImpl = fetch, timeoutMs = 4000 } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  const getJson = async (path) => {
+    const r = await fetchImpl(`${base}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) throw new Error(`${path} → ${r.status}`);
+    return await r.json();
+  };
+  let providers;
+  try {
+    providers = stripProviders(await getJson("/config/providers"));
+  } catch (e) {
+    return {
+      ok: false,
+      reason: `could not query opencode /config/providers (${String((e && e.message) || e).slice(0, 60)})`,
+      fix: "check the opencode server is up (see the 'Amicode — opencode' output channel)",
+    };
   }
+  let model;
+  try {
+    const cfg = await getJson("/config");
+    model = typeof cfg.model === "string" ? cfg.model : undefined;
+  } catch {
+    model = undefined; // model is optional — absence just skips the mismatch check
+  }
+  return resolveLlmCreds({ providers, model });
 }

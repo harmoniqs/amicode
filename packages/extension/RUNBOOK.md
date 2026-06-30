@@ -8,7 +8,7 @@ the dominant cost is the first Julia precompile.
 | 1 | Install Julia: `curl -fsSL https://install.julialang.org \| sh` (then restart your shell) | 5 min |
 | 2 | Get the VSIX: in the amicode repo, `pnpm install && pnpm --filter amicode-v2 package` | 5 min |
 | 3 | `bash packages/extension/scripts/install.sh` — instantiates the pinned Julia project (precompiles) + installs the VSIX + writes `~/.amico/lab.toml` | 15–25 min |
-| 4 | Configure the LLM. (a) **Store the provider key** in the canonical location `~/.amico/llm.json`: `{"provider":"anthropic","key":"sk-ant-…"}` (`provider` ∈ `anthropic`, `openai`, `amazon-bedrock` — the value of `key` is the matching API key / Bedrock bearer token). The extension injects it into the opencode process at boot; storing or replacing it needs **no reinstall** — just edit the file. (b) **Select the model** in `~/.config/opencode/opencode.jsonc` so it matches that provider, e.g. `"model":"anthropic/claude-sonnet-4-6"` (or `amazon-bedrock/us.anthropic.claude-sonnet-4-6` + `"provider":{"amazon-bedrock":{"region":"us-east-1"}}`). Bedrock via `~/.aws`/`AWS_*` env still works without (a) — back-compat. | 5 min |
+| 4 | Configure the LLM **through opencode** (amico reads opencode's resolution; it stores no key of its own). Give opencode a provider credential via any path it supports — the simplest is a provider API key in the environment (e.g. `export ANTHROPIC_API_KEY=sk-ant-…`), or `~/.config/opencode` / `opencode auth login`. Then select a matching model in `~/.config/opencode/opencode.jsonc`, e.g. `"model":"anthropic/claude-sonnet-4-6"` (Bedrock: `"model":"amazon-bedrock/us.anthropic.claude-sonnet-4-6"` + `"provider":{"amazon-bedrock":{"region":"us-east-1"}}` and AWS creds in env/`~/.aws`). The healthcheck + chat confirm a provider resolves via opencode's live `/config/providers`. | 5 min |
 | 5 | `node packages/extension/scripts/healthcheck.mjs` → expect all ✓, exit 0 | 2 min |
 | 6 | Open VS Code → Amicode chat → run a test gate; confirm the Run Inspector renders | 10 min |
 
@@ -16,10 +16,8 @@ the dominant cost is the first Julia precompile.
 - `✗ julia+project` → re-run `install.sh`; check `julia --version`.
 - `✗ opencode /event` → `pnpm --filter amicode-v2 fetch:opencode`; re-run.
 - `✗ amico-run` → `pnpm -r build` (stages `bin/`) or reinstall the VSIX.
-- `✗ LLM creds: LLM creds not configured` → store a key in `~/.amico/llm.json` (step 4a), then re-run.
-- `✗ LLM creds: …malformed` → the `~/.amico/llm.json` JSON or its `provider`/`key` is wrong; fix or remove it.
-- `✗ LLM creds: no (model in) opencode config` → select a model in `~/.config/opencode/opencode.jsonc` (step 4b).
-- `✗ LLM creds: stored provider "X" ≠ opencode model provider "Y"` → make the `provider` in `~/.amico/llm.json` match the opencode model (step 4), or change the model.
+- `✗ LLM creds: LLM creds not configured (opencode resolves no provider)` → give opencode a provider credential (step 4: env key / `~/.config/opencode` / `opencode auth login`), then re-run.
+- `✗ LLM creds: opencode model provider "X" has no resolved credentials` → set creds for that provider, or point the opencode model at one that resolves (step 4).
 
 ## Fallback (live solve or creds fail on-site)
 

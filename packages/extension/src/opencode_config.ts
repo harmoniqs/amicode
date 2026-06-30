@@ -1,8 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { credSpawnEnv } from "./llm_creds.mjs";
-import type { LlmCred, LlmCredError } from "./llm_creds.mjs";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -86,27 +84,6 @@ export function buildOpencodeConfigContent(agentsPath: string, templatePath: str
   });
 }
 
-/** Assemble the env handed to the opencode child (the spawn handoff). Kept a
- *  pure function (no vscode) so the credential injection wiring AND the no-leak
- *  invariant are unit-testable: the stored provider key lands ONLY in its
- *  provider env var — never in PATH or OPENCODE_CONFIG_CONTENT (0.3 AC1/AC6). */
-export function buildOpencodeSpawnEnv(opts: {
-  /** Dir to prepend to PATH so amico-run resolves (or undefined). */
-  amicoRunBinDir: string | undefined;
-  /** The inherited PATH to append after the prefix. */
-  basePath: string;
-  agentsPath: string;
-  templatePath: string;
-  /** Loaded credential (or null / malformed sentinel) — the secret carrier. */
-  cred: LlmCred | LlmCredError | null;
-}): Record<string, string> {
-  return {
-    PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${opts.basePath}`,
-    OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opts.agentsPath, opts.templatePath),
-    // The stored provider key (if any) — the ONLY channel the secret travels.
-    ...credSpawnEnv(opts.cred),
-  };
-}
 
 export interface OpencodeConfigOptions {
   /** Absolute path to packages/extension/AGENTS.md to substitute + write into the project dir. */
