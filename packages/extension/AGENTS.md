@@ -65,10 +65,10 @@ script, running with cwd = the run dir, must emit:
 - `AMICODE_ITER iter=<n> f=<obj> inf_pr=<…> inf_du=<…>` to stdout, flushed,
   once per Ipopt iteration (drives the live stats row). This stays on the raw
   Ipopt callback — it needs the rich IPM state the agnostic callback can't carry.
-- `iter_<N>.png` every few iterations (the live plot the Inspector shows). These
-  flow through **`LivePulsePlotCallback`** — Piccolo's `AbstractIntermediateCallback`
-  (the blessed per-iter plot idiom; see below). Do NOT hand-roll a per-iter
-  `plot_pulse`/`CairoMakie.save`.
+- `iter_<N>.png` every few iterations (the live plot the Inspector shows). See
+  the per-iter plotting idiom below — **`LivePulsePlotCallback`** once the bundled
+  Julia project pins DirectTrajOpt ≥ 0.9.7, else the hand-rolled Ipopt-callback
+  path (the only one that runs on 0.9.6).
 - `result.toml`, written **atomically** (write `result.toml.tmp`, then `mv`),
   with at least `fidelity` (float) and `iterations` (int).
 - `pulse.jld2` (the solved pulse) via `JLD2.save`.
@@ -76,12 +76,16 @@ script, running with cwd = the run dir, must emit:
 
 The template already does all of this — you only fill in numbers.
 
-### Per-iter plotting idiom (`LivePulsePlotCallback`)
+### Per-iter plotting idiom
 
-The live plot is emitted by `LivePulsePlotCallback`, which subtypes
-DirectTrajOpt's solver-agnostic `AbstractIntermediateCallback`. You install it on
-the solve via the solver's `intermediate_callback` option — the template wires
-the Ipopt path (live inspector is ipopt-only, Q74):
+Two idioms, by what the bundled Julia project pins:
+
+**Preferred — once DirectTrajOpt ≥ 0.9.7 is pinned: `LivePulsePlotCallback`.**
+It subtypes DirectTrajOpt's solver-agnostic `AbstractIntermediateCallback` and is
+installed via the solver's `intermediate_callback` option (the Ipopt path; live
+inspector is ipopt-only, Q74). It reconstructs the pulse from the optimizer's
+primal each iteration and writes `iter_<N>.png` — the same object would install
+on MadNLP via `MadNLPOptions(intermediate_callback = …)`:
 
 ```julia
 live_plot = LivePulsePlotCallback(qtraj, prob.trajectory; every = 6, save_dir = ".")
@@ -90,10 +94,16 @@ solve!(qcp; max_iter = max_iter,
        callback = CB.callback_factory(cb_log))                     # → AMICODE_ITER text
 ```
 
-It reconstructs the pulse from the optimizer's primal each iteration and writes
-`iter_<N>.png` into the run dir — the same callback object would install on MadNLP
-via `MadNLPOptions(intermediate_callback = live_plot)`. Keep the per-iter PNGs
-flowing through this callback; never re-introduce a bespoke plotting block.
+**Fallback on DirectTrajOpt 0.9.6 (no Ipopt `intermediate_callback` field yet):
+hand-roll the PNG from the raw Ipopt callback** — `IpoptOptions(intermediate_callback=…)`
+throws at construction on 0.9.6, so if you author a script against a project still
+pinned to 0.9.6, use the text-callback path instead: in `cb_log`, every few iters
+call `plot_pulse(qcp; bounds = true, title = …)` and `CairoMakie.save` the figure
+(alongside `callback_update_trajectory_factory` to keep the iterate in sync).
+
+The bundled template uses the preferred `LivePulsePlotCallback` path; it lands
+together with the DirectTrajOpt ≥ 0.9.7 `Manifest.toml` bump (lockstep), so the
+template and the pin are never out of step on `main`.
 
 ## Warm-start idiom
 
