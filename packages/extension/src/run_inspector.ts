@@ -194,10 +194,24 @@ class InspectorView implements vscode.WebviewViewProvider {
     // method owns only the security/wiring shell: the CSP, the nonce, and the
     // resource URIs. The DOM-id + message contract between that markup and
     // inspector_webview.ts is pinned by inspector_view_contract.test.ts.
-    const body = readFileSync(
-      vscode.Uri.joinPath(this.ctx.extensionUri, "media", "inspector.html").fsPath,
-      "utf8",
-    );
+    //
+    // style-src keeps 'unsafe-inline' deliberately — it is load-bearing for the
+    // static style="opacity:0" attrs on preview-a/b in inspector.html (runtime
+    // .style mutations aren't CSP-governed, so those attrs are the only thing
+    // that needs it). Don't strip it as "dead" now that the stylesheet moved
+    // external; the contract test guards this grant.
+    let body: string;
+    try {
+      body = readFileSync(
+        vscode.Uri.joinPath(this.ctx.extensionUri, "media", "inspector.html").fsPath,
+        "utf8",
+      );
+    } catch (err) {
+      // A corrupt/partial install (media/inspector.html missing) would otherwise
+      // throw out of resolveWebviewView before webview.html is ever set → an
+      // opaque blank panel. Degrade to a readable message instead.
+      return renderFallbackHtml(err);
+    }
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -210,7 +224,7 @@ class InspectorView implements vscode.WebviewViewProvider {
   <link rel="stylesheet" href="${styleUri}" />
 </head>
 <body>
-${body}
+${body.trimEnd()}
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -222,6 +236,26 @@ function newNonce(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
+}
+
+/** Self-contained fallback shown when the view markup can't be read (corrupt or
+ *  partial install). No external resources/scripts so it can't itself fail to
+ *  render; keeps webview.html set so the panel shows a message, not a blank. */
+function renderFallbackHtml(err: unknown): string {
+  const detail = (err instanceof Error ? err.message : String(err))
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;");
+  return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';" />
+</head>
+<body style="font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 14px; font-size: 12px;">
+  <p>Run Inspector failed to load its view (<code>media/inspector.html</code>).</p>
+  <p style="opacity: 0.7;">This usually means a corrupt or partial install — try reinstalling the extension.</p>
+  <p style="opacity: 0.5; font-family: monospace; font-size: 11px;">${detail}</p>
+</body>
+</html>`;
 }
 
 export function registerRunInspector(ctx: vscode.ExtensionContext, runsRoot: string): InspectorView {

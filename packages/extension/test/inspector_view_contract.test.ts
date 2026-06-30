@@ -32,9 +32,10 @@ function renderInspectorHtml(): string {
   return captured;
 }
 
-// The contract is derived from the script source, not hand-listed: every id the
-// webview script reads/writes MUST exist in the design-owned markup, else the
-// live inspector silently breaks with no test failure.
+// Every id the webview script reads/writes MUST exist in the design-owned
+// markup, else the live inspector silently breaks with no test failure. The
+// regex below recovers the literal $("id")/getElementById("id") lookups; the
+// computed hot-path lookups it can't see are pinned explicitly just below.
 const SCRIPT = readFileSync(join(PKG_ROOT, "src", "inspector_webview.ts"), "utf8");
 function idsReferencedByScript(): string[] {
   const ids = new Set<string>();
@@ -43,20 +44,42 @@ function idsReferencedByScript(): string[] {
   return [...ids];
 }
 
+// Ids addressed only computationally — the double-buffer swap ($("preview-" +
+// buffer)) and the metric fan-out (for (const id of [...]) $(id)). The literal
+// regex is blind to these; they pass its check today only because they also
+// happen to appear as literals elsewhere, so a design edit that drops that
+// incidental alias would go unguarded. Listed explicitly rather than parsed out
+// of the source on purpose: this single-run seam is temporary (Phase 1.3
+// reshapes the inspector into per-run views and this test goes with it), so a
+// fully-derived id contract would be throwaway.
+const COMPUTED_FORM_IDS = ["preview-a", "preview-b", "m-obj", "m-iter", "m-pr", "m-du"];
+
 describe("Run Inspector view contract (plumbing ⇄ media/inspector.{html,css})", () => {
   const html = renderInspectorHtml();
 
-  it("renders every DOM id the webview script depends on", () => {
+  it("renders every DOM id the webview script depends on (literal + computed-form)", () => {
     const ids = idsReferencedByScript();
     expect(ids.length).toBeGreaterThan(0); // guard the regex itself
-    for (const id of ids) {
+    for (const id of [...new Set([...ids, ...COMPUTED_FORM_IDS])]) {
       expect(html, `markup is missing id="${id}" (inspector_webview.ts drives it)`).toContain(`id="${id}"`);
     }
   });
 
-  it("links the external stylesheet and keeps the CSP authorizing it + the nonce'd script", () => {
+  it("links the external stylesheet and keeps the CSP authorizing every grant the view depends on", () => {
     expect(html).toMatch(/<link[^>]+rel="stylesheet"[^>]+href="vscode-webview:\/\/unit\/[^"]*inspector\.css"/);
-    expect(html).toMatch(/style-src vscode-webview:\/\/unit/);  // the linked sheet's source must be granted
+
+    // Pin grants to their directive, not just "appears somewhere in the CSP".
+    const styleSrc = html.match(/style-src([^;]*)/)?.[1] ?? "";
+    expect(styleSrc, "style-src must grant the webview source for the linked stylesheet").toContain("vscode-webview://unit");
+    // 'unsafe-inline' is the load-bearing grant: the static style="opacity:0"
+    // attrs on preview-a/b need it (runtime .style mutations aren't CSP-governed).
+    // Drop it and the previews start visible instead of fading in.
+    expect(styleSrc, "style-src must keep 'unsafe-inline' for the static style attrs").toContain("'unsafe-inline'");
+
+    // iter-frame PNGs load as asWebviewUri → vscode-webview:// URIs; img-src must grant the source.
+    const imgSrc = html.match(/img-src([^;]*)/)?.[1] ?? "";
+    expect(imgSrc, "img-src must grant the webview source for iter-frame PNGs").toContain("vscode-webview://unit");
+
     expect(html).toMatch(/script-src 'nonce-/);
     expect(html).toMatch(/<script nonce="[^"]+" src="vscode-webview:\/\/unit\/[^"]*inspector_webview\.js"/);
   });
