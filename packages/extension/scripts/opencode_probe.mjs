@@ -59,7 +59,9 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
 
   const cleanup = () => {
     try { child.kill("SIGTERM"); } catch {}
-    setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 3000);
+    // .unref() the SIGKILL fallback so it can't hold `node healthcheck.mjs` open
+    // for 3s after it's otherwise done (the child usually exits on SIGTERM).
+    setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 3000).unref();
   };
 
   try {
@@ -85,8 +87,12 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
       log += `\n/event probe error: ${String((e && e.message) || e)}`;
     }
 
-    // provider signal off the SAME running server (key-free).
-    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`);
+    // provider signal off the SAME running server (key-free). Scale the fetch
+    // timeout to the boot budget: the 4s default can expire while opencode is
+    // still resolving providers right after the port opens (→ a false "creds
+    // unverifiable"); give it up to half the budget, capped at 15s.
+    const signalTimeoutMs = Math.min(15000, Math.max(4000, Math.floor(timeoutMs / 2)));
+    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`, { timeoutMs: signalTimeoutMs });
 
     return { up: true, eventOk, eventStatus, eventCtype, signal, log };
   } finally {

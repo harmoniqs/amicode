@@ -47,6 +47,23 @@ describe('buildOpencodeConfigContent', () => {
     expect(cfg.permission.edit).toBe('allow')                 // fills the FILL-IN block
     expect(cfg.permission.webfetch).toBeUndefined()           // unused by the solve flow — dropped
   })
+  it('never embeds a credential in the config content (D11 no-store/no-inject regression guard)', () => {
+    // amico owns no secret: the config it writes into OPENCODE_CONFIG_CONTENT must
+    // never carry a provider key, even when one is present in the environment.
+    // Guards against a future edit that starts sourcing a key into the config.
+    const SENTINEL = 'sk-ant-LEAK5ENTINEL0000000000000000'
+    const prev = process.env.ANTHROPIC_API_KEY
+    process.env.ANTHROPIC_API_KEY = SENTINEL
+    try {
+      const content = buildOpencodeConfigContent('/abs/AGENTS.md', TPL)
+      expect(content).not.toContain(SENTINEL)                 // no env-sourced key leaks in
+      expect(content).not.toMatch(/sk-[A-Za-z0-9-]{16,}/)     // no key-shaped string at all
+      expect(content.toLowerCase()).not.toMatch(/"(apikey|api_key|authorization|bearer|token)"\s*:/)
+    } finally {
+      if (prev === undefined) delete process.env.ANTHROPIC_API_KEY
+      else process.env.ANTHROPIC_API_KEY = prev
+    }
+  })
 })
 
 // Integration: confirms opencode 1.17.3 DEEP-merges the injected `permission`

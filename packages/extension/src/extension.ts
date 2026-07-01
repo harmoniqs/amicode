@@ -161,7 +161,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 5. Commands
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openChat", async () => {
-      if (!opencodeReadyUrl) {
+      // Snapshot the ready URL before any await: restartServer nulls
+      // opencodeReadyUrl, so a restart racing this handler would otherwise reach
+      // openOrReveal as undefined (or reveal a panel bound to a stale server).
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
         vscode.window.showWarningMessage("Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.");
         return;
       }
@@ -170,12 +174,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // check and silently hang at the chat box (Q129). Ask opencode's own live
       // resolution (/config/providers, same signal the healthcheck uses) so the
       // cause is named, not hidden. Key-free.
-      const creds = await fetchProviderSignal(opencodeReadyUrl.toString());
+      const creds = await fetchProviderSignal(readyUrl.toString());
       if (!creds.ok) {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, opencodeReadyUrl);
+      ChatPanel.openOrReveal(ctx, readyUrl);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await vscode.commands.executeCommand("amicode.runInspector.focus");
