@@ -13,7 +13,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
       - run: pnpm -r run typecheck
-      - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite + @amicode/schema conformance
+      # Fetch the vendored opencode BEFORE vitest so the OC_BIN-gated integration
+      # test (opencode config injection + merge) actually RUNS in CI instead of
+      # self-skipping — the skip was the #25 CI-level false-green (an injection or
+      # config-merge regression would pass CI because the only test for it skipped).
+      - run: pnpm --filter amicode-v2 fetch:opencode
+      - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance
       - name: amico-validate — shipped configs conform + linked bin works (0.1c gate)
         run: |
           # Exercise the LINKED bin via a dependent (the bin links into amico-run /
