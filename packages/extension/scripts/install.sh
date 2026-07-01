@@ -14,6 +14,20 @@ die() { printf '\033[1;31m[amicode] %s\033[0m\n' "$*" >&2; exit 1; }
 command -v julia >/dev/null 2>&1 || die "Julia not found. Install: curl -fsSL https://install.julialang.org | sh  (then re-run)"
 say "julia: $(julia --version)"
 
+# 1b. Julia version vs the pinned Manifest. Manifest.toml is minor-format-specific
+# (pins `julia_version`); instantiating it on a different MINOR drifts silently or
+# fails confusingly, undercutting the deterministic-no-resolver-drift guarantee.
+# Minor mismatch → fatal; patch mismatch → warn (a patch-level re-resolve is fine).
+pinned_ver="$(sed -nE 's/^julia_version = "([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' "$EXT_ROOT/julia/Manifest.toml" | head -1)"
+running_ver="$(julia --version | sed -nE 's/.*[^0-9]([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')"
+if [ -n "$pinned_ver" ] && [ -n "$running_ver" ]; then
+  if [ "${running_ver%.*}" != "${pinned_ver%.*}" ]; then
+    die "Julia minor mismatch: running $running_ver, Manifest pins $pinned_ver. Match the minor and re-run, e.g.: juliaup add ${pinned_ver%.*} && juliaup default ${pinned_ver%.*}"
+  elif [ "$running_ver" != "$pinned_ver" ]; then
+    say "note: running Julia $running_ver differs from the Manifest's pinned patch $pinned_ver (minor matches; proceeding)."
+  fi
+fi
+
 # 2. Instantiate the pinned project (deterministic; ~5-10 min first time)
 mkdir -p "$JULIA_PROJECT"
 cp "$EXT_ROOT/julia/Project.toml"  "$JULIA_PROJECT/Project.toml"
