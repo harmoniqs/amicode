@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
+import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
@@ -111,6 +112,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (amicoRunBinDir === undefined) {
       opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
     }
+    // opencode owns the LLM credential (0.3): amico injects NO key into the
+    // spawn env — opencode resolves its provider from its own env / config /
+    // auth.json. The spawn env carries only PATH (so amico-run resolves) and the
+    // amico instructions/permission config.
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -135,6 +140,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // Surface ONE explicit LLM-provider signal at boot, read from opencode's
+      // OWN resolution (its live /config/providers) — not a silent hang at the
+      // chat box (Q129). Key-free; never logs a credential.
+      void fetchProviderSignal(url.toString()).then((sig) => {
+        opencodeChannel.appendLine(
+          sig.ok
+            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
+            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
+        );
+      });
     });
 
     serverManager.start().catch((err) => {
@@ -145,12 +160,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 5. Commands
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("amicode.openChat", () => {
-      if (!opencodeReadyUrl) {
+    vscode.commands.registerCommand("amicode.openChat", async () => {
+      // Snapshot the ready URL before any await: restartServer nulls
+      // opencodeReadyUrl, so a restart racing this handler would otherwise reach
+      // openOrReveal as undefined (or reveal a panel bound to a stale server).
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
         vscode.window.showWarningMessage("Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.");
         return;
       }
-      ChatPanel.openOrReveal(ctx, opencodeReadyUrl);
+      // Creds gate — opencode serves HTTP 200 (→ "ready") even with zero
+      // providers, so a missing credential would otherwise sail past the ready
+      // check and silently hang at the chat box (Q129). Ask opencode's own live
+      // resolution (/config/providers, same signal the healthcheck uses) so the
+      // cause is named, not hidden. Key-free.
+      const creds = await fetchProviderSignal(readyUrl.toString());
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
+      ChatPanel.openOrReveal(ctx, readyUrl);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await vscode.commands.executeCommand("amicode.runInspector.focus");

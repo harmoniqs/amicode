@@ -84,6 +84,7 @@ export function buildOpencodeConfigContent(agentsPath: string, templatePath: str
   });
 }
 
+
 export interface OpencodeConfigOptions {
   /** Absolute path to packages/extension/AGENTS.md to substitute + write into the project dir. */
   agentsSrc: string;
