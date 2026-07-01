@@ -69,9 +69,18 @@ wall = time() - t0
 Uroll = iso_vec_to_operator(unitary_rollout(get_trajectory(qcp), sys)[:, end])
 fid   = unitary_fidelity(Uroll, op.operator; subspace = op.subspace)
 
-# LivePulsePlotCallback fires at iter 0 (and every PLOT_EVERY after), so a run
-# dir always has ≥1 frame; no end-of-solve fallback plot is needed (and a direct
-# plot here would defeat routing every frame through the callback abstraction).
+# End-of-solve guarantee frame — STILL through LivePulsePlotCallback (no bespoke
+# plot). The live callback fires at iters 0, PLOT_EVERY, 2·PLOT_EVERY, …; a solve
+# that converges in < PLOT_EVERY iters would otherwise leave only the iter-0
+# random-init frame (inspector stuck showing the initial guess). Re-invoke the
+# callback once at every=1 with the FINAL primal so the last frame is the
+# converged pulse. prob.trajectory is the final iterate here (DTO synced it after
+# solve!), so this reconstructs the same primal the callback saw per-iter.
+let final_cb = LivePulsePlotCallback(qtraj, prob.trajectory; every = 1, save_dir = ".")
+    tr = prob.trajectory
+    final_primal = tr.global_dim > 0 ? vcat(collect(tr.datavec), collect(tr.global_data)) : collect(tr.datavec)
+    final_cb(final_primal, iters[])
+end
 
 JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` can reload it (warm-start)
 open("result.toml.tmp", "w") do io
