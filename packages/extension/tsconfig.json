@@ -16,6 +16,6 @@
     "rootDir": "./",
     "sourceMap": true
   },
-  "include": ["src/**/*", "mcp/**/*", "plugin/**/*"],
+  "include": ["src/**/*", "media/**/*.ts", "mcp/**/*", "plugin/**/*"],
   "exclude": ["node_modules", "dist"]
 }

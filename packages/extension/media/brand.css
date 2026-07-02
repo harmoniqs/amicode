@@ -1,0 +1,42 @@
+/* brand.css — style variables only. Prefer --vscode-* (inherit the theme);
+ * literals are reserved for brand identity. */
+
+:root {
+  /* color */
+  --color-accent: #FFF676;
+  --color-on-accent: #000000;      
+  --color-ok: var(--vscode-testing-iconPassed);
+  --color-fail: var(--vscode-errorForeground);
+  --color-run: var(--vscode-progressBar-background);
+  --color-dim: var(--vscode-descriptionForeground);
+
+  /* text */
+  --text-font: var(--vscode-font-family);
+  --text-mono: var(--vscode-editor-font-family, monospace);
+  --text-body: var(--vscode-font-size, 12px);
+  --text-label: 0.72em;
+  --text-small: 0.8em;
+  --text-value: 1.08em;
+  --text-hero: 1.3em;
+
+  /* space */
+  --space-xs: 4px;
+  --space-sm: 8px;
+  --space-md: 12px;
+  --space-lg: 16px;
+
+  /* square */
+  --square-dot: 8px;
+  --square-icon: 16px;
+
+  /* border */
+  --border-width: 1px;
+  --border-radius: 4px;
+  --border-radius-round: 1000px;
+  --border-color: var(--vscode-widget-border, var(--vscode-panel-border));
+  --border-color-hero: color-mix(in srgb, var(--color-accent) 45%, var(--vscode-panel-border));
+
+  /* background */
+  --bg-box: var(--vscode-editorWidget-background, transparent);
+  --bg-plot: var(--vscode-editor-background);
+}

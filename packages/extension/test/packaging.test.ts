@@ -14,8 +14,8 @@ const REQUIRED = [
   'extension/demo/run/run.toml',
   'extension/demo/run/FINISHED',
   'extension/demo/run/run.log',   // inspector reads run.log for the demo's stats row; *.log-gitignored so easy to drop
-  'extension/media/inspector.html', // Run Inspector body markup (design-owned) — must ship, else a blank inspector
-  'extension/media/inspector.css',  // Run Inspector styling (design-owned) — must ship, else an unstyled inspector
+  'extension/media/brand.css',      // style variables (design-owned) — must ship, else an unstyled inspector
+  'extension/media/layout.css',     // layout selectors (design-owned) — must ship, else an unstyled inspector
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback
