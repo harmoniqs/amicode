@@ -3,6 +3,14 @@
 // GET /event as an SSE stream (HTTP 200, text/event-stream) against a
 // synthesized project, with no LLM creds. Exit 0 = pass.
 //
+// SCOPE (see #25): this is the binary-liveness gate only — it deliberately does
+// NOT set OPENCODE_CONFIG_CONTENT, so it can't (and doesn't claim to) catch a
+// regression in the instructions/permission injection or the config merge. That
+// injection + merge is asserted against the REAL binary + the REAL
+// buildOpencodeConfigContent in test/opencode_config.test.ts ("opencode config
+// injection + merge"), which can import the TS builder (this .mjs can't, so
+// re-deriving the config here would just risk drift).
+//
 // Boot + probe logic lives in scripts/opencode_probe.mjs (shared with the
 // healthcheck, which derives BOTH the /event gate and the provider signal from a
 // single boot); this script asserts the /event gate and exits.
