@@ -5,7 +5,7 @@
 # Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today): a
 # single-qubit X gate on a 3-level transmon converges to subspace fidelity ~1.0.
 using Piccolo
-using CairoMakie
+using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
 using TOML
 using Printf
@@ -31,43 +31,32 @@ qcp = SmoothPulseProblem(qtraj, N;
     Q = 100.0, R = 1e-2)
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
-# Per-iter callbacks via Piccolo's PUBLIC `Callbacks` module (Piccolo 1.19).
-# NOTE on solver portability: this is the Ipopt intermediate-callback path
-# (rich state: obj_value/inf_pr/inf_du). When the default solver moves to
-# MadNLP/Altissimo, migrate to the solver-agnostic `AbstractIntermediateCallback`
-# (e.g. `LivePulsePlotCallback`), which fires `(primal, iter)` across backends.
-const CB = Piccolo.Callbacks
-
-# Plot every 6 iters (frequent live frames), skipping iter-0. Edge case: a solve
-# that converges in <6 iters emits no per-iter frame — the inspector shows
-# "warming up" until the end-of-solve guarantee frame below. Acceptable: the
-# warming-up state covers it, and sub-6-iter solves are rare in this regime.
+# Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
+# `AbstractIntermediateCallback` (the blessed, solver-agnostic per-iter plot
+# idiom — see AGENTS.md). It reconstructs the pulse from the optimizer's primal
+# each iteration and writes `iter_<N>.png` into the run dir; the Run Inspector
+# reads those frames. `every` is the redraw cadence. (No hand-rolled plotting:
+# the PNGs are the callback's job, not the script's.)
 const PLOT_EVERY = 6
+live_plot = LivePulsePlotCallback(qtraj, prob.trajectory; every = PLOT_EVERY, save_dir = ".")
+
+# AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
+# IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
+# doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
+# callback with `intermediate_callback`); the live inspector is ipopt-only (Q74).
+const CB = Piccolo.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k
     @printf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e\n", k, st.obj_value, st.inf_pr, st.inf_du)
     flush(stdout)
-    (k > 0 && k % PLOT_EVERY == 0) && save_control_plot(k)   # skip iter-0 (just the random init; defers Makie's first-plot compile off the first iter)
     return true
-end
-
-# Per-iter pulse plot via Piccolo's canonical `plot_pulse` (no rollout — keeps
-# the live solve fast). `bounds=true` shades the drive bounds; the QCP method
-# reads the current optimizer iterate, which callback_update_trajectory_factory
-# keeps in sync. Returns a Makie Figure we save as the run-dir frame.
-function save_control_plot(k::Int)
-    try
-        fig = plot_pulse(qcp; bounds = true, title = @sprintf("iter %d", k))
-        CairoMakie.save(@sprintf("iter_%04d.png", k), fig)
-    catch e
-        @warn "iter plot failed" exception = e   # never let plotting kill the solve
-    end
 end
 
 t0 = time()
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       callback = CB.callback_factory(CB.callback_update_trajectory_factory(prob), cb_log))
+       options = IpoptOptions(intermediate_callback = live_plot),
+       callback = CB.callback_factory(cb_log))
 wall = time() - t0
 
 # Fidelity over the COMPUTATIONAL subspace, from a fresh high-tolerance rollout.
@@ -80,8 +69,18 @@ wall = time() - t0
 Uroll = iso_vec_to_operator(unitary_rollout(get_trajectory(qcp), sys)[:, end])
 fid   = unitary_fidelity(Uroll, op.operator; subspace = op.subspace)
 
-# ensure at least one PNG even if the solve stopped before PLOT_EVERY
-isfile(@sprintf("iter_%04d.png", iters[])) || save_control_plot(iters[])
+# End-of-solve guarantee frame — STILL through LivePulsePlotCallback (no bespoke
+# plot). The live callback fires at iters 0, PLOT_EVERY, 2·PLOT_EVERY, …; a solve
+# that converges in < PLOT_EVERY iters would otherwise leave only the iter-0
+# random-init frame (inspector stuck showing the initial guess). Re-invoke the
+# callback once at every=1 with the FINAL primal so the last frame is the
+# converged pulse. prob.trajectory is the final iterate here (DTO synced it after
+# solve!), so this reconstructs the same primal the callback saw per-iter.
+let final_cb = LivePulsePlotCallback(qtraj, prob.trajectory; every = 1, save_dir = ".")
+    tr = prob.trajectory
+    final_primal = tr.global_dim > 0 ? vcat(collect(tr.datavec), collect(tr.global_data)) : collect(tr.datavec)
+    final_cb(final_primal, iters[])
+end
 
 JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` can reload it (warm-start)
 open("result.toml.tmp", "w") do io

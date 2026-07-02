@@ -66,25 +66,44 @@ describe('buildOpencodeConfigContent', () => {
   })
 })
 
-// Integration: confirms opencode 1.17.3 DEEP-merges the injected `permission`
-// object over the user's global config rather than shallow-replacing it (which
-// would wipe the user's other permission keys). Skipped when the vendored binary
-// isn't present (e.g. minimal CI before `fetch:opencode`).
+// Integration (#25): boots the REAL opencode binary (`opencode debug config`
+// resolves + dumps the merged config, equivalent to GET /config) with the REAL
+// buildOpencodeConfigContent as OPENCODE_CONFIG_CONTENT, and asserts the whole
+// injection + merge the extension relies on at spawn:
+//   - the injected `instructions` (the AGENTS.md path) is present — this is the
+//     regression the old boot_smoke false-green missed: boot_smoke.mjs boots
+//     WITHOUT OPENCODE_CONFIG_CONTENT, so it stayed green even if the instruction
+//     injection were removed. This test reds instead.
+//   - the user's global `model` survives the deep-merge (opencode picks the
+//     provider from it — the merge must not clobber it);
+//   - the user's global `permission` keys survive AND our injected permission key
+//     is added (deep-merge, not shallow-replace — folds in the #22 check).
+// Uses the real builder (no transcribed copy → no drift; boot_smoke.mjs can't
+// import the TS builder, which is why this lives here). Skipped when the vendored
+// binary isn't present (e.g. minimal CI before `fetch:opencode`).
 const OC_BIN = join(__dirname, '..', 'vendor', 'opencode', `${process.platform}-${process.arch}`, 'opencode')
-describe.skipIf(!existsSync(OC_BIN))('opencode permission merge (1.17.3)', () => {
-  it('injected permission ADDS keys — the user\'s global permission keys survive', () => {
+describe.skipIf(!existsSync(OC_BIN))('opencode config injection + merge (1.17.3)', () => {
+  it('injects instructions/permission AND preserves the user global model + permission', () => {
     const home = mkdtempSync(join(tmpdir(), 'ochome-'))
     mkdirSync(join(home, '.config', 'opencode'), { recursive: true })
+    // A user global config with a distinctive model + permission key — both must
+    // survive the deep-merge under OPENCODE_CONFIG_CONTENT.
     writeFileSync(join(home, '.config', 'opencode', 'opencode.json'),
-      JSON.stringify({ permission: { doom_loop: 'deny' } }))   // a distinctive user-set key
+      JSON.stringify({ model: 'anthropic/claude-sonnet-4-6', permission: { doom_loop: 'deny' } }))
+    const agentsPath = join(home, 'AGENTS.md')   // the exact file our `instructions` must point at
+    writeFileSync(agentsPath, '# amico\n')
     const out = execFileSync(OC_BIN, ['debug', 'config'], {
       encoding: 'utf8',
       env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
-             OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent('/abs/AGENTS.md', '/ext/templates/solve_template.jl') },
+             OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(agentsPath, '/ext/templates/solve_template.jl') },
     })
     const cfg = JSON.parse(out)
-    expect(cfg.permission.doom_loop).toBe('deny')                   // user's key SURVIVED the deep-merge
-    expect(typeof cfg.permission.external_directory).toBe('object') // our injected key is present too
+    // our injection landed (the false-green boot_smoke couldn't catch):
+    expect(cfg.instructions).toContain(agentsPath)                 // the AGENTS.md instruction injection
+    expect(typeof cfg.permission.external_directory).toBe('object') // our injected permission key
+    // the user's global config SURVIVED the deep-merge:
+    expect(cfg.model).toBe('anthropic/claude-sonnet-4-6')          // provider/model preserved (Q129 needs this)
+    expect(cfg.permission.doom_loop).toBe('deny')                  // user permission key preserved (#22)
   })
 })
 

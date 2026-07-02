@@ -561,9 +561,9 @@ version = "0.7.18"
 
 [[deps.DirectTrajOpt]]
 deps = ["ExponentialAction", "FiniteDiff", "ForwardDiff", "Ipopt", "LazyArrays", "Libdl", "LinearAlgebra", "MathOptInterface", "NamedTrajectories", "OrdinaryDiffEqTsit5", "Random", "Reexport", "SciMLBase", "SparseArrays", "Test", "TestItemRunner", "TestItems", "TrajectoryIndexingUtils"]
-git-tree-sha1 = "ccd269fd67bf08b4b4ae789e3c39c44de254c596"
+git-tree-sha1 = "c722d301a8d064de5d9ab67e5bc8a1dff893683a"
 uuid = "c823fa1f-8872-4af5-b810-2b9b72bbbf56"
-version = "0.9.6"
+version = "0.9.7"
 
     [deps.DirectTrajOpt.extensions]
     MadNLPSolverExt = ["MadNLP"]
