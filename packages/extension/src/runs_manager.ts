@@ -173,30 +173,52 @@ export class RunsManager implements vscode.Disposable {
     });
   }
 
-  /** EXPLICIT selection (demo replay command; 1.3's user clicks): routes the
-   *  single-run Inspector/StatusBar at a run AND PINS the selection — after
-   *  this, auto-follow never steals the view (see `pinned`). Replays the run
-   *  dir for display, then live events flow. */
+  /** EXPLICIT selection (demo replay command; 1.3's user clicks): makes
+   *  `runId` the inspector's visible pane (`activate`) AND PINS the selection —
+   *  after this, auto-follow never steals the view (see `pinned`).
+   *
+   *  Display: a run WITH a live pipeline was already fanned in runId-tagged
+   *  (registration replay + live tail), so its pane is current — no re-ingest
+   *  (review #70 #4). A run with NO pipeline (finished at discovery, or
+   *  completed + torn down) was never fanned — replay it from disk into its
+   *  pane. If FINISHED landed inside the ≤700ms poll window, the same-tick
+   *  checkFinished below turns it into a real completion (badge + status bar),
+   *  never a stale "running"/"warming". */
   selectRun(runId: string): void {
     const rec = this.registry.get(runId);
     if (!rec) return;
     this.pinned = true;
     if (this.selected === runId) return;
     this.selected = runId;
-    getInspector()?.reveal();
-    getInspector()?.setRunLabel(runId);
-    // Display replay (late-join safe): full history from disk → inspector.
-    // Promote inside the replay stays guarded by promotedRuns, so re-selecting
-    // a finished run never re-pops the prompt.
-    try { ingestRunDir(rec.runDir, this.displaySink(rec), this.opts.promoteThreshold ?? 0.99); }
-    catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
-    // Fresh/live run → Julia warming up (the view swaps the hint when the first
-    // pulse record arrives). Same post-replay order as β's switchToRun — and,
-    // like β, re-check DISK (not the registry phase): FINISHED may have landed
-    // inside the ≤700ms poll window, and warming-after-completion would invert
-    // the terminal badge until the next tick.
-    if (rec.phase !== "finished" && !fs.existsSync(path.join(rec.runDir, "FINISHED"))) {
-      getInspector()?.setWarmingUp();
+    const ins = getInspector();
+    ins?.reveal();
+    ins?.setRunLabel(runId, runId);
+    ins?.activate(runId);   // 1.3: switch the visible pane
+    const p = this.pipelines.get(runId);
+    if (p) {
+      // FINISHED may have landed inside the poll window — complete it NOW,
+      // through the one completion mechanism, so the badge can't sit stale.
+      this.checkFinished(p);
+      // Point the single status bar at the selected run from registry state
+      // (routeIter/completeRun keep it current from here).
+      const r = this.registry.get(runId)!;
+      this.opts.statusBar?.setRun({
+        runId, outputDir: r.runDir, startedAt: 0,
+        status: r.phase === "finished" ? (r.status ?? "completed") : "running",
+        latestIter: r.latestIter, fidelity: r.fidelity,
+      });
+    } else {
+      // Never fanned (no pipeline) — display replay from disk (late-join safe).
+      // Promote inside the replay stays guarded by promotedRuns, so
+      // re-selecting a finished run never re-pops the prompt.
+      try { ingestRunDir(rec.runDir, this.displaySink(rec), this.opts.promoteThreshold ?? 0.99); }
+      catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
+    }
+    // Fresh/live run → Julia warming up. Disk-checked (FINISHED may exist while
+    // the registry still says live); the host's setWarmingUp also no-ops if the
+    // pane already carries data/terminal state (host guard).
+    if (this.registry.get(runId)?.phase !== "finished" && !fs.existsSync(path.join(rec.runDir, "FINISHED"))) {
+      ins?.setWarmingUp(runId);
     }
   }
 
@@ -253,20 +275,22 @@ export class RunsManager implements vscode.Disposable {
 
     // Auto-follow BEFORE the replay (β latest-follow parity: a newly REGISTERED
     // live run is by definition the newest start) — unless an explicit selection
-    // is pinned. Deciding first lets the ONE ingest below both seed pipeline
-    // state and feed the display through routeIter/routePulse's selection gate
-    // (review #70: the old shape parsed the whole run.log twice per discovery —
-    // a state pass, then selectRun's display pass).
+    // is pinned. The single ingest below fans the run's history into ITS pane
+    // regardless (1.3 fan-out); following just decides which pane is visible
+    // (review #70 #4: the old shape parsed the whole run.log twice per
+    // discovery — a state pass, then selectRun's display pass).
     const follow = !this.pinned;
     if (follow && this.selected !== runId) {
       this.selected = runId;
-      getInspector()?.reveal();
-      getInspector()?.setRunLabel(runId);
+      const ins = getInspector();
+      ins?.reveal();
+      ins?.setRunLabel(runId, runId);
+      ins?.activate(runId);
     }
 
     // Single replay: arms the pipeline's pulse stream (meta), seeds iter
-    // high-water, routes to the inspector iff selected above, and yields the
-    // byte offset the live tail starts from.
+    // high-water, fans history runId-tagged, and yields the byte offset the
+    // live tail starts from.
     let logBytes = 0;
     try { logBytes = ingestRunDir(runDir, this.pipelineSink(p), this.opts.promoteThreshold ?? 0.99); }
     catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
@@ -298,45 +322,45 @@ export class RunsManager implements vscode.Disposable {
     // Fresh/live run with no data yet → Julia warming up (post-replay, β order).
     // Disk-checked: a torn FINISHED (fall-through above) must not read "warming".
     if (follow && !fs.existsSync(path.join(runDir, "FINISHED"))) {
-      getInspector()?.setWarmingUp();
+      getInspector()?.setWarmingUp(runId);
     }
   }
 
   /** Sink for a pipeline's SINGLE registration replay: seeds registry/pulse
-   *  state and — because auto-follow assigns selection BEFORE the replay —
-   *  feeds the display through routeIter/routePulse's selection gate in the
-   *  same pass (review #70: no second display ingest). */
+   *  state AND fans the history into the inspector runId-tagged through
+   *  routeIter/routePulse (1.3 fan-out — the run's pane buffers it even while
+   *  hidden), so no second display ingest is needed (review #70 #4). */
   private pipelineSink(p: RunPipeline): RunSink {
     return {
       iter: (rec: IterRecord) => this.routeIter(p, rec),
       // A FINISHED that landed between the existsSync check and this replay —
-      // rare race; treat exactly like a live completion.
+      // rare race; treat exactly like a live completion (fans out + promotes).
       run: (c: RunCompletion) => this.completeRun(p.runId, c.status, c.fidelity),
-      pulse: (e: PulseEvent) => {
-        if (e.type === "meta") p.pulses.arm(e.meta);
-        this.routePulse(p.runId, e);
-      },
+      pulse: (e: PulseEvent) => { if (e.type === "meta") p.pulses.arm(e.meta); this.routePulse(p.runId, e); },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
   }
 
-  /** Display sink for selection replays: inspector + status bar; promote stays
-   *  guarded. For a still-live run, meta also re-arms the pipeline stream. */
+  /** Display sink for a selection replay: posts the run's history into ITS pane
+   *  (runId-tagged) + points the status bar at it; promote stays guarded. For a
+   *  still-live run, meta also re-arms the pipeline stream (redundant with
+   *  registration but harmless). */
   private displaySink(rec: RunRecord): RunSink {
-    const p = this.pipelines.get(rec.runId);
+    const rid = rec.runId;
+    const p = this.pipelines.get(rid);
     return {
       iter: (r: IterRecord) => {
-        this.registry.noteIter(rec.runId, r.iter);
-        getInspector()?.postIterationRecord(r);
-        this.opts.statusBar?.setRun({ runId: rec.runId, outputDir: rec.runDir, startedAt: 0, status: "running", latestIter: r.iter });
+        this.registry.noteIter(rid, r.iter);
+        getInspector()?.postIterationRecord(rid, r);
+        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: "running", latestIter: r.iter });
       },
       run: (c: RunCompletion) => {
-        getInspector()?.postCompletion(c.status, c.fidelity);
-        this.opts.statusBar?.setRun({ runId: c.runId, outputDir: c.runDir, startedAt: 0, status: c.status, latestIter: this.registry.get(rec.runId)?.latestIter, fidelity: c.fidelity });
+        getInspector()?.postCompletion(rid, c.status, c.fidelity);
+        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: c.status, latestIter: this.registry.get(rid)?.latestIter, fidelity: c.fidelity });
       },
       pulse: (e: PulseEvent) => {
         if (e.type === "meta") p?.pulses.arm(e.meta);
-        getInspector()?.postPulse(e);
+        getInspector()?.postPulse(rid, e);
       },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
@@ -345,15 +369,20 @@ export class RunsManager implements vscode.Disposable {
   private routeIter(p: RunPipeline, rec: IterRecord): void {
     p.dedup.noteIter(rec.iter);
     this.registry.noteIter(p.runId, rec.iter);
-    if (this.selected !== p.runId) return;
-    getInspector()?.postIterationRecord(rec);
-    // Live status-bar update — "running · iter N" as it solves (#5 AC3).
-    this.opts.statusBar?.setRun({ runId: p.runId, outputDir: p.runDir, startedAt: 0, status: "running", latestIter: rec.iter });
+    // 1.3 fan-out: every run's iters go to the inspector runId-tagged (the
+    // webview updates that run's pane; only the active pane is visible — no
+    // cross-talk). The single status bar tracks the SELECTED run only.
+    getInspector()?.postIterationRecord(p.runId, rec);
+    if (this.selected === p.runId) {
+      // Live status-bar update — "running · iter N" as it solves (#5 AC3).
+      this.opts.statusBar?.setRun({ runId: p.runId, outputDir: p.runDir, startedAt: 0, status: "running", latestIter: rec.iter });
+    }
   }
 
   private routePulse(runId: string, e: PulseEvent): void {
-    if (this.selected !== runId) return;
-    getInspector()?.postPulse(e);
+    // Fan out to every run's pane (runId-tagged); the webview shows only the
+    // active pane. A background run's pulse never touches the visible plot.
+    getInspector()?.postPulse(runId, e);
   }
 
   private checkFinished(p: RunPipeline): void {
@@ -376,8 +405,10 @@ export class RunsManager implements vscode.Disposable {
     this.pipelines.delete(runId);
     this.opts.channel.appendLine(`[runs] ${runId} ${status}${fidelity !== undefined ? ` F=${fidelity.toFixed(6)}` : ""}`);
     if (status !== "completed") this.opts.channel.appendLine(`[runs] see ${path.join(rec.runDir, "run.log")}`);
+    // Terminal state to the inspector for EVERY run (its pane's badge stops
+    // saying "running" even in the background); status bar for the selected run.
+    getInspector()?.postCompletion(runId, status, fidelity);
     if (this.selected === runId) {
-      getInspector()?.postCompletion(status, fidelity);
       this.opts.statusBar?.setRun({ runId, outputDir: rec.runDir, startedAt: 0, status, latestIter: rec.latestIter, fidelity });
     }
     if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {

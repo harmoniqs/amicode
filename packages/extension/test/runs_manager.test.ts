@@ -4,12 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscodeMock from "vscode";
 
-// Drive the live RunsManager (1.2, #57) over a temp runs root and assert the
-// inspector calls. Ports the RunsRootWatcher state-machine coverage (idle-on-
-// finished baseline, warming→completion, #66 pulse routing) onto index-driven
-// discovery, and adds the multi-run behaviors: concurrent runs all tracked,
-// selection routing, background completion/promote, the Scheduler seam, and
-// the explicit-selection demo-replay path.
+// Drive the live RunsManager (1.2 #57 / 1.3 #58) over a temp runs root and
+// assert the inspector calls. Ports the RunsRootWatcher state-machine coverage
+// (idle-on-finished baseline, warming→completion, #66 pulse routing) onto
+// index-driven discovery, and adds the multi-run behaviors: concurrent runs all
+// tracked, selection routing, background completion/promote, the Scheduler seam,
+// and the explicit-selection demo-replay path.
+//
+// 1.3: the inspector protocol is runId-keyed and the manager FANS every run's
+// events into it runId-tagged (the webview shows only the active pane). The
+// single status bar stays selection-gated — so background-vs-foreground is now
+// asserted on the status bar, not on whether the inspector was called.
 //
 // The inspector is mocked (getInspector() returns spies); `vscode` is the
 // aliased stub. tick() is called directly so the poll path is deterministic.
@@ -21,6 +26,7 @@ const { inspector } = vi.hoisted(() => ({
     postIterationRecord: vi.fn(),
     postPulse: vi.fn(),
     setRunLabel: vi.fn(),
+    activate: vi.fn(),
     reveal: vi.fn(),
   },
 }));
@@ -30,6 +36,9 @@ import { RunsManager, type SchedulerLifecycleEvent, type SchedulerLike } from ".
 
 const channel = { appendLine() {}, append() {} } as never;
 const META_LINE = 'AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.2:0.2\n';
+
+/** Minimal StatusBarManager spy — only setRun is exercised. */
+function statusBarSpy() { return { setRun: vi.fn(), clear: vi.fn(), dispose: vi.fn() }; }
 
 function writeManifest(dir: string, runId: string): void {
   writeFileSync(join(dir, "run.toml"),
@@ -71,8 +80,9 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     const run = stageRun(root, "r2");                        // manifest only, no data yet
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
-    expect(inspector.setWarmingUp).toHaveBeenCalledTimes(1);
-    expect(inspector.setRunLabel).toHaveBeenCalledWith("r2");
+    expect(inspector.setWarmingUp).toHaveBeenCalledWith("r2");
+    expect(inspector.setRunLabel).toHaveBeenCalledWith("r2", "r2");
+    expect(inspector.activate).toHaveBeenCalledWith("r2");   // 1.3: selection = activate the pane
     expect(m.selectedRun).toBe("r2");
 
     // result.toml alone must NOT complete the run (FINISHED is authoritative).
@@ -82,11 +92,11 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
 
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     tick(m);
-    expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);
+    expect(inspector.postCompletion).toHaveBeenCalledWith("r2", "completed", 0.9999);
     m.dispose();
   });
 
-  it("live tail forwards meta and each record in order as they land (#66)", () => {
+  it("live tail forwards meta and each record in order as they land (#66), runId-tagged", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const run = stageRun(root, "p1");
     const m = new RunsManager({ runsRoot: root, channel });
@@ -96,13 +106,13 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     writeFileSync(join(run, "run.log"), META_LINE + "AMICODE_PULSE iter=1 dt=0.2 a=0.1,0.2\n");
     tick(m);
     expect(inspector.postPulse).toHaveBeenCalledTimes(2);
-    expect(inspector.postPulse).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: "meta" }));
-    expect(inspector.postPulse).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 1 }) }));
+    expect(inspector.postPulse).toHaveBeenNthCalledWith(1, "p1", expect.objectContaining({ type: "meta" }));
+    expect(inspector.postPulse).toHaveBeenNthCalledWith(2, "p1", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 1 }) }));
 
     appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=2 dt=0.2 a=0.3,0.4\n");
     tick(m);
     expect(inspector.postPulse).toHaveBeenCalledTimes(3);
-    expect(inspector.postPulse).toHaveBeenLastCalledWith(expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 2 }) }));
+    expect(inspector.postPulse).toHaveBeenLastCalledWith("p1", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 2 }) }));
     m.dispose();
   });
 
@@ -117,18 +127,19 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=4 dt=0.2 a=0.3,0.4\n");
     tick(m);                                                 // record parses against the armed meta
     expect(inspector.postPulse).toHaveBeenCalledTimes(3);
-    expect(inspector.postPulse).toHaveBeenLastCalledWith(expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 4 }) }));
+    expect(inspector.postPulse).toHaveBeenLastCalledWith("p2", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 4 }) }));
     m.dispose();
   });
 });
 
-describe("RunsManager multi-run (#57)", () => {
+describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
   beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
 
-  it("two concurrent live runs: newest auto-selected, BOTH tracked to completion", () => {
+  it("two concurrent live runs: newest auto-selected; both fanned to the inspector, status bar tracks the selected only", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const a = stageRun(root, "rA");
-    const m = new RunsManager({ runsRoot: root, channel });
+    const statusBar = statusBarSpy();
+    const m = new RunsManager({ runsRoot: root, channel, statusBar: statusBar as never });
     m.start();
     expect(m.selectedRun).toBe("rA");
 
@@ -136,27 +147,33 @@ describe("RunsManager multi-run (#57)", () => {
     tick(m);                                                 // index tail discovers it
     expect(m.selectedRun).toBe("rB");                        // auto-follow the newest start
     inspector.postIterationRecord.mockClear();
+    statusBar.setRun.mockClear();
 
-    // Background run A keeps streaming — tracked (registry) but NOT displayed.
+    // Background run A keeps streaming — FANNED to the inspector runId-tagged (the
+    // webview keeps it in rA's hidden pane) but the single status bar is untouched.
     appendFileSync(join(a, "run.log"), "AMICODE_ITER iter=7 f=0.1 inf_pr=1e-8 inf_du=1e-6\n");
     tick(m);
-    expect(inspector.postIterationRecord).not.toHaveBeenCalled();
+    expect(inspector.postIterationRecord).toHaveBeenCalledWith("rA", expect.objectContaining({ iter: 7 }));
+    expect(statusBar.setRun).not.toHaveBeenCalled();        // selection-gated: rB is selected
     expect(m.runs().find(r => r.runId === "rA")?.latestIter).toBe(7);
 
-    // A finishes in the background: registry terminal, inspector untouched…
+    // A finishes in the background: registry terminal, completion fanned to the
+    // inspector (rA's pane badge), status bar still untouched…
     writeFileSync(join(a, "result.toml"), 'schema_version = "1"\nfidelity = 0.9995\niterations = 7\n');
     writeFileSync(join(a, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
     tick(m);
-    expect(inspector.postCompletion).not.toHaveBeenCalled(); // rB is selected
+    expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9995);
+    expect(statusBar.setRun).not.toHaveBeenCalled();        // still rB selected
     expect(m.runs().find(r => r.runId === "rA")).toMatchObject({ phase: "finished", fidelity: 0.9995 });
-    // …but the promote prompt STILL fires (fan-out is per-run, not per-selection).
+    // …and the promote prompt STILL fires (fan-out is per-run, not per-selection).
     expect(promote).toHaveBeenCalledTimes(1);
 
-    // B completes while selected → completion reaches the inspector.
+    // B completes while selected → completion + status bar both fire.
     writeFileSync(join(b, "FINISHED"), 'status = "failed"\nexit_code = 3\n');
     tick(m);
-    expect(inspector.postCompletion).toHaveBeenCalledWith("failed", undefined);
+    expect(inspector.postCompletion).toHaveBeenCalledWith("rB", "failed", undefined);
+    expect(statusBar.setRun).toHaveBeenCalledWith(expect.objectContaining({ runId: "rB", status: "failed" }));
     promote.mockRestore();
     m.dispose();
   });
@@ -176,13 +193,14 @@ describe("RunsManager multi-run (#57)", () => {
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
     inspector.postCompletion.mockClear();
     m.selectRun("rA");                                       // user switches back (1.3 seam)
-    expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);
+    expect(inspector.activate).toHaveBeenCalledWith("rA");
+    expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9999);
     expect(promote).not.toHaveBeenCalled();                  // promote-once held
     promote.mockRestore();
     m.dispose();
   });
 
-  it("PULSE events are gated on selection too (not just iter) — background run's plot never reaches the inspector", () => {
+  it("PULSE events are fanned to the inspector runId-tagged even for a background run (webview shows only the active pane)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const a = stageRun(root, "rA", { log: META_LINE });        // rA armed with meta
     const m = new RunsManager({ runsRoot: root, channel });
@@ -192,10 +210,11 @@ describe("RunsManager multi-run (#57)", () => {
     expect(m.selectedRun).toBe("rB");                           // rA now background
     inspector.postPulse.mockClear();
 
-    // A background pulse RECORD on rA must not reach the inspector (rB selected).
+    // A background pulse RECORD on rA reaches the inspector TAGGED "rA" — the
+    // webview routes it to rA's hidden pane, never the visible rB plot.
     appendFileSync(join(a, "run.log"), "AMICODE_PULSE iter=5 dt=0.2 a=0.1,0.2\n");
     tick(m);
-    expect(inspector.postPulse).not.toHaveBeenCalled();
+    expect(inspector.postPulse).toHaveBeenCalledWith("rA", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 5 }) }));
     m.dispose();
   });
 
@@ -214,7 +233,7 @@ describe("RunsManager multi-run (#57)", () => {
     writeFileSync(join(a, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     m.selectRun("rA");                                          // user switches back BEFORE the tick
     // selectRun re-checks disk → completion, NOT warming (no terminal-badge inversion).
-    expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);
+    expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9999);
     expect(inspector.setWarmingUp).not.toHaveBeenCalled();
     m.dispose();
   });
@@ -245,8 +264,9 @@ describe("RunsManager multi-run (#57)", () => {
     emit({ kind: "queued", queueId: "q1", position: 0 });     // logged, no throw
     emit({ kind: "started", queueId: "q1", runId: "rSched", runDir: dir });
     expect(m.selectedRun).toBe("rSched");
-    expect(inspector.setRunLabel).toHaveBeenCalledWith("rSched");
-    expect(inspector.setWarmingUp).toHaveBeenCalled();
+    expect(inspector.setRunLabel).toHaveBeenCalledWith("rSched", "rSched");
+    expect(inspector.activate).toHaveBeenCalledWith("rSched");
+    expect(inspector.setWarmingUp).toHaveBeenCalledWith("rSched");
 
     // The index line landing later is a no-op (registration is idempotent).
     appendFileSync(join(root, "index"), "rSched\t2026-07-03T00:00:00Z\t/s.jl\n");
@@ -267,9 +287,10 @@ describe("RunsManager multi-run (#57)", () => {
     m.pokeDiscovery();                                        // same-tick registration…
     expect(inspector.postCompletion).not.toHaveBeenCalled();  // …but no auto-display
     m.selectRun("rDemo");                                     // the replayDemo command's path
-    expect(inspector.setRunLabel).toHaveBeenCalledWith("rDemo");
-    expect(inspector.postPulse).toHaveBeenCalledWith(expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 60 }) }));
-    expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9998);
+    expect(inspector.setRunLabel).toHaveBeenCalledWith("rDemo", "rDemo");
+    expect(inspector.activate).toHaveBeenCalledWith("rDemo");
+    expect(inspector.postPulse).toHaveBeenCalledWith("rDemo", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 60 }) }));
+    expect(inspector.postCompletion).toHaveBeenCalledWith("rDemo", "completed", 0.9998);
     expect(inspector.setWarmingUp).not.toHaveBeenCalled();    // finished — never "warming"
     expect(promote).not.toHaveBeenCalled();                   // finished-at-discovery: no prompt
     promote.mockRestore();
@@ -293,7 +314,8 @@ describe("RunsManager review-#70 fixes", () => {
     stageRun(root, "rB");                                     // background solve starts
     tick(m);
     expect(m.selectedRun).toBe("rA");                          // auto-follow deferred to the pin
-    expect(inspector.setRunLabel).not.toHaveBeenCalledWith("rB");
+    expect(inspector.setRunLabel).not.toHaveBeenCalledWith("rB", "rB");
+    expect(inspector.activate).not.toHaveBeenCalledWith("rB"); // visible pane untouched
     expect(m.runs().find(r => r.runId === "rB")?.phase).toBe("live");   // …but rB IS tracked
 
     m.selectRun("rB");                                        // explicit switch still works
