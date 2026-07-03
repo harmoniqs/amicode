@@ -45,10 +45,17 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
 })
 
 describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
-  it('scopes the interview to the pulse-designer persona and never forces it', () => {
+  it('scopes the interview to the pulse-designer persona and never forces it on a specific ask', () => {
     expect(AGENTS).toMatch(/pulse-designer/)
     expect(AGENTS).toMatch(/skip straight to\s+the\s+workflow/i)
     expect(AGENTS).toMatch(/fast-forward/i)
+  })
+  it('identity: Amico/Amicode, never self-describes as opencode; interview kicks off proactively on greetings', () => {
+    expect(AGENTS).toMatch(/You are \*\*Amico\*\*/)
+    expect(AGENTS).toMatch(/NOT "opencode"/)
+    expect(AGENTS).toMatch(/never describe yourself as an interactive CLI tool/i)
+    expect(AGENTS).toMatch(/\*\*proactively\*\*/i)
+    expect(AGENTS).toMatch(/greeting or no specific request/i)
   })
   it('enforces one-question-at-a-time cadence', () => {
     expect(AGENTS).toMatch(/ONE question at a time/)
