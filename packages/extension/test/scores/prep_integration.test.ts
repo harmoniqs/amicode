@@ -36,7 +36,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     const proj = prep();
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Onset router");
-    expect(agents).toContain("Compiled from score `pulse-designer` v1");
+    expect(agents).toMatch(/Compiled from score `pulse-designer` v\d+/); // version-agnostic: content bumps must not red this suite
     expect(agents).toContain("## Pulse-designer interview"); // heading preserved for the agent prompt
     expect(agents).not.toContain("Stages, in order:"); // hardcoded body replaced
     expect(agents).toContain("## Identity"); // engine sections intact
@@ -48,7 +48,10 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     const proj = prep();
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
-    expect(manifest.manifest.version).toBe(1);
+    expect(manifest.manifest.version).toBeGreaterThanOrEqual(1); // tracks SCORE.md frontmatter
+    // the compiled banner and the manifest must agree on the version (no drift)
+    const agentsForVersion = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(agentsForVersion).toContain(`Compiled from score \`pulse-designer\` v${manifest.manifest.version}`);
     expect(manifest.project_dir).toBe(proj.projectDir);
     expect(manifest.score_dir).toBe(path.join(DEFAULT_SCORES_ROOT, "pulse-designer"));
     // the copy the Bun-side guard actually reads (entitiesDir contract)
