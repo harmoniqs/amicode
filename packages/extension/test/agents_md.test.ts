@@ -75,6 +75,7 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
   })
   it('names the amicode_* recording tools as bookkeeping, not gates, with bash still the launch mechanism', () => {
     for (const t of [
+      'amicode_ask',
       'amicode_pick_system',
       'amicode_set_model',
       'amicode_formulate',
