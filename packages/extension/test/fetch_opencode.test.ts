@@ -79,3 +79,22 @@ describe('fetchOpencode', () => {
     expect(existsSync(join(root, 'vendor', 'opencode', 'linux-x64', 'opencode'))).toBe(false)
   })
 })
+
+describe('releaseCoords — fork-mirror pinning', async () => {
+  const { releaseCoords, assetUrl } = await import('../scripts/fetch_opencode.mjs')
+  const platforms = { 'linux-x64': { asset: 'opencode-linux-x64.tar.gz', sha256: 'a'.repeat(64) } }
+  it('defaults to upstream at v<version>, public', () => {
+    const m = { version: '1.17.3', platforms }
+    expect(releaseCoords(m)).toEqual({ repo: 'sst/opencode', tag: 'v1.17.3', private: false })
+    expect(assetUrl(m, 'linux-x64')).toBe(
+      'https://github.com/sst/opencode/releases/download/v1.17.3/opencode-linux-x64.tar.gz',
+    )
+  })
+  it('repo+tag repoint to the private mirror', () => {
+    const m = { version: '1.17.3', repo: 'harmoniqs/opencode', tag: 'v1.17.3-amicode.1', platforms }
+    expect(releaseCoords(m)).toEqual({ repo: 'harmoniqs/opencode', tag: 'v1.17.3-amicode.1', private: true })
+    expect(assetUrl(m, 'linux-x64')).toBe(
+      'https://github.com/harmoniqs/opencode/releases/download/v1.17.3-amicode.1/opencode-linux-x64.tar.gz',
+    )
+  })
+})

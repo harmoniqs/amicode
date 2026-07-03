@@ -32,8 +32,20 @@ export function resolvePlatform(manifest, flag) {
   return key
 }
 
+/** Release coordinates: default = upstream sst/opencode at v<version>; a manifest
+ *  with `repo`/`tag` set points at our fork's release instead (harmoniqs/opencode,
+ *  private — downloads go through the authenticated `gh` path in that case). */
+export function releaseCoords(manifest) {
+  return {
+    repo: manifest.repo ?? 'sst/opencode',
+    tag: manifest.tag ?? `v${manifest.version}`,
+    private: manifest.repo != null,   // our mirror is private; upstream is not
+  }
+}
+
 export function assetUrl(manifest, platform) {
-  return `https://github.com/sst/opencode/releases/download/v${manifest.version}/${manifest.platforms[platform].asset}`
+  const { repo, tag } = releaseCoords(manifest)
+  return `https://github.com/${repo}/releases/download/${tag}/${manifest.platforms[platform].asset}`
 }
 
 export const sha256 = (buf) => createHash('sha256').update(buf).digest('hex')
@@ -45,6 +57,21 @@ async function defaultDownload(url) {
   }
   if (!r.ok) throw new Error(`download failed: HTTP ${r.status} for ${url}`)
   return Buffer.from(await r.arrayBuffer())
+}
+
+/** Private-release download via the gh CLI (the team's auth path for our
+ *  private repos). Plain fetch 404s on private assets — gh handles the token. */
+function ghDownload(repo, tag, asset) {
+  const work = mkdtempSync(join(PKG_ROOT, '.ghdl-'))
+  try {
+    execFileSync('gh', ['release', 'download', tag, '--repo', repo, '--pattern', asset, '--dir', work],
+      { stdio: ['ignore', 'ignore', 'inherit'] })
+    return readFileSync(join(work, asset))
+  } catch (e) {
+    throw new Error(`gh release download failed for ${repo}@${tag} ${asset}: ${e.message} — is \`gh\` installed and authed for ${repo}?`)
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
 }
 
 export async function fetchOpencode({ root = PKG_ROOT, platform, download = defaultDownload } = {}) {
@@ -59,7 +86,10 @@ export async function fetchOpencode({ root = PKG_ROOT, platform, download = defa
     return { skipped: true, path: bin }                       // offline repeat builds
   }
 
-  const bytes = await download(assetUrl(manifest, key))
+  const coords = releaseCoords(manifest)
+  const bytes = coords.private && download === defaultDownload
+    ? ghDownload(coords.repo, coords.tag, asset)
+    : await download(assetUrl(manifest, key))
   const got = sha256(bytes)
   if (got !== want) {
     // Possible supply-chain signal: no retry, no override (spec §3 step 4).
