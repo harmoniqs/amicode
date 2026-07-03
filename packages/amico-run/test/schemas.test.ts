@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { validateManifest, validateFinished, validateResult } from '../src/schemas.js'
+import { validateManifest, validateFinished, validateResult, validateFormulation } from '../src/schemas.js'
 
 // These wrappers delegate to the shared @amicode/schema (single source of truth);
 // this suite is the delegation smoke + the field-precise contract they expose.
@@ -40,6 +40,21 @@ describe('validateResult (reader-side)', () => {
     expect(validateResult({ schema_version: '1', fidelity: 0.999, iterations: 200, wall_seconds: 12.5 }).ok).toBe(true)
     expect(validateResult({ fidelity: 0.999, iterations: 200 }).ok).toBe(false)   // no schema_version
     expect(validateResult({ schema_version: '1', iterations: 200 }).ok).toBe(false) // no fidelity
+  })
+})
+
+describe('validateFormulation (reader-side)', () => {
+  it('requires schema_version + system.family + formulation.gate; leaves lenient per family', () => {
+    // The pre-solve problem-definition file (#64 counterpart). Structure fixed,
+    // leaf params lenient per family (a rydberg [system] carries no delta).
+    expect(validateFormulation({
+      schema_version: '1',
+      system: { family: 'transmon', delta: 0.2, levels: 3, drive_max: 0.2 },
+      formulation: { gate: 'X', T: 10.0, N: 50, Q: 100.0, R: 0.01 },
+    }).ok).toBe(true)
+    expect(validateFormulation({ system: { family: 'transmon' }, formulation: { gate: 'X' } }).ok).toBe(false) // no schema_version
+    expect(validateFormulation({ schema_version: '1', system: {}, formulation: { gate: 'X' } }).ok).toBe(false) // no family
+    expect(validateFormulation({ schema_version: '1', system: { family: 'transmon' }, formulation: {} }).ok).toBe(false) // no gate
   })
 })
 

@@ -11,13 +11,15 @@ using TOML
 using Printf
 
 # ── FILL IN ──────────────────────────────────────────────────────────────
-δ          = 0.2        # anharmonicity (GHz, positive convention)
-levels     = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
-gate       = GATES[:X]
-T          = 10.0       # gate time (ns)
-N          = 50         # timesteps
-drive_max  = 0.2        # per-quadrature drive bound (GHz)
-max_iter   = 60
+δ           = 0.2        # anharmonicity (GHz, positive convention)
+levels      = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
+gate        = GATES[:X]
+gate_name   = "X"        # DECLARED gate label — GATES[:X] is a matrix, so the ":X" name is lost above; declare it so formulation.toml can record it
+system_name = nothing    # optional user-assigned device name (e.g. "qram-cleland"); nothing if unnamed
+T           = 10.0       # gate time (ns)
+N           = 50         # timesteps
+drive_max   = 0.2        # per-quadrature drive bound (GHz)
+max_iter    = 60
 # ─────────────────────────────────────────────────────────────────────────
 
 sys = TransmonSystem(; δ = δ, levels = levels, drive_bounds = fill(drive_max, 2))
@@ -26,10 +28,17 @@ op  = size(gate, 1) == sys.levels ? gate : EmbeddedOperator(gate, sys)
 times   = collect(range(0.0, T, length = N))
 initial = 0.1 * randn(sys.n_drives, N)
 qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(initial, times), op)
+Q = 100.0   # infidelity objective weight — defines the optimum (recorded in formulation.toml)
+R = 1e-2    # control-effort objective weight — defines the optimum (recorded in formulation.toml)
 qcp = SmoothPulseProblem(qtraj, N;
     piccolo_options = PiccoloOptions(timesteps_all_equal = true),
-    Q = 100.0, R = 1e-2)
+    Q = Q, R = R)
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
+
+# Shared run-dir emit helper (anti-drift; see emit_formulation.jl). Resolved
+# relative to THIS template's dir, not the run-dir cwd, so the include works
+# wherever amico-run drops us.
+include(joinpath(@__DIR__, "emit_formulation.jl"))
 
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
 # `AbstractIntermediateCallback` (the blessed, solver-agnostic per-iter plot
@@ -86,6 +95,19 @@ let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
     flush(stdout)
 end
 
+# Pre-solve: drop formulation.toml — the DECLARED problem (physics + objective),
+# written before solve! while every FILL-IN var is in scope. Authoritative
+# identity source (#64 keys hashes off this); [system] = the device, [formulation]
+# = the optimal-control problem posed against it. Via the shared helper so the
+# shape can't drift across templates.
+emit_formulation(;
+    system_family = "transmon",
+    gate_name = gate_name,
+    system_name = system_name,
+    system_params = Dict("delta" => δ, "levels" => levels, "drive_max" => drive_max),
+    formulation_extra = Dict("T" => T, "N" => N, "Q" => Q, "R" => R),
+)
+
 # AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
 # IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
@@ -132,6 +154,10 @@ JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` c
 open("result.toml.tmp", "w") do io
     # Record the regime each run actually solved (scalar FILL-IN params), so the
     # result is self-describing — not just fidelity/iterations.
+    # NOTE: [params] is now REDUNDANT with the pre-solve formulation.toml (the
+    # authoritative problem-definition file). Kept for now so in-flight consumers
+    # (#73 card reads params.T/params.system) don't break; killing it is a
+    # follow-up once those readers migrate to formulation.toml (tracked in #64).
     TOML.print(io, Dict(
         "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
         "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,

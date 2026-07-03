@@ -26,9 +26,9 @@ describe("valid golden fixtures validate clean", () => {
 });
 
 describe("schema set + exports", () => {
-  it("exposes all five versioned schemas + the FINISHED sub-shape", () => {
+  it("exposes all versioned schemas + the FINISHED sub-shape", () => {
     expect(new Set(SCHEMA_KINDS)).toEqual(
-      new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished"]),
+      new Set(["run", "result", "formulation", "lab", "solvespec", "catalog-entry", "finished"]),
     );
   });
   it("SUPPORTED_SCHEMA_VERSIONS is the v1 instantiation of a version SET", () => {
@@ -43,16 +43,16 @@ describe("schema set + exports", () => {
 
 // ── schema_version policy (S5/S6, #15 AC3, #16 AC5, #17 AC3) ──
 describe("schema_version policy", () => {
-  it("ABSENT version → field-precise missing-required (the five versioned schemas)", () => {
-    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
+  it("ABSENT version → field-precise missing-required (the versioned schemas)", () => {
+    for (const kind of ["run", "result", "formulation", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
       const obj = load(kind); delete obj.schema_version;
       const r = validate(obj, kind);
       expect(r.ok).toBe(false);
       expect(hasErr(r.errors, "missing required key \"schema_version\"")).toBe(true);
     }
   });
-  it("UNRECOGNIZED version → distinct version-specific error (all five versioned schemas)", () => {
-    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
+  it("UNRECOGNIZED version → distinct version-specific error (all versioned schemas)", () => {
+    for (const kind of ["run", "result", "formulation", "lab", "solvespec", "catalog-entry"] as SchemaKind[]) {
       const obj = load(kind); obj.schema_version = "99";
       const r = validate(obj, kind);
       expect(r.ok).toBe(false);
@@ -61,7 +61,7 @@ describe("schema_version policy", () => {
   });
   it("every versioned schema's enum is in sync with SUPPORTED_SCHEMA_VERSIONS (no drift seam)", () => {
     const schemasDir = join(here, "..", "schemas");
-    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"]) {
+    for (const kind of ["run", "result", "formulation", "lab", "solvespec", "catalog-entry"]) {
       const schema = JSON.parse(readFileSync(join(schemasDir, `${kind}.schema.json`), "utf8"));
       expect(schema.properties.schema_version.enum, `${kind} enum drift`).toEqual([...SUPPORTED_SCHEMA_VERSIONS]);
     }
@@ -128,6 +128,37 @@ describe("field-precise negative matrix", () => {
     (r.params as Record<string, unknown>).future_knob = 7;       // unknown param OK
     (r.params as Record<string, unknown>).levels = 4.0;          // float where int-ish OK
     expect(validate(r, "result").ok).toBe(true);
+  });
+});
+
+// ── formulation.toml — the pre-solve problem-definition file (#64 counterpart) ──
+describe("formulation.toml schema (System÷Formulation)", () => {
+  it("the valid fixture (transmon) validates clean", () => {
+    expect(validateFile(fixtureFile("formulation"), "formulation").errors).toEqual([]);
+  });
+  it("requires system.family and formulation.gate (the DECLARED labels)", () => {
+    const noFamily = load("formulation");
+    delete (noFamily.system as Record<string, unknown>).family;
+    expect(hasErr(validate(noFamily, "formulation").errors, '/system: missing required key "family"')).toBe(true);
+    const noGate = load("formulation");
+    delete (noGate.formulation as Record<string, unknown>).gate;
+    expect(hasErr(validate(noGate, "formulation").errors, '/formulation: missing required key "gate"')).toBe(true);
+  });
+  it("leaf fields are LENIENT per family (a rydberg [system] has no delta, extra keys OK)", () => {
+    // No delta/levels; family-specific keys instead — must still validate (M2 parity).
+    const rydberg = {
+      schema_version: "1",
+      system: { family: "rydberg", Omega_max: 5.0, Delta_max: 10.0, C6: 862690.0, distance: 5.5 },
+      formulation: { gate: "CZ", T: 0.5, N: 40 },
+    };
+    expect(validate(rydberg, "formulation").ok).toBe(true);
+  });
+  it("the invalid fixture (missing family + gate) is rejected", () => {
+    expect(validateFile(join(here, "fixtures", "invalid", "formulation.toml"), "formulation").ok).toBe(false);
+  });
+  it("unknown TOP-LEVEL key is rejected (structure is fixed even though leaves are lenient)", () => {
+    const r = load("formulation"); r.bogus = 1;
+    expect(hasErr(validate(r, "formulation").errors, 'unknown key "bogus"')).toBe(true);
   });
 });
 

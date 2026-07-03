@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/formulation/v1",
+  "title": "amico run-dir formulation.toml",
+  "description": "The PROBLEM a run was asked to solve — the physics and objective, written PRE-SOLVE by the Julia template (via the shared emit_formulation helper). Split into [system] (the physical device) and [formulation] (the optimal-control problem posed against it). Additive third file in the run-dir contract (alongside run.toml / result.toml); it is the authoritative identity source #64's hashing keys off. Field sets inside each block are LENIENT per family (a Rydberg [system] has no delta) — the structure (schema_version + [system] + [formulation]) is fixed, the leaf fields are validated leniently, mirroring result.toml's [params].",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "system", "formulation"],
+  "properties": {
+    "schema_version": { "enum": ["1"], "description": "run-dir contract version (enum = the supported-version SET; grows by one entry per bump)" },
+    "system": {
+      "type": "object",
+      "description": "The physical device being driven — independent of the gate asked of it. Leaf fields are family-dependent (transmon: delta/levels/drive_max; rydberg: Omega_max/Delta_max/C6/distance), so only the family label is required; the rest ride an additionalProperties: true params surface (a per-family closed schema is a later decision).",
+      "additionalProperties": true,
+      "required": ["family"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1, "description": "DECLARED family label (the family/type of system, e.g. \"transmon\", \"rydberg\") — cannot be reverse-derived from the Julia struct's type, so the template declares it" },
+        "name": { "type": "string", "description": "optional user-assigned device name (from the #73 save flow, if named)" }
+      }
+    },
+    "formulation": {
+      "type": "object",
+      "description": "The optimal-control problem posed against [system]: the target gate, horizon, and objective weights. Structure fixed; leaf set lenient per family (additionalProperties: true).",
+      "additionalProperties": true,
+      "required": ["gate"],
+      "properties": {
+        "gate": { "type": "string", "minLength": 1, "description": "DECLARED gate label (e.g. \"X\", \"CZ\") — GATES[:X] is a matrix, so the name is lost on that line; the template declares it" },
+        "T": { "type": "number", "exclusiveMinimum": 0, "description": "gate-time horizon" },
+        "N": { "type": "integer", "minimum": 1, "description": "timesteps" },
+        "Q": { "type": "number", "description": "infidelity objective weight" },
+        "R": { "type": "number", "description": "control-effort objective weight" }
+      }
+    }
+  }
+}

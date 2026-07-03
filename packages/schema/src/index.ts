@@ -11,6 +11,7 @@ import addFormatsDefault from "ajv-formats";
 
 import runSchema from "../schemas/run.schema.json" with { type: "json" };
 import finishedSchema from "../schemas/finished.schema.json" with { type: "json" };
+import formulationSchema from "../schemas/formulation.schema.json" with { type: "json" };
 import resultSchema from "../schemas/result.schema.json" with { type: "json" };
 import labSchema from "../schemas/lab.schema.json" with { type: "json" };
 import solvespecSchema from "../schemas/solvespec.schema.json" with { type: "json" };
@@ -27,6 +28,7 @@ const addFormats = (typeof addFormatsDefault === "function"
 const SCHEMAS = {
   run: runSchema,
   finished: finishedSchema,
+  formulation: formulationSchema,
   result: resultSchema,
   lab: labSchema,
   solvespec: solvespecSchema,
@@ -49,6 +51,7 @@ export interface Validation { ok: boolean; errors: string[] }
 export function kindForFilename(filePath: string): SchemaKind | undefined {
   const base = filePath.replace(/^.*[\\/]/, "");
   if (base === "run.toml") return "run";
+  if (base === "formulation.toml") return "formulation";
   if (base === "result.toml") return "result";
   if (base === "lab.toml") return "lab";
   if (base === "FINISHED") return "finished";
