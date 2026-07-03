@@ -17,21 +17,27 @@ export interface EntitlementProvider {
 // v1 local stub: reads <configDir>/entitlements.toml — `codes = [...]` (+ optional
 // `expired = [...]`). Missing file = public-only, silently. Malformed = named error
 // with public fallback: an entitlement failure must never dead-end the session.
+// Sync core so the (synchronous) session-prep path can use it; the async
+// EntitlementProvider interface is what the future redemption service implements.
+export function readLocalEntitlements(configDir: string): EntitlementResult {
+  const file = path.join(configDir, "entitlements.toml");
+  if (!fs.existsSync(file)) return { entitlements: [] };
+  let parsed: { codes?: string[]; expired?: string[] };
+  try {
+    parsed = parseToml(fs.readFileSync(file, "utf8")) as typeof parsed;
+  } catch {
+    return { entitlements: [], error: "invalid_code" };
+  }
+  const result: EntitlementResult = { entitlements: parsed.codes ?? [] };
+  if ((parsed.expired ?? []).length > 0) result.error = "expired_code";
+  return result;
+}
+
 export class LocalEntitlementProvider implements EntitlementProvider {
   constructor(private readonly configDir: string) {}
 
   async resolve(): Promise<EntitlementResult> {
-    const file = path.join(this.configDir, "entitlements.toml");
-    if (!fs.existsSync(file)) return { entitlements: [] };
-    let parsed: { codes?: string[]; expired?: string[] };
-    try {
-      parsed = parseToml(fs.readFileSync(file, "utf8")) as typeof parsed;
-    } catch {
-      return { entitlements: [], error: "invalid_code" };
-    }
-    const result: EntitlementResult = { entitlements: parsed.codes ?? [] };
-    if ((parsed.expired ?? []).length > 0) result.error = "expired_code";
-    return result;
+    return readLocalEntitlements(this.configDir);
   }
 }
 

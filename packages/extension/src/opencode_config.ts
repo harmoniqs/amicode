@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { loadRepertoire } from "./scores/loader";
+import { readLocalEntitlements, filterRepertoire } from "./scores/entitlements";
+import { buildRouterSection } from "./scores/router";
+import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -98,10 +102,15 @@ function entitiesDir(): string {
  *  from either. */
 const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "amicode_tools.ts");
 
+/** Default scores repertoire root — same sibling-of-src-and-dist trick as the
+ *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
+export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
   pluginPath: string = DEFAULT_PLUGIN_PATH,
+  scoresRoot: string = DEFAULT_SCORES_ROOT,
 ): string {
   const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
@@ -126,6 +135,7 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
         [`${entitiesDir()}/**`]: "allow",   // amicode_* entities the agent may read back
+        [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
       },
     },
   });
@@ -141,6 +151,10 @@ export interface OpencodeConfigOptions {
   /** Julia project (--project) the agent should use; already resolved (see
    *  resolveJuliaProject). Substituted into AGENTS.md as {{JULIA_PROJECT}}. */
   juliaProject: string | undefined;
+  /** Scores repertoire root (SCORE.md manifests). Default: the bundled scores/. */
+  scoresRoot?: string;
+  /** Dir holding the user's entitlements.toml (access-code stub). Default: ~/.amico/amicode. */
+  entitlementsDir?: string;
 }
 
 export interface OpencodeProject {
@@ -162,7 +176,34 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   const filled = raw
     .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
     .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc);
-  fs.writeFileSync(agentsPath, filled, "utf8");
+
+  // Score runtime ("data-defined, prompt-executed", scores spec §6): compile the
+  // selected score (v1: boot-time selection of score #0, pulse-designer) over the
+  // hardcoded interview section, prefix the onset router, and drop the manifest
+  // transport for the Bun-side plugin. FALLBACK: any failure leaves the substituted
+  // AGENTS.md exactly as before — the hardcoded section IS the fallback content;
+  // score trouble must never brick the boot.
+  let finalContent = filled;
+  try {
+    const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
+    const load = loadRepertoire(scoresRoot);
+    const ents = readLocalEntitlements(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
+    const visible = filterRepertoire(load.scores, ents.entitlements);
+    const score0 = visible.find((s) => s.manifest.id === "pulse-designer");
+    if (score0) {
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
+      // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
+      // reads this file to enforce stage order — see opencode-plugin/amicode_tools.ts.
+      fs.writeFileSync(
+        path.join(projectDir, "score_manifest.json"),
+        JSON.stringify({ manifest: score0.manifest, score_dir: score0.dir, project_dir: projectDir }, null, 2) + "\n",
+      );
+    }
+  } catch (e) {
+    console.warn(`amicode: score compilation failed, using built-in interview fallback: ${e}`);
+    finalContent = filled;
+  }
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
