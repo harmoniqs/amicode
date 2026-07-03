@@ -113,11 +113,12 @@ export class RunsRootWatcher implements vscode.Disposable {
    *  launch-follows-latest. */
   private readonly promotedRuns = new Set<string>();
   /** Polling backstop. macOS fs.watch (FSEvents) coalesces and silently drops
-   *  events — especially under load — so the symlink-follow + per-frame watches
-   *  miss `latest` swings and `iter_*.png` creations, leaving the inspector
-   *  stuck (no live frames). A cheap periodic rescan guarantees delivery; the
-   *  fs.watch paths stay for low latency. All sinks are idempotent (frame dedup
-   *  by iter, finishedSeen, log byte-offset), so double-delivery is harmless. */
+   *  events — especially under load — so the symlink-follow + run-dir watches
+   *  can miss `latest` swings and FINISHED, and the log tailer's change events
+   *  can go quiet. The periodic tick re-resolves `latest`, re-checks FINISHED,
+   *  and pokes the tailer (which self-attaches if run.log appeared unseen); the
+   *  fs.watch paths stay for low latency. All sinks are idempotent
+   *  (finishedSeen, log byte-offset), so double-delivery is harmless. */
   private poll?: NodeJS.Timeout;
   private static readonly POLL_MS = 700;
 
