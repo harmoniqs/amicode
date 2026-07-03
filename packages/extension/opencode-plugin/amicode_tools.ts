@@ -131,6 +131,37 @@ const RYDBERG_SCOPE_NOTE =
 // creation with PluginInput; we need nothing from it today.
 export const AmicodeTools = async (_input: unknown) => ({
   tool: {
+    amicode_ask: {
+      description:
+        "Present ONE multiple-choice question to the user as clickable buttons in the Amicode chat. " +
+        "Use for interview stages with a small option set (platform, sim-vs-solve, problem/gate). " +
+        "The user's next message is their answer (a button click sends the option text verbatim). " +
+        "End your turn after calling this — never answer on the user's behalf.",
+      args: {
+        question: {
+          type: "string",
+          description: "The single question to ask.",
+        },
+        options: {
+          type: "array",
+          items: { type: "string" },
+          description: "2-6 short option labels, one per button.",
+        },
+      },
+      async execute(a: { question: string; options: string[] }) {
+        const opts = Array.isArray(a.options)
+          ? a.options.filter((o) => typeof o === "string" && o.trim() !== "")
+          : [];
+        if (!a.question || a.question.trim() === "") return "Cannot ask: empty question.";
+        if (opts.length < 2 || opts.length > 6) return "Cannot ask: need 2-6 non-empty options.";
+        // The renderer draws the buttons from this tool part's INPUT args; this
+        // return text is for the model (and the pre-rail fallback display).
+        return (
+          `Question presented with ${opts.length} option buttons — ` +
+          `the user's next message is the answer; wait for it.`
+        );
+      },
+    },
     amicode_pick_system: {
       description:
         "Record the chosen platform as the System entity (interview stage 1: PLATFORM). " +

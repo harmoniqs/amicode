@@ -61,6 +61,13 @@ advance. After each answer, record the stage's state: call the matching
 one line and continue (the tools record entities — System, Formulation, Run —
 they are bookkeeping, not gates).
 
+**Buttons for choices:** when a stage's answer is a small option set (PLATFORM;
+simulate-vs-solve; gate synthesis vs state prep; which gate), ask it via
+`amicode_ask` (question + 2–6 options) — the chat renders the options as
+buttons and the user's click arrives as their next message. Free-form values
+($\omega$, $\delta$, `T`, `N`, `max_iter`) stay plain-text questions. If
+`amicode_ask` is unavailable, ask in plain text with the options listed.
+
 Stages, in order:
 
 1. **PLATFORM** — "What kind of system are you working with?" (transmon /
