@@ -16,6 +16,10 @@ const REQUIRED = [
   'extension/demo/run/run.log',   // inspector reads run.log for the demo's stats row; *.log-gitignored so easy to drop
   'extension/media/brand.css',      // style variables (design-owned) — must ship, else an unstyled inspector
   'extension/media/layout.css',     // layout selectors (design-owned) — must ship, else an unstyled inspector
+  'extension/scores/pulse-designer/SCORE.md',            // score #0 — the interview is data; a dropped repertoire = silent prose fallback
+  'extension/scores/pulse-designer/templates/solve.jl',  // score-local vetted template (lint requires it resolves)
+  'extension/scores/memory/free-phase-objective-only.md',
+  'extension/scores/entitlements.toml',                  // entitlement registry — gating breaks silently without it
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback

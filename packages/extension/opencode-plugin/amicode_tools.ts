@@ -68,6 +68,7 @@ import {
   type DeviceSessionStub,
   type CalibrationStub,
 } from "./entities";
+import { guardAndRecordStage, completeStage } from "./score_guard";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -193,6 +194,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { platform: string; omega?: number | null; delta?: number | null }) {
+        const blocked = guardAndRecordStage(entitiesDir(), "platform");
+        if (blocked) return blocked;
         const params: Record<string, number> = {};
         if (given(a.omega)) params.omega = a.omega;
         if (given(a.delta)) params.delta = a.delta;
@@ -200,6 +203,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         const problems = validateSystem(entity);
         if (problems.length) return `Cannot record system: ${problems.join("; ")}`;
         const file = persistSystem(entity);
+        completeStage(entitiesDir(), "platform");
         if (entity.platform === "transmon") {
           return (
             `System recorded (transmon, ${entity.levels} levels, ${paramsSummary(params)}) → ${file}\n\n` +
@@ -235,6 +239,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { levels?: number | null; drive_max?: number | null; params?: Record<string, number> | null }) {
+        const blocked = guardAndRecordStage(entitiesDir(), "model");
+        if (blocked) return blocked;
         const existing = readSystemState();
         if (!existing) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
         const patchParams: Record<string, number> = { ...(given(a.params) ? a.params : {}) };
@@ -245,6 +251,7 @@ export const AmicodeTools = async (_input: unknown) => ({
             params: patchParams,
           });
           const file = persistSystem(merged);
+          completeStage(entitiesDir(), "model");
           return `System updated (${merged.platform}, ${merged.levels} levels, ${paramsSummary(merged.params)}) → ${file}`;
         } catch (err) {
           return `Cannot update model: ${err instanceof Error ? err.message : String(err)}`;
@@ -276,6 +283,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
+        const blocked = guardAndRecordStage(entitiesDir(), "formulate");
+        if (blocked) return blocked;
         const entity: FormulationEntity = {
           problem: a.problem,
           target: a.target,
@@ -285,6 +294,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         const problems = validateFormulation(entity);
         if (problems.length) return `Cannot record formulation: ${problems.join("; ")}`;
         const file = writeEntity("formulation.toml", formulationToml(entity));
+        completeStage(entitiesDir(), "formulate");
         return (
           `Formulation recorded → ${file}\n` +
           `problem: ${entity.problem}; target: ${entity.target}; objective: ${entity.objective}; ` +
@@ -310,6 +320,8 @@ export const AmicodeTools = async (_input: unknown) => ({
       },
       async execute(a: { run_dir?: string | null; note?: string | null }) {
         const dir = entitiesDir();
+        const blocked = guardAndRecordStage(dir, "solve");
+        if (blocked) return blocked;
         const stub: RunStub = {};
         const sysPath = path.join(dir, "system.toml");
         const formPath = path.join(dir, "formulation.toml");
@@ -323,6 +335,7 @@ export const AmicodeTools = async (_input: unknown) => ({
           ...(stub.formulation_ref ? [] : ["formulation (stages 4–5 skipped?)"]),
         ];
         const warn = missing.length ? ` Note: no recorded ${missing.join(" or ")}.` : "";
+        completeStage(dir, "solve");
         return (
           `Run entity recorded → ${file} — launch via the workflow's amico-run bash command ` +
           `if not already launched.${warn}`
@@ -350,6 +363,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { pulse_ref?: string | null; run_dir?: string | null; note?: string | null }) {
+        const blocked = guardAndRecordStage(entitiesDir(), "hardware");
+        if (blocked) return blocked;
         const stub: DeviceSessionStub = {};
         if (given(a.pulse_ref)) stub.pulse_ref = a.pulse_ref;
         if (given(a.run_dir)) stub.run_dir = a.run_dir;
@@ -391,6 +406,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { device_session_ref?: string | null; note?: string | null }) {
+        const blocked = guardAndRecordStage(entitiesDir(), "hardware");
+        if (blocked) return blocked;
         const stub: CalibrationStub = {};
         if (given(a.device_session_ref)) {
           stub.device_session_ref = a.device_session_ref;
