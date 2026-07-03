@@ -18,6 +18,8 @@ import {
   systemToml,
   formulationToml,
   runStubToml,
+  deviceSessionStubToml,
+  calibrationStubToml,
   validateSystem,
   validateFormulation,
   updateSystem,
@@ -154,5 +156,59 @@ describe('runStubToml (bookkeeping stub — NOT amico-run\'s run.toml)', () => {
     expect('formulation_ref' in doc.run).toBe(false)
     expect('system_ref' in doc.run).toBe(false)
     expect('note' in doc.run).toBe(false)
+  })
+})
+
+describe('deviceSessionStubToml (stage-8 guided stub — NO device I/O in this build)', () => {
+  it('round-trips refs + the fixed gate/checks under [device_session]', () => {
+    const doc = parse(deviceSessionStubToml({
+      pulse_ref: '/home/u/.amico/runs/default/20260703-021500-abcd/pulse.jld2',
+      run_dir: '/home/u/.amico/runs/default/20260703-021500-abcd',
+      note: 'X gate pulse, F=0.9999',
+    })) as any
+    expect(doc.device_session.gate).toBe('pending-human-signoff')  // never auto-approved
+    expect(doc.device_session.checks).toEqual([                    // the send-to-device gate's auto checks
+      'fidelity>=threshold', '|drive|<=cap', 'bandwidth', 'leakage',
+    ])
+    expect(doc.device_session.pulse_ref).toMatch(/pulse\.jld2$/)
+    expect(doc.device_session.run_dir).toMatch(/20260703-021500-abcd$/)
+    expect(doc.device_session.note).toBe('X gate pulse, F=0.9999')
+    expect(Number.isNaN(Date.parse(doc.device_session.recorded))).toBe(false)
+  })
+  it('omits absent optional refs; gate + checks are always present', () => {
+    const doc = parse(deviceSessionStubToml({})) as any
+    expect(doc.device_session.gate).toBe('pending-human-signoff')
+    expect(doc.device_session.checks).toHaveLength(4)
+    expect('pulse_ref' in doc.device_session).toBe(false)
+    expect('run_dir' in doc.device_session).toBe(false)
+    expect('note' in doc.device_session).toBe(false)
+  })
+  it('rejects given-but-empty refs (a caller bug, not an omission)', () => {
+    expect(() => deviceSessionStubToml({ pulse_ref: '' })).toThrow(/pulse_ref/)
+    expect(() => deviceSessionStubToml({ run_dir: '   ' })).toThrow(/run_dir/)
+  })
+})
+
+describe('calibrationStubToml (guided follow-up stub — loop not wired in this build)', () => {
+  it('round-trips the ref + fixed loop/status under [calibration]', () => {
+    const doc = parse(calibrationStubToml({
+      device_session_ref: '/home/u/.amico/runs/default/_entities/device_session.toml',
+      note: 'after first hardware shots',
+    })) as any
+    expect(doc.calibration.loop).toBe('ILC')          // the loop that follows hardware runs
+    expect(doc.calibration.status).toBe('not-wired')  // honest: recorded follow-up only tonight
+    expect(doc.calibration.device_session_ref).toMatch(/device_session\.toml$/)
+    expect(doc.calibration.note).toBe('after first hardware shots')
+    expect(Number.isNaN(Date.parse(doc.calibration.recorded))).toBe(false)
+  })
+  it('omits absent optionals; loop + status are always present', () => {
+    const doc = parse(calibrationStubToml({})) as any
+    expect(doc.calibration.loop).toBe('ILC')
+    expect(doc.calibration.status).toBe('not-wired')
+    expect('device_session_ref' in doc.calibration).toBe(false)
+    expect('note' in doc.calibration).toBe(false)
+  })
+  it('rejects a given-but-empty device_session_ref', () => {
+    expect(() => calibrationStubToml({ device_session_ref: '' })).toThrow(/device_session_ref/)
   })
 })

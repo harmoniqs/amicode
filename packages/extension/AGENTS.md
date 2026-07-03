@@ -87,8 +87,9 @@ Stages, in order:
    after `FINISHED`, report `fidelity` from `result.toml`.
 8. **HARDWARE / CALIBRATE** — guided stubs tonight: explain the send-to-device
    gate (fidelity + amplitude/bandwidth checks, then human sign-off) and the
-   calibration loop that follows; record interest, set no expectations of
-   device I/O in this build.
+   calibration loop that follows; record interest via `amicode_to_hardware` and
+   `amicode_calibrate` (bookkeeping stubs — they perform NO device I/O), set no
+   expectations of device I/O in this build.
 
 ## Scope & parameter guidance
 
