@@ -78,12 +78,20 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
 
 describe("buildOpencodeConfigContent × scores", () => {
   it("grants external_directory on the scores root (templates + memory hooks)", () => {
-    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/templates/solve_template.jl"));
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/templates/solve_template.jl", "/home/u/.amico/runs/default"),
+    );
     expect(cfg.permission.external_directory[`${DEFAULT_SCORES_ROOT}/**`]).toBe("allow");
   });
   it("grant follows a custom scores root", () => {
     const cfg = JSON.parse(
-      buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/templates/solve_template.jl", "/p/plugin.ts", "/custom/scores"),
+      buildOpencodeConfigContent(
+        "/abs/AGENTS.md",
+        "/abs/templates/solve_template.jl",
+        "/home/u/.amico/runs/default",
+        "/p/plugin.ts",
+        "/custom/scores",
+      ),
     );
     expect(cfg.permission.external_directory["/custom/scores/**"]).toBe("allow");
   });

@@ -50,7 +50,7 @@ async function serveWithScores(port: number) {
     entitlementsDir: mkdtempSync(join(tmpdir(), 'scores-e2e-noents-')), // no code → public repertoire
   })
   const env = { ...process.env, AMICODE_ENTITIES_DIR: ENTITIES }
-  env.OPENCODE_CONFIG_CONTENT = buildOpencodeConfigContent(project.agentsPath, join(EXT, 'templates', 'solve_template.jl'))
+  env.OPENCODE_CONFIG_CONTENT = buildOpencodeConfigContent(project.agentsPath, join(EXT, 'templates', 'solve_template.jl'), join(homedir(), '.amico', 'runs', 'default'))
   let buf = ''
   const child = spawn(OC_BIN, ['serve', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] })
   servers.push(child)

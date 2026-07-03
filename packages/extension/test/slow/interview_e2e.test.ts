@@ -43,7 +43,7 @@ function hasCreds(): boolean {
  *  buildOpencodeConfigContent itself (agent block + plugin path), the builder
  *  output is used verbatim: zero test-local drift. */
 function layer0Config(agentsPath: string): string {
-  return buildOpencodeConfigContent(agentsPath, join(EXT, 'templates', 'solve_template.jl'))
+  return buildOpencodeConfigContent(agentsPath, join(EXT, 'templates', 'solve_template.jl'), join(homedir(), '.amico', 'runs', 'default'))
 }
 
 interface Server { child: ChildProcess; url: string; log: () => string }
