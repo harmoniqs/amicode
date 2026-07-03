@@ -63,8 +63,11 @@ function (cb::PulseEmitCallback)(primal, iter)
             else
                 Piccolo.NamedTrajectories.update!(traj, collect(view(primal, 1:(traj.dim * traj.N))); type = :data)
             end
-            # Drive component name differs by problem flavor (:u current, :a legacy).
-            A = something(traj.u, traj.a, missing)
+            # Drive component name differs by problem flavor (:u current, :a
+            # legacy). Membership check (not `something(traj.u, traj.a)`): it
+            # keeps the fallback reachable without leaning on property access
+            # returning `nothing` for missing components (review nit, #67).
+            A = :u in traj.names ? traj.u : (:a in traj.names ? traj.a : missing)
             A === missing && error("no drive component (:u/:a) on trajectory")
             vals = join((join((@sprintf("%.6g", v) for v in row), ",") for row in eachrow(A)), ";")
             @printf("AMICODE_PULSE iter=%d dt=%.6g a=%s\n", iter, first(Piccolo.get_timesteps(traj)), vals)

@@ -86,7 +86,11 @@ class InspectorView implements vscode.WebviewViewProvider {
   // -------- public surface used by RunsRootWatcher --------
 
   postIterationRecord(rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
-    if (!this.view) return; // ok to drop iter records if not visible — image stream is the canonical signal
+    // Ok to drop iter records pre-materialization: the stats row refreshes on
+    // the next record (seconds away), and switchToRun's log replay re-ingests
+    // history whenever the run is re-selected. (Pulse events, by contrast, are
+    // buffered above — the log line is their only delivery.)
+    if (!this.view) return;
     this.view.webview.postMessage({
       type: "iteration",
       iter:      rec.iter,
