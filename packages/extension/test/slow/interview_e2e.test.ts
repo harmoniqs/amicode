@@ -30,6 +30,7 @@ const AGENTS_SRC = join(EXT, 'AGENTS.md')
 
 const AUTH_JSON = join(homedir(), '.local', 'share', 'opencode', 'auth.json')
 function hasCreds(): boolean {
+  if (process.env.AMICODE_E2E_LIVE === '1') return true // force: e.g. opencode's free anonymous tier resolves without auth.json
   if (process.env.ANTHROPIC_API_KEY) return true
   try {
     return Object.keys(JSON.parse(readFileSync(AUTH_JSON, 'utf8'))).length > 0
@@ -38,18 +39,11 @@ function hasCreds(): boolean {
   }
 }
 
-/** The extension's real config content + the Layer-0 agent/plugin registration. */
+/** The extension's real config content — since the L0 registration landed in
+ *  buildOpencodeConfigContent itself (agent block + plugin path), the builder
+ *  output is used verbatim: zero test-local drift. */
 function layer0Config(agentsPath: string): string {
-  const cfg = JSON.parse(buildOpencodeConfigContent(agentsPath, join(EXT, 'templates', 'solve_template.jl')))
-  cfg.agent = {
-    'pulse-designer': {
-      description: 'Guided quantum pulse design interview',
-      prompt:
-        "You are Amico's pulse-designer. Follow the 'Pulse-designer interview' section of the project instructions exactly: one question at a time, record each stage with the amicode_* tools, and use the solve workflow for launches.",
-    },
-  }
-  if (existsSync(PLUGIN)) cfg.plugin = [PLUGIN]
-  return JSON.stringify(cfg)
+  return buildOpencodeConfigContent(agentsPath, join(EXT, 'templates', 'solve_template.jl'))
 }
 
 interface Server { child: ChildProcess; url: string; log: () => string }
@@ -131,9 +125,17 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())('live interview turns (creds
 
     const q1 = await turn('help me design a pulse')
     expect(q1.toLowerCase()).toMatch(/system|platform/)
-    expect((q1.match(/\?/g) ?? []).length, 'one question at a time').toBeLessThanOrEqual(2)
+    // One question AT A TIME = stage 1 only. Multiple "?" inside the platform
+    // question (listing options) is fine; asking stage-2+ topics in the same
+    // breath is the real protocol violation.
+    expect(q1.toLowerCase(), 'no stage-batching in turn 1').not.toMatch(/max_iter|timestep|objective|constraint|drive_max|how many levels/)
 
     const q2 = await turn('transmon')
     expect(q2).toMatch(/\\hat|H\s*\/\s*\\hbar|hamiltonian/i)
+
+    writeFileSync(
+      join(tmpdir(), `amicode-e2e-transcript-${Date.now()}.md`),
+      `# tier C transcript\n\n## turn 1 (help me design a pulse)\n\n${q1}\n\n## turn 2 (transmon)\n\n${q2}\n`,
+    )
   })
 })
