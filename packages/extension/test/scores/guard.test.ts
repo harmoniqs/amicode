@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,6 +8,8 @@ import {
   loadScoreState,
   saveScoreState,
   freshScoreState,
+  guardAndRecordStage,
+  completeStage,
   type StageLite,
 } from "../../opencode-plugin/score_guard";
 
@@ -88,5 +90,59 @@ describe("manifest + state IO (entitiesDir contract)", () => {
     const loaded = loadScoreState(dir)!;
     expect(loaded.score_version).toBe(1);
     expect(loaded.completed_stages).toEqual(["platform"]);
+  });
+});
+
+describe("guardAndRecordStage — two-dir (manifest vs state) split (spec A)", () => {
+  function dirs() {
+    const manifestDir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-m-"));
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-s-"));
+    fs.writeFileSync(
+      path.join(manifestDir, "score_manifest.json"),
+      JSON.stringify({ manifest: { id: "pulse-designer", version: 2, stages: STAGES } }),
+    );
+    return { manifestDir, stateDir };
+  }
+
+  it("reads manifest from manifestDir, writes state + usage to stateDir", () => {
+    const { manifestDir, stateDir } = dirs();
+    expect(guardAndRecordStage(manifestDir, stateDir, "platform")).toBeUndefined();
+    expect(fs.existsSync(path.join(stateDir, "interview_state.json"))).toBe(true);
+    expect(fs.existsSync(path.join(stateDir, "usage.jsonl"))).toBe(true);
+    expect(fs.existsSync(path.join(manifestDir, "interview_state.json"))).toBe(false);
+  });
+
+  it("blocks via the manifest read from manifestDir", () => {
+    const { manifestDir, stateDir } = dirs();
+    const blocked = guardAndRecordStage(manifestDir, stateDir, "formulate");
+    expect(blocked).toMatch(/model/); // model (emits system) not completed
+  });
+
+  it("resets state whose score_id/version mismatches the manifest", () => {
+    const { manifestDir, stateDir } = dirs();
+    const stale = freshScoreState("other-score", 1);
+    stale.completed_stages = ["platform", "model"];
+    saveScoreState(stateDir, stale);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    guardAndRecordStage(manifestDir, stateDir, "platform");
+    spy.mockRestore();
+    const reloaded = loadScoreState(stateDir)!;
+    expect(reloaded.score_id).toBe("pulse-designer");
+    expect(reloaded.score_version).toBe(2);
+    expect(reloaded.completed_stages).not.toContain("model");
+  });
+
+  it("completeStage records against the state dir", () => {
+    const { manifestDir, stateDir } = dirs();
+    guardAndRecordStage(manifestDir, stateDir, "platform");
+    completeStage(stateDir, "platform");
+    expect(loadScoreState(stateDir)!.completed_stages).toContain("platform");
+  });
+
+  it("no manifest → undefined (fallback), no state written", () => {
+    const emptyManifestDir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-m-"));
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-s-"));
+    expect(guardAndRecordStage(emptyManifestDir, stateDir, "platform")).toBeUndefined();
+    expect(fs.existsSync(path.join(stateDir, "interview_state.json"))).toBe(false);
   });
 });

@@ -7,13 +7,18 @@
 // unit-tested from test/scores/guard.test.ts. Named exports here are fine; the
 // single-export constraint applies only to the plugin entry (amicode_tools.ts).
 //
-// STATE CONTRACT: everything lives in entitiesDir() (the caller passes it in) —
-//   score_manifest.json   written by prepareOpencodeProject (extension side)
-//   interview_state.json  same shape as src/scores/interview_state.ts (JSON, "" not null)
-//   usage.jsonl           same line format as src/scores/usage.ts
+// STATE CONTRACT (spec A — TWO dirs, split from the old single entitiesDir):
+//   manifestDir (problems ROOT, session-scoped):
+//     score_manifest.json   written by prepareOpencodeProject (extension side)
+//   stateDir (the active problem's WORKSPACE, per-problem):
+//     interview_state.json  same shape as src/scores/interview_state.ts (JSON, "" not null)
+//     usage.jsonl           same line format as src/scores/usage.ts
 // The FILE FORMATS are the contract between the extension process and this Bun
 // process — the modules are deliberately parallel implementations because this
-// side must not import from src/ (see amicode_tools.ts header).
+// side must not import from src/ (see amicode_tools.ts header). When the state's
+// score_id/version disagree with the manifest (an old problem reopened under a
+// different score), the state is reset to fresh for the manifest's score so
+// completed-stage checks never cross scores.
 //
 // SEMANTICS: the guard protects ENTITY DEPENDENCIES, not conversation order.
 // Blockers for entering a stage = prior non-optional stages that EMIT entities
@@ -129,14 +134,25 @@ export function appendUsage(dir: string, event: Record<string, unknown>): void {
 
 /** One-call guard for a tool execute(): returns an error string to hand back to
  *  the model when blocked (naming the missing prerequisite), else undefined —
- *  and on success records stage entry + usage events. No manifest → no gating. */
-export function guardAndRecordStage(dir: string, stageId: string): string | undefined {
-  const manifest = loadManifest(dir);
+ *  and on success records stage entry + usage events. No manifest → no gating.
+ *  Reads the manifest from `manifestDir` (problems root) and state/usage from
+ *  `stateDir` (the active problem workspace); resets state on a score mismatch. */
+export function guardAndRecordStage(manifestDir: string, stateDir: string, stageId: string): string | undefined {
+  const manifest = loadManifest(manifestDir);
   if (!manifest) return undefined; // fallback mode: pure bookkeeping, as before
-  let state = loadScoreState(dir);
+  let state = loadScoreState(stateDir);
+  if (state && (state.score_id !== manifest.id || state.score_version !== manifest.version)) {
+    // Old problem reopened under a different score — reset to fresh (stderr only:
+    // stdout is parsed by `opencode debug config`; see amicode_tools.ts header).
+    console.error(
+      `[amicode-tools] score changed (${state.score_id} v${state.score_version} → ` +
+        `${manifest.id} v${manifest.version}); resetting interview state`,
+    );
+    state = undefined;
+  }
   if (!state) {
     state = freshScoreState(manifest.id, manifest.version);
-    appendUsage(dir, { kind: "session_started", ts: new Date().toISOString(), score_id: manifest.id, score_version: manifest.version });
+    appendUsage(stateDir, { kind: "session_started", ts: new Date().toISOString(), score_id: manifest.id, score_version: manifest.version });
   }
   const verdict = checkStagePrereqs(manifest.stages, state, stageId);
   if (!verdict.ok) {
@@ -148,10 +164,10 @@ export function guardAndRecordStage(dir: string, stageId: string): string | unde
     );
   }
   if (!state.completed_stages.includes(stageId)) {
-    appendUsage(dir, { kind: "stage_entered", ts: new Date().toISOString(), stage: stageId });
+    appendUsage(stateDir, { kind: "stage_entered", ts: new Date().toISOString(), stage: stageId });
   }
   state.stage_cursor = stageId;
-  saveScoreState(dir, state);
+  saveScoreState(stateDir, state);
   return undefined;
 }
 
