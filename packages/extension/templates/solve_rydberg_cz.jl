@@ -1,4 +1,10 @@
 #!/usr/bin/env julia
+# ⚠️ EXPERIMENTAL — NOT YET VETTED. The NLP's first iteration is pathologically
+# slow at this problem size in the current Piccolo path (both closure- and
+# matrix-form systems tried; single iteration > 25 min where the transmon
+# template solves in 72 s). Under investigation — do not wire into scores or
+# demos until a vetting solve completes with F > 0.99.
+#
 # Amicode Rydberg CZ template — fill in the `# FILL IN` block, then:
 #   amico-run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
@@ -41,8 +47,11 @@ Hy = kron(σy_1r, I3) + kron(I3, σy_1r)     # u[2] = Ωy(t)
 Hn = kron(n_r, I3) + kron(I3, n_r)         # u[3] = -Δ(t) (sign folded into H below)
 H_drift = V * kron(n_r, n_r)               # blockade shift on |rr⟩
 
-H = (u, t) -> H_drift + u[1] * Hx + u[2] * Hy - u[3] * Hn
-sys = QuantumSystem(H, [(-Ω_max, Ω_max), (-Ω_max, Ω_max), (-Δ_max, Δ_max)])
+# Matrix form (NOT a closure): hands Piccolo the bilinear structure analytically —
+# the function-Hamiltonian path forces AD through the closure per NLP evaluation
+# and is orders of magnitude slower at 9-dim. Detuning sign folded into the drive.
+sys = QuantumSystem(H_drift, [Hx, Hy, -Hn],
+    [(-Ω_max, Ω_max), (-Ω_max, Ω_max), (-Δ_max, Δ_max)])
 
 # CZ on the {|0⟩,|1⟩} subspace of each atom, embedded in the 9-dim space.
 op = EmbeddedOperator(GATES[:CZ], [1, 2], [1:2, 1:2], [3, 3])
