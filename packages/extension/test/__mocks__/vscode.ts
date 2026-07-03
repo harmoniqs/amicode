@@ -5,6 +5,7 @@ export const window = {
   showInformationMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
+  showInputBox: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
 };
@@ -29,3 +30,10 @@ export class EventEmitter {
 export class Disposable {
   dispose() {}
 }
+export class TreeItem {
+  description?: string;
+  tooltip?: string;
+  command?: unknown;
+  constructor(public label: string, public collapsibleState?: number) {}
+}
+export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 };

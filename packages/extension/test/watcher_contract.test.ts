@@ -53,7 +53,7 @@ describe('ingestRunDir — β.1 contract reading (replay)', () => {
     const sink = fakeSink()
     const dir = stageRun({ status: 'completed', exit: 0, iters: [1, 2, 3], fidelity: 0.999 })
     writeFileSync(join(dir, 'run.log'),
-      'AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.2:0.2\n' +
+      'AMICODE_PULSE_META drives=1 knots=2 labels="u_1" bounds=-0.2:0.2\n' +
       'AMICODE_PULSE iter=1 dt=0.2 a=0.1,0.2\n' +
       'AMICODE_ITER iter=1 f=0.1 inf_pr=1e-8 inf_du=1e-6\n' +
       'AMICODE_PULSE iter=2 dt=0.2 a=0.3,0.4\n' +
@@ -90,11 +90,11 @@ describe('AMICODE_ITER parsing — Inf/NaN are kept, not dropped', () => {
 // is untouched.
 describe('AMICODE_PULSE_META parsing (#66 pinned grammar)', () => {
   it('parses drives/knots/labels/bounds from a well-formed meta line', () => {
-    const m = parsePulseMetaLine('AMICODE_PULSE_META drives=2 knots=50 labels="a_1","a_2" bounds=-0.2:0.2,-0.2:0.2')
+    const m = parsePulseMetaLine('AMICODE_PULSE_META drives=2 knots=50 labels="u_1","u_2" bounds=-0.2:0.2,-0.2:0.2')
     expect(m).toEqual({
       drives: 2,
       knots: 50,
-      labels: ['a_1', 'a_2'],
+      labels: ['u_1', 'u_2'],
       bounds: [[-0.2, 0.2], [-0.2, 0.2]],
     })
   })
@@ -122,7 +122,7 @@ describe('AMICODE_PULSE record parsing (#66 pinned grammar)', () => {
 // dropped; the last meta wins and resets state; count-mismatched records and
 // internally-inconsistent metas are ignored.
 describe('PulseStream — cross-line policy (#66)', () => {
-  const META = 'AMICODE_PULSE_META drives=2 knots=3 labels="a_1","a_2" bounds=-0.2:0.2,-0.2:0.2'
+  const META = 'AMICODE_PULSE_META drives=2 knots=3 labels="u_1","u_2" bounds=-0.2:0.2,-0.2:0.2'
   const REC = 'AMICODE_PULSE iter=6 dt=0.2 a=0.1,0.2,0.3;0.4,0.5,0.6'
 
   it('drops records that arrive before any meta', () => {
@@ -142,8 +142,8 @@ describe('PulseStream — cross-line policy (#66)', () => {
 
   it('treats a meta whose label or bounds count disagrees with drives= as malformed (no state change)', () => {
     const ps = new PulseStream()
-    expect(ps.onLine('AMICODE_PULSE_META drives=2 knots=3 labels="a_1" bounds=-0.2:0.2,-0.2:0.2')).toBeUndefined()   // 1 label ≠ 2 drives
-    expect(ps.onLine('AMICODE_PULSE_META drives=2 knots=3 labels="a_1","a_2" bounds=-0.2:0.2')).toBeUndefined()      // 1 bound ≠ 2 drives
+    expect(ps.onLine('AMICODE_PULSE_META drives=2 knots=3 labels="u_1" bounds=-0.2:0.2,-0.2:0.2')).toBeUndefined()   // 1 label ≠ 2 drives
+    expect(ps.onLine('AMICODE_PULSE_META drives=2 knots=3 labels="u_1","u_2" bounds=-0.2:0.2')).toBeUndefined()      // 1 bound ≠ 2 drives
     expect(ps.onLine(REC)).toBeUndefined()   // bad metas did NOT arm the stream
   })
 
@@ -155,7 +155,7 @@ describe('PulseStream — cross-line policy (#66)', () => {
     expect(ps.onLine(META)).toMatchObject({ type: 'meta' })
     expect(ps.onLine(REC)).toMatchObject({ type: 'record' })
     // a NEW meta with a different shape governs subsequent records
-    expect(ps.onLine('AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.1:0.1')).toMatchObject({ type: 'meta' })
+    expect(ps.onLine('AMICODE_PULSE_META drives=1 knots=2 labels="u_1" bounds=-0.1:0.1')).toMatchObject({ type: 'meta' })
     expect(ps.onLine(REC)).toBeUndefined()                                          // old-shape record now ignored
     expect(ps.onLine('AMICODE_PULSE iter=9 dt=0.2 a=0.1,0.2')).toMatchObject({ type: 'record', record: { iter: 9 } })
   })

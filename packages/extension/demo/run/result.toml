@@ -4,6 +4,8 @@ schema_version = "1"
 wall_seconds = 109.01594400405884
 
 [params]
+system = "transmon"
+gate = "X"
 levels = 3
 drive_max = 0.2
 T = 10.0

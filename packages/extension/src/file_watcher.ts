@@ -94,8 +94,9 @@ class LiveRunSink implements RunSink {
         "Yes — promote", "No — keep local only",
       );
       if (choice === "Yes — promote") {
-        vscode.window.showInformationMessage(`Amicode: promotion stub — would catalog ${info.runId}.`);
-        await vscode.commands.executeCommand("amicode.catalog.refresh").then(undefined, () => undefined);
+        // #47: record in the session catalog + open the card (store
+        // persistence is still Phase 3 — the session catalog is workspaceState).
+        await vscode.commands.executeCommand("amicode.catalog.save", info.runDir).then(undefined, () => undefined);
       }
     })();
   }
