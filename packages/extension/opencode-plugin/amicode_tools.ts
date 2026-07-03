@@ -147,18 +147,28 @@ export const AmicodeTools = async (_input: unknown) => ({
           items: { type: "string" },
           description: "2-6 short option labels, one per button.",
         },
+        details: {
+          type: ["array", "null"],
+          items: { type: "string" },
+          description:
+            "Optional one-per-option short qualifier rendered dimly under each button " +
+            "(e.g. \"fully supported end-to-end\"). Same length as options, or null.",
+        },
       },
-      async execute(a: { question: string; options: string[] }) {
+      async execute(a: { question: string; options: string[]; details?: string[] | null }) {
         const opts = Array.isArray(a.options)
           ? a.options.filter((o) => typeof o === "string" && o.trim() !== "")
           : [];
         if (!a.question || a.question.trim() === "") return "Cannot ask: empty question.";
         if (opts.length < 2 || opts.length > 6) return "Cannot ask: need 2-6 non-empty options.";
+        if (a.details != null && (!Array.isArray(a.details) || a.details.length !== opts.length))
+          return "Cannot ask: details must be null or exactly one per option.";
         // The renderer draws the buttons from this tool part's INPUT args; this
         // return text is for the model (and the pre-rail fallback display).
         return (
-          `Question presented with ${opts.length} option buttons — ` +
-          `the user's next message is the answer; wait for it.`
+          `Question presented with ${opts.length} option buttons. STOP HERE: write no ` +
+          `further text this turn, do NOT repeat the question in prose, and NEVER pick ` +
+          `an option yourself — the user's next message is their click.`
         );
       },
     },
