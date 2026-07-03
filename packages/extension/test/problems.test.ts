@@ -23,6 +23,7 @@ import {
   appendRunRef,
   writeEntityFiles,
   lastEventSeq,
+  migrateLegacyEntities,
 } from '../opencode-plugin/problems'
 
 let tmp: string
@@ -186,5 +187,55 @@ describe('listProblems', () => {
     const all = listProblems()
     expect(all.map((p) => p.slug).sort()).toEqual(['x-gate', 'y-gate'])
     expect(all.find((p) => p.slug === 'y-gate')?.status).toBe('archived')
+  })
+})
+
+describe('migrateLegacyEntities (injectable roots — env-skip lives at the call site)', () => {
+  function legacyFixture(): string {
+    const legacy = fs.mkdtempSync(path.join(os.tmpdir(), 'amicode-legacy-'))
+    fs.writeFileSync(path.join(legacy, 'system.toml'), '[system]\nplatform = "transmon"\n')
+    fs.writeFileSync(path.join(legacy, 'system.json'), '{"platform":"transmon"}')
+    fs.writeFileSync(path.join(legacy, 'formulation.toml'), '[formulation]\nproblem = "gate_synthesis"\n')
+    fs.writeFileSync(path.join(legacy, 'score_manifest.json'), '{"manifest":{}}')
+    fs.writeFileSync(path.join(legacy, 'interview_state.json'), '{}')
+    fs.writeFileSync(path.join(legacy, 'usage.jsonl'), '{}\n')
+    return legacy
+  }
+
+  it('reshapes a flat legacy dir into an archived problem workspace + sets active', () => {
+    const legacy = legacyFixture()
+    const root = path.join(tmp, 'fresh-problems') // does not exist yet
+    migrateLegacyEntities(legacy, root)
+    const dirs = fs.readdirSync(root).filter((d) => d.startsWith('legacy-'))
+    expect(dirs).toHaveLength(1)
+    const ws = path.join(root, dirs[0])
+    // entity files reshaped under entities/
+    expect(fs.existsSync(path.join(ws, 'entities', 'system.toml'))).toBe(true)
+    expect(fs.existsSync(path.join(ws, 'entities', 'system.json'))).toBe(true)
+    expect(fs.existsSync(path.join(ws, 'entities', 'formulation.toml'))).toBe(true)
+    // score-state files at the workspace root
+    expect(fs.existsSync(path.join(ws, 'score_manifest.json'))).toBe(true)
+    expect(fs.existsSync(path.join(ws, 'interview_state.json'))).toBe(true)
+    expect(fs.existsSync(path.join(ws, 'usage.jsonl'))).toBe(true)
+    // synthesized archived meta + active set (no other problem)
+    const meta = JSON.parse(fs.readFileSync(path.join(ws, 'problem.json'), 'utf8'))
+    expect(meta.status).toBe('archived')
+    expect(fs.readFileSync(path.join(root, 'active'), 'utf8').trim()).toBe(dirs[0])
+    fs.rmSync(legacy, { recursive: true, force: true })
+  })
+
+  it('no-ops when problemsRoot already exists', () => {
+    const legacy = legacyFixture()
+    const root = path.join(tmp, 'existing-problems')
+    fs.mkdirSync(root, { recursive: true })
+    migrateLegacyEntities(legacy, root)
+    expect(fs.readdirSync(root).filter((d) => d.startsWith('legacy-'))).toHaveLength(0)
+    fs.rmSync(legacy, { recursive: true, force: true })
+  })
+
+  it('no-ops when legacySrc is absent', () => {
+    const root = path.join(tmp, 'root-no-legacy')
+    migrateLegacyEntities(path.join(tmp, 'does-not-exist'), root)
+    expect(fs.existsSync(root)).toBe(false)
   })
 })

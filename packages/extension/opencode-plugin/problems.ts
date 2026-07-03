@@ -249,10 +249,45 @@ export function writeEntityFiles(slug: string, kind: string, toml: string, json:
   atomicWrite(path.join(dir, `${kind}.json`), json);
 }
 
-// --- migration (Task 6 fills this in) ----------------------------------------
+// --- migration ---------------------------------------------------------------
 
-/** One-shot legacy `_entities/` → problem-workspace migration. No-op stub for now
- *  so amicode_tools.ts's module-load call resolves; implemented in Task 6. */
-export function migrateLegacyEntities(_legacySrc?: string, _problemsRoot?: string): void {
-  // intentionally empty — see Task 6
+const LEGACY_ENTITY_KINDS = new Set(["system", "formulation", "run", "device_session", "calibration"]);
+
+/** One-shot legacy `_entities/` → problem-workspace migration. Reshapes the flat
+ *  legacy dir into `<problemsRoot>/legacy-<date>/`: entity files under entities/,
+ *  score-state files (score_manifest/interview_state/usage) at the workspace root,
+ *  a synthesized archived problem.toml/.json, and `active` set only when no other
+ *  problem exists. Roots are injectable for testing; the env-skip guard lives at
+ *  the module-load CALL SITE (amicode_tools.ts), NOT here. No-op when the legacy
+ *  source is absent or the problems root already exists. */
+export function migrateLegacyEntities(
+  legacySrc: string = path.join(os.homedir(), ".amico", "runs", "default", "_entities"),
+  problemsRoot: string = problemsDir(),
+): void {
+  if (!fs.existsSync(legacySrc)) return; // nothing to migrate
+  if (fs.existsSync(problemsRoot)) return; // already migrated / problems exist
+  const slug = `legacy-${new Date().toISOString().slice(0, 10)}`;
+  const ws = path.join(problemsRoot, slug);
+  const wsEntities = path.join(ws, "entities");
+  fs.mkdirSync(wsEntities, { recursive: true });
+  for (const file of fs.readdirSync(legacySrc)) {
+    const src = path.join(legacySrc, file);
+    if (!fs.statSync(src).isFile()) continue;
+    const m = file.match(/^(.+)\.(toml|json)$/);
+    const isEntity = m !== null && LEGACY_ENTITY_KINDS.has(m[1]);
+    fs.copyFileSync(src, path.join(isEntity ? wsEntities : ws, file));
+  }
+  const meta: ProblemMeta = {
+    name: "Legacy entities",
+    slug,
+    created: new Date().toISOString(),
+    status: "archived",
+    recorded: new Date().toISOString(),
+  };
+  fs.writeFileSync(path.join(ws, "problem.toml"), problemToml(meta));
+  fs.writeFileSync(path.join(ws, "problem.json"), problemJson(meta));
+  const others = fs
+    .readdirSync(problemsRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && e.name !== slug);
+  if (others.length === 0) fs.writeFileSync(path.join(problemsRoot, "active"), slug + "\n");
 }
