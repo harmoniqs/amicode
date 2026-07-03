@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { loadRepertoire } from "./scores/loader";
+import { readLocalEntitlements, filterRepertoire } from "./scores/entitlements";
+import { buildRouterSection } from "./scores/router";
+import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -63,14 +67,65 @@ export function resolveJuliaProject(configValue: string): string {
  *
  *  `bash`/`edit` are left at "allow" (both already default to allow; bash runs
  *  the compound `mkdir … && nohup amico-run …` launch, not worth scoping).
- *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
+ *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL.
+ *
+ *  L0 pulse-designer additions (night build 2026-07-03; registration mechanism
+ *  probed on the stock vendored 1.17.3 — see opencode-plugin/amicode_tools.ts
+ *  header for the full T8 decision record):
+ *    - `plugin: [<abs path to opencode-plugin/amicode_tools.ts>]` — the
+ *      amicode_* tool pack, executed by opencode's embedded Bun runtime (it is
+ *      NOT part of the extension bundle). The path defaults from __dirname
+ *      (works from both src/ under vitest and dist/ in the cjs bundle — the
+ *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
+ *      pass this explicitly once .vsix packaging of opencode-plugin/ is
+ *      verified; the default keeps existing call sites working unchanged.
+ *    - `agent: {"pulse-designer": …}` — the interview agent; its prompt defers
+ *      to the "Pulse-designer interview" section of the injected AGENTS.md so
+ *      the interview script lives in ONE place.
+ *    - an `external_directory` grant for the entities dir, so the AGENT's file
+ *      tools can read back system/formulation/run TOML the plugin wrote (the
+ *      plugin's own fs writes are host-process calls and need no grant). Must
+ *      stay derivation-identical to entitiesDir() in amicode_tools.ts. */
 const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
 
-export function buildOpencodeConfigContent(agentsPath: string, templatePath: string): string {
+/** Where the amicode_* plugin records entities — MUST match entitiesDir() in
+ *  opencode-plugin/amicode_tools.ts ($AMICODE_ENTITIES_DIR override included,
+ *  so the permission grant follows the plugin wherever it is pointed). */
+function entitiesDir(): string {
+  const env = process.env.AMICODE_ENTITIES_DIR;
+  if (env && env.trim() !== "") return env;
+  return path.join(os.homedir(), ".amico", "runs", "default", "_entities");
+}
+
+/** Default location of the amicode_* opencode plugin: a sibling directory of
+ *  both src/ (vitest) and dist/ (the bundled extension), so __dirname/.. works
+ *  from either. */
+const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "amicode_tools.ts");
+
+/** Default scores repertoire root — same sibling-of-src-and-dist trick as the
+ *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
+export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
+
+export function buildOpencodeConfigContent(
+  agentsPath: string,
+  templatePath: string,
+  pluginPath: string = DEFAULT_PLUGIN_PATH,
+  scoresRoot: string = DEFAULT_SCORES_ROOT,
+): string {
   const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
+    plugin: [pluginPath],
+    agent: {
+      "pulse-designer": {
+        description: "Guided quantum pulse design interview",
+        prompt:
+          "You are Amico's pulse-designer. Follow the 'Pulse-designer interview' section of " +
+          "the project instructions exactly: one question at a time, record each stage with " +
+          "the amicode_* tools, and use the solve workflow for launches.",
+      },
+    },
     permission: {
       bash: "allow",
       edit: "allow",
@@ -79,6 +134,8 @@ export function buildOpencodeConfigContent(agentsPath: string, templatePath: str
         [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
         [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
+        [`${entitiesDir()}/**`]: "allow",   // amicode_* entities the agent may read back
+        [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
       },
     },
   });
@@ -94,6 +151,10 @@ export interface OpencodeConfigOptions {
   /** Julia project (--project) the agent should use; already resolved (see
    *  resolveJuliaProject). Substituted into AGENTS.md as {{JULIA_PROJECT}}. */
   juliaProject: string | undefined;
+  /** Scores repertoire root (SCORE.md manifests). Default: the bundled scores/. */
+  scoresRoot?: string;
+  /** Dir holding the user's entitlements.toml (access-code stub). Default: ~/.amico/amicode. */
+  entitlementsDir?: string;
 }
 
 export interface OpencodeProject {
@@ -115,7 +176,37 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   const filled = raw
     .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
     .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc);
-  fs.writeFileSync(agentsPath, filled, "utf8");
+
+  // Score runtime ("data-defined, prompt-executed", scores spec §6): compile the
+  // selected score (v1: boot-time selection of score #0, pulse-designer) over the
+  // hardcoded interview section, prefix the onset router, and drop the manifest
+  // transport for the Bun-side plugin. FALLBACK: any failure leaves the substituted
+  // AGENTS.md exactly as before — the hardcoded section IS the fallback content;
+  // score trouble must never brick the boot.
+  let finalContent = filled;
+  try {
+    const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
+    const load = loadRepertoire(scoresRoot);
+    const ents = readLocalEntitlements(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
+    const visible = filterRepertoire(load.scores, ents.entitlements);
+    const score0 = visible.find((s) => s.manifest.id === "pulse-designer");
+    if (score0) {
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
+      // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
+      // locates ALL its state via entitiesDir() — so the guard's copy goes there
+      // (see opencode-plugin/score_guard.ts header). The projectDir copy is the
+      // extension-side record of what this session was prepared with.
+      const manifestJson =
+        JSON.stringify({ manifest: score0.manifest, score_dir: score0.dir, project_dir: projectDir }, null, 2) + "\n";
+      fs.writeFileSync(path.join(projectDir, "score_manifest.json"), manifestJson);
+      fs.mkdirSync(entitiesDir(), { recursive: true });
+      fs.writeFileSync(path.join(entitiesDir(), "score_manifest.json"), manifestJson);
+    }
+  } catch (e) {
+    console.warn(`amicode: score compilation failed, using built-in interview fallback: ${e}`);
+    finalContent = filled;
+  }
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
