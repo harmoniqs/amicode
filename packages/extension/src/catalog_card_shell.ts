@@ -19,12 +19,16 @@ import * as vscode from "vscode";
 import { PulseStream, readTomlSafe, type PulseEvent } from "./run_dir_reader";
 
 export function registerCatalogCard(ctx: vscode.ExtensionContext): void {
+  const open = new Map<string, vscode.WebviewPanel>();   // run_id → live panel
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.catalogCard.open", (runDir: string, systemName?: string, tags?: string[]) => {
     const data = hydrateFromRunDir(runDir, systemName, tags);
     if (!data) {
       void vscode.window.showErrorMessage("Amicode: cannot build a catalog entry — run dir is missing run.toml/result.toml.");
       return;
     }
+    const key = String(data.entry.run_id);
+    const existing = open.get(key);
+    if (existing) { existing.reveal(vscode.ViewColumn.One); return; }   // re-focus, don't re-create
     const panel = vscode.window.createWebviewPanel(
       "amicode.catalogCard", `Catalog: ${data.entry.run_id}`, vscode.ViewColumn.One,
       {
@@ -35,6 +39,8 @@ export function registerCatalogCard(ctx: vscode.ExtensionContext): void {
         ],
       },
     );
+    open.set(key, panel);
+    panel.onDidDispose(() => open.delete(key), null, ctx.subscriptions);
     panel.webview.onDidReceiveMessage((m) => {
       if (m?.type === "whatnext") vscode.window.showInformationMessage(`what-next → ${m.id} (stub)`);
     });

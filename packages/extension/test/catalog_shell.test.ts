@@ -1,8 +1,9 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { hydrateFromRunDir } from "../src/catalog_card_shell";
+import * as vscode from "vscode";
+import { hydrateFromRunDir, registerCatalogCard } from "../src/catalog_card_shell";
 import { SessionCatalogTree, type SessionCatalogEntry } from "../src/trees";
 
 // The save-to-catalog flow (#47): entry hydration from real run artifacts,
@@ -51,6 +52,26 @@ describe("hydrateFromRunDir — entry from real run artifacts", () => {
     expect(hydrateFromRunDir(dir)!.pulse).toBeUndefined();
     const empty = mkdtempSync(join(tmpdir(), "card-empty-"));
     expect(hydrateFromRunDir(empty)).toBeUndefined();
+  });
+});
+
+describe("registerCatalogCard — reveal-or-create panel dedupe", () => {
+  it("re-opening the same entry reveals the live panel; dispose allows re-create", async () => {
+    const dir = stageRun({ gate: "X", system: "transmon" });
+    const ctx = { subscriptions: [], extensionUri: vscode.Uri.file("/ext") } as never;
+    registerCatalogCard(ctx);
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+
+    await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
+    await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
+    expect(spy).toHaveBeenCalledTimes(1);                        // one panel per run_id
+    const panel = spy.mock.results[0].value as { revealCount: number; dispose: () => void };
+    expect(panel.revealCount).toBe(1);                           // second click re-focuses
+
+    panel.dispose();                                             // user closes the tab
+    await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
+    expect(spy).toHaveBeenCalledTimes(2);                        // closed → fresh panel
+    spy.mockRestore();
   });
 });
 

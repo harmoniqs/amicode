@@ -8,8 +8,31 @@ export const window = {
   showInputBox: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
+  createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
+    const disposeCbs: Array<() => void> = [];
+    return {
+      webview: {
+        html: "",
+        cspSource: "test:",
+        asWebviewUri: (u: unknown) => u,
+        onDidReceiveMessage: () => ({ dispose() {} }),
+      },
+      revealCount: 0,
+      reveal() { this.revealCount += 1; },
+      onDidDispose(cb: () => void, _thisArg?: unknown, _subs?: unknown) { disposeCbs.push(cb); return { dispose() {} }; },
+      dispose() { for (const cb of disposeCbs) cb(); },
+    };
+  },
 };
-export const commands = { executeCommand: () => Promise.resolve(undefined) };
+const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
+export const commands = {
+  registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => {
+    registeredCommands.set(id, fn);
+    return { dispose() { registeredCommands.delete(id); } };
+  },
+  executeCommand: (id: string, ...a: unknown[]) => Promise.resolve(registeredCommands.get(id)?.(...a)),
+};
+export const ViewColumn = { One: 1, Two: 2 };
 export const workspace = {
   workspaceFolders: [] as unknown[],
   getConfiguration: () => ({ get: (_k: string, d?: unknown) => d ?? "" }),
