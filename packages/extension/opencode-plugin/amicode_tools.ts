@@ -134,9 +134,9 @@ export const AmicodeTools = async (_input: unknown) => ({
   tool: {
     amicode_ask: {
       description:
-        "Present ONE multiple-choice question to the user as clickable buttons in the Amicode chat. " +
-        "Use for interview stages with a small option set (platform, sim-vs-solve, problem/gate). " +
-        "The user's next message is their answer (a button click sends the option text verbatim). " +
+        "DEPRECATED — prefer the native `question` tool (turn-blocking form with options, " +
+        "descriptions, and custom answers). Kept for compatibility: presents ONE multiple-choice " +
+        "question as clickable buttons; the user's next message is their answer. " +
         "End your turn after calling this — never answer on the user's behalf.",
       args: {
         question: {

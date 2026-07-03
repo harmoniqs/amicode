@@ -2,7 +2,7 @@
 type: score
 schema_version: 1
 id: pulse-designer
-version: 2
+version: 3
 derived_from: null
 name: "Design an optimized pulse"
 outcome: "A solved, inspected pulse for your gate on your platform"
@@ -84,15 +84,16 @@ matching `amicode_*` tool if it is available; if not, summarize the recorded
 values in one line and continue (the tools record entities — System,
 Formulation, Run — they are bookkeeping, not gates).
 
-**Buttons for choices:** any question above with a `choices` list goes through
-`amicode_ask` (question + the options, default first, marked "(recommended)",
-plus optional one-line `details` per option — e.g. "fully supported end-to-end"
-/ "recorded for follow-up") — the chat renders them as buttons and the click
-arrives as the next message. **After calling `amicode_ask`, end your turn
-immediately: no prose repeat of the question, no commentary, and NEVER answer
-the question yourself.** Free-form values ($\omega$, $\delta$, `T`, `N`,
-`max_iter`) stay plain-text questions. If `amicode_ask` is unavailable, ask in
-plain text with the options listed.
+**Asking choice questions:** any question above with a `choices` list goes
+through the native **`question` tool** — ONE question per call; the default
+option FIRST with "(Recommended)" appended to its label; a short description
+per option where it helps (e.g. "fully supported end-to-end" / "recorded for
+follow-up"). The form blocks the turn until the user answers — so **call the
+tool and stop: do not also ask the question in prose, and never pre-empt the
+answer.** Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) may use
+`question` (custom answers are enabled by default) or plain text. The older
+`amicode_ask` tool is **deprecated** — prefer `question`; fall back to plain
+text with listed options only if both are unavailable.
 
 **Anchor on recorded state:** before asking any stage-2+ parameter question,
 re-read the recorded System entity (what the rail shows) and anchor on it —

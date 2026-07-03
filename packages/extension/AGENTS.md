@@ -61,16 +61,16 @@ advance. After each answer, record the stage's state: call the matching
 one line and continue (the tools record entities — System, Formulation, Run —
 they are bookkeeping, not gates).
 
-**Buttons for choices:** when a stage's answer is a small option set (PLATFORM;
-simulate-vs-solve; gate synthesis vs state prep; which gate), ask it via
-`amicode_ask` (question + 2–6 options, plus optional one-line `details` per
-option — e.g. "fully supported end-to-end" / "recorded for follow-up") — the
-chat renders the options as buttons and the user's click arrives as their next
-message. **After calling `amicode_ask`, end your turn immediately: no prose
-repeat of the question, no commentary, and NEVER answer the question yourself.**
-Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) stay plain-text
-questions. If `amicode_ask` is unavailable, ask in plain text with the options
-listed.
+**Asking choice questions:** when a stage's answer is a small option set
+(PLATFORM; simulate-vs-solve; gate synthesis vs state prep; which gate), ask it
+via the native **`question` tool** — ONE question per call; the default option
+FIRST with "(Recommended)" appended; a short description per option where it
+helps. The form blocks the turn until the user answers — **call the tool and
+stop: no prose repeat of the question, and never pre-empt the answer.**
+Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) may use `question`
+(custom answers are on by default) or plain text. The older `amicode_ask` tool
+is **deprecated** — prefer `question`; fall back to plain text with the options
+listed only if both are unavailable.
 
 Stages, in order:
 
