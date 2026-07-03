@@ -1,0 +1,139 @@
+import { describe, it, expect, afterAll } from 'vitest'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
+import { tmpdir, homedir } from 'node:os'
+import { join } from 'node:path'
+import { spawn, type ChildProcess } from 'node:child_process'
+import { buildOpencodeConfigContent } from '../../src/opencode_config'
+
+// ============================================================================
+// T13 e2e — pulse-designer interview against the REAL vendored binary.
+//
+// Boots `opencode serve` with the SAME OPENCODE_CONFIG_CONTENT injection the
+// extension performs (real builder import — no transcribed config, no drift;
+// the sanctioned pattern from test/opencode_config.test.ts), extended with the
+// Layer-0 registration: the pulse-designer agent block + the amicode_* plugin.
+//
+// Tiers (each skips independently, so the suite is green in any machine state):
+//   A. creds-free, hermetic HOME — agent registration visible via GET /agent
+//   B. creds-free, hermetic HOME — plugin module loads on session creation
+//   C. creds-gated, REAL HOME    — two live interview turns (one-question
+//      cadence + LaTeX). Needs `opencode auth login` (or ANTHROPIC_API_KEY).
+//
+// NOTE: /health is NOT a real route at v1.17.3 (SPA fallback answers it) —
+// readiness is polled on `GET /` + the listening log line instead.
+// ============================================================================
+
+const EXT = join(__dirname, '..', '..')
+const OC_BIN = join(EXT, 'vendor', 'opencode', `${process.platform}-${process.arch}`, 'opencode')
+const PLUGIN = join(EXT, 'opencode-plugin', 'amicode_tools.ts')
+const AGENTS_SRC = join(EXT, 'AGENTS.md')
+
+const AUTH_JSON = join(homedir(), '.local', 'share', 'opencode', 'auth.json')
+function hasCreds(): boolean {
+  if (process.env.ANTHROPIC_API_KEY) return true
+  try {
+    return Object.keys(JSON.parse(readFileSync(AUTH_JSON, 'utf8'))).length > 0
+  } catch {
+    return false
+  }
+}
+
+/** The extension's real config content + the Layer-0 agent/plugin registration. */
+function layer0Config(agentsPath: string): string {
+  const cfg = JSON.parse(buildOpencodeConfigContent(agentsPath, join(EXT, 'templates', 'solve_template.jl')))
+  cfg.agent = {
+    'pulse-designer': {
+      description: 'Guided quantum pulse design interview',
+      prompt:
+        "You are Amico's pulse-designer. Follow the 'Pulse-designer interview' section of the project instructions exactly: one question at a time, record each stage with the amicode_* tools, and use the solve workflow for launches.",
+    },
+  }
+  if (existsSync(PLUGIN)) cfg.plugin = [PLUGIN]
+  return JSON.stringify(cfg)
+}
+
+interface Server { child: ChildProcess; url: string; log: () => string }
+const servers: ChildProcess[] = []
+
+async function serve(opts: { hermetic: boolean; port: number }): Promise<Server> {
+  let env: NodeJS.ProcessEnv
+  let agentsPath: string
+  if (opts.hermetic) {
+    const home = mkdtempSync(join(tmpdir(), 'e2ehome-'))
+    mkdirSync(join(home, '.config', 'opencode'), { recursive: true })
+    writeFileSync(join(home, '.config', 'opencode', 'opencode.json'), JSON.stringify({}))
+    agentsPath = join(home, 'AGENTS.md')
+    writeFileSync(agentsPath, readFileSync(AGENTS_SRC, 'utf8')) // unsubstituted is fine for A/B
+    env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, '.local', 'share') }
+  } else {
+    agentsPath = AGENTS_SRC // real home: user creds + global config load (deliberate, tier C)
+    env = { ...process.env }
+  }
+  env.OPENCODE_CONFIG_CONTENT = layer0Config(agentsPath)
+  let buf = ''
+  const child = spawn(OC_BIN, ['serve', '--port', String(opts.port)], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  servers.push(child)
+  child.stdout!.on('data', (c) => (buf += c))
+  child.stderr!.on('data', (c) => (buf += c))
+  const url = `http://127.0.0.1:${opts.port}`
+  const deadline = Date.now() + 30_000
+  for (;;) {
+    try {
+      const r = await fetch(url + '/', { signal: AbortSignal.timeout(1000) })
+      if (r.ok) break
+    } catch { /* not up yet */ }
+    if (Date.now() > deadline) throw new Error(`serve not ready in 30s; log:\n${buf.slice(0, 2000)}`)
+    await new Promise((r) => setTimeout(r, 300))
+  }
+  return { child, url, log: () => buf }
+}
+
+afterAll(() => {
+  for (const c of servers) {
+    c.kill('SIGTERM')
+  }
+})
+
+describe.skipIf(!existsSync(OC_BIN))('L0 registration against the real binary (creds-free)', () => {
+  it('A: pulse-designer appears in GET /agent', { timeout: 60_000 }, async () => {
+    const s = await serve({ hermetic: true, port: 14310 })
+    const agents = (await (await fetch(s.url + '/agent')).json()) as Array<{ name: string }>
+    expect(agents.map((a) => a.name)).toContain('pulse-designer')
+  })
+
+  it.skipIf(!existsSync(PLUGIN))('B: amicode_tools plugin loads on session creation', { timeout: 60_000 }, async () => {
+    const s = await serve({ hermetic: true, port: 14311 })
+    const r = await fetch(s.url + '/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    expect(r.ok).toBe(true)
+    const deadline = Date.now() + 15_000
+    while (!s.log().includes('[amicode-tools]') && Date.now() < deadline) await new Promise((r) => setTimeout(r, 300))
+    expect(s.log(), 'plugin load line in serve log').toContain('[amicode-tools]')
+  })
+})
+
+describe.skipIf(!existsSync(OC_BIN) || !hasCreds())('live interview turns (creds required)', () => {
+  it('C: opens with ONE platform question, then LaTeX on "transmon"', { timeout: 300_000 }, async () => {
+    const s = await serve({ hermetic: false, port: 14312 })
+    const ses = (await (
+      await fetch(s.url + '/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+    ).json()) as { id: string }
+
+    const turn = async (text: string): Promise<string> => {
+      const r = await fetch(`${s.url}/session/${ses.id}/message`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ agent: 'pulse-designer', parts: [{ type: 'text', text }] }),
+      })
+      expect(r.ok, `message POST ${r.status}`).toBe(true)
+      const msg = (await r.json()) as { parts?: Array<{ type: string; text?: string }> }
+      return (msg.parts ?? []).filter((p) => p.type === 'text').map((p) => p.text).join('\n')
+    }
+
+    const q1 = await turn('help me design a pulse')
+    expect(q1.toLowerCase()).toMatch(/system|platform/)
+    expect((q1.match(/\?/g) ?? []).length, 'one question at a time').toBeLessThanOrEqual(2)
+
+    const q2 = await turn('transmon')
+    expect(q2).toMatch(/\\hat|H\s*\/\s*\\hbar|hamiltonian/i)
+  })
+})
