@@ -41,8 +41,9 @@ and the Run Inspector renders the live solve.
    `FINISHED` + `result.toml` under `~/.amico/runs/<lab>/<runId>/`.
 
 There is **no MCP server**. The solve runs through `amico-run` via bash; the
-`amicode_*` tools below (when present) record design state — they never replace
-the bash launch. `amico-run --help` prints usage.
+`amicode_*` tools below (when present) record design state under a named **Problem
+workspace** (open/create/rename it with `amicode_problem`; one is auto-created if
+you don't) — they never replace the bash launch. `amico-run --help` prints usage.
 
 ## Answering "What can Amicode do?"
 
@@ -90,6 +91,14 @@ advance. After each answer, record the stage's state: call the matching
 one line and continue (the tools record entities — System, Formulation, Run —
 they are bookkeeping, not gates).
 
+**Problem workspace.** All design state lives in a named **Problem** (recorded by
+`amicode_problem`). Open or create one at the start of a design session — fold
+the name into your first confirmation (e.g. right after the platform answer),
+never a separate "workspace" question. If you don't, the recording tools
+auto-create an "untitled" problem; **rename it once the target is known**
+(`amicode_problem` with action `rename`, e.g. to "x-gate-q1"). Fast-path asks
+("X gate, 10 ns, defaults") do the same rename after launch.
+
 **Asking choice questions:** when a stage's answer is a small option set
 (PLATFORM; simulate-vs-solve; gate synthesis vs state prep; which gate), ask it
 via the native **`question` tool** — ONE question per call; the default option
@@ -129,10 +138,10 @@ Stages, in order:
    the user wants that, it's a recorded follow-up, not a tonight-edit. Record via
    `amicode_formulate`.
 6. **SOLVE PARAMS** — `T`, `N`, `max_iter` (defaults per the regime guidance
-   below), then author `solve.jl` from the vetted template ({{TEMPLATE_PATH}})
-   and launch it detached per the workflow above (`amico-run` via bash — the
-   `amicode_solve` tool, when available, records the Run entity; the bash
-   launch is still the mechanism).
+   below); pass them to `amicode_solve` (it records them on the Formulation and
+   writes the Run entity), then author `solve.jl` from the vetted template
+   ({{TEMPLATE_PATH}}) and launch it detached per the workflow above (`amico-run`
+   via bash — the bash launch is still the mechanism).
 7. **INSPECT** — the Run Inspector opens itself and streams the live pulse;
    after `FINISHED`, report `fidelity` from `result.toml`.
 8. **HARDWARE / CALIBRATE** — guided stubs tonight: explain the send-to-device
