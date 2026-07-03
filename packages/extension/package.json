@@ -93,6 +93,11 @@
           "default": "",
           "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
         },
+        "amicode.opencodePort": {
+          "type": "number",
+          "default": 43117,
+          "description": "Fixed port for the spawned opencode server. Set to 0 to pick a free ephemeral port on each start instead."
+        },
         "amicode.juliaProject": {
           "type": "string",
           "default": "",

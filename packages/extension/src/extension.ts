@@ -116,9 +116,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // spawn env — opencode resolves its provider from its own env / config /
     // auth.json. The spawn env carries only PATH (so amico-run resolves) and the
     // amico instructions/permission config.
+    const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+    if (configuredPort > 0) {
+      opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
+    }
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
+      port: configuredPort > 0 ? configuredPort : undefined,
       env: {
         PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
         // Inject the amico solve workflow as opencode `instructions` (loaded for
@@ -130,7 +135,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       },
       channel: opencodeChannel,
     });
-    ctx.subscriptions.push({ dispose: () => serverManager?.stop() });
+    ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
 
     // SSE event channel — opens once opencode is healthy.
     sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
@@ -186,7 +191,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       opencodeChannel.appendLine(`[boot] restart requested`);
-      serverManager?.stop();
+      await serverManager?.stop();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
       try {

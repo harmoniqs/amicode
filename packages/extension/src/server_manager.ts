@@ -9,7 +9,7 @@ import type { Readable } from "node:stream";
 // the opencode-v2 decompiled extension (handover §6).
 //
 // Lifecycle:
-//   1. acquire a free TCP port
+//   1. use the configured port, or acquire a free TCP port if none was given
 //   2. spawn `opencode serve --port=<port>` with env injected
 //   3. poll http://127.0.0.1:<port>/health until 200 (max 30s)
 //   4. report ready; expose .url + .port + .child
@@ -27,6 +27,8 @@ export interface ServerOptions {
   env: Record<string, string>;
   /** OutputChannel for opencode stdout/stderr capture. */
   channel: vscode.OutputChannel;
+  /** Fixed port to serve on. 0 (default) picks a free ephemeral port each start. */
+  port?: number;
 }
 
 export class ServerManager {
@@ -46,7 +48,7 @@ export class ServerManager {
     if (this.child) {
       throw new Error("opencode server already running");
     }
-    const port = await pickFreePort();
+    const port = this.opts.port ?? (await pickFreePort());
     this._port = port;
     this.opts.channel.appendLine(`[server] spawning opencode serve --port=${port} (cwd=${this.opts.cwd})`);
 
@@ -78,16 +80,25 @@ export class ServerManager {
     return url;
   }
 
-  stop(): void {
-    if (!this.child) return;
+  /** Resolves once the child has actually exited (bounded by the SIGKILL fallback) —
+   *  callers restarting onto a fixed port must await this or the new spawn can race
+   *  the old process for the socket. */
+  stop(): Promise<void> {
+    if (!this.child) return Promise.resolve();
     this.opts.channel.appendLine(`[server] stopping opencode (pid=${this.child.pid})`);
-    try { this.child.kill("SIGTERM"); } catch {}
     const c = this.child;
-    setTimeout(() => {
-      try { c.kill("SIGKILL"); } catch {}
-    }, 3_000);
     this.child = undefined;
     this._ready = false;
+    return new Promise((resolve) => {
+      const killTimer = setTimeout(() => {
+        try { c.kill("SIGKILL"); } catch {}
+      }, 3_000);
+      c.once("exit", () => {
+        clearTimeout(killTimer);
+        resolve();
+      });
+      try { c.kill("SIGTERM"); } catch { clearTimeout(killTimer); resolve(); }
+    });
   }
 }
 
