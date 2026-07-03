@@ -18,6 +18,11 @@ jobs:
       # self-skipping — the skip was the #25 CI-level false-green (an injection or
       # config-merge regression would pass CI because the only test for it skipped).
       - run: pnpm --filter amicode-v2 fetch:opencode
+        env:
+          # gh release download pulls the vendored binary from the PRIVATE
+          # harmoniqs/opencode release; the default GITHUB_TOKEN is scoped to
+          # this repo only, so gh needs a cross-repo token (see repo secret).
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
       - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance
       - name: amico-validate — shipped configs conform + linked bin works (0.1c gate)
         run: |
@@ -71,6 +76,8 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode-v2 package   # amico-run build + ext build + fetch:opencode + vsce
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # package → fetch:opencode pulls the private binary
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
   boot-smoke:
     strategy:
@@ -84,4 +91,6 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode-v2 fetch:opencode
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
       - run: pnpm --filter amicode-v2 test:smoke
