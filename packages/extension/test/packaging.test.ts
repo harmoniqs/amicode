@@ -19,9 +19,16 @@ const REQUIRED = [
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback
-// trap, generalized). Inert without a built .vsix so CI stays green; run after
-// `pnpm --filter amicode-v2 package`.
-describe.skipIf(!existsSync(VSIX))('packaged VSIX contains runtime assets', () => {
+// trap, generalized). Locally: inert without a built .vsix (run after
+// `pnpm --filter amicode-v2 package`) so the fast suite stays green. In CI: the
+// vsix-gate job (#45) sets AMICODE_REQUIRE_VSIX=1, under which the suite can
+// NEVER self-skip — a missing .vsix is a hard failure there, closing the
+// perennial "2 skip" false-green.
+const REQUIRE_VSIX = process.env.AMICODE_REQUIRE_VSIX === '1'
+describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)('packaged VSIX contains runtime assets', () => {
+  it('the .vsix exists (hard requirement under AMICODE_REQUIRE_VSIX=1)', () => {
+    expect(existsSync(VSIX), `no ${VSIX} — run: pnpm --filter amicode-v2 package`).toBe(true)
+  })
   it('includes amico-run, template, julia project, AGENTS.md + a vendored opencode', () => {
     const listing = execFileSync('unzip', ['-Z1', VSIX], { encoding: 'utf8' })
     for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p)

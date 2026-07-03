@@ -56,6 +56,22 @@ jobs:
         run: bash packages/schema/scripts/producer_roundtrip.sh
       - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia
         run: bash packages/schema/scripts/ac6_drift_check.sh
+  vsix-gate:
+    # 1.4 (#45): build the REAL .vsix and run the packaging-manifest suite with
+    # AMICODE_REQUIRE_VSIX=1 — under that flag the suite can never self-skip, so
+    # a dropped runtime asset (or a package step that stops producing the file)
+    # reds CI instead of riding the perennial "2 skip" false-green. ubuntu-only:
+    # VSIX contents are platform-independent except the vendored opencode dir,
+    # and the manifest check accepts any platform there.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter amicode-v2 package   # amico-run build + ext build + fetch:opencode + vsce
+      - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
   boot-smoke:
     strategy:
       matrix:
