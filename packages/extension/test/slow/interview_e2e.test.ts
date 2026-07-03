@@ -212,9 +212,13 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())('live interview turns (creds
       expect(fidelity, `fidelity from ${newRun}`).toBeGreaterThan(0.99)
 
       // Entity bookkeeping (soft — free-tier models may skip tool calls; a miss is
-      // a prompt-strength finding, not a chain failure).
-      const entDir = join(homedir(), '.amico', 'runs', 'default', '_entities')
-      if (!existsSync(join(entDir, 'system.toml'))) {
+      // a prompt-strength finding, not a chain failure). Entities live in the
+      // active problem workspace now (spec A), not the old global _entities dir.
+      const problemsRoot = join(homedir(), '.amico', 'problems')
+      const activeFile = join(problemsRoot, 'active')
+      const activeSlug = existsSync(activeFile) ? readFileSync(activeFile, 'utf8').trim() : ''
+      const sysToml = activeSlug ? join(problemsRoot, activeSlug, 'entities', 'system.toml') : ''
+      if (!sysToml || !existsSync(sysToml)) {
         console.warn('[tier D] amicode_pick_system was not called — record as prompt-strength finding')
       }
     },

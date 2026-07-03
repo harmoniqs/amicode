@@ -73,18 +73,18 @@ describe('buildOpencodeConfigContent', () => {
     expect(pd.prompt).toContain('amicode_')                          // record stages via the tool pack
     expect(pd.prompt).toContain('solve workflow')                    // launches stay on the bash workflow
   })
-  it('grants external_directory on the entities dir (default + $AMICODE_ENTITIES_DIR override)', () => {
-    const defGrant = join(homedir(), '.amico', 'runs', 'default', '_entities') + '/**'
+  it('grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)', () => {
+    const defGrant = join(homedir(), '.amico', 'problems') + '/**'
     const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
     expect(cfg.permission.external_directory[defGrant]).toBe('allow')
-    const prev = process.env.AMICODE_ENTITIES_DIR
-    process.env.AMICODE_ENTITIES_DIR = '/custom/entities'
+    const prev = process.env.AMICODE_PROBLEMS_DIR
+    process.env.AMICODE_PROBLEMS_DIR = '/custom/problems'
     try {
       const cfg2 = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
-      expect(cfg2.permission.external_directory['/custom/entities/**']).toBe('allow') // grant follows the plugin
+      expect(cfg2.permission.external_directory['/custom/problems/**']).toBe('allow') // grant follows the plugin
     } finally {
-      if (prev === undefined) delete process.env.AMICODE_ENTITIES_DIR
-      else process.env.AMICODE_ENTITIES_DIR = prev
+      if (prev === undefined) delete process.env.AMICODE_PROBLEMS_DIR
+      else process.env.AMICODE_PROBLEMS_DIR = prev
     }
   })
   it('never embeds a credential in the config content (D11 no-store/no-inject regression guard)', () => {

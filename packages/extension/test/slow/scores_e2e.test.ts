@@ -14,13 +14,25 @@ import { readUsage, reconstructTraversal } from '../../src/scores/usage'
 // live-gating: skips without AMICODE_E2E_LIVE=1 / creds — a SKIP is not a PASS).
 // Differences: AGENTS.md goes through the REAL prepareOpencodeProject, which now
 // splices the onset router + compiled score #0 and writes the score_manifest
-// transport; AMICODE_ENTITIES_DIR is pinned to a fresh tmp dir so the Bun-side
-// guard state (interview_state.json, usage.jsonl) is hermetic and assertable.
-// No solve is run here — tier D of the night e2e owns that.
+// transport; AMICODE_PROBLEMS_DIR is pinned to a fresh tmp dir so the Bun-side
+// guard state (per-problem interview_state.json, usage.jsonl) is hermetic and
+// assertable. No solve is run here — tier D of the night e2e owns that.
 // ============================================================================
 
 const EXT = join(__dirname, '..', '..')
 const OC_BIN = join(EXT, 'vendor', 'opencode', `${process.platform}-${process.arch}`, 'opencode')
+
+// Spec A: the manifest lives at the problems ROOT (the guard's manifestDir), but
+// interview_state.json / usage.jsonl live in the ACTIVE problem's workspace. The
+// plugin auto-creates an untitled problem on the first tool call; resolve it via
+// the `active` pointer.
+function activeStateDir(problemsRoot: string): string | undefined {
+  const activeFile = join(problemsRoot, 'active')
+  if (!existsSync(activeFile)) return undefined
+  const slug = readFileSync(activeFile, 'utf8').trim()
+  if (!slug) return undefined
+  return join(problemsRoot, slug)
+}
 
 const AUTH_JSON = join(homedir(), '.local', 'share', 'opencode', 'auth.json')
 function hasCreds(): boolean {
@@ -33,23 +45,23 @@ function hasCreds(): boolean {
   }
 }
 
-const ENTITIES = mkdtempSync(join(tmpdir(), 'scores-e2e-entities-'))
+const PROBLEMS = mkdtempSync(join(tmpdir(), 'scores-e2e-problems-'))
 const servers: ChildProcess[] = []
 afterAll(() => {
   for (const c of servers) c.kill('SIGTERM')
 })
 
 async function serveWithScores(port: number) {
-  // entitiesDir must match between the extension-side builder (permission grant +
+  // problems root must match between the extension-side builder (permission grant +
   // manifest transport) and the Bun-side plugin — pin it before either runs.
-  process.env.AMICODE_ENTITIES_DIR = ENTITIES
+  process.env.AMICODE_PROBLEMS_DIR = PROBLEMS
   const project = prepareOpencodeProject({
     agentsSrc: join(EXT, 'AGENTS.md'),
     templateSrc: join(EXT, 'templates', 'solve_template.jl'),
     juliaProject: resolveJuliaProject(''),
     entitlementsDir: mkdtempSync(join(tmpdir(), 'scores-e2e-noents-')), // no code → public repertoire
   })
-  const env = { ...process.env, AMICODE_ENTITIES_DIR: ENTITIES }
+  const env = { ...process.env, AMICODE_PROBLEMS_DIR: PROBLEMS }
   env.OPENCODE_CONFIG_CONTENT = buildOpencodeConfigContent(project.agentsPath, join(EXT, 'templates', 'solve_template.jl'), join(homedir(), '.amico', 'runs', 'default'))
   let buf = ''
   const child = spawn(OC_BIN, ['serve', '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -114,20 +126,24 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())('scores runtime live e2e (cr
 
     // The guard state is written by the plugin when the tool fires; free-tier models
     // occasionally skip the tool call — one explicit nudge turn is allowed before
-    // the hard assertion (rerun-once policy covers residual sampling noise).
-    if (!loadState(ENTITIES)) {
+    // the hard assertion (rerun-once policy covers residual sampling noise). State
+    // now lives in the ACTIVE problem workspace, not the problems root.
+    const stateDir0 = activeStateDir(PROBLEMS)
+    if (!stateDir0 || !loadState(stateDir0)) {
       const t4 = await turn('please record that with your amicode tools before we continue')
       transcript.push(`## turn 4 (nudge)\n\n${t4}`)
     }
     writeFileSync(join(tmpdir(), `scores-e2e-transcript-${Date.now()}.md`), transcript.join('\n\n'))
 
     // Success criterion 1+8 (scores spec §10): pinned state + reconstructable funnel.
-    const state = loadState(ENTITIES)
+    const stateDir = activeStateDir(PROBLEMS)
+    expect(stateDir, 'active problem workspace exists').toBeDefined()
+    const state = loadState(stateDir!)
     expect(state, 'interview_state.json written by the guard').toBeDefined()
     expect(state!.score_id).toBe('pulse-designer')
     expect(state!.score_version).toBe(1)
 
-    const traversal = reconstructTraversal(readUsage(ENTITIES))
+    const traversal = reconstructTraversal(readUsage(stateDir!))
     expect(traversal.score_id).toBe('pulse-designer')
     expect(traversal.funnel.map((f) => f.stage)).toContain('platform')
   })

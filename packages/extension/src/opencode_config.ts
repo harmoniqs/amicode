@@ -87,19 +87,21 @@ export function resolveJuliaProject(configValue: string): string {
  *    - `agent: {"pulse-designer": …}` — the interview agent; its prompt defers
  *      to the "Pulse-designer interview" section of the injected AGENTS.md so
  *      the interview script lives in ONE place.
- *    - an `external_directory` grant for the entities dir, so the AGENT's file
- *      tools can read back system/formulation/run TOML the plugin wrote (the
- *      plugin's own fs writes are host-process calls and need no grant). Must
- *      stay derivation-identical to entitiesDir() in amicode_tools.ts. */
+ *    - an `external_directory` grant for the Problem-workspaces root, so the
+ *      AGENT's file tools can read back system/formulation/run/event TOML the
+ *      plugin wrote (the plugin's own fs writes are host-process calls and need
+ *      no grant). Must stay derivation-identical to problemsDir() in
+ *      opencode-plugin/problems.ts. */
 const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
 
-/** Where the amicode_* plugin records entities — MUST match entitiesDir() in
- *  opencode-plugin/amicode_tools.ts ($AMICODE_ENTITIES_DIR override included,
- *  so the permission grant follows the plugin wherever it is pointed). */
-function entitiesDir(): string {
-  const env = process.env.AMICODE_ENTITIES_DIR;
+/** Root of the amicode_* Problem workspaces — MUST match problemsDir() in
+ *  opencode-plugin/problems.ts ($AMICODE_PROBLEMS_DIR override included, so the
+ *  permission grant AND the score-manifest transport follow the plugin wherever
+ *  it is pointed). */
+function problemsRoot(): string {
+  const env = process.env.AMICODE_PROBLEMS_DIR;
   if (env && env.trim() !== "") return env;
-  return path.join(os.homedir(), ".amico", "runs", "default", "_entities");
+  return path.join(os.homedir(), ".amico", "problems");
 }
 
 /** Default location of the amicode_* opencode plugin: a sibling directory of
@@ -141,7 +143,7 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
         [`${runsRoot}/**`]: "allow",        // run read-backs: FINISHED/result.toml/run.log
-        [`${entitiesDir()}/**`]: "allow",   // amicode_* entities the agent may read back
+        [`${problemsRoot()}/**`]: "allow",   // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
       },
     },
@@ -200,14 +202,15 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     if (score0) {
       finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
-      // locates ALL its state via entitiesDir() — so the guard's copy goes there
-      // (see opencode-plugin/score_guard.ts header). The projectDir copy is the
-      // extension-side record of what this session was prepared with.
+      // reads score_manifest.json from the problems ROOT — that is the guard's
+      // session-scoped manifestDir (per-problem interview state lives in each
+      // workspace; see opencode-plugin/score_guard.ts header). The projectDir copy
+      // is the extension-side record of what this session was prepared with.
       const manifestJson =
         JSON.stringify({ manifest: score0.manifest, score_dir: score0.dir, project_dir: projectDir }, null, 2) + "\n";
       fs.writeFileSync(path.join(projectDir, "score_manifest.json"), manifestJson);
-      fs.mkdirSync(entitiesDir(), { recursive: true });
-      fs.writeFileSync(path.join(entitiesDir(), "score_manifest.json"), manifestJson);
+      fs.mkdirSync(problemsRoot(), { recursive: true });
+      fs.writeFileSync(path.join(problemsRoot(), "score_manifest.json"), manifestJson);
     }
   } catch (e) {
     console.warn(`amicode: score compilation failed, using built-in interview fallback: ${e}`);

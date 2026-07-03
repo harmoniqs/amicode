@@ -20,6 +20,13 @@ const REQUIRED = [
   'extension/scores/pulse-designer/templates/solve.jl',  // score-local vetted template (lint requires it resolves)
   'extension/scores/memory/free-phase-objective-only.md',
   'extension/scores/entitlements.toml',                  // entitlement registry — gating breaks silently without it
+  // amicode_* plugin (Bun-transpiled .ts, loaded by absolute path) — every sibling
+  // is load-bearing: a dropped file silently reverts the session to vanilla opencode.
+  'extension/opencode-plugin/amicode_tools.ts',
+  'extension/opencode-plugin/entities.ts',
+  'extension/opencode-plugin/problems.ts',
+  'extension/opencode-plugin/hashes.ts',
+  'extension/opencode-plugin/score_guard.ts',
 ]
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback

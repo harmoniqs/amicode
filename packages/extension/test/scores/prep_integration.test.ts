@@ -5,16 +5,16 @@ import * as path from "node:path";
 import { prepareOpencodeProject, buildOpencodeConfigContent, DEFAULT_SCORES_ROOT } from "../../src/opencode_config";
 
 // Hermeticity: prepareOpencodeProject writes the plugin's manifest transport to
-// entitiesDir(), which defaults into $HOME — point it at a tmp dir for the test run.
-const ENTITIES_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "prep-entities-"));
-let prevEntitiesDir: string | undefined;
+// the problems root, which defaults into $HOME — point it at a tmp dir for the run.
+const PROBLEMS_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "prep-problems-"));
+let prevProblemsDir: string | undefined;
 beforeAll(() => {
-  prevEntitiesDir = process.env.AMICODE_ENTITIES_DIR;
-  process.env.AMICODE_ENTITIES_DIR = ENTITIES_TMP;
+  prevProblemsDir = process.env.AMICODE_PROBLEMS_DIR;
+  process.env.AMICODE_PROBLEMS_DIR = PROBLEMS_TMP;
 });
 afterAll(() => {
-  if (prevEntitiesDir === undefined) delete process.env.AMICODE_ENTITIES_DIR;
-  else process.env.AMICODE_ENTITIES_DIR = prevEntitiesDir;
+  if (prevProblemsDir === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
+  else process.env.AMICODE_PROBLEMS_DIR = prevProblemsDir;
 });
 
 const AGENTS_SRC = path.resolve(__dirname, "..", "..", "AGENTS.md");
@@ -44,7 +44,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(agents).not.toMatch(/\{\{[A-Z_]+\}\}/); // substitution complete, incl. compiled content
   });
 
-  it("writes the score_manifest.json plugin transport (projectDir record + entitiesDir copy)", () => {
+  it("writes the score_manifest.json plugin transport (projectDir record + problems-root copy)", () => {
     const proj = prep();
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
@@ -54,8 +54,8 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(agentsForVersion).toContain(`Compiled from score \`pulse-designer\` v${manifest.manifest.version}`);
     expect(manifest.project_dir).toBe(proj.projectDir);
     expect(manifest.score_dir).toBe(path.join(DEFAULT_SCORES_ROOT, "pulse-designer"));
-    // the copy the Bun-side guard actually reads (entitiesDir contract)
-    const guardCopy = JSON.parse(fs.readFileSync(path.join(ENTITIES_TMP, "score_manifest.json"), "utf8"));
+    // the copy the Bun-side guard actually reads as its manifestDir (problems root)
+    const guardCopy = JSON.parse(fs.readFileSync(path.join(PROBLEMS_TMP, "score_manifest.json"), "utf8"));
     expect(guardCopy.manifest.id).toBe("pulse-designer");
   });
 
