@@ -50,6 +50,12 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
     expect(AGENTS).toMatch(/skip straight to\s+the\s+workflow/i)
     expect(AGENTS).toMatch(/fast-forward/i)
   })
+  it('capabilities question has a curated answer: no webfetch, no engine talk', () => {
+    expect(AGENTS).toMatch(/## Answering "What can Amicode do\?"/)
+    expect(AGENTS).toMatch(/never webfetch/i)
+    expect(AGENTS).toMatch(/never describe the underlying engine/i)
+    expect(AGENTS).toMatch(/Today's scope/)
+  })
   it('identity: Amico/Amicode, never self-describes as opencode; interview kicks off proactively on greetings', () => {
     expect(AGENTS).toMatch(/You are \*\*Amico\*\*/)
     expect(AGENTS).toMatch(/NOT "opencode"/)
