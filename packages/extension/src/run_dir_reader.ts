@@ -16,14 +16,92 @@ const NUM = String.raw`-?(?:Inf|NaN|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)`;
 export const AMICODE_ITER_RE = new RegExp(
   String.raw`^AMICODE_ITER\s+iter=(\d+)\s+f=(${NUM})\s+inf_pr=(${NUM})\s+inf_du=(${NUM})\s*$`,
 );
-export const ITER_PNG_RE = /^iter_(\d+)\.png$/;   // unbounded digits (β.1 contract)
-
 /** Parse an AMICODE_ITER numeric field, mapping Julia's Inf/NaN to JS values. */
 export function parseAmicoNum(s: string): number {
   if (s === "Inf") return Infinity;
   if (s === "-Inf") return -Infinity;
   if (s === "NaN" || s === "-NaN") return NaN;
   return Number(s);
+}
+
+// ---------------------------------------------------------------------------
+// Pulse-line grammar (#66) — additive lines in the run.log stdout tee feeding
+// client-side pulse rendering. Labels are double-quoted strings excluding
+// quotes and commas; bounds are lo:hi pairs, one per drive.
+// ---------------------------------------------------------------------------
+
+export const AMICODE_PULSE_META_RE = new RegExp(
+  String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)\s*$`,
+);
+
+export interface PulseMeta { drives: number; knots: number; labels: string[]; bounds: [number, number][] }
+
+/** Parse an AMICODE_PULSE_META line. Returns undefined for anything malformed. */
+export function parsePulseMetaLine(line: string): PulseMeta | undefined {
+  const m = AMICODE_PULSE_META_RE.exec(line);
+  if (!m) return undefined;
+  const labels = [...m[3].matchAll(/"([^",]*)"/g)].map((x) => x[1]);
+  const bounds = m[4].split(",").map((pair) => {
+    const [lo, hi] = pair.split(":");
+    return [parseAmicoNum(lo), parseAmicoNum(hi)] as [number, number];
+  });
+  return { drives: parseInt(m[1], 10), knots: parseInt(m[2], 10), labels, bounds };
+}
+
+export const AMICODE_PULSE_RE = new RegExp(
+  String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=(${NUM})\s+a=(${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)*)\s*$`,
+);
+
+export interface PulseRecord { iter: number; dt: number; values: number[][] }
+
+/** Parse an AMICODE_PULSE record line. Returns undefined for anything malformed. */
+export function parsePulseRecordLine(line: string): PulseRecord | undefined {
+  const m = AMICODE_PULSE_RE.exec(line);
+  if (!m) return undefined;
+  const values = m[3].split(";").map((drive) => drive.split(",").map(parseAmicoNum));
+  return { iter: parseInt(m[1], 10), dt: parseAmicoNum(m[2]), values };
+}
+
+export type PulseEvent =
+  | { type: "meta"; meta: PulseMeta }
+  | { type: "record"; record: PulseRecord };
+
+/** Cross-line policy for the pulse stream — the single gate BOTH delivery
+ *  paths (replay ingest, live tail) feed lines through. Policy (#66 AC4):
+ *  records before any meta are dropped (nothing to interpret them against);
+ *  the LAST meta wins (duplicate metas are expected — the tailer re-reads from
+ *  offset 0 on truncation) and its shape governs subsequent records; records
+ *  whose drive/knot counts disagree with the governing meta are ignored; a
+ *  meta whose own label/bounds counts disagree with drives= is malformed and
+ *  changes nothing. */
+export class PulseStream {
+  private meta?: PulseMeta;
+
+  /** Arm the stream with an externally-delivered meta (replay ingest runs its
+   *  own stream; the live sink re-arms from the forwarded meta event so tailed
+   *  records that follow a replayed meta still have a governing shape). */
+  arm(meta: PulseMeta): void {
+    this.meta = meta;
+  }
+
+  /** Feed one run.log line; returns a routable event or undefined (non-pulse
+   *  lines, malformed lines, and policy-dropped records). */
+  onLine(line: string): PulseEvent | undefined {
+    const meta = parsePulseMetaLine(line);
+    if (meta) {
+      if (meta.labels.length !== meta.drives || meta.bounds.length !== meta.drives) return undefined;
+      this.meta = meta;
+      return { type: "meta", meta };
+    }
+    const record = parsePulseRecordLine(line);
+    if (record) {
+      if (!this.meta) return undefined;   // record before meta — nothing to interpret it against
+      if (record.values.length !== this.meta.drives) return undefined;
+      if (record.values.some((d) => d.length !== this.meta!.knots)) return undefined;
+      return { type: "record", record };
+    }
+    return undefined;
+  }
 }
 
 export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
@@ -33,34 +111,23 @@ export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
 /** Where ingestRunDir routes its findings. The live impl carries the
  *  newest-wins + promote-once guards; the test impl is plain spies. */
 export interface RunSink {
-  image(fsPath: string, iter: number): void;
   iter(rec: IterRecord): void;
   run(c: RunCompletion): void;
   promote(info: PromoteInfo): void;
+  /** Pulse-stream events (#66): a meta or a policy-accepted record. Replay
+   *  forwards meta + the NEWEST record only; the live tail forwards each. */
+  pulse(e: PulseEvent): void;
 }
 
-/** Newest-wins guard for the live sink. Frame display and log-line iters are
- *  tracked SEPARATELY on purpose: run.log `AMICODE_ITER` lines arrive once per
- *  iteration and race ahead of the PNG frames (the solver logs `iter=k`, *then*
- *  writes `iter_k.png`). If frame dedup shared the log high-water mark, every
- *  frame would test `k <= high` and be dropped — leaving the inspector blank
- *  for the whole solve. So frames dedup only against prior FRAMES.
- *  Pure + vscode-free so it's unit-testable (LiveRunSink delegates to it). */
+/** Iteration high-water mark for the live sink — drives the status bar's
+ *  "iter N" and the completion record. Pure + vscode-free (unit-testable). */
 export class SinkDedup {
-  private lastFrameIter = -1;
   private latestIter = -1;
-  /** True if this frame is newer than the last DISPLAYED frame (→ forward it). */
-  acceptFrame(iter: number): boolean {
-    if (iter <= this.lastFrameIter) return false;
-    this.lastFrameIter = iter;
-    if (iter > this.latestIter) this.latestIter = iter;
-    return true;
-  }
-  /** Record a log-line iter — advances the high-water mark only, never frames. */
+  /** Record a log-line iter — advances the high-water mark. */
   noteIter(iter: number): void {
     if (iter > this.latestIter) this.latestIter = iter;
   }
-  /** Highest iter seen from any source (drives the status bar / completion). */
+  /** Highest iteration seen. */
   get high(): number { return this.latestIter; }
 }
 
@@ -79,24 +146,27 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   if (!manifest || !validateManifest(manifest).ok) return 0;   // no valid manifest → not a run dir yet
   const runId = String(manifest.run_id);
 
-  // newest iter PNG
-  let newest = -1; let newestPath: string | undefined;
-  for (const f of fs.readdirSync(runDir)) {
-    const m = ITER_PNG_RE.exec(f);
-    if (m) { const k = parseInt(m[1], 10); if (k > newest) { newest = k; newestPath = path.join(runDir, f); } }
-  }
-  if (newestPath) sink.image(newestPath, newest);
-
   // run.log body → iter records (replay; the live tailer handles appended lines)
   let logBody: string | undefined;
   try { logBody = fs.readFileSync(path.join(runDir, "run.log"), "utf8"); } catch { /* none yet */ }
   let logBytes = 0;
   if (logBody) {
     logBytes = Buffer.byteLength(logBody, "utf8");
+    // Pulse replay is newest-wins: a finished run's full history would burst
+    // thousands of identical-end-state messages at the webview. Forward the
+    // governing meta + the last policy-accepted record only.
+    const pulses = new PulseStream();
+    let pulseMeta: PulseEvent | undefined;
+    let newestPulse: PulseEvent | undefined;
     for (const line of logBody.split("\n")) {
       const m = AMICODE_ITER_RE.exec(line);
-      if (m) sink.iter({ iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) });
+      if (m) { sink.iter({ iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) }); continue; }
+      const e = pulses.onLine(line);
+      if (e?.type === "meta") { pulseMeta = e; newestPulse = undefined; }   // new meta governs; stale records don't cross it
+      else if (e?.type === "record") newestPulse = e;
     }
+    if (pulseMeta) sink.pulse(pulseMeta);
+    if (newestPulse) sink.pulse(newestPulse);
   }
 
   // FINISHED is the authoritative terminal signal

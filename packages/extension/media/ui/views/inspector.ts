@@ -1,13 +1,17 @@
 // Inspector view — pure composition of atoms/components + layout selectors.
 // Owns the message protocol (runlabel / iteration / warming / completed /
-// refresh / ping) shared with run_inspector.ts.
+// pulsemeta / pulse / ping) shared with run_inspector.ts.
+//
+// The live pulse renders NATIVELY from pulse data (#66) — the per-iter PNGs
+// remain run-dir/archival artifacts but are no longer displayed. A run whose
+// log carries no pulse lines shows a hint instead of a plot.
 
 import { defineStyle } from "../style";
 import { mark } from "../atoms/icon";
 import { pill } from "../atoms/pill";
 import { text } from "../atoms/text";
 import { metric } from "../components/metric";
-import { preview } from "../components/preview";
+import { pulseplot } from "../components/pulseplot";
 
 defineStyle("inspector-view", `
   body { margin: 0; height: 100vh; font-family: var(--text-font);
@@ -16,7 +20,8 @@ defineStyle("inspector-view", `
 `);
 
 const IDLE_HINT = "No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.";
-const WARMING_HINT = "Julia warming up — compiling the solver + plotter (~1–2 min). Frames will stream here.";
+const WARMING_HINT = "Julia warming up — compiling the solver (~1–2 min). The pulse will stream here.";
+const NO_DATA_HINT = "This run carries no pulse data — re-run with the current solve template to see the live pulse.";
 
 export interface InspectorView {
   el: HTMLElement;
@@ -26,12 +31,16 @@ export interface InspectorView {
 export function createInspectorView(post: (msg: unknown) => void): InspectorView {
   const status = pill("idle");
   const runLabel = text("mono small dim");
-  const frames = preview(IDLE_HINT);
+  const pulse = pulseplot(IDLE_HINT);
   const hero = metric("objective", { hero: true });
   const iteration = metric("iteration");
   const feasibility = metric("feasibility");
   const optimality = metric("optimality");
   const metrics = [hero, iteration, feasibility, optimality];
+
+  /** Whether the current run has delivered pulse data — decides the
+   *  completed-without-data hint. Reset on warming (a NEW run started). */
+  let gotPulse = false;
 
   const brand = document.createElement("div");
   brand.className = "row gap-sm brand";
@@ -49,7 +58,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const el = document.createElement("div");
   el.className = "stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, frames.el, grid);
+  el.append(topbar, pulse.el, grid);
 
   return {
     el,
@@ -74,10 +83,11 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           break;
         }
         case "warming": {
-          // A NEW run started but has no frame yet — clear the previous run's
-          // plot + stats so the old iter-N image doesn't linger while the new
-          // solve compiles/warms up.
-          frames.waiting(WARMING_HINT);
+          // A NEW run started but has no data yet — clear the previous run's
+          // plot + stats so the old pulse doesn't linger while the new solve
+          // compiles/warms up.
+          gotPulse = false;
+          pulse.waiting(WARMING_HINT);
           for (const m of metrics) m.clear();
           hero.label("objective");
           status.set("running", "warming up");
@@ -92,11 +102,18 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
             hero.label("fidelity");
             hero.value((msg.fidelity as number).toFixed(5));
           }
+          if (!gotPulse) pulse.waiting(NO_DATA_HINT);   // old runs / non-emitting scripts
           break;
         }
-        case "refresh": {
-          frames.show(msg.url, () => iteration.value(String(msg.iter)));
-          status.set("running", "running");   // a new frame means a live solve; completion arrives via "completed"
+        case "pulsemeta": {
+          pulse.meta({ drives: msg.drives, knots: msg.knots, labels: msg.labels, bounds: msg.bounds });
+          break;
+        }
+        case "pulse": {
+          // Plot-only: never touches the status pill (a throttled record can
+          // legally land after "completed"; the badge must not regress).
+          gotPulse = true;
+          pulse.update({ iter: msg.iter, dt: msg.dt, values: msg.values });
           break;
         }
       }

@@ -39,4 +39,14 @@
   /* background */
   --bg-box: var(--vscode-editorWidget-background, transparent);
   --bg-plot: var(--vscode-editor-background);
+
+  /* series — categorical, FIXED order (drive 1..4), never cycled. Primary
+   * values ride VS Code's theme-aware chart tokens; the hex fallbacks are the
+   * dev-harness set, validated (dataviz six checks) against the dark surface. */
+  --series-1: var(--vscode-charts-blue, #3794ff);
+  --series-2: var(--vscode-charts-orange, #c17800);
+  --series-3: var(--vscode-charts-purple, #9b6bc4);
+  --series-4: var(--vscode-charts-green, #4d9e51);
+  --plot-grid: var(--vscode-charts-lines, color-mix(in srgb, var(--vscode-foreground, #ccc) 18%, transparent));
+  --plot-band: color-mix(in srgb, var(--vscode-foreground, #ccc) 6%, transparent);
 }

@@ -1,4 +1,12 @@
-schema_version = "1"
 iterations = 60
-fidelity = 0.9999788203047787
-wall_seconds = 101.5023238658905
+fidelity = 0.9998472204856121
+schema_version = "1"
+wall_seconds = 109.01594400405884
+
+[params]
+levels = 3
+drive_max = 0.2
+T = 10.0
+max_iter = 60
+N = 50
+delta = 0.2

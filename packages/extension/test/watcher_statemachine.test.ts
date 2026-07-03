@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync, symlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,10 +13,10 @@ import { join } from "node:path";
 
 const { inspector } = vi.hoisted(() => ({
   inspector: {
-    setImageSource: vi.fn(),
     setWarmingUp: vi.fn(),
     postCompletion: vi.fn(),
     postIterationRecord: vi.fn(),
+    postPulse: vi.fn(),
     setRunLabel: vi.fn(),
     reveal: vi.fn(),
   },
@@ -38,55 +38,91 @@ function setLatest(root: string, target: string): void {
   symlinkSync(target, link);
 }
 const tick = (w: RunsRootWatcher): void => (w as unknown as { tick(): void }).tick();
+const META_LINE = 'AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.2:0.2\n';
 
 describe("RunsRootWatcher state machine", () => {
   beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
 
-  it("a run already FINISHED at launch stays idle — no stale plot re-rendered", () => {
+  it("a run already FINISHED at launch stays idle — nothing re-rendered", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const run = join(root, "r1"); mkdirSync(run);
     writeManifest(run, "r1");
-    writeFileSync(join(run, "iter_6.png"), "PNG");                 // a frame is on disk…
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     setLatest(root, run);
 
     const w = new RunsRootWatcher({ runsRoot: root, channel });
     w.start();
     tick(w);   // even after a poll, a finished-at-launch run must render nothing
-    expect(inspector.setImageSource).not.toHaveBeenCalled();       // …but it's NOT shown
+    expect(inspector.postPulse).not.toHaveBeenCalled();
+    expect(inspector.postCompletion).not.toHaveBeenCalled();
     expect(inspector.setWarmingUp).not.toHaveBeenCalled();
     w.dispose();
   });
 
-  it("fresh run → warming-up → poll delivers newest frame (newest-wins) → completion", () => {
+  it("fresh run → warming-up → completion (plot arrives via pulse routing, not frames)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const run = join(root, "r2"); mkdirSync(run);
-    writeManifest(run, "r2");                                      // manifest only, no frames yet
+    writeManifest(run, "r2");                                      // manifest only, no data yet
     setLatest(root, run);
 
     const w = new RunsRootWatcher({ runsRoot: root, channel });
     w.start();
-    // fresh run with no frames → warming, not idle, not a frame
+    // fresh run with no data → warming, not idle
     expect(inspector.setWarmingUp).toHaveBeenCalledTimes(1);
     expect(inspector.setRunLabel).toHaveBeenCalledWith("r2");
-    expect(inspector.setImageSource).not.toHaveBeenCalled();
-
-    // first frame appears; the poll backstop delivers it (no reliance on fs.watch)
-    writeFileSync(join(run, "iter_6.png"), "PNG");
-    tick(w);
-    expect(inspector.setImageSource).toHaveBeenLastCalledWith(expect.stringContaining("iter_6.png"), 6);
-
-    // two frames land between ticks → only the NEWEST is delivered
-    writeFileSync(join(run, "iter_12.png"), "PNG");
-    writeFileSync(join(run, "iter_18.png"), "PNG");
-    tick(w);
-    expect(inspector.setImageSource).toHaveBeenLastCalledWith(expect.stringContaining("iter_18.png"), 18);
 
     // FINISHED + result → terminal completion delivered once
     writeFileSync(join(run, "result.toml"), 'schema_version = "1"\nfidelity = 0.9999\niterations = 18\n');
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     tick(w);
     expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);
+    w.dispose();
+  });
+});
+
+// #66 AC6 — live-tail pulse routing. On a live run the tailer is the ONLY
+// carrier of meta (ingest sees an empty log at run start), so the tail path
+// must forward meta AND each record, in order.
+describe("pulse-line routing (#66)", () => {
+  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+
+  it("live tail forwards meta and each record in order as they land", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const run = join(root, "p1"); mkdirSync(run);
+    writeManifest(run, "p1");
+    setLatest(root, run);
+    const w = new RunsRootWatcher({ runsRoot: root, channel });
+    w.start();                                        // fresh run, empty log → warming
+    expect(inspector.postPulse).not.toHaveBeenCalled();
+
+    writeFileSync(join(run, "run.log"), META_LINE + "AMICODE_PULSE iter=1 dt=0.2 a=0.1,0.2\n");
+    tick(w);                                          // poll poke drains the tailer
+    expect(inspector.postPulse).toHaveBeenCalledTimes(2);
+    expect(inspector.postPulse).toHaveBeenNthCalledWith(1, expect.objectContaining({ type: "meta" }));
+    expect(inspector.postPulse).toHaveBeenNthCalledWith(2, expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 1 }) }));
+
+    appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=2 dt=0.2 a=0.3,0.4\n");
+    tick(w);
+    expect(inspector.postPulse).toHaveBeenCalledTimes(3);
+    expect(inspector.postPulse).toHaveBeenLastCalledWith(expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 2 }) }));
+    w.dispose();
+  });
+
+  it("replay-seeded meta arms the live stream: tailed records flow without a re-sent meta", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const run = join(root, "p2"); mkdirSync(run);
+    writeManifest(run, "p2");
+    // Mid-flight switch: meta + one record ALREADY on disk, run not finished.
+    writeFileSync(join(run, "run.log"), META_LINE + "AMICODE_PULSE iter=3 dt=0.2 a=0.1,0.2\n");
+    setLatest(root, run);
+    const w = new RunsRootWatcher({ runsRoot: root, channel });
+    w.start();                                        // ingest replays meta + newest record
+    expect(inspector.postPulse).toHaveBeenCalledTimes(2);
+
+    // a record tailed AFTER attach, with no meta line in the tailed region
+    appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=4 dt=0.2 a=0.5,0.6\n");
+    tick(w);
+    expect(inspector.postPulse).toHaveBeenLastCalledWith(expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 4 }) }));
     w.dispose();
   });
 });

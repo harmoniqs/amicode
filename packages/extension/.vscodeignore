@@ -5,6 +5,7 @@
 src/**
 test/**
 scripts/**
+dev/**
 node_modules/**
 esbuild.config.mjs
 tsconfig.json
