@@ -56,6 +56,9 @@ export class LogTailer implements vscode.Disposable {
       this.watcher = fs.watch(this.opts.path, { persistent: false }, (event) => {
         if (event === "change") this.drain();
       });
+      // Unhandled FSWatcher 'error' would crash the host; the owner's poll
+      // (poke) keeps draining even if this watcher dies.
+      this.watcher.on("error", (e) => this.opts.channel.appendLine(`[runs] log tail watch error: ${String(e)}`));
     } catch (err) {
       this.opts.channel.appendLine(`[runs] log tail attach failed: ${(err as Error).message}`);
     }

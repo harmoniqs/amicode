@@ -31,8 +31,11 @@ import {
 //
 // Completion keys on FINISHED (never result.toml presence); the contract
 // reading is the pure `ingestRunDir`. Double-delivery between a selection
-// replay and a live tail is tolerated by design — every consumer is
-// idempotent/newest-wins (same rationale as the poll backstop).
+// replay and a live tail is tolerated by design — terminal state and the
+// registry are idempotent, and the pulse/stats surfaces converge: the tailer
+// may transiently re-deliver records OLDER than a replayed newest (plot/stats
+// briefly regress) but every drain reads to EOF, so the last delivery is
+// always the true newest (same rationale as the poll backstop).
 //
 // Scheduler (1.1, #56/#68): `attachScheduler` consumes the lifecycle stream —
 // a `started` event registers + selects the run immediately (faster than the
@@ -115,6 +118,9 @@ export class RunsManager implements vscode.Disposable {
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "index") this.indexTailer?.poke();
     });
+    // An unhandled FSWatcher 'error' is an uncaught exception in the extension
+    // host (e.g. the watched dir deleted). The poll backstop keeps us live.
+    this.rootWatcher.on("error", (e) => this.opts.channel.appendLine(`[runs] root watch error: ${String(e)}`));
     this.poll = setInterval(() => this.tick(), RunsManager.POLL_MS);
     this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot}/index (fs.watch + ${RunsManager.POLL_MS}ms poll)`);
   }
@@ -172,8 +178,13 @@ export class RunsManager implements vscode.Disposable {
     try { ingestRunDir(rec.runDir, this.displaySink(rec), this.opts.promoteThreshold ?? 0.99); }
     catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
     // Fresh/live run → Julia warming up (the view swaps the hint when the first
-    // pulse record arrives). Same post-replay order as β's switchToRun.
-    if (rec.phase !== "finished") getInspector()?.setWarmingUp();
+    // pulse record arrives). Same post-replay order as β's switchToRun — and,
+    // like β, re-check DISK (not the registry phase): FINISHED may have landed
+    // inside the ≤700ms poll window, and warming-after-completion would invert
+    // the terminal badge until the next tick.
+    if (rec.phase !== "finished" && !fs.existsSync(path.join(rec.runDir, "FINISHED"))) {
+      getInspector()?.setWarmingUp();
+    }
   }
 
   /** Force immediate index-tail drain — for flows that just appended an index
@@ -195,7 +206,13 @@ export class RunsManager implements vscode.Disposable {
   // -------- internal --------
 
   private registerRun(runId: string, runDir: string, createdAt?: string, scriptPath?: string): void {
-    if (this.registry.get(runId)) return;   // idempotent — the index replays from 0 every launch
+    if (this.registry.get(runId)) {
+      // Idempotent — the index replays from 0 every launch. But a run first
+      // registered off the Scheduler's `started` event (runId+runDir only)
+      // gains its createdAt/scriptPath when the index line lands here.
+      this.registry.backfill(runId, { createdAt, scriptPath });
+      return;
+    }
     if (!fs.existsSync(runDir)) {
       this.opts.channel.appendLine(`[runs] index names ${runId} but ${runDir} is missing — skipped`);
       return;
@@ -233,6 +250,7 @@ export class RunsManager implements vscode.Disposable {
     p.dirWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
       if (filename === "FINISHED") this.checkFinished(p);
     });
+    p.dirWatcher.on("error", (e) => this.opts.channel.appendLine(`[runs] ${runId} dir watch error: ${String(e)}`));
     p.tailer = new LogTailer({
       path: path.join(runDir, "run.log"),
       startOffset: logBytes,

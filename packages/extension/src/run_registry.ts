@@ -58,12 +58,24 @@ export class RunRegistry {
     return true;
   }
 
+  /** Fill ONLY missing metadata on an existing record — a scheduler-registered
+   *  run (runId+runDir only) gains createdAt/scriptPath when its index line
+   *  lands later. Never overwrites present values (first registration wins for
+   *  everything stateful). */
+  backfill(runId: string, meta: { createdAt?: string; scriptPath?: string }): void {
+    const r = this.map.get(runId);
+    if (!r) return;
+    if (r.createdAt === undefined && meta.createdAt !== undefined) r.createdAt = meta.createdAt;
+    if (r.scriptPath === undefined && meta.scriptPath !== undefined) r.scriptPath = meta.scriptPath;
+  }
+
   get(runId: string): RunRecord | undefined {
     return this.map.get(runId);
   }
 
+  /** Snapshot COPIES — callers (1.3 trees) can't mutate registry state. */
   all(): RunRecord[] {
-    return [...this.map.values()];
+    return [...this.map.values()].map((r) => ({ ...r }));
   }
 
   noteIter(runId: string, iter: number): void {
