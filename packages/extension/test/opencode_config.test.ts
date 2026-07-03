@@ -32,17 +32,21 @@ describe('resolveJuliaProject', () => {
 describe('buildOpencodeConfigContent', () => {
   const TPL = '/ext/templates/solve_template.jl'
   it('emits valid JSON whose instructions points at the (absolute) agents file', () => {
-    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL))
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
     expect(cfg.instructions).toEqual(['/abs/AGENTS.md'])
   })
-  it('scopes external_directory to the template + scratch roots (least privilege), drops webfetch', () => {
-    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL))
+  it('scopes external_directory to the template + scratch + runs roots (least privilege), drops webfetch', () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
     const ed = cfg.permission.external_directory
     expect(typeof ed).toBe('object')                          // path-scoped, NOT a blanket "allow"
     expect(ed[TPL]).toBe('allow')                             // the template file the agent reads
     expect(ed['/ext/templates/**']).toBe('allow')            // its dir (belt-and-suspenders)
     expect(ed['/tmp/amicode-work/**']).toBe('allow')         // scratch it writes solve.jl into
     expect(ed['/private/tmp/amicode-work/**']).toBe('allow') // macOS: /tmp → /private/tmp
+    // The runs root: AGENTS.md tells the agent to read FINISHED/result.toml for
+    // results and run.log for tracebacks — without this grant every such read is
+    // an external_directory "ask" prompt (one per solve, worse on failures).
+    expect(ed['/home/u/.amico/runs/default/**']).toBe('allow')
     expect(cfg.permission.bash).toBe('allow')                 // runs amico-run (compound launch)
     expect(cfg.permission.edit).toBe('allow')                 // fills the FILL-IN block
     expect(cfg.permission.webfetch).toBeUndefined()           // unused by the solve flow — dropped
@@ -55,7 +59,7 @@ describe('buildOpencodeConfigContent', () => {
     const prev = process.env.ANTHROPIC_API_KEY
     process.env.ANTHROPIC_API_KEY = SENTINEL
     try {
-      const content = buildOpencodeConfigContent('/abs/AGENTS.md', TPL)
+      const content = buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default')
       expect(content).not.toContain(SENTINEL)                 // no env-sourced key leaks in
       expect(content).not.toMatch(/sk-[A-Za-z0-9-]{16,}/)     // no key-shaped string at all
       expect(content.toLowerCase()).not.toMatch(/"(apikey|api_key|authorization|bearer|token)"\s*:/)
@@ -95,12 +99,15 @@ describe.skipIf(!existsSync(OC_BIN))('opencode config injection + merge (1.17.3)
     const out = execFileSync(OC_BIN, ['debug', 'config'], {
       encoding: 'utf8',
       env: { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'),
-             OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(agentsPath, '/ext/templates/solve_template.jl') },
+             OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(agentsPath, '/ext/templates/solve_template.jl', join(home, '.amico', 'runs', 'default')) },
     })
     const cfg = JSON.parse(out)
     // our injection landed (the false-green boot_smoke couldn't catch):
     expect(cfg.instructions).toContain(agentsPath)                 // the AGENTS.md instruction injection
     expect(typeof cfg.permission.external_directory).toBe('object') // our injected permission key
+    // the runs-root grant survives the real deep-merge — the agent's post-solve
+    // FINISHED/result.toml/run.log read-backs must not "ask" on every run:
+    expect(cfg.permission.external_directory[join(home, '.amico', 'runs', 'default') + '/**']).toBe('allow')
     // the user's global config SURVIVED the deep-merge:
     expect(cfg.model).toBe('anthropic/claude-sonnet-4-6')          // provider/model preserved (Q129 needs this)
     expect(cfg.permission.doom_loop).toBe('deny')                  // user permission key preserved (#22)

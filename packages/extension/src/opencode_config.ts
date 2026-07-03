@@ -49,12 +49,17 @@ export function resolveJuliaProject(configValue: string): string {
  *  the turn hang forever (headless) and nags the user on every solve (GUI).
  *
  *  `external_directory` is the only load-bearing line, and it's SCOPED (least
- *  privilege) to the two roots the agent's file tools actually touch:
+ *  privilege) to the three roots the agent's file tools actually touch:
  *    - the bundled templates dir — the agent READS the solve template there;
- *    - /tmp/amicode-work — the scratch dir it WRITES solve.jl into.
+ *    - /tmp/amicode-work — the scratch dir it WRITES solve.jl into;
+ *    - the runs root — AGENTS.md tells the agent to READ a run's
+ *      FINISHED/result.toml for results and run.log for failure tracebacks;
+ *      without the grant each such read is an "ask" prompt (one per solve,
+ *      worse on failures — the nag the 2026-07-03 live test hit).
  *  (amico-run's own writes to ~/.amico/runs|julia are the subprocess's, not the
- *  agent's file tools, so they need no grant.) The path-scoped object form is
- *  accepted by opencode 1.17.3 (verified via `opencode debug config`).
+ *  agent's file tools, so they need no grant — only the agent's read-backs do.)
+ *  The path-scoped object form is accepted by opencode 1.17.3 (verified via
+ *  `opencode debug config`).
  *
  *  Merge safety: opencode DEEP-merges this `permission` object over the user's
  *  global config — verified against 1.17.3 (a global `permission.doom_loop`
@@ -66,7 +71,7 @@ export function resolveJuliaProject(configValue: string): string {
  *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
 const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
 
-export function buildOpencodeConfigContent(agentsPath: string, templatePath: string): string {
+export function buildOpencodeConfigContent(agentsPath: string, templatePath: string, runsRoot: string): string {
   const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
@@ -79,6 +84,7 @@ export function buildOpencodeConfigContent(agentsPath: string, templatePath: str
         [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
         [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
+        [`${runsRoot}/**`]: "allow",        // run read-backs: FINISHED/result.toml/run.log
       },
     },
   });
