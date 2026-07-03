@@ -193,11 +193,14 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     if (score0) {
       finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
-      // reads this file to enforce stage order — see opencode-plugin/amicode_tools.ts.
-      fs.writeFileSync(
-        path.join(projectDir, "score_manifest.json"),
-        JSON.stringify({ manifest: score0.manifest, score_dir: score0.dir, project_dir: projectDir }, null, 2) + "\n",
-      );
+      // locates ALL its state via entitiesDir() — so the guard's copy goes there
+      // (see opencode-plugin/score_guard.ts header). The projectDir copy is the
+      // extension-side record of what this session was prepared with.
+      const manifestJson =
+        JSON.stringify({ manifest: score0.manifest, score_dir: score0.dir, project_dir: projectDir }, null, 2) + "\n";
+      fs.writeFileSync(path.join(projectDir, "score_manifest.json"), manifestJson);
+      fs.mkdirSync(entitiesDir(), { recursive: true });
+      fs.writeFileSync(path.join(entitiesDir(), "score_manifest.json"), manifestJson);
     }
   } catch (e) {
     console.warn(`amicode: score compilation failed, using built-in interview fallback: ${e}`);
