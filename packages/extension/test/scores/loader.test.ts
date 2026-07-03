@@ -37,7 +37,7 @@ describe("parseScoreMd", () => {
     expect(() => parseScoreMd("no frontmatter here", "x/SCORE.md")).toThrow(/x\/SCORE\.md/);
   });
   it("throws with validation errors on an invalid manifest", () => {
-    const bad = GOOD.replace("version: 1", "version: 0");
+    const bad = GOOD.replace("\nversion: 1", "\nversion: 0");
     expect(() => parseScoreMd(bad, "y/SCORE.md")).toThrow(/positive integer/);
   });
 });
