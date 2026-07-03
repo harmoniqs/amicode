@@ -1,8 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { prepareOpencodeProject, buildOpencodeConfigContent, DEFAULT_SCORES_ROOT } from "../../src/opencode_config";
+
+// Hermeticity: prepareOpencodeProject writes the plugin's manifest transport to
+// entitiesDir(), which defaults into $HOME — point it at a tmp dir for the test run.
+const ENTITIES_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "prep-entities-"));
+let prevEntitiesDir: string | undefined;
+beforeAll(() => {
+  prevEntitiesDir = process.env.AMICODE_ENTITIES_DIR;
+  process.env.AMICODE_ENTITIES_DIR = ENTITIES_TMP;
+});
+afterAll(() => {
+  if (prevEntitiesDir === undefined) delete process.env.AMICODE_ENTITIES_DIR;
+  else process.env.AMICODE_ENTITIES_DIR = prevEntitiesDir;
+});
 
 const AGENTS_SRC = path.resolve(__dirname, "..", "..", "AGENTS.md");
 const TEMPLATE_SRC = path.resolve(__dirname, "..", "..", "templates", "solve_template.jl");
@@ -31,13 +44,16 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(agents).not.toMatch(/\{\{[A-Z_]+\}\}/); // substitution complete, incl. compiled content
   });
 
-  it("writes the score_manifest.json plugin transport", () => {
+  it("writes the score_manifest.json plugin transport (projectDir record + entitiesDir copy)", () => {
     const proj = prep();
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
     expect(manifest.manifest.version).toBe(1);
     expect(manifest.project_dir).toBe(proj.projectDir);
     expect(manifest.score_dir).toBe(path.join(DEFAULT_SCORES_ROOT, "pulse-designer"));
+    // the copy the Bun-side guard actually reads (entitiesDir contract)
+    const guardCopy = JSON.parse(fs.readFileSync(path.join(ENTITIES_TMP, "score_manifest.json"), "utf8"));
+    expect(guardCopy.manifest.id).toBe("pulse-designer");
   });
 
   it("FALLBACK: a corrupt scores root leaves the substituted AGENTS.md unchanged (never brick the boot)", () => {
