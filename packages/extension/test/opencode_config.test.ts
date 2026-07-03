@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, isAbsolute } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from '../src/opencode_config'
 
@@ -50,6 +50,42 @@ describe('buildOpencodeConfigContent', () => {
     expect(cfg.permission.bash).toBe('allow')                 // runs amico-run (compound launch)
     expect(cfg.permission.edit).toBe('allow')                 // fills the FILL-IN block
     expect(cfg.permission.webfetch).toBeUndefined()           // unused by the solve flow — dropped
+  })
+  it('registers the amicode_* plugin by ABSOLUTE default path — and the file actually exists', () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
+    expect(Array.isArray(cfg.plugin)).toBe(true)
+    expect(cfg.plugin).toHaveLength(1)
+    expect(isAbsolute(cfg.plugin[0])).toBe(true)                       // opencode imports it by abs path
+    expect(cfg.plugin[0].endsWith(join('opencode-plugin', 'amicode_tools.ts'))).toBe(true)
+    expect(existsSync(cfg.plugin[0])).toBe(true)                       // __dirname default resolves to the real file
+    expect(existsSync(join(cfg.plugin[0], '..', 'entities.ts'))).toBe(true) // its relative import target too
+  })
+  it('honors an explicit pluginPath (the follow-up extension.ts wiring)', () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default', '/elsewhere/amicode_tools.ts'))
+    expect(cfg.plugin).toEqual(['/elsewhere/amicode_tools.ts'])
+  })
+  it('declares the pulse-designer agent whose prompt defers to the AGENTS.md interview', () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
+    const pd = cfg.agent['pulse-designer']
+    expect(pd.description).toBe('Guided quantum pulse design interview')
+    expect(pd.prompt).toContain('one question at a time')            // the interview protocol
+    expect(pd.prompt).toContain("'Pulse-designer interview'")        // script lives in AGENTS.md, not here
+    expect(pd.prompt).toContain('amicode_')                          // record stages via the tool pack
+    expect(pd.prompt).toContain('solve workflow')                    // launches stay on the bash workflow
+  })
+  it('grants external_directory on the entities dir (default + $AMICODE_ENTITIES_DIR override)', () => {
+    const defGrant = join(homedir(), '.amico', 'runs', 'default', '_entities') + '/**'
+    const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
+    expect(cfg.permission.external_directory[defGrant]).toBe('allow')
+    const prev = process.env.AMICODE_ENTITIES_DIR
+    process.env.AMICODE_ENTITIES_DIR = '/custom/entities'
+    try {
+      const cfg2 = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
+      expect(cfg2.permission.external_directory['/custom/entities/**']).toBe('allow') // grant follows the plugin
+    } finally {
+      if (prev === undefined) delete process.env.AMICODE_ENTITIES_DIR
+      else process.env.AMICODE_ENTITIES_DIR = prev
+    }
   })
   it('never embeds a credential in the config content (D11 no-store/no-inject regression guard)', () => {
     // amico owns no secret: the config it writes into OPENCODE_CONFIG_CONTENT must
@@ -111,6 +147,15 @@ describe.skipIf(!existsSync(OC_BIN))('opencode config injection + merge (1.17.3)
     // the user's global config SURVIVED the deep-merge:
     expect(cfg.model).toBe('anthropic/claude-sonnet-4-6')          // provider/model preserved (Q129 needs this)
     expect(cfg.permission.doom_loop).toBe('deny')                  // user permission key preserved (#22)
+    // L0 pulse-designer registration survived resolution against the REAL binary.
+    // NOTE: `debug config` IMPORTS listed plugins before printing JSON to stdout
+    // (verified on 1.17.3) — so JSON.parse(out) succeeding above doubles as a
+    // regression guard that amicode_tools.ts loads cleanly AND never writes to
+    // stdout at module scope (its load line must stay on stderr).
+    expect(cfg.plugin).toHaveLength(1)
+    expect(cfg.plugin[0].endsWith(join('opencode-plugin', 'amicode_tools.ts'))).toBe(true)
+    expect(cfg.agent['pulse-designer'].description).toBe('Guided quantum pulse design interview')
+    expect(cfg.agent['pulse-designer'].prompt).toContain('one question at a time')
   })
 })
 
