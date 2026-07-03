@@ -42,9 +42,11 @@ restarts reuse it.
    **Run Inspector** pops with the live pulse, expect **F ≥ 0.999** in ~1–2 min warm.
 4. **Fast path** — new session, type "optimize an X gate on my transmon, defaults" — should skip
    the interview and launch directly.
-5. **Rydberg** — pick "neutral-atom Rydberg" in the interview: CZ (the native gate) via
-   `templates/solve_rydberg_cz.jl` (QuEra gate-zone params; fixed-phase NLP + post-hoc virtual-Z
-   scan — both fidelities land in `result.toml`).
+5. **Rydberg** — pick "neutral-atom Rydberg" in the interview: expect the *honest scope*
+   behavior (System recorded, formulation captured for follow-up — no dead reckoning). An
+   **experimental** CZ template exists (`templates/solve_rydberg_cz.jl`, QuEra gate-zone
+   params, public-Piccolo-only) but is NOT yet vetted — its first NLP iteration is
+   pathologically slow (under investigation); don't wire it into demos yet.
 6. **"What can Amicode do?"** — should give the curated capability pitch (no web fetches).
 7. **Thinking spinner** — the pulsing H glyph in the header/timeline while the model works.
 
