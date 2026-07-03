@@ -1,56 +1,32 @@
 // ============================================================================
-// amicode_* tool pack v0 — an opencode PLUGIN, not extension-bundle code.
+// amicode_* tool pack v1 — an opencode PLUGIN, not extension-bundle code.
 //
 // RUNTIME: this file executes inside opencode's embedded Bun runtime. It is
 // registered by ABSOLUTE PATH via OPENCODE_CONFIG_CONTENT `plugin: ["<abs>"]`
 // (built in ../src/opencode_config.ts) and imported by the binary's plugin
 // loader with a bare dynamic `import()` — Bun transpiles TS natively, so the
-// relative `./entities` sibling import below resolves; nothing else does.
-// Keep this module dependency-free (node: builtins + ./entities only) and it
-// must have EXACTLY ONE export: opencode 1.17.3's legacy-plugin scan
-// (plugin/index.ts getLegacyPlugins) throws "Plugin export is not a function"
-// on any extra named export. It is deliberately OUTSIDE the extension's
-// tsconfig include and vitest graph; its pure logic lives in ./entities.ts,
-// which IS unit-tested (test/amicode_tools.test.ts).
+// relative `./entities` / `./problems` / `./hashes` / `./score_guard` sibling
+// imports below resolve; nothing else does. It must have EXACTLY ONE export:
+// opencode 1.17.3's legacy-plugin scan (plugin/index.ts getLegacyPlugins) throws
+// "Plugin export is not a function" on any extra named export. It is deliberately
+// OUTSIDE the extension's tsconfig include and vitest graph; its pure logic lives
+// in ./entities.ts + ./problems.ts + ./hashes.ts, which ARE unit-tested.
 //
-// T8 REGISTRATION DECISION (probed on the stock vendored binary v1.17.3):
-//   chosen: OPENCODE_CONFIG_CONTENT carrying BOTH
-//     - `agent: {"pulse-designer": {description, prompt}}`  → shows in GET /agent
-//     - `plugin: ["/abs/path/amicode_tools.ts"]`            → module executes on
-//       session creation (plugin_origins lists source OPENCODE_CONFIG_CONTENT)
-//   fallback (if a future binary drops either): instructions-only interview —
-//   AGENTS.md already tells the agent to summarize each stage in one line when
-//   the amicode_* tools are absent, and the solve launch is ALWAYS the bash
-//   `amico-run` workflow. The tools are bookkeeping, not gates.
+// v1 (spec A — Problem workspaces): entities live under a durable, named Problem
+// workspace (~/.amico/problems/<slug>/), NOT the old global _entities singleton.
+// Every entity write appends a structured-diff event to the workspace's
+// events.jsonl AND returns an `AMICODE_DIFF {json}` sentinel as its LAST line
+// (the UI parses it into a diff receipt — same idiom as the run-dir contract's
+// AMICODE_ITER/AMICODE_PULSE lines). The active problem is auto-created if none
+// exists, so fast-path sessions never stall on bookkeeping.
 //
-// ARGS-SCHEMA DECISION: plain JSON-Schema property objects, validated inside
-// execute(). Rationale (from the v1.17.3 source, tool/registry.ts fromPlugin):
-//   - if every `args` value is a Zod type it uses z.object(...); the only zod
-//     the loader accepts is zod v4 (`"_zod" in value`) and the sanctioned way
-//     to get it is `tool.schema` from @opencode-ai/plugin — which is NOT a
-//     dependency of this repo and MUST NOT become one (the binary can't be
-//     assumed to resolve npm imports from this directory).
-//   - otherwise `legacyJsonSchema` treats each value as a raw JSON-Schema
-//     property definition: {type:"object", properties, required: ALL keys},
-//     and server-side validation is skipped (parameters = Schema.Unknown).
-//   Consequences we design for: every declared arg is REQUIRED in the schema
-//   the LLM sees, so optional args are declared nullable ("pass null to skip")
-//   and all real validation happens in execute() via ./entities validators.
-//
-// STATE: entities are written under entitiesDir():
-//   $AMICODE_ENTITIES_DIR if set, else ~/.amico/runs/default/_entities
-// system.json is a machine-readable sidecar of system.toml — the merge source
-// for amicode_set_model (this module is TOML-writer-only; it carries no TOML
-// parser, and won't grow one). The Run stub (run.toml here) is bookkeeping —
-// NOT the run-dir run.toml that amico-run writes.
-//
-// TODO(follow-up): extension.ts should pass the plugin path explicitly to
-// buildOpencodeConfigContent once packaging (.vsix layout) is verified; today
-// the default path is derived from __dirname in opencode_config.ts.
+// ARGS-SCHEMA DECISION (unchanged): plain JSON-Schema property objects validated
+// inside execute(); every declared arg is REQUIRED in the schema the LLM sees,
+// so optional args are declared nullable ("pass null to skip") and all real
+// validation happens in execute() via ./entities validators.
 // ============================================================================
 
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   systemToml,
@@ -61,13 +37,32 @@ import {
   updateSystem,
   validateSystem,
   validateFormulation,
-  PLATFORMS,
+  entityDiff,
+  truncateDiffForSentinel,
+  KNOWN_PLATFORMS,
+  MAX_LEVELS,
   type SystemEntity,
   type FormulationEntity,
   type RunStub,
   type DeviceSessionStub,
   type CalibrationStub,
 } from "./entities";
+import { entityHash } from "./hashes";
+import {
+  ensureActiveProblem,
+  problemsDir,
+  problemDir,
+  writeEntityFiles,
+  appendEvent,
+  appendRunRef,
+  createProblem,
+  openProblem,
+  renameProblem,
+  archiveProblem,
+  listProblems,
+  lastEventSeq,
+  migrateLegacyEntities,
+} from "./problems";
 import { guardAndRecordStage, completeStage } from "./score_guard";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
@@ -75,20 +70,16 @@ import { guardAndRecordStage, completeStage } from "./score_guard";
 // v1.17.3) — a stdout log here corrupts that JSON and breaks any caller that
 // parses it (test/opencode_config.test.ts does). stderr still lands in the
 // serve log, which is where the load line is grepped for.
-console.error("[amicode-tools] loaded — amicode_* tool pack v0 (entities → " + entitiesDir() + ")");
+console.error("[amicode-tools] loaded — amicode_* tool pack v1 (problems → " + problemsDir() + ")");
 
-function entitiesDir(): string {
-  const env = process.env.AMICODE_ENTITIES_DIR;
-  if (env && env.trim() !== "") return env;
-  return path.join(os.homedir(), ".amico", "runs", "default", "_entities");
-}
-
-function writeEntity(name: string, content: string): string {
-  const dir = entitiesDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const file = path.join(dir, name);
-  fs.writeFileSync(file, content, "utf8");
-  return file;
+// One-shot legacy _entities → problem-workspace migration. Skipped when either
+// env override is set (test harnesses point them at temp dirs). stderr-only.
+if (!process.env.AMICODE_ENTITIES_DIR && !process.env.AMICODE_PROBLEMS_DIR) {
+  try {
+    migrateLegacyEntities();
+  } catch (e) {
+    console.error(`[amicode-tools] legacy migration skipped: ${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 /** null/undefined → absent (the schema forces the LLM to pass every key, so
@@ -97,26 +88,52 @@ function given<T>(v: T | null | undefined): v is T {
   return v !== null && v !== undefined;
 }
 
-function readSystemState(): SystemEntity | undefined {
-  const file = path.join(entitiesDir(), "system.json");
+function paramsSummary(params: Record<string, number>): string {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return "no params recorded";
+  return entries.map(([k, v]) => `${k}=${v}`).join(", ");
+}
+
+/** Read an entity's JSON sidecar from the active problem's workspace (the plugin
+ *  is TOML-writer-only; all reads go through .json). */
+function readEntityJson<T>(slug: string, kind: string): T | undefined {
+  const file = path.join(problemDir(slug), "entities", `${kind}.json`);
   if (!fs.existsSync(file)) return undefined;
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as SystemEntity;
+    return JSON.parse(fs.readFileSync(file, "utf8")) as T;
   } catch {
     return undefined;
   }
 }
 
-function persistSystem(e: SystemEntity): string {
-  const tomlPath = writeEntity("system.toml", systemToml(e));
-  writeEntity("system.json", JSON.stringify(e, null, 2) + "\n");
-  return tomlPath;
+/** The AMICODE_DIFF sentinel line (LAST line of a tool return) — the UI parses
+ *  it into a diff receipt; the prose above it is for the model. */
+function sentinelLine(
+  problem: string,
+  entity: string,
+  action: string,
+  seq: number,
+  diff: Record<string, { from: unknown; to: unknown }>,
+): string {
+  return "AMICODE_DIFF " + JSON.stringify({ problem, entity, action, seq, diff: truncateDiffForSentinel(diff) });
 }
 
-function paramsSummary(params: Record<string, number>): string {
-  const entries = Object.entries(params);
-  if (entries.length === 0) return "no params recorded";
-  return entries.map(([k, v]) => `${k}=${v}`).join(", ");
+/** Persist an entity to the active problem workspace: write TOML+JSON sidecar,
+ *  append a structured-diff event (with content hash), and return the sentinel
+ *  line. `action` is derived from whether a prior snapshot exists. */
+function recordEntity(
+  slug: string,
+  kind: string,
+  entity: Record<string, unknown>,
+  toml: string,
+  source: { tool: string; stage?: string },
+): string {
+  const before = readEntityJson<Record<string, unknown>>(slug, kind);
+  const action: "created" | "updated" = before ? "updated" : "created";
+  writeEntityFiles(slug, kind, toml, JSON.stringify(entity, null, 2) + "\n");
+  const diff = entityDiff(before, entity);
+  const seq = appendEvent(slug, { entity: kind, action, diff, hash: entityHash(entity), source });
+  return sentinelLine(slug, kind, action, seq, diff);
 }
 
 // LaTeX shown at the PLATFORM stage — kept verbatim in sync with AGENTS.md's
@@ -173,47 +190,151 @@ export const AmicodeTools = async (_input: unknown) => ({
         );
       },
     },
+
+    amicode_problem: {
+      description:
+        "Open or create the Problem workspace the design state belongs to (spec A). " +
+        "Call this at the start of a design session (fold the name into the first " +
+        "confirmation — never a separate 'workspace' question), and to rename the " +
+        "auto-created untitled problem once the target is known. Bookkeeping only.",
+      args: {
+        action: {
+          type: "string",
+          enum: ["open", "create", "rename", "archive"],
+          description: "open (by name/slug) | create | rename the active/target problem | archive.",
+        },
+        name: {
+          type: "string",
+          description: "For create/open: the problem name (or slug) to create/find. For rename/archive: the target slug.",
+        },
+        new_name: {
+          type: ["string", "null"],
+          description: "For rename: the new name. Null otherwise.",
+        },
+      },
+      async execute(a: { action: string; name: string; new_name?: string | null }) {
+        if (!a.name || a.name.trim() === "") return "Cannot: empty name.";
+        if (a.action === "create") {
+          const meta = createProblem(a.name);
+          return (
+            `Problem created: "${meta.name}" (${meta.slug}).\n\n` +
+            sentinelLine(meta.slug, "problem", "created", lastEventSeq(meta.slug), {
+              slug: { from: null, to: meta.slug },
+              name: { from: null, to: meta.name },
+            })
+          );
+        }
+        if (a.action === "open") {
+          const meta = openProblem(a.name);
+          if (!meta) {
+            const near = listProblems()
+              .filter((p) => p.status !== "archived")
+              .map((p) => `${p.name} (${p.slug})`)
+              .slice(0, 8);
+            return near.length
+              ? `No problem matches "${a.name}". Open problems: ${near.join("; ")}.`
+              : `No problem matches "${a.name}", and none exist yet — create one first.`;
+          }
+          return `Opened problem: "${meta.name}" (${meta.slug}).`;
+        }
+        if (a.action === "rename") {
+          if (!given(a.new_name) || a.new_name.trim() === "") return "Cannot rename: new_name is required.";
+          let meta;
+          try {
+            meta = renameProblem(a.name, a.new_name);
+          } catch (err) {
+            return `Cannot rename: ${err instanceof Error ? err.message : String(err)}`;
+          }
+          return (
+            `Problem renamed to "${meta.name}" (${meta.slug}).\n\n` +
+            sentinelLine(meta.slug, "problem", "renamed", lastEventSeq(meta.slug), {
+              name: { from: null, to: meta.name },
+            })
+          );
+        }
+        if (a.action === "archive") {
+          let meta;
+          try {
+            meta = archiveProblem(a.name);
+          } catch (err) {
+            return `Cannot archive: ${err instanceof Error ? err.message : String(err)}`;
+          }
+          return (
+            `Problem archived: "${meta.name}" (${meta.slug}).\n\n` +
+            sentinelLine(meta.slug, "problem", "archived", lastEventSeq(meta.slug), {
+              status: { from: null, to: "archived" },
+            })
+          );
+        }
+        return `Unknown action "${a.action}".`;
+      },
+    },
+
     amicode_pick_system: {
       description:
         "Record the chosen platform as the System entity (interview stage 1: PLATFORM). " +
         "Returns the model Hamiltonian in LaTeX to show the user for confirmation. " +
-        "Bookkeeping only — never launches anything.",
+        "Platform is free-form — known platforms (" +
+        KNOWN_PLATFORMS.join(", ") +
+        ") get built-in affordances; others are recorded honestly. Bookkeeping only.",
       args: {
         platform: {
           type: "string",
-          enum: [...PLATFORMS],
-          description: "Device platform the user named.",
+          description: `Device platform the user named (e.g. ${KNOWN_PLATFORMS.join(", ")}, or anything else).`,
         },
         omega: {
           type: ["number", "null"],
-          description: "Transmon frequency ω in GHz; pass null if not yet known.",
+          description: "Transmon frequency ω in GHz; pass null if not applicable/known.",
         },
         delta: {
           type: ["number", "null"],
-          description: "Anharmonicity δ in GHz; pass null if not yet known.",
+          description: "Anharmonicity δ in GHz; pass null if not applicable/known.",
+        },
+        notes: {
+          type: ["string", "null"],
+          description: "Free-text notes for what params can't hold (e.g. topology); null for none.",
         },
       },
-      async execute(a: { platform: string; omega?: number | null; delta?: number | null }) {
-        const blocked = guardAndRecordStage(entitiesDir(), "platform");
+      async execute(a: { platform: string; omega?: number | null; delta?: number | null; notes?: string | null }) {
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "platform");
         if (blocked) return blocked;
+        if (!a.platform || a.platform.trim() === "") return "Cannot record system: platform must be non-empty.";
         const params: Record<string, number> = {};
         if (given(a.omega)) params.omega = a.omega;
         if (given(a.delta)) params.delta = a.delta;
-        const entity: SystemEntity = { platform: a.platform as SystemEntity["platform"], levels: 3, params };
+        // Known platforms default to a sensible model size; unknown ones get no
+        // levels default (recorded honestly — spec A).
+        const known = (KNOWN_PLATFORMS as readonly string[]).includes(a.platform);
+        const entity: SystemEntity = { platform: a.platform, params };
+        if (known) entity.levels = 3;
+        if (given(a.notes)) entity.notes = a.notes;
         const problems = validateSystem(entity);
         if (problems.length) return `Cannot record system: ${problems.join("; ")}`;
-        const file = persistSystem(entity);
-        completeStage(entitiesDir(), "platform");
-        if (entity.platform === "transmon") {
+        const sentinel = recordEntity(meta.slug, "system", entity as any, systemToml(entity), {
+          tool: "amicode_pick_system",
+          stage: "platform",
+        });
+        completeStage(dir, "platform");
+        const levelsDesc = entity.levels !== undefined ? `${entity.levels} levels` : "levels TBD";
+        if (a.platform === "transmon") {
           return (
-            `System recorded (transmon, ${entity.levels} levels, ${paramsSummary(params)}) → ${file}\n\n` +
+            `System recorded (transmon, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
             `Model Hamiltonian:\n${TRANSMON_LATEX}\n\n` +
-            `Show this to the user and confirm it matches their device.`
+            `Show this to the user and confirm it matches their device.\n\n${sentinel}`
+          );
+        }
+        if (a.platform === "rydberg") {
+          return (
+            `System recorded (rydberg, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
+            `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}\n\n${sentinel}`
           );
         }
         return (
-          `System recorded (rydberg, ${entity.levels} levels, ${paramsSummary(params)}) → ${file}\n\n` +
-          `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}`
+          `System recorded (${a.platform}, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
+          `This platform has no built-in template in this build — record the formulation for ` +
+          `follow-up; don't improvise an unvetted script.\n\n${sentinel}`
         );
       },
     },
@@ -226,7 +347,7 @@ export const AmicodeTools = async (_input: unknown) => ({
       args: {
         levels: {
           type: ["integer", "null"],
-          description: "Number of transmon levels to model (2–6, default 3); null to leave unchanged.",
+          description: "Number of levels to model (>=2, default 3); null to leave unchanged.",
         },
         drive_max: {
           type: ["number", "null"],
@@ -239,9 +360,11 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { levels?: number | null; drive_max?: number | null; params?: Record<string, number> | null }) {
-        const blocked = guardAndRecordStage(entitiesDir(), "model");
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "model");
         if (blocked) return blocked;
-        const existing = readSystemState();
+        const existing = readEntityJson<SystemEntity>(meta.slug, "system");
         if (!existing) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
         const patchParams: Record<string, number> = { ...(given(a.params) ? a.params : {}) };
         if (given(a.drive_max)) patchParams.drive_max = a.drive_max;
@@ -250,9 +373,16 @@ export const AmicodeTools = async (_input: unknown) => ({
             levels: given(a.levels) ? a.levels : undefined,
             params: patchParams,
           });
-          const file = persistSystem(merged);
-          completeStage(entitiesDir(), "model");
-          return `System updated (${merged.platform}, ${merged.levels} levels, ${paramsSummary(merged.params)}) → ${file}`;
+          const sentinel = recordEntity(meta.slug, "system", merged as any, systemToml(merged), {
+            tool: "amicode_set_model",
+            stage: "model",
+          });
+          completeStage(dir, "model");
+          const warn =
+            merged.levels !== undefined && merged.levels > MAX_LEVELS
+              ? ` ⚠️ ${merged.levels} levels worsens conditioning/leakage and solve cost — convergence may degrade.`
+              : "";
+          return `System updated (${merged.platform}, ${merged.levels ?? "levels TBD"}, ${paramsSummary(merged.params)}).${warn}\n\n${sentinel}`;
         } catch (err) {
           return `Cannot update model: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -266,7 +396,7 @@ export const AmicodeTools = async (_input: unknown) => ({
       args: {
         problem: {
           type: "string",
-          description: "Problem kind: \"gate_synthesis\" or \"state_prep\".",
+          description: "Problem kind, e.g. \"gate_synthesis\", \"state_prep\", \"min_time\".",
         },
         target: {
           type: "string",
@@ -283,63 +413,126 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
-        const blocked = guardAndRecordStage(entitiesDir(), "formulate");
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "formulate");
         if (blocked) return blocked;
+        // Preserve any solve sub-object already recorded (stage 6 writes it via
+        // amicode_solve; re-running formulate must not wipe it).
+        const existing = readEntityJson<FormulationEntity>(meta.slug, "formulation");
         const entity: FormulationEntity = {
           problem: a.problem,
           target: a.target,
           objective: given(a.objective) ? a.objective : "unitary infidelity",
           constraints: given(a.constraints) ? a.constraints : ["amplitude bound (drive_max)"],
         };
+        if (existing?.solve) entity.solve = existing.solve;
         const problems = validateFormulation(entity);
         if (problems.length) return `Cannot record formulation: ${problems.join("; ")}`;
-        const file = writeEntity("formulation.toml", formulationToml(entity));
-        completeStage(entitiesDir(), "formulate");
+        const sentinel = recordEntity(meta.slug, "formulation", entity as any, formulationToml(entity), {
+          tool: "amicode_formulate",
+          stage: "formulate",
+        });
+        completeStage(dir, "formulate");
         return (
-          `Formulation recorded → ${file}\n` +
-          `problem: ${entity.problem}; target: ${entity.target}; objective: ${entity.objective}; ` +
-          `constraints: ${entity.constraints.join(" · ")}`
+          `Formulation recorded in "${meta.slug}": problem: ${entity.problem}; target: ${entity.target}; ` +
+          `objective: ${entity.objective}; constraints: ${entity.constraints.join(" · ")}\n\n${sentinel}`
         );
       },
     },
 
     amicode_solve: {
       description:
-        "Record the Run entity stub (interview stage 6: SOLVE PARAMS). This tool NEVER " +
+        "Record the Run entity stub (interview stage 6: SOLVE PARAMS), merging solve " +
+        "parameters (T/N/max_iter/integrator) into the Formulation. This tool NEVER " +
         "launches a solve — the launch is the AGENTS.md bash workflow (`nohup amico-run …`). " +
-        "Call this to record that a launch was requested/performed. Bookkeeping, not a gate.",
+        "Bookkeeping, not a gate.",
       args: {
         run_dir: {
           type: ["string", "null"],
           description: "The run directory if the bash launch already happened and it is known; else null.",
+        },
+        T: { type: ["number", "null"], description: "Gate time T in ns; null if not applicable." },
+        N: { type: ["integer", "null"], description: "Number of timesteps N; null if not applicable." },
+        max_iter: { type: ["integer", "null"], description: "Solver max iterations; null for the default." },
+        integrator: { type: ["string", "null"], description: "Integrator name (e.g. \"MagnusGL4\"); null for the default." },
+        tier: {
+          type: ["string", "null"],
+          description: "Authoring tier: \"vetted\" | \"composed\" | \"free\" (spec C); null if unknown.",
         },
         note: {
           type: ["string", "null"],
           description: "Short free-text note, e.g. \"X gate, T=10ns, N=50, defaults\"; null for none.",
         },
       },
-      async execute(a: { run_dir?: string | null; note?: string | null }) {
-        const dir = entitiesDir();
-        const blocked = guardAndRecordStage(dir, "solve");
+      async execute(a: {
+        run_dir?: string | null;
+        T?: number | null;
+        N?: number | null;
+        max_iter?: number | null;
+        integrator?: string | null;
+        tier?: string | null;
+        note?: string | null;
+      }) {
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "solve");
         if (blocked) return blocked;
+
+        // Merge solve params into the Formulation (they are the hash-relevant
+        // half of #64's formulation_hash). One event, no sentinel (the Run
+        // sentinel below is this call's receipt).
+        if (given(a.T) || given(a.N) || given(a.max_iter) || given(a.integrator)) {
+          const form = readEntityJson<FormulationEntity>(meta.slug, "formulation");
+          if (form) {
+            const solve = { ...(form.solve ?? {}) };
+            if (given(a.T)) solve.T = a.T;
+            if (given(a.N)) solve.N = a.N;
+            if (given(a.max_iter)) solve.max_iter = a.max_iter;
+            if (given(a.integrator)) solve.integrator = a.integrator;
+            const merged: FormulationEntity = { ...form, solve };
+            recordEntity(meta.slug, "formulation", merged as any, formulationToml(merged), {
+              tool: "amicode_solve",
+              stage: "solve",
+            });
+          }
+        }
+
+        // Run stub — refs point at the workspace entity files.
         const stub: RunStub = {};
-        const sysPath = path.join(dir, "system.toml");
-        const formPath = path.join(dir, "formulation.toml");
+        const sysPath = path.join(dir, "entities", "system.toml");
+        const formPath = path.join(dir, "entities", "formulation.toml");
         if (fs.existsSync(sysPath)) stub.system_ref = sysPath;
         if (fs.existsSync(formPath)) stub.formulation_ref = formPath;
         if (given(a.run_dir)) stub.run_dir = a.run_dir;
+        if (given(a.tier)) stub.tier = a.tier as RunStub["tier"];
         if (given(a.note)) stub.note = a.note;
-        const file = writeEntity("run.toml", runStubToml(stub));
+        const sentinel = recordEntity(meta.slug, "run", stub as any, runStubToml(stub), {
+          tool: "amicode_solve",
+          stage: "solve",
+        });
+
+        // Append a run REF (lab/run_id parsed from run_dir's last two segments).
+        if (given(a.run_dir)) {
+          const parts = a.run_dir.replace(/\/+$/, "").split("/");
+          const run_id = parts[parts.length - 1];
+          const lab = parts[parts.length - 2] ?? "default";
+          appendRunRef(meta.slug, {
+            run_id,
+            lab,
+            tier: given(a.tier) ? (a.tier as RunStub["tier"]) : undefined,
+            recorded: new Date().toISOString(),
+          });
+        }
+
         const missing = [
           ...(stub.system_ref ? [] : ["system (stage 1 skipped?)"]),
           ...(stub.formulation_ref ? [] : ["formulation (stages 4–5 skipped?)"]),
         ];
         const warn = missing.length ? ` Note: no recorded ${missing.join(" or ")}.` : "";
+        const runWarn = given(a.run_dir) ? "" : " No run_dir yet — launch via the workflow's amico-run bash command.";
         completeStage(dir, "solve");
-        return (
-          `Run entity recorded → ${file} — launch via the workflow's amico-run bash command ` +
-          `if not already launched.${warn}`
-        );
+        return `Run entity recorded in "${meta.slug}".${warn}${runWarn}\n\n${sentinel}`;
       },
     },
 
@@ -363,15 +556,20 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { pulse_ref?: string | null; run_dir?: string | null; note?: string | null }) {
-        const blocked = guardAndRecordStage(entitiesDir(), "hardware");
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "hardware");
         if (blocked) return blocked;
         const stub: DeviceSessionStub = {};
         if (given(a.pulse_ref)) stub.pulse_ref = a.pulse_ref;
         if (given(a.run_dir)) stub.run_dir = a.run_dir;
         if (given(a.note)) stub.note = a.note;
-        let file: string;
+        let sentinel: string;
         try {
-          file = writeEntity("device_session.toml", deviceSessionStubToml(stub));
+          sentinel = recordEntity(meta.slug, "device_session", stub as any, deviceSessionStubToml(stub), {
+            tool: "amicode_to_hardware",
+            stage: "hardware",
+          });
         } catch (err) {
           return `Cannot record device session: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -379,12 +577,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           ? ""
           : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
         return (
-          `Device session recorded → ${file} (gate: pending-human-signoff).${warn}\n\n` +
+          `Device session recorded in "${meta.slug}" (gate: pending-human-signoff).${warn}\n\n` +
           `The send-to-device gate, when wired: (1) automated checks — fidelity ≥ threshold, ` +
           `|drive| ≤ amplitude cap, bandwidth within hardware limits, leakage bounded; ` +
           `(2) a human visually signs off on the pulse before anything is sent. ` +
-          `THIS BUILD PERFORMS NO DEVICE I/O — intent recorded only; set no expectation of ` +
-          `hardware execution tonight.`
+          `THIS BUILD PERFORMS NO DEVICE I/O — intent recorded only.\n\n${sentinel}`
         );
       },
     },
@@ -406,21 +603,24 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
       },
       async execute(a: { device_session_ref?: string | null; note?: string | null }) {
-        const blocked = guardAndRecordStage(entitiesDir(), "hardware");
+        const meta = ensureActiveProblem();
+        const dir = problemDir(meta.slug);
+        const blocked = guardAndRecordStage(problemsDir(), dir, "hardware");
         if (blocked) return blocked;
         const stub: CalibrationStub = {};
         if (given(a.device_session_ref)) {
           stub.device_session_ref = a.device_session_ref;
         } else {
-          // Mirror amicode_solve's auto-ref idiom: point at the recorded device
-          // session when one exists (existence check only — no TOML parsing here).
-          const dsPath = path.join(entitiesDir(), "device_session.toml");
+          const dsPath = path.join(dir, "entities", "device_session.toml");
           if (fs.existsSync(dsPath)) stub.device_session_ref = dsPath;
         }
         if (given(a.note)) stub.note = a.note;
-        let file: string;
+        let sentinel: string;
         try {
-          file = writeEntity("calibration.toml", calibrationStubToml(stub));
+          sentinel = recordEntity(meta.slug, "calibration", stub as any, calibrationStubToml(stub), {
+            tool: "amicode_calibrate",
+            stage: "hardware",
+          });
         } catch (err) {
           return `Cannot record calibration: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -428,11 +628,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           ? ""
           : " Note: no device session recorded yet — amicode_to_hardware comes first.";
         return (
-          `Calibration follow-up recorded → ${file} (loop: ILC, status: not-wired).${warn}\n\n` +
+          `Calibration follow-up recorded in "${meta.slug}" (loop: ILC, status: not-wired).${warn}\n\n` +
           `After hardware runs, a calibration loop (ILC — iterative learning control) closes ` +
           `the model-device gap: run the pulse, measure, compare against the model's ` +
           `prediction, update, repeat until the device matches the design. In this build ` +
-          `that loop is a recorded follow-up only — nothing is executed tonight.`
+          `that loop is a recorded follow-up only — nothing is executed tonight.\n\n${sentinel}`
         );
       },
     },

@@ -191,6 +191,15 @@ export interface EventInput {
   source?: { tool?: string; stage?: string; session?: string };
 }
 
+/** The last (highest) event seq recorded for a problem, or 0 if none. Used by
+ *  the tools to emit an honest `seq` in the AMICODE_DIFF sentinel for lifecycle
+ *  events that problems.ts appends internally (create/rename/archive). */
+export function lastEventSeq(slug: string): number {
+  const file = path.join(problemDir(slug), "events.jsonl");
+  if (!fs.existsSync(file)) return 0;
+  return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim() !== "").length;
+}
+
 /** Append one event to the problem's events.jsonl; returns its monotonic seq
  *  (= existing non-empty line count + 1). `ts` + `provenance:null` are stamped. */
 export function appendEvent(slug: string, input: EventInput): number {

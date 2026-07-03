@@ -22,6 +22,7 @@ import {
   appendEvent,
   appendRunRef,
   writeEntityFiles,
+  lastEventSeq,
 } from '../opencode-plugin/problems'
 
 let tmp: string
@@ -141,6 +142,15 @@ describe('appendEvent', () => {
     const e2 = JSON.parse(lines[1])
     expect(e2).toMatchObject({ seq: 2, entity: 'system', action: 'created', hash: 'sha256:abc', provenance: null })
     expect(e2.source.tool).toBe('amicode_pick_system')
+  })
+})
+
+describe('lastEventSeq', () => {
+  it('returns 0 before any event and the highest seq after', () => {
+    const meta = createProblem('X gate')        // created event = seq 1
+    expect(lastEventSeq(meta.slug)).toBe(1)
+    appendEvent(meta.slug, { entity: 'system', action: 'created' })
+    expect(lastEventSeq(meta.slug)).toBe(2)
   })
 })
 
