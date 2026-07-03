@@ -24,10 +24,31 @@
 // ============================================================================
 
 export interface SystemEntity {
-  platform: "transmon" | "rydberg";
-  levels: number;
+  /** Open platform string (spec A): any platform a Legato/Piccolo/Intonato user
+   *  names. Known platforms (KNOWN_PLATFORMS) keep their affordances; unknown
+   *  ones are recorded honestly. Validated non-empty. */
+  platform: string;
+  /** Optional — platform-dependent. Only transmon defaults to 3; unknown
+   *  platforms get no default. When given: integer >= MIN_LEVELS (no upper
+   *  error — the old <=6 cap is now a tool-side warning, not a validation error). */
+  levels?: number;
   /** Named physical parameters, e.g. omega/delta (GHz), drive_max. */
   params: Record<string, number>;
+  /** Free text for what params can't hold (e.g. topology prose). EXCLUDED from
+   *  the canonical hash input (prose edits must not churn identity). */
+  notes?: string;
+}
+
+/** Structured solve parameters merged into the Formulation (spec A): they are the
+ *  hash-relevant "duration/knots + integrator + parameterization + pinned globals"
+ *  half of amicode#64's formulation_hash. Written by amicode_solve. */
+export interface SolveParams {
+  T?: number;
+  N?: number;
+  max_iter?: number;
+  integrator?: string;
+  parameterization?: string;
+  pinned_globals?: string[];
 }
 
 export interface FormulationEntity {
@@ -35,6 +56,8 @@ export interface FormulationEntity {
   target: string;
   objective: string;
   constraints: string[];
+  /** Solve params (spec A) — present once amicode_solve has recorded them. */
+  solve?: SolveParams;
 }
 
 export interface RunStub {
@@ -42,8 +65,47 @@ export interface RunStub {
   system_ref?: string;
   /** Run directory, when the bash launch already happened and the agent knows it. */
   run_dir?: string;
+  /** Authoring tier (spec C): vetted | composed | free. */
+  tier?: "vetted" | "composed" | "free";
+  /** Path to the authored script (spec C — workspace-owned solve.jl). */
+  script_ref?: string;
+  /** Resolved env binding kind (spec C). */
+  env?: string;
   /** Optional free-text note ("X gate, defaults"). */
   note?: string;
+}
+
+/** Problem workspace identity (spec A) — the `[problem]` table of problem.toml. */
+export interface ProblemScoreRef {
+  id: string;
+  version: number;
+}
+
+export interface ProblemEnvBinding {
+  /** provisioned (~/.amico/julia) | project (a Julia project path) | sandbox
+   *  (generated per-problem). NO cloud kind — executor routing is per-solve. */
+  kind: "provisioned" | "project" | "sandbox";
+  path?: string;
+}
+
+export interface ProblemMeta {
+  name: string;
+  slug: string;
+  created: string;
+  /** Only these two persist; solving/solved are display-derived (spec A). */
+  status: "designing" | "archived";
+  recorded?: string;
+  score?: ProblemScoreRef;
+  env?: ProblemEnvBinding;
+}
+
+/** A reference into ~/.amico/runs/<lab>/<runId> (spec A) — the workspace stores
+ *  refs only; RunsManager's runs/index is the run source of truth. */
+export interface RunRef {
+  run_id: string;
+  lab: string;
+  tier?: "vetted" | "composed" | "free";
+  recorded: string;
 }
 
 /** Stage-8 guided stub (amicode_to_hardware): records intent to send a pulse to
@@ -66,20 +128,29 @@ export interface CalibrationStub {
   note?: string;
 }
 
-export const PLATFORMS = ["transmon", "rydberg"] as const;
+/** Platforms with built-in affordances (Hamiltonian LaTeX, defaults). NOT a
+ *  closed validation set anymore (spec A opened `platform` to any string) — this
+ *  is the hint list for tool descriptions. PLATFORMS kept as an alias for the
+ *  existing amicode_tools.ts import. */
+export const KNOWN_PLATFORMS = ["transmon", "rydberg"] as const;
+export const PLATFORMS = KNOWN_PLATFORMS;
 export const MIN_LEVELS = 2;
+/** Soft cap: >MAX_LEVELS is a tool-side warning, no longer a validation error. */
 export const MAX_LEVELS = 6;
 
 // --- validation --------------------------------------------------------------
 
-/** Problems with a SystemEntity; [] means valid. */
+/** Problems with a SystemEntity; [] means valid. Opened model (spec A): any
+ *  non-empty platform string; levels optional and, when given, an integer
+ *  >= MIN_LEVELS (no upper bound — the >6 case is a warning surfaced by the
+ *  tool, not a validation error). */
 export function validateSystem(e: SystemEntity): string[] {
   const problems: string[] = [];
-  if (!(PLATFORMS as readonly string[]).includes(e.platform)) {
-    problems.push(`unknown platform "${e.platform}" — expected one of: ${PLATFORMS.join(", ")}`);
+  if (typeof e.platform !== "string" || e.platform.trim() === "") {
+    problems.push(`platform must be a non-empty string`);
   }
-  if (!Number.isInteger(e.levels) || e.levels < MIN_LEVELS || e.levels > MAX_LEVELS) {
-    problems.push(`levels must be an integer in [${MIN_LEVELS}, ${MAX_LEVELS}], got ${e.levels}`);
+  if (e.levels !== undefined && (!Number.isInteger(e.levels) || e.levels < MIN_LEVELS)) {
+    problems.push(`levels, when given, must be an integer >= ${MIN_LEVELS}, got ${e.levels}`);
   }
   for (const [k, v] of Object.entries(e.params ?? {})) {
     if (typeof v !== "number" || !Number.isFinite(v)) {
@@ -117,6 +188,7 @@ export function updateSystem(existing: SystemEntity, patch: SystemPatch): System
     levels: patch.levels ?? existing.levels,
     params: { ...existing.params, ...(patch.params ?? {}) },
   };
+  if (existing.notes !== undefined) merged.notes = existing.notes;
   const problems = validateSystem(merged);
   if (problems.length) throw new Error(`invalid system after merge: ${problems.join("; ")}`);
   return merged;
@@ -163,15 +235,11 @@ function isoNow(now?: Date): string {
 export function systemToml(e: SystemEntity, now?: Date): string {
   const problems = validateSystem(e);
   if (problems.length) throw new Error(`invalid system: ${problems.join("; ")}`);
-  const lines = [
-    "[system]",
-    `platform = ${tomlEscape(e.platform)}`,
-    `levels = ${e.levels}`,
-    `recorded = ${tomlEscape(isoNow(now))}`,
-    "",
-    "[system.params]",
-    ...Object.entries(e.params).map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`),
-  ];
+  const lines = ["[system]", `platform = ${tomlEscape(e.platform)}`];
+  if (e.levels !== undefined) lines.push(`levels = ${e.levels}`);
+  if (e.notes !== undefined) lines.push(`notes = ${tomlEscape(e.notes)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`, "", "[system.params]");
+  lines.push(...Object.entries(e.params).map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`));
   return lines.join("\n") + "\n";
 }
 
@@ -187,6 +255,20 @@ export function formulationToml(e: FormulationEntity, now?: Date): string {
     `constraints = [${e.constraints.map(tomlEscape).join(", ")}]`,
     `recorded = ${tomlEscape(isoNow(now))}`,
   ];
+  // [formulation.solve] sub-table (spec A) — MUST follow all [formulation]
+  // scalar keys (TOML: no keys added to a table after a sub-table opens).
+  if (e.solve) {
+    const s = e.solve;
+    lines.push("", "[formulation.solve]");
+    if (s.T !== undefined) lines.push(`T = ${tomlNumber(s.T)}`);
+    if (s.N !== undefined) lines.push(`N = ${tomlNumber(s.N)}`);
+    if (s.max_iter !== undefined) lines.push(`max_iter = ${tomlNumber(s.max_iter)}`);
+    if (s.integrator !== undefined) lines.push(`integrator = ${tomlEscape(s.integrator)}`);
+    if (s.parameterization !== undefined) lines.push(`parameterization = ${tomlEscape(s.parameterization)}`);
+    if (s.pinned_globals !== undefined) {
+      lines.push(`pinned_globals = [${s.pinned_globals.map(tomlEscape).join(", ")}]`);
+    }
+  }
   return lines.join("\n") + "\n";
 }
 
@@ -199,10 +281,143 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   if (stub.formulation_ref !== undefined) lines.push(`formulation_ref = ${tomlEscape(stub.formulation_ref)}`);
   if (stub.system_ref !== undefined) lines.push(`system_ref = ${tomlEscape(stub.system_ref)}`);
   if (stub.run_dir !== undefined) lines.push(`run_dir = ${tomlEscape(stub.run_dir)}`);
+  if (stub.tier !== undefined) lines.push(`tier = ${tomlEscape(stub.tier)}`);
+  if (stub.script_ref !== undefined) lines.push(`script_ref = ${tomlEscape(stub.script_ref)}`);
+  if (stub.env !== undefined) lines.push(`env = ${tomlEscape(stub.env)}`);
   lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
   return lines.join("\n") + "\n";
+}
+
+// --- problem workspace serializers (spec A) ----------------------------------
+
+/** Serialize ProblemMeta under [problem] (+ [problem.score]/[problem.env]).
+ *  `recorded` defaults to now when absent. */
+export function problemToml(meta: ProblemMeta, now?: Date): string {
+  const lines = [
+    "[problem]",
+    `name = ${tomlEscape(meta.name)}`,
+    `slug = ${tomlEscape(meta.slug)}`,
+    `created = ${tomlEscape(meta.created)}`,
+    `status = ${tomlEscape(meta.status)}`,
+    `recorded = ${tomlEscape(meta.recorded ?? isoNow(now))}`,
+  ];
+  if (meta.score) {
+    lines.push("", "[problem.score]", `id = ${tomlEscape(meta.score.id)}`, `version = ${meta.score.version}`);
+  }
+  if (meta.env) {
+    lines.push("", "[problem.env]", `kind = ${tomlEscape(meta.env.kind)}`);
+    if (meta.env.path !== undefined) lines.push(`path = ${tomlEscape(meta.env.path)}`);
+  }
+  return lines.join("\n") + "\n";
+}
+
+/** Serialize an array of RunRefs as [[runs]] array-of-tables. */
+export function runRefsToml(refs: RunRef[]): string {
+  const blocks = refs.map((r) => {
+    const lines = ["[[runs]]", `run_id = ${tomlEscape(r.run_id)}`, `lab = ${tomlEscape(r.lab)}`];
+    if (r.tier !== undefined) lines.push(`tier = ${tomlEscape(r.tier)}`);
+    lines.push(`recorded = ${tomlEscape(r.recorded)}`);
+    return lines.join("\n");
+  });
+  return blocks.length ? blocks.join("\n\n") + "\n" : "";
+}
+
+/** JSON sidecars — the machine-read source (the plugin is TOML-writer-only, so
+ *  all reads/merges go through these). */
+export function problemJson(meta: ProblemMeta): string {
+  return JSON.stringify(meta, null, 2) + "\n";
+}
+
+export function runRefsJson(refs: RunRef[]): string {
+  return JSON.stringify({ runs: refs }, null, 2) + "\n";
+}
+
+// --- canonical serialization + diffs (spec A / amicode#64) -------------------
+
+/** Keys excluded from the canonical hash input: `recorded` (clock ticks) and
+ *  `notes` (prose) must not churn entity identity. The #64 coordination seam —
+ *  number normalization is JSON.stringify's default for v1 (revisit with #64). */
+const HASH_EXCLUDED_KEYS = new Set(["recorded", "notes"]);
+
+function canonicalize(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(canonicalize);
+  const out: Record<string, unknown> = {};
+  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+    if (HASH_EXCLUDED_KEYS.has(key)) continue;
+    const v = (value as Record<string, unknown>)[key];
+    if (v === undefined) continue;
+    out[key] = canonicalize(v);
+  }
+  return out;
+}
+
+/** Canonical JSON: recursively key-sorted, `recorded`/`notes` and undefined
+ *  dropped at every level. The hash input for hashes.ts (spec A / #64). */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(canonicalize(value));
+}
+
+/** Kebab-case slug from a problem name; empty result → "untitled". */
+export function deriveSlug(name: string): string {
+  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  return slug || "untitled";
+}
+
+/** Flatten one level of nested objects to dotted keys (`params.drive_max`),
+ *  dropping `recorded`. Arrays are treated as scalar values. */
+function flattenForDiff(e: Record<string, unknown> | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (!e) return out;
+  for (const [k, v] of Object.entries(e)) {
+    if (k === "recorded") continue;
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      for (const [sk, sv] of Object.entries(v as Record<string, unknown>)) out[`${k}.${sk}`] = sv;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+/** Structured diff of two entity snapshots → { dottedKey: {from, to} } for
+ *  changed keys only. `before === undefined` (create) → every `from` is null. */
+export function entityDiff(
+  before: Record<string, unknown> | undefined,
+  after: Record<string, unknown> | undefined,
+): Record<string, { from: unknown; to: unknown }> {
+  const b = flattenForDiff(before);
+  const a = flattenForDiff(after);
+  const diff: Record<string, { from: unknown; to: unknown }> = {};
+  for (const k of new Set([...Object.keys(b), ...Object.keys(a)])) {
+    const fromV = k in b ? b[k] : null;
+    const toV = k in a ? a[k] : null;
+    if (JSON.stringify(fromV) !== JSON.stringify(toV)) {
+      diff[k] = { from: before === undefined ? null : fromV, to: toV };
+    }
+  }
+  return diff;
+}
+
+/** Keep the AMICODE_DIFF sentinel line small: truncate long string values, then,
+ *  if still over budget, drop trailing entries and mark with an "…" key. */
+export function truncateDiffForSentinel(
+  diff: Record<string, { from: unknown; to: unknown }>,
+  maxBytes = 1024,
+): Record<string, { from: unknown; to: unknown }> {
+  const trunc = (v: unknown): unknown =>
+    typeof v === "string" && v.length > 120 ? v.slice(0, 120) + "…" : v;
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [k, { from, to }] of Object.entries(diff)) out[k] = { from: trunc(from), to: trunc(to) };
+  const keys = Object.keys(out);
+  const total = keys.length;
+  while (JSON.stringify(out).length > maxBytes && keys.length > 0) {
+    delete out[keys.pop()!];
+    out["…"] = { from: null, to: `${total - keys.length} more fields` };
+  }
+  return out;
 }
 
 /** A given-but-empty ref is a caller bug (an ABSENT ref is fine — omit the key). */

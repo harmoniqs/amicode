@@ -23,8 +23,15 @@ import {
   validateSystem,
   validateFormulation,
   updateSystem,
+  canonicalJson,
+  deriveSlug,
+  entityDiff,
+  truncateDiffForSentinel,
+  problemToml,
+  runRefsToml,
   type SystemEntity,
   type FormulationEntity,
+  type ProblemMeta,
 } from '../opencode-plugin/entities'
 
 const SYS: SystemEntity = {
@@ -58,13 +65,14 @@ describe('systemToml', () => {
     expect(() => systemToml({ ...SYS, levels: 2 })).not.toThrow()
     expect(() => systemToml({ ...SYS, levels: 6 })).not.toThrow()
   })
-  it('rejects an unknown platform', () => {
-    expect(() => systemToml({ ...SYS, platform: 'flux-capacitor' as any })).toThrow(/platform/)
+  it('accepts an arbitrary platform, rejects an empty one (opened model, spec A)', () => {
+    expect(() => systemToml({ ...SYS, platform: 'gkp-cavity' })).not.toThrow()
+    expect(() => systemToml({ ...SYS, platform: '' })).toThrow(/platform/)
   })
-  it('rejects levels < 2, > 6, and non-integers', () => {
+  it('rejects levels < 2 and non-integers, but allows levels > 6 (warning, not error)', () => {
     expect(() => systemToml({ ...SYS, levels: 1 })).toThrow(/levels/)
-    expect(() => systemToml({ ...SYS, levels: 7 })).toThrow(/levels/)
     expect(() => systemToml({ ...SYS, levels: 3.5 })).toThrow(/levels/)
+    expect(() => systemToml({ ...SYS, levels: 7 })).not.toThrow()
   })
   it('rejects non-finite param values (NaN/Infinity have no TOML representation)', () => {
     expect(() => systemToml({ ...SYS, params: { omega: NaN } })).toThrow(/param/)
@@ -106,8 +114,8 @@ describe('validateSystem / validateFormulation', () => {
     expect(validateFormulation(FORM)).toEqual([])
   })
   it('name the offending field in each problem message', () => {
-    expect(validateSystem({ ...SYS, platform: 'nope' as any }).join(' ')).toMatch(/platform/)
-    expect(validateSystem({ ...SYS, levels: 99 }).join(' ')).toMatch(/levels/)
+    expect(validateSystem({ ...SYS, platform: '' as any }).join(' ')).toMatch(/platform/)
+    expect(validateSystem({ ...SYS, levels: 1 }).join(' ')).toMatch(/levels/)
     expect(validateFormulation({ ...FORM, target: '' }).join(' ')).toMatch(/target/)
   })
 })
@@ -130,7 +138,7 @@ describe('updateSystem (the amicode_set_model merge)', () => {
     expect(updateSystem(SYS, { params: { drive_max: 0.3 } }).levels).toBe(3)
   })
   it('throws when the merge would produce an invalid entity', () => {
-    expect(() => updateSystem(SYS, { levels: 9 })).toThrow(/levels/)
+    expect(() => updateSystem(SYS, { levels: 1 })).toThrow(/levels/)
     expect(() => updateSystem(SYS, { params: { omega: NaN } })).toThrow(/param/)
   })
 })
@@ -210,5 +218,76 @@ describe('calibrationStubToml (guided follow-up stub — loop not wired in this 
   })
   it('rejects a given-but-empty device_session_ref', () => {
     expect(() => calibrationStubToml({ device_session_ref: '' })).toThrow(/device_session_ref/)
+  })
+})
+
+describe('opened entity model (spec A)', () => {
+  it('accepts an unknown platform and optional levels', () => {
+    expect(validateSystem({ platform: 'gkp-cavity', params: { chi: 0.5 } } as SystemEntity)).toEqual([])
+    expect(validateSystem({ platform: '', params: {} } as SystemEntity)).not.toEqual([])
+  })
+  it('warns but does not reject levels > 6', () => {
+    expect(validateSystem({ platform: 'transmon', levels: 7, params: {} } as SystemEntity)).toEqual([])
+  })
+  it('round-trips formulation.solve through TOML', () => {
+    const f: FormulationEntity = {
+      problem: 'min_time', target: 'CZ', objective: 'unitary infidelity',
+      constraints: ['amplitude bound'], solve: { T: 10, N: 50, max_iter: 60, integrator: 'MagnusGL4' },
+    }
+    const parsed = parse(formulationToml(f)) as any
+    expect(parsed.formulation.solve.T).toBe(10)
+    expect(parsed.formulation.solve.integrator).toBe('MagnusGL4')
+  })
+})
+
+describe('canonicalJson + hash input rules', () => {
+  it('sorts keys and excludes recorded/notes', () => {
+    expect(canonicalJson({ b: 1, a: 2, recorded: 'x', notes: 'y' })).toBe('{"a":2,"b":1}')
+  })
+  it('is stable across key order', () => {
+    expect(canonicalJson({ x: { b: 1, a: [1, 2] } })).toBe(canonicalJson({ x: { a: [1, 2], b: 1 } }))
+  })
+})
+
+describe('deriveSlug', () => {
+  it('kebab-cases and strips punctuation', () => {
+    expect(deriveSlug('X gate on Q1!')).toBe('x-gate-on-q1')
+    expect(deriveSlug('///')).toBe('untitled')
+  })
+})
+
+describe('entityDiff + sentinel truncation', () => {
+  it('produces dotted keys for nested params and skips recorded', () => {
+    const d = entityDiff(
+      { levels: 3, params: { drive_max: 0.2 } },
+      { levels: 4, params: { drive_max: 0.2 }, recorded: 'x' },
+    )
+    expect(d).toEqual({ levels: { from: 3, to: 4 } })
+  })
+  it('null from on create', () => {
+    expect(entityDiff(undefined, { platform: 'transmon' })).toEqual({ platform: { from: null, to: 'transmon' } })
+  })
+  it('keeps the sentinel line under 1 KB', () => {
+    const big = entityDiff(undefined, { notes2: 'z'.repeat(5000) })
+    const line = JSON.stringify(truncateDiffForSentinel(big))
+    expect(line.length).toBeLessThanOrEqual(1024)
+    expect(line).toContain('…')
+  })
+})
+
+describe('problem + run-ref serializers', () => {
+  it('round-trips problem.toml', () => {
+    const meta: ProblemMeta = {
+      name: 'X gate on Q1', slug: 'x-gate-q1', created: '2026-07-03T00:00:00Z',
+      status: 'designing', score: { id: 'pulse-designer', version: 3 }, env: { kind: 'provisioned' },
+    }
+    const parsed = parse(problemToml(meta)) as any
+    expect(parsed.problem.slug).toBe('x-gate-q1')
+    expect(parsed.problem.score.id).toBe('pulse-designer')
+    expect(parsed.problem.env.kind).toBe('provisioned')
+  })
+  it('round-trips runs.toml appends', () => {
+    const t = runRefsToml([{ run_id: 'r1', lab: 'default', tier: 'vetted', recorded: 'x' }])
+    expect((parse(t) as any).runs[0].tier).toBe('vetted')
   })
 })
