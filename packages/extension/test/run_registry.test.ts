@@ -45,4 +45,25 @@ describe("RunRegistry", () => {
     reg.markFinished("r1", "completed", 0.9991);
     expect(reg.get("r1")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.9991, latestIter: 42 });
   });
+  it("backfill fills ONLY missing metadata (scheduler-registered run gains createdAt/scriptPath from a later index line)", () => {
+    const reg = new RunRegistry();
+    reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });   // scheduler path: no metadata
+    expect(reg.get("r1")?.createdAt).toBeUndefined();
+    expect(reg.get("r1")?.scriptPath).toBeUndefined();
+    reg.backfill("r1", { createdAt: "2026-07-03T00:00:00Z", scriptPath: "/s.jl" });
+    expect(reg.get("r1")).toMatchObject({ createdAt: "2026-07-03T00:00:00Z", scriptPath: "/s.jl" });
+    // never overwrites a present value (first registration wins for everything)
+    reg.backfill("r1", { createdAt: "2099-01-01T00:00:00Z", scriptPath: "/other.jl" });
+    expect(reg.get("r1")).toMatchObject({ createdAt: "2026-07-03T00:00:00Z", scriptPath: "/s.jl" });
+    reg.backfill("nope", { createdAt: "x" });   // unknown run — no throw
+  });
+  it("all() returns COPIES — callers can't mutate registry state", () => {
+    const reg = new RunRegistry();
+    reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });
+    const snap = reg.all();
+    snap[0].phase = "finished";
+    snap[0].latestIter = 999;
+    expect(reg.get("r1")?.phase).toBe("live");
+    expect(reg.get("r1")?.latestIter).toBeUndefined();
+  });
 });

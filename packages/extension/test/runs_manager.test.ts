@@ -182,6 +182,43 @@ describe("RunsManager multi-run (#57)", () => {
     m.dispose();
   });
 
+  it("PULSE events are gated on selection too (not just iter) — background run's plot never reaches the inspector", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const a = stageRun(root, "rA", { log: META_LINE });        // rA armed with meta
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    stageRun(root, "rB");
+    tick(m);
+    expect(m.selectedRun).toBe("rB");                           // rA now background
+    inspector.postPulse.mockClear();
+
+    // A background pulse RECORD on rA must not reach the inspector (rB selected).
+    appendFileSync(join(a, "run.log"), "AMICODE_PULSE iter=5 dt=0.2 a=0.1,0.2\n");
+    tick(m);
+    expect(inspector.postPulse).not.toHaveBeenCalled();
+    m.dispose();
+  });
+
+  it("selecting a run whose FINISHED landed inside the poll window shows completion, never warming", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const a = stageRun(root, "rA");                             // live at discovery → pipeline + selected
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    stageRun(root, "rB");
+    tick(m);                                                    // selection moves to rB (rA still "live" in registry)
+    inspector.setWarmingUp.mockClear();
+    inspector.postCompletion.mockClear();
+
+    // rA finishes on disk but the poll hasn't ticked (registry still says live).
+    writeFileSync(join(a, "result.toml"), 'schema_version = "1"\nfidelity = 0.9999\niterations = 3\n');
+    writeFileSync(join(a, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
+    m.selectRun("rA");                                          // user switches back BEFORE the tick
+    // selectRun re-checks disk → completion, NOT warming (no terminal-badge inversion).
+    expect(inspector.postCompletion).toHaveBeenCalledWith("completed", 0.9999);
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled();
+    m.dispose();
+  });
+
   it("an index line naming a missing run dir is tolerated (skipped, no throw)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     writeFileSync(join(root, "index"), "rGone\t2026-07-03T00:00:00Z\t/s.jl\n");
