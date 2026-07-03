@@ -1,0 +1,3 @@
+# Registered entitlement ids (spec §3 contract test: "every entitlements id is registered").
+# A score naming an unregistered id is a lint error — typos must fail CI, not silently hide a score.
+known = ["pasqal-hackathon-2026"]
