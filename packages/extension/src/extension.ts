@@ -82,6 +82,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       await vscode.commands.executeCommand("amicode.catalogCard.open", runDir, system, tags);
     }),
     vscode.commands.registerCommand("amicode.catalog.refresh", () => trees.catalog.refresh()),
+    // Context-menu removal: unsave the pointer; run artifacts stay on disk.
+    vscode.commands.registerCommand("amicode.catalog.remove", async (entry?: { run_id?: string }) => {
+      if (entry?.run_id) await trees.catalog.remove(entry.run_id);
+    }),
   );
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });

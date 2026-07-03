@@ -84,6 +84,25 @@ describe("SessionCatalogTree — pointer records, newest first", () => {
     expect(item.command?.arguments).toEqual(["/runs/r2", "transmon", undefined]);   // runDir + name + tags → card
   });
 
+  it("remove() unsaves the pointer only — remaining entries and order survive", async () => {
+    const tree = new SessionCatalogTree(makeCtx());
+    await tree.save(entry("r1"));
+    await tree.save(entry("r2"));
+    await tree.save(entry("r3"));
+    await tree.remove("r2");
+    const rows = tree.getChildren() as SessionCatalogEntry[];
+    expect(rows.map((r) => r.run_id)).toEqual(["r3", "r1"]);
+    await tree.remove("r2");   // idempotent — removing a gone entry is a no-op
+    expect((tree.getChildren() as SessionCatalogEntry[]).length).toBe(2);
+  });
+
+  it("rows carry the context value that enables the remove menu", async () => {
+    const tree = new SessionCatalogTree(makeCtx());
+    await tree.save(entry("r1"));
+    const item = tree.getTreeItem((tree.getChildren() as SessionCatalogEntry[])[0]) as { contextValue?: string };
+    expect(item.contextValue).toBe("amicodeCatalogEntry");
+  });
+
   it("empty state renders the hint row", () => {
     const tree = new SessionCatalogTree(makeCtx());
     const rows = tree.getChildren();

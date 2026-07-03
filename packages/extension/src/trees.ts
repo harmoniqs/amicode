@@ -58,6 +58,14 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
     this._onDidChange.fire();
   }
 
+  /** Remove the POINTER record (unsave). Non-destructive by design: the run
+   *  dir and pulse.jld2 stay on disk — deleting artifacts (and archive/
+   *  supersede semantics) belongs to the Phase-3 CatalogStore (Q94/Q95). */
+  async remove(run_id: string): Promise<void> {
+    await this.ctx.workspaceState.update(CATALOG_KEY, this.entries().filter((e) => e.run_id !== run_id));
+    this._onDidChange.fire();
+  }
+
   getTreeItem(el: SessionCatalogEntry | string): vscode.TreeItem {
     if (typeof el === "string") return new vscode.TreeItem(el, vscode.TreeItemCollapsibleState.None);
     // Chip-shaped label: gate · system · fidelity (Hamiltonian-based identity;
@@ -70,6 +78,7 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
     item.tooltip = `lab: ${el.lab_id}${el.tags?.length ? `\ntags: ${el.tags.join(", ")}` : ""}\nsaved ${el.saved_at}\n${el.runDir}`;
     if (el.tags?.length) item.description = `${el.run_id} · ${el.tags.join(" · ")}`;
     item.command = { command: "amicode.catalogCard.open", title: "Open catalog card", arguments: [el.runDir, el.system, el.tags] };
+    item.contextValue = "amicodeCatalogEntry";   // enables the row's context menu (remove)
     return item;
   }
 
