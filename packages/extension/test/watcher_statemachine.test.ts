@@ -38,7 +38,7 @@ function setLatest(root: string, target: string): void {
   symlinkSync(target, link);
 }
 const tick = (w: RunsRootWatcher): void => (w as unknown as { tick(): void }).tick();
-const META_LINE = 'AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.2:0.2\n';
+const META_LINE = 'AMICODE_PULSE_META drives=1 knots=2 labels="u_1" bounds=-0.2:0.2\n';
 
 describe("RunsRootWatcher state machine", () => {
   beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });

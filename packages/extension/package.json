@@ -83,6 +83,10 @@
       {
         "command": "amicode.replayDemo",
         "title": "Amicode: Replay demo run"
+      },
+      {
+        "command": "amicode.catalog.remove",
+        "title": "Remove from Catalog"
       }
     ],
     "configuration": {
@@ -109,6 +113,21 @@
           "description": "Path to the lab.toml hardware profile, validated on load. Empty = ~/.amico/lab.toml (where install.sh writes the starter)."
         }
       }
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "amicode.catalog.remove",
+          "when": "view == amicode.catalog && viewItem == amicodeCatalogEntry",
+          "group": "7_modification"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "amicode.catalog.remove",
+          "when": "false"
+        }
+      ]
     }
   },
   "scripts": {
