@@ -2,7 +2,7 @@
 type: score
 schema_version: 1
 id: pulse-designer
-version: 1
+version: 2
 derived_from: null
 name: "Design an optimized pulse"
 outcome: "A solved, inspected pulse for your gate on your platform"
@@ -85,11 +85,20 @@ values in one line and continue (the tools record entities — System,
 Formulation, Run — they are bookkeeping, not gates).
 
 **Buttons for choices:** any question above with a `choices` list goes through
-`amicode_ask` (question + the options, default first, marked "(recommended)")
-— the chat renders them as buttons and the click arrives as the next message.
-Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) stay plain-text
-questions. If `amicode_ask` is unavailable, ask in plain text with the options
-listed.
+`amicode_ask` (question + the options, default first, marked "(recommended)",
+plus optional one-line `details` per option — e.g. "fully supported end-to-end"
+/ "recorded for follow-up") — the chat renders them as buttons and the click
+arrives as the next message. **After calling `amicode_ask`, end your turn
+immediately: no prose repeat of the question, no commentary, and NEVER answer
+the question yourself.** Free-form values ($\omega$, $\delta$, `T`, `N`,
+`max_iter`) stay plain-text questions. If `amicode_ask` is unavailable, ask in
+plain text with the options listed.
+
+**Anchor on recorded state:** before asking any stage-2+ parameter question,
+re-read the recorded System entity (what the rail shows) and anchor on it —
+never ask questions that contradict what is recorded. If the record is wrong
+(wrong platform, stale value), correct it via the matching `amicode_*` tool
+FIRST, then continue.
 
 Per-stage notes:
 
