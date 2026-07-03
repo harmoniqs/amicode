@@ -40,6 +40,52 @@ prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 const PLOT_EVERY = 6
 live_plot = LivePulsePlotCallback(qtraj, prob.trajectory; every = PLOT_EVERY, save_dir = ".")
 
+# Pulse-data telemetry (#66, prototype-grade): raw knot values per iteration as
+# AMICODE_PULSE lines on stdout (→ run.log), riding the SAME solver-agnostic
+# (primal, iter) hook as the live plot — the inspector renders them natively.
+# Additive to the run-dir contract: consumers that don't know the lines ignore
+# them. META once (shape + bounds), then one record per iteration (~1KB).
+struct PulseEmitCallback <: AbstractIntermediateCallback
+    inner::Any   # delegate (the live plot) — fires first, keeps the PNG cadence
+    traj::Any    # prob.trajectory — synced from the primal, then read
+end
+function (cb::PulseEmitCallback)(primal, iter)
+    ok = cb.inner(primal, iter)
+    try
+        traj = cb.traj
+        expected = traj.dim * traj.N + traj.global_dim
+        if length(primal) == expected
+            # Own sync — the delegate only updates the trajectory on its plot cadence.
+            # Qualified: `update!` is also exported by Makie/CairoMakie — the
+            # unqualified binding is ambiguous once the plotting stack loads.
+            if traj.global_dim > 0
+                Piccolo.NamedTrajectories.update!(traj, collect(view(primal, 1:expected)); type = :both)
+            else
+                Piccolo.NamedTrajectories.update!(traj, collect(view(primal, 1:(traj.dim * traj.N))); type = :data)
+            end
+            # Drive component name differs by problem flavor (:u current, :a
+            # legacy). Membership check (not `something(traj.u, traj.a)`): it
+            # keeps the fallback reachable without leaning on property access
+            # returning `nothing` for missing components (review nit, #67).
+            A = :u in traj.names ? traj.u : (:a in traj.names ? traj.a : missing)
+            A === missing && error("no drive component (:u/:a) on trajectory")
+            vals = join((join((@sprintf("%.6g", v) for v in row), ",") for row in eachrow(A)), ";")
+            @printf("AMICODE_PULSE iter=%d dt=%.6g a=%s\n", iter, first(Piccolo.get_timesteps(traj)), vals)
+            flush(stdout)
+        end
+    catch e
+        @warn "pulse emit failed" exception = e maxlog = 3   # never let telemetry kill the solve
+    end
+    return ok
+end
+pulse_emit = PulseEmitCallback(live_plot, prob.trajectory)
+
+let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
+    bs = join(("$(-drive_max):$(drive_max)" for _ in 1:sys.n_drives), ",")
+    println("AMICODE_PULSE_META drives=$(sys.n_drives) knots=$N labels=$ls bounds=$bs")
+    flush(stdout)
+end
+
 # AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
 # IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
@@ -55,7 +101,7 @@ end
 
 t0 = time()
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       options = IpoptOptions(intermediate_callback = live_plot),
+       options = IpoptOptions(intermediate_callback = pulse_emit),
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 

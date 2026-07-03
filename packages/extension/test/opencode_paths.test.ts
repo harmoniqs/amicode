@@ -36,8 +36,8 @@ describe('resolveRunsRoot', () => {
 })
 
 describe('inspectorResourceRootDirs', () => {
-  it('includes the runs-root so live PNGs are not CSP-blocked', () => {
-    expect(inspectorResourceRootDirs('/ext', '/home/u/.amico/runs/default'))
-      .toContain('/home/u/.amico/runs/default')
+  it('grants extension assets only — no run-dir roots (the view renders from message data)', () => {
+    const roots = inspectorResourceRootDirs('/ext')
+    expect(roots).toEqual(['/ext/dist', '/ext/media'])
   })
 })

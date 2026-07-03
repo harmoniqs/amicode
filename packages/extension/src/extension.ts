@@ -41,7 +41,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 1. UI surfaces
   registerTrees(ctx);
-  registerRunInspector(ctx, runsRoot);
+  registerRunInspector(ctx);
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 

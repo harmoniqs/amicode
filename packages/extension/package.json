@@ -1,12 +1,15 @@
 {
   "name": "amicode-v2",
   "displayName": "Amicode v2",
-  "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
+  "description": "Amico research IDE \u2014 opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
   "version": "0.0.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "private": true,
-  "repository": { "type": "git", "url": "https://github.com/harmoniqs/amicode" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harmoniqs/amicode"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -117,7 +120,8 @@
     "test:smoke": "node test/boot_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs",
     "healthcheck": "node scripts/healthcheck.mjs",
-    "package": "pnpm --filter @amicode/amico-run build && pnpm run build && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix"
+    "package": "pnpm --filter @amicode/amico-run build && pnpm run build && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix",
+    "dev:pulseplot": "esbuild dev/pulseplot_harness/main.ts --bundle --format=iife --outfile=dev/pulseplot_harness/main.js && open dev/pulseplot_harness/index.html"
   },
   "devDependencies": {
     "@amicode/amico-run": "workspace:*",
