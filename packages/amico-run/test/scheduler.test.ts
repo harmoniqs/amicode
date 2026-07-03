@@ -192,13 +192,82 @@ describe('Scheduler — serial queue (#56)', () => {
     expect(good.some(e => e.kind === 'finished')).toBe(true)   // pump survived
   })
 
+  it('contract (d): a rogue `finished` REJECTION is survived — error event, queue advances', async () => {
+    // `finished` never rejects per contract; a broken executor must still not
+    // wedge every queued run behind it. (Pins the defensive branch — a mutation
+    // deleting it must fail here.)
+    class RogueExecutor extends FakeExecutor {
+      async submit(scriptPath: string, opts?: SubmitOpts): Promise<RunHandle> {
+        const h = await super.submit(scriptPath, opts)
+        if (scriptPath === 'rogue.jl') return { ...h, finished: Promise.reject(new Error('boom')) }
+        return h
+      }
+    }
+    const ex = new RogueExecutor()
+    const s = new Scheduler(ex)
+    const seen = collect(s)
+    s.enqueue({ scriptPath: 'rogue.jl' })
+    const ok = s.enqueue({ scriptPath: 'ok.jl' })
+    await tick(); await tick()
+    expect(seen.some(e => e.kind === 'error' && /finished rejected: boom/.test((e as { message: string }).message))).toBe(true)
+    expect(ex.submits.map(x => x.scriptPath)).toEqual(['rogue.jl', 'ok.jl'])   // queue advanced
+    expect((await ok.handle).runId).toBe('run-2')
+  })
+
+  it('a SYNC-throwing submit (contract-violating executor) cannot blow the stack or strand the queue', async () => {
+    // The dangerous shape: a big backlog of sync-throwers ACCUMULATES behind one
+    // pending run, then drains in a single chain when it finishes. With a direct
+    // finally re-pump that chain is real recursion (RangeError → stranded queue);
+    // the microtask deferral keeps it flat. (Enqueuing sync-throwers onto an idle
+    // scheduler never recurses — each enqueue drains its own entry — so the
+    // backlog-behind-a-pending-run setup is load-bearing for this pin.)
+    class SyncThrower implements Executor {
+      good = new FakeExecutor()
+      submit(scriptPath: string, opts?: SubmitOpts): Promise<RunHandle> {
+        if (!scriptPath.startsWith('bad-')) return this.good.submit(scriptPath, opts)
+        throw new ConfigError(`sync boom: ${scriptPath}`)   // sync, no Promise
+      }
+    }
+    const ex = new SyncThrower()
+    const s = new Scheduler(ex)
+    s.enqueue({ scriptPath: 'first.jl' })    // holds the queue while the backlog builds
+    await tick()
+    const bad = Array.from({ length: 8000 }, (_, i) => s.enqueue({ scriptPath: `bad-${i}.jl` }))
+    const good = s.enqueue({ scriptPath: 'good.jl' })
+    ex.good.handles[0].finish({ status: 'completed', exitCode: 0 })   // release → drain the 8000 in one go
+    const h = await good.handle              // resolves only if the whole backlog drained
+    expect(h.runId).toBe('run-2')
+    expect(s.depth).toBe(1)                  // just the good run, still running
+    await expect(bad[0].handle).rejects.toThrow(/sync boom/)
+    await expect(bad[7999].handle).rejects.toThrow(/sync boom/)
+  })
+
+  it('an untouched ScheduledRun.handle never surfaces an unhandledRejection (cancel path)', async () => {
+    // Pins the internal handle.catch(() => {}) suppression explicitly — callers
+    // that only consume lifecycle events never touch `handle`, and a cancel's
+    // rejection must not trip the process.
+    const seen: unknown[] = []
+    const trap = (r: unknown): void => { seen.push(r) }
+    process.on('unhandledRejection', trap)
+    try {
+      const s = new Scheduler(new FakeExecutor())
+      s.enqueue({ scriptPath: 'a.jl' })
+      const b = s.enqueue({ scriptPath: 'b.jl' })
+      expect(b.cancel()).toBe(true)          // rejects b.handle — nobody is listening
+      await tick(); await tick()
+      expect(seen).toEqual([])
+    } finally {
+      process.off('unhandledRejection', trap)
+    }
+  })
+
   it('contract (c): the Scheduler owns no timers (no warming timeout to hard-code)', async () => {
     // Structural pin: remote cold-start ≫ local seconds, so ANY scheduler-side
     // timeout would violate the per-executor warming budget. Assert the source
-    // has no timer calls at all.
+    // has no timer calls at all (microtasks are fine — they encode no duration).
     const { readFileSync } = await import('node:fs')
     const { fileURLToPath } = await import('node:url')
     const src = readFileSync(fileURLToPath(new URL('../src/scheduler.ts', import.meta.url)), 'utf8')
-    expect(src).not.toMatch(/setTimeout|setInterval/)
+    expect(src).not.toMatch(/setTimeout|setInterval|setImmediate|Date\.now/)
   })
 })

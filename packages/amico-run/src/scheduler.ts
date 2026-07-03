@@ -52,9 +52,12 @@ export interface ScheduledRun {
    *  of the queue and submit() succeeds. Rejects if the entry is cancelled
    *  before starting, or if submit() throws (e.g. ConfigError). */
   handle: Promise<RunHandle>
-  /** Dequeue BEFORE start: true if the entry was still queued (it will never
-   *  run), false once started — a live run is stopped via RunHandle.abort()
-   *  (a request, per contract (b)), never via the queue. */
+  /** Dequeue BEFORE start: true iff the entry was still queued (it will never
+   *  run). False in every other case — already started, already cancelled, or
+   *  mid-submit (shifted but `started` not yet emitted; `handle` may still
+   *  REJECT if that submit fails). To stop a live run, `await handle` (in a
+   *  try/catch) and call RunHandle.abort() — a request, per contract (b);
+   *  never via the queue. */
   cancel(): boolean
 }
 
@@ -146,11 +149,17 @@ export class Scheduler {
         this.emit({ kind: 'finished', queueId: entry.queueId, runId: handle.runId, status: fin.status, exitCode: fin.exitCode })
       } catch (e) {
         // …but a rogue executor breaking that must not deadlock every queued run.
-        this.emit({ kind: 'error', queueId: entry.queueId, message: `finished rejected: ${(e as Error).message}` })
+        const msg = e instanceof Error ? e.message : String(e)
+        this.emit({ kind: 'error', queueId: entry.queueId, message: `finished rejected: ${msg}` })
       }
     } finally {
       this.running = false
-      void this.pump()   // next entry, if any
+      // Microtask deferral, NOT a direct call: a contract-violating executor
+      // whose submit() throws SYNCHRONOUSLY would otherwise make this finally
+      // direct recursion — a long backlog of such failures blows the stack and
+      // strands the rest of the queue. Deferring one microtask keeps the chain
+      // flat regardless of how the executor misbehaves.
+      queueMicrotask(() => void this.pump())
     }
   }
 }
