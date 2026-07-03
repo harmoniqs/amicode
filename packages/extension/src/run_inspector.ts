@@ -83,7 +83,7 @@ class InspectorView implements vscode.WebviewViewProvider {
     }
   }
 
-  // -------- public surface used by RunsRootWatcher --------
+  // -------- public surface used by RunsManager --------
 
   postIterationRecord(rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
     // Ok to drop iter records pre-materialization: the stats row refreshes on

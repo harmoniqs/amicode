@@ -13,7 +13,7 @@ import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
-import { RunsRootWatcher } from "./file_watcher";
+import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { readTomlSafe } from "./run_dir_reader";
 
@@ -29,7 +29,7 @@ import { readTomlSafe } from "./run_dir_reader";
 let serverManager: ServerManager | undefined;
 let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
-let watcher: RunsRootWatcher | undefined;
+let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
 
 
@@ -90,12 +90,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
-  // 2. Start watching the runs root immediately — solves may already exist
-  // from prior dev-host sessions, and watchers are cheap.
+  // 2. Start the multi-run RunsManager immediately — it tails the append-only
+  // runs/index (1.2, #57), so solves from prior dev-host sessions register and
+  // a still-live run resumes; every concurrent run is tracked to completion.
   fs.mkdirSync(runsRoot, { recursive: true });
-  watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
-  watcher.start();
-  ctx.subscriptions.push(watcher);
+  runsManager = new RunsManager({ runsRoot, channel: runsChannel, statusBar });
+  runsManager.start();
+  ctx.subscriptions.push(runsManager);
 
   // Validate lab.toml on load (0.1b / S17). A malformed hardware profile would
   // otherwise silently solve against the wrong hardware or fail opaquely mid-solve.
@@ -241,8 +242,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
     // On-site fallback (β.6): stage the bundled pre-baked solve into the runs
-    // root. The watcher already running on runsRoot follows `latest` →
-    // ingestRunDir replays the converged solve — no Julia, no opencode, no creds.
+    // root. Under the multi-run RunsManager (#57) a run that is FINISHED at
+    // discovery registers quietly (no auto-display), so the demo is shown by
+    // EXPLICIT selection: poke the index tail (same-tick registration), then
+    // selectRun → the display replay renders the converged solve — no Julia,
+    // no opencode, no creds. Promote stays suppressed (finished at discovery).
     vscode.commands.registerCommand("amicode.replayDemo", async () => {
       const demoDir = path.join(ctx.extensionPath, "demo", "run");
       if (!fs.existsSync(path.join(demoDir, "FINISHED"))) {
@@ -251,6 +255,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       try {
         const runDir = stageDemoRun(demoDir, runsRoot);
+        runsManager?.pokeDiscovery();
+        runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
         await vscode.commands.executeCommand("amicode.runInspector.focus");
         // Save-to-catalog prompt (#47): the watcher suppresses the promote
@@ -276,7 +282,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 export function deactivate(): void {
   sseClient?.dispose();
   serverManager?.stop();
-  watcher?.dispose();
+  runsManager?.dispose();
   statusBar?.dispose();
 }
 

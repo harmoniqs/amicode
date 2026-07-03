@@ -6,7 +6,7 @@ import type { RunStatus } from "./types";
 
 // ============================================================================
 // Pure (vscode-free) reader for the β.1 run-dir contract. Unit-testable in
-// isolation; the vscode-coupled RunsRootWatcher (file_watcher.ts) consumes it.
+// isolation; the vscode-coupled RunsManager (runs_manager.ts) consumes it.
 // ============================================================================
 
 // Float group accepts Julia's @printf %e output incl. Inf/-Inf/NaN, so stagnation
