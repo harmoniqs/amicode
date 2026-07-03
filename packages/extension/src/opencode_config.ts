@@ -63,14 +63,60 @@ export function resolveJuliaProject(configValue: string): string {
  *
  *  `bash`/`edit` are left at "allow" (both already default to allow; bash runs
  *  the compound `mkdir … && nohup amico-run …` launch, not worth scoping).
- *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
+ *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL.
+ *
+ *  L0 pulse-designer additions (night build 2026-07-03; registration mechanism
+ *  probed on the stock vendored 1.17.3 — see opencode-plugin/amicode_tools.ts
+ *  header for the full T8 decision record):
+ *    - `plugin: [<abs path to opencode-plugin/amicode_tools.ts>]` — the
+ *      amicode_* tool pack, executed by opencode's embedded Bun runtime (it is
+ *      NOT part of the extension bundle). The path defaults from __dirname
+ *      (works from both src/ under vitest and dist/ in the cjs bundle — the
+ *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
+ *      pass this explicitly once .vsix packaging of opencode-plugin/ is
+ *      verified; the default keeps existing call sites working unchanged.
+ *    - `agent: {"pulse-designer": …}` — the interview agent; its prompt defers
+ *      to the "Pulse-designer interview" section of the injected AGENTS.md so
+ *      the interview script lives in ONE place.
+ *    - an `external_directory` grant for the entities dir, so the AGENT's file
+ *      tools can read back system/formulation/run TOML the plugin wrote (the
+ *      plugin's own fs writes are host-process calls and need no grant). Must
+ *      stay derivation-identical to entitiesDir() in amicode_tools.ts. */
 const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
 
-export function buildOpencodeConfigContent(agentsPath: string, templatePath: string): string {
+/** Where the amicode_* plugin records entities — MUST match entitiesDir() in
+ *  opencode-plugin/amicode_tools.ts ($AMICODE_ENTITIES_DIR override included,
+ *  so the permission grant follows the plugin wherever it is pointed). */
+function entitiesDir(): string {
+  const env = process.env.AMICODE_ENTITIES_DIR;
+  if (env && env.trim() !== "") return env;
+  return path.join(os.homedir(), ".amico", "runs", "default", "_entities");
+}
+
+/** Default location of the amicode_* opencode plugin: a sibling directory of
+ *  both src/ (vitest) and dist/ (the bundled extension), so __dirname/.. works
+ *  from either. */
+const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "amicode_tools.ts");
+
+export function buildOpencodeConfigContent(
+  agentsPath: string,
+  templatePath: string,
+  pluginPath: string = DEFAULT_PLUGIN_PATH,
+): string {
   const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
+    plugin: [pluginPath],
+    agent: {
+      "pulse-designer": {
+        description: "Guided quantum pulse design interview",
+        prompt:
+          "You are Amico's pulse-designer. Follow the 'Pulse-designer interview' section of " +
+          "the project instructions exactly: one question at a time, record each stage with " +
+          "the amicode_* tools, and use the solve workflow for launches.",
+      },
+    },
     permission: {
       bash: "allow",
       edit: "allow",
@@ -79,6 +125,7 @@ export function buildOpencodeConfigContent(agentsPath: string, templatePath: str
         [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
         [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
+        [`${entitiesDir()}/**`]: "allow",   // amicode_* entities the agent may read back
       },
     },
   });
