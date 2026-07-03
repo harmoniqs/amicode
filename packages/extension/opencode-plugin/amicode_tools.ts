@@ -56,6 +56,8 @@ import {
   systemToml,
   formulationToml,
   runStubToml,
+  deviceSessionStubToml,
+  calibrationStubToml,
   updateSystem,
   validateSystem,
   validateFormulation,
@@ -63,6 +65,8 @@ import {
   type SystemEntity,
   type FormulationEntity,
   type RunStub,
+  type DeviceSessionStub,
+  type CalibrationStub,
 } from "./entities";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
@@ -281,6 +285,96 @@ export const AmicodeTools = async (_input: unknown) => ({
         return (
           `Run entity recorded → ${file} — launch via the workflow's amico-run bash command ` +
           `if not already launched.${warn}`
+        );
+      },
+    },
+
+    amicode_to_hardware: {
+      description:
+        "Record the DeviceSession entity stub (interview stage 8: HARDWARE — guided stub). " +
+        "THIS BUILD PERFORMS NO DEVICE I/O: the tool records intent only and returns an " +
+        "explanation of the send-to-device gate. Bookkeeping, not a gate.",
+      args: {
+        pulse_ref: {
+          type: ["string", "null"],
+          description: "Path to the solved pulse artifact (pulse.jld2) if known; else null.",
+        },
+        run_dir: {
+          type: ["string", "null"],
+          description: "The run directory the pulse came from, if known; else null.",
+        },
+        note: {
+          type: ["string", "null"],
+          description: "Short free-text note; null for none.",
+        },
+      },
+      async execute(a: { pulse_ref?: string | null; run_dir?: string | null; note?: string | null }) {
+        const stub: DeviceSessionStub = {};
+        if (given(a.pulse_ref)) stub.pulse_ref = a.pulse_ref;
+        if (given(a.run_dir)) stub.run_dir = a.run_dir;
+        if (given(a.note)) stub.note = a.note;
+        let file: string;
+        try {
+          file = writeEntity("device_session.toml", deviceSessionStubToml(stub));
+        } catch (err) {
+          return `Cannot record device session: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        const warn = stub.pulse_ref || stub.run_dir
+          ? ""
+          : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
+        return (
+          `Device session recorded → ${file} (gate: pending-human-signoff).${warn}\n\n` +
+          `The send-to-device gate, when wired: (1) automated checks — fidelity ≥ threshold, ` +
+          `|drive| ≤ amplitude cap, bandwidth within hardware limits, leakage bounded; ` +
+          `(2) a human visually signs off on the pulse before anything is sent. ` +
+          `THIS BUILD PERFORMS NO DEVICE I/O — intent recorded only; set no expectation of ` +
+          `hardware execution tonight.`
+        );
+      },
+    },
+
+    amicode_calibrate: {
+      description:
+        "Record the Calibration entity stub (interview stage 8: CALIBRATE — guided stub). " +
+        "The calibration loop is NOT wired in this build: the tool records the follow-up " +
+        "and returns an explanation of the loop. Bookkeeping, not a gate.",
+      args: {
+        device_session_ref: {
+          type: ["string", "null"],
+          description:
+            "Path to the recorded device_session.toml; null to auto-reference the recorded one if present.",
+        },
+        note: {
+          type: ["string", "null"],
+          description: "Short free-text note; null for none.",
+        },
+      },
+      async execute(a: { device_session_ref?: string | null; note?: string | null }) {
+        const stub: CalibrationStub = {};
+        if (given(a.device_session_ref)) {
+          stub.device_session_ref = a.device_session_ref;
+        } else {
+          // Mirror amicode_solve's auto-ref idiom: point at the recorded device
+          // session when one exists (existence check only — no TOML parsing here).
+          const dsPath = path.join(entitiesDir(), "device_session.toml");
+          if (fs.existsSync(dsPath)) stub.device_session_ref = dsPath;
+        }
+        if (given(a.note)) stub.note = a.note;
+        let file: string;
+        try {
+          file = writeEntity("calibration.toml", calibrationStubToml(stub));
+        } catch (err) {
+          return `Cannot record calibration: ${err instanceof Error ? err.message : String(err)}`;
+        }
+        const warn = stub.device_session_ref
+          ? ""
+          : " Note: no device session recorded yet — amicode_to_hardware comes first.";
+        return (
+          `Calibration follow-up recorded → ${file} (loop: ILC, status: not-wired).${warn}\n\n` +
+          `After hardware runs, a calibration loop (ILC — iterative learning control) closes ` +
+          `the model-device gap: run the pulse, measure, compare against the model's ` +
+          `prediction, update, repeat until the device matches the design. In this build ` +
+          `that loop is a recorded follow-up only — nothing is executed tonight.`
         );
       },
     },

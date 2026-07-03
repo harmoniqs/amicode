@@ -67,7 +67,14 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
     expect(AGENTS).toMatch(/rydberg/i)
   })
   it('names the amicode_* recording tools as bookkeeping, not gates, with bash still the launch mechanism', () => {
-    for (const t of ['amicode_pick_system', 'amicode_set_model', 'amicode_formulate', 'amicode_solve']) {
+    for (const t of [
+      'amicode_pick_system',
+      'amicode_set_model',
+      'amicode_formulate',
+      'amicode_solve',
+      'amicode_to_hardware',
+      'amicode_calibrate',
+    ]) {
       expect(AGENTS).toContain(t)
     }
     expect(AGENTS).toMatch(/bookkeeping, not gates/)

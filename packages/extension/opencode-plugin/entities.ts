@@ -46,6 +46,26 @@ export interface RunStub {
   note?: string;
 }
 
+/** Stage-8 guided stub (amicode_to_hardware): records intent to send a pulse to
+ *  a device. THIS BUILD PERFORMS NO DEVICE I/O — `gate` and `checks` are fixed
+ *  by the serializer (pending-human-signoff + the auto-check list), never
+ *  caller-supplied, so a stub can't claim an approval that didn't happen. */
+export interface DeviceSessionStub {
+  /** The solved pulse artifact (pulse.jld2) if known. */
+  pulse_ref?: string;
+  /** The run directory the pulse came from, if known. */
+  run_dir?: string;
+  note?: string;
+}
+
+/** Guided follow-up stub (amicode_calibrate): the calibration loop that follows
+ *  hardware runs. `loop`/`status` are fixed by the serializer — "not-wired" is
+ *  the honest state of this build. */
+export interface CalibrationStub {
+  device_session_ref?: string;
+  note?: string;
+}
+
 export const PLATFORMS = ["transmon", "rydberg"] as const;
 export const MIN_LEVELS = 2;
 export const MAX_LEVELS = 6;
@@ -180,6 +200,49 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   if (stub.system_ref !== undefined) lines.push(`system_ref = ${tomlEscape(stub.system_ref)}`);
   if (stub.run_dir !== undefined) lines.push(`run_dir = ${tomlEscape(stub.run_dir)}`);
   lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
+  if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  return lines.join("\n") + "\n";
+}
+
+/** A given-but-empty ref is a caller bug (an ABSENT ref is fine — omit the key). */
+function requireNonEmptyRef(name: string, value: string | undefined): void {
+  if (value !== undefined && value.trim() === "") {
+    throw new Error(`${name} must be non-empty when given — omit it (null) if unknown`);
+  }
+}
+
+/** The stage-8 send-to-device gate's automated checks — fixed, not caller data:
+ *  they describe what the gate WILL verify, not what happened (nothing happens
+ *  in this build). Human visual sign-off follows the auto checks. */
+const HARDWARE_CHECKS = ["fidelity>=threshold", "|drive|<=cap", "bandwidth", "leakage"] as const;
+
+/** Serialize the DeviceSession stub under [device_session]. `gate` is pinned to
+ *  "pending-human-signoff" and `checks` to HARDWARE_CHECKS (see interface note). */
+export function deviceSessionStubToml(stub: DeviceSessionStub, now?: Date): string {
+  requireNonEmptyRef("pulse_ref", stub.pulse_ref);
+  requireNonEmptyRef("run_dir", stub.run_dir);
+  const lines = ["[device_session]"];
+  if (stub.pulse_ref !== undefined) lines.push(`pulse_ref = ${tomlEscape(stub.pulse_ref)}`);
+  if (stub.run_dir !== undefined) lines.push(`run_dir = ${tomlEscape(stub.run_dir)}`);
+  lines.push(`gate = ${tomlEscape("pending-human-signoff")}`);
+  lines.push(`checks = [${HARDWARE_CHECKS.map(tomlEscape).join(", ")}]`);
+  if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  return lines.join("\n") + "\n";
+}
+
+/** Serialize the Calibration stub under [calibration]. `loop` is pinned to "ILC"
+ *  (iterative learning control — the loop that follows hardware runs) and
+ *  `status` to "not-wired": this build records the follow-up, nothing more. */
+export function calibrationStubToml(stub: CalibrationStub, now?: Date): string {
+  requireNonEmptyRef("device_session_ref", stub.device_session_ref);
+  const lines = ["[calibration]"];
+  if (stub.device_session_ref !== undefined) {
+    lines.push(`device_session_ref = ${tomlEscape(stub.device_session_ref)}`);
+  }
+  lines.push(`loop = ${tomlEscape("ILC")}`);
+  lines.push(`status = ${tomlEscape("not-wired")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
   return lines.join("\n") + "\n";
