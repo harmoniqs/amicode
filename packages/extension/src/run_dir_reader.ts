@@ -136,6 +136,25 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   catch { return undefined; }
 }
 
+/** spec C promote gate: rendering is tier-blind, PROMOTION is not. A `free`-tier
+ *  run (solvespec.json tier === "free") can only be promoted once its re-rollout
+ *  verification.toml records agree === true — the known optimizer-vs-rollout
+ *  divergence must never be promoted on the optimizer's number. Non-free runs
+ *  (or runs with no solvespec) are always eligible. "pending_verification" means
+ *  the harness hasn't written verification.toml yet (the FINISHED-before-verify
+ *  race) — the caller must NOT promote AND must re-check when it lands, never
+ *  mark the run permanently un-promotable. */
+export type PromoteEligibility = "eligible" | "pending_verification" | "suppressed";
+export function promoteEligibility(runDir: string): PromoteEligibility {
+  let spec: Record<string, unknown> | undefined;
+  try { spec = JSON.parse(fs.readFileSync(path.join(runDir, "solvespec.json"), "utf8")); }
+  catch { return "eligible"; }   // no/unreadable spec → a bare run, unchanged behavior
+  if (spec?.tier !== "free") return "eligible";
+  const verification = readTomlSafe(path.join(runDir, "verification.toml"));
+  if (!verification) return "pending_verification";
+  return verification.agree === true ? "eligible" : "suppressed";
+}
+
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
  *  sink method at most once per relevant artifact. Safe to re-invoke (the live
  *  sink's guards make it idempotent). Returns the number of run.log bytes
@@ -188,7 +207,9 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   }
   sink.run({ runId, runDir, status, fidelity });
   if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {
-    sink.promote({ runId, runDir, fidelity });
+    const eligibility = promoteEligibility(runDir);   // tier-blind render, tier-aware promote (spec C)
+    if (eligibility === "eligible") sink.promote({ runId, runDir, fidelity });
+    else console.warn(`[amico] promote skipped for ${runId}: free-tier verification ${eligibility}`);
   }
   return logBytes;
 }

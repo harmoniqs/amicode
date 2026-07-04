@@ -2,9 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ingestRunDir, AMICODE_ITER_RE, parseAmicoNum, parsePulseMetaLine, parsePulseRecordLine, PulseStream, SinkDedup } from '../src/run_dir_reader'   // pure β.1-contract reader (vscode-free)
+import { ingestRunDir, promoteEligibility, AMICODE_ITER_RE, parseAmicoNum, parsePulseMetaLine, parsePulseRecordLine, PulseStream, SinkDedup } from '../src/run_dir_reader'   // pure β.1-contract reader (vscode-free)
 
-function stageRun(opts: { status: string; exit: number; iters: number[]; fidelity?: number }): string {
+function stageRun(opts: { status: string; exit: number; iters: number[]; fidelity?: number; tier?: string; agree?: boolean }): string {
   const root = mkdtempSync(join(tmpdir(), 'runs-'))
   const runId = 'r20260615-000000Z-ab12'
   const dir = join(root, runId); mkdirSync(dir, { recursive: true })
@@ -12,6 +12,9 @@ function stageRun(opts: { status: string; exit: number; iters: number[]; fidelit
     `schema_version = "1"\nrun_id = "${runId}"\nscript_path = "/s.jl"\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`)
   writeFileSync(join(dir, 'run.log'), opts.iters.map(k => `AMICODE_ITER iter=${k} f=0.1 inf_pr=1e-8 inf_du=1e-6`).join('\n') + '\n')
   if (opts.fidelity !== undefined) writeFileSync(join(dir, 'result.toml'), `schema_version = "1"\nfidelity = ${opts.fidelity}\niterations = ${Math.max(...opts.iters, 0)}\n`)
+  // spec C: a --spec launch persists solvespec.json; free tier gates promotion
+  if (opts.tier !== undefined) writeFileSync(join(dir, 'solvespec.json'), JSON.stringify({ schema_version: '2', script_path: '/s.jl', lab_id: 'default', tier: opts.tier }))
+  if (opts.agree !== undefined) writeFileSync(join(dir, 'verification.toml'), `schema_version = "1"\nagree = ${opts.agree}\n`)
   writeFileSync(join(dir, 'FINISHED'), `status = "${opts.status}"\nexit_code = ${opts.exit}\n`)
   return dir
 }
@@ -42,6 +45,42 @@ describe('ingestRunDir — β.1 contract reading (replay)', () => {
     const sink = fakeSink()
     ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.5 }), sink)
     expect(sink.promote).not.toHaveBeenCalled()
+  })
+
+  // spec C: rendering stays tier-blind (sink.run always fires); promotion is gated
+  describe('free-tier verification gates promotion (spec C)', () => {
+    it('(a) no solvespec.json (bare run) → promote fires, unchanged', () => {
+      const sink = fakeSink()
+      ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999 }), sink)
+      expect(sink.promote).toHaveBeenCalled()
+    })
+    it('(b) tier=free, no verification.toml → NO promote, but run STILL rendered (tier-blind)', () => {
+      const sink = fakeSink()
+      ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free' }), sink)
+      expect(sink.run).toHaveBeenCalled()
+      expect(sink.promote).not.toHaveBeenCalled()
+    })
+    it('(c) tier=free + agree=true → promote', () => {
+      const sink = fakeSink()
+      ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free', agree: true }), sink)
+      expect(sink.promote).toHaveBeenCalled()
+    })
+    it('(d) tier=free + agree=false → NO promote', () => {
+      const sink = fakeSink()
+      ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free', agree: false }), sink)
+      expect(sink.promote).not.toHaveBeenCalled()
+    })
+    it('(e) tier=vetted, no verification → promote (only free is gated)', () => {
+      const sink = fakeSink()
+      ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'vetted' }), sink)
+      expect(sink.promote).toHaveBeenCalled()
+    })
+    it('promoteEligibility: eligible / pending_verification / suppressed / eligible-when-agree', () => {
+      expect(promoteEligibility(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999 }))).toBe('eligible')
+      expect(promoteEligibility(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free' }))).toBe('pending_verification')
+      expect(promoteEligibility(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free', agree: false }))).toBe('suppressed')
+      expect(promoteEligibility(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, tier: 'free', agree: true }))).toBe('eligible')
+    })
   })
   it('returns the run.log byte offset (so the live tailer attaches without skipping iters)', () => {
     const sink = fakeSink()

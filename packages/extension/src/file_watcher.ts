@@ -6,7 +6,7 @@ import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
+  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, parseAmicoNum, promoteEligibility, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -209,10 +209,15 @@ export class RunsRootWatcher implements vscode.Disposable {
     if (!finishedAtSwitch) getInspector()?.setWarmingUp();
 
     // Incremental: FINISHED (pulse/iter lines arrive via the log tailer).
+    // Also watch verification.toml: a free-tier run's FINISHED lands BEFORE
+    // amico-run's harness writes verification.toml, so onFinished may see the
+    // promote as "pending" — re-run the promote check when verification lands
+    // (spec C: late verification still promotes exactly once).
     this.activeRunWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
       if (!filename) return;
       if (!fs.existsSync(path.join(runDir, filename))) return;
       if (filename === "FINISHED" && !this.finishedSeen) { this.finishedSeen = true; this.onFinished(runDir); }
+      if (filename === "verification.toml") this.onFinished(runDir);
     });
 
     // Incremental: appended AMICODE_ITER lines — start at the ingest offset so a
@@ -249,7 +254,12 @@ export class RunsRootWatcher implements vscode.Disposable {
     }
     this.sink?.run({ runId, runDir, status, fidelity });
     if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
-      this.sink?.promote({ runId, runDir, fidelity });
+      // spec C: gate promotion on free-tier verification. "pending" → don't
+      // promote AND don't mark promoted — the verification.toml watch re-runs
+      // this and promotes once it lands (promote() itself dedups via promotedRuns).
+      const eligibility = promoteEligibility(runDir);
+      if (eligibility === "eligible") this.sink?.promote({ runId, runDir, fidelity });
+      else this.opts.channel.appendLine(`[runs] promote gated for ${runId}: free-tier verification ${eligibility}`);
     }
   }
 }
