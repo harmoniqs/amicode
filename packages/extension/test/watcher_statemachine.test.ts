@@ -18,6 +18,7 @@ const { inspector } = vi.hoisted(() => ({
     postIterationRecord: vi.fn(),
     postPulse: vi.fn(),
     setRunLabel: vi.fn(),
+    postTiming: vi.fn(),
     reveal: vi.fn(),
   },
 }));
