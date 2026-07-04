@@ -13,6 +13,7 @@ import { text } from "../atoms/text";
 import { button } from "../atoms/button";
 import { metric } from "../components/metric";
 import { pulseplot } from "../components/pulseplot";
+import { sparkline } from "../components/sparkline";
 import { controlEnablement, type ControlStatus } from "../control-state";
 import { formatElapsed, computeEta, ratePerSec } from "../../../src/run_timing";
 
@@ -41,6 +42,10 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const feasibility = metric("feasibility", { variant: "small" });
   const optimality = metric("optimality", { variant: "small" });
   const metrics = [iteration, hero, feasibility, optimality];
+
+  // Convergence sparkline lives inside the hero, under the objective value.
+  const spark = sparkline();
+  hero.el.append(spark.el);
 
   /** Whether the current run has delivered pulse data — decides the
    *  completed-without-data hint. Reset on warming (a NEW run started). */
@@ -144,6 +149,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           iterStamps.push(Date.now());
           if (iterStamps.length > 12) iterStamps.shift();
           renderTiming();
+          spark.update(msg.f_val as number);
           break;
         }
         case "warming": {
@@ -157,6 +163,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           status.set("running", "warming up");
           controlStatus = "warming"; hasData = false; applyControls();
           iterStamps.length = 0; latestIter = 0;   // new run — reset rate history
+          spark.reset();
           break;
         }
         case "completed": {
