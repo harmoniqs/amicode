@@ -20,8 +20,10 @@ describe('validateManifest', () => {
     expect(r.errors.join(' ')).toContain('run_id')      // wrong-typed top-level field
     expect(r.errors.join(' ')).toContain('binary')      // /julia missing required "binary"
   })
-  it('rejects unknown schema_version', () =>
-    expect(validateManifest({ ...goodManifest, schema_version: '2' }).ok).toBe(false))
+  it('rejects unknown schema_version (v2 is now valid — spec C bump)', () => {
+    expect(validateManifest({ ...goodManifest, schema_version: '99' }).ok).toBe(false)
+    expect(validateManifest({ ...goodManifest, schema_version: '2' }).ok).toBe(true)
+  })
 })
 
 describe('validateFinished', () => {
