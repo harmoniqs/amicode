@@ -164,6 +164,17 @@ describe('runStubToml (bookkeeping stub — NOT amico-run\'s run.toml)', () => {
     expect('formulation_ref' in doc.run).toBe(false)
     expect('system_ref' in doc.run).toBe(false)
     expect('note' in doc.run).toBe(false)
+    expect('verification' in doc.run).toBe(false)   // spec C: absent until amicode_verify
+  })
+  it('round-trips the free-tier verification sub-table (spec C)', () => {
+    const doc = parse(runStubToml({
+      tier: 'free',
+      verification: { agree: false, fidelity_rerolled: 0.0004, fidelity_reported: 0.9999 },
+    })) as any
+    expect(doc.run.tier).toBe('free')
+    expect(doc.run.verification.agree).toBe(false)
+    expect(doc.run.verification.fidelity_rerolled).toBeCloseTo(0.0004)
+    expect(doc.run.verification.fidelity_reported).toBeCloseTo(0.9999)
   })
 })
 

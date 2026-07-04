@@ -49,6 +49,12 @@ const s4 = lastSentinel(
 );
 assert(s4.entity === "run", "solve emits a run sentinel");
 
+// verify (spec C) — record the free-tier re-rollout outcome on the Run entity
+const s5 = lastSentinel(
+  await tools.amicode_verify.execute({ agree: true, fidelity_rerolled: 0.998, fidelity_reported: 0.999 }),
+);
+assert(s5.entity === "run" && s5.action === "updated", "verify updates the run entity");
+
 // Workspace layout
 const ws = path.join(tmp, slug);
 for (const f of ["entities/system.toml", "entities/system.json", "entities/formulation.toml", "entities/run.toml", "problem.json"]) {

@@ -536,6 +536,54 @@ export const AmicodeTools = async (_input: unknown) => ({
       },
     },
 
+    amicode_verify: {
+      description:
+        "Record the free-tier re-rollout VERIFICATION outcome on the Run entity (spec C). " +
+        "Call this AFTER a `tier=\"free\"` solve finishes: amico-run runs the fixed re-rollout " +
+        "harness and writes verification.toml; read it and pass agree + the two fidelities here. " +
+        "Bookkeeping AFTER the fact — no stage gate (a verification record must never be lost). " +
+        "Promotion of a free run is blocked until agree = true.",
+      args: {
+        agree: {
+          type: "boolean",
+          description: "Did the independent re-rollout agree with the reported fidelity (verification.toml `agree`)?",
+        },
+        fidelity_rerolled: {
+          type: ["number", "null"],
+          description: "The harness's re-rolled fidelity; null if unavailable.",
+        },
+        fidelity_reported: {
+          type: ["number", "null"],
+          description: "The solve's reported fidelity; null if unavailable.",
+        },
+      },
+      async execute(a: { agree: boolean; fidelity_rerolled?: number | null; fidelity_reported?: number | null }) {
+        const meta = ensureActiveProblem();
+        const existing = readEntityJson<RunStub>(meta.slug, "run");
+        if (!existing) {
+          return (
+            `No Run entity recorded in "${meta.slug}" yet — record the solve (amicode_solve) ` +
+            `before its verification.`
+          );
+        }
+        const merged: RunStub = {
+          ...existing,
+          verification: {
+            agree: a.agree === true,
+            fidelity_rerolled: given(a.fidelity_rerolled) ? a.fidelity_rerolled : null,
+            fidelity_reported: given(a.fidelity_reported) ? a.fidelity_reported : null,
+          },
+        };
+        const sentinel = recordEntity(meta.slug, "run", merged as any, runStubToml(merged), {
+          tool: "amicode_verify",
+        });
+        const verdict = a.agree
+          ? "agree = true — the re-rollout confirms the reported fidelity; the run can be promoted."
+          : "agree = FALSE — the independent re-rollout disagrees; the run is UNTRUSTED and cannot be promoted. Relay this honestly.";
+        return `Verification recorded on the Run entity in "${meta.slug}". ${verdict}\n\n${sentinel}`;
+      },
+    },
+
     amicode_to_hardware: {
       description:
         "Record the DeviceSession entity stub (interview stage 8: HARDWARE — guided stub). " +

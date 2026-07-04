@@ -5,7 +5,7 @@
 // subcommand AND is not an existing file (a bare script named `resolve` keeps
 // the launch contract).
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { readAuthoring } from './authoring.js'
 import { loadExemplarsIndex, loadRegistry, matchShape } from './catalog.js'
 
@@ -35,14 +35,18 @@ export function resolveCommand(argv: string[]): number {
   const exemplars = loadExemplarsIndex(config.exemplars ?? '')
   const match = matchShape({ platform, kind, size }, registry, exemplars, config.allowlist)
 
+  // template/exemplar paths in the catalog are relative to their manifest file;
+  // resolve to absolute so the agent can copy the script directly.
+  const registryDir = config.registry ? dirname(config.registry) : process.cwd()
+  const exemplarsDir = config.exemplars ? dirname(config.exemplars) : process.cwd()
   const out: Record<string, unknown> = { tier: match.tier }
   if (match.template) {
     out.source = { template_id: match.template.id }
-    out.template_path = match.template.path
+    out.template_path = resolve(registryDir, match.template.path)
     out.packages = match.template.packages
   } else if (match.exemplar) {
     out.source = { exemplar_id: match.exemplar.id }
-    out.exemplar_path = match.exemplar.path
+    out.exemplar_path = resolve(exemplarsDir, match.exemplar.path)
     out.packages = match.exemplar.packages
   } else {
     out.packages = TIER3_MIN_PACKAGES

@@ -5,12 +5,17 @@ import { join } from 'node:path'
 const AGENTS = readFileSync(join(__dirname, '..', 'AGENTS.md'), 'utf8')
 
 describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
-  it('points at the bundled template and the amico-run <script> invocation', () => {
-    expect(AGENTS).toMatch(/solve_template\.jl/)
-    expect(AGENTS).toMatch(/amico-run .*solve\.jl/)   // the actual invocation it teaches
+  it('teaches the tiered resolve → author → --spec launch (spec C), not a single bundled template', () => {
+    expect(AGENTS).toMatch(/amico-run resolve/)   // tier resolution step
+    expect(AGENTS).toMatch(/amico-run --spec/)    // the gated invocation it teaches
+    expect(AGENTS).toMatch(/solve\.jl/)
+    expect(AGENTS).toMatch(/vetted/)                       // the three tiers named
+    expect(AGENTS).toMatch(/composed/)
+    expect(AGENTS).toMatch(/free/)
   })
-  it('references the template by absolute path (substituted at session prep), not "in this project dir"', () => {
-    expect(AGENTS).toMatch(/\{\{TEMPLATE_PATH\}\}/)   // session cwd is the workspace, not the temp dir
+  it('authors into the workspace-owned solve.jl (spec A), never /tmp', () => {
+    expect(AGENTS).toMatch(/~\/\.amico\/problems\/<slug>\/solve\.jl/)  // workspace-owned
+    expect(AGENTS).not.toMatch(/\/tmp\/amicode-work/)                  // the old scratch path is gone
     expect(AGENTS).not.toMatch(/in this project dir/)
   })
   it('teaches the portable detached launch (nohup + & in a subshell + watch inspector), not setsid', () => {
@@ -92,7 +97,12 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
       expect(AGENTS).toContain(t)
     }
     expect(AGENTS).toMatch(/bookkeeping, not gates/)
-    expect(AGENTS).toMatch(/bash\s+launch is still the mechanism/i)
+    expect(AGENTS).toMatch(/they never replace the bash launch/i)
+  })
+  it('teaches the free-tier verification recording (amicode_verify) and untrusted-until-agree rule', () => {
+    expect(AGENTS).toContain('amicode_verify')
+    expect(AGENTS).toMatch(/verification\.toml/)
+    expect(AGENTS).toMatch(/cannot be promoted[\s\S]*until verification/i)
   })
   it('keeps the guardrails: T-vs-N convention and no silent global co-optimization', () => {
     expect(AGENTS).toMatch(/`T` = scalar gate time/)

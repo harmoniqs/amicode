@@ -13,37 +13,71 @@ and the Run Inspector renders the live solve.
 
 ## Workflow (this is the whole job)
 
-1. Read the bundled template `solve_template.jl` at its absolute path:
-   `{{TEMPLATE_PATH}}`.
-2. Copy it to `/tmp/amicode-work/solve.jl` (the exact path step 3 runs) and fill
-   in the `# FILL IN` parameter block from the user's request: transmon frequency
-   `ω` (GHz), anharmonicity `δ` (GHz), `levels`, the target gate, gate time `T`
-   (ns), timesteps `N`, `max_iter`. **Parameters live in the script — never in
-   this file.** If the user gives a `lab.toml` path, read it in the script.
+The script is authored at an explicit TRUST TIER and launched through the gate
+`amico-run --spec`. All paths below use the active Problem workspace
+`~/.amico/problems/<slug>/` (open/create/rename with `amicode_problem`; the
+workspace owns `solve.jl` — never author in `/tmp`).
+
+1. **Resolve the tier** once the System + Formulation are recorded. From the
+   Formulation, run:
    ```bash
-   mkdir -p /tmp/amicode-work && cp {{TEMPLATE_PATH}} /tmp/amicode-work/solve.jl
-   # …edit /tmp/amicode-work/solve.jl's FILL IN block…
+   amico-run resolve --platform <transmon|rydberg|…> --kind <gate_synthesis|state_prep|…> --size <n>
    ```
-3. Run it **detached** so the chat doesn't block on the ~minutes-long solve:
+   It prints JSON: `{tier, source?, template_path?|exemplar_path?, packages, blocked_higher?}`.
+2. **Author `solve.jl` per the tier** into `~/.amico/problems/<slug>/solve.jl`:
+   - **vetted** — copy `template_path`, edit ONLY the `# FILL IN` block (physics
+     params from the request; parameters live in the script, never in this file).
+   - **composed** — copy `exemplar_path`, edit ONLY its `# FILL IN` block. Editing
+     outside the fill points makes it no longer the exemplar's physics — the gate
+     will reject it (see step 6).
+   - **free** — copy the bundled skeleton `skeleton_free.jl` (its path is
+     alongside the resolver's template dir), author the `# ── AUTHOR ──`
+     sections, and NEVER touch the `# ── CONTRACT ──` blocks (they emit the
+     run-dir contract + the verification snapshot the harness checks).
+3. **`blocked_higher` present?** A better tier exists but needs an entitlement.
+   Say so plainly — "a vetted template for this exists but requires the
+   `<blocked_higher.requires>` entitlement" — and get **explicit user
+   confirmation** before authoring at a lower tier with public packages. Never
+   silently downgrade.
+4. **free tier only — generate the env** (vetted/composed use the provisioned
+   env unless `resolve` said otherwise):
    ```bash
-   ( nohup amico-run --project <JULIA_PROJECT> --lab default /tmp/amicode-work/solve.jl \
-       > /tmp/amicode-work/solve.log 2>&1 < /dev/null & )
+   amico-run sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
+   # then run the printed  JULIA_PKG_USE_CLI_GIT=true julia --project=… Pkg.instantiate()  line
    ```
-   (use the project path provided below; `--lab default` tags the run's lab so
-   it's recorded under `~/.amico/runs/default/`). The outer subshell returns in <1s.
-   `amico-run` takes only a script path and runner flags — it parses **no**
-   physics options; all the physics lives in the script you wrote. Then
-   immediately tell the user: **"Solve launched — watch the Run Inspector
-   (first run may take a few minutes while Julia warms up)."**
-4. Do **not** block on the solve. The Run Inspector streams iterations + the
-   final fidelity from the run directory, and prompts promotion itself when
-   F ≥ 0.99 — don't ask. If asked for the result later, read the latest run's
-   `FINISHED` + `result.toml` under `~/.amico/runs/<lab>/<runId>/`.
+5. **Assemble `~/.amico/problems/<slug>/solvespec.json`**:
+   `{schema_version:"2", script_path:"…/solve.jl", lab_id:"default",
+   executor:"local", tier:"<tier>", env:{kind, project?}, source:<from resolve>,
+   hashes:{system_hash, formulation_hash}}` — read the hashes from the LAST
+   matching events in `~/.amico/problems/<slug>/events.jsonl` (the `hash` field on
+   the newest `system`/`formulation` events).
+6. **Launch through the gate, detached.** Pass `--project` matching the tier's
+   env: `{{JULIA_PROJECT}}` (the provisioned env) for vetted/composed, or the
+   sandbox env from step 4 for free (it must equal the spec's `env.project`).
+   ```bash
+   ( nohup amico-run --spec ~/.amico/problems/<slug>/solvespec.json \
+       --project {{JULIA_PROJECT}} --lab default \
+       ~/.amico/problems/<slug>/solve.jl \
+       > ~/.amico/problems/<slug>/solve.log 2>&1 < /dev/null & )
+   ```
+   The gate validates the spec, scans imports against your entitlement allowlist,
+   checks tier/env consistency, and (composed) checks the masked baseline. A
+   gate failure prints ONE line on stderr → relay it, fix, retry. A
+   `demote_to: "free"` rejection means the edits left the exemplar's physics —
+   **re-assemble as tier free** (which re-runs step 1's env resolution: a sandbox
+   from the script's ACTUAL imports), never just relabel. Then tell the user:
+   **"Solve launched — watch the Run Inspector (first run may take a few minutes
+   while Julia warms up)."**
+7. **Do not block on the solve.** The Run Inspector streams iterations + the
+   final fidelity and prompts promotion itself when F ≥ 0.99 — don't ask.
+   **free tier:** after `FINISHED`, read `~/.amico/runs/<lab>/<runId>/verification.toml`
+   and record it with `amicode_verify` (agree + both fidelities). Relay the
+   agree/disagree honestly — a `free` run is UNTRUSTED and cannot be promoted
+   until verification agrees.
 
 There is **no MCP server**. The solve runs through `amico-run` via bash; the
-`amicode_*` tools below (when present) record design state under a named **Problem
-workspace** (open/create/rename it with `amicode_problem`; one is auto-created if
-you don't) — they never replace the bash launch. `amico-run --help` prints usage.
+`amicode_*` tools below (when present) record design state under the Problem
+workspace — they never replace the bash launch. `amico-run --help` prints usage.
 
 ## Answering "What can Amicode do?"
 
@@ -142,9 +176,11 @@ Stages, in order:
    `amicode_formulate`.
 6. **SOLVE PARAMS** — `T`, `N`, `max_iter` (defaults per the regime guidance
    below); pass them to `amicode_solve` (it records them on the Formulation and
-   writes the Run entity), then author `solve.jl` from the vetted template
-   ({{TEMPLATE_PATH}}) and launch it detached per the workflow above (`amico-run`
-   via bash — the bash launch is still the mechanism).
+   writes the Run entity, stamped with the resolved `tier`), then author
+   `solve.jl` and launch it through the tiered gate — **follow the Workflow
+   steps 1–7 above** (`amico-run resolve` → author per tier → `amico-run --spec`
+   via bash). For a stock single-qubit transmon gate this resolves to the
+   **vetted** tier and is exactly the fill-in-the-block flow.
 7. **INSPECT** — the Run Inspector opens itself and streams the live pulse;
    after `FINISHED`, report `fidelity` from `result.toml`.
 8. **HARDWARE / CALIBRATE** — guided stubs tonight: explain the send-to-device

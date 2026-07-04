@@ -71,6 +71,14 @@ export interface RunStub {
   script_ref?: string;
   /** Resolved env binding kind (spec C). */
   env?: string;
+  /** Free-tier re-rollout verification outcome (spec C) — recorded by
+   *  amicode_verify after amico-run's harness writes verification.toml. Spec B's
+   *  entity view renders it beside the tier; promotion is gated on agree. */
+  verification?: {
+    agree: boolean;
+    fidelity_rerolled?: number | null;
+    fidelity_reported?: number | null;
+  };
   /** Optional free-text note ("X gate, defaults"). */
   note?: string;
 }
@@ -287,6 +295,13 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  if (stub.verification !== undefined) {
+    lines.push("", "[run.verification]", `agree = ${stub.verification.agree}`);
+    if (stub.verification.fidelity_rerolled != null)
+      lines.push(`fidelity_rerolled = ${stub.verification.fidelity_rerolled}`);
+    if (stub.verification.fidelity_reported != null)
+      lines.push(`fidelity_reported = ${stub.verification.fidelity_reported}`);
+  }
   return lines.join("\n") + "\n";
 }
 

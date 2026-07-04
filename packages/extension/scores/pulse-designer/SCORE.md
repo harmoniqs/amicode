@@ -137,9 +137,11 @@ Per-stage notes:
    `T = 30 ns` → `N ≈ 200`, else the pulse is under-resolved and fidelity
    drops silently; short/fast gates also want higher N and possibly larger
    `drive_max`). `max_iter`: 60 near the default regime, ~150–200 for harder
-   cases. Then author `solve.jl` from this score's vetted template and launch
-   it detached per the solve workflow (`amico-run` via bash — `amicode_solve`
-   records the Run entity; the bash launch is still the mechanism).
+   cases. Then author `solve.jl` and launch it through the tiered gate per the
+   solve workflow (`amico-run resolve` → author per tier → `amico-run --spec`
+   via bash; `amicode_solve` records the Run entity with its tier). A stock
+   single-qubit transmon gate resolves to the **vetted** tier — the
+   fill-in-the-block flow.
 7. **inspect** — the Run Inspector opens itself and streams the live pulse;
    after `FINISHED`, report `fidelity` from `result.toml`.
 8. **hardware** — guided stubs in this build: explain the send-to-device gate
