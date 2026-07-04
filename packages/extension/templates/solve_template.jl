@@ -13,8 +13,13 @@ using Printf
 # ── FILL IN ──────────────────────────────────────────────────────────────
 δ           = 0.2        # anharmonicity (GHz, positive convention)
 levels      = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
-gate        = GATES[:X]
-gate_name   = "X"        # DECLARED gate label — GATES[:X] is a matrix, so the ":X" name is lost above; declare it so formulation.toml can record it
+# Standard gate — the symbol is the single source: it drives both the matrix AND the
+# label, so they can't drift (GATES[:X] is a matrix; the ":X" name is otherwise lost).
+gate_sym    = :X
+gate        = GATES[gate_sym]
+gate_name   = string(gate_sym)
+# — Bespoke gate NOT in the (deliberately sparse) GATES set (cat / Fock-mix / CXX / ZZ…)?
+#   Declare both directly — there's no symbol to derive from:  gate = my_unitary; gate_name = "cat-CZ"
 system_name = nothing    # optional user-assigned device name (e.g. "qram-cleland"); nothing if unnamed
 T           = 10.0       # gate time (ns)
 N           = 50         # timesteps

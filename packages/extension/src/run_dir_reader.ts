@@ -142,6 +142,18 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   catch { return undefined; }
 }
 
+/** Read + validate formulation.toml (#64 counterpart) — additive, absent → undefined.
+ *  Shared by BOTH completion routes (ingestRunDir replay + the live-finish path) so
+ *  they can't diverge on whether a run carries its problem identity. Say-why-on-
+ *  invalid; never throws. */
+export function readFormulation(runDir: string): Formulation | undefined {
+  const raw = readTomlSafe(path.join(runDir, "formulation.toml"));
+  if (!raw) return undefined;
+  const v = validateFormulation(raw);
+  if (!v.ok) { console.warn(`[amico] formulation.toml present but invalid (${runDir}): ${v.errors.join("; ")}`); return undefined; }
+  return { system: raw.system as Record<string, unknown>, formulation: raw.formulation as Record<string, unknown> };
+}
+
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
  *  sink method at most once per relevant artifact. Safe to re-invoke (the live
  *  sink's guards make it idempotent). Returns the number of run.log bytes
@@ -175,17 +187,10 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     if (newestPulse) sink.pulse(newestPulse);
   }
 
-  // formulation.toml (#64 counterpart) — the pre-solve problem definition. Written
-  // by the template BEFORE solve!, so it can be present even mid-run; additive, so
-  // its absence changes nothing (older runs have none). Same say-why-on-invalid
-  // policy as result.toml: surface WHY rather than silently dropping identity.
-  let formulation: Formulation | undefined;
-  const formRaw = readTomlSafe(path.join(runDir, "formulation.toml"));
-  if (formRaw) {
-    const v = validateFormulation(formRaw);
-    if (v.ok) formulation = { system: formRaw.system as Record<string, unknown>, formulation: formRaw.formulation as Record<string, unknown> };
-    else console.warn(`[amico] formulation.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
-  }
+  // formulation.toml (#64 counterpart) — the pre-solve problem definition, read via
+  // the shared readFormulation helper so this replay path and the live-finish path
+  // stay in lockstep (additive; absent → undefined, older runs unchanged).
+  const formulation = readFormulation(runDir);
 
   // FINISHED is the authoritative terminal signal
   const finished = readTomlSafe(path.join(runDir, "FINISHED"));
