@@ -8,6 +8,14 @@ const REQUIRED = [
   'extension/bin/dist/amico-run.js',
   'extension/bin/launcher/amico-run',
   'extension/templates/solve_template.jl',
+  // spec C authoring assets — the tiered resolver + verification chain break
+  // silently if any of these is dropped from the vsix.
+  'extension/templates/registry.toml',           // tier-1 template registry + support set + sandbox uuid map
+  'extension/templates/skeleton_free.jl',        // tier-3 free-authoring skeleton (contract + verify snapshot)
+  'extension/exemplars/EXEMPLARS.toml',          // tier-2 seed (build input)
+  'extension/exemplars/index.json',              // tier-2 index (the artifact amico-run reads)
+  'extension/exemplars/rydberg-cz/script.jl',    // the seeded exemplar script the index points at
+  'extension/julia/verify_rollout.jl',           // fixed re-rollout harness — the tier-3 trust anchor
   'extension/julia/Project.toml',
   'extension/julia/Manifest.toml',
   'extension/AGENTS.md',
