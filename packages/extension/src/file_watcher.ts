@@ -211,7 +211,12 @@ export class RunsRootWatcher implements vscode.Disposable {
     // Fresh unfinished run → Julia warming up; show that instead of an idle
     // panel so the ~minute cold start isn't read as frozen. The view swaps the
     // hint for the plot when the first pulse record arrives.
-    if (!finishedAtSwitch) getInspector()?.setWarmingUp();
+    if (!finishedAtSwitch) {
+      getInspector()?.setWarmingUp();
+      // Also surface "warming" on the status bar (it otherwise only hears iter/
+      // completion) — use the existing unused "starting" status.
+      this.opts.statusBar?.setRun({ runId, outputDir: runDir, startedAt: 0, status: "starting" });
+    }
 
     // Incremental: FINISHED (pulse/iter lines arrive via the log tailer).
     // Also watch verification.toml: a free-tier run's FINISHED lands BEFORE
