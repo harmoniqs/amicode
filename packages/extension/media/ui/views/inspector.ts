@@ -35,11 +35,12 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const status = pill("idle");
   const runLabel = text("mono small dim");
   const pulse = pulseplot(IDLE_HINT);
-  const hero = metric("objective", { hero: true });
-  const iteration = metric("iteration");
-  const feasibility = metric("feasibility");
-  const optimality = metric("optimality");
-  const metrics = [hero, iteration, feasibility, optimality];
+  // Layout order (left→right): ITER counter · OBJECTIVE hero · FEAS · OPT.
+  const iteration = metric("iteration", { variant: "counter" });
+  const hero = metric("objective", { variant: "hero" });
+  const feasibility = metric("feasibility", { variant: "small" });
+  const optimality = metric("optimality", { variant: "small" });
+  const metrics = [iteration, hero, feasibility, optimality];
 
   /** Whether the current run has delivered pulse data — decides the
    *  completed-without-data hint. Reset on warming (a NEW run started). */
@@ -55,7 +56,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   topbar.append(brand, runLabel.el, status.el);
 
   const grid = document.createElement("div");
-  grid.className = "grid-fit";
+  grid.className = "metric-row";
   grid.append(...metrics.map((m) => m.el));
 
   // Control row — Stop / Save pulse / Open run dir. Each posts to the extension
