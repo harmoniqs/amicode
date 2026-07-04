@@ -155,6 +155,19 @@ export function promoteEligibility(runDir: string): PromoteEligibility {
   return verification.agree === true ? "eligible" : "suppressed";
 }
 
+/** True iff the solve halted via the cooperative stop-file. The solver prints
+ *  AMICODE_STOPPED only when its Ipopt intermediate callback actually returned
+ *  false, so key on the marker — NOT the STOP file's presence, which only proves
+ *  the request was made and can race a genuine convergence. Shared by both
+ *  completion paths (ingestRunDir here + file_watcher.onFinished). */
+export function detectStopped(runDir: string): boolean {
+  try {
+    return fs.readFileSync(path.join(runDir, "run.log"), "utf8").includes("AMICODE_STOPPED");
+  } catch {
+    return false;
+  }
+}
+
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
  *  sink method at most once per relevant artifact. Safe to re-invoke (the live
  *  sink's guards make it idempotent). Returns the number of run.log bytes
@@ -191,7 +204,11 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   // FINISHED is the authoritative terminal signal
   const finished = readTomlSafe(path.join(runDir, "FINISHED"));
   if (!finished || !validateFinished(finished).ok) return logBytes;
-  const status = finished.status as RunStatus;
+  const rawStatus = finished.status as RunStatus;
+  // A cooperative user-stop exits 0 → FINISHED says "completed"; relabel to
+  // "stopped" so the UI doesn't read it as a genuine convergence. Applied BEFORE
+  // the promote gate below (promote requires "completed", so this skips it).
+  const status: RunStatus = rawStatus === "completed" && detectStopped(runDir) ? "stopped" : rawStatus;
 
   let fidelity: number | undefined;
   if (status === "completed") {

@@ -6,7 +6,7 @@ import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, parseAmicoNum, promoteEligibility, PulseStream, SinkDedup,
+  AMICODE_ITER_RE, detectStopped, ingestRunDir, readTomlSafe, parseAmicoNum, promoteEligibility, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -238,7 +238,11 @@ export class RunsRootWatcher implements vscode.Disposable {
   private onFinished(runDir: string): void {
     const finished = readTomlSafe(path.join(runDir, "FINISHED"));
     if (!finished || !validateFinished(finished).ok) return;
-    const status = finished.status as RunStatus;
+    const rawStatus = finished.status as RunStatus;
+    // Relabel a cooperative user-stop (exits 0 → "completed") to "stopped" on the
+    // LIVE path too — onFinished never routes through ingestRunDir. Before the
+    // promote gate below (promote requires "completed").
+    const status: RunStatus = rawStatus === "completed" && detectStopped(runDir) ? "stopped" : rawStatus;
     const runId = String(readTomlSafe(path.join(runDir, "run.toml"))?.run_id ?? path.basename(runDir));
     let fidelity: number | undefined;
     if (status === "completed") {
