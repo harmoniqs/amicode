@@ -27,10 +27,12 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
   it('does not tell the agent to block on the solve', () => {
     expect(AGENTS).not.toMatch(/wait for (the )?solve to finish/i)
   })
-  it('scopes the agent to single-qubit and declines multi-qubit (no hallucinated coupled systems)', () => {
+  it('scopes transmon to single-qubit and declines multi-qubit transmon, but keeps the Rydberg CZ exception', () => {
     expect(AGENTS).toMatch(/single[- ]qubit/i)
-    expect(AGENTS).toMatch(/not supported|isn.t supported/i)
+    expect(AGENTS).toMatch(/out of scope/i)
     expect(AGENTS).toMatch(/multi-qubit|two-qubit|2-qubit|CNOT/i)
+    // the reconciliation: 2-qubit Rydberg CZ IS supported (composed exemplar)
+    expect(AGENTS).toMatch(/Rydberg CZ is the\s+exception/i)
   })
   it('gives regime guidance (level cap + scale N with gate time)', () => {
     expect(AGENTS).toMatch(/levels/i)
@@ -79,10 +81,14 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
     idx.forEach((i, k) => expect(i, `stage ${stages[k]} present`).toBeGreaterThan(-1))
     for (let k = 1; k < idx.length; k++) expect(idx[k], `${stages[k]} after ${stages[k - 1]}`).toBeGreaterThan(idx[k - 1])
   })
-  it('shows the transmon Hamiltonian in LaTeX and is honest about Rydberg scope', () => {
+  it('shows the transmon Hamiltonian in LaTeX and is honest about the Rydberg tier', () => {
     expect(AGENTS).toContain('\\hat H/\\hbar')
-    expect(AGENTS).toMatch(/transmon-only/i)
     expect(AGENTS).toMatch(/rydberg/i)
+    // Rydberg authoring IS wired (composed tier, experimental) — the stale
+    // "not wired / transmon-only follow-up" narrative must stay gone.
+    expect(AGENTS).toMatch(/composed/i)
+    expect(AGENTS).toMatch(/experimental/i)
+    expect(AGENTS).not.toMatch(/Rydberg solve authoring is not wired/i)
   })
   it('names the amicode_* recording tools as bookkeeping, not gates, with bash still the launch mechanism', () => {
     for (const t of [
