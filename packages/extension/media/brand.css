@@ -1,6 +1,16 @@
 /* brand.css — style variables only. Prefer --vscode-* (inherit the theme);
  * literals are reserved for brand identity. */
 
+/* JuliaMono — Amicode's brand mono (matches the app, AMICODE-PATCHES #14).
+ * url() resolves relative to this stylesheet's webview URI; needs the CSP
+ * font-src grant (run_inspector.ts) + localResourceRoots covering media/. */
+@font-face {
+  font-family: "JuliaMono";
+  src: url("ui/atoms/JuliaMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   /* color */
   --color-accent: #FFF676;
@@ -12,7 +22,7 @@
 
   /* text */
   --text-font: var(--vscode-font-family);
-  --text-mono: var(--vscode-editor-font-family, monospace);
+  --text-mono: "JuliaMono", var(--vscode-editor-font-family, monospace);
   --text-body: var(--vscode-font-size, 12px);
   --text-label: 0.72em;
   --text-small: 0.8em;

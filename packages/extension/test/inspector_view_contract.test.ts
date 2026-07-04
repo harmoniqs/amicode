@@ -53,6 +53,11 @@ describe("Run Inspector shell contract (plumbing ⇄ TS-composed view)", () => {
 
     expect(html, "no image grants — the view renders from message data (#66)").not.toMatch(/img-src/);
     expect(html).toMatch(/script-src 'nonce-/);
+
+    // font-src must grant the webview source so the JuliaMono @font-face loads
+    // (under default-src 'none' a missing font-src silently blocks the fetch).
+    const fontSrc = html.match(/font-src([^;]*)/)?.[1] ?? "";
+    expect(fontSrc, "font-src must grant the webview source for @font-face").toContain("vscode-webview://unit");
   });
 
   it("design-owned stylesheets exist; brand.css carries the brand token", () => {

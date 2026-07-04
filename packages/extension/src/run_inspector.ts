@@ -227,7 +227,8 @@ class InspectorView implements vscode.WebviewViewProvider {
   <meta http-equiv="Content-Security-Policy"
     content="default-src 'none';
              script-src 'nonce-${nonce}';
-             style-src ${webview.cspSource} 'unsafe-inline';">
+             style-src ${webview.cspSource} 'unsafe-inline';
+             font-src ${webview.cspSource};">
   <link rel="stylesheet" href="${uri("media", "brand.css")}" />
   <link rel="stylesheet" href="${uri("media", "layout.css")}" />
 </head>
