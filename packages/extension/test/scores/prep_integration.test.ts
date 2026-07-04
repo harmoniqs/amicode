@@ -87,7 +87,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(authoring.schema_version).toBe(1);
     expect(authoring.allowlist).toEqual(["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]);
     expect(authoring.support_set).toEqual(expect.arrayContaining(["JLD2", "CairoMakie", "TOML"]));
-    expect(authoring.verify_tolerance).toBe(0.01);
+    expect(authoring.verify_tolerance).toBe(0.001);   // spec-20260704-113005 §6 (resolves spec-C open q1)
     // the paths point at REAL bundled assets (Task 9 shipped them)
     expect(path.isAbsolute(authoring.registry) && fs.existsSync(authoring.registry)).toBe(true);
     expect(path.isAbsolute(authoring.exemplars) && fs.existsSync(authoring.exemplars)).toBe(true);

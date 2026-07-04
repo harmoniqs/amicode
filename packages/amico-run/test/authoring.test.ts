@@ -46,7 +46,7 @@ describe("readAuthoring", () => {
     expect(config.allowlist).toEqual(["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"])
     expect(config.support_set).toEqual(DEFAULT_SUPPORT)
     expect(config.support_set).toEqual(expect.arrayContaining(["JLD2", "CairoMakie", "TOML"]))
-    expect(config.verify_tolerance).toBe(0.01)
+    expect(config.verify_tolerance).toBe(0.001)   // spec-20260704-113005 §6 (resolves spec-C open q1)
   })
 
   it("malformed JSON → defaults + a warning naming the file", () => {

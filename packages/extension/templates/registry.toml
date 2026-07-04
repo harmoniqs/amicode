@@ -5,7 +5,7 @@
 # `packages` drives the entitlement check + sandbox generation; `entitlement`
 # (optional) names the entitlement a gated template requires.
 
-verify_tolerance = 0.01   # tier-3 re-rollout agreement (absolute; calibration pending — spec C open q1)
+verify_tolerance = 0.001   # tier-3 re-rollout agreement (absolute; spec-20260704-113005 §6 — resolves spec-C open q1)
 
 [[template]]
 id = "transmon-gate-1q"

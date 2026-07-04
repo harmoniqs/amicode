@@ -19,7 +19,7 @@ export interface AuthoringConfig {
 
 export const DEFAULT_ALLOWLIST = ['Piccolo', 'Legato', 'Intonato', 'NamedTrajectories', 'DirectTrajOpt']
 export const DEFAULT_SUPPORT = ['JLD2', 'CairoMakie', 'Makie', 'TOML', 'Printf']
-const DEFAULT_TOLERANCE = 0.01
+const DEFAULT_TOLERANCE = 0.001
 
 function defaults(): AuthoringConfig {
   return {
