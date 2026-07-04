@@ -7,6 +7,7 @@ import {
   writeManifest, writeFinished, appendIndex, updateLatest,
 } from '../src/run_dir.js'
 import { ConfigError } from '../src/types.js'
+import { validate } from '@amicode/schema'
 
 describe('deriveLabId', () => {
   it('uses id pointers verbatim', () => expect(deriveLabId('schuster')).toBe('schuster'))
@@ -41,6 +42,29 @@ describe('writers', () => {
     expect(m.lab_id).toBe('x')
     expect((m.julia as Record<string, unknown>).project).toBe('/proj')
     expect(m).not.toHaveProperty('sizeClass')   // spec §5: intentionally absent
+  })
+  it('manifest v2: tier + [hashes] emitted only when present; validates as "run" v2 (spec C)', () => {
+    const root = tmpRoot()
+    const base = {
+      run_id: 'r1', script_path: '/s.jl', lab: 'default', lab_id: 'default',
+      created_at: '2026-07-03T00:00:00Z', orchestrator_version: '0.1.0',
+      julia: { binary: 'julia' },
+    }
+    // bare (v1) output is byte-stable: no tier/hashes lines at all
+    writeManifest(root, { schema_version: '1', ...base })
+    const v1text = readFileSync(join(root, 'run.toml'), 'utf8')
+    expect(v1text).not.toContain('tier')
+    expect(v1text).not.toContain('[hashes]')
+    // spec-driven (v2)
+    writeManifest(root, {
+      schema_version: '2', ...base, tier: 'free',
+      hashes: { system_hash: 'sha256:ab', spec_hash: 'sha256:cd' },
+    })
+    const m = readToml(join(root, 'run.toml'))
+    expect(m.schema_version).toBe('2')
+    expect(m.tier).toBe('free')
+    expect((m.hashes as Record<string, unknown>).spec_hash).toBe('sha256:cd')
+    expect(validate(m, 'run').errors).toEqual([])
   })
   it('FINISHED carries status + exit_code (snake_case)', () => {
     const root = tmpRoot()

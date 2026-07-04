@@ -1,15 +1,20 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { LocalExecutor } from './local_executor.js'
 import { ConfigError, type Finished, type SubmitOpts } from './types.js'
+import { readAuthoring } from './authoring.js'
+import { runGate } from './gate.js'
 
 const USAGE = `usage: amico-run <script.jl> [--executor local] [--lab <id-or-path>]
-                 [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]`
+                 [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]
+                 [--spec <solvespec.json>]   (spec C: validate + gate before launch)`
 
 export async function main(argv: string[]): Promise<number> {
   let script: string | undefined
   let executor = 'local'
+  let specPath: string | undefined
   const opts: SubmitOpts = { julia: {} }
+  let projectExplicit = false
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -25,8 +30,9 @@ export async function main(argv: string[]): Promise<number> {
         case '--lab': opts.lab = next(); break
         case '--runs-root': opts.runsRoot = next(); break
         case '--julia': opts.julia!.julia = next(); break
-        case '--project': opts.julia!.project = next(); break
+        case '--project': opts.julia!.project = next(); projectExplicit = true; break
         case '--sysimage': opts.julia!.sysimage = next(); break
+        case '--spec': specPath = next(); break
         default:
           if (a.startsWith('-')) { console.error(`amico-run: unknown flag ${a}\n${USAGE}`); return 64 }
           if (script) { console.error(`amico-run: multiple scripts given`); return 64 }
@@ -39,6 +45,28 @@ export async function main(argv: string[]): Promise<number> {
   }
   if (!script) { console.error(`amico-run: no script given\n${USAGE}`); return 64 }
   if (executor !== 'local') { console.error(`amico-run: only --executor local is supported in β`); return 64 }
+
+  // ── spec C: the launch gate. Failures leave NO run dir and exit 64. ──
+  if (specPath) {
+    let specRaw: unknown
+    try { specRaw = JSON.parse(readFileSync(specPath, 'utf8')) }
+    catch (e) { console.error(`amico-run: cannot read --spec ${specPath}: ${(e as Error).message}`); return 64 }
+    let scriptText: string
+    try { scriptText = readFileSync(script, 'utf8') }
+    catch (e) { console.error(`amico-run: cannot read script ${script}: ${(e as Error).message}`); return 64 }
+    const { config: authoring, warning } = readAuthoring()
+    if (warning) console.error(`amico-run: ${warning}`)
+    const gate = runGate(specRaw, scriptText, authoring)
+    if (!gate.ok) { console.error(`amico-run: gate: ${gate.reason}`); return 64 }
+    // env resolution: spec env.project feeds --project unless the flag was explicit
+    const env = (specRaw as { env?: { kind?: string; project?: string } }).env
+    if (env?.project && (env.kind === 'project' || env.kind === 'sandbox')) {
+      if (projectExplicit && opts.julia!.project !== env.project)
+        console.error(`amico-run: --project ${opts.julia!.project} overrides the spec's env.project ${env.project}`)
+      else opts.julia!.project = env.project
+    }
+    opts.spec = { canonical: gate.stamp.specCanonical, tier: gate.stamp.tier, hashes: gate.stamp.hashes }
+  }
 
   // NOTE: `--sysimage <path>` is honored (passed through to the Julia process and
   // recorded in the manifest) but amicode does NOT build one — the local

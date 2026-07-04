@@ -6,7 +6,7 @@ import * as readline from 'node:readline'
 import { EventQueue } from './event_queue.js'
 import { classifyLine } from './telemetry.js'
 import {
-  appendIndex, defaultRunsRoot, deriveLabId, generateRunId,
+  appendIndex, atomicWriteFile, defaultRunsRoot, deriveLabId, generateRunId,
   updateLatest, writeFinished, writeManifest,
 } from './run_dir.js'
 import {
@@ -52,11 +52,14 @@ export class LocalExecutor implements Executor {
     mkdirSync(runDir)
     const createdAt = new Date().toISOString()
     writeManifest(runDir, {
-      schema_version: '1', run_id: runId, script_path: script,
+      // spec C: --spec launches stamp tier + hashes and bump to v2; bare runs stay v1
+      schema_version: opts.spec ? '2' : '1', run_id: runId, script_path: script,
       lab, lab_id: labId, created_at: createdAt,
       orchestrator_version: ORCHESTRATOR_VERSION,
       julia: { binary: juliaBin, project: opts.julia?.project, sysimage: opts.julia?.sysimage },
+      tier: opts.spec?.tier, hashes: opts.spec?.hashes,
     })
+    if (opts.spec) atomicWriteFile(runDir, 'solvespec.json', opts.spec.canonical + '\n')
     appendIndex(runsRoot, runId, createdAt, script)
     updateLatest(runsRoot, runId)
 

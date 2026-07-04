@@ -11,6 +11,14 @@ export interface SubmitOpts {
   runsRoot?: string   // default: ~/.amico/runs/<lab-id>/
   julia?: JuliaOpts
   graceMs?: number    // abort SIGTERM→SIGKILL grace; default 5000. Test knob, NOT exposed in the CLI.
+  spec?: SpecStamp    // spec C: gate-passed SolveSpec → solvespec.json persisted + run.toml v2 stamped
+}
+
+/** What a gate-passed --spec launch carries into the run dir (spec C). */
+export interface SpecStamp {
+  canonical: string                 // stable-key-order solvespec.json body
+  tier?: string
+  hashes?: Record<string, string>   // incl. gate-computed spec_hash
 }
 
 export type RunEvent =

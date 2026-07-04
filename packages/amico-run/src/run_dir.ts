@@ -42,7 +42,7 @@ export function atomicWriteFile(dir: string, name: string, content: string): voi
 const ts = (s: string) => JSON.stringify(s)  // JSON escaping is valid TOML basic-string
 
 export interface Manifest {
-  schema_version: '1'
+  schema_version: '1' | '2'
   run_id: string
   script_path: string
   lab: string
@@ -50,11 +50,16 @@ export interface Manifest {
   created_at: string
   orchestrator_version: string
   julia: { binary: string; project?: string; sysimage?: string }
+  // v2 (spec C, --spec launches only) — bare runs stay byte-identical v1
+  tier?: string
+  hashes?: Record<string, string>
 }
 
 export function writeManifest(runDir: string, m: Manifest): void {
+  const hashEntries = Object.entries(m.hashes ?? {})
   const lines = [
     `schema_version = ${ts(m.schema_version)}`,
+    ...(m.tier ? [`tier = ${ts(m.tier)}`] : []),
     `run_id = ${ts(m.run_id)}`,
     `script_path = ${ts(m.script_path)}`,
     `lab = ${ts(m.lab)}`,
@@ -66,6 +71,9 @@ export function writeManifest(runDir: string, m: Manifest): void {
     `binary = ${ts(m.julia.binary)}`,
     ...(m.julia.project ? [`project = ${ts(m.julia.project)}`] : []),
     ...(m.julia.sysimage ? [`sysimage = ${ts(m.julia.sysimage)}`] : []),
+    ...(hashEntries.length > 0
+      ? ['', '[hashes]', ...hashEntries.map(([key, value]) => `${key} = ${ts(value)}`)]
+      : []),
   ]
   atomicWriteFile(runDir, 'run.toml', lines.join('\n') + '\n')
 }
