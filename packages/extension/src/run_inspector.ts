@@ -127,8 +127,12 @@ class InspectorView implements vscode.WebviewViewProvider {
    *  of an idle panel, so a ~minute of cold start doesn't read as frozen. */
   setWarmingUp(): void {
     if (!this.view) {
+      // Buffer the warming state regardless — so it shows when the user DOES
+      // open the panel — but only steal focus when auto-open is enabled.
       this.bufferedWarming = true;
-      vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
+      if (autoOpenEnabled()) {
+        vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
+      }
       return;
     }
     this.view.webview.postMessage({ type: "warming" });
@@ -163,8 +167,10 @@ class InspectorView implements vscode.WebviewViewProvider {
   }
 
   reveal(): void {
-    // Force materialize the view via its auto-registered .focus command.
-    // Unconditional — without an existing view, this is what creates one.
+    // Auto-reveal only when opted in (amicode.inspector.autoOpen). Off by
+    // default so a starting solve never steals focus; the status-bar item and
+    // the explicit open command (which bypasses reveal) remain available.
+    if (!autoOpenEnabled()) return;
     vscode.commands.executeCommand("amicode.runInspector.focus")
       .then(undefined, () => undefined);
   }
@@ -208,6 +214,13 @@ class InspectorView implements vscode.WebviewViewProvider {
 </body>
 </html>`;
   }
+}
+
+/** Whether a starting solve should auto-reveal the panel. Default off — the
+ *  status-bar item / "Amicode: Open Run Inspector" are the on-demand entry
+ *  points. The explicit open command bypasses reveal(), so it always works. */
+export function autoOpenEnabled(): boolean {
+  return vscode.workspace.getConfiguration("amicode").get<boolean>("inspector.autoOpen", false);
 }
 
 function newNonce(): string {
