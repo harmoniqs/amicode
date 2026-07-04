@@ -46,14 +46,17 @@ using Printf
 let goal_is_embedded = isdefined(Main, :op) && hasproperty(op, :operator) && hasproperty(op, :subspace)
     U_goal_full = goal_is_embedded ? Matrix{ComplexF64}(op.operator) : Matrix{ComplexF64}(op isa AbstractMatrix ? op : op.operator)
     subspace_idx = goal_is_embedded ? collect(Int, op.subspace) : collect(1:size(U_goal_full, 1))
+    # get_drift/get_drives return the bare Hamiltonian MATRICES (sys.H_drift /
+    # sys.H_drives hold internal DriftTerm/LinearDrive wrappers). drive_bounds is
+    # stored as (lo,hi) tuples; the harness only needs magnitudes to reconstruct.
     JLD2.jldopen("system_verify.jld2", "w") do f
         f["schema"]       = 1
-        f["H_drift"]      = Matrix{ComplexF64}(sys.H_drift)
-        f["H_drives"]     = [Matrix{ComplexF64}(H) for H in sys.H_drives]
+        f["H_drift"]      = Matrix{ComplexF64}(get_drift(sys))
+        f["H_drives"]     = [Matrix{ComplexF64}(H) for H in get_drives(sys)]
         f["goal_kind"]    = "unitary"
         f["goal"]         = U_goal_full
         f["subspace"]     = subspace_idx
-        f["drive_bounds"] = collect(Float64, sys.drive_bounds)
+        f["drive_bounds"] = [Float64(b[2]) for b in sys.drive_bounds]
     end
 end
 # ──────────────────────────────────────────────────────────────────────────
