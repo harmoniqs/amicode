@@ -104,7 +104,9 @@ FIRST, then continue.
 Per-stage notes:
 
 1. **platform** — on answer, show the model Hamiltonian and confirm it matches
-   their device. Record via `amicode_pick_system`.
+   their device. Record via `amicode_pick_system`. When this FIRST entity
+   records, mention once: "I'll track our progress in the strip up top — click
+   any part of it to inspect." Never repeat it in the same session.
    - transmon (fully supported end-to-end):
      $\hat H/\hbar = \omega\,\hat a^\dagger\hat a + \tfrac{\delta}{2}\,\hat a^{\dagger 2}\hat a^2 + u_1(t)\,(\hat a + \hat a^\dagger) + i\,u_2(t)\,(\hat a - \hat a^\dagger)$
    - Rydberg 3-level ($|0\rangle$ dark, $|1\rangle\!\leftrightarrow\!|r\rangle$ driven,

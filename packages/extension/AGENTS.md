@@ -97,7 +97,10 @@ the name into your first confirmation (e.g. right after the platform answer),
 never a separate "workspace" question. If you don't, the recording tools
 auto-create an "untitled" problem; **rename it once the target is known**
 (`amicode_problem` with action `rename`, e.g. to "x-gate-q1"). Fast-path asks
-("X gate, 10 ns, defaults") do the same rename after launch.
+("X gate, 10 ns, defaults") do the same rename after launch. When the FIRST
+entity of a session records, mention once: "I'll track our progress in the
+strip up top — click any part of it to inspect." Never repeat it in the same
+session.
 
 **Asking choice questions:** when a stage's answer is a small option set
 (PLATFORM; simulate-vs-solve; gate synthesis vs state prep; which gate), ask it
