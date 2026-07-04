@@ -123,6 +123,14 @@ export const AUTHORING_ASSETS = {
   verifyHarness: path.resolve(__dirname, "..", "julia", "verify_rollout.jl"),
 };
 
+/** The entitlement→package table ships with the scores repertoire (spec C put
+ *  it in scores/entitlements.toml). NOT registry.toml — that file has no
+ *  [packages] table (the §3 mis-wire this fixes: reading registry meant holding
+ *  `issimo` never allowlisted Piccolissimo in production). */
+export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT): string {
+  return path.join(scoresRoot, "entitlements.toml");
+}
+
 /** Where amico-run reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
  *  overrides (tests + parity with amico-run's own reader). */
 export function authoringFilePath(): string {
@@ -134,11 +142,11 @@ export function authoringFilePath(): string {
 /** Assemble + write authoring.json at session prep. Reads verify_tolerance from
  *  the bundled registry.toml (falls back to 0.01). Never throws — a write
  *  failure logs and leaves amico-run to use its built-in conservative defaults. */
-export function writeAuthoringConfig(entitlementsDir: string): void {
+export function writeAuthoringConfig(entitlementsDir: string, scoresRoot: string = DEFAULT_SCORES_ROOT): void {
   try {
     const ents = readLocalEntitlements(entitlementsDir);
     const registry = AUTHORING_ASSETS.registry;
-    const allowlist = packageAllowlist(registry, ents.entitlements);
+    const allowlist = packageAllowlist(entitlementsTablePath(scoresRoot), ents.entitlements);
     let tolerance = 0.01;
     let support: string[] = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"];
     try {
@@ -276,7 +284,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
-  writeAuthoringConfig(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
+  writeAuthoringConfig(
+    opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"),
+    opts.scoresRoot ?? DEFAULT_SCORES_ROOT,
+  );
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
