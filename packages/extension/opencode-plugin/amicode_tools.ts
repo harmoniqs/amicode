@@ -141,12 +141,13 @@ function recordEntity(
 const TRANSMON_LATEX = String.raw`$\hat H/\hbar = \omega\,\hat a^\dagger\hat a + \tfrac{\delta}{2}\,\hat a^{\dagger 2}\hat a^2 + u_1(t)\,(\hat a + \hat a^\dagger) + i\,u_2(t)\,(\hat a - \hat a^\dagger)$`;
 const RYDBERG_DESC = String.raw`3-level ladder: $|0\rangle$ dark, $|1\rangle\!\leftrightarrow\!|r\rangle$ laser-driven, blockade shift on $|rr\rangle$`;
 const RYDBERG_SCOPE_NOTE =
-  "Good news, with an asterisk: Rydberg solve authoring IS wired via the tiered " +
-  "resolver (it runs at solve time). Gate synthesis lands on the COMPOSED tier — the " +
-  "`rydberg-cz` exemplar (experimental, not-yet-vetted; the 2-qubit CZ is a touch " +
-  "sluggish in the current Piccolo path). Other shapes drop to the free tier " +
-  "(public-package authoring, re-rollout-checked). Offer to proceed, be honest about " +
-  "the tier — and do NOT tell the user Rydberg is unsupported, because it isn't.";
+  "Good news, with an asterisk: Rydberg solve authoring IS wired. When the ## Skill " +
+  "index lists `Piccolissimo/piccolissimo-authoring`, recommend the Piccolissimo " +
+  "free-phase CZ path (skill-guided, from scratch, subsystem_levels=[3,3]) — free-phase " +
+  "is the honest primary metric for entangling gates. Otherwise the composed `rydberg-cz` " +
+  "exemplar is the public fallback (experimental, not-yet-vetted, fixed-phase + virtual-Z " +
+  "scan; the 2-qubit CZ is a touch sluggish in the current Piccolo path). Either way, be " +
+  "honest about the tier — and do NOT tell the user Rydberg is unsupported, because it isn't.";
 
 // The plugin: exactly one export (see header). opencode calls it on session
 // creation with PluginInput; we need nothing from it today.
@@ -338,10 +339,19 @@ export const AmicodeTools = async (_input: unknown) => ({
             `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}\n\n${sentinel}`
           );
         }
+        // Author-first / open intake (spec-20260704-113005 §5). Any platform is
+        // acknowledged AS STATED (recorded here with the actual string). No vetted
+        // template ≠ decline: offer free-tier from-scratch authoring, honest that
+        // it is unvetted and that every result is independently re-rolled before
+        // we trust it. (This return string previously said "I won't improvise an
+        // unvetted script" — the exact tool output that declined the spin-CX ask.)
         return (
-          `${a.platform}, ${levelsDesc}, ${paramsSummary(params)} — filed under "${meta.slug}".\n\n` +
-          `I don't have a built-in template for ${a.platform} in this build, so let's capture the ` +
-          `formulation for follow-up — I won't improvise an unvetted script.\n\n${sentinel}`
+          `${a.platform}, ${levelsDesc}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
+          `No vetted template for ${a.platform} in this build. That's fine — I can author a ` +
+          `from-scratch script for it against the public stack (unvetted), and every result is ` +
+          `independently re-checked (re-rolled) before we trust it. If a platform skill for ` +
+          `${a.platform} is listed in the Skill index, I'll follow it; otherwise I'll build from ` +
+          `first principles and flag it honestly. Want me to proceed?\n\n${sentinel}`
         );
       },
     },

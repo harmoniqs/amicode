@@ -157,6 +157,15 @@ describe("buildOpencodeConfigContent × scores", () => {
 });
 
 describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source)", () => {
+  // NOTE: presence/absence is asserted on the STRUCTURED authoring.json skills
+  // array (source/name/package), not raw prompt text — the author-first prose
+  // now mentions "atoms" and "Piccolissimo/piccolissimo-authoring" as routing
+  // examples, so whole-prompt string matching can't distinguish the index.
+  type SkillRec = { source: "library" | "package"; package?: string; name: string };
+  const readSkills = (): SkillRec[] => JSON.parse(fs.readFileSync(AUTHORING_TMP, "utf8")).skills;
+  const libNames = (s: SkillRec[]) => s.filter((e) => e.source === "library").map((e) => e.name);
+  const pkgNames = (s: SkillRec[]) => s.filter((e) => e.source === "package").map((e) => e.package);
+
   it("entitled: indexes platform (public) + package (gated), platform first + authoring.json records both", () => {
     const proj = prep({
       entitlementsDir: entitledDir(),
@@ -166,14 +175,12 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Skill index");
-    expect(agents).toContain("atoms");
-    expect(agents).toContain("Piccolissimo/piccolissimo-authoring");
-    expect(agents.indexOf("atoms")).toBeLessThan(agents.indexOf("Piccolissimo/piccolissimo-authoring"));
+    expect(agents).toMatch(/free-phase CZ path/i); // author-first routing from SCORE.md compiled in (§5)
     expect(proj.skillPaths.some((p) => p.endsWith("/atoms/SKILL.md"))).toBe(true);
-    const authoring = JSON.parse(fs.readFileSync(AUTHORING_TMP, "utf8"));
-    const sources = authoring.skills.map((s: { source: string }) => s.source);
-    expect(sources).toContain("library");
-    expect(sources).toContain("package");
+    const skills = readSkills();
+    expect(libNames(skills)).toContain("atoms");
+    expect(pkgNames(skills)).toContain("Piccolissimo");
+    expect(skills[0].source).toBe("library"); // platform entries first (spec §3)
   });
 
   it("skill index survives a score-compile failure (independent splice, spec §3)", () => {
@@ -193,8 +200,9 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("Stages, in order:"); // score compile failed → fallback interview
     expect(agents).toContain("## Skill index");     // yet the skill index is STILL present
-    expect(agents).toContain("atoms");
-    expect(agents).toContain("Piccolissimo/piccolissimo-authoring");
+    const skills = readSkills();
+    expect(libNames(skills)).toContain("atoms");
+    expect(pkgNames(skills)).toContain("Piccolissimo");
   });
 
   it("unentitled: platform skills still index (public); package skills do not (acceptance D, prep half)", () => {
@@ -204,12 +212,12 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
-    const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("## Skill index");
-    expect(agents).toContain("atoms");
-    expect(agents).not.toContain("Piccolissimo/piccolissimo-authoring");
+    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");
     const authoring = JSON.parse(fs.readFileSync(AUTHORING_TMP, "utf8"));
-    expect(authoring.skills.every((s: { source: string }) => s.source === "library")).toBe(true);
+    const skills: SkillRec[] = authoring.skills;
+    expect(skills.length).toBeGreaterThan(0);
+    expect(skills.every((e) => e.source === "library")).toBe(true); // platform only, no package
+    expect(libNames(skills)).toContain("atoms");
     expect(authoring.allowlist).not.toContain("Piccolissimo");
   });
 
@@ -220,9 +228,9 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       platformSkills: ["atoms"],
       skillLibraryRoots: ["/nonexistent-lib"],
     });
-    const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("## Skill index");
-    expect(agents).toContain("Piccolissimo/piccolissimo-authoring");
-    expect(agents).not.toContain("atoms");
+    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");
+    const skills = readSkills();
+    expect(skills.every((e) => e.source === "package")).toBe(true); // no platform entries
+    expect(pkgNames(skills)).toContain("Piccolissimo");
   });
 });
