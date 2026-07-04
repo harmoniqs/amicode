@@ -136,6 +136,34 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   catch { return undefined; }
 }
 
+/** Terminal state of a run dir, read + validated in ONE place (review #70: the
+ *  FINISHED→status→result.toml→fidelity orchestration used to live both here
+ *  and in RunsManager.readTerminal — a contract change had to be edited in two
+ *  places or finished-at-discovery diverged from live-completed).
+ *
+ *  Returns undefined while FINISHED is absent OR present-but-torn/invalid
+ *  (mid-write) — callers retry on their next pass. A present-but-invalid
+ *  result.toml is NAMED via `onInvalidResult` (S4: say why, never silently
+ *  drop fidelity); the default keeps this reader vscode-free via console.warn. */
+export function readTerminalState(
+  runDir: string,
+  onInvalidResult: (why: string) => void = (why) => console.warn(`[amico] ${why}`),
+): { status: RunStatus; fidelity?: number } | undefined {
+  const finished = readTomlSafe(path.join(runDir, "FINISHED"));
+  if (!finished || !validateFinished(finished).ok) return undefined;
+  const status = finished.status as RunStatus;
+  let fidelity: number | undefined;
+  if (status === "completed") {
+    const result = readTomlSafe(path.join(runDir, "result.toml"));
+    if (result) {
+      const v = validateResult(result);
+      if (v.ok) fidelity = result.fidelity as number;
+      else onInvalidResult(`result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
+    }
+  }
+  return { status, fidelity };
+}
+
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
  *  sink method at most once per relevant artifact. Safe to re-invoke (the live
  *  sink's guards make it idempotent). Returns the number of run.log bytes
@@ -169,26 +197,13 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     if (newestPulse) sink.pulse(newestPulse);
   }
 
-  // FINISHED is the authoritative terminal signal
-  const finished = readTomlSafe(path.join(runDir, "FINISHED"));
-  if (!finished || !validateFinished(finished).ok) return logBytes;
-  const status = finished.status as RunStatus;
-
-  let fidelity: number | undefined;
-  if (status === "completed") {
-    const result = readTomlSafe(path.join(runDir, "result.toml"));
-    if (result) {
-      const v = validateResult(result);
-      if (v.ok) fidelity = result.fidelity as number;
-      // Present-but-nonconforming result.toml: surface WHY rather than silently
-      // dropping fidelity + skipping promote (S4). console.warn keeps this reader
-      // vscode-free; the live watcher logs to its channel too.
-      else console.warn(`[amico] result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
-    }
-  }
-  sink.run({ runId, runDir, status, fidelity });
-  if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {
-    sink.promote({ runId, runDir, fidelity });
+  // FINISHED is the authoritative terminal signal — single orchestration point
+  // (readTerminalState) shared with the manager's finished-at-discovery path.
+  const t = readTerminalState(runDir);
+  if (!t) return logBytes;
+  sink.run({ runId, runDir, status: t.status, fidelity: t.fidelity });
+  if (t.status === "completed" && t.fidelity !== undefined && t.fidelity >= promoteThreshold) {
+    sink.promote({ runId, runDir, fidelity: t.fidelity });
   }
   return logBytes;
 }

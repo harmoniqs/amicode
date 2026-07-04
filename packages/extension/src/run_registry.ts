@@ -84,9 +84,14 @@ export class RunRegistry {
     if (r.latestIter === undefined || iter > r.latestIter) r.latestIter = iter;
   }
 
+  /** First terminal wins: re-marking an already-finished run is a no-op, so a
+   *  stray second call can't leave e.g. status:"failed" beside a stale
+   *  fidelity from an earlier "completed" (review #70 — the guard lives HERE,
+   *  not only in the manager's completeRun, because this is public surface the
+   *  1.3 consumers touch). */
   markFinished(runId: string, status: RunStatus, fidelity?: number): void {
     const r = this.map.get(runId);
-    if (!r) return;
+    if (!r || r.phase === "finished") return;
     r.phase = "finished";
     r.status = status;
     if (fidelity !== undefined) r.fidelity = fidelity;

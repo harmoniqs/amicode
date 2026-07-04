@@ -45,6 +45,13 @@ describe("RunRegistry", () => {
     reg.markFinished("r1", "completed", 0.9991);
     expect(reg.get("r1")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.9991, latestIter: 42 });
   });
+  it("markFinished: first terminal wins — re-marking can't leave a contradictory status/fidelity pair (review #70 #3)", () => {
+    const reg = new RunRegistry();
+    reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });
+    reg.markFinished("r1", "completed", 0.999);
+    reg.markFinished("r1", "failed");                          // stray second call (public surface, 1.3 consumers)
+    expect(reg.get("r1")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.999 });
+  });
   it("backfill fills ONLY missing metadata (scheduler-registered run gains createdAt/scriptPath from a later index line)", () => {
     const reg = new RunRegistry();
     reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });   // scheduler path: no metadata

@@ -276,3 +276,80 @@ describe("RunsManager multi-run (#57)", () => {
     m.dispose();
   });
 });
+
+// Review #70 findings — one test per fix (jack-champagne's static/design pass).
+describe("RunsManager review-#70 fixes", () => {
+  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+
+  it("#1 explicit selection is PINNED — a new live run registering does not steal the view", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    stageRun(root, "rA", { finished: "completed", fidelity: 0.9 });
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    m.selectRun("rA");                                        // the user deliberately opens rA
+    expect(m.selectedRun).toBe("rA");
+    inspector.setRunLabel.mockClear();
+
+    stageRun(root, "rB");                                     // background solve starts
+    tick(m);
+    expect(m.selectedRun).toBe("rA");                          // auto-follow deferred to the pin
+    expect(inspector.setRunLabel).not.toHaveBeenCalledWith("rB");
+    expect(m.runs().find(r => r.runId === "rB")?.phase).toBe("live");   // …but rB IS tracked
+
+    m.selectRun("rB");                                        // explicit switch still works
+    expect(m.selectedRun).toBe("rB");
+    m.dispose();
+  });
+
+  it("#1 auto-follow still applies while nothing was explicitly selected (β latest-follow parity)", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    stageRun(root, "rA");
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    stageRun(root, "rB");
+    tick(m);
+    expect(m.selectedRun).toBe("rB");                          // no pin → newest live run wins
+    m.dispose();
+  });
+
+  it("#2 a torn/invalid FINISHED at discovery is retried, not finalized as status:undefined", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const dir = join(root, "rTorn");
+    mkdirSync(dir, { recursive: true });
+    writeManifest(dir, "rTorn");
+    writeFileSync(join(dir, "result.toml"), 'schema_version = "1"\nfidelity = 0.9997\niterations = 5\n');
+    writeFileSync(join(dir, "FINISHED"), 'status = "comp');    // torn mid-write: invalid TOML
+    appendFileSync(join(root, "index"), "rTorn\t2026-07-04T00:00:00Z\t/s.jl\n");
+
+    const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    // NOT finalized with an undefined status — held live so the retry lane owns it.
+    expect(m.runs().find(r => r.runId === "rTorn")).toMatchObject({ phase: "live" });
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled();     // FINISHED exists on disk — never "warming"
+
+    writeFileSync(join(dir, "FINISHED"), 'status = "completed"\nexit_code = 0\n');   // the write completes
+    tick(m);
+    expect(m.runs().find(r => r.runId === "rTorn")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.9997 });
+    expect(promote).not.toHaveBeenCalled();                    // still a launch replay — promote suppressed
+    promote.mockRestore();
+    m.dispose();
+  });
+
+  it("#4 discovery ingests the run dir ONCE — no second display pass (registration replay feeds the display)", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    stageRun(root, "rOne", { log: META_LINE + "AMICODE_PULSE iter=3 dt=0.2 a=0.1,0.2\n" });
+    // The old shape ran ingestRunDir twice per discovery: a pipelineSink state
+    // pass, then auto-follow's selectRun → a displaySink DISPLAY pass over the
+    // same run.log. displaySink now only backs EXPLICIT selection replays — its
+    // absence during discovery is the single-pass property.
+    const displayPass = vi.spyOn(RunsManager.prototype as never as { displaySink(): unknown }, "displaySink");
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    expect(displayPass).not.toHaveBeenCalled();                // was 1 per discovery
+    // …and the single pass still displayed the history (meta + newest record):
+    expect(inspector.postPulse).toHaveBeenCalledTimes(2);
+    displayPass.mockRestore();
+    m.dispose();
+  });
+});

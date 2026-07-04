@@ -1,14 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
-import { validateFinished, validateResult } from "@amicode/amico-run";
 import { getInspector } from "./run_inspector";
 import { LogTailer } from "./log_tailer";
 import { parseIndexLine, RunRegistry, type RunRecord } from "./run_registry";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
+  AMICODE_ITER_RE, ingestRunDir, readTerminalState, parseAmicoNum, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -27,7 +26,9 @@ import {
 // single-run Inspector/StatusBar only for the SELECTED run (1.3 fans the
 // inspector itself into per-run views; `selectRun` is its seam). Completions
 // and the promote prompt fire for EVERY run, selected or not. Selection
-// auto-follows the newest started run (parity with β's latest-follow UX).
+// auto-follows the newest started run (parity with β's latest-follow UX) —
+// UNLESS a run was selected explicitly (selectRun pins; auto-follow defers),
+// so a background solve can't yank the view off a deliberately-opened run.
 //
 // Completion keys on FINISHED (never result.toml presence); the contract
 // reading is the pure `ingestRunDir`. Double-delivery between a selection
@@ -38,8 +39,9 @@ import {
 // always the true newest (same rationale as the poll backstop).
 //
 // Scheduler (1.1, #56/#68): `attachScheduler` consumes the lifecycle stream —
-// a `started` event registers + selects the run immediately (faster than the
-// index tail; also the only path for runs under a non-default runsRoot).
+// a `started` event registers the run immediately (faster than the index
+// tail; also the only path for runs under a non-default runsRoot), with the
+// same pin-aware auto-follow as index discovery.
 // Structural type so this compiles independently of the Scheduler landing.
 // ============================================================================
 
@@ -91,6 +93,12 @@ export class RunsManager implements vscode.Disposable {
   private rootWatcher?: fs.FSWatcher;
   private poll?: NodeJS.Timeout;
   private selected?: string;
+  /** True once a run was selected EXPLICITLY (selectRun — demo command, 1.3
+   *  user clicks). Auto-follow (a newly-registered live run taking the view,
+   *  β latest-follow parity) only applies while NOT pinned — a background
+   *  solve starting must never yank the view off a run the user deliberately
+   *  opened (review #70; the seam 1.3's selection UI builds on). */
+  private pinned = false;
   private schedulerDispose?: () => void;
   /** Promote-once + never-on-replay: runs finished at DISCOVERY are pre-marked
    *  so only a fresh live completion prompts (ports β's finishedAtSwitch). */
@@ -151,8 +159,9 @@ export class RunsManager implements vscode.Disposable {
     this.pipelines.clear();
   }
 
-  /** Consume the #56 Scheduler lifecycle: `started` registers + selects the run
-   *  immediately (its runDir is authoritative — may live outside runsRoot). */
+  /** Consume the #56 Scheduler lifecycle: `started` registers the run
+   *  immediately (its runDir is authoritative — may live outside runsRoot);
+   *  auto-follow applies unless an explicit selection is pinned. */
   attachScheduler(scheduler: SchedulerLike): void {
     this.schedulerDispose?.();
     this.schedulerDispose = scheduler.onEvent((e) => {
@@ -164,11 +173,15 @@ export class RunsManager implements vscode.Disposable {
     });
   }
 
-  /** Route the single-run Inspector/StatusBar at a run (1.3's seam; also called
-   *  by auto-follow). Replays the run dir for display, then live events flow. */
+  /** EXPLICIT selection (demo replay command; 1.3's user clicks): routes the
+   *  single-run Inspector/StatusBar at a run AND PINS the selection — after
+   *  this, auto-follow never steals the view (see `pinned`). Replays the run
+   *  dir for display, then live events flow. */
   selectRun(runId: string): void {
     const rec = this.registry.get(runId);
-    if (!rec || this.selected === runId) return;
+    if (!rec) return;
+    this.pinned = true;
+    if (this.selected === runId) return;
     this.selected = runId;
     getInspector()?.reveal();
     getInspector()?.setRunLabel(runId);
@@ -219,32 +232,50 @@ export class RunsManager implements vscode.Disposable {
     }
     const finishedAtDiscovery = fs.existsSync(path.join(runDir, "FINISHED"));
     if (finishedAtDiscovery) {
-      // Terminal at discovery: record it (status/fidelity for the registry) but
-      // render nothing and never re-pop the promote prompt (β launch parity).
       const t = this.readTerminal(runDir);
-      this.registry.register({ runId, runDir, createdAt, scriptPath, phase: "finished", status: t?.status, fidelity: t?.fidelity });
+      if (t) {
+        // Terminal at discovery: record it (status/fidelity for the registry) but
+        // render nothing and never re-pop the promote prompt (β launch parity).
+        this.registry.register({ runId, runDir, createdAt, scriptPath, phase: "finished", status: t.status, fidelity: t.fidelity });
+        this.promotedRuns.add(runId);
+        return;
+      }
+      // FINISHED present but torn/invalid (caught mid-write) — do NOT finalize
+      // with an undefined status that nothing revisits (review #70): fall
+      // through to the live path, whose checkFinished re-reads next tick (the
+      // same retry the live lane already has). Promote stays suppressed:
+      // terminal-at-discovery is a launch replay regardless of the torn write.
       this.promotedRuns.add(runId);
-      return;
     }
     this.registry.register({ runId, runDir, createdAt, scriptPath, phase: "live" });
     const p = new RunPipeline(runId, runDir);
     this.pipelines.set(runId, p);
 
-    // State replay: arms the pipeline's pulse stream (meta), seeds iter
-    // high-water, and yields the byte offset the live tail starts from. Routes
-    // to the inspector only if this run is (still) selected — at registration
-    // it never is; the display replay below covers it.
+    // Auto-follow BEFORE the replay (β latest-follow parity: a newly REGISTERED
+    // live run is by definition the newest start) — unless an explicit selection
+    // is pinned. Deciding first lets the ONE ingest below both seed pipeline
+    // state and feed the display through routeIter/routePulse's selection gate
+    // (review #70: the old shape parsed the whole run.log twice per discovery —
+    // a state pass, then selectRun's display pass).
+    const follow = !this.pinned;
+    if (follow && this.selected !== runId) {
+      this.selected = runId;
+      getInspector()?.reveal();
+      getInspector()?.setRunLabel(runId);
+    }
+
+    // Single replay: arms the pipeline's pulse stream (meta), seeds iter
+    // high-water, routes to the inspector iff selected above, and yields the
+    // byte offset the live tail starts from.
     let logBytes = 0;
     try { logBytes = ingestRunDir(runDir, this.pipelineSink(p), this.opts.promoteThreshold ?? 0.99); }
     catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
 
     // FINISHED landed between the existsSync check and the replay (rare race):
-    // completeRun already tore the pipeline down — don't attach watch/tail to a
-    // disposed pipeline; just show the (live) completion.
-    if (this.registry.get(runId)?.phase === "finished") {
-      this.selectRun(runId);
-      return;
-    }
+    // completeRun already tore the pipeline down (and — selection was assigned
+    // above — showed the completion); don't attach watch/tail to a disposed
+    // pipeline.
+    if (this.registry.get(runId)?.phase === "finished") return;
 
     // Incremental: FINISHED (authoritative terminal), then appended log lines.
     p.dirWatcher = fs.watch(runDir, { persistent: false }, (_e, filename) => {
@@ -264,12 +295,17 @@ export class RunsManager implements vscode.Disposable {
     });
     p.tailer.start();
 
-    // Auto-follow: a newly REGISTERED live run is by definition the newest
-    // start (index lines append in creation order) — β latest-follow parity.
-    this.selectRun(runId);
+    // Fresh/live run with no data yet → Julia warming up (post-replay, β order).
+    // Disk-checked: a torn FINISHED (fall-through above) must not read "warming".
+    if (follow && !fs.existsSync(path.join(runDir, "FINISHED"))) {
+      getInspector()?.setWarmingUp();
+    }
   }
 
-  /** State-only sink for a pipeline's initial replay. */
+  /** Sink for a pipeline's SINGLE registration replay: seeds registry/pulse
+   *  state and — because auto-follow assigns selection BEFORE the replay —
+   *  feeds the display through routeIter/routePulse's selection gate in the
+   *  same pass (review #70: no second display ingest). */
   private pipelineSink(p: RunPipeline): RunSink {
     return {
       iter: (rec: IterRecord) => this.routeIter(p, rec),
@@ -353,19 +389,10 @@ export class RunsManager implements vscode.Disposable {
    *  logging as β (S4: a present-but-invalid result.toml is named, not
    *  silently dropped). */
   private readTerminal(runDir: string): { status: RunStatus; fidelity?: number } | undefined {
-    const finished = readTomlSafe(path.join(runDir, "FINISHED"));
-    if (!finished || !validateFinished(finished).ok) return undefined;
-    const status = finished.status as RunStatus;
-    let fidelity: number | undefined;
-    if (status === "completed") {
-      const result = readTomlSafe(path.join(runDir, "result.toml"));
-      if (result) {
-        const v = validateResult(result);
-        if (v.ok) fidelity = result.fidelity as number;
-        else this.opts.channel.appendLine(`[runs] result.toml present but invalid: ${v.errors.join("; ")}`);
-      }
-    }
-    return { status, fidelity };
+    // Delegates to the reader's single orchestration point (review #70 — the
+    // FINISHED→result.toml sequence must not be maintained twice); only the
+    // say-why channel is manager-specific.
+    return readTerminalState(runDir, (why) => this.opts.channel.appendLine(`[runs] ${why}`));
   }
 
   private promptPromote(info: PromoteInfo): void {
