@@ -47,3 +47,28 @@ export function filterRepertoire(scores: Score[], ents: string[]): Score[] {
     (s) => (s.manifest.entitlements ?? []).length === 0 || s.manifest.entitlements!.some((e) => ents.includes(e)),
   );
 }
+
+// Entitlement → Harmoniqs package allowlist (spec C). Reads the [packages]
+// table of entitlements.toml: `default` (public base) plus each held
+// entitlement's package list. Feeds the resolver + the amico-run import scan —
+// SEPARATE from filterRepertoire (score visibility). Missing file / malformed
+// table → public defaults, never throws (an entitlement failure must not
+// dead-end authoring).
+const PUBLIC_PACKAGES = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"];
+
+export function packageAllowlist(registryFile: string, ents: string[]): string[] {
+  let packages: { default?: string[] } & Record<string, string[]> = {};
+  try {
+    const parsed = parseToml(fs.readFileSync(registryFile, "utf8")) as { packages?: typeof packages };
+    if (parsed.packages && typeof parsed.packages === "object") packages = parsed.packages;
+  } catch {
+    // missing/malformed → public defaults below
+  }
+  const base = Array.isArray(packages.default) ? packages.default : PUBLIC_PACKAGES;
+  const out = [...base];
+  for (const ent of ents) {
+    const extra = packages[ent];
+    if (Array.isArray(extra)) for (const p of extra) if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}

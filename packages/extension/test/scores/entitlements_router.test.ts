@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { LocalEntitlementProvider, filterRepertoire } from "../../src/scores/entitlements";
+import { LocalEntitlementProvider, filterRepertoire, packageAllowlist } from "../../src/scores/entitlements";
 import { buildRouterSection } from "../../src/scores/router";
 import { Score } from "../../src/scores/loader";
 
@@ -102,5 +102,30 @@ describe("buildRouterSection", () => {
   });
   it("is deterministic", () => {
     expect(buildRouterSection([pub, gated])).toBe(buildRouterSection([pub, gated]));
+  });
+});
+
+describe("packageAllowlist (spec C entitlement → package tiers)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pkg-allow-"));
+  const registry = path.join(dir, "registry.toml");
+  fs.writeFileSync(
+    registry,
+    `[packages]\ndefault = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]\nissimo = ["Piccolissimo", "Strettissimo", "Intonatissimo"]\n`,
+  );
+
+  it("no entitlements → the five public packages", () => {
+    expect(packageAllowlist(registry, [])).toEqual([
+      "Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt",
+    ]);
+  });
+  it("issimo entitlement → adds the three gated packages", () => {
+    const allow = packageAllowlist(registry, ["issimo"]);
+    expect(allow).toEqual(expect.arrayContaining(["Piccolo", "Piccolissimo", "Strettissimo", "Intonatissimo"]));
+    expect(allow).toHaveLength(8);
+  });
+  it("missing file / malformed [packages] → public defaults, never throws", () => {
+    expect(packageAllowlist(path.join(dir, "nope.toml"), ["issimo"])).toEqual([
+      "Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt",
+    ]);
   });
 });

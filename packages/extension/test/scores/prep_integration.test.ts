@@ -7,14 +7,20 @@ import { prepareOpencodeProject, buildOpencodeConfigContent, DEFAULT_SCORES_ROOT
 // Hermeticity: prepareOpencodeProject writes the plugin's manifest transport to
 // the problems root, which defaults into $HOME — point it at a tmp dir for the run.
 const PROBLEMS_TMP = fs.mkdtempSync(path.join(os.tmpdir(), "prep-problems-"));
+const AUTHORING_TMP = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "prep-authoring-")), "authoring.json");
 let prevProblemsDir: string | undefined;
+let prevAuthoringFile: string | undefined;
 beforeAll(() => {
   prevProblemsDir = process.env.AMICODE_PROBLEMS_DIR;
   process.env.AMICODE_PROBLEMS_DIR = PROBLEMS_TMP;
+  prevAuthoringFile = process.env.AMICO_AUTHORING_FILE;
+  process.env.AMICO_AUTHORING_FILE = AUTHORING_TMP; // isolate authoring.json from $HOME
 });
 afterAll(() => {
   if (prevProblemsDir === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
   else process.env.AMICODE_PROBLEMS_DIR = prevProblemsDir;
+  if (prevAuthoringFile === undefined) delete process.env.AMICO_AUTHORING_FILE;
+  else process.env.AMICO_AUTHORING_FILE = prevAuthoringFile;
 });
 
 const AGENTS_SRC = path.resolve(__dirname, "..", "..", "AGENTS.md");
@@ -73,6 +79,19 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
   it("missing scores root behaves like fallback (no throw)", () => {
     const proj = prep({ scoresRoot: "/nonexistent/scores" });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("Stages, in order:");
+  });
+
+  it("writes authoring.json (spec C) — public allowlist, support set, existing bundled asset paths, tolerance", () => {
+    prep(); // entitlementsDir is a fresh empty dir → public entitlements
+    const authoring = JSON.parse(fs.readFileSync(AUTHORING_TMP, "utf8"));
+    expect(authoring.schema_version).toBe(1);
+    expect(authoring.allowlist).toEqual(["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]);
+    expect(authoring.support_set).toEqual(expect.arrayContaining(["JLD2", "CairoMakie", "TOML"]));
+    expect(authoring.verify_tolerance).toBe(0.01);
+    // the paths point at REAL bundled assets (Task 9 shipped them)
+    expect(path.isAbsolute(authoring.registry) && fs.existsSync(authoring.registry)).toBe(true);
+    expect(path.isAbsolute(authoring.exemplars) && fs.existsSync(authoring.exemplars)).toBe(true);
+    expect(path.isAbsolute(authoring.verify_harness) && fs.existsSync(authoring.verify_harness)).toBe(true);
   });
 });
 

@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { parse as parseToml } from "smol-toml";
 import { loadRepertoire } from "./scores/loader";
-import { readLocalEntitlements, filterRepertoire } from "./scores/entitlements";
+import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 
@@ -113,6 +114,61 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
+/** Bundled spec-C authoring assets (absolute), resolved relative to this module.
+ *  At runtime __dirname is the extension's dist/src dir; the assets ship one
+ *  level up under templates/, exemplars/, julia/. */
+export const AUTHORING_ASSETS = {
+  registry: path.resolve(__dirname, "..", "templates", "registry.toml"),
+  exemplars: path.resolve(__dirname, "..", "exemplars", "index.json"),
+  verifyHarness: path.resolve(__dirname, "..", "julia", "verify_rollout.jl"),
+};
+
+/** Where amico-run reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
+ *  overrides (tests + parity with amico-run's own reader). */
+export function authoringFilePath(): string {
+  const env = process.env.AMICO_AUTHORING_FILE;
+  if (env && env.trim() !== "") return env;
+  return path.join(os.homedir(), ".amico", "authoring", "authoring.json");
+}
+
+/** Assemble + write authoring.json at session prep. Reads verify_tolerance from
+ *  the bundled registry.toml (falls back to 0.01). Never throws — a write
+ *  failure logs and leaves amico-run to use its built-in conservative defaults. */
+export function writeAuthoringConfig(entitlementsDir: string): void {
+  try {
+    const ents = readLocalEntitlements(entitlementsDir);
+    const registry = AUTHORING_ASSETS.registry;
+    const allowlist = packageAllowlist(registry, ents.entitlements);
+    let tolerance = 0.01;
+    let support: string[] = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"];
+    try {
+      const reg = parseToml(fs.readFileSync(registry, "utf8")) as { verify_tolerance?: number; support?: { packages?: string[] } };
+      if (typeof reg.verify_tolerance === "number") tolerance = reg.verify_tolerance;
+      if (Array.isArray(reg.support?.packages)) support = reg.support!.packages!;
+    } catch { /* keep defaults */ }
+    const file = authoringFilePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(
+      file,
+      JSON.stringify(
+        {
+          schema_version: 1,
+          allowlist,
+          support_set: support,
+          registry,
+          exemplars: AUTHORING_ASSETS.exemplars,
+          verify_harness: AUTHORING_ASSETS.verifyHarness,
+          verify_tolerance: tolerance,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } catch (e) {
+    console.warn(`amicode: failed to write authoring.json (amico-run will use built-in defaults): ${e}`);
+  }
+}
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
@@ -217,6 +273,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     finalContent = filled;
   }
   fs.writeFileSync(agentsPath, finalContent, "utf8");
+
+  // spec C: write the authoring.json seam amico-run reads (allowlist resolved
+  // from the same entitlements the score filter used + the bundled asset paths).
+  writeAuthoringConfig(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
