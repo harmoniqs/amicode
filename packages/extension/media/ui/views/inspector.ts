@@ -10,8 +10,10 @@ import { defineStyle } from "../style";
 import { mark } from "../atoms/icon";
 import { pill } from "../atoms/pill";
 import { text } from "../atoms/text";
+import { button } from "../atoms/button";
 import { metric } from "../components/metric";
 import { pulseplot } from "../components/pulseplot";
+import { controlEnablement, type ControlStatus } from "../control-state";
 
 defineStyle("inspector-view", `
   body { margin: 0; height: 100vh; font-family: var(--text-font);
@@ -55,10 +57,27 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   grid.className = "grid-fit";
   grid.append(...metrics.map((m) => m.el));
 
+  // Control row — Stop / Save pulse / Open run dir. Each posts to the extension
+  // (run_inspector.ts routes {type:"control", action} to the matching command).
+  const stopBtn = button("■ Stop", () => post({ type: "control", action: "stop" }));
+  const saveBtn = button("↓ Save pulse", () => post({ type: "control", action: "save" }));
+  const openBtn = button("↗ Open run dir", () => post({ type: "control", action: "open" }));
+  const controls = document.createElement("div");
+  controls.className = "row gap-sm wrap";
+  controls.append(stopBtn.el, saveBtn.el, openBtn.el);
+
+  let controlStatus: ControlStatus = "idle";
+  let hasData = false;
+  const applyControls = () => {
+    const e = controlEnablement(controlStatus, hasData);
+    stopBtn.enable(e.stop); saveBtn.enable(e.save); openBtn.enable(e.open);
+  };
+  applyControls();
+
   const el = document.createElement("div");
   el.className = "stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid);
+  el.append(topbar, pulse.el, grid, controls);
 
   return {
     el,
@@ -80,6 +99,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           feasibility.value((msg.eq_viol as number).toExponential(2));
           optimality.value((msg.kkt_error as number).toExponential(2));
           status.set("running", "running");
+          controlStatus = "running"; hasData = true; applyControls();
           break;
         }
         case "warming": {
@@ -91,18 +111,23 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           for (const m of metrics) m.clear();
           hero.label("objective");
           status.set("running", "warming up");
+          controlStatus = "warming"; hasData = false; applyControls();
           break;
         }
         case "completed": {
           // Authoritative terminal state from the watcher (FINISHED on disk).
           const ok = msg.status === "completed";
-          status.set(ok ? "done" : "failed", ok ? "converged" : String(msg.status));
+          const stopped = msg.status === "stopped";
+          // stopped = graceful user stop (neutral, dim); completed = success;
+          // anything else = failure.
+          status.set(ok ? "done" : stopped ? "idle" : "failed", ok ? "converged" : String(msg.status));
           // Promote the hero card to the final fidelity — the number that matters.
           if (ok && typeof msg.fidelity === "number") {
             hero.label("fidelity");
             hero.value((msg.fidelity as number).toFixed(5));
           }
           if (!gotPulse) pulse.waiting(NO_DATA_HINT);   // old runs / non-emitting scripts
+          controlStatus = (ok ? "completed" : stopped ? "stopped" : "failed"); applyControls();
           break;
         }
         case "pulsemeta": {
@@ -113,6 +138,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           // Plot-only: never touches the status pill (a throttled record can
           // legally land after "completed"; the badge must not regress).
           gotPulse = true;
+          hasData = true; applyControls();
           pulse.update({ iter: msg.iter, dt: msg.dt, values: msg.values });
           break;
         }
