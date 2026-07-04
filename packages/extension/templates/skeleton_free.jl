@@ -70,6 +70,14 @@ struct PulseEmitCallback <: AbstractIntermediateCallback
     traj::Any
 end
 function (cb::PulseEmitCallback)(primal, iter)
+    # Cooperative stop: the Run Inspector's Stop button drops a STOP file into the
+    # run dir (== cwd). Returning false from Ipopt's intermediate_callback halts
+    # the solve (User_Requested_Stop) at the next iteration; solve! returns
+    # normally, so the partial pulse.jld2/result.toml still get written below.
+    if isfile("STOP")
+        println("AMICODE_STOPPED"); flush(stdout)
+        return false
+    end
     ok = cb.inner(primal, iter)
     try
         traj = cb.traj
