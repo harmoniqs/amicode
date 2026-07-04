@@ -14,6 +14,7 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
 import { stageDemoRun } from "./demo_replay";
+import { writeStopFile, savePulseTo, catalogPulsesDir } from "./run_controls";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -184,10 +185,44 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl);
+      ChatPanel.openOrReveal(ctx, readyUrl, opencodeChannel);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await vscode.commands.executeCommand("amicode.runInspector.focus");
+    }),
+    vscode.commands.registerCommand("amicode.stopRun", () => {
+      const dir = watcher?.getActiveRunDir();
+      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run to stop."); return; }
+      writeStopFile(dir);
+      vscode.window.showInformationMessage("Amicode: stop requested — the solve will halt at the next iteration.");
+    }),
+    vscode.commands.registerCommand("amicode.openRunDir", async () => {
+      const dir = watcher?.getActiveRunDir();
+      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
+      await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+    }),
+    vscode.commands.registerCommand("amicode.savePulse", async () => {
+      const dir = watcher?.getActiveRunDir();
+      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
+      const catalog = catalogPulsesDir();
+      const picks = [catalog ? "Save to catalog" : undefined, "Save to file…"].filter(Boolean) as string[];
+      const choice = await vscode.window.showQuickPick(picks, { title: "Save pulse" });
+      if (!choice) return;
+      try {
+        if (choice === "Save to catalog" && catalog) {
+          const name = `${path.basename(dir)}.jld2`;
+          savePulseTo(dir, path.join(catalog, name));
+          vscode.window.showInformationMessage(`Amicode: saved pulse to catalog (${name}).`);
+        } else {
+          const uri = await vscode.window.showSaveDialog({
+            filters: { JLD2: ["jld2"] },
+            defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
+          });
+          if (uri) { savePulseTo(dir, uri.fsPath); vscode.window.showInformationMessage("Amicode: pulse saved."); }
+        }
+      } catch (e) {
+        vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
+      }
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       opencodeChannel.appendLine(`[boot] restart requested`);

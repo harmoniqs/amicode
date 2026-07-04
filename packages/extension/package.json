@@ -83,6 +83,18 @@
       {
         "command": "amicode.replayDemo",
         "title": "Amicode: Replay demo run"
+      },
+      {
+        "command": "amicode.stopRun",
+        "title": "Amicode: Stop current solve"
+      },
+      {
+        "command": "amicode.savePulse",
+        "title": "Amicode: Save pulse from current run"
+      },
+      {
+        "command": "amicode.openRunDir",
+        "title": "Amicode: Open current run directory"
       }
     ],
     "configuration": {

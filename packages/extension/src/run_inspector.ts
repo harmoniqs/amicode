@@ -51,7 +51,16 @@ class InspectorView implements vscode.WebviewViewProvider {
       localResourceRoots: inspectorResourceRootDirs(this.ctx.extensionUri.fsPath).map((d) => vscode.Uri.file(d)),
     };
     view.webview.html = this.renderHtml(view.webview);
-    view.onDidDispose(() => { this.view = undefined; this.clearPulseTimer(); });
+
+    // Control row (Stop / Save pulse / Open dir): the view posts
+    // {type:"control", action}; forward to the matching command, which resolves
+    // the target run from the watcher's activeRunDir.
+    const msgSub = view.webview.onDidReceiveMessage((msg: { type?: string; action?: string }) => {
+      if (msg?.type !== "control") return;
+      const cmd = ({ stop: "amicode.stopRun", save: "amicode.savePulse", open: "amicode.openRunDir" } as Record<string, string>)[msg.action ?? ""];
+      if (cmd) void vscode.commands.executeCommand(cmd);
+    });
+    view.onDidDispose(() => { this.view = undefined; this.clearPulseTimer(); msgSub.dispose(); });
 
     // Topbar run label — replay first so it's set regardless of run state.
     if (this.bufferedRunLabel) {
