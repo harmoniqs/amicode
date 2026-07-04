@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as vscode from "vscode";
 import { validateFinished, validateResult } from "@amicode/amico-run";
 import { getInspector } from "./run_inspector";
+import { parseMaxIter } from "./run_timing";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
@@ -64,6 +65,11 @@ class LiveRunSink implements RunSink {
     // Fires on live finish (onFinished) AND replay of an already-finished run
     // (ingestRunDir) — both route through this sink.
     getInspector()?.postCompletion(c.status, c.fidelity);
+    // Freeze the elapsed strip at the recorded wall time (now − created_at would
+    // overshoot for a run that finished before the panel opened).
+    const result = readTomlSafe(path.join(c.runDir, "result.toml"));
+    const wallSeconds = typeof result?.wall_seconds === "number" ? result.wall_seconds : undefined;
+    getInspector()?.postTiming({ wallSeconds, terminal: true });
     this.opts.statusBar?.setRun({
       runId: c.runId, outputDir: c.runDir, startedAt: 0,
       status: c.status, latestIter: this.dedup.high >= 0 ? this.dedup.high : undefined,
@@ -200,6 +206,14 @@ export class RunsRootWatcher implements vscode.Disposable {
     this.sink = new LiveRunSink(this.opts, runId, runDir, this.promotedRuns);
     getInspector()?.reveal();
     getInspector()?.setRunLabel(runId);
+
+    // Timing base for the elapsed/rate/ETA strip: created_at → live elapsed;
+    // max_iter (parsed from the run's actual script) → ETA. Best-effort.
+    const manifest = readTomlSafe(path.join(runDir, "run.toml"));
+    const createdAtMs = manifest?.created_at ? Date.parse(String(manifest.created_at)) : NaN;
+    let maxIter: number | undefined;
+    try { if (manifest?.script_path) maxIter = parseMaxIter(fs.readFileSync(String(manifest.script_path), "utf8")); } catch { /* script gone */ }
+    getInspector()?.postTiming({ createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : undefined, maxIter, terminal: false });
 
     // Replay everything already on disk (late-join safe). Returns the run.log
     // bytes consumed so the tailer attaches exactly there (no skipped iters).

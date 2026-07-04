@@ -14,6 +14,14 @@ import type { PulseEvent, PulseMeta, PulseRecord } from "./run_dir_reader";
 
 const REFRESH_INTERVAL_MS = 200; // 5 Hz cap on pulse-record refresh
 
+/** Timing payload for the elapsed/rate/ETA strip. */
+export interface TimingInfo {
+  createdAtMs?: number;   // run.toml created_at → live elapsed base
+  maxIter?: number;       // parsed from the run script → ETA
+  wallSeconds?: number;   // result.toml wall_seconds → frozen elapsed on finish
+  terminal?: boolean;     // true once the run is finished
+}
+
 let INSPECTOR: InspectorView | undefined;
 
 class InspectorView implements vscode.WebviewViewProvider {
@@ -29,6 +37,9 @@ class InspectorView implements vscode.WebviewViewProvider {
   /** Run label (runId) for the topbar — buffered so it shows even if the panel
    *  opens after the run was selected. */
   private bufferedRunLabel?: string;
+  /** Timing (created-at / max-iter / wall-seconds) — buffered like the run label
+   *  so the elapsed/ETA strip isn't blank when the panel opens after run start. */
+  private bufferedTiming?: TimingInfo;
   /** Pulse events that arrived before the webview existed (#66 AC7). Unlike
    *  PNGs (re-offered by the poll forever), the log line is the canonical
    *  signal — dropped means gone. Meta + NEWEST record only. */
@@ -66,6 +77,10 @@ class InspectorView implements vscode.WebviewViewProvider {
     if (this.bufferedRunLabel) {
       view.webview.postMessage({ type: "runlabel", text: this.bufferedRunLabel });
       this.bufferedRunLabel = undefined;
+    }
+    if (this.bufferedTiming) {
+      view.webview.postMessage({ type: "timing", ...this.bufferedTiming });
+      this.bufferedTiming = undefined;
     }
     // A run is warming up (no data yet) — show that until the first record.
     if (this.bufferedWarming) {
@@ -164,6 +179,13 @@ class InspectorView implements vscode.WebviewViewProvider {
   setRunLabel(label: string): void {
     if (!this.view) { this.bufferedRunLabel = label; return; }
     this.view.webview.postMessage({ type: "runlabel", text: label });
+  }
+
+  /** Feed the elapsed/rate/ETA strip. Non-terminal = run start (createdAtMs +
+   *  maxIter); terminal = finish (wallSeconds frozen). Buffered like the label. */
+  postTiming(t: TimingInfo): void {
+    if (!this.view) { this.bufferedTiming = { ...this.bufferedTiming, ...t }; return; }
+    this.view.webview.postMessage({ type: "timing", ...t });
   }
 
   reveal(): void {

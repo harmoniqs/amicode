@@ -14,6 +14,7 @@ import { button } from "../atoms/button";
 import { metric } from "../components/metric";
 import { pulseplot } from "../components/pulseplot";
 import { controlEnablement, type ControlStatus } from "../control-state";
+import { formatElapsed, computeEta, ratePerSec } from "../../../src/run_timing";
 
 defineStyle("inspector-view", `
   body { margin: 0; height: 100vh; font-family: var(--text-font);
@@ -63,7 +64,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const saveBtn = button("↓ Save pulse", () => post({ type: "control", action: "save" }));
   const openBtn = button("↗ Open run dir", () => post({ type: "control", action: "open" }));
   const controls = document.createElement("div");
-  controls.className = "row gap-sm wrap";
+  controls.className = "row gap-sm wrap push-end";
   controls.append(stopBtn.el, saveBtn.el, openBtn.el);
 
   let controlStatus: ControlStatus = "idle";
@@ -74,10 +75,35 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   };
   applyControls();
 
+  // Elapsed / rate / ETA strip. Ticks 1 Hz while running from run.toml
+  // created_at; freezes at result.toml wall_seconds on finish.
+  const timing = text("mono small dim");
+  let createdAtMs: number | undefined;
+  let maxIter: number | undefined;
+  let latestIter = 0;
+  const iterStamps: number[] = [];   // arrival times → rate
+  let tick: ReturnType<typeof setInterval> | undefined;
+  const clearTick = () => { if (tick) { clearInterval(tick); tick = undefined; } };
+  const renderTiming = () => {
+    if (createdAtMs === undefined) { timing.set(""); return; }
+    const parts = [`elapsed ${formatElapsed((Date.now() - createdAtMs) / 1000)}`];
+    const r = ratePerSec(iterStamps);
+    if (r !== undefined) {
+      parts.push(`${r.toFixed(1)} it/s`);
+      const eta = computeEta({ iter: latestIter, maxIter, ratePerSec: r });
+      if (eta !== undefined) parts.push(`ETA ~${formatElapsed(eta)}`);
+    }
+    timing.set(parts.join(" · "));
+  };
+
+  const footer = document.createElement("div");
+  footer.className = "row wrap";
+  footer.append(timing.el, controls);
+
   const el = document.createElement("div");
   el.className = "stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid, controls);
+  el.append(topbar, pulse.el, grid, footer);
 
   return {
     el,
@@ -92,6 +118,19 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           runLabel.set(String(msg.text ?? ""));
           break;
         }
+        case "timing": {
+          if (msg.terminal) {
+            clearTick();
+            createdAtMs = undefined;
+            if (typeof msg.wallSeconds === "number") timing.set(`elapsed ${formatElapsed(msg.wallSeconds)}`);
+            break;
+          }
+          if (typeof msg.createdAtMs === "number") createdAtMs = msg.createdAtMs;
+          if (typeof msg.maxIter === "number") maxIter = msg.maxIter;
+          renderTiming();
+          if (!tick) tick = setInterval(renderTiming, 1000);
+          break;
+        }
         case "iteration": {
           hero.label("objective");
           hero.value((msg.f_val as number).toExponential(4));
@@ -100,6 +139,10 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           optimality.value((msg.kkt_error as number).toExponential(2));
           status.set("running", "running");
           controlStatus = "running"; hasData = true; applyControls();
+          latestIter = msg.iter as number;
+          iterStamps.push(Date.now());
+          if (iterStamps.length > 12) iterStamps.shift();
+          renderTiming();
           break;
         }
         case "warming": {
@@ -112,6 +155,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
           hero.label("objective");
           status.set("running", "warming up");
           controlStatus = "warming"; hasData = false; applyControls();
+          iterStamps.length = 0; latestIter = 0;   // new run — reset rate history
           break;
         }
         case "completed": {
