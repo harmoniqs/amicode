@@ -1,17 +1,46 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://amico.harmoniqs.co/schema/solvespec/v1",
+  "$id": "https://amico.harmoniqs.co/schema/solvespec/v2",
   "title": "amico SolveSpec",
-  "description": "FORWARD-LOOKING. The resolved solve specification a future amico-run would assemble and validate before dispatch. amico-run is argv-only today and emits no SolveSpec, so this schema is authored from the PRD shape and exercised via a committed fixture + `--schema solvespec` only (no emitter to round-trip yet). Its assembler/validate() call is a later slice, NOT 0.1a.",
+  "description": "The resolved solve specification the agent assembles and `amico-run --spec` validates + gates before dispatch (spec C). v2 adds executor/tier/env/source/hashes; v1 specs remain valid (tier-less specs skip tier gating).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "script_path", "lab_id"],
   "properties": {
-    "schema_version": { "enum": ["1"] },
+    "schema_version": { "enum": ["1", "2"] },
     "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run" },
     "lab_id": { "type": "string", "minLength": 1, "description": "lab pointer (id or path) — physics params live in the lab.toml/script, not here" },
     "gate": { "type": "string", "description": "target gate label (e.g. X, H), if known at assembly" },
     "params": { "type": "object", "additionalProperties": true, "description": "lenient solve-knob block (T, N, max_iter, …)" },
+    "executor": { "enum": ["local"], "description": "whose machine runs it — per-solve and explicit (Δ10); only local exists today" },
+    "tier": { "enum": ["vetted", "composed", "free"], "description": "trust tier of the authored script (spec C resolver)" },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["provisioned", "project", "sandbox"], "description": "which Julia environment (NOT which machine — that is executor)" },
+        "project": { "type": "string", "description": "Julia project path for kind=project|sandbox" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "template_id": { "type": "string", "description": "tier-1 registry entry id" },
+        "exemplar_id": { "type": "string", "description": "tier-2 exemplars-index entry id (required by the gate when tier=composed)" }
+      }
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "system_hash": { "type": "string" },
+        "formulation_hash": { "type": "string" },
+        "warm_start_hash": { "type": "string" }
+      },
+      "description": "amicode#64 entity hashes from the problem workspace's events; spec_hash is computed by the gate, never supplied here"
+    },
     "julia": {
       "type": "object",
       "additionalProperties": false,

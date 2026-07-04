@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import {
-  validate, validateFile, SCHEMA_KINDS, SUPPORTED_SCHEMA_VERSIONS, type SchemaKind,
+  validate, validateFile, SCHEMA_KINDS, SUPPORTED_VERSIONS_BY_KIND, type SchemaKind,
 } from "../src/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -31,8 +31,14 @@ describe("schema set + exports", () => {
       new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished"]),
     );
   });
-  it("SUPPORTED_SCHEMA_VERSIONS is the v1 instantiation of a version SET", () => {
-    expect([...SUPPORTED_SCHEMA_VERSIONS]).toEqual(["1"]);
+  it("supported versions are PER-KIND: run + solvespec bumped to v2 (spec C), the rest v1", () => {
+    expect(SUPPORTED_VERSIONS_BY_KIND).toEqual({
+      run: ["1", "2"],
+      solvespec: ["1", "2"],
+      result: ["1"],
+      lab: ["1"],
+      "catalog-entry": ["1"],
+    });
   });
   it("an unknown kind is a clean error, not a throw", () => {
     const r = validate({}, "nope" as SchemaKind);
@@ -59,11 +65,13 @@ describe("schema_version policy", () => {
       expect(hasErr(r.errors, "/schema_version: unrecognized version")).toBe(true);
     }
   });
-  it("every versioned schema's enum is in sync with SUPPORTED_SCHEMA_VERSIONS (no drift seam)", () => {
+  it("every versioned schema's enum is in sync with its per-kind version set (no drift seam)", () => {
     const schemasDir = join(here, "..", "schemas");
-    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"]) {
+    for (const kind of ["run", "result", "lab", "solvespec", "catalog-entry"] as const) {
       const schema = JSON.parse(readFileSync(join(schemasDir, `${kind}.schema.json`), "utf8"));
-      expect(schema.properties.schema_version.enum, `${kind} enum drift`).toEqual([...SUPPORTED_SCHEMA_VERSIONS]);
+      expect(schema.properties.schema_version.enum, `${kind} enum drift`).toEqual(
+        SUPPORTED_VERSIONS_BY_KIND[kind],
+      );
     }
   });
   it("FINISHED is a sub-shape — it carries NO schema_version and adding one is rejected", () => {
@@ -172,5 +180,36 @@ describe("bundled demo run dir conforms", () => {
     expect(validateFile(join(demoDir, "run.toml"), "run").errors).toEqual([]);
     expect(validateFile(join(demoDir, "FINISHED"), "finished").errors).toEqual([]);
     expect(validateFile(join(demoDir, "result.toml"), "result").errors).toEqual([]);
+  });
+});
+
+// ── v2 (spec C): SolveSpec executor/tier/env/source/hashes + run.toml tier/hashes ──
+describe("v2 (spec C)", () => {
+  const specV2 = {
+    schema_version: "2", script_path: "/w/solve.jl", lab_id: "default",
+    executor: "local", tier: "free",
+    env: { kind: "sandbox", project: "/w/env" },
+    source: {}, hashes: { system_hash: "sha256:ab", formulation_hash: "sha256:cd" },
+  };
+  it("accepts a full v2 solvespec and still accepts v1", () => {
+    expect(validate(specV2, "solvespec").errors).toEqual([]);
+    expect(validate({ schema_version: "1", script_path: "/s.jl", lab_id: "default" }, "solvespec").ok).toBe(true);
+  });
+  it("rejects bad tier / executor / env.kind field-precisely", () => {
+    expect(validate({ ...specV2, tier: "trusted" }, "solvespec").errors.join()).toMatch(/tier/);
+    expect(validate({ ...specV2, executor: "cloud" }, "solvespec").errors.join()).toMatch(/executor/);
+    expect(validate({ ...specV2, env: { kind: "docker" } }, "solvespec").errors.join()).toMatch(/kind/);
+  });
+  it("run v2: tier + [hashes] (all four keys) accepted; v1 manifests still valid", () => {
+    const run1 = {
+      schema_version: "1", run_id: "r", script_path: "/s.jl", lab: "default", lab_id: "default",
+      created_at: "2026-07-03T00:00:00Z", orchestrator_version: "0.1.0", julia: { binary: "julia" },
+    };
+    expect(validate(run1, "run").ok).toBe(true);
+    expect(validate({
+      ...run1, schema_version: "2", tier: "free",
+      hashes: { system_hash: "sha256:ab", formulation_hash: "sha256:cd", warm_start_hash: "sha256:ef", spec_hash: "sha256:01" },
+    }, "run").errors).toEqual([]);
+    expect(validate({ ...run1, schema_version: "2", tier: "nope" }, "run").errors.join()).toMatch(/tier/);
   });
 });
