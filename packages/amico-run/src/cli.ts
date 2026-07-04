@@ -1,10 +1,17 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { parse as parseToml } from 'smol-toml'
 import { LocalExecutor } from './local_executor.js'
 import { ConfigError, type Finished, type SubmitOpts } from './types.js'
 import { readAuthoring } from './authoring.js'
 import { runGate } from './gate.js'
+import { runVerification } from './verify.js'
 import { trySubcommand } from './subcommands.js'
+
+function readTomlSafe(fp: string): Record<string, unknown> | undefined {
+  try { return parseToml(readFileSync(fp, 'utf8')) as Record<string, unknown> }
+  catch { return undefined }
+}
 
 const USAGE = `usage: amico-run <script.jl> [--executor local] [--lab <id-or-path>]
                  [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]
@@ -73,7 +80,10 @@ export async function main(argv: string[]): Promise<number> {
         console.error(`amico-run: --project ${opts.julia!.project} overrides the spec's env.project ${env.project}`)
       else opts.julia!.project = env.project
     }
-    opts.spec = { canonical: gate.stamp.specCanonical, tier: gate.stamp.tier, hashes: gate.stamp.hashes }
+    opts.spec = {
+      canonical: gate.stamp.specCanonical, tier: gate.stamp.tier, hashes: gate.stamp.hashes,
+      julia_binary: opts.julia!.julia, env_project: opts.julia!.project,
+    }
   }
 
   // NOTE: `--sysimage <path>` is honored (passed through to the Julia process and
@@ -107,6 +117,16 @@ export async function main(argv: string[]): Promise<number> {
   if (!existsSync(join(handle.runDir, 'FINISHED'))) {
     console.error(`amico-run: FINISHED missing in ${handle.runDir} (write fault)`)
     return 64
+  }
+  // spec C: free-tier re-rollout verification runs AFTER FINISHED, BEFORE the
+  // AMICODE_FINISHED line — so consumers see a settled verification state. The
+  // harness (or the fallback) always writes verification.toml; the promote gate
+  // keys off agree==true.
+  if (opts.spec?.tier === 'free') {
+    const { config: authoring } = readAuthoring()
+    await runVerification(handle.runDir, opts.spec, authoring)
+    const verified = readTomlSafe(join(handle.runDir, 'verification.toml'))
+    console.log(`AMICODE_VERIFIED agree=${verified?.agree === true}`)
   }
   // stdout protocol line — camelCase by design (spec §4)
   console.log(`AMICODE_FINISHED status=${f.status} exitCode=${f.exitCode} runDir=${handle.runDir}`)

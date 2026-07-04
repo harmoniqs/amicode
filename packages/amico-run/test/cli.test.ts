@@ -9,9 +9,9 @@ beforeAll(() => {
   execFileSync('node', [join(__dirname, '..', 'esbuild.config.mjs')], { cwd: join(__dirname, '..') })
 })
 
-function run(args: string[]): { code: number; stdout: string; stderr: string } {
+function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync('node', [BUNDLE, ...args], { encoding: 'utf8' })
+    const stdout = execFileSync('node', [BUNDLE, ...args], { encoding: 'utf8', env: { ...process.env, ...env } })
     return { code: 0, stdout, stderr: '' }
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string }
@@ -102,6 +102,39 @@ describe('amico-run CLI', () => {
     const r = run([script, '--runs-root', join(root, 'runs'), '--spec', join(root, 'spec.json'), '--julia', julia])
     expect(r.code).toBe(0)
     expect(r.stdout).toContain(`--project=${env}`)
+  })
+  it('--spec tier=free: verification runs after FINISHED (AMICODE_VERIFIED + verification.toml); vetted: neither (spec C)', () => {
+    const root = tmpRoot()
+    const script = fakeJulia(root, 's.jl', '')
+    const env = join(root, 'env')
+    mkdirSync(env, { recursive: true })
+    writeFileSync(join(env, 'Project.toml'), `[deps]\n`)
+    writeFileSync(join(env, 'Manifest.toml'), `julia_version = "1.11.0"\n`)
+    // fake harness (node) that writes agree=true; wired as the julia binary so
+    // runVerification spawns it (AMICO_VERIFY_RUNNER unset → spec.julia_binary)
+    const harness = fakeJulia(root, 'h.js',
+      `const fs=require('fs'),p=require('path');fs.writeFileSync(p.join(process.argv[process.argv.length-2],'verification.toml'),'schema_version = "1"\\nagree = true\\n')`)
+    writeFileSync(join(root, 'authoring.json'), JSON.stringify({
+      schema_version: 1, allowlist: ['Piccolo'], support_set: ['JLD2', 'TOML'],
+      verify_harness: harness, verify_tolerance: 0.01,
+    }))
+    const julia = fakeJulia(root, 'j', `console.log('DONE f=0.99')`)
+    const AUTH = { AMICO_AUTHORING_FILE: join(root, 'authoring.json'), AMICO_VERIFY_RUNNER: harness }
+
+    const freeSpec = { schema_version: '2', script_path: script, lab_id: 'default', tier: 'free', env: { kind: 'sandbox', project: env } }
+    writeFileSync(join(root, 'free.json'), JSON.stringify(freeSpec))
+    const rFree = run([script, '--runs-root', join(root, 'runs'), '--spec', join(root, 'free.json'), '--julia', julia], AUTH)
+    expect(rFree.code).toBe(0)
+    expect(rFree.stdout).toMatch(/AMICODE_VERIFIED agree=true/)
+    const freeDir = /runDir=(\S+)/.exec(rFree.stdout)![1]
+    expect(existsSync(join(freeDir, 'verification.toml'))).toBe(true)
+
+    const vetSpec = { schema_version: '2', script_path: script, lab_id: 'default', tier: 'vetted', env: { kind: 'provisioned' } }
+    writeFileSync(join(root, 'vet.json'), JSON.stringify(vetSpec))
+    const rVet = run([script, '--runs-root', join(root, 'runs2'), '--spec', join(root, 'vet.json'), '--julia', julia], AUTH)
+    expect(rVet.stdout).not.toMatch(/AMICODE_VERIFIED/)
+    const vetDir = /runDir=(\S+)/.exec(rVet.stdout)![1]
+    expect(existsSync(join(vetDir, 'verification.toml'))).toBe(false)
   })
   it('SIGTERM to the CLI → abort lane, exit 130', async () => {
     const root = tmpRoot()

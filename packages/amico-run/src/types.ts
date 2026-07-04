@@ -19,6 +19,8 @@ export interface SpecStamp {
   canonical: string                 // stable-key-order solvespec.json body
   tier?: string
   hashes?: Record<string, string>   // incl. gate-computed spec_hash
+  julia_binary?: string             // resolved julia bin — the free-tier verify harness runs under it
+  env_project?: string              // resolved env project — --project for the harness
 }
 
 export type RunEvent =
