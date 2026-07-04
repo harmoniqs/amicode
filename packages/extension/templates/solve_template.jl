@@ -35,10 +35,55 @@ qcp = SmoothPulseProblem(qtraj, N;
     Q = Q, R = R)
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
-# Shared run-dir emit helper (anti-drift; see emit_formulation.jl). Resolved
-# relative to THIS template's dir, not the run-dir cwd, so the include works
-# wherever amico-run drops us.
-include(joinpath(@__DIR__, "emit_formulation.jl"))
+# Pre-solve run-dir emit helper: writes formulation.toml (the DECLARED problem —
+# physics + objective), the authoritative identity source #64 keys hashes off.
+# Defined INLINE — NOT include(joinpath(@__DIR__, "...")): AGENTS.md deploys this
+# template by copying THIS FILE ALONE into a scratch dir and running the copy, so
+# @__DIR__ is that scratch dir and a sibling include resolves to a file that was
+# never copied (LoadError before solve!). When a second template needs this, lift
+# it verbatim into a Julia package (AmicoRunDir.jl) resolved via `using` — the only
+# share mechanism that survives the single-file copy.
+#
+# Contract (validated by @amicode/schema formulation.schema.json):
+#   [system]      family (required) + optional name + family-dependent params
+#   [formulation] gate + T + N (required) + optional Q/R + family-dependent extras
+# system_params / formulation_extra are merged per family (the schema constrains
+# known families but tolerates unknown leaves), so a rydberg caller can pass
+# Omega_max/C6/... with no edit here.
+function emit_formulation(;
+    system_family::AbstractString,
+    gate_name::AbstractString,
+    system_params::AbstractDict = Dict{String,Any}(),
+    system_name::Union{AbstractString,Nothing} = nothing,
+    formulation_extra::AbstractDict = Dict{String,Any}(),
+    path::AbstractString = "formulation.toml",
+)
+    system = Dict{String,Any}("family" => String(system_family))
+    if system_name !== nothing
+        system["name"] = String(system_name)
+    end
+    for (k, v) in system_params
+        system[String(k)] = v
+    end
+
+    formulation = Dict{String,Any}("gate" => String(gate_name))
+    for (k, v) in formulation_extra
+        formulation[String(k)] = v
+    end
+
+    doc = Dict{String,Any}(
+        "schema_version" => "1",   # run-dir contract version (@amicode/schema formulation schema)
+        "system" => system,
+        "formulation" => formulation,
+    )
+
+    tmp = path * ".tmp"
+    open(tmp, "w") do io
+        TOML.print(io, doc)
+    end
+    mv(tmp, path; force = true)   # atomic swap — a partial read never sees a half-written file
+    return path
+end
 
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
 # `AbstractIntermediateCallback` (the blessed, solver-agnostic per-iter plot
@@ -98,8 +143,7 @@ end
 # Pre-solve: drop formulation.toml — the DECLARED problem (physics + objective),
 # written before solve! while every FILL-IN var is in scope. Authoritative
 # identity source (#64 keys hashes off this); [system] = the device, [formulation]
-# = the optimal-control problem posed against it. Via the shared helper so the
-# shape can't drift across templates.
+# = the optimal-control problem posed against it.
 emit_formulation(;
     system_family = "transmon",
     gate_name = gate_name,

@@ -144,14 +144,44 @@ describe("formulation.toml schema (System÷Formulation)", () => {
     delete (noGate.formulation as Record<string, unknown>).gate;
     expect(hasErr(validate(noGate, "formulation").errors, '/formulation: missing required key "gate"')).toBe(true);
   });
-  it("leaf fields are LENIENT per family (a rydberg [system] has no delta, extra keys OK)", () => {
-    // No delta/levels; family-specific keys instead — must still validate (M2 parity).
+  it("UNKNOWN family stays lenient (a rydberg [system] has no delta; extra leaves ride through)", () => {
+    // No transmon branch fires — only family + gate/T/N are required, family-specific leaves pass.
     const rydberg = {
       schema_version: "1",
       system: { family: "rydberg", Omega_max: 5.0, Delta_max: 10.0, C6: 862690.0, distance: 5.5 },
       formulation: { gate: "CZ", T: 0.5, N: 40 },
     };
     expect(validate(rydberg, "formulation").ok).toBe(true);
+  });
+  it("KNOWN family (transmon) requires its identity leaves: delta/levels/drive_max", () => {
+    for (const leaf of ["delta", "levels", "drive_max"]) {
+      const obj = load("formulation");                       // the valid transmon fixture
+      delete (obj.system as Record<string, unknown>)[leaf];
+      const r = validate(obj, "formulation");
+      expect(r.ok, `transmon missing ${leaf} should reject`).toBe(false);
+      expect(hasErr(r.errors, `/system: missing required key "${leaf}"`)).toBe(true);
+    }
+  });
+  it("transmon leaves are type-checked (levels must be an integer)", () => {
+    const obj = load("formulation");
+    (obj.system as Record<string, unknown>).levels = 3.5;
+    const r = validate(obj, "formulation");
+    expect(r.ok).toBe(false);
+    expect(hasErr(r.errors, "/system/levels")).toBe(true);
+  });
+  it("formulation requires the family-independent core: gate + T + N (Q/R stay optional)", () => {
+    for (const leaf of ["gate", "T", "N"]) {
+      const obj = load("formulation");
+      delete (obj.formulation as Record<string, unknown>)[leaf];
+      const r = validate(obj, "formulation");
+      expect(r.ok, `formulation missing ${leaf} should reject`).toBe(false);
+      expect(hasErr(r.errors, `/formulation: missing required key "${leaf}"`)).toBe(true);
+    }
+    // Q and R absent → still valid (optional per the Slack-agreed shape).
+    const noWeights = load("formulation");
+    delete (noWeights.formulation as Record<string, unknown>).Q;
+    delete (noWeights.formulation as Record<string, unknown>).R;
+    expect(validate(noWeights, "formulation").ok).toBe(true);
   });
   it("the invalid fixture (missing family + gate) is rejected", () => {
     expect(validateFile(join(here, "fixtures", "invalid", "formulation.toml"), "formulation").ok).toBe(false);
