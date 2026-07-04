@@ -335,7 +335,7 @@ export class RunsManager implements vscode.Disposable {
       iter: (rec: IterRecord) => this.routeIter(p, rec),
       // A FINISHED that landed between the existsSync check and this replay —
       // rare race; treat exactly like a live completion (fans out + promotes).
-      run: (c: RunCompletion) => this.completeRun(p.runId, c.status, c.fidelity),
+      run: (c: RunCompletion) => this.completeRun(c),   // whole object — see completeRun (#84 seam)
       pulse: (e: PulseEvent) => { if (e.type === "meta") p.pulses.arm(e.meta); this.routePulse(p.runId, e); },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
@@ -391,28 +391,35 @@ export class RunsManager implements vscode.Disposable {
     const t = this.readTerminal(p.runDir);
     if (!t) return;   // torn/invalid FINISHED — next tick retries
     p.finishedSeen = true;
-    this.completeRun(p.runId, t.status, t.fidelity);
+    this.completeRun({ runId: p.runId, runDir: p.runDir, ...t });
   }
 
   /** Terminal handling for ANY run, selected or not: registry, teardown,
-   *  channel, inspector/status-bar (selected only), promote (any run, once). */
-  private completeRun(runId: string, status: RunStatus, fidelity?: number): void {
-    const rec = this.registry.get(runId);
+   *  channel, inspector/status-bar (selected only), promote (any run, once).
+   *
+   *  Takes the WHOLE RunCompletion (never exploded into positional fields) —
+   *  this is the #84 seam: every completion path (ingestRunDir replay, live
+   *  checkFinished) funnels the object built by ONE shared read, so an
+   *  additive contract field (#81's `formulation` next, then #64 hashing /
+   *  #41 usage) reaches every consumer by construction instead of being
+   *  re-plumbed per path. Consumers cherry-pick at the leaf, not mid-pipe. */
+  private completeRun(c: RunCompletion): void {
+    const rec = this.registry.get(c.runId);
     if (!rec || rec.phase === "finished") return;   // idempotent (watch + poll can both fire)
-    this.registry.markFinished(runId, status, fidelity);
-    const p = this.pipelines.get(runId);
+    this.registry.markFinished(c.runId, c.status, c.fidelity);
+    const p = this.pipelines.get(c.runId);
     p?.dispose();
-    this.pipelines.delete(runId);
-    this.opts.channel.appendLine(`[runs] ${runId} ${status}${fidelity !== undefined ? ` F=${fidelity.toFixed(6)}` : ""}`);
-    if (status !== "completed") this.opts.channel.appendLine(`[runs] see ${path.join(rec.runDir, "run.log")}`);
+    this.pipelines.delete(c.runId);
+    this.opts.channel.appendLine(`[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`);
+    if (c.status !== "completed") this.opts.channel.appendLine(`[runs] see ${path.join(rec.runDir, "run.log")}`);
     // Terminal state to the inspector for EVERY run (its pane's badge stops
     // saying "running" even in the background); status bar for the selected run.
-    getInspector()?.postCompletion(runId, status, fidelity);
-    if (this.selected === runId) {
-      this.opts.statusBar?.setRun({ runId, outputDir: rec.runDir, startedAt: 0, status, latestIter: rec.latestIter, fidelity });
+    getInspector()?.postCompletion(c.runId, c.status, c.fidelity);
+    if (this.selected === c.runId) {
+      this.opts.statusBar?.setRun({ runId: c.runId, outputDir: rec.runDir, startedAt: 0, status: c.status, latestIter: rec.latestIter, fidelity: c.fidelity });
     }
-    if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
-      this.promptPromote({ runId, runDir: rec.runDir, fidelity });
+    if (c.status === "completed" && c.fidelity !== undefined && c.fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
+      this.promptPromote({ runId: c.runId, runDir: rec.runDir, fidelity: c.fidelity });
     }
   }
 
