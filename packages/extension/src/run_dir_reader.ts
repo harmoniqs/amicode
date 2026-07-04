@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse } from "smol-toml";
-import { validateManifest, validateFinished, validateResult } from "@amicode/amico-run";
+import { validateManifest, validateFinished, validateResult, validateFormulation } from "@amicode/amico-run";
 import type { RunStatus } from "./types";
 
 // ============================================================================
@@ -105,7 +105,13 @@ export class PulseStream {
 }
 
 export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
-export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number }
+
+/** The pre-solve problem definition, surfaced from formulation.toml when present
+ *  and valid (additive to the run-dir contract). `[system]`/`[formulation]` are
+ *  lenient leaf-field bags per family (see formulation.schema.json), so this is
+ *  intentionally loose; the only guaranteed keys are system.family + formulation.gate. */
+export interface Formulation { system: Record<string, unknown>; formulation: Record<string, unknown> }
+export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number; formulation?: Formulation }
 export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
 
 /** Where ingestRunDir routes its findings. The live impl carries the
@@ -134,6 +140,18 @@ export class SinkDedup {
 export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   try { return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>; }
   catch { return undefined; }
+}
+
+/** Read + validate formulation.toml (#64 counterpart) — additive, absent → undefined.
+ *  Shared by BOTH completion routes (ingestRunDir replay + the live-finish path) so
+ *  they can't diverge on whether a run carries its problem identity. Say-why-on-
+ *  invalid; never throws. */
+export function readFormulation(runDir: string): Formulation | undefined {
+  const raw = readTomlSafe(path.join(runDir, "formulation.toml"));
+  if (!raw) return undefined;
+  const v = validateFormulation(raw);
+  if (!v.ok) { console.warn(`[amico] formulation.toml present but invalid (${runDir}): ${v.errors.join("; ")}`); return undefined; }
+  return { system: raw.system as Record<string, unknown>, formulation: raw.formulation as Record<string, unknown> };
 }
 
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
@@ -169,6 +187,11 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     if (newestPulse) sink.pulse(newestPulse);
   }
 
+  // formulation.toml (#64 counterpart) — the pre-solve problem definition, read via
+  // the shared readFormulation helper so this replay path and the live-finish path
+  // stay in lockstep (additive; absent → undefined, older runs unchanged).
+  const formulation = readFormulation(runDir);
+
   // FINISHED is the authoritative terminal signal
   const finished = readTomlSafe(path.join(runDir, "FINISHED"));
   if (!finished || !validateFinished(finished).ok) return logBytes;
@@ -186,7 +209,7 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
       else console.warn(`[amico] result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
     }
   }
-  sink.run({ runId, runDir, status, fidelity });
+  sink.run({ runId, runDir, status, fidelity, formulation });
   if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {
     sink.promote({ runId, runDir, fidelity });
   }

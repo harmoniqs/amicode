@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ingestRunDir, AMICODE_ITER_RE, parseAmicoNum, parsePulseMetaLine, parsePulseRecordLine, PulseStream, SinkDedup } from '../src/run_dir_reader'   // pure β.1-contract reader (vscode-free)
 
-function stageRun(opts: { status: string; exit: number; iters: number[]; fidelity?: number }): string {
+const VALID_FORMULATION =
+  'schema_version = "1"\n[system]\nfamily = "transmon"\nname = "qram-cleland"\nlevels = 3\ndelta = 0.2\ndrive_max = 0.2\n' +
+  '[formulation]\ngate = "X"\nT = 10.0\nN = 50\nQ = 100.0\nR = 0.01\n'
+// nonconforming: [system] has no family, [formulation] has no gate (the two DECLARED-label requireds)
+const INVALID_FORMULATION = 'schema_version = "1"\n[system]\nlevels = 3\n[formulation]\nT = 10.0\n'
+
+function stageRun(opts: { status: string; exit: number; iters: number[]; fidelity?: number; formulation?: string }): string {
   const root = mkdtempSync(join(tmpdir(), 'runs-'))
   const runId = 'r20260615-000000Z-ab12'
   const dir = join(root, runId); mkdirSync(dir, { recursive: true })
@@ -12,6 +18,7 @@ function stageRun(opts: { status: string; exit: number; iters: number[]; fidelit
     `schema_version = "1"\nrun_id = "${runId}"\nscript_path = "/s.jl"\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`)
   writeFileSync(join(dir, 'run.log'), opts.iters.map(k => `AMICODE_ITER iter=${k} f=0.1 inf_pr=1e-8 inf_du=1e-6`).join('\n') + '\n')
   if (opts.fidelity !== undefined) writeFileSync(join(dir, 'result.toml'), `schema_version = "1"\nfidelity = ${opts.fidelity}\niterations = ${Math.max(...opts.iters, 0)}\n`)
+  if (opts.formulation !== undefined) writeFileSync(join(dir, 'formulation.toml'), opts.formulation)
   writeFileSync(join(dir, 'FINISHED'), `status = "${opts.status}"\nexit_code = ${opts.exit}\n`)
   return dir
 }
@@ -68,6 +75,42 @@ describe('ingestRunDir — β.1 contract reading (replay)', () => {
     const sink = fakeSink()
     ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999 }), sink)
     expect(sink.pulse).not.toHaveBeenCalled()
+  })
+})
+
+// formulation.toml (#64 counterpart) — the pre-solve problem-definition file.
+// Additive to the reader: present+valid → surfaced on the completion record;
+// absent → undefined (older runs unchanged); present+invalid → dropped, run still reported.
+describe('ingestRunDir — formulation.toml surfacing (additive)', () => {
+  it('present + valid: surfaces [system]/[formulation] on the completion record', () => {
+    const sink = fakeSink()
+    ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, formulation: VALID_FORMULATION }), sink)
+    expect(sink.run).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'completed',
+      formulation: {
+        system: expect.objectContaining({ family: 'transmon', name: 'qram-cleland', delta: 0.2 }),
+        formulation: expect.objectContaining({ gate: 'X', T: 10.0, N: 50, Q: 100.0, R: 0.01 }),
+      },
+    }))
+  })
+
+  it('absent: completion record carries no formulation (older runs unchanged)', () => {
+    const sink = fakeSink()
+    ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999 }), sink)
+    expect(sink.run).toHaveBeenCalledTimes(1)
+    expect(sink.run.mock.calls[0][0].formulation).toBeUndefined()
+    expect(sink.run).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', fidelity: 0.999 }))
+  })
+
+  it('present but invalid: dropped (formulation undefined), run still reported + still promotes', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const sink = fakeSink()
+    ingestRunDir(stageRun({ status: 'completed', exit: 0, iters: [1], fidelity: 0.999, formulation: INVALID_FORMULATION }), sink)
+    expect(sink.run.mock.calls[0][0].formulation).toBeUndefined()   // invalid → not surfaced
+    expect(sink.run).toHaveBeenCalledWith(expect.objectContaining({ status: 'completed', fidelity: 0.999 }))
+    expect(sink.promote).toHaveBeenCalled()                          // fidelity path untouched
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('formulation.toml present but invalid'))
+    warn.mockRestore()
   })
 })
 

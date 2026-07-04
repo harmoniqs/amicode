@@ -1,0 +1,9 @@
+schema_version = "1"
+
+[system]
+name = "qram-cleland"
+levels = 3
+
+[formulation]
+T = 10.0
+N = 50

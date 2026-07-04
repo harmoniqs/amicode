@@ -1,0 +1,48 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/formulation/v1",
+  "title": "amico run-dir formulation.toml",
+  "description": "The PROBLEM a run was asked to solve — the physics and objective, written PRE-SOLVE by the Julia template. Split into [system] (the physical device) and [formulation] (the optimal-control problem posed against it). Additive third file in the run-dir contract (alongside run.toml / result.toml); it is the authoritative identity source #64's hashing keys off. The STRUCTURE is fixed (schema_version + [system] + [formulation]). Leaf fields are constrained PER FAMILY via conditional (if/then) branches keyed on system.family: a KNOWN family requires + type-checks its identity params (transmon: delta/levels/drive_max), while an UNKNOWN family stays lenient (additionalProperties: true) so a new device type validates before its branch lands. Add a family's constraints in the same change as that family's producer template — that keeps every such tightening additive (no pre-existing on-disk data of that family to break), so it never forces a schema_version bump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "system", "formulation"],
+  "properties": {
+    "schema_version": { "enum": ["1"], "description": "run-dir contract version (enum = the supported-version SET; grows by one entry per bump)" },
+    "system": {
+      "type": "object",
+      "description": "The physical device being driven — independent of the gate asked of it. Only the family label is required at this level; each KNOWN family adds its own required + typed leaves via the allOf/if-then branches below (transmon: delta/levels/drive_max). additionalProperties stays true so a family can carry extra params, and an unknown family validates leniently until its branch is added.",
+      "additionalProperties": true,
+      "required": ["family"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1, "description": "DECLARED family label (the family/type of system, e.g. \"transmon\", \"rydberg\") — cannot be reverse-derived from the Julia struct's type, so the template declares it" },
+        "name": { "type": "string", "description": "optional user-assigned device name (from the #73 save flow, if named)" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "family": { "const": "transmon" } }, "required": ["family"] },
+          "then": {
+            "required": ["delta", "levels", "drive_max"],
+            "properties": {
+              "delta": { "type": "number", "description": "anharmonicity δ (GHz, positive convention)" },
+              "levels": { "type": "integer", "minimum": 2, "description": "transmon levels modeled (2 = ideal qubit; 3 = qubit + 1 leakage)" },
+              "drive_max": { "type": "number", "exclusiveMinimum": 0, "description": "per-quadrature drive bound (GHz)" }
+            }
+          }
+        }
+      ]
+    },
+    "formulation": {
+      "type": "object",
+      "description": "The optimal-control problem posed against [system]: the target gate, time horizon, and objective weights. gate + T + N are the family-independent core every formulation carries; Q/R are optional (a family may weight its objective differently or not at all). additionalProperties stays true for family-dependent extras.",
+      "additionalProperties": true,
+      "required": ["gate", "T", "N"],
+      "properties": {
+        "gate": { "type": "string", "minLength": 1, "description": "DECLARED gate label (e.g. \"X\", \"CZ\") — GATES[:X] is a matrix, so the name is lost on that line; the template declares it" },
+        "T": { "type": "number", "exclusiveMinimum": 0, "description": "gate-time horizon (ns)" },
+        "N": { "type": "integer", "minimum": 1, "description": "timesteps" },
+        "Q": { "type": "number", "description": "infidelity objective weight (optional — defines the optimum when present)" },
+        "R": { "type": "number", "description": "control-effort objective weight (optional — defines the optimum when present)" }
+      }
+    }
+  }
+}

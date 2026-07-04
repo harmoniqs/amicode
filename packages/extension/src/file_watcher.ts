@@ -6,7 +6,7 @@ import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
+  AMICODE_ITER_RE, ingestRunDir, readTomlSafe, readFormulation, parseAmicoNum, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
 
@@ -248,7 +248,10 @@ export class RunsRootWatcher implements vscode.Disposable {
         else this.opts.channel.appendLine(`[runs] result.toml present but invalid: ${v.errors.join("; ")}`);
       }
     }
-    this.sink?.run({ runId, runDir, status, fidelity });
+    // Same read as the replay path (shared helper — the two completion routes
+    // can't diverge on whether a live-finished run carries its formulation).
+    const formulation = readFormulation(runDir);
+    this.sink?.run({ runId, runDir, status, fidelity, formulation });
     if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
       this.sink?.promote({ runId, runDir, fidelity });
     }

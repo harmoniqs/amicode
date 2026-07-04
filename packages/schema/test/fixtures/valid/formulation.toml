@@ -1,0 +1,15 @@
+schema_version = "1"
+
+[system]
+family = "transmon"
+name = "qram-cleland"
+levels = 3
+delta = 0.2
+drive_max = 0.2
+
+[formulation]
+gate = "X"
+T = 10.0
+N = 50
+Q = 100.0
+R = 0.01

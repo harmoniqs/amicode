@@ -17,6 +17,10 @@ export function validateFinished(v: unknown): Validation {
   return validate(v, "finished");
 }
 
+export function validateFormulation(v: unknown): Validation {
+  return validate(v, "formulation");
+}
+
 export function validateResult(v: unknown): Validation {
   return validate(v, "result");
 }

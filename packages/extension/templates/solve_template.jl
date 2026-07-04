@@ -11,13 +11,20 @@ using TOML
 using Printf
 
 # ── FILL IN ──────────────────────────────────────────────────────────────
-δ          = 0.2        # anharmonicity (GHz, positive convention)
-levels     = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
-gate       = GATES[:X]
-T          = 10.0       # gate time (ns)
-N          = 50         # timesteps
-drive_max  = 0.2        # per-quadrature drive bound (GHz)
-max_iter   = 60
+δ           = 0.2        # anharmonicity (GHz, positive convention)
+levels      = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
+# Standard gate — the symbol is the single source: it drives both the matrix AND the
+# label, so they can't drift (GATES[:X] is a matrix; the ":X" name is otherwise lost).
+gate_sym    = :X
+gate        = GATES[gate_sym]
+gate_name   = string(gate_sym)
+# — Bespoke gate NOT in the (deliberately sparse) GATES set (cat / Fock-mix / CXX / ZZ…)?
+#   Declare both directly — there's no symbol to derive from:  gate = my_unitary; gate_name = "cat-CZ"
+system_name = nothing    # optional user-assigned device name (e.g. "qram-cleland"); nothing if unnamed
+T           = 10.0       # gate time (ns)
+N           = 50         # timesteps
+drive_max   = 0.2        # per-quadrature drive bound (GHz)
+max_iter    = 60
 # ─────────────────────────────────────────────────────────────────────────
 
 sys = TransmonSystem(; δ = δ, levels = levels, drive_bounds = fill(drive_max, 2))
@@ -26,10 +33,62 @@ op  = size(gate, 1) == sys.levels ? gate : EmbeddedOperator(gate, sys)
 times   = collect(range(0.0, T, length = N))
 initial = 0.1 * randn(sys.n_drives, N)
 qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(initial, times), op)
+Q = 100.0   # infidelity objective weight — defines the optimum (recorded in formulation.toml)
+R = 1e-2    # control-effort objective weight — defines the optimum (recorded in formulation.toml)
 qcp = SmoothPulseProblem(qtraj, N;
     piccolo_options = PiccoloOptions(timesteps_all_equal = true),
-    Q = 100.0, R = 1e-2)
+    Q = Q, R = R)
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
+
+# Pre-solve run-dir emit helper: writes formulation.toml (the DECLARED problem —
+# physics + objective), the authoritative identity source #64 keys hashes off.
+# Defined INLINE — NOT include(joinpath(@__DIR__, "...")): AGENTS.md deploys this
+# template by copying THIS FILE ALONE into a scratch dir and running the copy, so
+# @__DIR__ is that scratch dir and a sibling include resolves to a file that was
+# never copied (LoadError before solve!). When a second template needs this, lift
+# it verbatim into a Julia package (AmicoRunDir.jl) resolved via `using` — the only
+# share mechanism that survives the single-file copy.
+#
+# Contract (validated by @amicode/schema formulation.schema.json):
+#   [system]      family (required) + optional name + family-dependent params
+#   [formulation] gate + T + N (required) + optional Q/R + family-dependent extras
+# system_params / formulation_extra are merged per family (the schema constrains
+# known families but tolerates unknown leaves), so a rydberg caller can pass
+# Omega_max/C6/... with no edit here.
+function emit_formulation(;
+    system_family::AbstractString,
+    gate_name::AbstractString,
+    system_params::AbstractDict = Dict{String,Any}(),
+    system_name::Union{AbstractString,Nothing} = nothing,
+    formulation_extra::AbstractDict = Dict{String,Any}(),
+    path::AbstractString = "formulation.toml",
+)
+    system = Dict{String,Any}("family" => String(system_family))
+    if system_name !== nothing
+        system["name"] = String(system_name)
+    end
+    for (k, v) in system_params
+        system[String(k)] = v
+    end
+
+    formulation = Dict{String,Any}("gate" => String(gate_name))
+    for (k, v) in formulation_extra
+        formulation[String(k)] = v
+    end
+
+    doc = Dict{String,Any}(
+        "schema_version" => "1",   # run-dir contract version (@amicode/schema formulation schema)
+        "system" => system,
+        "formulation" => formulation,
+    )
+
+    tmp = path * ".tmp"
+    open(tmp, "w") do io
+        TOML.print(io, doc)
+    end
+    mv(tmp, path; force = true)   # atomic swap — a partial read never sees a half-written file
+    return path
+end
 
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
 # `AbstractIntermediateCallback` (the blessed, solver-agnostic per-iter plot
@@ -86,6 +145,18 @@ let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
     flush(stdout)
 end
 
+# Pre-solve: drop formulation.toml — the DECLARED problem (physics + objective),
+# written before solve! while every FILL-IN var is in scope. Authoritative
+# identity source (#64 keys hashes off this); [system] = the device, [formulation]
+# = the optimal-control problem posed against it.
+emit_formulation(;
+    system_family = "transmon",
+    gate_name = gate_name,
+    system_name = system_name,
+    system_params = Dict("delta" => δ, "levels" => levels, "drive_max" => drive_max),
+    formulation_extra = Dict("T" => T, "N" => N, "Q" => Q, "R" => R),
+)
+
 # AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
 # IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
@@ -132,6 +203,10 @@ JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` c
 open("result.toml.tmp", "w") do io
     # Record the regime each run actually solved (scalar FILL-IN params), so the
     # result is self-describing — not just fidelity/iterations.
+    # NOTE: [params] is now REDUNDANT with the pre-solve formulation.toml (the
+    # authoritative problem-definition file). Kept for now so in-flight consumers
+    # (#73 card reads params.T/params.system) don't break; killing it is a
+    # follow-up once those readers migrate to formulation.toml (tracked in #64).
     TOML.print(io, Dict(
         "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
         "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,
