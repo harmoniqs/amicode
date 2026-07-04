@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as vscodeMock from "vscode";
 import { LocalExecutor, Scheduler, type SchedulerEvent } from "@amicode/amico-run";
 
 // Smoke corpus (1.4a, #61) — the END-TO-END lane: real Scheduler (#56) → real
@@ -16,6 +17,11 @@ import { LocalExecutor, Scheduler, type SchedulerEvent } from "@amicode/amico-ru
 // read, scheduler lifecycle events satisfy the manager's structural seam, and
 // per-run telemetry lands runId-keyed on the inspector with no cross-tagging.
 // (#62 wires this into CI as a required gate.)
+//
+// SCOPE — don't over-trust (review #78): fake-julia is an independent encoding
+// of the AMICODE_* grammar, so this suite guards WIRING (fake ↔ parser), NOT
+// FORMAT (template ↔ parser). A solve_template.jl emit-format change stays
+// green here while real solves break; that boundary is #83's format guard.
 
 const { inspector } = vi.hoisted(() => ({
   inspector: {
@@ -39,11 +45,14 @@ const EMITTER = join(CORPUS, "fake-julia");
 const tick = (m: RunsManager): void => (m as unknown as { tick(): void }).tick();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 /** Pump the manager's poll path until `pred` holds (the 700ms wall-clock poll
- *  is too slow for a test — tick() is the same code path, deterministic). */
-async function pumpUntil(m: RunsManager, pred: () => boolean, ms = 8000): Promise<void> {
+ *  is too slow for a test — tick() is the same code path, deterministic).
+ *  THROWS on timeout (review #78): a wiring regression must fail fast at the
+ *  offending await, not surface as an opaque suite hang. */
+async function pumpUntil(m: RunsManager, pred: () => boolean, what: string, ms = 8000): Promise<void> {
   const t0 = Date.now();
   while (!pred() && Date.now() - t0 < ms) { tick(m); await sleep(25); }
   tick(m);
+  if (!pred()) throw new Error(`pumpUntil timed out after ${ms}ms waiting for: ${what}`);
 }
 
 describe("smoke corpus — Scheduler → executor → run-dir → RunsManager → inspector", () => {
@@ -64,11 +73,11 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     const b = scheduler.enqueue({ scriptPath: join(CORPUS, "cavity_displacement.jl"), opts });
 
     const ha = await a.handle;                       // head of queue — starts immediately
-    await pumpUntil(m, () => existsSync(join(ha.runDir, "FINISHED")));
+    await pumpUntil(m, () => existsSync(join(ha.runDir, "FINISHED")), "run A FINISHED on disk");
     expect((await ha.finished).status).toBe("completed");
 
     const hb = await b.handle;                       // resolves only after A finished (serial)
-    await pumpUntil(m, () => existsSync(join(hb.runDir, "FINISHED")));
+    await pumpUntil(m, () => existsSync(join(hb.runDir, "FINISHED")), "run B FINISHED on disk");
     expect((await hb.finished).status).toBe("completed");
 
     // --- scheduler lifecycle: strict serial ordering, queueIds line up ---
@@ -87,7 +96,7 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     }
 
     // --- registry: both finished, fidelity + iter high-water from the stream ---
-    await pumpUntil(m, () => m.runs().filter((r) => r.phase === "finished").length === 2);
+    await pumpUntil(m, () => m.runs().filter((r) => r.phase === "finished").length === 2, "both runs terminal in the registry");
     expect(m.runs().find((r) => r.runId === ha.runId)).toMatchObject({
       phase: "finished", status: "completed", fidelity: 0.9993, latestIter: 4,
     });
@@ -119,6 +128,35 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     expect(inspector.postIterationRecord).toHaveBeenCalledWith(ha.runId, expect.objectContaining({ iter: 4 }));
     expect(inspector.postIterationRecord).toHaveBeenCalledWith(hb.runId, expect.objectContaining({ iter: 3 }));
 
+    m.dispose();
+  }, 20000);
+
+  it("failure lane: a crashing solve lands FINISHED{failed}, no result.toml, no fidelity, promote suppressed", async () => {
+    const runsRoot = mkdtempSync(join(tmpdir(), "smoke-corpus-fail-"));
+    const m = new RunsManager({ runsRoot, channel });
+    m.start();
+    const scheduler = new Scheduler(new LocalExecutor());
+    m.attachScheduler(scheduler);
+    const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
+
+    const f = scheduler.enqueue({ scriptPath: join(CORPUS, "failing_solve.jl"), opts: { runsRoot, julia: { julia: EMITTER } } });
+    const hf = await f.handle;
+    await pumpUntil(m, () => existsSync(join(hf.runDir, "FINISHED")), "failing run FINISHED on disk");
+    expect((await hf.finished).status).toBe("failed");
+
+    // Run-dir contract for the failure lane: FINISHED written by the EXECUTOR
+    // (never the script), and no result.toml (the emitter dies before it).
+    expect(existsSync(join(hf.runDir, "result.toml"))).toBe(false);
+    await pumpUntil(m, () => m.runs().find((r) => r.runId === hf.runId)?.phase === "finished", "failed run terminal in the registry");
+    expect(m.runs().find((r) => r.runId === hf.runId)).toMatchObject({ phase: "finished", status: "failed" });
+    expect(m.runs().find((r) => r.runId === hf.runId)?.fidelity).toBeUndefined();
+    // …but the telemetry it emitted BEFORE dying was tracked (iters 0-2).
+    expect(m.runs().find((r) => r.runId === hf.runId)?.latestIter).toBe(2);
+
+    // Completion fans runId-keyed with no fidelity; promote never fires.
+    expect(inspector.postCompletion).toHaveBeenCalledWith(hf.runId, "failed", undefined);
+    expect(promote).not.toHaveBeenCalled();
+    promote.mockRestore();
     m.dispose();
   }, 20000);
 });
