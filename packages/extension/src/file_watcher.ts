@@ -104,6 +104,11 @@ class LiveRunSink implements RunSink {
 export class RunsRootWatcher implements vscode.Disposable {
   private rootWatcher?: fs.FSWatcher;
   private activeRunDir?: string;
+
+  /** The run dir the watcher is currently following (`latest`) — the target for
+   *  the Run Inspector's Stop / Save / Open controls. */
+  getActiveRunDir(): string | undefined { return this.activeRunDir; }
+
   private activeRunWatcher?: fs.FSWatcher;
   private logTailer?: LogTailer;
   private sink?: LiveRunSink;
