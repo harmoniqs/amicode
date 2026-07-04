@@ -4,12 +4,20 @@ import { LocalExecutor } from './local_executor.js'
 import { ConfigError, type Finished, type SubmitOpts } from './types.js'
 import { readAuthoring } from './authoring.js'
 import { runGate } from './gate.js'
+import { trySubcommand } from './subcommands.js'
 
 const USAGE = `usage: amico-run <script.jl> [--executor local] [--lab <id-or-path>]
                  [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]
-                 [--spec <solvespec.json>]   (spec C: validate + gate before launch)`
+                 [--spec <solvespec.json>]   (spec C: validate + gate before launch)
+       amico-run resolve --platform <p> --kind <k> --size <n>   (tier resolution → JSON)
+       amico-run sandbox <workspace-dir> --packages A,B,…       (generate env/Project.toml)
+       (a bare script literally named "resolve"/"sandbox" still launches — dispatch checks the file exists)`
 
 export async function main(argv: string[]): Promise<number> {
+  // spec C subcommands — dispatched before the launch flag loop
+  const sub = trySubcommand(argv)
+  if (sub !== undefined) return sub
+
   let script: string | undefined
   let executor = 'local'
   let specPath: string | undefined
