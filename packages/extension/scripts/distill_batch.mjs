@@ -80,6 +80,7 @@ function distillerConfig() {
         [`${OPS}/**`]: "allow",
         [`${PROBLEMS_ROOT}/**`]: "allow",
         [`${RUNS_ROOT}/**`]: "allow",
+        [`${path.join(HOME, "harmoniqs", "demos")}/**`]: "allow", // demo-ingest reads
       },
     },
   });

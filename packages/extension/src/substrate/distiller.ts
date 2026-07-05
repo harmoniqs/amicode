@@ -6,6 +6,8 @@
  *  shared module opencode-plugin/distill_queue.ts so the Bun-side plugin and
  *  the batch script produce IDENTICAL distiller processes via the
  *  distiller.config.json transport this module writes at activation. */
+import * as path from "node:path";
+import * as os from "node:os";
 import {
   enqueueJob,
   enqueueAndDrain,
@@ -51,6 +53,7 @@ export function buildDistillerConfigContent(s: DistillerSetup): Record<string, u
         [`${s.opsDir}/**`]: "allow",           // onboarding stream + queue state
         [`${s.problemsRoot}/**`]: "allow",     // events.jsonl reads
         [`${s.runsRoot}/**`]: "allow",         // result.toml / run.toml / pulse.jld2 reads
+        [`${path.join(os.homedir(), "harmoniqs", "demos")}/**`]: "allow", // demo-ingest (L1 §3)
       },
     },
   };
