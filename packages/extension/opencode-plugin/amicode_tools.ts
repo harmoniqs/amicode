@@ -50,6 +50,7 @@ import {
 import { entityHash } from "./hashes";
 import {
   ensureActiveProblem,
+  readActiveSlug,
   problemsDir,
   problemDir,
   writeEntityFiles,
@@ -758,6 +759,79 @@ export const AmicodeTools = async (_input: unknown) => ({
           return `Recorded ${a.entity} (event ${seq}): ${fields}.`;
         } catch (err) {
           return `Cannot record onboarding entity: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
+    // ── Recommendations (spec-20260705-024340 L1) — advisory, UNGATED. Records
+    // WHY a parameter is what it is (value + confidence + cited provenance), and
+    // the accept/override outcome. The value still LANDS via amicode_set_model /
+    // amicode_formulate; this annotates the decision so it's inspectable and so
+    // L2 (Veloce) has a machine-readable confidence to act on.
+    amicode_recommend: {
+      description:
+        "Record a parameter recommendation and its outcome (L1). Two actions: " +
+        "action=`propose` logs {stage, param, value, confidence: high|medium|low, " +
+        "provenance:[{source: own-precedent|demo|physics|default, ref, note}], alternatives?} — " +
+        "confidence is MECHANICAL per scores/memory/confidence-rubric.md (never a guess); " +
+        "action=`outcome` logs {stage, param, outcome: accepted|overridden, applied_value} AFTER " +
+        "the value lands via set_model/formulate (append-only pair, keyed on stage+param). " +
+        "No active problem workspace yet → a no-op receipt (recommendations begin at the problem stage).",
+      args: {
+        action: { type: "string", description: "propose | outcome" },
+        stage: { type: "string", description: "interview stage, e.g. model | formulate" },
+        param: { type: "string", description: "parameter name, e.g. N | T | levels | drive_max | warm_start" },
+        value: { type: ["string", "number", "boolean", "null"], description: "recommended value (propose)" },
+        confidence: { type: ["string", "null"], description: "high | medium | low (propose)" },
+        provenance: { type: ["array", "null"], description: "[{source, ref, note}] (propose) — cite where it came from" },
+        alternatives: { type: ["array", "null"], description: "optional [{value, note}] considered (propose)" },
+        outcome: { type: ["string", "null"], description: "accepted | overridden (outcome)" },
+        applied_value: { type: ["string", "number", "boolean", "null"], description: "the value actually applied (outcome)" },
+      },
+      async execute(a: {
+        action: string;
+        stage?: string;
+        param?: string;
+        value?: unknown;
+        confidence?: string | null;
+        provenance?: unknown[] | null;
+        alternatives?: unknown[] | null;
+        outcome?: string | null;
+        applied_value?: unknown;
+      }) {
+        try {
+          const slug = readActiveSlug();
+          if (!slug) return "No active problem yet — recommendation not recorded (recommendations begin at the problem stage).";
+          const key = `${a.stage ?? "?"}/${a.param ?? "?"}`;
+          if (a.action === "outcome") {
+            const seq = appendEvent(slug, {
+              entity: "recommendation",
+              action: "outcome",
+              diff: { key, stage: a.stage, param: a.param, outcome: a.outcome, applied_value: a.applied_value },
+              source: { tool: "amicode_recommend", stage: a.stage },
+            });
+            return `Recorded outcome for ${key}: ${a.outcome} (applied ${JSON.stringify(a.applied_value)}) [event ${seq}].`;
+          }
+          // default: propose
+          const seq = appendEvent(slug, {
+            entity: "recommendation",
+            action: "proposed",
+            diff: {
+              key,
+              stage: a.stage,
+              param: a.param,
+              value: a.value,
+              confidence: a.confidence,
+              provenance: a.provenance ?? [],
+              ...(a.alternatives ? { alternatives: a.alternatives } : {}),
+            },
+            source: { tool: "amicode_recommend", stage: a.stage },
+          });
+          const prov = Array.isArray(a.provenance) && a.provenance.length
+            ? (a.provenance[0] as { source?: string }).source ?? "?"
+            : "none";
+          return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov}) [event ${seq}].`;
+        } catch (err) {
+          return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
         }
       },
     },

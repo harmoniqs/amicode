@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { buildAboutUserSection, buildRecentProblemsSection } from "../../src/substrate/user_splice";
+import { buildAboutUserSection, buildRecentProblemsSection, buildReferenceDemosSection } from "../../src/substrate/user_splice";
 import { buildOpencodeConfigContent, prepareOpencodeProject } from "../../src/opencode_config";
 
 describe("buildAboutUserSection (spec §6)", () => {
@@ -77,5 +77,18 @@ describe("vault wiring (grant + splice + return)", () => {
     // the agent to anchor on it. The actual spliced sections carry these lines:
     expect(agents).not.toContain("Greet and recommend with this context");
     expect(agents).not.toContain("Before recommending parameters, check whether");
+  });
+});
+
+describe("buildReferenceDemosSection (L1 §3)", () => {
+  it("empty → ''", () => {
+    expect(buildReferenceDemosSection([])).toBe("");
+  });
+  it("renders demo lines + the precedent/medium-confidence instruction", () => {
+    const s = buildReferenceDemosSection(["- [stanford-bosonics-cat](demos/stanford-bosonics-cat.md) — cavity cat, N_fock=20"]);
+    expect(s).toContain("## Reference demos");
+    expect(s).toContain("N_fock=20");
+    expect(s).toMatch(/precedent/i);
+    expect(s).toMatch(/medium confidence/i);
   });
 });

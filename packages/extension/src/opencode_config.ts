@@ -9,8 +9,8 @@ import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } 
 import {
   resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, stageOpencodeSkills, type SkillIndexEntry,
 } from "./scores/package_skills";
-import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines, hasOnboardingCompleted, onboardingDir } from "./substrate/vault_store";
-import { buildAboutUserSection, buildRecentProblemsSection } from "./substrate/user_splice";
+import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines, readDemoLines, hasOnboardingCompleted, onboardingDir } from "./substrate/vault_store";
+import { buildAboutUserSection, buildRecentProblemsSection, buildReferenceDemosSection } from "./substrate/user_splice";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -416,7 +416,8 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     try {
       const about = buildAboutUserSection(readProfileMd(vaultDir));
       const recent = buildRecentProblemsSection(readKnowledgeLines(vaultDir));
-      for (const section of [about, recent]) {
+      const demos = buildReferenceDemosSection(readDemoLines(vaultDir)); // L1 §3
+      for (const section of [about, recent, demos]) {
         if (section) finalContent = finalContent + "\n\n" + section;
       }
     } catch (e) {

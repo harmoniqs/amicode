@@ -106,6 +106,20 @@ never ask questions that contradict what is recorded. If the record is wrong
 (wrong platform, stale value), correct it via the matching `amicode_*` tool
 FIRST, then continue.
 
+**Recommendations (L1) — every parameter carries confidence + provenance.**
+Before proposing any parameter (T, N, max_iter, drive_max, levels/Fock cutoff,
+objective, warm-start), derive a recommendation and score its confidence
+MECHANICALLY per `scores/memory/confidence-rubric.md` (read it — do not guess
+confidence): resolve own-precedent (a matching `## Your recent problems` card) →
+reference demos (`## Reference demos`) → the platform skill's physics → static
+default, and take the highest available. State it inline as
+`value — confidence — one-line provenance` (e.g. "N = 50 — high — your
+`x-gate-transmon` card, 8 solves"), call `amicode_recommend {action:"propose", …}`
+to record it, then offer it as the default and ask. After the value lands via
+`amicode_set_model`/`amicode_formulate`, call
+`amicode_recommend {action:"outcome", …}` (accepted if applied == recommended,
+else overridden). A warm-start is "high" ONLY if the banked pulse exists.
+
 **Anchor on the user's memory.** If an `## About this user` section is present,
 you already know their name, platforms, environment, and devices — greet them by
 name, lead with their platform, and NEVER ask what a section already answers. If a

@@ -19,6 +19,7 @@ Your input is ONE JSON job object (the message you were invoked with):
 - `{"kind":"run","run_id":"r...","runs_root":"...","vault":"...","ops":"..."}`
 - `{"kind":"sweep","session_ids":[...],"vault":"...","ops":"..."}` — distill these sessions
 - `{"kind":"onboarding","vault":"...","ops":"..."}` — materialize the profile
+- `{"kind":"demo","demo_dir":"/home/.../demos/<name>","vault":"...","ops":"..."}` — write a demo card (§ Demos)
 - `{"kind":"batch", ...}` — same as sweep but larger; same rules
 
 ## Hard rules (violating any of these is failure)
@@ -108,6 +109,14 @@ solve_count: 8
 first_seen: 2026-07-03
 last_seen: 2026-07-04
 sessions: [ses_..., ses_...]
+sys_params:                           # STRUCTURED regime scalars (L1 §2.1.1) —
+  levels: 3                           # the deterministic "high"-confidence gate.
+  drive_max: 0.2                      # Emit the platform's gating scalars:
+  # transmon: levels (int), drive_max (float)
+  # cavity/bosonic: fock_cutoff (int), chi (float), alpha or fock_index
+  # atoms: levels, rabi_max, delta_max, distance
+  # Only include scalars you actually read from the artifacts; omit unknowns
+  # (a missing scalar makes L1 score medium, never high — fail-safe).
 ---
 
 # <Target> on <platform>
@@ -212,6 +221,46 @@ allocation: null
 
 <params as a short table or bullets>
 ```
+
+## Demos (kind: `demo`) — the expert corpus (L1 §3)
+
+A `demo` job points at a curated demo directory (`demo_dir`). Write a **demo
+card** — same shape as a problem card but `source: demo`, `status: reference` —
+into `<vault>/amicode/demos/<slug>.md`, and add a line to `<vault>/amicode/DEMOS.md`
+(a SEPARATE index from KNOWLEDGE.md).
+
+Reading the demo, in order: (1) a `demo.toml` if present (entry script +
+metadata); else (2) the demo's `README`; else (3) docstrings of the
+representative script. **Representative script** for a many-script dir: the one
+named after the demo (`<name>.jl` / `main.jl` / `optimize_*.jl`), else the one
+importing the platform skill's system builder, else the largest top-level script.
+
+**Honesty:** never invent a fidelity or a param. If nothing readable yields
+params, write a **thin card** (platform + script pointer + "params not
+extracted") — never skip the demo, never fabricate.
+
+Demo card frontmatter (mirror the problem card + these):
+```
+type: amicode-demo
+slug: stanford-bosonics-cat
+source: demo
+status: reference
+platform: cavity
+problem_kind: state_prep
+target: cat-state
+fidelity: <only if the demo states one; omit otherwise>
+script: <relative path to the representative script>
+sys_params: { fock_cutoff: 20, chi: 0.0000328, alpha: 2 }   # if readable
+```
+
+DEMOS.md line:
+```
+- [stanford-bosonics-cat](demos/stanford-bosonics-cat.md) — cavity state_prep cat-state, N_fock=20, script scripts/optimize_cat_alpha2.jl
+```
+
+Match/idempotency: a `demo` job for a `demo_dir` already carded (same slug) with
+no change is a no-op. Demo cards use the same 3-tuple identity as problem cards
+but never merge with the user's own solves (source distinguishes them).
 
 ## Finishing a job
 

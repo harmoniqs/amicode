@@ -47,7 +47,7 @@ const VAULT = resolveVault();
 
 // Pre-create the distiller's working root so it never needs to explore the vault
 // root (which it isn't granted). First run starts from an empty skeleton.
-for (const d of ["", "problems", "pulses", "environment", "devices"]) {
+for (const d of ["", "problems", "pulses", "environment", "devices", "demos"]) {
   fs.mkdirSync(path.join(VAULT, "amicode", d), { recursive: true });
 }
 {
@@ -169,6 +169,16 @@ if (has("--runs-only") || has("--all")) {
   const sel = runs.slice(0, limit === Infinity ? runs.length : limit);
   console.log(`\n[runs] distilling ${sel.length} run(s):`);
   for (const r of sel) (distill({ kind: "run", run_id: r, vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, r) ? ok++ : fail++);
+}
+if (has("--demos-ingest")) {
+  const DEMOS = path.join(HOME, "harmoniqs", "demos");
+  const dirs = fs.existsSync(DEMOS)
+    ? fs.readdirSync(DEMOS).filter((d) => fs.statSync(path.join(DEMOS, d)).isDirectory())
+    : [];
+  const sel = dirs.slice(0, limit === Infinity ? dirs.length : limit);
+  console.log(`\n[demos] ingesting ${sel.length} demo(s) from ${DEMOS}:`);
+  for (const d of sel)
+    (distill({ kind: "demo", demo_dir: path.join(DEMOS, d), vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, d) ? ok++ : fail++);
 }
 if (has("--sweeps") || has("--all")) {
   const sel = sessions.slice(0, limit === Infinity ? sessions.length : limit);

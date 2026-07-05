@@ -54,11 +54,11 @@ export function readProfileMd(vaultDir: string): string {
   }
 }
 
-/** KNOWLEDGE.md list-item lines, capped (§2.3). */
-export function readKnowledgeLines(vaultDir: string, cap: number = KNOWLEDGE_LINE_CAP): string[] {
+/** List-item lines from an amicode index file, capped. */
+function readIndexLines(vaultDir: string, file: string, cap: number): string[] {
   let text: string;
   try {
-    text = fs.readFileSync(path.join(vaultDir, "amicode", "KNOWLEDGE.md"), "utf8");
+    text = fs.readFileSync(path.join(vaultDir, "amicode", file), "utf8");
   } catch {
     return [];
   }
@@ -66,6 +66,17 @@ export function readKnowledgeLines(vaultDir: string, cap: number = KNOWLEDGE_LIN
     .split("\n")
     .filter((l) => l.startsWith("- "))
     .slice(0, cap);
+}
+
+/** KNOWLEDGE.md list-item lines, capped (§2.3). */
+export function readKnowledgeLines(vaultDir: string, cap: number = KNOWLEDGE_LINE_CAP): string[] {
+  return readIndexLines(vaultDir, "KNOWLEDGE.md", cap);
+}
+
+/** DEMOS.md list-item lines (L1 §3) — separate index so reference demos never
+ *  age against KNOWLEDGE.md's problem cap. Capped tighter (splice budget ≤~2KB). */
+export function readDemoLines(vaultDir: string, cap = 30): string[] {
+  return readIndexLines(vaultDir, "DEMOS.md", cap);
 }
 
 /** Second disjunct of the routing predicate (§3): completed marker in the

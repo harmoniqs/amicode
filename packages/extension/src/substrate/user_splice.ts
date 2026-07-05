@@ -16,6 +16,19 @@ export function buildAboutUserSection(profileMd: string): string {
   ].join("\n");
 }
 
+export function buildReferenceDemosSection(demoLines: string[]): string {
+  if (demoLines.length === 0) return "";
+  return [
+    "## Reference demos",
+    "",
+    ...demoLines,
+    "",
+    "Curated demos we've built — use them as PRECEDENT (medium confidence) when",
+    "the user's target matches one and there's no own-precedent card. Read the",
+    "demo card on demand for its params, and cite it in your recommendation.",
+  ].join("\n");
+}
+
 export function buildRecentProblemsSection(knowledgeLines: string[]): string {
   if (knowledgeLines.length === 0) return "";
   return [
