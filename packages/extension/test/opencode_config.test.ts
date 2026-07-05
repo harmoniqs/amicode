@@ -64,6 +64,14 @@ describe('buildOpencodeConfigContent', () => {
     const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default', '/elsewhere/amicode_tools.ts'))
     expect(cfg.plugin).toEqual(['/elsewhere/amicode_tools.ts'])
   })
+  it('registers skills.paths only when a stage dir is given (opencode-native skills)', () => {
+    const without = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
+    expect(without.skills).toBeUndefined()                     // no stage dir → no skills key at all
+    const withStage = JSON.parse(
+      buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default', undefined, undefined, [], '/tmp/proj/skills'),
+    )
+    expect(withStage.skills).toEqual({ paths: ['/tmp/proj/skills'] }) // absolute per-session dir (guarded set), never a library root
+  })
   it('declares the pulse-designer agent whose prompt defers to the AGENTS.md interview', () => {
     const cfg = JSON.parse(buildOpencodeConfigContent('/abs/AGENTS.md', TPL, '/home/u/.amico/runs/default'))
     const pd = cfg.agent['pulse-designer']

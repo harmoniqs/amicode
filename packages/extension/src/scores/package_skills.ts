@@ -82,26 +82,56 @@ export function resolveLibrarySkills(names: string[], roots: string[]): SkillInd
   return out;
 }
 
+/** Stage the resolved (guarded) skill set as opencode-native skills for this
+ *  session: copy each SKILL.md to `<stageRoot>/<name>/SKILL.md` so opencode's
+ *  loader — pointed HERE via config `skills.paths` (an absolute dir) — registers
+ *  exactly this set and no more. We must NOT point `skills.paths` at a library
+ *  root: opencode scans it recursively for `**​/SKILL.md`, which would leak the
+ *  ~50 process skills (the exact guard from spec §3). Folder name = frontmatter
+ *  `name`, satisfying opencode's name-matches-folder rule; content is copied
+ *  verbatim (opencode ignores the extra `agents:` field — verified 2026-07-04).
+ *  Returns the stage root, or "" if nothing was staged (→ no `skills.paths`). */
+export function stageOpencodeSkills(stageRoot: string, entries: SkillIndexEntry[]): string {
+  if (entries.length === 0) return "";
+  let staged = 0;
+  for (const e of entries) {
+    try {
+      const dir = path.join(stageRoot, e.name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.copyFileSync(e.path, path.join(dir, "SKILL.md"));
+      staged++;
+    } catch (err) {
+      console.warn(`amicode: could not stage skill ${e.name} for opencode: ${err}`); // never dead-end (spec §9)
+    }
+  }
+  return staged > 0 ? stageRoot : "";
+}
+
 /** Splice one merged index into the prompt — platform entries FIRST (spec §3),
- *  then package entries. Empty index → empty string (no section at all). */
+ *  then package entries. Empty index → empty string (no section at all).
+ *  The skills are registered as opencode-native skills (stageOpencodeSkills +
+ *  config `skills.paths`), so the agent INVOKES them by name — it must not try to
+ *  read a file path (observed 2026-07-04: the agent guessed `atoms` as a skill;
+ *  now it IS one). The index adds the usage guidance opencode's auto-listing
+ *  lacks (physics-reference framing + the §6 verification contract). */
 export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return ""; // no section at all (spec §3)
   const platform = entries.filter((e) => e.source === "library");
   const pkg = entries.filter((e) => e.source === "package");
   const lines = [
-    "## Skill index", // renamed (Rev 2): holds platform + package skills
+    "## Skill index", // registered opencode skills (platform + package)
     "",
-    "Authoring guides for this session.",
-    // Single line on purpose: the read-before-authoring instruction is asserted as one regex.
-    "**Read the skill file (at its absolute path) BEFORE authoring any script on its platform or importing its package** —",
+    "The following are registered as opencode **skills** for this session.",
+    // Single line on purpose: the invoke-before-authoring instruction is asserted as one regex.
+    "**Invoke a skill by its name to load its full reference BEFORE authoring any script on its platform or importing its package** —",
     "it carries construction patterns, integrator selection, and the verification",
     "contract your script must emit.",
     "",
     ...platform.map(
       (e) =>
-        `- **${e.name}** (platform) — ${e.description}\n  - \`${e.path}\`\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
+        `- **${e.name}** (platform reference) — ${e.description}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
     ),
-    ...pkg.map((e) => `- **${e.package}/${e.name}** — ${e.description}\n  - \`${e.path}\``),
+    ...pkg.map((e) => `- **${e.name}** (package: ${e.package}) — ${e.description}`),
     "",
   ];
   return lines.join("\n");

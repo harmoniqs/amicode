@@ -7,7 +7,7 @@ import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./sco
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
-  resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, type SkillIndexEntry,
+  resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, stageOpencodeSkills, type SkillIndexEntry,
 } from "./scores/package_skills";
 
 // ============================================================================
@@ -201,6 +201,7 @@ export function buildOpencodeConfigContent(
   pluginPath: string = DEFAULT_PLUGIN_PATH,
   scoresRoot: string = DEFAULT_SCORES_ROOT,
   skillPaths: string[] = [],
+  skillsStageDir: string = "",
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -208,10 +209,17 @@ export function buildOpencodeConfigContent(
   // unreadable; the grants agree with the index guard).
   const skillGrants: Record<string, string> = {};
   for (const p of skillPaths) skillGrants[`${path.dirname(p)}/**`] = "allow";
+  // Register the staged skills as opencode-native skills (spec §3 fix,
+  // 2026-07-04): an ABSOLUTE per-session dir holding ONLY the resolved set, so
+  // `atoms`/`piccolissimo-authoring`/… are invocable by name. Absolute path (not
+  // a `.opencode/skills` under cwd) sidesteps the session-cwd=workspace pollution
+  // and the worktree-walk; the dir holds only the guarded set (stageOpencodeSkills).
+  const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
     plugin: [pluginPath],
+    ...(skills ? { skills } : {}),
     agent: {
       "pulse-designer": {
         description: "Guided quantum pulse design interview",
@@ -267,6 +275,9 @@ export interface OpencodeProject {
   templatePath: string;
   /** Absolute SKILL.md paths indexed this session — thread into buildOpencodeConfigContent for grants. */
   skillPaths: string[];
+  /** Absolute dir holding the staged opencode-native skills — thread into
+   *  buildOpencodeConfigContent as `skills.paths`. "" if none staged. */
+  skillsStageDir: string;
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
@@ -343,7 +354,20 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     skillEntries,
   );
 
+  // Register the resolved skills as opencode-native skills: stage ONLY this set
+  // into an absolute per-session dir, pointed at by config `skills.paths` (see
+  // buildOpencodeConfigContent). Makes them invocable by name (the agent's
+  // instinct — observed 2026-07-04); the guard holds because we stage the
+  // resolved set, never a whole library root.
+  const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
+
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
-  return { projectDir, agentsPath, templatePath: opts.templateSrc, skillPaths: skillEntries.map((e) => e.path) };
+  return {
+    projectDir,
+    agentsPath,
+    templatePath: opts.templateSrc,
+    skillPaths: skillEntries.map((e) => e.path),
+    skillsStageDir,
+  };
 }

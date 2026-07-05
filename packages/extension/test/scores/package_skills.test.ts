@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolvePackageSkills, resolveLibrarySkills, buildSkillIndexSection } from "../../src/scores/package_skills";
+import { resolvePackageSkills, resolveLibrarySkills, buildSkillIndexSection, stageOpencodeSkills } from "../../src/scores/package_skills";
 
 function mkRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "amicode-skillroot-"));
@@ -83,23 +83,47 @@ describe("buildSkillIndexSection", () => {
   it("empty index → empty string (no section at all)", () => {
     expect(buildSkillIndexSection([])).toBe("");
   });
-  it("renders both entry kinds, the heading, and the read-before-authoring instruction", () => {
+  it("renders both entry kinds, the heading, and the invoke-before-authoring instruction", () => {
     const s = buildSkillIndexSection([
       { source: "library", name: "atoms", description: "Rydberg physics", path: "/lib/atoms/SKILL.md" },
       { source: "package", package: "Piccolissimo", name: "authoring", description: "Author solves", path: "/abs/SKILL.md" },
     ]);
-    expect(s).toContain("## Skill index"); // renamed — it no longer holds only package skills
+    expect(s).toContain("## Skill index"); // registered opencode skills (platform + package)
     expect(s).toContain("atoms");
     expect(s).toMatch(/physics reference/i); // platform-entry instruction (inline constants, self-contained)
-    expect(s).toContain("Piccolissimo/authoring");
-    expect(s).toContain("/abs/SKILL.md");
-    expect(s).toMatch(/read .*BEFORE authoring/i);
+    expect(s).toContain("package: Piccolissimo"); // package entry shows its invocable name + owning package
+    // These are opencode-native skills now → invoke by name, NOT read a path.
+    expect(s).toMatch(/invoke .*BEFORE authoring/i);
+    expect(s).not.toContain("/abs/SKILL.md"); // no file path in the prose (agent invokes, doesn't read)
   });
   it("orders platform entries before package entries", () => {
     const s = buildSkillIndexSection([
       { source: "package", package: "Piccolissimo", name: "authoring", description: "d", path: "/a" },
       { source: "library", name: "atoms", description: "d", path: "/b" },
     ]);
-    expect(s.indexOf("atoms")).toBeLessThan(s.indexOf("Piccolissimo/authoring"));
+    expect(s.indexOf("atoms")).toBeLessThan(s.indexOf("package: Piccolissimo"));
+  });
+});
+
+describe("stageOpencodeSkills", () => {
+  it("copies ONLY the resolved set into <root>/<name>/SKILL.md and returns the root", () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), "skillsrc-"));
+    fs.mkdirSync(path.join(src, "atoms"));
+    fs.writeFileSync(path.join(src, "atoms", "SKILL.md"), "---\nname: atoms\ndescription: d\nagents: [x]\n---\nbody\n");
+    const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));
+    const out = stageOpencodeSkills(stageRoot, [
+      { source: "library", name: "atoms", description: "d", path: path.join(src, "atoms", "SKILL.md") },
+    ]);
+    expect(out).toBe(stageRoot);
+    const staged = path.join(stageRoot, "atoms", "SKILL.md");
+    expect(fs.existsSync(staged)).toBe(true);
+    // folder name == frontmatter name (opencode's rule); content copied verbatim (agents: kept — opencode ignores it)
+    expect(fs.readFileSync(staged, "utf8")).toContain("agents: [x]");
+    // nothing else staged — only the one resolved entry's dir exists
+    expect(fs.readdirSync(stageRoot).sort()).toEqual(["atoms"]);
+  });
+  it("empty set → '' (no skills.paths registered)", () => {
+    const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));
+    expect(stageOpencodeSkills(stageRoot, [])).toBe("");
   });
 });
