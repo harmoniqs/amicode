@@ -27,10 +27,24 @@ describe('AGENTS.md teaches the D9/D10 script-authoring workflow', () => {
   it('does not tell the agent to block on the solve', () => {
     expect(AGENTS).not.toMatch(/wait for (the )?solve to finish/i)
   })
-  it('scopes the agent to single-qubit and declines multi-qubit (no hallucinated coupled systems)', () => {
+  it('author-first: multi-qubit transmon ROUTES to the free-tier offer (unvetted, verified), never a flat decline', () => {
     expect(AGENTS).toMatch(/single[- ]qubit/i)
-    expect(AGENTS).toMatch(/not supported|isn.t supported/i)
     expect(AGENTS).toMatch(/multi-qubit|two-qubit|2-qubit|CNOT/i)
+    // spec-20260704-113005 §5: "no template → decline" is retired — it routes to
+    // the free-tier offer with an honest unvetted caveat, not a stop.
+    expect(AGENTS).toMatch(/free[- ]tier/i)
+    expect(AGENTS).toMatch(/unvetted/i)
+    expect(AGENTS).not.toMatch(/say so plainly and stop/i)
+    // the reconciliation: 2-qubit Rydberg CZ IS supported (composed exemplar / Piccolissimo path).
+    // whitespace-tolerant: markdown reflow may wrap any gap in the phrase.
+    expect(AGENTS).toMatch(/Rydberg\s+CZ\s+is\s+the\s+exception/i)
+  })
+  it('author-first PLATFORM intake: no coercion, records the actual platform, offers free-tier (spec §5)', () => {
+    expect(AGENTS).toMatch(/as stated/i)                     // acknowledge the platform as itself
+    expect(AGENTS).toMatch(/actual platform string/i)        // record the real string, not "other"
+    expect(AGENTS).toMatch(/never coerce/i)
+    expect(AGENTS).toMatch(/## Skill index/)                 // routing keys off the dual-source index
+    expect(AGENTS).toMatch(/free-phase CZ path/i)            // the issimo Piccolissimo recommendation
   })
   it('gives regime guidance (level cap + scale N with gate time)', () => {
     expect(AGENTS).toMatch(/levels/i)
@@ -59,7 +73,7 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
     expect(AGENTS).toMatch(/## Answering "What can Amicode do\?"/)
     expect(AGENTS).toMatch(/never webfetch/i)
     expect(AGENTS).toMatch(/never describe the underlying engine/i)
-    expect(AGENTS).toMatch(/Today's scope/)
+    expect(AGENTS).toMatch(/How I work \(author-first\)/)   // the curated scope statement (renamed from "Today's scope" in §5)
   })
   it('identity: Amico/Amicode, never self-describes as opencode; interview kicks off proactively on greetings', () => {
     expect(AGENTS).toMatch(/You are \*\*Amico\*\*/)
@@ -79,10 +93,14 @@ describe('AGENTS.md pulse-designer interview (Layer 0)', () => {
     idx.forEach((i, k) => expect(i, `stage ${stages[k]} present`).toBeGreaterThan(-1))
     for (let k = 1; k < idx.length; k++) expect(idx[k], `${stages[k]} after ${stages[k - 1]}`).toBeGreaterThan(idx[k - 1])
   })
-  it('shows the transmon Hamiltonian in LaTeX and is honest about Rydberg scope', () => {
+  it('shows the transmon Hamiltonian in LaTeX and is honest about the Rydberg tier', () => {
     expect(AGENTS).toContain('\\hat H/\\hbar')
-    expect(AGENTS).toMatch(/transmon-only/i)
     expect(AGENTS).toMatch(/rydberg/i)
+    // Rydberg authoring IS wired (composed tier, experimental) — the stale
+    // "not wired / transmon-only follow-up" narrative must stay gone.
+    expect(AGENTS).toMatch(/composed/i)
+    expect(AGENTS).toMatch(/experimental/i)
+    expect(AGENTS).not.toMatch(/Rydberg solve authoring is not wired/i)
   })
   it('names the amicode_* recording tools as bookkeeping, not gates, with bash still the launch mechanism', () => {
     for (const t of [

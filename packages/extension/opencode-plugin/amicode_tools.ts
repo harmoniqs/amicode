@@ -141,9 +141,13 @@ function recordEntity(
 const TRANSMON_LATEX = String.raw`$\hat H/\hbar = \omega\,\hat a^\dagger\hat a + \tfrac{\delta}{2}\,\hat a^{\dagger 2}\hat a^2 + u_1(t)\,(\hat a + \hat a^\dagger) + i\,u_2(t)\,(\hat a - \hat a^\dagger)$`;
 const RYDBERG_DESC = String.raw`3-level ladder: $|0\rangle$ dark, $|1\rangle\!\leftrightarrow\!|r\rangle$ laser-driven, blockade shift on $|rr\rangle$`;
 const RYDBERG_SCOPE_NOTE =
-  "Honest scope note: this build's vetted solve template is transmon-only — " +
-  "Rydberg solve authoring is not wired yet. The System entity is recorded so the " +
-  "formulation can be captured for follow-up; don't improvise an unvetted script.";
+  "Good news, with an asterisk: Rydberg solve authoring IS wired. When the ## Skill " +
+  "index lists `Piccolissimo/piccolissimo-authoring`, recommend the Piccolissimo " +
+  "free-phase CZ path (skill-guided, from scratch, subsystem_levels=[3,3]) — free-phase " +
+  "is the honest primary metric for entangling gates. Otherwise the composed `rydberg-cz` " +
+  "exemplar is the public fallback (experimental, not-yet-vetted, fixed-phase + virtual-Z " +
+  "scan; the 2-qubit CZ is a touch sluggish in the current Piccolo path). Either way, be " +
+  "honest about the tier — and do NOT tell the user Rydberg is unsupported, because it isn't.";
 
 // The plugin: exactly one export (see header). opencode calls it on session
 // creation with PluginInput; we need nothing from it today.
@@ -166,11 +170,15 @@ export const AmicodeTools = async (_input: unknown) => ({
           description: "2-6 short option labels, one per button.",
         },
         details: {
+          // Optional nullable array. The registry's legacyJsonSchema strips the
+          // "null" and marks the field optional, yielding a clean singular-typed
+          // schema every provider accepts (a raw nullable array is what Gemini
+          // rejected). execute() also tolerates absent/empty defensively.
           type: ["array", "null"],
           items: { type: "string" },
           description:
             "Optional one-per-option short qualifier rendered dimly under each button " +
-            "(e.g. \"fully supported end-to-end\"). Same length as options, or null.",
+            "(e.g. \"fully supported end-to-end\"). Same length as options; omit for none.",
         },
       },
       async execute(a: { question: string; options: string[]; details?: string[] | null }) {
@@ -179,8 +187,8 @@ export const AmicodeTools = async (_input: unknown) => ({
           : [];
         if (!a.question || a.question.trim() === "") return "Cannot ask: empty question.";
         if (opts.length < 2 || opts.length > 6) return "Cannot ask: need 2-6 non-empty options.";
-        if (a.details != null && (!Array.isArray(a.details) || a.details.length !== opts.length))
-          return "Cannot ask: details must be null or exactly one per option.";
+        if (Array.isArray(a.details) && a.details.length > 0 && a.details.length !== opts.length)
+          return "Cannot ask: details must be one per option (or omitted).";
         // The renderer draws the buttons from this tool part's INPUT args; this
         // return text is for the model (and the pre-rail fallback display).
         return (
@@ -320,21 +328,30 @@ export const AmicodeTools = async (_input: unknown) => ({
         const levelsDesc = entity.levels !== undefined ? `${entity.levels} levels` : "levels TBD";
         if (a.platform === "transmon") {
           return (
-            `System recorded (transmon, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
+            `Transmon it is — ${levelsDesc}, ${paramsSummary(params)}. Filed under "${meta.slug}".\n\n` +
             `Model Hamiltonian:\n${TRANSMON_LATEX}\n\n` +
             `Show this to the user and confirm it matches their device.\n\n${sentinel}`
           );
         }
         if (a.platform === "rydberg") {
           return (
-            `System recorded (rydberg, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
+            `Rydberg, ${levelsDesc}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
             `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}\n\n${sentinel}`
           );
         }
+        // Author-first / open intake (spec-20260704-113005 §5). Any platform is
+        // acknowledged AS STATED (recorded here with the actual string). No vetted
+        // template ≠ decline: offer free-tier from-scratch authoring, honest that
+        // it is unvetted and that every result is independently re-rolled before
+        // we trust it. (This return string previously said "I won't improvise an
+        // unvetted script" — the exact tool output that declined the spin-CX ask.)
         return (
-          `System recorded (${a.platform}, ${levelsDesc}, ${paramsSummary(params)}) in problem "${meta.slug}".\n\n` +
-          `This platform has no built-in template in this build — record the formulation for ` +
-          `follow-up; don't improvise an unvetted script.\n\n${sentinel}`
+          `${a.platform}, ${levelsDesc}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
+          `No vetted template for ${a.platform} in this build. That's fine — I can author a ` +
+          `from-scratch script for it against the public stack (unvetted), and every result is ` +
+          `independently re-checked (re-rolled) before we trust it. If a platform skill for ` +
+          `${a.platform} is listed in the Skill index, I'll follow it; otherwise I'll build from ` +
+          `first principles and flag it honestly. Want me to proceed?\n\n${sentinel}`
         );
       },
     },
@@ -382,7 +399,7 @@ export const AmicodeTools = async (_input: unknown) => ({
             merged.levels !== undefined && merged.levels > MAX_LEVELS
               ? ` ⚠️ ${merged.levels} levels worsens conditioning/leakage and solve cost — convergence may degrade.`
               : "";
-          return `System updated (${merged.platform}, ${merged.levels ?? "levels TBD"}, ${paramsSummary(merged.params)}).${warn}\n\n${sentinel}`;
+          return `Tweaked — ${merged.platform}, ${merged.levels ?? "levels TBD"}, ${paramsSummary(merged.params)}.${warn}\n\n${sentinel}`;
         } catch (err) {
           return `Cannot update model: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -407,9 +424,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           description: "Objective; null for the default \"unitary infidelity\".",
         },
         constraints: {
+          // Optional nullable array — see the details field above. legacyJsonSchema
+          // strips "null" → optional singular-typed array (provider-agnostic).
           type: ["array", "null"],
           items: { type: "string" },
-          description: "Constraint list; null for the default [\"amplitude bound (drive_max)\"].",
+          description: "Constraint list; omit for the default [\"amplitude bound (drive_max)\"].",
         },
       },
       async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
@@ -424,7 +443,10 @@ export const AmicodeTools = async (_input: unknown) => ({
           problem: a.problem,
           target: a.target,
           objective: given(a.objective) ? a.objective : "unitary infidelity",
-          constraints: given(a.constraints) ? a.constraints : ["amplitude bound (drive_max)"],
+          constraints:
+            Array.isArray(a.constraints) && a.constraints.length > 0
+              ? a.constraints
+              : ["amplitude bound (drive_max)"],
         };
         if (existing?.solve) entity.solve = existing.solve;
         const problems = validateFormulation(entity);
@@ -435,7 +457,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         });
         completeStage(dir, "formulate");
         return (
-          `Formulation recorded in "${meta.slug}": problem: ${entity.problem}; target: ${entity.target}; ` +
+          `Formulation's locked for "${meta.slug}" — ${entity.problem}, targeting ${entity.target}; ` +
           `objective: ${entity.objective}; constraints: ${entity.constraints.join(" · ")}\n\n${sentinel}`
         );
       },
@@ -532,7 +554,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         const warn = missing.length ? ` Note: no recorded ${missing.join(" or ")}.` : "";
         const runWarn = given(a.run_dir) ? "" : " No run_dir yet — launch via the workflow's amico-run bash command.";
         completeStage(dir, "solve");
-        return `Run entity recorded in "${meta.slug}".${warn}${runWarn}\n\n${sentinel}`;
+        return `Solve knobs set for "${meta.slug}".${warn}${runWarn}\n\n${sentinel}`;
       },
     },
 
@@ -580,7 +602,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         const verdict = a.agree
           ? "agree = true — the re-rollout confirms the reported fidelity; the run can be promoted."
           : "agree = FALSE — the independent re-rollout disagrees; the run is UNTRUSTED and cannot be promoted. Relay this honestly.";
-        return `Verification recorded on the Run entity in "${meta.slug}". ${verdict}\n\n${sentinel}`;
+        return `Verification's in for "${meta.slug}". ${verdict}\n\n${sentinel}`;
       },
     },
 
@@ -625,11 +647,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           ? ""
           : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
         return (
-          `Device session recorded in "${meta.slug}" (gate: pending-human-signoff).${warn}\n\n` +
+          `Hardware intent noted for "${meta.slug}" — pending your sign-off.${warn}\n\n` +
           `The send-to-device gate, when wired: (1) automated checks — fidelity ≥ threshold, ` +
           `|drive| ≤ amplitude cap, bandwidth within hardware limits, leakage bounded; ` +
-          `(2) a human visually signs off on the pulse before anything is sent. ` +
-          `THIS BUILD PERFORMS NO DEVICE I/O — intent recorded only.\n\n${sentinel}`
+          `(2) a human eyeballs the pulse and signs off before anything ships. ` +
+          `Full disclosure — this build touches no real silicon, so this is a promissory note, not a live session.\n\n${sentinel}`
         );
       },
     },
@@ -676,11 +698,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           ? ""
           : " Note: no device session recorded yet — amicode_to_hardware comes first.";
         return (
-          `Calibration follow-up recorded in "${meta.slug}" (loop: ILC, status: not-wired).${warn}\n\n` +
-          `After hardware runs, a calibration loop (ILC — iterative learning control) closes ` +
+          `Calibration follow-up on the books for "${meta.slug}" (loop: ILC, status: not-wired).${warn}\n\n` +
+          `Once hardware runs, an ILC loop (iterative learning control) closes ` +
           `the model-device gap: run the pulse, measure, compare against the model's ` +
-          `prediction, update, repeat until the device matches the design. In this build ` +
-          `that loop is a recorded follow-up only — nothing is executed tonight.\n\n${sentinel}`
+          `prediction, update, repeat until the device matches the design on paper. In this build ` +
+          `that loop's a recorded follow-up only — nothing actually fires here yet.\n\n${sentinel}`
         );
       },
     },

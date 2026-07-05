@@ -72,12 +72,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 3. opencode project bootstrap
   const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);
+  // Configured skill-index overrides (spec-20260704-113005 §3) — an empty/unset
+  // array falls through to the module defaults (undefined → the `??` default).
+  const cfgArr = (key: string): string[] | undefined => {
+    const v = vscode.workspace.getConfiguration("amicode").get<string[]>(key, []);
+    return Array.isArray(v) && v.length ? v : undefined;
+  };
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
     juliaProject: resolveJuliaProject(
       vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
     ),
+    skillRoots: cfgArr("skillRoots"),
+    platformSkills: cfgArr("platformSkills"),
+    skillLibraryRoots: cfgArr("skillLibraryRoots"),
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
@@ -132,7 +141,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot),
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot, undefined, undefined, opencodeProject.skillPaths),
       },
       channel: opencodeChannel,
     });

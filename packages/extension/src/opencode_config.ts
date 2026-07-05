@@ -6,6 +6,9 @@ import { loadRepertoire } from "./scores/loader";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
+import {
+  resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, type SkillIndexEntry,
+} from "./scores/package_skills";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -114,6 +117,13 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
+/** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
+ *  in the workspace package repos; platform skills are the configured names in
+ *  the central amico-plugin library. Overridable via settings (Task 6). */
+export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
+export const DEFAULT_PLATFORM_SKILLS = ["atoms", "transmon", "fluxonium", "ions", "bosonic"];
+export const DEFAULT_LIBRARY_ROOTS = [path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills")];
+
 /** Bundled spec-C authoring assets (absolute), resolved relative to this module.
  *  At runtime __dirname is the extension's dist/src dir; the assets ship one
  *  level up under templates/, exemplars/, julia/. */
@@ -122,6 +132,14 @@ export const AUTHORING_ASSETS = {
   exemplars: path.resolve(__dirname, "..", "exemplars", "index.json"),
   verifyHarness: path.resolve(__dirname, "..", "julia", "verify_rollout.jl"),
 };
+
+/** The entitlement→package table ships with the scores repertoire (spec C put
+ *  it in scores/entitlements.toml). NOT registry.toml — that file has no
+ *  [packages] table (the §3 mis-wire this fixes: reading registry meant holding
+ *  `issimo` never allowlisted Piccolissimo in production). */
+export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT): string {
+  return path.join(scoresRoot, "entitlements.toml");
+}
 
 /** Where amico-run reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
  *  overrides (tests + parity with amico-run's own reader). */
@@ -134,11 +152,15 @@ export function authoringFilePath(): string {
 /** Assemble + write authoring.json at session prep. Reads verify_tolerance from
  *  the bundled registry.toml (falls back to 0.01). Never throws — a write
  *  failure logs and leaves amico-run to use its built-in conservative defaults. */
-export function writeAuthoringConfig(entitlementsDir: string): void {
+export function writeAuthoringConfig(
+  entitlementsDir: string,
+  scoresRoot: string = DEFAULT_SCORES_ROOT,
+  skills: SkillIndexEntry[] = [],
+): void {
   try {
     const ents = readLocalEntitlements(entitlementsDir);
     const registry = AUTHORING_ASSETS.registry;
-    const allowlist = packageAllowlist(registry, ents.entitlements);
+    const allowlist = packageAllowlist(entitlementsTablePath(scoresRoot), ents.entitlements);
     let tolerance = 0.01;
     let support: string[] = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"];
     try {
@@ -159,6 +181,9 @@ export function writeAuthoringConfig(entitlementsDir: string): void {
           exemplars: AUTHORING_ASSETS.exemplars,
           verify_harness: AUTHORING_ASSETS.verifyHarness,
           verify_tolerance: tolerance,
+          // Additive session record (spec §3): the dual-source skill index the
+          // agent was given. amico-run ignores unknown fields; schema_version stays 1.
+          skills,
         },
         null,
         2,
@@ -175,8 +200,14 @@ export function buildOpencodeConfigContent(
   runsRoot: string,
   pluginPath: string = DEFAULT_PLUGIN_PATH,
   scoresRoot: string = DEFAULT_SCORES_ROOT,
+  skillPaths: string[] = [],
 ): string {
   const templatesDir = path.dirname(templatePath);
+  // Least-privilege read grants for the skill index (spec §3): each indexed
+  // skill's OWN directory only — NOT a library root (the ~50 process skills stay
+  // unreadable; the grants agree with the index guard).
+  const skillGrants: Record<string, string> = {};
+  for (const p of skillPaths) skillGrants[`${path.dirname(p)}/**`] = "allow";
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     instructions: [agentsPath],
@@ -201,6 +232,7 @@ export function buildOpencodeConfigContent(
         [`${runsRoot}/**`]: "allow",        // run read-backs: FINISHED/result.toml/run.log
         [`${problemsRoot()}/**`]: "allow",   // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
+        ...skillGrants,                     // per-indexed-skill dirs (spec §3, least-privilege)
       },
     },
   });
@@ -220,6 +252,12 @@ export interface OpencodeConfigOptions {
   scoresRoot?: string;
   /** Dir holding the user's entitlements.toml (access-code stub). Default: ~/.amico/amicode. */
   entitlementsDir?: string;
+  /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
+  skillRoots?: string[];
+  /** Configured platform-skill names to index from the library (spec §3). Default: DEFAULT_PLATFORM_SKILLS. */
+  platformSkills?: string[];
+  /** Roots for the central platform-skill library (spec §3). Default: DEFAULT_LIBRARY_ROOTS. */
+  skillLibraryRoots?: string[];
 }
 
 export interface OpencodeProject {
@@ -227,6 +265,8 @@ export interface OpencodeProject {
   agentsPath: string;
   /** The vetted template the agent reads — the bundled source (absolute), not a copy. */
   templatePath: string;
+  /** Absolute SKILL.md paths indexed this session — thread into buildOpencodeConfigContent for grants. */
+  skillPaths: string[];
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
@@ -272,13 +312,38 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: score compilation failed, using built-in interview fallback: ${e}`);
     finalContent = filled;
   }
+  // Package + platform skill index (spec-20260704-113005 §3) — deliberately
+  // OUTSIDE the score try/catch above: score-compile trouble must not drop
+  // entitled skills, nor vice versa. Platform (library, PUBLIC) entries first,
+  // then entitlement-gated package skills. Read on demand — the content is never
+  // baked into the prompt or the .vsix; only the lean index is spliced.
+  let skillEntries: SkillIndexEntry[] = [];
+  try {
+    const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
+    const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
+    const allow = packageAllowlist(entitlementsTablePath(scoresRoot), readLocalEntitlements(entsDir).entitlements);
+    skillEntries = [
+      ...resolveLibrarySkills(opts.platformSkills ?? DEFAULT_PLATFORM_SKILLS, opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS),
+      ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
+    ];
+    const section = buildSkillIndexSection(skillEntries);
+    if (section) finalContent = finalContent + "\n\n" + section;
+  } catch (e) {
+    console.warn(`amicode: skill index failed (session continues without it): ${e}`);
+  }
+
   fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
-  writeAuthoringConfig(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
+  // The skill index rides along as an additive session record (spec §3).
+  writeAuthoringConfig(
+    opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"),
+    opts.scoresRoot ?? DEFAULT_SCORES_ROOT,
+    skillEntries,
+  );
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
-  return { projectDir, agentsPath, templatePath: opts.templateSrc };
+  return { projectDir, agentsPath, templatePath: opts.templateSrc, skillPaths: skillEntries.map((e) => e.path) };
 }

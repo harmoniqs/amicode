@@ -139,6 +139,29 @@ describe("field-precise negative matrix", () => {
   });
 });
 
+describe("result.toml spline/free-phase fields (spec-20260704-113005 §6, additive)", () => {
+  const base = { schema_version: "1", fidelity: 0.9991, iterations: 42 };
+
+  it("accepts pulse_kind spline with free-phase declaration", () => {
+    expect(
+      validate({ ...base, pulse_kind: "spline", fidelity_convention: "free_phase",
+                 free_phases: [0.12, -1.7], subsystem_levels: [2, 3] }, "result").ok,
+    ).toBe(true);
+  });
+  it("accepts plain PWC results unchanged (fields all optional)", () => {
+    expect(validate(base, "result").ok).toBe(true);
+  });
+  it("rejects unknown pulse_kind", () => {
+    expect(validate({ ...base, pulse_kind: "wavelet" }, "result").ok).toBe(false);
+  });
+  it("rejects subsystem_levels below 2", () => {
+    expect(validate({ ...base, subsystem_levels: [2, 1] }, "result").ok).toBe(false);
+  });
+  it("rejects non-numeric free_phases", () => {
+    expect(validate({ ...base, free_phases: ["pi"] }, "result").ok).toBe(false);
+  });
+});
+
 // ── migration: the contract formalize-don't-fork guarantee (S2) ──
 describe("formalize-don't-fork: real beta.1 artifacts validate under the closed schemas", () => {
   it("a beta.1 manifest (writeManifest shape) + schema_version validates clean", () => {

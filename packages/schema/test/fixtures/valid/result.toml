@@ -2,6 +2,10 @@ schema_version = "1"
 fidelity = 0.99995
 iterations = 60
 wall_seconds = 88.5
+pulse_kind = "spline"
+fidelity_convention = "free_phase"
+free_phases = [0.12, -1.7]
+subsystem_levels = [2, 3]
 
 [params]
 delta = 0.2

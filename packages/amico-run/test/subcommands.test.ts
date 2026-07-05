@@ -109,4 +109,54 @@ describe("sandbox subcommand", () => {
     rmSync(dir, { recursive: true, force: true })
     rmSync(target, { recursive: true, force: true })
   })
+  it("stdlibs need no [deps] entry — they load from @stdlib (spec-20260704-113005 §3 defect #2)", () => {
+    const dir = authoringDir()
+    const target = mkdtempSync(join(tmpdir(), "amico-ws-"))
+    // TOML + Printf are stdlibs with NO uuid in the fixture registry — before the
+    // filter this exit-64'd; now they are dropped from [deps] and the run succeeds.
+    const r = run(["sandbox", target, "--packages", "Piccolo,JLD2,TOML,Printf"], {
+      AMICO_AUTHORING_FILE: join(dir, "authoring.json"),
+    })
+    expect(r.code).toBe(0)
+    const deps = readToml(join(target, "env", "Project.toml")).deps as Record<string, string>
+    expect(Object.keys(deps).sort()).toEqual(["JLD2", "Piccolo"]) // stdlibs filtered out
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(target, { recursive: true, force: true })
+  })
+})
+
+// Production-path (spec-20260704-113005 §3 defect #2): the EXACT tier-free
+// resolve output (TIER3_MIN_PACKAGES) must sandbox against the BUNDLED registry,
+// not a fixture that happens to carry its own [uuids]. Printf/TOML are stdlibs
+// (filtered); Piccolo/CairoMakie/JLD2 must all be in the bundled [uuids].
+describe("sandbox — bundled-asset production path", () => {
+  function bundledAuthoringDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), "amico-prod-"))
+    const registry = join(__dirname, "..", "..", "extension", "templates", "registry.toml")
+    const exemplars = join(__dirname, "..", "..", "extension", "exemplars", "index.json")
+    writeFileSync(
+      join(dir, "authoring.json"),
+      JSON.stringify({
+        schema_version: 1,
+        allowlist: ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"],
+        support_set: ["JLD2", "CairoMakie", "Makie", "TOML", "Printf"],
+        registry,
+        exemplars,
+        verify_tolerance: 0.001,
+      }),
+    )
+    return dir
+  }
+  it("TIER3_MIN_PACKAGES sandboxes clean against the bundled registry", () => {
+    const dir = bundledAuthoringDir()
+    const target = mkdtempSync(join(tmpdir(), "amico-ws-"))
+    const r = run(["sandbox", target, "--packages", "Piccolo,CairoMakie,JLD2,TOML,Printf"], {
+      AMICO_AUTHORING_FILE: join(dir, "authoring.json"),
+    })
+    expect(r.code).toBe(0)
+    const deps = readToml(join(target, "env", "Project.toml")).deps as Record<string, string>
+    expect(Object.keys(deps).sort()).toEqual(["CairoMakie", "JLD2", "Piccolo"])
+    rmSync(dir, { recursive: true, force: true })
+    rmSync(target, { recursive: true, force: true })
+  })
 })

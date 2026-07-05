@@ -8,6 +8,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { readAuthoring } from './authoring.js'
 import { loadExemplarsIndex, loadRegistry, matchShape } from './catalog.js'
+import { JULIA_STDLIBS } from './import_scan.js'
 
 /** Tier-3 minimum package set — the free skeleton's `using` block AND the
  *  re-rollout harness both need these in the sandbox env, so `resolve` returns
@@ -63,15 +64,23 @@ export function sandboxCommand(argv: string[]): number {
   if (!packagesRaw) { console.error('amico-run sandbox: --packages A,B,… required'); return 64 }
   const packages = packagesRaw.split(',').map((p) => p.trim()).filter(Boolean)
 
+  // Julia stdlibs load from @stdlib in LOAD_PATH regardless of a project's
+  // [deps] — they need no uuid and no [deps] entry. Filter them so the sandbox
+  // is robust to ANY stdlib an authored script imports (spec-20260704-113005 §3
+  // defect #2: TIER3_MIN_PACKAGES ships Printf+TOML, both stdlibs with no
+  // [uuids] entry, which exit-64'd every tier-free launch at env generation).
+  // Non-stdlib packages still require a uuid — the unknown-package guard holds.
+  const depsNeeded = packages.filter((p) => !JULIA_STDLIBS.has(p))
+
   const { config } = readAuthoring()
   const registry = loadRegistry(config.registry ?? '')
-  const missing = packages.filter((p) => !registry.uuids[p])
+  const missing = depsNeeded.filter((p) => !registry.uuids[p])
   if (missing.length > 0) {
     console.error(`amico-run sandbox: no uuid in the registry for: ${missing.join(', ')}`)
     return 64
   }
 
-  const deps = packages
+  const deps = depsNeeded
     .slice()
     .sort()
     .map((p) => `${p} = ${JSON.stringify(registry.uuids[p])}`)

@@ -8,6 +8,11 @@ import { existsSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+// NOTE (spec-20260704-113005 §3): session prep ALSO writes an additive
+// `skills: [{source: "library"|"package", package?, name, description, path}]`
+// array — the dual-source skill index the agent was given this session. It is a
+// record for provenance/UI; amico-run does not consume it (unknown fields are
+// ignored here), so it is intentionally NOT in this interface.
 export interface AuthoringConfig {
   allowlist: string[]      // entitlement-resolved Harmoniqs packages
   support_set: string[]    // fixed support packages the run-dir contract itself needs
@@ -19,7 +24,7 @@ export interface AuthoringConfig {
 
 export const DEFAULT_ALLOWLIST = ['Piccolo', 'Legato', 'Intonato', 'NamedTrajectories', 'DirectTrajOpt']
 export const DEFAULT_SUPPORT = ['JLD2', 'CairoMakie', 'Makie', 'TOML', 'Printf']
-const DEFAULT_TOLERANCE = 0.01
+const DEFAULT_TOLERANCE = 0.001
 
 function defaults(): AuthoringConfig {
   return {
