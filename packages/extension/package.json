@@ -161,6 +161,11 @@
           "type": "string",
           "default": "opencode/big-pickle",
           "description": "Model (providerID/modelID) for the headless distiller agent. Pinned separately from the chat model so distillation survives provider rate limits."
+        },
+        "amicode.veloce": {
+          "type": "boolean",
+          "default": false,
+          "description": "Amico Veloce: start sessions with autonomy on — auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
         }
       }
     }

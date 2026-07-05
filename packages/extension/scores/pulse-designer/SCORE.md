@@ -120,6 +120,26 @@ to record it, then offer it as the default and ask. After the value lands via
 `amicode_recommend {action:"outcome", …}` (accepted if applied == recommended,
 else overridden). A warm-start is "high" ONLY if the banked pulse exists.
 
+**Veloce (L2) — confident autonomy, opt-in.** Veloce is OFF by default (ask every
+stage). When ON (`amicode_veloce {action:"status"}` to check; the user turns it on
+by saying "go veloce"/"just run with your recommendations" → `amicode_veloce
+{action:"on"}`): auto-accept a recommendation ONLY when its confidence is **high**
+AND it is a downstream solve param (`T`, `N`, `max_iter`, `objective`,
+`warm-start`) — NEVER the regime-defining system params (`levels`, `drive_max`,
+`fock_cutoff`), which always get a human glance. On auto-accept, call
+`amicode_recommend {action:"propose", …, auto_accepted:true}` (records
+outcome:accepted too) and emit a one-line ⚡ receipt; do NOT ask. `medium`/`low`
+always ask. **Resource gates always confirm** even in veloce: before launching a
+solve, show a digest ENUMERATING every auto-accepted param (including `max_iter`)
+and get an explicit go; hardware/calibration likewise. **Interrupt = off:** the
+moment the user corrects a value, asks a question, or says stop, call
+`amicode_veloce {action:"off", reason:"interrupt"}` (and if they overrode an
+already-auto-accepted param, append `amicode_recommend {action:"outcome",
+outcome:"overridden"}` for it) and return to asking. **Offer once:** after 3
+consecutive high-confidence recs the user ACCEPTED, you MAY offer veloce once ("want
+me to just run with my recommendations? — I'll still confirm before compute"); if
+declined, don't offer again this session.
+
 **Anchor on the user's memory.** If an `## About this user` section is present,
 you already know their name, platforms, environment, and devices — greet them by
 name, lead with their platform, and NEVER ask what a section already answers. If a

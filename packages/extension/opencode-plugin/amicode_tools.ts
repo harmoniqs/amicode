@@ -786,6 +786,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         alternatives: { type: ["array", "null"], description: "optional [{value, note}] considered (propose)" },
         outcome: { type: ["string", "null"], description: "accepted | overridden (outcome)" },
         applied_value: { type: ["string", "number", "boolean", "null"], description: "the value actually applied (outcome)" },
+        auto_accepted: { type: ["boolean", "null"], description: "true when Veloce (L2) auto-accepted this without asking (propose)" },
       },
       async execute(a: {
         action: string;
@@ -797,6 +798,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         alternatives?: unknown[] | null;
         outcome?: string | null;
         applied_value?: unknown;
+        auto_accepted?: boolean | null;
       }) {
         try {
           const slug = readActiveSlug();
@@ -823,15 +825,66 @@ export const AmicodeTools = async (_input: unknown) => ({
               confidence: a.confidence,
               provenance: a.provenance ?? [],
               ...(a.alternatives ? { alternatives: a.alternatives } : {}),
+              // Veloce (L2): an auto-accept records auto_accepted AND outcome:accepted
+              // in one step (spec L2 §5).
+              ...(a.auto_accepted ? { auto_accepted: true, outcome: "accepted", applied_value: a.value } : {}),
             },
             source: { tool: "amicode_recommend", stage: a.stage },
           });
           const prov = Array.isArray(a.provenance) && a.provenance.length
             ? (a.provenance[0] as { source?: string }).source ?? "?"
             : "none";
-          return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov}) [event ${seq}].`;
+          const auto = a.auto_accepted ? " ⚡auto" : "";
+          return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].`;
         } catch (err) {
           return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
+        }
+      },
+    },
+    // ── Veloce (spec-20260705-024341 L2) — records the autonomy-mode transition.
+    // The policy itself (auto-accept HIGH-confidence downstream params; resource
+    // gates always confirm; interrupt-off) is prompt-level in SCORE.md; this tool
+    // makes the mode durable + inspectable (⚡ badge) and returns current state.
+    amicode_veloce: {
+      description:
+        "Turn Amico Veloce on/off, or read its state. Veloce auto-accepts HIGH-confidence " +
+        "downstream recommendations (never system params, never past a resource gate — those " +
+        "always confirm). action=`on` {reason: explicit|offered|persisted}, action=`off` " +
+        "{reason: interrupt|explicit}, action=`status` returns current mode. Record `off, " +
+        "reason:interrupt` the moment the user corrects a value, asks a question, or says stop.",
+      args: {
+        action: { type: "string", description: "on | off | status" },
+        reason: { type: ["string", "null"], description: "explicit | offered | persisted | interrupt" },
+      },
+      async execute(a: { action: string; reason?: string | null }) {
+        try {
+          const slug = readActiveSlug();
+          if (!slug) return "No active problem yet — veloce state not recorded.";
+          if (a.action === "status") {
+            // Latest veloce event wins.
+            const file = path.join(problemDir(slug), "events.jsonl");
+            let mode = "off";
+            try {
+              for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+                if (!line.trim()) continue;
+                const e = JSON.parse(line);
+                if (e.entity === "veloce" && e.diff?.mode) mode = e.diff.mode;
+              }
+            } catch { /* no events yet */ }
+            return `Veloce is ${mode}.`;
+          }
+          const mode = a.action === "on" ? "on" : "off";
+          const seq = appendEvent(slug, {
+            entity: "veloce",
+            action: "transition",
+            diff: { mode, reason: a.reason ?? "explicit" },
+            source: { tool: "amicode_veloce" },
+          });
+          return mode === "on"
+            ? `⚡ Veloce ON (${a.reason ?? "explicit"}) — I'll auto-accept high-confidence choices and still confirm before any solve [event ${seq}].`
+            : `Veloce OFF (${a.reason ?? "explicit"}) — back to asking each step [event ${seq}].`;
+        } catch (err) {
+          return `Cannot set veloce: ${err instanceof Error ? err.message : String(err)}`;
         }
       },
     },
