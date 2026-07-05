@@ -31,6 +31,10 @@ export interface RunsRootWatcherOptions {
   channel: vscode.OutputChannel;
   statusBar?: StatusBarManager;
   promoteThreshold?: number;
+  /** Live-only run-completion hook (spec-20260705-002847 §4.1 trigger 1) —
+   *  fired at most once per run dir, from the LIVE onFinished path only (never
+   *  boot replay, which would re-trigger distills for historical runs). */
+  onRunFinished?: (info: { runId: string; runDir: string; status: string }) => void;
 }
 
 /** Live sink: routes to the Inspector + status bar, carrying newest-wins and
@@ -123,6 +127,10 @@ export class RunsRootWatcher implements vscode.Disposable {
    *  promote prompt fires at most once per run, never re-popping on re-switch /
    *  launch-follows-latest. */
   private readonly promotedRuns = new Set<string>();
+  /** Run dirs whose live completion already fired onRunFinished — the
+   *  verification.toml watch re-enters onFinished for late promotion and must
+   *  not double-trigger a distill. */
+  private readonly runFinishedNotified = new Set<string>();
   /** Polling backstop. macOS fs.watch (FSEvents) coalesces and silently drops
    *  events — especially under load — so the symlink-follow + run-dir watches
    *  can miss `latest` swings and FINISHED, and the log tailer's change events
@@ -281,6 +289,11 @@ export class RunsRootWatcher implements vscode.Disposable {
       }
     }
     this.sink?.run({ runId, runDir, status, fidelity });
+    // Distill trigger (spec §4.1 trigger 1) — once per run dir, live path only.
+    if (!this.runFinishedNotified.has(runDir)) {
+      this.runFinishedNotified.add(runDir);
+      try { this.opts.onRunFinished?.({ runId, runDir, status }); } catch { /* never break the watcher */ }
+    }
     if (status === "completed" && fidelity !== undefined && fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
       // spec C: gate promotion on free-tier verification. "pending" → don't
       // promote AND don't mark promoted — the verification.toml watch re-runs

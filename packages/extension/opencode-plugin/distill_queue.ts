@@ -15,8 +15,11 @@
  *    retried forever), and the drain continues */
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { execFile } from "node:child_process";
 
 export const STALE_LOCK_MS = 15 * 60 * 1000;
+/** One distill job gets at most 10 min of LLM time before it's set aside. */
+export const JOB_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface DistillJob {
   kind: "run" | "sweep" | "onboarding" | "batch";
@@ -128,6 +131,89 @@ export async function drainOnce(opsDir: string, handler: (job: DistillJob) => Pr
     }
   }
   return n;
+}
+
+/** The distiller spawn transport (spec §4 config transport, plan reviewer #5):
+ *  `distiller.config.json` — written by the extension at activation, read by
+ *  every spawner (extension trigger, plugin trigger-4, batch shell) so all
+ *  three produce identical distiller processes. */
+export interface DistillerConfigFile {
+  /** Absolute path of the opencode binary to spawn. */
+  binary: string;
+  /** The OPENCODE_CONFIG_CONTENT object for the distiller variant. */
+  config: Record<string, unknown>;
+}
+
+export function distillerConfigPath(opsDir: string): string {
+  return path.join(opsDir, "distiller.config.json");
+}
+
+export function readDistillerConfig(opsDir: string): DistillerConfigFile | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(distillerConfigPath(opsDir), "utf8"));
+    if (typeof parsed.binary === "string" && parsed.config) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDistillerConfig(opsDir: string, file: DistillerConfigFile): void {
+  fs.mkdirSync(opsDir, { recursive: true });
+  fs.writeFileSync(distillerConfigPath(opsDir), JSON.stringify(file, null, 2) + "\n");
+}
+
+/** Run ONE distill job as a headless opencode child (`run --agent distiller`),
+ *  awaited — the drain loop is deterministic code; only the job itself is LLM. */
+export function runDistillerJob(
+  cfg: DistillerConfigFile,
+  job: DistillJob,
+  timeoutMs: number = JOB_TIMEOUT_MS,
+): Promise<{ code: number; output: string }> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      cfg.binary,
+      ["run", "--agent", "distiller", JSON.stringify(job)],
+      {
+        env: { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify(cfg.config) },
+        timeout: timeoutMs,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+      (err, stdout, stderr) => {
+        const output = `${stdout}\n${stderr}`.trim();
+        if (err && (err as { code?: unknown }).code !== 0) {
+          reject(new Error(`distiller job failed (${(err as { code?: unknown }).code}): ${output.slice(-500)}`));
+        } else {
+          resolve({ code: 0, output });
+        }
+      },
+    );
+  });
+}
+
+/** Convenience used by every trigger: enqueue, then drain the queue through
+ *  headless distiller children. No-ops (returns false) when the transport
+ *  config hasn't been written yet — the job stays queued for the next drain. */
+export async function enqueueAndDrain(opsDir: string, job: DistillJob, clock: DrainClock): Promise<boolean> {
+  enqueueJob(opsDir, job);
+  const cfg = readDistillerConfig(opsDir);
+  if (!cfg) return false;
+  return runDrainLoop(opsDir, (j) => runDistillerJob(cfg, j).then(() => undefined), clock);
+}
+
+export function defaultClock(): DrainClock {
+  return {
+    pid: process.pid,
+    now: () => Date.now(),
+    isPidAlive: (pid: number) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 /** Full winner protocol: claim (or reclaim stale) → drain → release →

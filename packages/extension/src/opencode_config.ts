@@ -9,6 +9,8 @@ import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
   resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, stageOpencodeSkills, type SkillIndexEntry,
 } from "./scores/package_skills";
+import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines } from "./substrate/vault_store";
+import { buildAboutUserSection, buildRecentProblemsSection } from "./substrate/user_splice";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -202,6 +204,7 @@ export function buildOpencodeConfigContent(
   scoresRoot: string = DEFAULT_SCORES_ROOT,
   skillPaths: string[] = [],
   skillsStageDir: string = "",
+  vaultDir: string = "",
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -241,6 +244,11 @@ export function buildOpencodeConfigContent(
         [`${problemsRoot()}/**`]: "allow",   // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants,                     // per-indexed-skill dirs (spec §3, least-privilege)
+        // User-memory substrate (spec-20260705-002847 §6): the interview reads
+        // problem/environment cards on demand. Read-only BY CONTRACT — vault
+        // writes are distiller-only (its own config); the permission surface
+        // has no read/write split, so this is posture, documented in spec §10.
+        ...(vaultDir ? { [`${vaultDir}/amicode/**`]: "allow" } : {}),
       },
     },
   });
@@ -266,6 +274,10 @@ export interface OpencodeConfigOptions {
   platformSkills?: string[];
   /** Roots for the central platform-skill library (spec §3). Default: DEFAULT_LIBRARY_ROOTS. */
   skillLibraryRoots?: string[];
+  /** Personal vault dir for the user-memory substrate (spec-20260705-002847).
+   *  undefined → auto-resolve (kind=personal marker scan under ~/.amico/vaults);
+   *  "" → personalization disabled; a path → used as-is. */
+  vaultDir?: string;
 }
 
 export interface OpencodeProject {
@@ -278,6 +290,9 @@ export interface OpencodeProject {
   /** Absolute dir holding the staged opencode-native skills — thread into
    *  buildOpencodeConfigContent as `skills.paths`. "" if none staged. */
   skillsStageDir: string;
+  /** Resolved personal vault ("" when personalization is off) — thread into
+   *  buildOpencodeConfigContent for the read grant. */
+  vaultDir: string;
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
@@ -361,6 +376,24 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // resolved set, never a whole library root.
   const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
 
+  // User-memory splice (spec-20260705-002847 §6): About-this-user + Your-recent-
+  // problems, appended AFTER the AGENTS.md write above is prepared — own
+  // try/catch, personalization trouble must never brick the boot.
+  const vaultDir = opts.vaultDir !== undefined ? opts.vaultDir : resolvePersonalVault(defaultVaultsRoot(), "");
+  if (vaultDir) {
+    try {
+      const about = buildAboutUserSection(readProfileMd(vaultDir));
+      const recent = buildRecentProblemsSection(readKnowledgeLines(vaultDir));
+      for (const section of [about, recent]) {
+        if (section) finalContent = finalContent + "\n\n" + section;
+      }
+    } catch (e) {
+      console.warn(`amicode: user-memory splice failed (session continues unpersonalized): ${e}`);
+    }
+  }
+
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
+
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
   return {
@@ -369,5 +402,6 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     templatePath: opts.templateSrc,
     skillPaths: skillEntries.map((e) => e.path),
     skillsStageDir,
+    vaultDir,
   };
 }

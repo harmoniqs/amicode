@@ -145,3 +145,46 @@ describe("drain (spec §4.1: sequential, keep-on-failure, post-release re-check)
     expect(queueIsEmpty(ops)).toBe(false); // job left for the holder
   });
 });
+
+describe("distiller spawn transport (config file + headless child)", () => {
+  function fakeBinary(dir: string): string {
+    const bin = path.join(dir, "fake-opencode");
+    fs.writeFileSync(
+      bin,
+      `#!/bin/sh\nprintf '%s\\n' "$4" > "${dir}/captured-job"\nprintf '%s\\n' "$OPENCODE_CONFIG_CONTENT" > "${dir}/captured-env"\necho done\n`,
+    );
+    fs.chmodSync(bin, 0o755);
+    return bin;
+  }
+  it("write/read round-trip; missing/garbage → null", async () => {
+    const ops = mkOps();
+    const { writeDistillerConfig, readDistillerConfig } = await import("../../opencode-plugin/distill_queue");
+    expect(readDistillerConfig(ops)).toBeNull();
+    writeDistillerConfig(ops, { binary: "/x/opencode", config: { agent: {} } });
+    expect(readDistillerConfig(ops)!.binary).toBe("/x/opencode");
+  });
+  it("runDistillerJob spawns `run --agent distiller <job>` with the config env", async () => {
+    const ops = mkOps();
+    const { runDistillerJob } = await import("../../opencode-plugin/distill_queue");
+    const bin = fakeBinary(ops);
+    const res = await runDistillerJob({ binary: bin, config: { marker: 42 } }, { kind: "run", run_id: "rX" });
+    expect(res.code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(path.join(ops, "captured-job"), "utf8")).run_id).toBe("rX");
+    expect(JSON.parse(fs.readFileSync(path.join(ops, "captured-env"), "utf8")).marker).toBe(42);
+  });
+  it("enqueueAndDrain without a transport config leaves the job queued (no throw)", async () => {
+    const ops = mkOps();
+    const { enqueueAndDrain, defaultClock } = await import("../../opencode-plugin/distill_queue");
+    const ran = await enqueueAndDrain(ops, { kind: "sweep" }, defaultClock());
+    expect(ran).toBe(false);
+    expect(queueIsEmpty(ops)).toBe(false);
+  });
+  it("enqueueAndDrain with a transport config drains through the child", async () => {
+    const ops = mkOps();
+    const { enqueueAndDrain, defaultClock, writeDistillerConfig } = await import("../../opencode-plugin/distill_queue");
+    writeDistillerConfig(ops, { binary: fakeBinary(ops), config: { m: 1 } });
+    const ran = await enqueueAndDrain(ops, { kind: "run", run_id: "rZ" }, defaultClock());
+    expect(ran).toBe(true);
+    expect(queueIsEmpty(ops)).toBe(true);
+  });
+});

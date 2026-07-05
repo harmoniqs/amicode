@@ -95,6 +95,10 @@
       {
         "command": "amicode.openRunDir",
         "title": "Amicode: Open current run directory"
+      },
+      {
+        "command": "amicode.distillNow",
+        "title": "Amicode: Distill now (update my memory)"
       }
     ],
     "configuration": {
@@ -147,6 +151,16 @@
           "items": { "type": "string" },
           "default": [],
           "description": "Roots for the central platform-skill library. Empty = ~/harmoniqs/amico-plugin/skills."
+        },
+        "amicode.vaultDir": {
+          "type": "string",
+          "default": "",
+          "description": "Personal Armonia vault for the user-memory substrate (profile, problem cards, pulse bank). Empty = auto-resolve the first kind=personal mount under ~/.amico/vaults."
+        },
+        "amicode.distillerModel": {
+          "type": "string",
+          "default": "opencode/big-pickle",
+          "description": "Model (providerID/modelID) for the headless distiller agent. Pinned separately from the chat model so distillation survives provider rate limits."
         }
       }
     }

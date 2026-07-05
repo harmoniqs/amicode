@@ -15,6 +15,9 @@ import { OpencodeEventClient } from "./sse_client";
 import { RunsRootWatcher } from "./file_watcher";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir } from "./run_controls";
+import { amicodeOpsDir } from "./substrate/vault_store";
+import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
+import * as os from "node:os";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -30,6 +33,9 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let watcher: RunsRootWatcher | undefined;
 let opencodeReadyUrl: URL | undefined;
+/** Set once the binary + vault are known; the watcher's onRunFinished closure
+ *  and the distillNow command read it lazily (undefined = distiller disabled). */
+let distillerSetup: DistillerSetup | undefined;
 
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
@@ -49,7 +55,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 2. Start watching the runs root immediately — solves may already exist
   // from prior dev-host sessions, and watchers are cheap.
   fs.mkdirSync(runsRoot, { recursive: true });
-  watcher = new RunsRootWatcher({ runsRoot, channel: runsChannel, statusBar });
+  watcher = new RunsRootWatcher({
+    runsRoot,
+    channel: runsChannel,
+    statusBar,
+    // Distill trigger 1 (spec-20260705-002847 §4.1): every LIVE completion —
+    // including failures (failure lessons are first-class knowledge, §4.4).
+    onRunFinished: ({ runId }) => {
+      if (distillerSetup) triggerRunDistill(distillerSetup, runId);
+    },
+  });
   watcher.start();
   ctx.subscriptions.push(watcher);
 
@@ -87,6 +102,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     skillRoots: cfgArr("skillRoots"),
     platformSkills: cfgArr("platformSkills"),
     skillLibraryRoots: cfgArr("skillLibraryRoots"),
+    // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
+    // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
+    vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
@@ -141,11 +159,37 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot, undefined, undefined, opencodeProject.skillPaths, opencodeProject.skillsStageDir),
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot, undefined, undefined, opencodeProject.skillPaths, opencodeProject.skillsStageDir, opencodeProject.vaultDir),
       },
       channel: opencodeChannel,
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
+
+    // Distiller transport (spec-20260705-002847 §4): written once per
+    // activation so every spawner — the run-finished trigger here, the plugin's
+    // onboarding trigger, and the batch shell — produces identical headless
+    // distillers. Requires a resolved personal vault; without one the distiller
+    // stays disabled and the session is simply unpersonalized.
+    if (opencodeProject.vaultDir) {
+      try {
+        distillerSetup = {
+          binary,
+          distillerMdPath: path.resolve(ctx.extensionPath, "DISTILLER.md"),
+          vaultDir: opencodeProject.vaultDir,
+          opsDir: amicodeOpsDir(),
+          problemsRoot: path.join(os.homedir(), ".amico", "problems"),
+          runsRoot,
+          model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
+        };
+        initDistillerTransport(distillerSetup);
+        opencodeChannel.appendLine(`[boot] distiller armed (vault: ${opencodeProject.vaultDir}, model: ${distillerSetup.model})`);
+      } catch (e) {
+        opencodeChannel.appendLine(`[boot] distiller transport failed (memory disabled this session): ${e}`);
+        distillerSetup = undefined;
+      }
+    } else {
+      opencodeChannel.appendLine(`[boot] no personal vault resolved — distiller disabled, session unpersonalized`);
+    }
 
     // SSE event channel — opens once opencode is healthy.
     sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
@@ -233,6 +277,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
       }
     }),
+    // Distill trigger 3 (manual): coarse idempotent sweep — safe to mash.
+    vscode.commands.registerCommand("amicode.distillNow", () => {
+      if (!distillerSetup) {
+        void vscode.window.showWarningMessage("Amicode: distiller disabled (no personal vault resolved).");
+        return;
+      }
+      triggerSweep(distillerSetup, true);
+      void vscode.window.showInformationMessage("Amicode: distilling recent sessions in the background.");
+    }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       opencodeChannel.appendLine(`[boot] restart requested`);
       await serverManager?.stop();
@@ -267,6 +320,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function deactivate(): void {
+  // Distill trigger 2 (session close): queue-only — a drain must not delay
+  // shutdown; the next activation or trigger drains the queue.
+  if (distillerSetup) triggerSweep(distillerSetup, false);
   sseClient?.dispose();
   serverManager?.stop();
   watcher?.dispose();
