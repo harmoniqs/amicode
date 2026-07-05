@@ -14,15 +14,14 @@ stages:
     questions:
       - id: platform
         prompt: "What kind of system are you working with?"
-        choices: ["transmon", "neutral-atom Rydberg", "other"]
+        choices: ["transmon", "neutral-atom Rydberg", "cavity / bosonic", "other"]
         default: "transmon"
   - id: model
     emits: [system]
     questions:
       - id: levels
-        prompt: "How many levels should the model keep?"
-        choices: ["3", "4"]
-        default: "3"
+        prompt: "How many levels should the model keep? (I'll recommend based on your system — see guidance)"
+        default: "platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)"
         rationale_ref: "#levels-guidance"
       - id: drives
         prompt: "Drive parameterization and amplitude bound (drive_max)?"
@@ -41,16 +40,15 @@ stages:
   - id: problem
     questions:
       - id: target
-        prompt: "Which single-qubit gate is the target?"
-        choices: ["X", "Y", "Z", "H", "S", "T", "√X", "arbitrary unitary"]
-        default: "X"
+        prompt: "What is the target — a gate, or a state to prepare?"
+        default: "a single-qubit gate"
         rationale_ref: "#scope"
   - id: formulate
     emits: [formulation]
     questions:
       - id: objective
-        prompt: "Objective and constraints beyond the vetted default (unitary infidelity under the amplitude bound)?"
-        default: "vetted default only"
+        prompt: "Objective and constraints? (gate → unitary infidelity; state preparation → ket infidelity to the target state; both under the amplitude bound)"
+        default: "the standard objective for this problem type"
         memory_hooks: [free-phase-objective-only, pin-globals-first-solve]
   - id: solve
     emits: [run, pulse]
@@ -58,7 +56,7 @@ stages:
     template: templates/solve.jl
     questions:
       - id: solve_params
-        prompt: "Gate time T (ns), timesteps N, and max_iter?"
+        prompt: "Pulse duration T (ns), timesteps N, and max_iter?"
         default: "T = 10 ns, N = 50, max_iter = 60"
         rationale_ref: "#regime-guidance"
   - id: inspect
@@ -128,25 +126,51 @@ Per-stage notes:
      **composed** `rydberg-cz` exemplar is the public fallback (experimental /
      not-yet-vetted, fixed-phase + virtual-Z scan, slow at 2 qubits). Do not claim
      Rydberg is unsupported.
+   - cavity / bosonic (a harmonic mode, optionally coupled to a transmon):
+     $\hat H/\hbar = \omega\,\hat a^\dagger\hat a + u_1(t)(\hat a+\hat a^\dagger) + i\,u_2(t)(\hat a-\hat a^\dagger) + \dots$
+     record `platform = "cavity"` (or `"transmon-cavity"` for the coupled system).
+     The natural targets here are **states** (cat, Fock, GKP), not gates — see the
+     problem stage. **Invoke the `bosonic` skill** for the displaced-frame model and
+     Fock-cutoff sizing, and (with `issimo`) `piccolissimo-authoring` for the
+     `KetTrajectory` state-prep flow.
+   - **General routing (skills-first):** for ANY platform, if the `## Skill index`
+     lists a matching skill (`atoms`, `transmon`, `fluxonium`, `ions`, `bosonic`),
+     **invoke it by name** for the physics before authoring — do not hand-roll the
+     Hamiltonian from memory when a skill carries it.
 2. **model** — convention: **`T` = scalar gate time (ns), `N` = number of
    timesteps** — never conflate them. Record via `amicode_set_model`.
-   <a id="levels-guidance"></a>Levels: 3 (default) or 4 for more leakage
-   realism; **avoid 5+** — added levels worsen conditioning and leakage and
-   inflate solve cost; if the user insists, warn it may not converge.
+   <a id="levels-guidance"></a>Levels are **platform-dependent** — do not default
+   to 3 blindly. A **transmon** qubit keeps 3 (default) or 4 for leakage realism;
+   avoid 5+ (worse conditioning/leakage, higher solve cost). A **cavity / bosonic
+   mode** is different: it needs a **Fock cutoff** large enough to contain the
+   target state and its transients — a cat state $|\alpha\rangle+|{-}\alpha\rangle$
+   with $|\alpha|\sim 2$ wants ~15–25 Fock levels; too small a cutoff silently
+   truncates the state and corrupts the fidelity. Invoke the **`bosonic`** skill
+   for a cutoff appropriate to the target. (For a transmon⊗cavity system, the
+   dimension is levels × Fock-cutoff.)
 3. **mode** — if warm-starting: `traj = load_traj("path/to/pulse.jld2")` as
    the initial guess (the warm-start idiom in the project context).
-4. **problem** — <a id="scope"></a>**transmon single-qubit gates use the vetted
-   template**: X, Y, Z, H, S, T, √X, or an arbitrary single-qubit unitary.
-   Multi-qubit *transmon* gates (CNOT, CZ, iSWAP on transmons) have no vetted
-   template/exemplar — they are **not declined**: they route through the
-   **free-tier** offer (author from scratch, **unvetted**, re-rollout-verified),
-   caveat stated up front. **The Rydberg CZ is the exception** — the composed
-   `rydberg-cz` exemplar (2-qubit, experimental), or the Piccolissimo free-phase
-   path when the Skill index lists it (honestly caveated).
-5. **formulate** — the vetted template optimizes unitary infidelity under the
-   amplitude bound `drive_max`; record any further objectives/constraints as
-   follow-ups in the Formulation entity — do not improvise unvetted physics
-   into the script. **Never silently co-optimize global model parameters**
+4. **problem** — <a id="scope"></a>Two problem TYPES, **both first-class** — never
+   force one into the other:
+   - **Gate synthesis** (target = a unitary). Transmon single-qubit gates (X, Y, Z,
+     H, S, T, √X, arbitrary unitary) use the vetted template. Multi-qubit *transmon*
+     gates (CNOT, CZ, iSWAP) have no vetted template — **not declined**: free-tier
+     offer (author from scratch, **unvetted**, re-rollout-verified), caveat up front.
+     **Rydberg CZ is the exception** — the composed `rydberg-cz` exemplar (2-qubit,
+     experimental) or the Piccolissimo free-phase path when the Skill index lists it.
+   - **State preparation** (target = a STATE, not a gate): cat states, Fock states,
+     GKP states, arbitrary kets — e.g. a **cavity cat state**. This is NOT gate
+     synthesis: it optimizes a **`KetTrajectory`** toward the target state
+     (**ket infidelity**), never a unitary. Do NOT ask "which gate," do NOT record a
+     gate target, do NOT report unitary infidelity. Supported via **Piccolissimo**
+     (invoke `piccolissimo-authoring`) with the platform physics skill (`bosonic`
+     for a cavity). Name the problem for the target (e.g. `cat-state-transmon-cavity`)
+     — the strip slug follows the name, so a wrong name reads as a wrong problem.
+5. **formulate** — the objective matches the problem TYPE: **gate synthesis** →
+   unitary infidelity under the amplitude bound `drive_max` (the vetted template);
+   **state preparation** → **ket infidelity** to the target state (a `KetTrajectory`
+   solve). Record any further objectives/constraints as follow-ups in the
+   Formulation entity — do not improvise unvetted physics into the script. **Never silently co-optimize global model parameters**
    (frequencies, anharmonicities) — if the user wants that, it's a recorded
    follow-up, not a live edit. Record via `amicode_formulate`.
 6. **solve** — <a id="regime-guidance"></a>defaults converge to F > 0.999 in
