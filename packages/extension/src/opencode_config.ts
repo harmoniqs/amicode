@@ -5,11 +5,11 @@ import { parse as parseToml } from "smol-toml";
 import { loadRepertoire } from "./scores/loader";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
-import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
+import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
 import {
   resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, stageOpencodeSkills, type SkillIndexEntry,
 } from "./scores/package_skills";
-import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines } from "./substrate/vault_store";
+import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines, hasOnboardingCompleted, onboardingDir } from "./substrate/vault_store";
 import { buildAboutUserSection, buildRecentProblemsSection } from "./substrate/user_splice";
 
 // ============================================================================
@@ -314,6 +314,11 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // transport for the Bun-side plugin. FALLBACK: any failure leaves the substituted
   // AGENTS.md exactly as before — the hardcoded section IS the fallback content;
   // score trouble must never brick the boot.
+  // User-memory substrate (spec-20260705-002847): resolve the personal vault
+  // ONCE, up front — the routing predicate (§3) and the splice (§6) both need
+  // it. undefined → auto-resolve (kind=personal marker scan); "" → off.
+  const vaultDir = opts.vaultDir !== undefined ? opts.vaultDir : resolvePersonalVault(defaultVaultsRoot(), "");
+
   let finalContent = filled;
   try {
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
@@ -321,7 +326,33 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const ents = readLocalEntitlements(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
     const visible = filterRepertoire(load.scores, ents.entitlements);
     const score0 = visible.find((s) => s.manifest.id === "pulse-designer");
-    if (score0) {
+    const overture = visible.find((s) => s.manifest.id === "overture");
+    // Routing predicate (spec §3): onboard (chain overture → pulse-designer)
+    // ONLY when there is a vault to remember into AND the user has neither a
+    // materialized profile NOR a completion marker (the second disjunct closes
+    // the ~2-min materialization window; an empty/whitespace PROFILE.md counts
+    // as absent via readProfileMd). No vault ⇒ never onboard (nowhere to
+    // materialize) — just run pulse-designer.
+    const shouldOnboard =
+      !!overture &&
+      !!score0 &&
+      vaultDir !== "" &&
+      readProfileMd(vaultDir) === "" &&
+      !hasOnboardingCompleted(onboardingDir());
+    if (shouldOnboard && overture && score0) {
+      // Chained: ONE compiled section, ONE manifest (id `overture`, stages =
+      // overture ++ pulse-designer) so the score guard sees the whole flow.
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileChainedScore(overture, score0));
+      const manifestJson =
+        JSON.stringify(
+          { manifest: chainManifest(overture, score0), score_dir: overture.dir, project_dir: projectDir },
+          null,
+          2,
+        ) + "\n";
+      fs.writeFileSync(path.join(projectDir, "score_manifest.json"), manifestJson);
+      fs.mkdirSync(problemsRoot(), { recursive: true });
+      fs.writeFileSync(path.join(problemsRoot(), "score_manifest.json"), manifestJson);
+    } else if (score0) {
       finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
       // reads score_manifest.json from the problems ROOT — that is the guard's
@@ -377,9 +408,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
 
   // User-memory splice (spec-20260705-002847 §6): About-this-user + Your-recent-
-  // problems, appended AFTER the AGENTS.md write above is prepared — own
-  // try/catch, personalization trouble must never brick the boot.
-  const vaultDir = opts.vaultDir !== undefined ? opts.vaultDir : resolvePersonalVault(defaultVaultsRoot(), "");
+  // problems, appended to the compiled content — own try/catch, personalization
+  // trouble must never brick the boot. `vaultDir` was resolved up front (above).
+  // When we routed to the overture (no profile yet) these read empty and add
+  // nothing — correct: there is no memory to splice on the very first session.
   if (vaultDir) {
     try {
       const about = buildAboutUserSection(readProfileMd(vaultDir));

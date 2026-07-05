@@ -64,7 +64,7 @@ describe("vault wiring (grant + splice + return)", () => {
     expect(agents).toContain("## Your recent problems");
     expect(agents).toContain("x-gate-v1");
   });
-  it("explicit empty vaultDir disables personalization (absent sections, no throw)", () => {
+  it("explicit empty vaultDir disables personalization (no spliced sections, no throw)", () => {
     const proj = prepareOpencodeProject({
       agentsSrc: "/nonexistent-agents.md",
       templateSrc: "/tmp/none.jl",
@@ -72,7 +72,10 @@ describe("vault wiring (grant + splice + return)", () => {
       vaultDir: "",
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).not.toContain("## About this user");
-    expect(agents).not.toContain("## Your recent problems");
+    // Key on splice-UNIQUE sentinels, not the section headings — the pulse-designer
+    // SCORE.md prose legitimately references "## About this user" when instructing
+    // the agent to anchor on it. The actual spliced sections carry these lines:
+    expect(agents).not.toContain("Greet and recommend with this context");
+    expect(agents).not.toContain("Before recommending parameters, check whether");
   });
 });

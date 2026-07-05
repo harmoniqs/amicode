@@ -38,6 +38,11 @@ function prep(overrides: Partial<Parameters<typeof prepareOpencodeProject>[0]> =
     skillRoots: [],
     platformSkills: [],
     skillLibraryRoots: [],
+    // hermetic: personalization off (else auto-resolve hits the machine's real
+    // personal vault and, absent a profile there, routes to the overture score —
+    // these tests assert pure pulse-designer compilation). Onboarding routing
+    // has its own suite (overture_routing.test.ts).
+    vaultDir: "",
     ...overrides,
   });
 }

@@ -33,10 +33,11 @@ stages:
         choices: ["solve", "simulate"]
         default: "solve"
       - id: warm_start
-        prompt: "Warm start from a previous pulse (pulse.jld2), or cold start?"
+        prompt: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?"
         choices: ["cold start", "warm start"]
         default: "cold start"
         skip_if: "mode == simulate"
+        rationale_ref: "#warm-start-bank"
   - id: problem
     questions:
       - id: target
@@ -105,13 +106,26 @@ never ask questions that contradict what is recorded. If the record is wrong
 (wrong platform, stale value), correct it via the matching `amicode_*` tool
 FIRST, then continue.
 
+**Anchor on the user's memory.** If an `## About this user` section is present,
+you already know their name, platforms, environment, and devices — greet them by
+name, lead with their platform, and NEVER ask what a section already answers. If a
+`## Your recent problems` section is present, check whether their target matches a
+card before asking boilerplate; a matching card means you have priors (typical
+params, best fidelity, lessons) — use them.
+
 Per-stage notes:
 
 1. **platform** — **author-first / open intake.** Acknowledge whatever the user
    states **as stated** — transmon, Rydberg, spin qubits, cavities, anything.
    **Never coerce** an unfamiliar platform into a known one; never decline for lack
    of a template. Record the **actual platform string** via `amicode_pick_system`
-   (free-form). Then route, in order: (1) matching **platform skill** in the
+   (free-form). If `## About this user` names their platform(s), lead with that
+   instead of asking cold. Then route, in order: (1) matching **platform skill** in the
+   `## Skill index` → skill-guided; (2) `issimo` + package skill → the private path
+   (e.g. Piccolissimo **free-phase CZ path**); (3) no skill → **offer free-tier
+   from-scratch authoring anyway** (public packages, **unvetted**, re-rollout-
+   verified). When this FIRST entity records, mention once: "I'll track our progress
+   in the strip up top — click any part of it to inspect." Never repeat it. Then route, in order: (1) matching **platform skill** in the
    `## Skill index` → skill-guided; (2) `issimo` + package skill → the private path
    (e.g. Piccolissimo **free-phase CZ path**); (3) no skill → **offer free-tier
    from-scratch authoring anyway** (public packages, **unvetted**, re-rollout-
@@ -148,8 +162,13 @@ Per-stage notes:
    truncates the state and corrupts the fidelity. Invoke the **`bosonic`** skill
    for a cutoff appropriate to the target. (For a transmon⊗cavity system, the
    dimension is levels × Fock-cutoff.)
-3. **mode** — if warm-starting: `traj = load_traj("path/to/pulse.jld2")` as
-   the initial guess (the warm-start idiom in the project context).
+3. **mode** — <a id="warm-start-bank"></a>if warm-starting:
+   `traj = load_traj("path/to/pulse.jld2")` as the initial guess (the warm-start
+   idiom in the project context). **Prefer the user's pulse bank:** if
+   `## Your recent problems` lists a card whose target matches, proactively offer
+   a warm start from that card's banked `pulse.jld2` (the path shown in the
+   card / KNOWLEDGE line) instead of asking for a path — a solved problem should
+   never be re-solved cold. Say what you're seeding from and its recorded fidelity.
 4. **problem** — <a id="scope"></a>Two problem TYPES, **both first-class** — never
    force one into the other:
    - **Gate synthesis** (target = a unitary). Transmon single-qubit gates (X, Y, Z,
@@ -189,3 +208,10 @@ Per-stage notes:
    (fidelity + amplitude/bandwidth checks, then human sign-off) and the
    calibration loop that follows; record interest via `amicode_to_hardware`
    and `amicode_calibrate` (bookkeeping stubs — they perform NO device I/O).
+   **Speak the user's environment.** If `## About this user` records an
+   environment, frame the send-to-device path in ITS terms — for `qick-lab`,
+   "this would compile to your QICK control code" (adapter: IntonatoQICK); for
+   `cloud-pasqal`, "this would submit to the cloud, emulator first"; for
+   `local-sim`, be explicit that hardware isn't wired yet. Read the environment
+   card from the vault for specifics. Don't offer a generic device stub when you
+   know exactly what they're patching into.

@@ -171,7 +171,7 @@ describe('prepareOpencodeProject', () => {
   it('substitutes the julia project AND the absolute template path, leaving no placeholders', () => {
     const ext = fakeExtRoot()
     const templateSrc = join(ext, 'templates', 'solve_template.jl')
-    const p = prepareOpencodeProject({ agentsSrc: join(ext, 'AGENTS.md'), templateSrc, juliaProject: '/opt/piccolo' })
+    const p = prepareOpencodeProject({ agentsSrc: join(ext, 'AGENTS.md'), templateSrc, juliaProject: '/opt/piccolo', vaultDir: '' })
     const agents = readFileSync(p.agentsPath, 'utf8')
     expect(agents).toContain('/opt/piccolo')
     expect(agents).toContain(templateSrc)          // {{TEMPLATE_PATH}} → the absolute bundled template
@@ -181,7 +181,7 @@ describe('prepareOpencodeProject', () => {
   it('does NOT copy the template or write a vestigial .opencode/opencode.json into the session dir', () => {
     const ext = fakeExtRoot()
     const p = prepareOpencodeProject({ agentsSrc: join(ext, 'AGENTS.md'),
-      templateSrc: join(ext, 'templates', 'solve_template.jl'), juliaProject: '/opt/piccolo' })
+      templateSrc: join(ext, 'templates', 'solve_template.jl'), juliaProject: '/opt/piccolo', vaultDir: '' })
     expect(existsSync(join(p.projectDir, 'solve_template.jl'))).toBe(false)
     expect(existsSync(join(p.projectDir, '.opencode', 'opencode.json'))).toBe(false)
   })
