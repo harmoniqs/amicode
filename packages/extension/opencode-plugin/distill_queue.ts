@@ -142,6 +142,9 @@ export interface DistillerConfigFile {
   binary: string;
   /** The OPENCODE_CONFIG_CONTENT object for the distiller variant. */
   config: Record<string, unknown>;
+  /** Merged into every job by spawners that don't know the paths themselves
+   *  (the Bun plugin, the batch shell): vault, ops, runs_root. */
+  job_defaults?: Record<string, unknown>;
 }
 
 export function distillerConfigPath(opsDir: string): string {

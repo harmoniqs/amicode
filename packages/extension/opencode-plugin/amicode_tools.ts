@@ -64,6 +64,13 @@ import {
   migrateLegacyEntities,
 } from "./problems";
 import { guardAndRecordStage, completeStage } from "./score_guard";
+import {
+  onboardingStreamDir,
+  isOnboardingEntity,
+  appendOnboardingEvent,
+  statusSummary,
+  triggerOnboardingDistill,
+} from "./onboarding";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -704,6 +711,54 @@ export const AmicodeTools = async (_input: unknown) => ({
           `prediction, update, repeat until the device matches the design on paper. In this build ` +
           `that loop's a recorded follow-up only — nothing actually fires here yet.\n\n${sentinel}`
         );
+      },
+    },
+    // ── Onboarding (spec-20260705-002847 §3) — NOT a problem stage: UNGATED
+    // (no guardAndRecordStage), writes the ops-side onboarding stream, never the
+    // vault. The distiller materializes the cards on the completion marker.
+    amicode_profile: {
+      description:
+        "Record onboarding entities during the overture interview (session zero), and read them " +
+        "back to resume. Entities: `profile` {name, role, org, platforms[], goals}; " +
+        "`environment` {slug, archetype: qick-lab|cloud-pasqal|local-sim|other, control_stack, " +
+        "integration, emulator, endpoints[] — POINTERS ONLY, never credentials}; " +
+        "`device` {name, platform, environment, qubits, params, status}; and " +
+        "`onboarding_completed` {} — record it EXACTLY ONCE, at the handoff stage (it is what " +
+        "lets the background distiller materialize the user's profile). " +
+        "Pass `status` as the entity to read back everything recorded so far — call that FIRST " +
+        "when the overture starts, and resume from it (ask only what's missing).",
+      args: {
+        entity: {
+          type: "string",
+          description: "profile | environment | device | onboarding_completed | status",
+        },
+        payload: {
+          type: ["object", "null"],
+          description: "The entity's fields (see tool description). Pass null for status / onboarding_completed.",
+        },
+      },
+      async execute(a: { entity: string; payload?: Record<string, unknown> | null }) {
+        try {
+          const dir = onboardingStreamDir();
+          if (a.entity === "status") return statusSummary(dir);
+          if (!isOnboardingEntity(a.entity)) {
+            return `Cannot record "${a.entity}" — valid entities: profile, environment, device, onboarding_completed, status.`;
+          }
+          const { seq, clean } = appendOnboardingEvent(dir, a.entity, a.payload ?? {});
+          if (a.entity === "onboarding_completed") {
+            const spawned = triggerOnboardingDistill();
+            return (
+              `Onboarding complete (event ${seq}). ` +
+              (spawned
+                ? "Your profile is being materialized in the background — the next session opens personalized."
+                : "Profile materialization queued (distiller transport not armed yet — it runs on the next drain).")
+            );
+          }
+          const fields = Object.keys(clean).join(", ") || "(empty)";
+          return `Recorded ${a.entity} (event ${seq}): ${fields}.`;
+        } catch (err) {
+          return `Cannot record onboarding entity: ${err instanceof Error ? err.message : String(err)}`;
+        }
       },
     },
   },

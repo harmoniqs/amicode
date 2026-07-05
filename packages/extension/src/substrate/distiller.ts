@@ -58,7 +58,11 @@ export function buildDistillerConfigContent(s: DistillerSetup): Record<string, u
 /** Written once per activation; every spawner (extension, plugin trigger-4,
  *  batch shell) reads this file so headless distillers are identical. */
 export function initDistillerTransport(s: DistillerSetup): void {
-  writeDistillerConfig(s.opsDir, { binary: s.binary, config: buildDistillerConfigContent(s) });
+  writeDistillerConfig(s.opsDir, {
+    binary: s.binary,
+    config: buildDistillerConfigContent(s),
+    job_defaults: { vault: s.vaultDir, ops: s.opsDir, runs_root: s.runsRoot },
+  });
 }
 
 function baseJob(s: DistillerSetup): Pick<DistillJob, never> & { vault: string; ops: string; runs_root: string } {
