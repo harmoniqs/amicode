@@ -174,6 +174,13 @@ export function detectStopped(runDir: string): boolean {
 
 /** Terminal state of a run dir, read + validated in ONE place (review #70 —
  *  the #84 funnel; RunsManager.readTerminal and ingestRunDir both delegate).
+ *
+ *  ONE-SPINE MIRROR: the opencode fork's run-status/run-series endpoints keep
+ *  a documented mirror of these semantics (harmoniqs/opencode,
+ *  packages/opencode/src/server/amicode/run-terminal.ts). If you change the
+ *  terminal semantics here — status field authority, torn-FINISHED retry, the
+ *  AMICODE_STOPPED relabel, fidelity-only-from-result.toml — change them there
+ *  in the same change-set.
  *  Folds the cooperative-stop relabel in: a user-stop exits 0 → FINISHED says
  *  "completed"; relabel to "stopped" (AMICODE_STOPPED marker) so no consumer
  *  reads it as a genuine convergence and promote is skipped by construction.
