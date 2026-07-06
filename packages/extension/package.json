@@ -1,7 +1,7 @@
 {
   "name": "amicode-v2",
   "displayName": "Amicode v2",
-  "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
+  "description": "Amico research IDE \u2014 opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
   "version": "0.0.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
@@ -77,6 +77,10 @@
         "title": "Amicode: Open Run Inspector"
       },
       {
+        "command": "amicode.selectRun",
+        "title": "Amicode: Select run to inspect\u2026"
+      },
+      {
         "command": "amicode.restartServer",
         "title": "Amicode: Restart opencode server"
       },
@@ -140,19 +144,25 @@
         },
         "amicode.skillRoots": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Roots to search for co-located package skills (<Pkg>.jl/skills/<name>/SKILL.md). Empty = ~/harmoniqs/packages. First root containing a package's skills wins."
         },
         "amicode.platformSkills": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
-          "description": "Platform-skill names indexed from the central library (public). Empty = atoms, transmon, fluxonium, ions, bosonic. Only listed names are indexed — the library also holds process skills that must not leak."
+          "description": "Platform-skill names indexed from the central library (public). Empty = atoms, transmon, fluxonium, ions, bosonic. Only listed names are indexed \u2014 the library also holds process skills that must not leak."
         },
         "amicode.skillLibraryRoots": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Roots for the central platform-skill library. Empty = ~/harmoniqs/amico-plugin/skills."
         },
@@ -169,7 +179,7 @@
         "amicode.veloce": {
           "type": "boolean",
           "default": false,
-          "description": "Amico Veloce: start sessions with autonomy on — auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
+          "description": "Amico Veloce: start sessions with autonomy on \u2014 auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
         }
       }
     },

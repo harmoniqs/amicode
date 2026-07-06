@@ -289,6 +289,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await vscode.commands.executeCommand("amicode.runInspector.focus");
     }),
+    // Run picker (pre-UX4 utility): switch the inspector between tracked runs.
+    // Picking pins the selection (a background solve won't steal the view);
+    // "Follow latest" releases the pin and resumes newest-run auto-follow.
+    vscode.commands.registerCommand("amicode.selectRun", async () => {
+      const runs = runsManager?.runs() ?? [];
+      if (runs.length === 0) { void vscode.window.showInformationMessage("Amicode: no runs tracked yet."); return; }
+      const items: (vscode.QuickPickItem & { runId?: string; follow?: boolean })[] = [
+        { label: "$(radio-tower) Follow latest", description: "auto-follow the newest run (release pin)", follow: true },
+        ...[...runs].reverse().map((r) => ({
+          label: `${r.phase === "live" ? "$(pulse)" : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
+          description: [r.phase === "live" ? `live · iter ${r.latestIter ?? 0}` : r.status,
+                        r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
+                        r.scriptPath ? path.basename(r.scriptPath) : undefined].filter(Boolean).join(" · "),
+          runId: r.runId,
+        })),
+      ];
+      const pick = await vscode.window.showQuickPick(items, { placeHolder: "Amicode: select the run to inspect" });
+      if (!pick) return;
+      if (pick.follow) runsManager?.resumeAutoFollow();
+      else if (pick.runId) runsManager?.selectRun(pick.runId);
+      await vscode.commands.executeCommand("amicode.runInspector.focus");
+    }),
     vscode.commands.registerCommand("amicode.stopRun", () => {
       const dir = runsManager?.getActiveRunDir();
       if (!dir) { vscode.window.showWarningMessage("Amicode: no active run to stop."); return; }

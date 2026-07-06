@@ -249,6 +249,21 @@ export class RunsManager implements vscode.Disposable {
     return this.selected ? this.registry.get(this.selected)?.runDir : undefined;
   }
 
+  /** Release an explicit pin and resume latest-follow: jump to the newest LIVE
+   *  run if one exists (registration order = creation order), else stay put.
+   *  Backs the run picker's "Follow latest" entry. */
+  resumeAutoFollow(): void {
+    this.pinned = false;
+    const live = this.registry.all().filter((r) => r.phase === "live");
+    const newest = live[live.length - 1];
+    if (newest && this.selected !== newest.runId) {
+      // Route through selectRun for the full display path, then re-release the
+      // pin it sets (this is the auto lane, not an explicit selection).
+      this.selectRun(newest.runId);
+      this.pinned = false;
+    }
+  }
+
   // -------- internal --------
 
   private registerRun(runId: string, runDir: string, createdAt?: string, scriptPath?: string): void {

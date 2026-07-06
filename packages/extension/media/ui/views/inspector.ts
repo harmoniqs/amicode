@@ -46,9 +46,12 @@ export interface InspectorView {
 interface Panel {
   el: HTMLElement;
   apply(msg: Record<string, unknown>): void;
+  /** Hidden panes pause their 1 Hz timing ticker (review/audit #8) — the strip
+   *  re-renders and resumes on activation. */
+  setActive(active: boolean): void;
 }
 
-function createPanel(post: (msg: unknown) => void): Panel {
+function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const status = pill("idle");
   const runLabel = text("mono small dim");
   const pulse = pulseplot(IDLE_HINT);
@@ -80,9 +83,9 @@ function createPanel(post: (msg: unknown) => void): Panel {
 
   // Control row — Stop / Save pulse / Open run dir. Each posts to the extension
   // (run_inspector.ts routes {type:"control", action} to the matching command).
-  const stopBtn = button("■ Stop", () => post({ type: "control", action: "stop" }));
-  const saveBtn = button("↓ Save pulse", () => post({ type: "control", action: "save" }));
-  const openBtn = button("↗ Open run dir", () => post({ type: "control", action: "open" }));
+  const stopBtn = button("■ Stop", () => post({ type: "control", action: "stop", runId }));
+  const saveBtn = button("↓ Save pulse", () => post({ type: "control", action: "save", runId }));
+  const openBtn = button("↗ Open run dir", () => post({ type: "control", action: "open", runId }));
   const controls = document.createElement("div");
   controls.className = "row gap-sm wrap push-end";
   controls.append(stopBtn.el, saveBtn.el, openBtn.el);
@@ -127,6 +130,13 @@ function createPanel(post: (msg: unknown) => void): Panel {
 
   return {
     el,
+    setActive(active: boolean): void {
+      if (!active) { clearTick(); return; }
+      if (createdAtMs !== undefined) {
+        renderTiming();
+        if (!tick) tick = setInterval(renderTiming, 1000);
+      }
+    },
     apply(msg: Record<string, unknown>): void {
       switch (msg.type) {
         case "runlabel":
@@ -215,7 +225,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const panelFor = (runId: string): Panel => {
     let p = panels.get(runId);
     if (!p) {
-      p = createPanel(post);
+      p = createPanel(post, runId);
       panels.set(runId, p);
       el.append(p.el);
     }
@@ -225,7 +235,10 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const activate = (runId: string): void => {
     active = runId;
     empty.el.style.display = "none";
-    for (const [id, p] of panels) p.el.classList.toggle("active", id === runId);
+    for (const [id, p] of panels) {
+      p.el.classList.toggle("active", id === runId);
+      p.setActive(id === runId);
+    }
     if (!panels.has(runId)) panelFor(runId).el.classList.add("active");   // pane may arrive before data
   };
 
