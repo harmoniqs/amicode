@@ -10,9 +10,9 @@ import { registerRunInspector } from "../src/run_inspector";
 //   1. the shell links brand.css + layout.css and the dist view bundle;
 //   2. the CSP authorizes every grant the view depends on;
 //   3. the design-owned stylesheets exist and brand.css carries the brand token.
-// The message protocol (runlabel/iteration/warming/completed/refresh/ping) is
-// exercised end-to-end by the watcher tests; ids/classes are now internal to
-// the view and free to change.
+// The message protocol (runId-keyed: runlabel/iteration/warming/completed/
+// pulsemeta/pulse/activate/ping) is exercised end-to-end by the watcher tests;
+// ids/classes are now internal to the view and free to change.
 
 const PKG_ROOT = join(__dirname, "..");
 
@@ -70,41 +70,54 @@ describe("Run Inspector shell contract (plumbing ⇄ TS-composed view)", () => {
 // #66 AC7 — pulse events posted before the webview materializes must not be
 // lost: the log line is the canonical signal (nothing re-delivers it, unlike
 // PNGs which the poll re-offers). The host buffers meta + the NEWEST record
-// and replays them on resolve, BEFORE any buffered terminal state.
-describe("Run Inspector host buffering (#66 pulse events)", () => {
+// per run and replays them on resolve, BEFORE any buffered terminal state.
+//
+// 1.3 (#58): every message is runId-keyed. Each run gets its own buffer +
+// throttle; resolve replays EVERY pane (S36) and activate names the visible one.
+describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
   const META = { drives: 1, knots: 2, labels: ["a_1"], bounds: [[-0.2, 0.2]] as [number, number][] };
+  const rec = (iter: number): { iter: number; dt: number; values: number[][] } => ({ iter, dt: 0.2, values: [[iter / 10, iter / 5]] });
 
   function harness() {
     const ctx = { extensionUri: { fsPath: PKG_ROOT }, subscriptions: [] as unknown[] };
     const inspector = registerRunInspector(ctx as never);
-    const posted: Array<Record<string, unknown>> = [];
-    const view = {
-      webview: {
-        options: {},
-        cspSource: "vscode-webview://unit",
-        asWebviewUri: (u: { fsPath?: string }) => ({ toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)) }),
-        postMessage: (m: Record<string, unknown>) => { posted.push(m); },
-        onDidReceiveMessage: () => ({ dispose() {} }),
-        set html(_v: string) { /* ignore */ },
-        get html() { return ""; },
-      },
-      onDidDispose: () => ({ dispose() {} }),
+    /** Build an independent webview target (its own capture buffer + dispose
+     *  hook) — lets a single inspector be resolved twice for the reopen path. */
+    const makeView = () => {
+      const posted: Array<Record<string, unknown>> = [];
+      let disposeCb: () => void = () => undefined;
+      const view = {
+        webview: {
+          options: {},
+          cspSource: "vscode-webview://unit",
+          asWebviewUri: (u: { fsPath?: string }) => ({ toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)) }),
+          postMessage: (m: Record<string, unknown>) => { posted.push(m); },
+          onDidReceiveMessage: () => ({ dispose() {} }),
+          set html(_v: string) { /* ignore */ },
+          get html() { return ""; },
+        },
+        onDidDispose: (cb: () => void) => { disposeCb = cb; return { dispose() {} }; },
+      };
+      return { view, posted, dispose: () => disposeCb() };
     };
-    return { inspector, view, posted };
+    const first = makeView();
+    return { inspector, makeView, view: first.view, posted: first.posted, dispose: first.dispose };
   }
 
-  it("buffers meta + NEWEST record pre-materialization, replays them before a buffered completion", () => {
+  it("buffers meta + NEWEST record pre-materialization, replays them (runId-tagged) before a buffered completion", () => {
     const { inspector, view, posted } = harness();
-    inspector.postPulse({ type: "meta", meta: META });
-    inspector.postPulse({ type: "record", record: { iter: 1, dt: 0.2, values: [[0.1, 0.2]] } });
-    inspector.postPulse({ type: "record", record: { iter: 2, dt: 0.2, values: [[0.3, 0.4]] } });
-    inspector.postCompletion("completed", 0.9999);
+    inspector.postPulse("r1", { type: "meta", meta: META });
+    inspector.postPulse("r1", { type: "record", record: rec(1) });
+    inspector.postPulse("r1", { type: "record", record: rec(2) });
+    inspector.postCompletion("r1", "completed", 0.9999);
     inspector.resolveWebviewView(view as never);
 
-    const types = posted.map((m) => m.type);
+    const r1 = posted.filter((m) => m.runId === "r1");
+    expect(r1.every((m) => m.runId === "r1")).toBe(true);                  // every message carries the runId
+    const types = r1.map((m) => m.type);
     expect(types).toContain("pulsemeta");
     expect(types.filter((t) => t === "pulse")).toHaveLength(1);            // newest-wins: iter 1 dropped
-    expect(posted.find((m) => m.type === "pulse")).toMatchObject({ iter: 2 });
+    expect(r1.find((m) => m.type === "pulse")).toMatchObject({ iter: 2 });
     expect(types.indexOf("pulsemeta")).toBeLessThan(types.indexOf("pulse"));
     expect(types.indexOf("pulse")).toBeLessThan(types.indexOf("completed")); // terminal state stays the last word
   });
@@ -113,25 +126,96 @@ describe("Run Inspector host buffering (#66 pulse events)", () => {
     vi.useFakeTimers();
     const { inspector, view, posted } = harness();
     inspector.resolveWebviewView(view as never);
-    inspector.postPulse({ type: "meta", meta: META });
+    inspector.postPulse("r1", { type: "meta", meta: META });
     posted.length = 0;
-    inspector.postPulse({ type: "record", record: { iter: 1, dt: 0.2, values: [[0.1, 0.2]] } });
+    inspector.postPulse("r1", { type: "record", record: rec(1) });
     expect(posted.map((m) => m.type)).toEqual(["pulse"]);                      // leading edge posts immediately
-    inspector.postPulse({ type: "record", record: { iter: 2, dt: 0.2, values: [[0.3, 0.4]] } });
-    inspector.postPulse({ type: "record", record: { iter: 3, dt: 0.2, values: [[0.5, 0.6]] } });
+    inspector.postPulse("r1", { type: "record", record: rec(2) });
+    inspector.postPulse("r1", { type: "record", record: rec(3) });
     expect(posted).toHaveLength(1);                                            // inside the window: coalesced
     vi.advanceTimersByTime(200);
     expect(posted).toHaveLength(2);                                            // trailing edge: exactly one flush
-    expect(posted[1]).toMatchObject({ type: "pulse", iter: 3 });               // …carrying the newest
+    expect(posted[1]).toMatchObject({ type: "pulse", iter: 3, runId: "r1" });  // …carrying the newest
   });
 
   it("posts straight through once the webview is live", () => {
     const { inspector, view, posted } = harness();
     inspector.resolveWebviewView(view as never);
     posted.length = 0;
-    inspector.postPulse({ type: "meta", meta: META });
-    inspector.postPulse({ type: "record", record: { iter: 3, dt: 0.2, values: [[0.5, 0.6]] } });
+    inspector.postPulse("r1", { type: "meta", meta: META });
+    inspector.postPulse("r1", { type: "record", record: rec(3) });
     expect(posted.map((m) => m.type)).toEqual(["pulsemeta", "pulse"]);
+    expect(posted.every((m) => m.runId === "r1")).toBe(true);
+  });
+
+  it("keeps a separate pane buffer per run — a background run's record never lands under another runId", () => {
+    const { inspector, view, posted } = harness();
+    inspector.postPulse("r1", { type: "meta", meta: META });
+    inspector.postPulse("r1", { type: "record", record: rec(1) });
+    inspector.postPulse("r2", { type: "meta", meta: META });
+    inspector.postPulse("r2", { type: "record", record: rec(7) });
+    inspector.resolveWebviewView(view as never);
+
+    // r1's pulse is iter 1 under r1; r2's is iter 7 under r2. No cross-key leak.
+    expect(posted.filter((m) => m.type === "pulse" && m.runId === "r1")).toMatchObject([{ iter: 1 }]);
+    expect(posted.filter((m) => m.type === "pulse" && m.runId === "r2")).toMatchObject([{ iter: 7 }]);
+  });
+
+  it("per-run throttle windows are independent — r2's leading edge is not coalesced by r1's open window", () => {
+    vi.useFakeTimers();
+    const { inspector, view, posted } = harness();
+    inspector.resolveWebviewView(view as never);
+    posted.length = 0;
+    inspector.postPulse("r1", { type: "record", record: rec(1) });   // opens r1's window (posts)
+    inspector.postPulse("r2", { type: "record", record: rec(1) });   // r2 has its OWN window (posts)
+    expect(posted.filter((m) => m.type === "pulse")).toHaveLength(2);
+    expect(posted.map((m) => m.runId).sort()).toEqual(["r1", "r2"]);
+  });
+
+  it("activate is replayed LAST on materialize and names the visible pane", () => {
+    const { inspector, view, posted } = harness();
+    inspector.postPulse("r1", { type: "meta", meta: META });
+    inspector.postPulse("r2", { type: "meta", meta: META });
+    inspector.activate("r2");
+    inspector.resolveWebviewView(view as never);
+
+    const activate = posted.filter((m) => m.type === "activate");
+    expect(activate).toHaveLength(1);
+    expect(activate[0]).toMatchObject({ runId: "r2" });
+    expect(posted.indexOf(activate[0])).toBe(posted.length - 1);        // last word = the visible pane
+  });
+
+  it("rebuilds EVERY pane on reopen (S36) — dispose then re-resolve replays all runs", () => {
+    const { inspector, makeView } = harness();
+    const a = makeView();
+    inspector.resolveWebviewView(a.view as never);
+    inspector.postPulse("r1", { type: "meta", meta: META });
+    inspector.postPulse("r1", { type: "record", record: rec(4) });
+    inspector.postCompletion("r1", "completed", 0.99);
+    inspector.postPulse("r2", { type: "meta", meta: META });
+    inspector.postPulse("r2", { type: "record", record: rec(9) });
+    inspector.activate("r2");
+    a.dispose();                                    // user closes the panel
+
+    const b = makeView();
+    inspector.resolveWebviewView(b.view as never);   // reopen — fresh DOM
+    // Both panes rebuilt from buffers, each with its newest record, r1 terminal.
+    expect(b.posted.filter((m) => m.type === "pulse" && m.runId === "r1")).toMatchObject([{ iter: 4 }]);
+    expect(b.posted.filter((m) => m.type === "completed" && m.runId === "r1")).toHaveLength(1);
+    expect(b.posted.filter((m) => m.type === "pulse" && m.runId === "r2")).toMatchObject([{ iter: 9 }]);
+    expect(b.posted[b.posted.length - 1]).toMatchObject({ type: "activate", runId: "r2" });
+  });
+
+  it("setWarmingUp no-ops once the pane has data or terminal state (no clobber of a fanned-in run)", () => {
+    const { inspector, view, posted } = harness();
+    inspector.resolveWebviewView(view as never);
+    inspector.postPulse("r1", { type: "record", record: rec(1) });   // r1 has data
+    inspector.postCompletion("r2", "completed", 0.99);               // r2 is terminal
+    posted.length = 0;
+    inspector.setWarmingUp("r1");
+    inspector.setWarmingUp("r2");
+    inspector.setWarmingUp("r3");                                    // fresh run → warming IS shown
+    expect(posted.filter((m) => m.type === "warming")).toMatchObject([{ runId: "r3" }]);
   });
 });
 

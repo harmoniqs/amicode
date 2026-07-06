@@ -7,7 +7,7 @@ import { generateRunId, appendIndex, updateLatest } from "@amicode/amico-run";
  * rewrite run.toml's `run_id` to match the new directory, append the
  * index, and swing `latest` to it. Reuses the β.1 run-dir primitives so the
  * staged run is byte-for-byte contract-identical and the existing
- * RunsRootWatcher renders it exactly like a live solve.
+ * RunsManager discovers it off the index and renders it like a live solve.
  *
  * Filesystem side effects only (pure w.r.t. its inputs). Returns the staged
  * run directory.

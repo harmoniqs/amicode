@@ -6,7 +6,7 @@ import type { RunStatus } from "./types";
 
 // ============================================================================
 // Pure (vscode-free) reader for the β.1 run-dir contract. Unit-testable in
-// isolation; the vscode-coupled RunsRootWatcher (file_watcher.ts) consumes it.
+// isolation; the vscode-coupled RunsManager (runs_manager.ts) consumes it.
 // ============================================================================
 
 // Float group accepts Julia's @printf %e output incl. Inf/-Inf/NaN, so stagnation
@@ -105,6 +105,10 @@ export class PulseStream {
 }
 
 export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
+/** Terminal completion, built by readTerminalState and flowed WHOLE to every
+ *  consumer (never exploded into positional args mid-pipe) — the #84 funnel.
+ *  Additive contract fields join HERE + readTerminalState and reach all paths
+ *  by construction: #81's `formulation?` next, then #64 hashing / #41 usage. */
 export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number }
 export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
 
@@ -168,6 +172,35 @@ export function detectStopped(runDir: string): boolean {
   }
 }
 
+/** Terminal state of a run dir, read + validated in ONE place (review #70 —
+ *  the #84 funnel; RunsManager.readTerminal and ingestRunDir both delegate).
+ *  Folds the cooperative-stop relabel in: a user-stop exits 0 → FINISHED says
+ *  "completed"; relabel to "stopped" (AMICODE_STOPPED marker) so no consumer
+ *  reads it as a genuine convergence and promote is skipped by construction.
+ *
+ *  Returns undefined while FINISHED is absent OR present-but-torn/invalid
+ *  (mid-write) — callers retry on their next pass. A present-but-invalid
+ *  result.toml is NAMED via `onInvalidResult` (S4). */
+export function readTerminalState(
+  runDir: string,
+  onInvalidResult: (why: string) => void = (why) => console.warn(`[amico] ${why}`),
+): { status: RunStatus; fidelity?: number } | undefined {
+  const finished = readTomlSafe(path.join(runDir, "FINISHED"));
+  if (!finished || !validateFinished(finished).ok) return undefined;
+  const rawStatus = finished.status as RunStatus;
+  const status: RunStatus = rawStatus === "completed" && detectStopped(runDir) ? "stopped" : rawStatus;
+  let fidelity: number | undefined;
+  if (status === "completed") {
+    const result = readTomlSafe(path.join(runDir, "result.toml"));
+    if (result) {
+      const v = validateResult(result);
+      if (v.ok) fidelity = result.fidelity as number;
+      else onInvalidResult(`result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
+    }
+  }
+  return { status, fidelity };
+}
+
 /** Pure, stateless replay of a run dir against the β.1 contract. Calls each
  *  sink method at most once per relevant artifact. Safe to re-invoke (the live
  *  sink's guards make it idempotent). Returns the number of run.log bytes
@@ -201,31 +234,15 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     if (newestPulse) sink.pulse(newestPulse);
   }
 
-  // FINISHED is the authoritative terminal signal
-  const finished = readTomlSafe(path.join(runDir, "FINISHED"));
-  if (!finished || !validateFinished(finished).ok) return logBytes;
-  const rawStatus = finished.status as RunStatus;
-  // A cooperative user-stop exits 0 → FINISHED says "completed"; relabel to
-  // "stopped" so the UI doesn't read it as a genuine convergence. Applied BEFORE
-  // the promote gate below (promote requires "completed", so this skips it).
-  const status: RunStatus = rawStatus === "completed" && detectStopped(runDir) ? "stopped" : rawStatus;
-
-  let fidelity: number | undefined;
-  if (status === "completed") {
-    const result = readTomlSafe(path.join(runDir, "result.toml"));
-    if (result) {
-      const v = validateResult(result);
-      if (v.ok) fidelity = result.fidelity as number;
-      // Present-but-nonconforming result.toml: surface WHY rather than silently
-      // dropping fidelity + skipping promote (S4). console.warn keeps this reader
-      // vscode-free; the live watcher logs to its channel too.
-      else console.warn(`[amico] result.toml present but invalid (${runDir}): ${v.errors.join("; ")}`);
-    }
-  }
-  sink.run({ runId, runDir, status, fidelity });
-  if (status === "completed" && fidelity !== undefined && fidelity >= promoteThreshold) {
+  // FINISHED is the authoritative terminal signal — single orchestration point
+  // (readTerminalState: status incl. stopped-relabel + fidelity) shared with
+  // the manager's finished-at-discovery path.
+  const t = readTerminalState(runDir);
+  if (!t) return logBytes;
+  sink.run({ runId, runDir, ...t });
+  if (t.status === "completed" && t.fidelity !== undefined && t.fidelity >= promoteThreshold) {
     const eligibility = promoteEligibility(runDir);   // tier-blind render, tier-aware promote (spec C)
-    if (eligibility === "eligible") sink.promote({ runId, runDir, fidelity });
+    if (eligibility === "eligible") sink.promote({ runId, runDir, fidelity: t.fidelity });
     else console.warn(`[amico] promote skipped for ${runId}: free-tier verification ${eligibility}`);
   }
   return logBytes;

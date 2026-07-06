@@ -32,6 +32,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // catalog-card dev preview webview bundle (#47 scaffold)
+  {
+    entryPoints: ["src/catalog_card_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/catalog_card_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
   // bottom-panel Run Inspector webview bundle
   {
     entryPoints: ["src/inspector_webview.ts"],
