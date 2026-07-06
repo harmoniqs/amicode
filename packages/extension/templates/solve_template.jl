@@ -13,7 +13,9 @@ using Printf
 # ── FILL IN ──────────────────────────────────────────────────────────────
 δ          = 0.2        # anharmonicity (GHz, positive convention)
 levels     = 3          # transmon levels modeled (3 = qubit + 1 leakage; bump to 4–5 for more leakage realism)
-gate       = GATES[:X]
+system     = "transmon" # system family, recorded in result.toml params (drives the catalog card/chip)
+gate_name  = "X"        # gate label, recorded in result.toml params (drives the catalog card/chip)
+gate       = GATES[Symbol(gate_name)]
 T          = 10.0       # gate time (ns)
 N          = 50         # timesteps
 drive_max  = 0.2        # per-quadrature drive bound (GHz)
@@ -80,7 +82,7 @@ function (cb::PulseEmitCallback)(primal, iter)
 end
 pulse_emit = PulseEmitCallback(live_plot, prob.trajectory)
 
-let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
+let ls = join(("\"u_$i\"" for i in 1:sys.n_drives), ","),
     bs = join(("$(-drive_max):$(drive_max)" for _ in 1:sys.n_drives), ",")
     println("AMICODE_PULSE_META drives=$(sys.n_drives) knots=$N labels=$ls bounds=$bs")
     flush(stdout)
@@ -135,7 +137,7 @@ open("result.toml.tmp", "w") do io
     TOML.print(io, Dict(
         "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
         "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,
-        "params" => Dict("delta" => δ, "levels" => levels, "T" => T, "N" => N,
+        "params" => Dict("system" => system, "gate" => gate_name, "delta" => δ, "levels" => levels, "T" => T, "N" => N,
                          "drive_max" => drive_max, "max_iter" => max_iter),
     ))
 end
