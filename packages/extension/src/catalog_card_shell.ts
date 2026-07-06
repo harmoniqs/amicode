@@ -42,7 +42,23 @@ export function registerCatalogCard(ctx: vscode.ExtensionContext): void {
     open.set(key, panel);
     panel.onDidDispose(() => open.delete(key), null, ctx.subscriptions);
     panel.webview.onDidReceiveMessage((m) => {
-      if (m?.type === "whatnext") vscode.window.showInformationMessage(`what-next → ${m.id} (stub)`);
+      if (m?.type !== "whatnext") return;
+      // Wire the save → tune → warm-start ladder to the CHAT (the agent owns the
+      // solve workflow): stage a concrete prompt on the clipboard and open the
+      // chat. Promote (team catalog) stays honestly unwired until Phase 3.
+      const e = data.entry;
+      const ident = `${e.gate ?? "gate"} on ${e.system ?? String(e.lab_id)} (run ${e.run_id}, F=${Number(e.fidelity).toFixed(5)})`;
+      if (m.id === "warmstart" || m.id === "tune") {
+        const prompt = m.id === "warmstart"
+          ? `Warm-start a new solve from the banked pulse of ${ident}: load ${runDir}/pulse.jld2 as the initial trajectory (load_traj), keep the same formulation, and run it.`
+          : `Tune the solve for ${ident}: start from ${runDir}/pulse.jld2, keep the formulation but ask me which weights/params (Q, R, T, N, max_iter) to adjust before launching.`;
+        void vscode.env.clipboard.writeText(prompt).then(async () => {
+          await vscode.commands.executeCommand("amicode.openChat");
+          void vscode.window.showInformationMessage(`Amicode: ${m.id} prompt copied — paste into the chat to launch.`);
+        });
+      } else if (m.id === "promote") {
+        void vscode.window.showInformationMessage("Amicode: team-catalog promotion isn't wired yet (Phase 3) — the pulse stays in your local bank.");
+      }
     });
     const uri = (...p: string[]) => panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
     const nonce = Math.random().toString(36).slice(2);
