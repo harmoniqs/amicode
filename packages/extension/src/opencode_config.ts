@@ -37,10 +37,11 @@ export function resolveJuliaProject(configValue: string): string {
 }
 
 /** Build the OPENCODE_CONFIG_CONTENT value: a config object that injects the
- *  amico AGENTS.md as a top-level `instructions` entry AND auto-allows the
+ *  amico AGENTS.md as a top-level `instructions` entry, PINS the team model
+ *  (AMICODE_MODEL — never the user's global model), and auto-allows the
  *  permissions the solve workflow needs. opencode MERGES this over the user's
- *  global config (model/provider preserved) for every session, independent of
- *  the session's working directory.
+ *  global config (non-conflicting user keys preserved) for every session,
+ *  independent of the session's working directory.
  *
  *  Why the `permission` block: the agent reads the bundled template at an
  *  absolute path *outside* the session's working dir and writes scratch to
@@ -71,10 +72,21 @@ export function resolveJuliaProject(configValue: string): string {
  *  `webfetch` is intentionally NOT set — the solve flow never fetches a URL. */
 const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
 
+/** The ONE model every amicode session runs — pinned, never read from the
+ *  user's global opencode config. Rationale: sessions were silently falling
+ *  back to opencode's free anonymous model (`big-pickle`) on machines with an
+ *  empty global config, which is exactly the "free-model phrasing variance"
+ *  behind protocol breaks (invented Other options, JSON drift) — and two
+ *  teammates debugging the same interview must be running the same model.
+ *  Requires provider auth (`opencode auth login`); with none, sessions fail
+ *  loudly instead of silently degrading. */
+export const AMICODE_MODEL = "anthropic/claude-sonnet-5";
+
 export function buildOpencodeConfigContent(agentsPath: string, templatePath: string, runsRoot: string): string {
   const templatesDir = path.dirname(templatePath);
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    model: AMICODE_MODEL,   // pinned team-wide — overrides any user global model (deep-merge, ours wins)
     instructions: [agentsPath],
     permission: {
       bash: "allow",

@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from '../src/opencode_config'
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, AMICODE_MODEL } from '../src/opencode_config'
 
 function fakeExtRoot(): string {
   const root = mkdtempSync(join(tmpdir(), 'extroot-'))
@@ -87,11 +87,12 @@ describe('buildOpencodeConfigContent', () => {
 // binary isn't present (e.g. minimal CI before `fetch:opencode`).
 const OC_BIN = join(__dirname, '..', 'vendor', 'opencode', `${process.platform}-${process.arch}`, 'opencode')
 describe.skipIf(!existsSync(OC_BIN))('opencode config injection + merge (1.17.3)', () => {
-  it('injects instructions/permission AND preserves the user global model + permission', () => {
+  it('injects instructions/permission, PINS the team model over the user global, preserves other user keys', () => {
     const home = mkdtempSync(join(tmpdir(), 'ochome-'))
     mkdirSync(join(home, '.config', 'opencode'), { recursive: true })
-    // A user global config with a distinctive model + permission key — both must
-    // survive the deep-merge under OPENCODE_CONFIG_CONTENT.
+    // A user global config with a CONFLICTING model + a distinctive permission
+    // key: the model must LOSE to the pin (one team, one model — no silent
+    // big-pickle fallback, no per-machine drift); the permission key must survive.
     writeFileSync(join(home, '.config', 'opencode', 'opencode.json'),
       JSON.stringify({ model: 'anthropic/claude-sonnet-4-6', permission: { doom_loop: 'deny' } }))
     const agentsPath = join(home, 'AGENTS.md')   // the exact file our `instructions` must point at
@@ -108,8 +109,9 @@ describe.skipIf(!existsSync(OC_BIN))('opencode config injection + merge (1.17.3)
     // the runs-root grant survives the real deep-merge — the agent's post-solve
     // FINISHED/result.toml/run.log read-backs must not "ask" on every run:
     expect(cfg.permission.external_directory[join(home, '.amico', 'runs', 'default') + '/**']).toBe('allow')
-    // the user's global config SURVIVED the deep-merge:
-    expect(cfg.model).toBe('anthropic/claude-sonnet-4-6')          // provider/model preserved (Q129 needs this)
+    // the team model pin BEATS the user's global model (verified on the real binary):
+    expect(cfg.model).toBe(AMICODE_MODEL)
+    // …while non-conflicting user keys still survive the deep-merge:
     expect(cfg.permission.doom_loop).toBe('deny')                  // user permission key preserved (#22)
   })
 })
