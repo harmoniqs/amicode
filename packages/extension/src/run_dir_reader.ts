@@ -105,6 +105,10 @@ export class PulseStream {
 }
 
 export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
+/** Terminal completion, built by readTerminalState and flowed WHOLE to every
+ *  consumer (never exploded into positional args mid-pipe) — the #84 funnel.
+ *  Additive contract fields join HERE + readTerminalState and reach all paths
+ *  by construction: #81's `formulation?` next, then #64 hashing / #41 usage. */
 export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number }
 export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
 
