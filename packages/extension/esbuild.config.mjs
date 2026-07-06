@@ -18,6 +18,13 @@ if (existsSync(`${arRoot}/dist/amico-run.js`)) {
   console.warn("[esbuild] amico-run/dist not built — run `pnpm --filter @amicode/amico-run build` before packaging");
 }
 
+// Stage KaTeX assets for the interview webview's Hamiltonian panel — the
+// webview CSP forbids CDNs, so css + fonts ship locally from media/vendor/
+// (a build artifact, gitignored; the js is bundled into interview_webview.js).
+mkdirSync("media/vendor/katex", { recursive: true });
+cpSync("node_modules/katex/dist/katex.min.css", "media/vendor/katex/katex.min.css", { dereference: true });
+cpSync("node_modules/katex/dist/fonts", "media/vendor/katex/fonts", { recursive: true, dereference: true });
+
 const targets = [
   // extension host entry point
   {
@@ -28,6 +35,18 @@ const targets = [
     format: "cjs",
     outfile: "dist/extension.js",
     external: ["vscode"],
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
+  // UX1 live interview webview bundle (#46)
+  {
+    entryPoints: ["src/interview_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/interview_webview.js",
     sourcemap: true,
     minify: false,
     logLevel: "info",

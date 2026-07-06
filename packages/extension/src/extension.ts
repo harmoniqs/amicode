@@ -7,6 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
+import { registerInterview } from "./interview_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
@@ -116,6 +117,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 3. opencode project bootstrap
   const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);
+  registerInterview(ctx, {   // #46 — the LIVE interview (Amico-guided, real solve)
+    serverUrl: () => opencodeReadyUrl,
+    runsRoot,
+    juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+    amicoRunBinDir,
+    channel: runsChannel,
+  });
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
