@@ -20,13 +20,28 @@ const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.openInspector",
 ]);
 
+
+/** VS Code theme kind → the fork app's ColorScheme. */
+function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
+  return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";
+}
+
 export class ChatPanel {
   private static current?: ChatPanel;
   private readonly disposables: vscode.Disposable[] = [];
 
+
+
   private constructor(private readonly panel: vscode.WebviewPanel, opencodeUrl: URL) {
     this.panel.webview.html = this.renderHtml(opencodeUrl);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    // Live theme bridge: editor theme changes flow extension → outer relay →
+    // iframe → the app's setColorScheme (boot theme rides ?colorScheme=).
+    vscode.window.onDidChangeActiveColorTheme(
+      (t) => void this.panel.webview.postMessage({ source: "amicode", kind: "theme", colorScheme: themeKindToScheme(t.kind) }),
+      null,
+      this.disposables,
+    );
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
         // iframe → extension command bridge: the opencode "Amico" palette group
@@ -88,6 +103,11 @@ export class ChatPanel {
       "connect-src 'self'",
     ].join("; ");
     const origin = JSON.stringify(opencodeUrl.origin);
+    // Boot theme: the app's preload reads ?colorScheme= and seeds its scheme
+    // storage, so the chat opens in the EDITOR's theme (prefers-color-scheme
+    // inside the webview iframe reports the OS, not VS Code).
+    const framed = new URL(opencodeUrl.href);
+    framed.searchParams.set("colorScheme", themeKindToScheme(vscode.window.activeColorTheme.kind));
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -100,7 +120,7 @@ export class ChatPanel {
   </style>
 </head>
 <body>
-  <iframe src="${opencodeUrl.href}" allow="clipboard-read; clipboard-write" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"></iframe>
+  <iframe src="${framed.href}" allow="clipboard-read; clipboard-write" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"></iframe>
   <script nonce="${nonce}">
     (function () {
       // Relay the in-app "Amico" palette's command messages from the opencode
@@ -109,10 +129,21 @@ export class ChatPanel {
       // VS Code directly, so this bridge is how the framed app triggers ops.
       var vscode = acquireVsCodeApi();
       window.addEventListener("message", function (e) {
-        if (e.origin !== ${origin}) return;
         var d = e.data;
-        if (d && d.source === "amicode" && d.kind === "command" && typeof d.command === "string") {
-          vscode.postMessage(d);
+        // Lane 1 — iframe → extension (commands): MUST come from the opencode
+        // origin; the extension side additionally allowlists commands.
+        if (e.origin === ${origin}) {
+          if (d && d.source === "amicode" && d.kind === "command" && typeof d.command === "string") {
+            vscode.postMessage(d);
+          }
+          return;
+        }
+        // Lane 2 — extension → iframe (theme): posted by the extension host
+        // (webview-internal origin, never the opencode origin). Forward only
+        // our own theme envelope, pinned to the opencode origin.
+        if (d && d.source === "amicode" && d.kind === "theme") {
+          var f = document.querySelector("iframe");
+          if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
       });
     })();
