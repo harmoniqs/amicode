@@ -217,6 +217,10 @@ describe("buildKickoffPrompt — the interview contract", () => {
       expect(prompt).toContain(`header: "${s.id}"`);
     }
   });
+  it("forbids agent-authored Other options — the composer IS the free-form path", () => {
+    expect(prompt).toMatch(/NEVER include an "Other"/);
+    expect(prompt).toMatch(/chat input below the options is always available/);
+  });
   it("pins the load-bearing protocol rules: question TOOL for questions, strict JSON for the resume", () => {
     expect(prompt).toContain("QUESTION TOOL");
     expect(prompt).toContain("Never ask questions as plain text");

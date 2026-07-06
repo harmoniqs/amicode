@@ -94,7 +94,7 @@ PLATFORM PATHS — offer ALL of these as modality options (every platform is a v
 ${platforms}
 
 PROTOCOL:
-- To ask the next question, use the QUESTION TOOL (one call per question): header = the current stage id EXACTLY as given above; a focused question; 2-5 options with the recommended default FIRST (label 1-4 words, description says why); allow a custom answer. Never ask questions as plain text.
+- To ask the next question, use the QUESTION TOOL (one call per question): header = the current stage id EXACTLY as given above; a focused question; 2-5 options with the recommended default FIRST (label 1-4 words, description says why). Options must be CONCRETE choices only — NEVER include an "Other"/"custom"/"describe it" option: the chat input below the options is always available for free-form answers and the UI labels it. Never ask questions as plain text.
 - When every slot is known, finish the conversation with EXACTLY ONE JSON text object and nothing else (no prose, no code fences, no tool call):
   {"type":"resume","slots":{"modality":"...","system_name":"...","device_source":"...","physics":["anharmonicity"],"levels":3,"drive_max":0.2,"n_drives":2,"gate":"X","objective":"vetted-default","T":10,"N":50,"max_iter":60}}
   (numbers as numbers, no strings for numeric slots; "levels" is per subsystem — a scalar for a single qubit, an array like [3,5,3] when the model includes couplers/multiple subsystems)

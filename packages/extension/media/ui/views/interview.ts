@@ -176,6 +176,13 @@ export function createInterview(): { el: HTMLElement } {
       }
       const q = questions[i];
       host.replaceChildren();
+      // Anything that requires TYPING must not be a clickable card. The agent
+      // is instructed never to emit "Other"-ish options, but models slip —
+      // filter them out and promote their description into the composer
+      // placeholder, so the invitation to type is explicit where typing happens.
+      const otherish = /^(other|custom|none of (these|the above)|something else)\b/i;
+      const concrete = q.options.filter((o) => !otherish.test(o.label.trim()));
+      const filtered = q.options.find((o) => otherish.test(o.label.trim()));
       // Physics-flavored multi-select: the model Hamiltonian assembles live
       // under the option cards as terms toggle. Declared before the frame so
       // the toggle hook can reach it; assigned only when terms are on offer.
@@ -183,7 +190,7 @@ export function createInterview(): { el: HTMLElement } {
       const frame = askframe({
         stage: q.header,
         question: q.question,
-        options: q.options.map((o, j) => ({ label: o.label, description: o.description, default: j === 0 })),
+        options: concrete.map((o, j) => ({ label: o.label, description: o.description, default: j === 0 })),
         // No "Other…" card: the chat composer IS the free-form path — always
         // present, always typable, no mode switch.
         other: false,
@@ -199,9 +206,11 @@ export function createInterview(): { el: HTMLElement } {
         host.append(hm.el);
       }
       // Composer answers THIS question free-form (same reply slot as a card).
-      // The placeholder IS the Other affordance — no card, no mode switch;
-      // multi-select questions invite a fuller custom response.
-      setComposer((t) => { answers.push([t]); step(i + 1, q.header); }, q.multiple === true ? "Custom response" : "Other");
+      // The placeholder IS the Other affordance — no card, no mode switch. A
+      // filtered "Other"-ish option donates its description ("Another modality
+      // — describe it freely"), the strongest possible type-here signal.
+      const invite = filtered?.description?.slice(0, 90) ?? (q.multiple === true ? "Custom response — type here" : "Other — type here");
+      setComposer((t) => { answers.push([t]); step(i + 1, q.header); }, invite);
     };
     step(0);
   }
