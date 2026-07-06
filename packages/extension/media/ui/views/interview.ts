@@ -47,7 +47,9 @@ defineStyle("interview", `
                        color: var(--vscode-input-foreground, var(--vscode-foreground));
                        background: transparent; border: none; outline: none; padding: 0; }
   .iv-composer input::placeholder { color: var(--vscode-input-placeholderForeground, var(--color-dim));
-                                    opacity: 1; }
+                                    /* Themes often leave placeholderForeground ≈ the input foreground —
+                                     * the faded look must not depend on the token. */
+                                    opacity: 0.55; }
   .iv-composer input:disabled { opacity: 0.5; }
   .iv-composer .cp-controls { display: flex; justify-content: space-between; align-items: center; }
   .iv-composer .cp-plus { font-size: var(--text-value); line-height: 1;
