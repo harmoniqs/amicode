@@ -2,7 +2,10 @@
 // (window.__CARD_DATA__, hydrated from the real run dir by the save-to-catalog
 // flow); the baked fixture below is the fallback for hostless debugging.
 
+import { applyBrandAccent } from "../media/ui/brand_accent";
 import { catalogcard, type CatalogEntry, type CardPulse } from "../media/ui/components/catalogcard";
+
+applyBrandAccent();   // theme-calculated Harmoniqs yellow (brand-wide contract)
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
 declare global { interface Window { __CARD_DATA__?: { entry: CatalogEntry; pulse?: CardPulse } } }

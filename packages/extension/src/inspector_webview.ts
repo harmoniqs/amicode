@@ -2,7 +2,10 @@
 // inspector.ts). No static markup: the view builds its own DOM from atoms/
 // components; brand.css + layout.css are linked by the shell (run_inspector.ts).
 
+import { applyBrandAccent } from "../media/ui/brand_accent";
 import { createInspectorView } from "../media/ui/views/inspector";
+
+applyBrandAccent();   // theme-calculated Harmoniqs yellow (brand-wide contract)
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
