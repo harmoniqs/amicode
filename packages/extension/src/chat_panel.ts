@@ -59,7 +59,7 @@ export class ChatPanel {
           (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "open-external" &&
           typeof (msg as { url?: unknown }).url === "string" &&
-          /^https:\/\//.test((msg as { url: string }).url)
+          /^https:\/\//i.test((msg as { url: string }).url)   // scheme is case-insensitive (RFC 3986)
         ) {
           // target=_blank/window.open are dead inside the framed app — open
           // https links via the editor (system browser). https-only.
@@ -75,6 +75,10 @@ export class ChatPanel {
           // Paste bridge: navigator.clipboard is unavailable to the framed app
           // (the webview parent has no clipboard-read to delegate), so the app
           // asks US — the extension host reads the OS clipboard and replies.
+          // Visibility gate: the app renders LLM-driven content, so a hidden
+          // panel must not be able to sample the clipboard in the background —
+          // reads only answer while the user can see the chat.
+          if (!this.panel.visible) return;
           void vscode.env.clipboard.readText().then((text) =>
             this.panel.webview.postMessage({ source: "amicode", kind: "clipboard", nonce: (msg as { nonce?: string }).nonce, text }),
           );
