@@ -306,13 +306,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (runs.length === 0) { void vscode.window.showInformationMessage("Amicode: no runs tracked yet."); return; }
       const items: (vscode.QuickPickItem & { runId?: string; follow?: boolean })[] = [
         { label: "$(radio-tower) Follow latest", description: "auto-follow the newest run (release pin)", follow: true },
-        ...[...runs].reverse().map((r) => ({
-          label: `${r.phase === "live" ? "$(pulse)" : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
-          description: [r.phase === "live" ? `live · iter ${r.latestIter ?? 0}` : r.status,
-                        r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
-                        r.scriptPath ? path.basename(r.scriptPath) : undefined].filter(Boolean).join(" · "),
-          runId: r.runId,
-        })),
+        ...[...runs].reverse().map((r) => {
+          // A "live" run whose log has gone cold is stalled — the picker must
+          // agree with the status bar, not advertise a wedge as live.
+          const stalled = r.phase === "live" && stopPlan(r.runDir) === "force";
+          return {
+            label: `${r.phase === "live" ? (stalled ? "$(warning)" : "$(pulse)") : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
+            description: [r.phase === "live" ? (stalled ? `stalled · iter ${r.latestIter ?? 0}` : `live · iter ${r.latestIter ?? 0}`) : r.status,
+                          r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
+                          r.scriptPath ? path.basename(r.scriptPath) : undefined].filter(Boolean).join(" · "),
+            runId: r.runId,
+          };
+        }),
       ];
       const pick = await vscode.window.showQuickPick(items, { placeHolder: "Amicode: select the run to inspect" });
       if (!pick) return;
