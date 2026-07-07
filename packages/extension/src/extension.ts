@@ -40,6 +40,10 @@ let opencodeReadyUrl: URL | undefined;
 let distillerSetup: DistillerSetup | undefined;
 
 
+/** Run dirs with a cooperative stop in flight (escalation timer armed) — a
+ *  second Stop click must not stack a second dialog. */
+const pendingStops = new Set<string>();
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -324,6 +328,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // one gets a grace window and then an explicit Force-stop offer (never a
       // silent kill: one long Ipopt iteration can look wedged).
       const label = path.basename(dir);   // every toast names the run — stop A, start B, a nameless dialog at t+120s reads as "B is wedged"
+      if (pendingStops.has(dir)) {
+        vscode.window.showInformationMessage(`Amicode: stop already in progress for ${label}.`);
+        return;
+      }
       const plan = stopPlan(dir);
       if (plan === "already-finished") {
         vscode.window.showInformationMessage(`Amicode: run ${label} has already finished.`);
@@ -337,7 +345,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       vscode.window.showInformationMessage(`Amicode: stop requested for ${label} — the solve will halt at the next iteration.`);
       const mtimeAtStop = runLogMtime(dir);
-      setTimeout(async () => {
+      pendingStops.add(dir);
+      const timer = setTimeout(async () => {
+        pendingStops.delete(dir);
         if (stopPlan(dir) === "already-finished") return;          // cooperative stop landed
         if (runLogMtime(dir) !== mtimeAtStop) return;              // still iterating — let it reach the callback
         const pick = await vscode.window.showWarningMessage(
@@ -350,6 +360,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           vscode.window.showInformationMessage(`Amicode: run ${label} force-stopped and marked aborted.`);
         }
       }, 120_000);
+      ctx.subscriptions.push({ dispose: () => { clearTimeout(timer); pendingStops.delete(dir); } });
     }),
     vscode.commands.registerCommand("amicode.openRunDir", async () => {
       const dir = runsManager?.getActiveRunDir();
