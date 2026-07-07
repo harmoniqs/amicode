@@ -104,6 +104,10 @@ export class RunsManager implements vscode.Disposable {
    *  solve starting must never yank the view off a run the user deliberately
    *  opened (review #70; the seam 1.3's selection UI builds on). */
   private pinned = false;
+  /** True during start()'s synchronous index replay — runs discovered at BOOT
+   *  are registered/selected for state, but never reveal the inspector or show
+   *  warming focus (only a run that starts while the user works should). */
+  private booting = false;
   private schedulerDispose?: () => void;
   /** Promote-once + never-on-replay: runs finished at DISCOVERY are pre-marked
    *  so only a fresh live completion prompts (ports β's finishedAtSwitch). */
@@ -127,7 +131,9 @@ export class RunsManager implements vscode.Disposable {
         if (e) this.registerRun(e.runId, path.join(this.opts.runsRoot, e.runId), e.createdAt, e.scriptPath);
       },
     });
-    this.indexTailer.start();
+    this.booting = true;
+    this.indexTailer.start();   // synchronous initial drain — boot replay
+    this.booting = false;
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "index") this.indexTailer?.poke();
     });
@@ -319,7 +325,7 @@ export class RunsManager implements vscode.Disposable {
     if (follow && this.selected !== runId) {
       this.selected = runId;
       const ins = getInspector();
-      ins?.reveal();
+      if (!this.booting) ins?.reveal();   // boot replay must not steal focus
       ins?.setRunLabel(runId, runId);
       ins?.activate(runId);
     }
@@ -357,7 +363,7 @@ export class RunsManager implements vscode.Disposable {
 
     // Fresh/live run with no data yet → Julia warming up (post-replay, β order).
     // Disk-checked: a torn FINISHED (fall-through above) must not read "warming".
-    if (follow && !fs.existsSync(path.join(runDir, "FINISHED"))) {
+    if (follow && !this.booting && !fs.existsSync(path.join(runDir, "FINISHED"))) {
       getInspector()?.setWarmingUp(runId);
     }
   }
