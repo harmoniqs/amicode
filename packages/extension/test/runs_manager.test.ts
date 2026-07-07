@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscodeMock from "vscode";
@@ -387,6 +387,35 @@ describe("RunsManager review-#70 fixes", () => {
     // …and the single pass still displayed the history (meta + newest record):
     expect(inspector.postPulse).toHaveBeenCalledTimes(2);
     displayPass.mockRestore();
+    m.dispose();
+  });
+});
+
+describe("mid-session stall surfaces on the status bar", () => {
+  it("tick downgrades the selected run to 'stalled' once run.log goes cold (and never upgrades)", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const statusBar = statusBarSpy();
+    const m = new RunsManager({ runsRoot: root, channel, statusBar: statusBar as never });
+    m.start();
+    const dir = stageRun(root, "r-wedge", { log: "AMICODE_ITER iter=8 f=1.07e+01 inf_pr=1e-3 inf_du=1e-2\n" });
+    tick(m);   // registers + replays → status bar sees running/iter 8 via routeIter
+    statusBar.setRun.mockClear();
+
+    // age run.log past the stall threshold, then let the poll backstop fire
+    const cold = new Date(Date.now() - 11 * 60 * 1000);
+    utimesSync(join(dir, "run.log"), cold, cold);
+    (m as unknown as { liveStatusCache: Map<string, unknown> }).liveStatusCache.clear();
+    tick(m);
+    const stalledCall = statusBar.setRun.mock.calls.find((c) => c[0]?.status === "stalled");
+    expect(stalledCall?.[0]).toMatchObject({ runId: "r-wedge", status: "stalled", latestIter: 8 });
+
+    // a finished run must NOT be re-stamped by the backstop
+    writeFileSync(join(dir, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
+    tick(m);
+    statusBar.setRun.mockClear();
+    (m as unknown as { liveStatusCache: Map<string, unknown> }).liveStatusCache.clear();
+    tick(m);
+    expect(statusBar.setRun.mock.calls.every((c) => c[0]?.status !== "stalled")).toBe(true);
     m.dispose();
   });
 });

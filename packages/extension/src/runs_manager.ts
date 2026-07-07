@@ -155,6 +155,14 @@ export class RunsManager implements vscode.Disposable {
         this.checkFinished(p);
         p.tailer?.poke();
       }
+      // Stall re-check for the SELECTED run: routeIter only fires when a line
+      // arrives — which by definition means "not stalled" — so a run that
+      // wedges mid-watch would keep "running · iter N" forever without this.
+      // DOWNGRADE only (never stamps "running": warming/iter flow owns that).
+      const sel = this.selected ? this.registry.get(this.selected) : undefined;
+      if (sel && sel.phase !== "finished" && sel.latestIter !== undefined && this.liveStatus(sel.runDir) === "stalled") {
+        this.opts.statusBar?.setRun({ runId: sel.runId, outputDir: sel.runDir, startedAt: 0, status: "stalled", latestIter: sel.latestIter });
+      }
     } catch { /* transient fs race — next tick retries */ }
   }
 
