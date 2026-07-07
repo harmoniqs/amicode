@@ -18,6 +18,10 @@ const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.savePulse",
   "amicode.openRunDir",
   "amicode.openInspector",
+  // ⌘⇧P inside the chat iframe lands in the APP's palette, not VS Code's —
+  // the fork forwards it here so the editor's Command Palette (where every
+  // Amicode: command lives) opens as users expect.
+  "workbench.action.showCommands",
 ]);
 
 
