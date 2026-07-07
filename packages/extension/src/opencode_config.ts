@@ -228,7 +228,7 @@ export function writeAuthoringConfig(
  *  default-resolution gambles on provider ordering and (with Google creds)
  *  lands on preview variants — gemini-3.1-pro-preview-customtools rejected or
  *  HUNG every turn. Preference: Anthropic if the user has creds for it, else
- *  the GA Gemini flash (verified: completes tool-bearing turns). The app's
+ *  the boring-but-available GA Gemini flash (the newest flash is capacity-throttled at peak; 2.5 answered in 1.4s while 3.5 returned overloaded). The app's
  *  model picker still overrides per session; undefined leaves opencode's own
  *  default (no creds yet — nothing sane to pin). */
 export function preferredModel(
@@ -237,7 +237,7 @@ export function preferredModel(
   try {
     const providers = Object.keys(JSON.parse(fs.readFileSync(authPath, "utf8")) as Record<string, unknown>);
     if (providers.includes("anthropic")) return "anthropic/claude-sonnet-5";
-    if (providers.includes("google")) return "google/gemini-3.5-flash";
+    if (providers.includes("google")) return "google/gemini-2.5-flash";
   } catch {
     /* no auth.json yet */
   }
