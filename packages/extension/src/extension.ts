@@ -245,6 +245,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // Open the chat as soon as the server is up (amicode.chat.autoOpen,
+      // default on) — the chat IS the product's front door.
+      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        ChatPanel.openOrReveal(ctx, url);
+      }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
       // chat box (Q129). Key-free; never logs a credential.

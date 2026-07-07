@@ -180,6 +180,11 @@
           "type": "boolean",
           "default": false,
           "description": "Amico Veloce: start sessions with autonomy on \u2014 auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
+        },
+        "amicode.chat.autoOpen": {
+          "type": "boolean",
+          "default": true,
+          "description": "Open the Amicode chat automatically once the opencode server is ready."
         }
       }
     },
