@@ -20,6 +20,7 @@
     "onCommand:amicode.openChat",
     "onCommand:amicode.openInspector",
     "onView:amicode.runInspector",
+    "onView:amicode.deviceInspector",
     "onView:amicode.vault",
     "onStartupFinished"
   ],
@@ -64,6 +65,11 @@
           "id": "amicode.runInspector",
           "name": "Run Inspector",
           "type": "webview"
+        },
+        {
+          "id": "amicode.deviceInspector",
+          "name": "Device Inspector",
+          "type": "webview"
         }
       ]
     },
@@ -75,6 +81,14 @@
       {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
+      },
+      {
+        "command": "amicode.openDeviceInspector",
+        "title": "Amicode: Open Device Inspector"
+      },
+      {
+        "command": "amicode.device.refresh",
+        "title": "Amicode: Refresh device status"
       },
       {
         "command": "amicode.selectRun",
@@ -185,6 +199,26 @@
           "type": "boolean",
           "default": true,
           "description": "Open the Amicode chat automatically once the opencode server is ready."
+        },
+        "amicode.device.name": {
+          "type": "string",
+          "default": "",
+          "description": "Device to show in the Device Inspector (Spec A §3). Empty = the Device Inspector stays dormant. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+        },
+        "amicode.device.graph": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the device's calibration graph.toml (Spec A §4). Empty = the Device Inspector stays dormant."
+        },
+        "amicode.device.card": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the device card markdown (Spec A §3.1) whose frontmatter carries drive_lines + qubits. Empty = qubits are derived from the graph and no drive lines are shown."
+        },
+        "amicode.device.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL of the QICK job-server (queue/health/config-versioning, Spec A §2). A pointer only, never credentials. Empty = the queue reads idle and drive lines read offline."
         }
       }
     },
