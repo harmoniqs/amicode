@@ -223,6 +223,47 @@ export function writeAuthoringConfig(
   }
 }
 
+
+/** Default model pin for the generated config. Without one, opencode's
+ *  default-resolution gambles on provider ordering and (with Google creds)
+ *  lands on preview variants — gemini-3.1-pro-preview-customtools rejected or
+ *  HUNG every turn. Preference: Anthropic if the user has creds for it, else
+ *  the GA Gemini flash (verified: completes tool-bearing turns). The app's
+ *  model picker still overrides per session; undefined leaves opencode's own
+ *  default (no creds yet — nothing sane to pin). */
+export function preferredModel(
+  authPath: string = path.join(os.homedir(), ".local", "share", "opencode", "auth.json"),
+): string | undefined {
+  try {
+    const providers = Object.keys(JSON.parse(fs.readFileSync(authPath, "utf8")) as Record<string, unknown>);
+    if (providers.includes("anthropic")) return "anthropic/claude-sonnet-5";
+    if (providers.includes("google")) return "google/gemini-3.5-flash";
+  } catch {
+    /* no auth.json yet */
+  }
+  return undefined;
+}
+
+/** The model pin to inject, or undefined. FALLBACK-only: a model in the user's
+ *  global opencode config wins (our injected config would override it in the
+ *  merge — the 1.17.3 preserve-user-model contract), so we pin nothing then. */
+export function resolveModelPin(
+  globalConfigPath: string = path.join(
+    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"),
+    "opencode",
+    "opencode.json",
+  ),
+  authPath?: string,
+): string | undefined {
+  try {
+    const cfg = JSON.parse(fs.readFileSync(globalConfigPath, "utf8")) as { model?: unknown };
+    if (typeof cfg.model === "string" && cfg.model) return undefined; // user chose — never override
+  } catch {
+    /* no global config — fall through to the creds-based pin */
+  }
+  return authPath === undefined ? preferredModel() : preferredModel(authPath);
+}
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
@@ -232,6 +273,7 @@ export function buildOpencodeConfigContent(
   skillPaths: string[] = [],
   skillsStageDir: string = "",
   vaultDir: string = "",
+  modelPin?: string,
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -247,6 +289,7 @@ export function buildOpencodeConfigContent(
   const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
+    ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     plugin: [pluginPath],
     ...(skills ? { skills } : {}),

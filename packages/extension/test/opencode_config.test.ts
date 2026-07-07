@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 
 import { tmpdir, homedir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { execFileSync } from "node:child_process";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "../src/opencode_config";
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, preferredModel, resolveModelPin } from "../src/opencode_config";
 
 function fakeExtRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "extroot-"));
@@ -213,5 +213,31 @@ describe("prepareOpencodeProject", () => {
     });
     expect(existsSync(join(p.projectDir, "solve_template.jl"))).toBe(false);
     expect(existsSync(join(p.projectDir, ".opencode", "opencode.json"))).toBe(false);
+  });
+});
+
+describe("preferredModel", () => {
+  it("anthropic wins, google falls back to GA flash, absent auth pins nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "auth-"));
+    const authPath = join(dir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
+    expect(preferredModel(authPath)).toBe("google/gemini-3.5-flash");
+    writeFileSync(authPath, JSON.stringify({ google: { type: "api" }, anthropic: { type: "api" } }));
+    expect(preferredModel(authPath)).toBe("anthropic/claude-sonnet-5");
+    expect(preferredModel(join(dir, "missing.json"))).toBeUndefined();
+  });
+});
+
+describe("resolveModelPin (fallback-only)", () => {
+  it("a user global model suppresses the pin; no global model → creds-based pin", () => {
+    const dir = mkdtempSync(join(tmpdir(), "pin-"));
+    const cfgPath = join(dir, "opencode.json");
+    const authPath = join(dir, "auth.json");
+    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
+    writeFileSync(cfgPath, JSON.stringify({ model: "anthropic/claude-sonnet-4-6" }));
+    expect(resolveModelPin(cfgPath, authPath)).toBeUndefined();
+    writeFileSync(cfgPath, JSON.stringify({}));
+    expect(resolveModelPin(cfgPath, authPath)).toBe("google/gemini-3.5-flash");
+    expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("google/gemini-3.5-flash");
   });
 });

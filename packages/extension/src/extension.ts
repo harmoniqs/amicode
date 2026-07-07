@@ -9,7 +9,7 @@ import { registerRunInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, resolveModelPin } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
@@ -221,6 +221,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeProject.skillPaths,
           opencodeProject.skillsStageDir,
           opencodeProject.vaultDir,
+          // Model pin (fallback-only, resolveModelPin): without it, default
+          // resolution gambles on provider ordering — with Google creds it
+          // picked a preview model that hung every headless/agent turn.
+          resolveModelPin(),
         ),
       },
       channel: opencodeChannel,
