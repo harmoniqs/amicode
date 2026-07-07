@@ -224,7 +224,7 @@ export class RunsManager implements vscode.Disposable {
       const r = this.registry.get(runId)!;
       this.opts.statusBar?.setRun({
         runId, outputDir: r.runDir, startedAt: 0,
-        status: r.phase === "finished" ? (r.status ?? "completed") : "running",
+        status: r.phase === "finished" ? (r.status ?? "completed") : this.liveStatus(r.runDir),
         latestIter: r.latestIter, fidelity: r.fidelity,
       });
     } else {
@@ -403,7 +403,11 @@ export class RunsManager implements vscode.Disposable {
       iter: (r: IterRecord) => {
         this.registry.noteIter(rid, r.iter);
         getInspector()?.postIterationRecord(rid, r);
-        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: this.liveStatus(rec.runDir), latestIter: r.iter });
+        // A finished run's replay must not stamp running/stalled per line — its
+        // completion event (below) sets the bar exactly once at the end.
+        if (this.registry.get(rid)?.phase !== "finished") {
+          this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: this.liveStatus(rec.runDir), latestIter: r.iter });
+        }
       },
       run: (c: RunCompletion) => {
         getInspector()?.postCompletion(rid, c.status, c.fidelity);
