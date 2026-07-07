@@ -323,30 +323,31 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // to poll it — a stalled run gets the hard path immediately, a healthy
       // one gets a grace window and then an explicit Force-stop offer (never a
       // silent kill: one long Ipopt iteration can look wedged).
+      const label = path.basename(dir);   // every toast names the run — stop A, start B, a nameless dialog at t+120s reads as "B is wedged"
       const plan = stopPlan(dir);
       if (plan === "already-finished") {
-        vscode.window.showInformationMessage("Amicode: that run has already finished.");
+        vscode.window.showInformationMessage(`Amicode: run ${label} has already finished.`);
         return;
       }
       writeStopFile(dir);
       if (plan === "force") {
         await forceStop(dir);
-        vscode.window.showInformationMessage("Amicode: run was stalled — force-stopped and marked aborted.");
+        vscode.window.showInformationMessage(`Amicode: run ${label} was stalled — force-stopped and marked aborted.`);
         return;
       }
-      vscode.window.showInformationMessage("Amicode: stop requested — the solve will halt at the next iteration.");
+      vscode.window.showInformationMessage(`Amicode: stop requested for ${label} — the solve will halt at the next iteration.`);
       const mtimeAtStop = runLogMtime(dir);
       setTimeout(async () => {
         if (stopPlan(dir) === "already-finished") return;          // cooperative stop landed
         if (runLogMtime(dir) !== mtimeAtStop) return;              // still iterating — let it reach the callback
         const pick = await vscode.window.showWarningMessage(
-          "Amicode: the solver hasn't responded to stop.",
+          `Amicode: run ${label} hasn't responded to stop.`,
           "Force stop",
           "Keep waiting",
         );
         if (pick === "Force stop") {
           await forceStop(dir);
-          vscode.window.showInformationMessage("Amicode: run force-stopped and marked aborted.");
+          vscode.window.showInformationMessage(`Amicode: run ${label} force-stopped and marked aborted.`);
         }
       }, 120_000);
     }),
