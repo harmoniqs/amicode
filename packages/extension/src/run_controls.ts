@@ -64,6 +64,10 @@ function lsofPath(): string {
   return "lsof"; // last resort: PATH lookup
 }
 
+function realpathOr(p: string): string {
+  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+}
+
 /** PIDs belonging to THIS run: command line references the run's solve script
  *  (or the run dir itself) AND the process cwd is the run dir. The two-key
  *  match is the safety property — sibling runs of the same problem share the
@@ -88,9 +92,12 @@ export function findRunPids(
   return candidates.filter((pid) => {
     if (pid === process.pid) return false;
     try {
-      // lsof -Fn prints the cwd as a line starting with "n"
+      // lsof -Fn prints the cwd as a line starting with "n". It reports the
+      // PHYSICAL path, so realpath our side too — a symlinked runs root
+      // (/tmp → /private/tmp on macOS) must not defeat the ownership proof.
+      const realRunDir = realpathOr(runDir);
       const out = exec(lsofPath(), ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
-      return out.split("\n").some((l) => l.startsWith("n") && path.resolve(l.slice(1)) === path.resolve(runDir));
+      return out.split("\n").some((l) => l.startsWith("n") && realpathOr(path.resolve(l.slice(1))) === realRunDir);
     } catch {
       return false; // can't prove it's ours → don't kill it
     }
