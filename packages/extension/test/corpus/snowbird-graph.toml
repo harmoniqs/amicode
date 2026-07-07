@@ -1,0 +1,108 @@
+# Snowbird calibration graph (Spec A §4.4) — the worked example DAG.
+#   resonator_spec → qubit_spec → {pi_amp, pi_len}
+#                              → {T1, T2_ramsey, T2_echo, readout} → chevron
+#   cz_gate (impl=qilc, fallback=cz_gate_standard) depends on {T2_ramsey, readout}
+#
+# Snowbird is driven by its QICK MCP server, so every node's `experiment` is an
+# `adapter = "mcp"` blob naming a measurement tool (§4.1 per-adapter opaque blob).
+# This fixture backs the §6 evaluation acceptance tests — MOCK-only, no hardware.
+
+[node.resonator_spec]
+depends_on  = []
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "resonator_spectroscopy" } }
+produces    = ["resonator_freq"]
+ttl_seconds = 86400
+impl        = "standard"
+[node.resonator_spec.thresholds]
+check    = { metric = "resonator_freq_drift", max = 0.5 }
+calibrate = { metric = "resonator_snr", min = 5.0 }
+
+[node.qubit_spec]
+depends_on  = ["resonator_spec"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "qubit_spectroscopy" } }
+produces    = ["qubit_freq"]
+ttl_seconds = 43200
+impl        = "standard"
+[node.qubit_spec.thresholds]
+check    = { metric = "qubit_freq_drift", max = 0.2 }
+calibrate = { metric = "qubit_snr", min = 4.0 }
+
+[node.pi_amp]
+depends_on  = ["qubit_spec"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "amplitude_rabi" } }
+produces    = ["pi_amp"]
+ttl_seconds = 43200
+impl        = "standard"
+[node.pi_amp.thresholds]
+check    = { metric = "pi_amp_drift", max = 0.02 }
+calibrate = { metric = "rabi_contrast", min = 0.8 }
+
+[node.pi_len]
+depends_on  = ["qubit_spec"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "length_rabi" } }
+produces    = ["pi_len"]
+ttl_seconds = 43200
+impl        = "standard"
+
+[node.T1]
+depends_on  = ["pi_amp", "pi_len"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "t1" } }
+produces    = ["T1"]
+ttl_seconds = 21600
+impl        = "standard"
+
+[node.T2_ramsey]
+depends_on  = ["pi_amp", "pi_len"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "t2_ramsey" } }
+produces    = ["T2_ramsey"]
+ttl_seconds = 21600
+impl        = "standard"
+
+[node.T2_echo]
+depends_on  = ["pi_amp", "pi_len"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "t2_echo" } }
+produces    = ["T2_echo"]
+ttl_seconds = 21600
+impl        = "standard"
+
+[node.readout]
+depends_on  = ["pi_amp", "pi_len"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "readout_optimization" } }
+produces    = ["readout_fidelity"]
+ttl_seconds = 21600
+impl        = "standard"
+
+[node.chevron]
+depends_on  = ["readout"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "chevron" } }
+produces    = ["chevron_map"]
+ttl_seconds = 21600
+impl        = "standard"
+
+# A qilc (PREMIUM, §5.2) node names a standard fallback so an UNentitled user
+# still gets a computable recommendation.
+[node.cz_gate]
+depends_on  = ["T2_ramsey", "readout"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "cz_qilc" } }
+produces    = ["cz_fidelity"]
+ttl_seconds = 21600
+impl        = "qilc"
+fallback    = "cz_gate_standard"
+
+[node.cz_gate_standard]
+depends_on  = ["T2_ramsey", "readout"]
+qubit       = "Q1"
+experiment  = { adapter = "mcp", payload = { tool = "cz_standard" } }
+produces    = ["cz_fidelity"]
+ttl_seconds = 21600
+impl        = "standard"
