@@ -32,7 +32,10 @@ git checkout aaron/night-l0-pulse-designer   # the testing branch (PR #75) until
 corepack enable && pnpm install               # check: exits 0, lockfile untouched
 pnpm -r build                                 # check: packages/extension/dist/extension.js exists
 pnpm --filter amicode-v2 run fetch:opencode   # check: vendor/opencode/<platform>/opencode exists
-                                              # (downloads via gh from harmoniqs/opencode release)
+                                              # (lock source=local: builds from a harmoniqs/opencode
+                                              # clone at the locked ref — sibling ../opencode, or
+                                              # AMICODE_OPENCODE_SRC / --local <path>; needs bun.
+                                              # No clone → falls back to the gh release download)
 pnpm --filter amicode-v2 test                 # check: 200+ tests pass, 0 fail
 bash packages/extension/scripts/install.sh    # Julia project (~15 min first precompile) + VSIX + lab.toml
 node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico-run, creds)
@@ -70,6 +73,8 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 ## Known sharp edges
 
 - `test:slow` without `AMICO_TEST_JULIA_PROJECT` silently skips the Julia gates.
-- The vendor `.sha256` stamp must match the lock manifest or `fetch:opencode` re-downloads.
+- The vendor `.sha256` stamp is the ACTUAL binary hash; `.source` records provenance
+  (`local <ref>` or `release <repo>@<tag>`). Local-source installs always rebuild; a
+  release-mode run re-downloads whenever the stamp differs from the lock manifest.
 - Free-tier live e2e tiers are non-deterministic; a single tier-C failure is sampling noise.
 - Julia 1.12.x minor-version drift vs the pinned Manifest prints a warning and proceeds.
