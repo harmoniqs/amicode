@@ -70,7 +70,9 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter amicode-v2 package   # amico-run build + ext build + fetch:opencode + vsce
+      - run: pnpm -r run build   # amico-run + extension (same as fast — ensures dist/ is in place before vsce)
+      - run: pnpm --filter amicode-v2 fetch:opencode   # vendor the opencode binary (explicit step, matches fast/boot-smoke)
+      - run: pnpm --filter amicode-v2 exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
   boot-smoke:
     strategy:
