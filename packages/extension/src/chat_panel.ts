@@ -57,6 +57,19 @@ export class ChatPanel {
           msg &&
           typeof msg === "object" &&
           (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "open-external" &&
+          typeof (msg as { url?: unknown }).url === "string" &&
+          /^https:\/\//.test((msg as { url: string }).url)
+        ) {
+          // target=_blank/window.open are dead inside the framed app — open
+          // https links via the editor (system browser). https-only.
+          void vscode.env.openExternal(vscode.Uri.parse((msg as { url: string }).url));
+          return;
+        }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "clipboard-request"
         ) {
           // Paste bridge: navigator.clipboard is unavailable to the framed app
@@ -151,7 +164,7 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external")) {
             vscode.postMessage(d);
           }
           return;
