@@ -180,7 +180,10 @@ export function detectStopped(runDir: string): boolean {
  *  packages/opencode/src/server/amicode/run-terminal.ts). If you change the
  *  terminal semantics here — status field authority, torn-FINISHED retry, the
  *  AMICODE_STOPPED relabel, fidelity-only-from-result.toml — change them there
- *  in the same change-set.
+ *  in the same change-set. Also mirrored (same rule): the 10-min stall
+ *  threshold (STALL_AFTER_MS here in run_controls.ts / runs_manager.ts vs the
+ *  fork's problems.ts) and the display vocabulary (the fork maps
+ *  completed→"finished"; extension surfaces render RunStatus directly).
  *  Folds the cooperative-stop relabel in: a user-stop exits 0 → FINISHED says
  *  "completed"; relabel to "stopped" (AMICODE_STOPPED marker) so no consumer
  *  reads it as a genuine convergence and promote is skipped by construction.

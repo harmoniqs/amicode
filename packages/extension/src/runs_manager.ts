@@ -8,6 +8,7 @@ import { parseMaxIter } from "./run_timing";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
+import { STALL_AFTER_MS } from "./run_controls";
   AMICODE_ITER_RE, ingestRunDir, readTerminalState, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
@@ -92,7 +93,6 @@ class RunPipeline implements vscode.Disposable {
 }
 
 export class RunsManager implements vscode.Disposable {
-  private static readonly STALL_AFTER_MS = 10 * 60 * 1000;
   private readonly registry = new RunRegistry();
   private readonly pipelines = new Map<string, RunPipeline>();
   private indexTailer?: LogTailer;
@@ -435,7 +435,7 @@ export class RunsManager implements vscode.Disposable {
     if (hit && now - hit.at < 2000) return hit.val;
     let val: "running" | "stalled" = "running";
     try {
-      if (now - fs.statSync(path.join(runDir, "run.log")).mtimeMs > RunsManager.STALL_AFTER_MS) val = "stalled";
+      if (now - fs.statSync(path.join(runDir, "run.log")).mtimeMs > STALL_AFTER_MS) val = "stalled";
     } catch { /* no run.log yet — brand-new run, trust the tailer */ }
     this.liveStatusCache.set(runDir, { at: now, val });
     return val;
