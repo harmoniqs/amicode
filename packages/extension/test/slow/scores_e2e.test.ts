@@ -88,7 +88,9 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())('scores runtime live e2e (cr
     // Sanity: the session prep actually compiled the score (not the fallback).
     const agents = readFileSync(s.agentsPath, 'utf8')
     expect(agents).toContain('## Onset router')
-    expect(agents).toContain('Compiled from score `pulse-designer` v1')
+    // Version-agnostic: SCORE.md version bumps must not rot this pin (it sat
+    // hardcoded at v1 while the score reached v3 — red on every creds machine).
+    expect(agents).toMatch(/Compiled from score `pulse-designer` v\d+/)
 
     const ses = (await (
       await fetch(s.url + '/session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
