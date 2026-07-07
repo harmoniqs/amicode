@@ -320,7 +320,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("amicode.openRunDir", async () => {
       const dir = runsManager?.getActiveRunDir();
       if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
-      await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+      // revealFileInOS wants a FILE (a bare directory errors on macOS) — reveal
+      // the manifest, which every run dir has from birth; fall back to opening
+      // the folder externally if the reveal still fails.
+      const manifest = path.join(dir, "run.toml");
+      try {
+        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fs.existsSync(manifest) ? manifest : dir));
+      } catch {
+        await vscode.env.openExternal(vscode.Uri.file(dir));
+      }
     }),
     vscode.commands.registerCommand("amicode.savePulse", async () => {
       const dir = runsManager?.getActiveRunDir();

@@ -114,8 +114,8 @@
       "properties": {
         "amicode.inspector.autoOpen": {
           "type": "boolean",
-          "default": false,
-          "description": "Automatically reveal the Run Inspector panel when a solve starts. When off (default), use the status-bar item or the 'Amicode: Open Run Inspector' command."
+          "default": true,
+          "description": "Automatically reveal the Run Inspector panel when a solve starts (default on). Turn off if a starting solve stealing focus bothers you."
         },
         "amicode.opencodeBinary": {
           "type": "string",
