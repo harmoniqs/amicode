@@ -8,7 +8,12 @@ import * as vscode from "vscode";
 // live run's run.log PLUS one on the append-only runs/index (discovery).
 // ===========================================================================
 
-export interface LogTailerOptions { path: string; channel: vscode.OutputChannel; onLine: (line: string) => void; startOffset?: number }
+export interface LogTailerOptions {
+  path: string;
+  channel: vscode.OutputChannel;
+  onLine: (line: string) => void;
+  startOffset?: number;
+}
 
 export class LogTailer implements vscode.Disposable {
   private watcher?: fs.FSWatcher;
@@ -42,7 +47,11 @@ export class LogTailer implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     if (this.pollTimer) clearTimeout(this.pollTimer);
-    try { this.watcher?.close(); } catch { /* noop */ }
+    try {
+      this.watcher?.close();
+    } catch {
+      /* noop */
+    }
     this.watcher = undefined;
   }
 
@@ -69,10 +78,17 @@ export class LogTailer implements vscode.Disposable {
   private drain(): void {
     if (this.disposed) return;
     let fd: number;
-    try { fd = fs.openSync(this.opts.path, "r"); } catch { return; }
+    try {
+      fd = fs.openSync(this.opts.path, "r");
+    } catch {
+      return;
+    }
     try {
       const size = fs.fstatSync(fd).size;
-      if (size < this.offset) { this.offset = 0; this.buf = ""; }
+      if (size < this.offset) {
+        this.offset = 0;
+        this.buf = "";
+      }
       if (size === this.offset) return;
       const chunk = Buffer.allocUnsafe(size - this.offset);
       const read = fs.readSync(fd, chunk, 0, chunk.length, this.offset);
@@ -82,10 +98,18 @@ export class LogTailer implements vscode.Disposable {
       while ((nl = this.buf.indexOf("\n")) >= 0) {
         const line = this.buf.slice(0, nl);
         this.buf = this.buf.slice(nl + 1);
-        try { this.opts.onLine(line); } catch (e) { this.opts.channel.appendLine(`[runs] onLine threw: ${String(e)}`); }
+        try {
+          this.opts.onLine(line);
+        } catch (e) {
+          this.opts.channel.appendLine(`[runs] onLine threw: ${String(e)}`);
+        }
       }
     } finally {
-      try { fs.closeSync(fd); } catch { /* noop */ }
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* noop */
+      }
     }
   }
 }

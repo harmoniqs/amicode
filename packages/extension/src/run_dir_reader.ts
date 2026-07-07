@@ -34,7 +34,12 @@ export const AMICODE_PULSE_META_RE = new RegExp(
   String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)\s*$`,
 );
 
-export interface PulseMeta { drives: number; knots: number; labels: string[]; bounds: [number, number][] }
+export interface PulseMeta {
+  drives: number;
+  knots: number;
+  labels: string[];
+  bounds: [number, number][];
+}
 
 /** Parse an AMICODE_PULSE_META line. Returns undefined for anything malformed. */
 export function parsePulseMetaLine(line: string): PulseMeta | undefined {
@@ -52,7 +57,11 @@ export const AMICODE_PULSE_RE = new RegExp(
   String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=(${NUM})\s+a=(${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)*)\s*$`,
 );
 
-export interface PulseRecord { iter: number; dt: number; values: number[][] }
+export interface PulseRecord {
+  iter: number;
+  dt: number;
+  values: number[][];
+}
 
 /** Parse an AMICODE_PULSE record line. Returns undefined for anything malformed. */
 export function parsePulseRecordLine(line: string): PulseRecord | undefined {
@@ -62,9 +71,7 @@ export function parsePulseRecordLine(line: string): PulseRecord | undefined {
   return { iter: parseInt(m[1], 10), dt: parseAmicoNum(m[2]), values };
 }
 
-export type PulseEvent =
-  | { type: "meta"; meta: PulseMeta }
-  | { type: "record"; record: PulseRecord };
+export type PulseEvent = { type: "meta"; meta: PulseMeta } | { type: "record"; record: PulseRecord };
 
 /** Cross-line policy for the pulse stream — the single gate BOTH delivery
  *  paths (replay ingest, live tail) feed lines through. Policy (#66 AC4):
@@ -95,7 +102,7 @@ export class PulseStream {
     }
     const record = parsePulseRecordLine(line);
     if (record) {
-      if (!this.meta) return undefined;   // record before meta — nothing to interpret it against
+      if (!this.meta) return undefined; // record before meta — nothing to interpret it against
       if (record.values.length !== this.meta.drives) return undefined;
       if (record.values.some((d) => d.length !== this.meta!.knots)) return undefined;
       return { type: "record", record };
@@ -104,13 +111,27 @@ export class PulseStream {
   }
 }
 
-export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
+export interface IterRecord {
+  iter: number;
+  f_val: number;
+  inf_pr: number;
+  inf_du: number;
+}
 /** Terminal completion, built by readTerminalState and flowed WHOLE to every
  *  consumer (never exploded into positional args mid-pipe) — the #84 funnel.
  *  Additive contract fields join HERE + readTerminalState and reach all paths
  *  by construction: #81's `formulation?` next, then #64 hashing / #41 usage. */
-export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number }
-export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
+export interface RunCompletion {
+  runId: string;
+  runDir: string;
+  status: RunStatus;
+  fidelity?: number;
+}
+export interface PromoteInfo {
+  runId: string;
+  runDir: string;
+  fidelity: number;
+}
 
 /** Where ingestRunDir routes its findings. The live impl carries the
  *  newest-wins + promote-once guards; the test impl is plain spies. */
@@ -132,12 +153,17 @@ export class SinkDedup {
     if (iter > this.latestIter) this.latestIter = iter;
   }
   /** Highest iteration seen. */
-  get high(): number { return this.latestIter; }
+  get high(): number {
+    return this.latestIter;
+  }
 }
 
 export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
-  try { return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>; }
-  catch { return undefined; }
+  try {
+    return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
 /** spec C promote gate: rendering is tier-blind, PROMOTION is not. A `free`-tier
@@ -151,8 +177,11 @@ export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
 export type PromoteEligibility = "eligible" | "pending_verification" | "suppressed";
 export function promoteEligibility(runDir: string): PromoteEligibility {
   let spec: Record<string, unknown> | undefined;
-  try { spec = JSON.parse(fs.readFileSync(path.join(runDir, "solvespec.json"), "utf8")); }
-  catch { return "eligible"; }   // no/unreadable spec → a bare run, unchanged behavior
+  try {
+    spec = JSON.parse(fs.readFileSync(path.join(runDir, "solvespec.json"), "utf8"));
+  } catch {
+    return "eligible";
+  } // no/unreadable spec → a bare run, unchanged behavior
   if (spec?.tier !== "free") return "eligible";
   const verification = readTomlSafe(path.join(runDir, "verification.toml"));
   if (!verification) return "pending_verification";
@@ -218,12 +247,16 @@ export function readTerminalState(
  *  appended after the read are tailed) and no overlap (already-replayed lines). */
 export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0.99): number {
   const manifest = readTomlSafe(path.join(runDir, "run.toml"));
-  if (!manifest || !validateManifest(manifest).ok) return 0;   // no valid manifest → not a run dir yet
+  if (!manifest || !validateManifest(manifest).ok) return 0; // no valid manifest → not a run dir yet
   const runId = String(manifest.run_id);
 
   // run.log body → iter records (replay; the live tailer handles appended lines)
   let logBody: string | undefined;
-  try { logBody = fs.readFileSync(path.join(runDir, "run.log"), "utf8"); } catch { /* none yet */ }
+  try {
+    logBody = fs.readFileSync(path.join(runDir, "run.log"), "utf8");
+  } catch {
+    /* none yet */
+  }
   let logBytes = 0;
   if (logBody) {
     logBytes = Buffer.byteLength(logBody, "utf8");
@@ -235,9 +268,20 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     let newestPulse: PulseEvent | undefined;
     for (const line of logBody.split("\n")) {
       const m = AMICODE_ITER_RE.exec(line);
-      if (m) { sink.iter({ iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) }); continue; }
+      if (m) {
+        sink.iter({
+          iter: +m[1],
+          f_val: parseAmicoNum(m[2]),
+          inf_pr: parseAmicoNum(m[3]),
+          inf_du: parseAmicoNum(m[4]),
+        });
+        continue;
+      }
       const e = pulses.onLine(line);
-      if (e?.type === "meta") { pulseMeta = e; newestPulse = undefined; }   // new meta governs; stale records don't cross it
+      if (e?.type === "meta") {
+        pulseMeta = e;
+        newestPulse = undefined;
+      } // new meta governs; stale records don't cross it
       else if (e?.type === "record") newestPulse = e;
     }
     if (pulseMeta) sink.pulse(pulseMeta);
@@ -251,7 +295,7 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   if (!t) return logBytes;
   sink.run({ runId, runDir, ...t });
   if (t.status === "completed" && t.fidelity !== undefined && t.fidelity >= promoteThreshold) {
-    const eligibility = promoteEligibility(runDir);   // tier-blind render, tier-aware promote (spec C)
+    const eligibility = promoteEligibility(runDir); // tier-blind render, tier-aware promote (spec C)
     if (eligibility === "eligible") sink.promote({ runId, runDir, fidelity: t.fidelity });
     else console.warn(`[amico] promote skipped for ${runId}: free-tier verification ${eligibility}`);
   }

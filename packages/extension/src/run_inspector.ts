@@ -22,10 +22,10 @@ const REFRESH_INTERVAL_MS = 200; // 5 Hz cap on pulse-record refresh (per run)
 
 /** Timing payload for the elapsed/rate/ETA strip. */
 export interface TimingInfo {
-  createdAtMs?: number;   // run.toml created_at → live elapsed base
-  maxIter?: number;       // parsed from the run script → ETA
-  wallSeconds?: number;   // result.toml wall_seconds → frozen elapsed on finish
-  terminal?: boolean;     // true once the run is finished
+  createdAtMs?: number; // run.toml created_at → live elapsed base
+  maxIter?: number; // parsed from the run script → ETA
+  wallSeconds?: number; // result.toml wall_seconds → frozen elapsed on finish
+  terminal?: boolean; // true once the run is finished
 }
 
 let INSPECTOR: InspectorView | undefined;
@@ -39,9 +39,9 @@ interface PaneBuffer {
   warming: boolean;
   completion?: { status: string; fidelity?: number };
   pulseMeta?: PulseMeta;
-  pulseRecord?: PulseRecord;   // newest record (throttle coalesces to this)
+  pulseRecord?: PulseRecord; // newest record (throttle coalesces to this)
   iterRecord?: { iter: number; f_val: number; kkt_error: number; eq_viol: number; ineq_viol: number; rho: number };
-  timing?: TimingInfo;         // elapsed/rate/ETA strip state (his run_timing UI)
+  timing?: TimingInfo; // elapsed/rate/ETA strip state (his run_timing UI)
   pulseTimer?: NodeJS.Timeout;
   pendingPulse?: PulseRecord;
 }
@@ -81,10 +81,16 @@ class InspectorView implements vscode.WebviewViewProvider {
     // the target run from the manager's selected run.
     const msgSub = view.webview.onDidReceiveMessage((msg: { type?: string; action?: string }) => {
       if (msg?.type !== "control") return;
-      const cmd = ({ stop: "amicode.stopRun", save: "amicode.savePulse", open: "amicode.openRunDir" } as Record<string, string>)[msg.action ?? ""];
+      const cmd = (
+        { stop: "amicode.stopRun", save: "amicode.savePulse", open: "amicode.openRunDir" } as Record<string, string>
+      )[msg.action ?? ""];
       if (cmd) void vscode.commands.executeCommand(cmd);
     });
-    view.onDidDispose(() => { this.view = undefined; this.clearAllTimers(); msgSub.dispose(); });
+    view.onDidDispose(() => {
+      this.view = undefined;
+      this.clearAllTimers();
+      msgSub.dispose();
+    });
 
     // S36 replay: rebuild EVERY pane from its buffer (not just the active one),
     // so switching to a background run after reopen shows its state too. Per
@@ -104,7 +110,13 @@ class InspectorView implements vscode.WebviewViewProvider {
     if (p.pulseMeta) view.webview.postMessage({ type: "pulsemeta", runId: rid, ...p.pulseMeta });
     if (p.pulseRecord) view.webview.postMessage({ type: "pulse", runId: rid, ...p.pulseRecord });
     if (p.iterRecord) view.webview.postMessage({ type: "iteration", runId: rid, ...p.iterRecord, t_post: Date.now() });
-    if (p.completion) view.webview.postMessage({ type: "completed", runId: rid, status: p.completion.status, fidelity: p.completion.fidelity });
+    if (p.completion)
+      view.webview.postMessage({
+        type: "completed",
+        runId: rid,
+        status: p.completion.status,
+        fidelity: p.completion.fidelity,
+      });
   }
 
   // -------- public surface used by RunsManager (all runId-keyed) --------
@@ -112,8 +124,15 @@ class InspectorView implements vscode.WebviewViewProvider {
   postIterationRecord(runId: string, rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
     const p = this.paneFor(runId);
     p.warming = false;
-    p.iterRecord = { iter: rec.iter, f_val: rec.f_val, kkt_error: rec.inf_du, eq_viol: rec.inf_pr, ineq_viol: 0, rho: 1.0 };
-    if (!this.view) return;   // buffered above; reopen replays it
+    p.iterRecord = {
+      iter: rec.iter,
+      f_val: rec.f_val,
+      kkt_error: rec.inf_du,
+      eq_viol: rec.inf_pr,
+      ineq_viol: 0,
+      rho: 1.0,
+    };
+    if (!this.view) return; // buffered above; reopen replays it
     this.view.webview.postMessage({ type: "iteration", runId, ...p.iterRecord, t_post: Date.now() });
   }
 
@@ -163,9 +182,12 @@ class InspectorView implements vscode.WebviewViewProvider {
       return;
     }
     // record
-    p.pulseRecord = e.record;   // newest wins for reopen replay
+    p.pulseRecord = e.record; // newest wins for reopen replay
     if (!this.view) return;
-    if (p.pulseTimer) { p.pendingPulse = e.record; return; }   // window open — coalesce
+    if (p.pulseTimer) {
+      p.pendingPulse = e.record;
+      return;
+    } // window open — coalesce
     this.view.webview.postMessage({ type: "pulse", runId, ...e.record });
     p.pulseTimer = setTimeout(() => {
       p.pulseTimer = undefined;
@@ -194,7 +216,7 @@ class InspectorView implements vscode.WebviewViewProvider {
   /** Make `runId` the visible pane (1.3 selection seam). Buffered until the
    *  webview materializes; resolveWebviewView replays it last. */
   activate(runId: string): void {
-    this.paneFor(runId);   // ensure a pane exists even before any data
+    this.paneFor(runId); // ensure a pane exists even before any data
     this.activeRunId = runId;
     if (this.view) this.view.webview.postMessage({ type: "activate", runId });
   }
@@ -204,22 +226,23 @@ class InspectorView implements vscode.WebviewViewProvider {
     // default so a starting solve never steals focus; the status-bar item and
     // the explicit open command (which bypasses reveal) remain available.
     if (!autoOpenEnabled()) return;
-    vscode.commands.executeCommand("amicode.runInspector.focus")
-      .then(undefined, () => undefined);
+    vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
   }
 
   // -------- internal --------
 
   private clearAllTimers(): void {
     for (const p of this.panes.values()) {
-      if (p.pulseTimer) { clearTimeout(p.pulseTimer); p.pulseTimer = undefined; }
+      if (p.pulseTimer) {
+        clearTimeout(p.pulseTimer);
+        p.pulseTimer = undefined;
+      }
       p.pendingPulse = undefined;
     }
   }
 
   private renderHtml(webview: vscode.Webview): string {
-    const uri = (...parts: string[]) =>
-      webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, ...parts));
+    const uri = (...parts: string[]) => webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, ...parts));
     const nonce = newNonce();
     // The view is TS-composed (media/ui/views/inspector.ts → dist bundle): the
     // script builds its own DOM from atoms/components and injects their styles

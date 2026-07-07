@@ -51,13 +51,18 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  *  offending await, not surface as an opaque suite hang. */
 async function pumpUntil(m: RunsManager, pred: () => boolean, what: string, ms = 8000): Promise<void> {
   const t0 = Date.now();
-  while (!pred() && Date.now() - t0 < ms) { tick(m); await sleep(25); }
+  while (!pred() && Date.now() - t0 < ms) {
+    tick(m);
+    await sleep(25);
+  }
   tick(m);
   if (!pred()) throw new Error(`pumpUntil timed out after ${ms}ms waiting for: ${what}`);
 }
 
 describe("smoke corpus — Scheduler → executor → run-dir → RunsManager → inspector", () => {
-  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+  beforeEach(() => {
+    for (const f of Object.values(inspector)) f.mockClear();
+  });
 
   it("runs the corpus serially end-to-end; both runs tracked, runId-keyed, correct fidelity", async () => {
     const runsRoot = mkdtempSync(join(tmpdir(), "smoke-corpus-"));
@@ -73,18 +78,18 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     const a = scheduler.enqueue({ scriptPath: join(CORPUS, "transmon_x.jl"), opts });
     const b = scheduler.enqueue({ scriptPath: join(CORPUS, "cavity_displacement.jl"), opts });
 
-    const ha = await a.handle;                       // head of queue — starts immediately
+    const ha = await a.handle; // head of queue — starts immediately
     await pumpUntil(m, () => existsSync(join(ha.runDir, "FINISHED")), "run A FINISHED on disk");
     expect((await ha.finished).status).toBe("completed");
 
-    const hb = await b.handle;                       // resolves only after A finished (serial)
+    const hb = await b.handle; // resolves only after A finished (serial)
     await pumpUntil(m, () => existsSync(join(hb.runDir, "FINISHED")), "run B FINISHED on disk");
     expect((await hb.finished).status).toBe("completed");
 
     // --- scheduler lifecycle: strict serial ordering, queueIds line up ---
     const seq = events.map((e) => `${e.kind}:${e.queueId}`);
     expect(seq.indexOf("finished:q1")).toBeGreaterThan(seq.indexOf("started:q1"));
-    expect(seq.indexOf("started:q2")).toBeGreaterThan(seq.indexOf("finished:q1"));  // B started strictly after A finished
+    expect(seq.indexOf("started:q2")).toBeGreaterThan(seq.indexOf("finished:q1")); // B started strictly after A finished
     expect(seq.indexOf("finished:q2")).toBeGreaterThan(seq.indexOf("started:q2"));
 
     // --- run-dir contract on disk for BOTH runs (what the executor wrote is
@@ -97,12 +102,22 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     }
 
     // --- registry: both finished, fidelity + iter high-water from the stream ---
-    await pumpUntil(m, () => m.runs().filter((r) => r.phase === "finished").length === 2, "both runs terminal in the registry");
+    await pumpUntil(
+      m,
+      () => m.runs().filter((r) => r.phase === "finished").length === 2,
+      "both runs terminal in the registry",
+    );
     expect(m.runs().find((r) => r.runId === ha.runId)).toMatchObject({
-      phase: "finished", status: "completed", fidelity: 0.9993, latestIter: 4,
+      phase: "finished",
+      status: "completed",
+      fidelity: 0.9993,
+      latestIter: 4,
     });
     expect(m.runs().find((r) => r.runId === hb.runId)).toMatchObject({
-      phase: "finished", status: "completed", fidelity: 0.9981, latestIter: 3,
+      phase: "finished",
+      status: "completed",
+      fidelity: 0.9981,
+      latestIter: 3,
     });
 
     // --- inspector fan-out: per-run, runId-keyed, no cross-tagging ---
@@ -115,8 +130,12 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     // Pulse stream per run: meta + records with the fixture's shape, and every
     // record tagged with ITS run — dims prove no stream-crossing (A is 2×8, B is 1×6).
     const pulses = (rid: string) => inspector.postPulse.mock.calls.filter((c) => c[0] === rid).map((c) => c[1]);
-    const lastA = pulses(ha.runId).filter((e) => e.type === "record").at(-1);
-    const lastB = pulses(hb.runId).filter((e) => e.type === "record").at(-1);
+    const lastA = pulses(ha.runId)
+      .filter((e) => e.type === "record")
+      .at(-1);
+    const lastB = pulses(hb.runId)
+      .filter((e) => e.type === "record")
+      .at(-1);
     expect(pulses(ha.runId).some((e) => e.type === "meta" && e.meta.drives === 2 && e.meta.knots === 8)).toBe(true);
     expect(pulses(hb.runId).some((e) => e.type === "meta" && e.meta.drives === 1 && e.meta.knots === 6)).toBe(true);
     expect(lastA.record).toMatchObject({ iter: 4 });
@@ -140,7 +159,10 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     m.attachScheduler(scheduler);
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
 
-    const f = scheduler.enqueue({ scriptPath: join(CORPUS, "failing_solve.jl"), opts: { runsRoot, julia: { julia: EMITTER } } });
+    const f = scheduler.enqueue({
+      scriptPath: join(CORPUS, "failing_solve.jl"),
+      opts: { runsRoot, julia: { julia: EMITTER } },
+    });
     const hf = await f.handle;
     await pumpUntil(m, () => existsSync(join(hf.runDir, "FINISHED")), "failing run FINISHED on disk");
     expect((await hf.finished).status).toBe("failed");
@@ -148,7 +170,11 @@ describe("smoke corpus — Scheduler → executor → run-dir → RunsManager �
     // Run-dir contract for the failure lane: FINISHED written by the EXECUTOR
     // (never the script), and no result.toml (the emitter dies before it).
     expect(existsSync(join(hf.runDir, "result.toml"))).toBe(false);
-    await pumpUntil(m, () => m.runs().find((r) => r.runId === hf.runId)?.phase === "finished", "failed run terminal in the registry");
+    await pumpUntil(
+      m,
+      () => m.runs().find((r) => r.runId === hf.runId)?.phase === "finished",
+      "failed run terminal in the registry",
+    );
     expect(m.runs().find((r) => r.runId === hf.runId)).toMatchObject({ phase: "finished", status: "failed" });
     expect(m.runs().find((r) => r.runId === hf.runId)?.fidelity).toBeUndefined();
     // …but the telemetry it emitted BEFORE dying was tracked (iters 0-2).

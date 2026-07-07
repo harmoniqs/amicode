@@ -90,7 +90,8 @@ describe("forceFinalize", () => {
 describe("findRunPids (two-key match: cmdline AND cwd)", () => {
   const RUN_DIR = "/fake/runs/default/r1";
   const SCRIPT = "/fake/problems/x/solve.jl";
-  const fakeExec = (psLines: string, cwdByPid: Record<string, string>) =>
+  const fakeExec =
+    (psLines: string, cwdByPid: Record<string, string>) =>
     (cmd: string, args: string[]): string => {
       if (cmd === "/bin/ps") return psLines;
       const pid = args[args.indexOf("-p") + 1];
@@ -100,18 +101,26 @@ describe("findRunPids (two-key match: cmdline AND cwd)", () => {
 
   it("kills only processes running the script FROM this run dir", () => {
     const ps = [
-      `  101 julia --project=/x ${SCRIPT}`,          // ours: script + cwd match
-      `  202 julia --project=/x ${SCRIPT}`,          // sibling run, other cwd
-      `  303 vim ${RUN_DIR}/run.log`,                // references dir, wrong cwd
+      `  101 julia --project=/x ${SCRIPT}`, // ours: script + cwd match
+      `  202 julia --project=/x ${SCRIPT}`, // sibling run, other cwd
+      `  303 vim ${RUN_DIR}/run.log`, // references dir, wrong cwd
       "  404 unrelated",
     ].join("\n");
-    const pids = findRunPids(RUN_DIR, SCRIPT, fakeExec(ps, { "101": RUN_DIR, "202": "/fake/runs/default/r2", "303": "/home" }));
+    const pids = findRunPids(
+      RUN_DIR,
+      SCRIPT,
+      fakeExec(ps, { "101": RUN_DIR, "202": "/fake/runs/default/r2", "303": "/home" }),
+    );
     expect(pids).toEqual([101]);
   });
   it("returns [] when nothing matches or lsof cannot prove ownership", () => {
     const ps = `  505 julia ${SCRIPT}\n`;
     expect(findRunPids(RUN_DIR, SCRIPT, fakeExec(ps, {}))).toEqual([]);
-    expect(findRunPids(RUN_DIR, SCRIPT, () => { throw new Error("ps down"); })).toEqual([]);
+    expect(
+      findRunPids(RUN_DIR, SCRIPT, () => {
+        throw new Error("ps down");
+      }),
+    ).toEqual([]);
   });
 });
 

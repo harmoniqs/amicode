@@ -18,9 +18,16 @@ export const window = {
         onDidReceiveMessage: () => ({ dispose() {} }),
       },
       revealCount: 0,
-      reveal() { this.revealCount += 1; },
-      onDidDispose(cb: () => void, _thisArg?: unknown, _subs?: unknown) { disposeCbs.push(cb); return { dispose() {} }; },
-      dispose() { for (const cb of disposeCbs) cb(); },
+      reveal() {
+        this.revealCount += 1;
+      },
+      onDidDispose(cb: () => void, _thisArg?: unknown, _subs?: unknown) {
+        disposeCbs.push(cb);
+        return { dispose() {} };
+      },
+      dispose() {
+        for (const cb of disposeCbs) cb();
+      },
     };
   },
 };
@@ -28,7 +35,11 @@ const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
 export const commands = {
   registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => {
     registeredCommands.set(id, fn);
-    return { dispose() { registeredCommands.delete(id); } };
+    return {
+      dispose() {
+        registeredCommands.delete(id);
+      },
+    };
   },
   executeCommand: (id: string, ...a: unknown[]) => Promise.resolve(registeredCommands.get(id)?.(...a)),
 };
@@ -40,7 +51,7 @@ export const workspace = {
 export const Uri = {
   file: (p: string) => ({ fsPath: p, toString: () => p }),
   joinPath: (base: { fsPath?: string } | string, ...parts: string[]) => {
-    const root = typeof base === "string" ? base : base.fsPath ?? "";
+    const root = typeof base === "string" ? base : (base.fsPath ?? "");
     const full = [root, ...parts].join("/");
     return { fsPath: full, toString: () => full };
   },
@@ -57,6 +68,9 @@ export class TreeItem {
   description?: string;
   tooltip?: string;
   command?: unknown;
-  constructor(public label: string, public collapsibleState?: number) {}
+  constructor(
+    public label: string,
+    public collapsibleState?: number,
+  ) {}
 }
 export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 };

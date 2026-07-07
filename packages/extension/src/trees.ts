@@ -21,7 +21,9 @@ class PlaceholderTree implements vscode.TreeDataProvider<string> {
   getChildren(): string[] {
     return [this.hint];
   }
-  refresh(): void { this._onDidChange.fire(); }
+  refresh(): void {
+    this._onDidChange.fire();
+  }
 }
 
 /** A saved session-catalog entry (#47). Promote-shaped, mirrors the card's
@@ -62,7 +64,10 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
    *  dir and pulse.jld2 stay on disk — deleting artifacts (and archive/
    *  supersede semantics) belongs to the Phase-3 CatalogStore (Q94/Q95). */
   async remove(run_id: string): Promise<void> {
-    await this.ctx.workspaceState.update(CATALOG_KEY, this.entries().filter((e) => e.run_id !== run_id));
+    await this.ctx.workspaceState.update(
+      CATALOG_KEY,
+      this.entries().filter((e) => e.run_id !== run_id),
+    );
     this._onDidChange.fire();
   }
 
@@ -77,8 +82,12 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
     item.description = el.run_id;
     item.tooltip = `lab: ${el.lab_id}${el.tags?.length ? `\ntags: ${el.tags.join(", ")}` : ""}\nsaved ${el.saved_at}\n${el.runDir}`;
     if (el.tags?.length) item.description = `${el.run_id} · ${el.tags.join(" · ")}`;
-    item.command = { command: "amicode.catalogCard.open", title: "Open catalog card", arguments: [el.runDir, el.system, el.tags] };
-    item.contextValue = "amicodeCatalogEntry";   // enables the row's context menu (remove)
+    item.command = {
+      command: "amicode.catalogCard.open",
+      title: "Open catalog card",
+      arguments: [el.runDir, el.system, el.tags],
+    };
+    item.contextValue = "amicodeCatalogEntry"; // enables the row's context menu (remove)
     return item;
   }
 
@@ -87,7 +96,9 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
     return e.length ? e : ["(empty — save a converged run to the catalog)"];
   }
 
-  refresh(): void { this._onDidChange.fire(); }
+  refresh(): void {
+    this._onDidChange.fire();
+  }
 }
 
 export function registerTrees(ctx: vscode.ExtensionContext): {
@@ -95,12 +106,12 @@ export function registerTrees(ctx: vscode.ExtensionContext): {
   catalog: SessionCatalogTree;
   armonia: PlaceholderTree;
 } {
-  const vault   = new PlaceholderTree("(vault tree will appear when Armonia mounts are configured)");
+  const vault = new PlaceholderTree("(vault tree will appear when Armonia mounts are configured)");
   const catalog = new SessionCatalogTree(ctx);
   const armonia = new PlaceholderTree("(no mounts yet — run Amicode: Open Chat to start)");
 
   ctx.subscriptions.push(
-    vscode.window.registerTreeDataProvider("amicode.vault",   vault),
+    vscode.window.registerTreeDataProvider("amicode.vault", vault),
     vscode.window.registerTreeDataProvider("amicode.catalog", catalog),
     vscode.window.registerTreeDataProvider("amicode.armonia", armonia),
   );

@@ -185,6 +185,7 @@ Per-stage notes:
      lists a matching skill (`atoms`, `transmon`, `fluxonium`, `ions`, `bosonic`),
      **invoke it by name** for the physics before authoring — do not hand-roll the
      Hamiltonian from memory when a skill carries it.
+
 2. **model** — convention: **`T` = scalar gate time (ns), `N` = number of
    timesteps** — never conflate them. Record via `amicode_set_model`.
    <a id="levels-guidance"></a>Levels are **platform-dependent** — do not default
@@ -206,7 +207,7 @@ Per-stage notes:
 4. **problem** — <a id="scope"></a>Two problem TYPES, **both first-class** — never
    force one into the other:
    - **Gate synthesis** (target = a unitary). Transmon single-qubit gates (X, Y, Z,
-     H, S, T, √X, arbitrary unitary) use the vetted template. Multi-qubit *transmon*
+     H, S, T, √X, arbitrary unitary) use the vetted template. Multi-qubit _transmon_
      gates (CNOT, CZ, iSWAP) have no vetted template — **not declined**: free-tier
      offer (author from scratch, **unvetted**, re-rollout-verified), caveat up front.
      **Rydberg CZ is the exception** — the composed `rydberg-cz` exemplar (2-qubit,

@@ -1,7 +1,7 @@
 {
   "name": "amicode-v2",
   "displayName": "Amicode v2",
-  "description": "Amico research IDE \u2014 opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
+  "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
   "version": "0.0.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
@@ -78,7 +78,7 @@
       },
       {
         "command": "amicode.selectRun",
-        "title": "Amicode: Select run to inspect\u2026"
+        "title": "Amicode: Select run to inspect…"
       },
       {
         "command": "amicode.restartServer",
@@ -156,7 +156,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Platform-skill names indexed from the central library (public). Empty = atoms, transmon, fluxonium, ions, bosonic. Only listed names are indexed \u2014 the library also holds process skills that must not leak."
+          "description": "Platform-skill names indexed from the central library (public). Empty = atoms, transmon, fluxonium, ions, bosonic. Only listed names are indexed — the library also holds process skills that must not leak."
         },
         "amicode.skillLibraryRoots": {
           "type": "array",
@@ -179,7 +179,7 @@
         "amicode.veloce": {
           "type": "boolean",
           "default": false,
-          "description": "Amico Veloce: start sessions with autonomy on \u2014 auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
+          "description": "Amico Veloce: start sessions with autonomy on — auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
         },
         "amicode.chat.autoOpen": {
           "type": "boolean",

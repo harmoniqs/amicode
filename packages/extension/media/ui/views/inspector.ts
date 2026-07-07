@@ -21,7 +21,9 @@ import { sparkline } from "../components/sparkline";
 import { controlEnablement, type ControlStatus } from "../control-state";
 import { formatElapsed, computeEta, ratePerSec } from "../../../src/run_timing";
 
-defineStyle("inspector-view", `
+defineStyle(
+  "inspector-view",
+  `
   body { margin: 0; height: 100vh; font-family: var(--text-font);
          font-size: var(--text-body); color: var(--vscode-foreground); }
   .brand { font-weight: 600; }
@@ -29,7 +31,8 @@ defineStyle("inspector-view", `
      these win over .stack on specificity — not on stylesheet order. */
   .pane:not(.active) { display: none; }
   .pane.active { display: flex; }
-`);
+`,
+);
 
 const IDLE_HINT = "No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.";
 const WARMING_HINT = "Julia warming up — compiling the solver (~1–2 min). The pulse will stream here.";
@@ -66,7 +69,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const spark = sparkline();
   hero.el.append(spark.el);
 
-  let gotPulse = false;   // per-pane: decides the completed-without-data hint
+  let gotPulse = false; // per-pane: decides the completed-without-data hint
 
   const brand = document.createElement("div");
   brand.className = "row gap-sm brand";
@@ -94,7 +97,9 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   let hasData = false;
   const applyControls = () => {
     const e = controlEnablement(controlStatus, hasData);
-    stopBtn.enable(e.stop); saveBtn.enable(e.save); openBtn.enable(e.open);
+    stopBtn.enable(e.stop);
+    saveBtn.enable(e.save);
+    openBtn.enable(e.open);
   };
   applyControls();
 
@@ -104,11 +109,19 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   let createdAtMs: number | undefined;
   let maxIter: number | undefined;
   let latestIter = 0;
-  const iterStamps: number[] = [];   // arrival times → rate
+  const iterStamps: number[] = []; // arrival times → rate
   let tick: ReturnType<typeof setInterval> | undefined;
-  const clearTick = () => { if (tick) { clearInterval(tick); tick = undefined; } };
+  const clearTick = () => {
+    if (tick) {
+      clearInterval(tick);
+      tick = undefined;
+    }
+  };
   const renderTiming = () => {
-    if (createdAtMs === undefined) { timing.set(""); return; }
+    if (createdAtMs === undefined) {
+      timing.set("");
+      return;
+    }
     const parts = [`elapsed ${formatElapsed((Date.now() - createdAtMs) / 1000)}`];
     const r = ratePerSec(iterStamps);
     if (r !== undefined) {
@@ -131,7 +144,10 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   return {
     el,
     setActive(active: boolean): void {
-      if (!active) { clearTick(); return; }
+      if (!active) {
+        clearTick();
+        return;
+      }
       if (createdAtMs !== undefined) {
         renderTiming();
         if (!tick) tick = setInterval(renderTiming, 1000);
@@ -162,7 +178,9 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           feasibility.value((msg.eq_viol as number).toExponential(2));
           optimality.value((msg.kkt_error as number).toExponential(2));
           status.set("running", "running");
-          controlStatus = "running"; hasData = true; applyControls();
+          controlStatus = "running";
+          hasData = true;
+          applyControls();
           latestIter = msg.iter as number;
           iterStamps.push(Date.now());
           if (iterStamps.length > 12) iterStamps.shift();
@@ -176,8 +194,11 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           for (const m of metrics) m.clear();
           hero.label("objective");
           status.set("running", "warming up");
-          controlStatus = "warming"; hasData = false; applyControls();
-          iterStamps.length = 0; latestIter = 0;   // new run — reset rate history
+          controlStatus = "warming";
+          hasData = false;
+          applyControls();
+          iterStamps.length = 0;
+          latestIter = 0; // new run — reset rate history
           spark.reset();
           break;
         case "completed": {
@@ -191,18 +212,25 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
             hero.label("fidelity");
             hero.value((msg.fidelity as number).toFixed(5));
           }
-          if (!gotPulse) pulse.waiting(NO_DATA_HINT);   // old runs / non-emitting scripts
-          controlStatus = (ok ? "completed" : stopped ? "stopped" : "failed"); applyControls();
+          if (!gotPulse) pulse.waiting(NO_DATA_HINT); // old runs / non-emitting scripts
+          controlStatus = ok ? "completed" : stopped ? "stopped" : "failed";
+          applyControls();
           break;
         }
         case "pulsemeta":
-          pulse.meta({ drives: msg.drives as number, knots: msg.knots as number, labels: msg.labels as string[], bounds: msg.bounds as [number, number][] });
+          pulse.meta({
+            drives: msg.drives as number,
+            knots: msg.knots as number,
+            labels: msg.labels as string[],
+            bounds: msg.bounds as [number, number][],
+          });
           break;
         case "pulse":
           // Plot-only (never the badge): a throttled record can land after
           // "completed", and for a background run must not touch the visible pane.
           gotPulse = true;
-          hasData = true; applyControls();
+          hasData = true;
+          applyControls();
           pulse.update({ iter: msg.iter as number, dt: msg.dt as number, values: msg.values as number[][] });
           break;
       }
@@ -239,15 +267,21 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
       p.el.classList.toggle("active", id === runId);
       p.setActive(id === runId);
     }
-    if (!panels.has(runId)) panelFor(runId).el.classList.add("active");   // pane may arrive before data
+    if (!panels.has(runId)) panelFor(runId).el.classList.add("active"); // pane may arrive before data
   };
 
   return {
     el,
     onMessage(msg: any): void {
       if (!msg || typeof msg !== "object") return;
-      if (msg.type === "ping") { post({ type: "pong", seq: msg.seq, t0: msg.t0 }); return; }
-      if (msg.type === "activate") { if (typeof msg.runId === "string") activate(msg.runId); return; }
+      if (msg.type === "ping") {
+        post({ type: "pong", seq: msg.seq, t0: msg.t0 });
+        return;
+      }
+      if (msg.type === "activate") {
+        if (typeof msg.runId === "string") activate(msg.runId);
+        return;
+      }
       // Every other message is runId-keyed → route to that run's pane. A message
       // with no runId (legacy/none) falls back to the active pane.
       const runId = typeof msg.runId === "string" ? msg.runId : active;

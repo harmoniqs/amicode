@@ -8,8 +8,18 @@ import { parseMaxIter } from "./run_timing";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-  AMICODE_ITER_RE, ingestRunDir, readTerminalState, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
-  type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
+  AMICODE_ITER_RE,
+  ingestRunDir,
+  readTerminalState,
+  readTomlSafe,
+  parseAmicoNum,
+  PulseStream,
+  SinkDedup,
+  type IterRecord,
+  type PulseEvent,
+  type RunCompletion,
+  type PromoteInfo,
+  type RunSink,
 } from "./run_dir_reader";
 import { STALL_AFTER_MS } from "./run_controls";
 
@@ -82,10 +92,17 @@ class RunPipeline implements vscode.Disposable {
   dirWatcher?: fs.FSWatcher;
   tailer?: LogTailer;
 
-  constructor(readonly runId: string, readonly runDir: string) {}
+  constructor(
+    readonly runId: string,
+    readonly runDir: string,
+  ) {}
 
   dispose(): void {
-    try { this.dirWatcher?.close(); } catch { /* noop */ }
+    try {
+      this.dirWatcher?.close();
+    } catch {
+      /* noop */
+    }
     this.tailer?.dispose();
     this.dirWatcher = undefined;
     this.tailer = undefined;
@@ -133,7 +150,7 @@ export class RunsManager implements vscode.Disposable {
       },
     });
     this.booting = true;
-    this.indexTailer.start();   // synchronous initial drain — boot replay
+    this.indexTailer.start(); // synchronous initial drain — boot replay
     this.booting = false;
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "index") this.indexTailer?.poke();
@@ -142,7 +159,9 @@ export class RunsManager implements vscode.Disposable {
     // host (e.g. the watched dir deleted). The poll backstop keeps us live.
     this.rootWatcher.on("error", (e) => this.opts.channel.appendLine(`[runs] root watch error: ${String(e)}`));
     this.poll = setInterval(() => this.tick(), RunsManager.POLL_MS);
-    this.opts.channel.appendLine(`[runs] watching ${this.opts.runsRoot}/index (fs.watch + ${RunsManager.POLL_MS}ms poll)`);
+    this.opts.channel.appendLine(
+      `[runs] watching ${this.opts.runsRoot}/index (fs.watch + ${RunsManager.POLL_MS}ms poll)`,
+    );
   }
 
   /** Poll backstop — macOS FSEvents coalesces/drops events, so re-poke the
@@ -160,16 +179,33 @@ export class RunsManager implements vscode.Disposable {
       // wedges mid-watch would keep "running · iter N" forever without this.
       // DOWNGRADE only (never stamps "running": warming/iter flow owns that).
       const sel = this.selected ? this.registry.get(this.selected) : undefined;
-      if (sel && sel.phase !== "finished" && sel.latestIter !== undefined && this.liveStatus(sel.runDir) === "stalled") {
-        this.opts.statusBar?.setRun({ runId: sel.runId, outputDir: sel.runDir, startedAt: 0, status: "stalled", latestIter: sel.latestIter });
+      if (
+        sel &&
+        sel.phase !== "finished" &&
+        sel.latestIter !== undefined &&
+        this.liveStatus(sel.runDir) === "stalled"
+      ) {
+        this.opts.statusBar?.setRun({
+          runId: sel.runId,
+          outputDir: sel.runDir,
+          startedAt: 0,
+          status: "stalled",
+          latestIter: sel.latestIter,
+        });
       }
-    } catch { /* transient fs race — next tick retries */ }
+    } catch {
+      /* transient fs race — next tick retries */
+    }
   }
 
   dispose(): void {
     if (this.poll) clearInterval(this.poll);
     this.poll = undefined;
-    try { this.rootWatcher?.close(); } catch { /* noop */ }
+    try {
+      this.rootWatcher?.close();
+    } catch {
+      /* noop */
+    }
     this.rootWatcher = undefined;
     this.indexTailer?.dispose();
     this.indexTailer = undefined;
@@ -189,7 +225,9 @@ export class RunsManager implements vscode.Disposable {
         this.registerRun(e.runId, e.runDir);
         return;
       }
-      this.opts.channel.appendLine(`[runs] scheduler ${e.kind} ${e.runId ?? e.queueId}${e.message ? `: ${e.message}` : ""}`);
+      this.opts.channel.appendLine(
+        `[runs] scheduler ${e.kind} ${e.runId ?? e.queueId}${e.message ? `: ${e.message}` : ""}`,
+      );
     });
   }
 
@@ -213,7 +251,7 @@ export class RunsManager implements vscode.Disposable {
     const ins = getInspector();
     ins?.reveal();
     ins?.setRunLabel(runId, runId);
-    ins?.activate(runId);   // 1.3: switch the visible pane
+    ins?.activate(runId); // 1.3: switch the visible pane
     const p = this.pipelines.get(runId);
     if (p) {
       // FINISHED may have landed inside the poll window — complete it NOW,
@@ -223,16 +261,22 @@ export class RunsManager implements vscode.Disposable {
       // (routeIter/completeRun keep it current from here).
       const r = this.registry.get(runId)!;
       this.opts.statusBar?.setRun({
-        runId, outputDir: r.runDir, startedAt: 0,
+        runId,
+        outputDir: r.runDir,
+        startedAt: 0,
         status: r.phase === "finished" ? (r.status ?? "completed") : this.liveStatus(r.runDir),
-        latestIter: r.latestIter, fidelity: r.fidelity,
+        latestIter: r.latestIter,
+        fidelity: r.fidelity,
       });
     } else {
       // Never fanned (no pipeline) — display replay from disk (late-join safe).
       // Promote inside the replay stays guarded by promotedRuns, so
       // re-selecting a finished run never re-pops the prompt.
-      try { ingestRunDir(rec.runDir, this.displaySink(rec), this.opts.promoteThreshold ?? 0.99); }
-      catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
+      try {
+        ingestRunDir(rec.runDir, this.displaySink(rec), this.opts.promoteThreshold ?? 0.99);
+      } catch (err) {
+        this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`);
+      }
     }
     // Fresh/live run → Julia warming up. Disk-checked (FINISHED may exist while
     // the registry still says live); the host's setWarmingUp also no-ops if the
@@ -299,7 +343,15 @@ export class RunsManager implements vscode.Disposable {
       if (t) {
         // Terminal at discovery: record it (status/fidelity for the registry) but
         // render nothing and never re-pop the promote prompt (β launch parity).
-        this.registry.register({ runId, runDir, createdAt, scriptPath, phase: "finished", status: t.status, fidelity: t.fidelity });
+        this.registry.register({
+          runId,
+          runDir,
+          createdAt,
+          scriptPath,
+          phase: "finished",
+          status: t.status,
+          fidelity: t.fidelity,
+        });
         this.promotedRuns.add(runId);
         return;
       }
@@ -320,8 +372,16 @@ export class RunsManager implements vscode.Disposable {
       const manifest = readTomlSafe(path.join(runDir, "run.toml"));
       const createdAtMs = manifest?.created_at ? Date.parse(String(manifest.created_at)) : NaN;
       let maxIter: number | undefined;
-      try { if (manifest?.script_path) maxIter = parseMaxIter(fs.readFileSync(String(manifest.script_path), "utf8")); } catch { /* script gone */ }
-      getInspector()?.postTiming(runId, { createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : undefined, maxIter, terminal: false });
+      try {
+        if (manifest?.script_path) maxIter = parseMaxIter(fs.readFileSync(String(manifest.script_path), "utf8"));
+      } catch {
+        /* script gone */
+      }
+      getInspector()?.postTiming(runId, {
+        createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : undefined,
+        maxIter,
+        terminal: false,
+      });
     }
 
     // Auto-follow BEFORE the replay (β latest-follow parity: a newly REGISTERED
@@ -334,7 +394,7 @@ export class RunsManager implements vscode.Disposable {
     if (follow && this.selected !== runId) {
       this.selected = runId;
       const ins = getInspector();
-      if (!this.booting) ins?.reveal();   // boot replay must not steal focus
+      if (!this.booting) ins?.reveal(); // boot replay must not steal focus
       ins?.setRunLabel(runId, runId);
       ins?.activate(runId);
     }
@@ -343,8 +403,11 @@ export class RunsManager implements vscode.Disposable {
     // high-water, fans history runId-tagged, and yields the byte offset the
     // live tail starts from.
     let logBytes = 0;
-    try { logBytes = ingestRunDir(runDir, this.pipelineSink(p), this.opts.promoteThreshold ?? 0.99); }
-    catch (err) { this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`); }
+    try {
+      logBytes = ingestRunDir(runDir, this.pipelineSink(p), this.opts.promoteThreshold ?? 0.99);
+    } catch (err) {
+      this.opts.channel.appendLine(`[runs] replay failed: ${(err as Error).message}`);
+    }
 
     // FINISHED landed between the existsSync check and the replay (rare race):
     // completeRun already tore the pipeline down (and — selection was assigned
@@ -363,7 +426,15 @@ export class RunsManager implements vscode.Disposable {
       channel: this.opts.channel,
       onLine: (line) => {
         const m = AMICODE_ITER_RE.exec(line);
-        if (m) { this.routeIter(p, { iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) }); return; }
+        if (m) {
+          this.routeIter(p, {
+            iter: +m[1],
+            f_val: parseAmicoNum(m[2]),
+            inf_pr: parseAmicoNum(m[3]),
+            inf_du: parseAmicoNum(m[4]),
+          });
+          return;
+        }
         const e = p.pulses.onLine(line);
         if (e) this.routePulse(p.runId, e);
       },
@@ -386,8 +457,11 @@ export class RunsManager implements vscode.Disposable {
       iter: (rec: IterRecord) => this.routeIter(p, rec),
       // A FINISHED that landed between the existsSync check and this replay —
       // rare race; treat exactly like a live completion (fans out + promotes).
-      run: (c: RunCompletion) => this.completeRun(c),   // whole object — see completeRun (#84 seam)
-      pulse: (e: PulseEvent) => { if (e.type === "meta") p.pulses.arm(e.meta); this.routePulse(p.runId, e); },
+      run: (c: RunCompletion) => this.completeRun(c), // whole object — see completeRun (#84 seam)
+      pulse: (e: PulseEvent) => {
+        if (e.type === "meta") p.pulses.arm(e.meta);
+        this.routePulse(p.runId, e);
+      },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
   }
@@ -406,12 +480,25 @@ export class RunsManager implements vscode.Disposable {
         // A finished run's replay must not stamp running/stalled per line — its
         // completion event (below) sets the bar exactly once at the end.
         if (this.registry.get(rid)?.phase !== "finished") {
-          this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: this.liveStatus(rec.runDir), latestIter: r.iter });
+          this.opts.statusBar?.setRun({
+            runId: rid,
+            outputDir: rec.runDir,
+            startedAt: 0,
+            status: this.liveStatus(rec.runDir),
+            latestIter: r.iter,
+          });
         }
       },
       run: (c: RunCompletion) => {
         getInspector()?.postCompletion(rid, c.status, c.fidelity);
-        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: c.status, latestIter: this.registry.get(rid)?.latestIter, fidelity: c.fidelity });
+        this.opts.statusBar?.setRun({
+          runId: rid,
+          outputDir: rec.runDir,
+          startedAt: 0,
+          status: c.status,
+          latestIter: this.registry.get(rid)?.latestIter,
+          fidelity: c.fidelity,
+        });
       },
       pulse: (e: PulseEvent) => {
         if (e.type === "meta") p?.pulses.arm(e.meta);
@@ -420,7 +507,6 @@ export class RunsManager implements vscode.Disposable {
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
   }
-
 
   /** "running" only if run.log is actually moving. A FINISHED-less run whose
    *  log has been silent >10 min is wedged (OOM, killed host) — never let a
@@ -436,7 +522,9 @@ export class RunsManager implements vscode.Disposable {
     let val: "running" | "stalled" = "running";
     try {
       if (now - fs.statSync(path.join(runDir, "run.log")).mtimeMs > STALL_AFTER_MS) val = "stalled";
-    } catch { /* no run.log yet — brand-new run, trust the tailer */ }
+    } catch {
+      /* no run.log yet — brand-new run, trust the tailer */
+    }
     this.liveStatusCache.set(runDir, { at: now, val });
     return val;
   }
@@ -450,7 +538,13 @@ export class RunsManager implements vscode.Disposable {
     getInspector()?.postIterationRecord(p.runId, rec);
     if (this.selected === p.runId) {
       // Live status-bar update — "running · iter N" as it solves (#5 AC3).
-      this.opts.statusBar?.setRun({ runId: p.runId, outputDir: p.runDir, startedAt: 0, status: this.liveStatus(p.runDir), latestIter: rec.iter });
+      this.opts.statusBar?.setRun({
+        runId: p.runId,
+        outputDir: p.runDir,
+        startedAt: 0,
+        status: this.liveStatus(p.runDir),
+        latestIter: rec.iter,
+      });
     }
   }
 
@@ -464,7 +558,7 @@ export class RunsManager implements vscode.Disposable {
     if (p.finishedSeen) return;
     if (!fs.existsSync(path.join(p.runDir, "FINISHED"))) return;
     const t = this.readTerminal(p.runDir);
-    if (!t) return;   // torn/invalid FINISHED — next tick retries
+    if (!t) return; // torn/invalid FINISHED — next tick retries
     p.finishedSeen = true;
     this.completeRun({ runId: p.runId, runDir: p.runDir, ...t });
   }
@@ -480,12 +574,14 @@ export class RunsManager implements vscode.Disposable {
    *  re-plumbed per path. Consumers cherry-pick at the leaf, not mid-pipe. */
   private completeRun(c: RunCompletion): void {
     const rec = this.registry.get(c.runId);
-    if (!rec || rec.phase === "finished") return;   // idempotent (watch + poll can both fire)
+    if (!rec || rec.phase === "finished") return; // idempotent (watch + poll can both fire)
     this.registry.markFinished(c.runId, c.status, c.fidelity);
     const p = this.pipelines.get(c.runId);
     p?.dispose();
     this.pipelines.delete(c.runId);
-    this.opts.channel.appendLine(`[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`);
+    this.opts.channel.appendLine(
+      `[runs] ${c.runId} ${c.status}${c.fidelity !== undefined ? ` F=${c.fidelity.toFixed(6)}` : ""}`,
+    );
     if (c.status !== "completed") this.opts.channel.appendLine(`[runs] see ${path.join(rec.runDir, "run.log")}`);
     // Terminal state to the inspector for EVERY run (its pane's badge stops
     // saying "running" even in the background); status bar for the selected run.
@@ -497,7 +593,14 @@ export class RunsManager implements vscode.Disposable {
     getInspector()?.postTiming(c.runId, { wallSeconds, terminal: true });
     this.opts.onRunFinished?.({ runId: c.runId, runDir: rec.runDir, status: c.status });
     if (this.selected === c.runId) {
-      this.opts.statusBar?.setRun({ runId: c.runId, outputDir: rec.runDir, startedAt: 0, status: c.status, latestIter: rec.latestIter, fidelity: c.fidelity });
+      this.opts.statusBar?.setRun({
+        runId: c.runId,
+        outputDir: rec.runDir,
+        startedAt: 0,
+        status: c.status,
+        latestIter: rec.latestIter,
+        fidelity: c.fidelity,
+      });
     }
     if (c.status === "completed" && c.fidelity !== undefined && c.fidelity >= (this.opts.promoteThreshold ?? 0.99)) {
       this.promptPromote({ runId: c.runId, runDir: rec.runDir, fidelity: c.fidelity });
@@ -520,7 +623,8 @@ export class RunsManager implements vscode.Disposable {
     void (async () => {
       const choice = await vscode.window.showInformationMessage(
         `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Promote pulse to catalog?`,
-        "Yes — promote", "No — keep local only",
+        "Yes — promote",
+        "No — keep local only",
       );
       if (choice === "Yes — promote") {
         // #47: record in the session catalog + open the card (store persistence

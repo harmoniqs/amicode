@@ -24,7 +24,6 @@ const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "workbench.action.showCommands",
 ]);
 
-
 /** VS Code theme kind → the fork app's ColorScheme. */
 function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";
@@ -34,15 +33,21 @@ export class ChatPanel {
   private static current?: ChatPanel;
   private readonly disposables: vscode.Disposable[] = [];
 
-
-
-  private constructor(private readonly panel: vscode.WebviewPanel, opencodeUrl: URL) {
+  private constructor(
+    private readonly panel: vscode.WebviewPanel,
+    opencodeUrl: URL,
+  ) {
     this.panel.webview.html = this.renderHtml(opencodeUrl);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // Live theme bridge: editor theme changes flow extension → outer relay →
     // iframe → the app's setColorScheme (boot theme rides ?colorScheme=).
     vscode.window.onDidChangeActiveColorTheme(
-      (t) => void this.panel.webview.postMessage({ source: "amicode", kind: "theme", colorScheme: themeKindToScheme(t.kind) }),
+      (t) =>
+        void this.panel.webview.postMessage({
+          source: "amicode",
+          kind: "theme",
+          colorScheme: themeKindToScheme(t.kind),
+        }),
       null,
       this.disposables,
     );
@@ -59,7 +64,7 @@ export class ChatPanel {
           (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "open-external" &&
           typeof (msg as { url?: unknown }).url === "string" &&
-          /^https:\/\//i.test((msg as { url: string }).url)   // scheme is case-insensitive (RFC 3986)
+          /^https:\/\//i.test((msg as { url: string }).url) // scheme is case-insensitive (RFC 3986)
         ) {
           // target=_blank/window.open are dead inside the framed app — open
           // https links via the editor (system browser). https-only.
@@ -79,9 +84,16 @@ export class ChatPanel {
           // panel must not be able to sample the clipboard in the background —
           // reads only answer while the user can see the chat.
           if (!this.panel.visible) return;
-          void vscode.env.clipboard.readText().then((text) =>
-            this.panel.webview.postMessage({ source: "amicode", kind: "clipboard", nonce: (msg as { nonce?: string }).nonce, text }),
-          );
+          void vscode.env.clipboard
+            .readText()
+            .then((text) =>
+              this.panel.webview.postMessage({
+                source: "amicode",
+                kind: "clipboard",
+                nonce: (msg as { nonce?: string }).nonce,
+                text,
+              }),
+            );
           return;
         }
         if (
@@ -107,19 +119,14 @@ export class ChatPanel {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
       return ChatPanel.current;
     }
-    const panel = vscode.window.createWebviewPanel(
-      "amicode.chat",
-      "Amicode Chat",
-      vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        // The chat lives at localhost; we let the webview reach out via http://127.0.0.1
-        // through normal browser networking. No localResourceRoots needed for the iframe
-        // itself — we only host one extension-local asset (the loading splash).
-        localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
-      },
-    );
+    const panel = vscode.window.createWebviewPanel("amicode.chat", "Amicode Chat", vscode.ViewColumn.One, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      // The chat lives at localhost; we let the webview reach out via http://127.0.0.1
+      // through normal browser networking. No localResourceRoots needed for the iframe
+      // itself — we only host one extension-local asset (the loading splash).
+      localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
+    });
     panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, "media", "amico.svg");
     ChatPanel.current = new ChatPanel(panel, opencodeUrl);
     return ChatPanel.current;
@@ -189,7 +196,9 @@ export class ChatPanel {
 
   dispose(): void {
     for (const d of this.disposables) {
-      try { d.dispose(); } catch {}
+      try {
+        d.dispose();
+      } catch {}
     }
     this.disposables.length = 0;
     if (ChatPanel.current === this) ChatPanel.current = undefined;

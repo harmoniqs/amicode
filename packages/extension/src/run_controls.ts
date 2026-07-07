@@ -27,7 +27,11 @@ export const STALL_AFTER_MS = 10 * 60 * 1000;
 
 /** run.log mtime, or undefined before the log exists. */
 export function runLogMtime(runDir: string): number | undefined {
-  try { return fs.statSync(path.join(runDir, "run.log")).mtimeMs; } catch { return undefined; }
+  try {
+    return fs.statSync(path.join(runDir, "run.log")).mtimeMs;
+  } catch {
+    return undefined;
+  }
 }
 
 /** What stopping this run requires right now: nothing (already terminal), the
@@ -52,7 +56,11 @@ export function runScriptPath(runDir: string): string | undefined {
   try {
     const m = /^script_path\s*=\s*(".*")\s*$/m.exec(fs.readFileSync(path.join(runDir, "run.toml"), "utf8"));
     if (!m) return undefined;
-    try { return JSON.parse(m[1]) as string; } catch { return m[1].slice(1, -1); }
+    try {
+      return JSON.parse(m[1]) as string;
+    } catch {
+      return m[1].slice(1, -1);
+    }
   } catch {
     return undefined;
   }
@@ -68,7 +76,11 @@ function lsofPath(): string {
 }
 
 function realpathOr(p: string): string {
-  try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  try {
+    return fs.realpathSync(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 /** PIDs belonging to THIS run: command line references the run's solve script
@@ -84,7 +96,11 @@ export function findRunPids(
     execFileSync(cmd, args, { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 }),
 ): number[] {
   let psOut = "";
-  try { psOut = exec("/bin/ps", ["-A", "-o", "pid=,args="]); } catch { return []; }
+  try {
+    psOut = exec("/bin/ps", ["-A", "-o", "pid=,args="]);
+  } catch {
+    return [];
+  }
   const candidates: number[] = [];
   for (const line of psOut.split("\n")) {
     const m = /^\s*(\d+)\s+(.*)$/.exec(line);
@@ -116,8 +132,13 @@ export function forceFinalize(runDir: string): void {
   fs.writeFileSync(tmp, 'status = "aborted"\nexit_code = -1\n');
   fs.renameSync(tmp, path.join(runDir, "FINISHED"));
   try {
-    fs.appendFileSync(path.join(runDir, "run.log"), "\nAMICODE_ABORTED force-stopped by user (solver not responding)\n");
-  } catch { /* log breadcrumb is best-effort */ }
+    fs.appendFileSync(
+      path.join(runDir, "run.log"),
+      "\nAMICODE_ABORTED force-stopped by user (solver not responding)\n",
+    );
+  } catch {
+    /* log breadcrumb is best-effort */
+  }
 }
 
 /** The hard path: TERM any live solver process provably tied to this run dir,
@@ -126,14 +147,28 @@ export function forceFinalize(runDir: string): void {
  *  fully dead run — the pid scan just comes back empty. */
 export async function forceStop(runDir: string): Promise<void> {
   const pids = findRunPids(runDir, runScriptPath(runDir));
-  for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ } }
+  for (const pid of pids) {
+    try {
+      process.kill(pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
   if (pids.length > 0) {
     await new Promise((r) => setTimeout(r, 1500));
     // Re-prove ownership before the KILL sweep — a pid that exited on TERM can
     // be reused by an unrelated process inside the window, and the two-key
     // safety property is the whole point of this module.
     const survivors = new Set(findRunPids(runDir, runScriptPath(runDir)));
-    for (const pid of pids) { if (survivors.has(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* exited */ } } }
+    for (const pid of pids) {
+      if (survivors.has(pid)) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* exited */
+        }
+      }
+    }
   }
   // The orchestrator (cwd ≠ run dir, outside the kill set) may observe the
   // child's death and write its own truthful FINISHED (e.g. failed/143) during
@@ -141,7 +176,9 @@ export async function forceStop(runDir: string): Promise<void> {
   // Best-effort on a DELETED run dir (nothing to finalize, nothing to crash).
   try {
     if (!fs.existsSync(path.join(runDir, "FINISHED"))) forceFinalize(runDir);
-  } catch { /* run dir removed underneath us */ }
+  } catch {
+    /* run dir removed underneath us */
+  }
 }
 
 /** Copy the run's pulse.jld2 to an absolute destination path. */

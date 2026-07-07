@@ -8,14 +8,16 @@ import { parseIndexLine, RunRegistry } from "../src/run_registry";
 describe("parseIndexLine — runs/index grammar", () => {
   it("parses the writer's TSV line", () => {
     expect(parseIndexLine("r20260703-010203Z-ab12\t2026-07-03T01:02:03Z\t/tmp/solve.jl")).toEqual({
-      runId: "r20260703-010203Z-ab12", createdAt: "2026-07-03T01:02:03Z", scriptPath: "/tmp/solve.jl",
+      runId: "r20260703-010203Z-ab12",
+      createdAt: "2026-07-03T01:02:03Z",
+      scriptPath: "/tmp/solve.jl",
     });
   });
   it("rejects blank and malformed lines (torn final line heals on next drain)", () => {
     expect(parseIndexLine("")).toBeUndefined();
     expect(parseIndexLine("   ")).toBeUndefined();
     expect(parseIndexLine("r1\tonly-two-fields")).toBeUndefined();
-    expect(parseIndexLine("\t\t/s.jl")).toBeUndefined();      // empty runId
+    expect(parseIndexLine("\t\t/s.jl")).toBeUndefined(); // empty runId
   });
   it("re-joins extra tabs into the path (defensive — the writer sanitizes)", () => {
     expect(parseIndexLine("r1\t2026-01-01T00:00:00Z\t/a\tb.jl")?.scriptPath).toBe("/a\tb.jl");
@@ -27,16 +29,16 @@ describe("RunRegistry", () => {
     const reg = new RunRegistry();
     expect(reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" })).toBe(true);
     expect(reg.register({ runId: "r1", runDir: "/elsewhere", phase: "finished" })).toBe(false);
-    expect(reg.get("r1")?.runDir).toBe("/runs/r1");            // first registration wins
+    expect(reg.get("r1")?.runDir).toBe("/runs/r1"); // first registration wins
     expect(reg.get("r1")?.phase).toBe("live");
   });
   it("noteIter is a monotonic high-water mark", () => {
     const reg = new RunRegistry();
     reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });
     reg.noteIter("r1", 5);
-    reg.noteIter("r1", 3);                                     // out-of-order (poll double-delivery)
+    reg.noteIter("r1", 3); // out-of-order (poll double-delivery)
     expect(reg.get("r1")?.latestIter).toBe(5);
-    reg.noteIter("nope", 9);                                   // unknown run — no throw
+    reg.noteIter("nope", 9); // unknown run — no throw
   });
   it("markFinished sets phase/status/fidelity and keeps latestIter", () => {
     const reg = new RunRegistry();
@@ -49,12 +51,12 @@ describe("RunRegistry", () => {
     const reg = new RunRegistry();
     reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });
     reg.markFinished("r1", "completed", 0.999);
-    reg.markFinished("r1", "failed");                          // stray second call (public surface, 1.3 consumers)
+    reg.markFinished("r1", "failed"); // stray second call (public surface, 1.3 consumers)
     expect(reg.get("r1")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.999 });
   });
   it("backfill fills ONLY missing metadata (scheduler-registered run gains createdAt/scriptPath from a later index line)", () => {
     const reg = new RunRegistry();
-    reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" });   // scheduler path: no metadata
+    reg.register({ runId: "r1", runDir: "/runs/r1", phase: "live" }); // scheduler path: no metadata
     expect(reg.get("r1")?.createdAt).toBeUndefined();
     expect(reg.get("r1")?.scriptPath).toBeUndefined();
     reg.backfill("r1", { createdAt: "2026-07-03T00:00:00Z", scriptPath: "/s.jl" });
@@ -62,7 +64,7 @@ describe("RunRegistry", () => {
     // never overwrites a present value (first registration wins for everything)
     reg.backfill("r1", { createdAt: "2099-01-01T00:00:00Z", scriptPath: "/other.jl" });
     expect(reg.get("r1")).toMatchObject({ createdAt: "2026-07-03T00:00:00Z", scriptPath: "/s.jl" });
-    reg.backfill("nope", { createdAt: "x" });   // unknown run — no throw
+    reg.backfill("nope", { createdAt: "x" }); // unknown run — no throw
   });
   it("all() returns COPIES — callers can't mutate registry state", () => {
     const reg = new RunRegistry();

@@ -5,7 +5,9 @@
 
 import { defineStyle } from "../style";
 
-defineStyle("pill", `
+defineStyle(
+  "pill",
+  `
   .pill { font-size: var(--text-small); font-weight: 600; letter-spacing: 0.5px;
           text-transform: uppercase; padding: var(--space-xs) var(--space-md);
           border-radius: var(--border-radius-round);
@@ -20,7 +22,8 @@ defineStyle("pill", `
   .pill.done    { color: var(--color-ok); }
   .pill.failed  { color: var(--color-fail); }
   @keyframes pill-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
-`);
+`,
+);
 
 export type PillState = "idle" | "running" | "done" | "failed";
 

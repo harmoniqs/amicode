@@ -19,50 +19,65 @@ import * as vscode from "vscode";
 import { PulseStream, readTomlSafe, type PulseEvent } from "./run_dir_reader";
 
 export function registerCatalogCard(ctx: vscode.ExtensionContext): void {
-  const open = new Map<string, vscode.WebviewPanel>();   // run_id → live panel
-  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.catalogCard.open", (runDir: string, systemName?: string, tags?: string[]) => {
-    const data = hydrateFromRunDir(runDir, systemName, tags);
-    if (!data) {
-      void vscode.window.showErrorMessage("Amicode: cannot build a catalog entry — run dir is missing run.toml/result.toml.");
-      return;
-    }
-    const key = String(data.entry.run_id);
-    const existing = open.get(key);
-    if (existing) { existing.reveal(vscode.ViewColumn.One); return; }   // re-focus, don't re-create
-    const panel = vscode.window.createWebviewPanel(
-      "amicode.catalogCard", `Catalog: ${data.entry.run_id}`, vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        localResourceRoots: [
-          vscode.Uri.joinPath(ctx.extensionUri, "dist"),
-          vscode.Uri.joinPath(ctx.extensionUri, "media"),
-        ],
-      },
-    );
-    open.set(key, panel);
-    panel.onDidDispose(() => open.delete(key), null, ctx.subscriptions);
-    panel.webview.onDidReceiveMessage((m) => {
-      if (m?.type !== "whatnext") return;
-      // Wire the save → tune → warm-start ladder to the CHAT (the agent owns the
-      // solve workflow): stage a concrete prompt on the clipboard and open the
-      // chat. Promote (team catalog) stays honestly unwired until Phase 3.
-      const e = data.entry;
-      const ident = `${e.gate ?? "gate"} on ${e.system ?? String(e.lab_id)} (run ${e.run_id}, F=${Number(e.fidelity).toFixed(5)})`;
-      if (m.id === "warmstart" || m.id === "tune") {
-        const prompt = m.id === "warmstart"
-          ? `Warm-start a new solve from the banked pulse of ${ident}: load ${runDir}/pulse.jld2 as the initial trajectory (load_traj), keep the same formulation, and run it.`
-          : `Tune the solve for ${ident}: start from ${runDir}/pulse.jld2, keep the formulation but ask me which weights/params (Q, R, T, N, max_iter) to adjust before launching.`;
-        void vscode.env.clipboard.writeText(prompt).then(async () => {
-          await vscode.commands.executeCommand("amicode.openChat");
-          void vscode.window.showInformationMessage(`Amicode: ${m.id} prompt copied — paste into the chat to launch.`);
+  const open = new Map<string, vscode.WebviewPanel>(); // run_id → live panel
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand(
+      "amicode.catalogCard.open",
+      (runDir: string, systemName?: string, tags?: string[]) => {
+        const data = hydrateFromRunDir(runDir, systemName, tags);
+        if (!data) {
+          void vscode.window.showErrorMessage(
+            "Amicode: cannot build a catalog entry — run dir is missing run.toml/result.toml.",
+          );
+          return;
+        }
+        const key = String(data.entry.run_id);
+        const existing = open.get(key);
+        if (existing) {
+          existing.reveal(vscode.ViewColumn.One);
+          return;
+        } // re-focus, don't re-create
+        const panel = vscode.window.createWebviewPanel(
+          "amicode.catalogCard",
+          `Catalog: ${data.entry.run_id}`,
+          vscode.ViewColumn.One,
+          {
+            enableScripts: true,
+            localResourceRoots: [
+              vscode.Uri.joinPath(ctx.extensionUri, "dist"),
+              vscode.Uri.joinPath(ctx.extensionUri, "media"),
+            ],
+          },
+        );
+        open.set(key, panel);
+        panel.onDidDispose(() => open.delete(key), null, ctx.subscriptions);
+        panel.webview.onDidReceiveMessage((m) => {
+          if (m?.type !== "whatnext") return;
+          // Wire the save → tune → warm-start ladder to the CHAT (the agent owns the
+          // solve workflow): stage a concrete prompt on the clipboard and open the
+          // chat. Promote (team catalog) stays honestly unwired until Phase 3.
+          const e = data.entry;
+          const ident = `${e.gate ?? "gate"} on ${e.system ?? String(e.lab_id)} (run ${e.run_id}, F=${Number(e.fidelity).toFixed(5)})`;
+          if (m.id === "warmstart" || m.id === "tune") {
+            const prompt =
+              m.id === "warmstart"
+                ? `Warm-start a new solve from the banked pulse of ${ident}: load ${runDir}/pulse.jld2 as the initial trajectory (load_traj), keep the same formulation, and run it.`
+                : `Tune the solve for ${ident}: start from ${runDir}/pulse.jld2, keep the formulation but ask me which weights/params (Q, R, T, N, max_iter) to adjust before launching.`;
+            void vscode.env.clipboard.writeText(prompt).then(async () => {
+              await vscode.commands.executeCommand("amicode.openChat");
+              void vscode.window.showInformationMessage(
+                `Amicode: ${m.id} prompt copied — paste into the chat to launch.`,
+              );
+            });
+          } else if (m.id === "promote") {
+            void vscode.window.showInformationMessage(
+              "Amicode: team-catalog promotion isn't wired yet (Phase 3) — the pulse stays in your local bank.",
+            );
+          }
         });
-      } else if (m.id === "promote") {
-        void vscode.window.showInformationMessage("Amicode: team-catalog promotion isn't wired yet (Phase 3) — the pulse stays in your local bank.");
-      }
-    });
-    const uri = (...p: string[]) => panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
-    const nonce = Math.random().toString(36).slice(2);
-    panel.webview.html = `<!DOCTYPE html>
+        const uri = (...p: string[]) => panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
+        const nonce = Math.random().toString(36).slice(2);
+        panel.webview.html = `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${panel.webview.cspSource} 'unsafe-inline';">
 <link rel="stylesheet" href="${uri("media", "brand.css")}" />
@@ -71,13 +86,19 @@ export function registerCatalogCard(ctx: vscode.ExtensionContext): void {
 <script nonce="${nonce}">window.__CARD_DATA__ = ${JSON.stringify(data)};</script>
 <script nonce="${nonce}" src="${uri("dist", "catalog_card_webview.js")}"></script>
 </body></html>`;
-  }));
+      },
+    ),
+  );
 }
 
 /** Build the card's data from real run artifacts. Returns undefined when the
  *  dir lacks the promote-shaped basics. Shape mirrors the webview's CARD_DATA.
  *  Exported for tests. */
-export function hydrateFromRunDir(runDir: string, systemName?: string, tags?: string[]): { entry: Record<string, unknown>; pulse?: { meta: unknown; record: unknown } } | undefined {
+export function hydrateFromRunDir(
+  runDir: string,
+  systemName?: string,
+  tags?: string[],
+): { entry: Record<string, unknown>; pulse?: { meta: unknown; record: unknown } } | undefined {
   const manifest = readTomlSafe(path.join(runDir, "run.toml"));
   const result = readTomlSafe(path.join(runDir, "result.toml"));
   if (!manifest || !result) return undefined;
@@ -110,11 +131,15 @@ export function hydrateFromRunDir(runDir: string, systemName?: string, tags?: st
     let meta: PulseEvent | undefined, newest: PulseEvent | undefined;
     for (const line of fs.readFileSync(path.join(runDir, "run.log"), "utf8").split("\n")) {
       const e = stream.onLine(line);
-      if (e?.type === "meta") { meta = e; newest = undefined; }
-      else if (e?.type === "record") newest = e;
+      if (e?.type === "meta") {
+        meta = e;
+        newest = undefined;
+      } else if (e?.type === "record") newest = e;
     }
     if (meta?.type === "meta" && newest?.type === "record") pulse = { meta: meta.meta, record: newest.record };
-  } catch { /* no run.log → card renders the not-hydrated state */ }
+  } catch {
+    /* no run.log → card renders the not-hydrated state */
+  }
 
   return { entry, pulse };
 }

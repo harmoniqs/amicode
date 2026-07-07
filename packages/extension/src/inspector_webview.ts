@@ -5,7 +5,7 @@
 import { applyBrandAccent } from "../media/ui/brand_accent";
 import { createInspectorView } from "../media/ui/views/inspector";
 
-applyBrandAccent();   // theme-calculated Harmoniqs yellow (brand-wide contract)
+applyBrandAccent(); // theme-calculated Harmoniqs yellow (brand-wide contract)
 
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;

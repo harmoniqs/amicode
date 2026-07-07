@@ -39,7 +39,6 @@ let opencodeReadyUrl: URL | undefined;
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
 
-
 /** Run dirs with a cooperative stop in flight (escalation timer armed) — a
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
@@ -55,7 +54,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
-  registerCatalogCard(ctx);   // #47 dev scaffold — card opens via the save-to-catalog flow
+  registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
     // the card. Both prompts (demo replay, live promote) route through here.
@@ -79,7 +78,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         prompt: "Tags (comma-separated, optional)",
         placeHolder: "e.g. high-R, T=8, fast",
       });
-      const tags = tagsRaw?.split(",").map((t) => t.trim()).filter(Boolean) ?? [];
+      const tags =
+        tagsRaw
+          ?.split(",")
+          .map((t) => t.trim())
+          .filter(Boolean) ?? [];
       await trees.catalog.save({
         run_id: String(manifest.run_id ?? path.basename(runDir)),
         runDir,
@@ -146,9 +149,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
-    juliaProject: resolveJuliaProject(
-      vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
-    ),
+    juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     platformSkills: cfgArr("platformSkills"),
     skillLibraryRoots: cfgArr("skillLibraryRoots"),
@@ -188,7 +189,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
     // and passes it as `--project`. PATH just needs to resolve the launcher.
     if (amicoRunBinDir === undefined) {
-      opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
+      opencodeChannel.appendLine(
+        `[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`,
+      );
     }
     // opencode owns the LLM credential (0.3): amico injects NO key into the
     // spawn env — opencode resolves its provider from its own env / config /
@@ -209,7 +212,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot, undefined, undefined, opencodeProject.skillPaths, opencodeProject.skillsStageDir, opencodeProject.vaultDir),
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+          opencodeProject.agentsPath,
+          opencodeProject.templatePath,
+          runsRoot,
+          undefined,
+          undefined,
+          opencodeProject.skillPaths,
+          opencodeProject.skillsStageDir,
+          opencodeProject.vaultDir,
+        ),
       },
       channel: opencodeChannel,
     });
@@ -232,7 +244,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
         };
         initDistillerTransport(distillerSetup);
-        opencodeChannel.appendLine(`[boot] distiller armed (vault: ${opencodeProject.vaultDir}, model: ${distillerSetup.model})`);
+        opencodeChannel.appendLine(
+          `[boot] distiller armed (vault: ${opencodeProject.vaultDir}, model: ${distillerSetup.model})`,
+        );
       } catch (e) {
         opencodeChannel.appendLine(`[boot] distiller transport failed (memory disabled this session): ${e}`);
         distillerSetup = undefined;
@@ -280,7 +294,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // openOrReveal as undefined (or reveal a panel bound to a stale server).
       const readyUrl = opencodeReadyUrl;
       if (!readyUrl) {
-        vscode.window.showWarningMessage("Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.");
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
         return;
       }
       // Creds gate — opencode serves HTTP 200 (→ "ready") even with zero
@@ -303,18 +319,33 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // "Follow latest" releases the pin and resumes newest-run auto-follow.
     vscode.commands.registerCommand("amicode.selectRun", async () => {
       const runs = runsManager?.runs() ?? [];
-      if (runs.length === 0) { void vscode.window.showInformationMessage("Amicode: no runs tracked yet."); return; }
+      if (runs.length === 0) {
+        void vscode.window.showInformationMessage("Amicode: no runs tracked yet.");
+        return;
+      }
       const items: (vscode.QuickPickItem & { runId?: string; follow?: boolean })[] = [
-        { label: "$(radio-tower) Follow latest", description: "auto-follow the newest run (release pin)", follow: true },
+        {
+          label: "$(radio-tower) Follow latest",
+          description: "auto-follow the newest run (release pin)",
+          follow: true,
+        },
         ...[...runs].reverse().map((r) => {
           // A "live" run whose log has gone cold is stalled — the picker must
           // agree with the status bar, not advertise a wedge as live.
           const stalled = r.phase === "live" && stopPlan(r.runDir) === "force";
           return {
             label: `${r.phase === "live" ? (stalled ? "$(warning)" : "$(pulse)") : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
-            description: [r.phase === "live" ? (stalled ? `stalled · iter ${r.latestIter ?? 0}` : `live · iter ${r.latestIter ?? 0}`) : r.status,
-                          r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
-                          r.scriptPath ? path.basename(r.scriptPath) : undefined].filter(Boolean).join(" · "),
+            description: [
+              r.phase === "live"
+                ? stalled
+                  ? `stalled · iter ${r.latestIter ?? 0}`
+                  : `live · iter ${r.latestIter ?? 0}`
+                : r.status,
+              r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
+              r.scriptPath ? path.basename(r.scriptPath) : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · "),
             runId: r.runId,
           };
         }),
@@ -327,12 +358,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
     vscode.commands.registerCommand("amicode.stopRun", async () => {
       const dir = runsManager?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run to stop."); return; }
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run to stop.");
+        return;
+      }
       // Escalation ladder: cooperative STOP only works while a solver is alive
       // to poll it — a stalled run gets the hard path immediately, a healthy
       // one gets a grace window and then an explicit Force-stop offer (never a
       // silent kill: one long Ipopt iteration can look wedged).
-      const label = path.basename(dir);   // every toast names the run — stop A, start B, a nameless dialog at t+120s reads as "B is wedged"
+      const label = path.basename(dir); // every toast names the run — stop A, start B, a nameless dialog at t+120s reads as "B is wedged"
       if (pendingStops.has(dir)) {
         vscode.window.showInformationMessage(`Amicode: stop already in progress for ${label}.`);
         return;
@@ -344,19 +378,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       // Best-effort: a deleted run dir throws ENOENT here, and the force path
       // below must still be reachable to clear the registry/UI entry.
-      try { writeStopFile(dir); } catch { /* dir gone — force path handles it */ }
+      try {
+        writeStopFile(dir);
+      } catch {
+        /* dir gone — force path handles it */
+      }
       if (plan === "force") {
         await forceStop(dir);
         vscode.window.showInformationMessage(`Amicode: run ${label} was stalled — force-stopped and marked aborted.`);
         return;
       }
-      vscode.window.showInformationMessage(`Amicode: stop requested for ${label} — the solve will halt at the next iteration.`);
+      vscode.window.showInformationMessage(
+        `Amicode: stop requested for ${label} — the solve will halt at the next iteration.`,
+      );
       const mtimeAtStop = runLogMtime(dir);
       pendingStops.add(dir);
       const timer = setTimeout(async () => {
         pendingStops.delete(dir);
-        if (stopPlan(dir) === "already-finished") return;          // cooperative stop landed
-        if (runLogMtime(dir) !== mtimeAtStop) return;              // still iterating — let it reach the callback
+        if (stopPlan(dir) === "already-finished") return; // cooperative stop landed
+        if (runLogMtime(dir) !== mtimeAtStop) return; // still iterating — let it reach the callback
         const pick = await vscode.window.showWarningMessage(
           `Amicode: run ${label} hasn't responded to stop.`,
           "Force stop",
@@ -367,24 +407,38 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           vscode.window.showInformationMessage(`Amicode: run ${label} force-stopped and marked aborted.`);
         }
       }, 120_000);
-      ctx.subscriptions.push({ dispose: () => { clearTimeout(timer); pendingStops.delete(dir); } });
+      ctx.subscriptions.push({
+        dispose: () => {
+          clearTimeout(timer);
+          pendingStops.delete(dir);
+        },
+      });
     }),
     vscode.commands.registerCommand("amicode.openRunDir", async () => {
       const dir = runsManager?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run.");
+        return;
+      }
       // revealFileInOS wants a FILE (a bare directory errors on macOS) — reveal
       // the manifest, which every run dir has from birth; fall back to opening
       // the folder externally if the reveal still fails.
       const manifest = path.join(dir, "run.toml");
       try {
-        await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fs.existsSync(manifest) ? manifest : dir));
+        await vscode.commands.executeCommand(
+          "revealFileInOS",
+          vscode.Uri.file(fs.existsSync(manifest) ? manifest : dir),
+        );
       } catch {
         await vscode.env.openExternal(vscode.Uri.file(dir));
       }
     }),
     vscode.commands.registerCommand("amicode.savePulse", async () => {
       const dir = runsManager?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run.");
+        return;
+      }
       const catalog = catalogPulsesDir();
       const picks = [catalog ? "Save to catalog" : undefined, "Save to file…"].filter(Boolean) as string[];
       const choice = await vscode.window.showQuickPick(picks, { title: "Save pulse" });
@@ -399,7 +453,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             filters: { JLD2: ["jld2"] },
             defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
           });
-          if (uri) { savePulseTo(dir, uri.fsPath); vscode.window.showInformationMessage("Amicode: pulse saved."); }
+          if (uri) {
+            savePulseTo(dir, uri.fsPath);
+            vscode.window.showInformationMessage("Amicode: pulse saved.");
+          }
         }
       } catch (e) {
         vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
@@ -450,7 +507,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         if (fid >= 0.99) {
           const choice = await vscode.window.showInformationMessage(
             `Amicode: demo solve converged (F=${fid.toFixed(4)}). Save to catalog?`,
-            "Save to catalog", "Not now",
+            "Save to catalog",
+            "Not now",
           );
           if (choice === "Save to catalog") await vscode.commands.executeCommand("amicode.catalog.save", runDir);
         }
@@ -472,4 +530,3 @@ export function deactivate(): void {
   runsManager?.dispose();
   statusBar?.dispose();
 }
-

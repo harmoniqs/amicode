@@ -15,9 +15,9 @@
 // theme switches (VS Code mutates body attributes when the theme changes).
 
 const BRAND_HEX = "#FFF676";
-const CONTRAST_TARGET = 3.0;   // WCAG non-text UI component minimum
+const CONTRAST_TARGET = 3.0; // WCAG non-text UI component minimum
 
-type RGB = [number, number, number];   // 0..1
+type RGB = [number, number, number]; // 0..1
 
 export function parseColor(s: string): RGB | undefined {
   const t = s.trim();
@@ -32,7 +32,15 @@ export function parseColor(s: string): RGB | undefined {
 }
 
 const toHex = (rgb: RGB): string =>
-  "#" + rgb.map((c) => Math.round(Math.min(1, Math.max(0, c)) * 255).toString(16).padStart(2, "0")).join("").toUpperCase();
+  "#" +
+  rgb
+    .map((c) =>
+      Math.round(Math.min(1, Math.max(0, c)) * 255)
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")
+    .toUpperCase();
 
 // -- OKLCH (Björn Ottosson's OKLab) -----------------------------------------
 
@@ -104,8 +112,7 @@ export interface BrandAccent {
 export function solveBrandAccent(background: string): BrandAccent {
   const bg = parseColor(background) ?? parseColor("#1e1e1e")!;
   const brand = parseColor(BRAND_HEX)!;
-  const onAccent =
-    contrast([0, 0, 0], brand) >= contrast([1, 1, 1], brand) ? "#000000" : "#FFFFFF";
+  const onAccent = contrast([0, 0, 0], brand) >= contrast([1, 1, 1], brand) ? "#000000" : "#FFFFFF";
 
   if (contrast(brand, bg) >= CONTRAST_TARGET) {
     return { accent: BRAND_HEX, accentFill: BRAND_HEX, onAccent, brandExact: true };
@@ -114,7 +121,8 @@ export function solveBrandAccent(background: string): BrandAccent {
   // that still meets target — the closest-to-brand gold that survives. This
   // is the LINE color only; the fill stays brand.
   const { C, h, L: brandL } = srgbToOklch(brand);
-  let lo = 0.15, hi = brandL;
+  let lo = 0.15,
+    hi = brandL;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     if (contrast(oklchToSrgbClamped({ L: mid, C, h }), bg) >= CONTRAST_TARGET) lo = mid;

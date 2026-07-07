@@ -9,7 +9,9 @@
 import { defineStyle } from "../style";
 import { text } from "../atoms/text";
 
-defineStyle("chip", `
+defineStyle(
+  "chip",
+  `
   .chip { display: inline-flex; align-items: center; gap: var(--space-sm);
           padding: var(--space-xs) var(--space-md);
           border: var(--border-width) solid var(--border-color);
@@ -19,7 +21,8 @@ defineStyle("chip", `
   .chip .chip-gate { font-weight: 600; }
   .chip .chip-sep { color: var(--color-dim); opacity: 0.6; }
   .chip .proposed { border-bottom: 1px dashed var(--color-dim); opacity: 0.75; }
-`);
+`,
+);
 
 export interface ChipFields {
   gate?: string;

@@ -18,10 +18,10 @@ describe("solveBrandAccent — the theme-calculated Harmoniqs yellow", () => {
     const r = solveBrandAccent("#ffffff");
     expect(r.brandExact).toBe(false);
     const solved = parseColor(r.accent)!;
-    expect(contrast(solved, parseColor("#ffffff")!)).toBeGreaterThanOrEqual(2.98);   // binary-search tolerance
+    expect(contrast(solved, parseColor("#ffffff")!)).toBeGreaterThanOrEqual(2.98); // binary-search tolerance
     const brand = srgbToOklch(parseColor("#FFF676")!);
     const got = srgbToOklch(solved);
-    expect(Math.abs(got.h - brand.h)).toBeLessThan(8);   // hue is the brand carrier
+    expect(Math.abs(got.h - brand.h)).toBeLessThan(8); // hue is the brand carrier
     expect(got.L).toBeLessThan(brand.L);
   });
 

@@ -6,14 +6,17 @@
 
 import { defineStyle } from "../style";
 
-defineStyle("mark", `
+defineStyle(
+  "mark",
+  `
   .mark { display: inline-flex; align-items: center; }
   .mark svg { width: 20px; height: 17.5px; display: block; color: var(--vscode-foreground); }
   @media (prefers-reduced-motion: no-preference) {
     .mark svg { animation: mark-pulse 1.2s ease-in-out infinite both; }
   }
   @keyframes mark-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
-`);
+`,
+);
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
