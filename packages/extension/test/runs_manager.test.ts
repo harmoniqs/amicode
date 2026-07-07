@@ -78,9 +78,12 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
 
   it("fresh run → warming-up → completion (FINISHED-keyed, not result.toml presence)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
-    const run = stageRun(root, "r2");                        // manifest only, no data yet
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
+    // Registered AFTER boot (a run that STARTS while the user works) — the
+    // boot-replay path is warming-quiet by design (see the boot test below).
+    const run = stageRun(root, "r2");                        // manifest only, no data yet
+    tick(m);
     expect(inspector.setWarmingUp).toHaveBeenCalledWith("r2");
     expect(inspector.setRunLabel).toHaveBeenCalledWith("r2", "r2");
     expect(inspector.activate).toHaveBeenCalledWith("r2");   // 1.3: selection = activate the pane
@@ -94,6 +97,17 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     tick(m);
     expect(inspector.postCompletion).toHaveBeenCalledWith("r2", "completed", 0.9999);
+    m.dispose();
+  });
+
+  it("BOOT replay is warming/reveal-quiet: a live run discovered at start() is tracked but never steals focus", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    stageRun(root, "rBoot");                                 // live run exists BEFORE start
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    expect(m.selectedRun).toBe("rBoot");                     // state still selects it…
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled();   // …but no warming focus
+    expect(inspector.reveal).not.toHaveBeenCalled();         // …and no reveal at boot
     m.dispose();
   });
 
