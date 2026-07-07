@@ -128,7 +128,10 @@ export async function forceStop(runDir: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 1500));
     for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* exited on TERM */ } }
   }
-  forceFinalize(runDir);
+  // The orchestrator (cwd ≠ run dir, outside the kill set) may observe the
+  // child's death and write its own truthful FINISHED (e.g. failed/143) during
+  // the TERM window — that verdict wins; only finalize if nobody else did.
+  if (!fs.existsSync(path.join(runDir, "FINISHED"))) forceFinalize(runDir);
 }
 
 /** Copy the run's pulse.jld2 to an absolute destination path. */

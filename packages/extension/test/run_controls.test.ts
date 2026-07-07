@@ -123,3 +123,13 @@ describe("runScriptPath", () => {
     expect(runScriptPath(mkdtempSync(join(tmpdir(), "run-")))).toBeUndefined();
   });
 });
+
+describe("forceStop finalize guard", () => {
+  it("does not clobber a FINISHED that appeared before finalize", async () => {
+    const d = mkdtempSync(join(tmpdir(), "run-"));
+    writeFileSync(join(d, "FINISHED"), 'status = "failed"\nexit_code = 143\n');
+    const { forceStop } = await import("../src/run_controls");
+    await forceStop(d);
+    expect(readFileSync(join(d, "FINISHED"), "utf8")).toContain('"failed"');
+  });
+});
