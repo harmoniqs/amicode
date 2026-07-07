@@ -126,7 +126,11 @@ export async function forceStop(runDir: string): Promise<void> {
   for (const pid of pids) { try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ } }
   if (pids.length > 0) {
     await new Promise((r) => setTimeout(r, 1500));
-    for (const pid of pids) { try { process.kill(pid, "SIGKILL"); } catch { /* exited on TERM */ } }
+    // Re-prove ownership before the KILL sweep — a pid that exited on TERM can
+    // be reused by an unrelated process inside the window, and the two-key
+    // safety property is the whole point of this module.
+    const survivors = new Set(findRunPids(runDir, runScriptPath(runDir)));
+    for (const pid of pids) { if (survivors.has(pid)) { try { process.kill(pid, "SIGKILL"); } catch { /* exited */ } } }
   }
   // The orchestrator (cwd ≠ run dir, outside the kill set) may observe the
   // child's death and write its own truthful FINISHED (e.g. failed/143) during
