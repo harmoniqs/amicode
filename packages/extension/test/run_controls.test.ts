@@ -133,3 +133,11 @@ describe("forceStop finalize guard", () => {
     expect(readFileSync(join(d, "FINISHED"), "utf8")).toContain('"failed"');
   });
 });
+
+describe("runScriptPath escaping", () => {
+  it("JSON-decodes escaped values (writer uses JSON.stringify)", () => {
+    const d = mkdtempSync(join(tmpdir(), "run-"));
+    writeFileSync(join(d, "run.toml"), `script_path = ${JSON.stringify('/p/weïrd "dir"/solve.jl')}\n`);
+    expect(runScriptPath(d)).toBe('/p/weïrd "dir"/solve.jl');
+  });
+});
