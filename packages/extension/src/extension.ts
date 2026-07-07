@@ -337,7 +337,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showInformationMessage(`Amicode: run ${label} has already finished.`);
         return;
       }
-      writeStopFile(dir);
+      // Best-effort: a deleted run dir throws ENOENT here, and the force path
+      // below must still be reachable to clear the registry/UI entry.
+      try { writeStopFile(dir); } catch { /* dir gone — force path handles it */ }
       if (plan === "force") {
         await forceStop(dir);
         vscode.window.showInformationMessage(`Amicode: run ${label} was stalled — force-stopped and marked aborted.`);

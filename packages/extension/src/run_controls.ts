@@ -138,7 +138,10 @@ export async function forceStop(runDir: string): Promise<void> {
   // The orchestrator (cwd ≠ run dir, outside the kill set) may observe the
   // child's death and write its own truthful FINISHED (e.g. failed/143) during
   // the TERM window — that verdict wins; only finalize if nobody else did.
-  if (!fs.existsSync(path.join(runDir, "FINISHED"))) forceFinalize(runDir);
+  // Best-effort on a DELETED run dir (nothing to finalize, nothing to crash).
+  try {
+    if (!fs.existsSync(path.join(runDir, "FINISHED"))) forceFinalize(runDir);
+  } catch { /* run dir removed underneath us */ }
 }
 
 /** Copy the run's pulse.jld2 to an absolute destination path. */
