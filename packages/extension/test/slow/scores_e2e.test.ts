@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
-import { buildOpencodeConfigContent, prepareOpencodeProject, resolveJuliaProject } from "../../src/opencode_config";
+import { buildOpencodeConfigContent, prepareOpencodeProject, resolveJuliaProject, resolveModelPin } from "../../src/opencode_config";
 import { loadState } from "../../src/scores/interview_state";
 import { readUsage, reconstructTraversal } from "../../src/scores/usage";
 
@@ -66,6 +66,14 @@ async function serveWithScores(port: number) {
     project.agentsPath,
     join(EXT, "templates", "solve_template.jl"),
     join(homedir(), ".amico", "runs", "default"),
+    undefined,
+    undefined,
+    [],
+    "",
+    "",
+    // production model pin (fallback-only) — without it the live turns ride
+    // opencode's default resolution, which picks a hanging preview model here
+    resolveModelPin(),
   );
   let buf = "";
   const child = spawn(OC_BIN, ["serve", "--port", String(port)], { env, stdio: ["ignore", "pipe", "pipe"] });
@@ -111,11 +119,24 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())("scores runtime live e2e (cr
           body: JSON.stringify({ agent: "pulse-designer", parts: [{ type: "text", text }] }),
         });
         expect(r.ok, `message POST ${r.status}`).toBe(true);
-        const msg = (await r.json()) as { parts?: Array<{ type: string; text?: string }> };
-        return (msg.parts ?? [])
+        const msg = (await r.json()) as {
+          parts?: Array<{ type: string; text?: string; tool?: string; state?: { input?: Record<string, unknown> } }>;
+        };
+        const textOut = (msg.parts ?? [])
           .filter((p) => p.type === "text")
           .map((p) => p.text)
           .join("\n");
+        // Model-agnostic: some models (Gemini) open with the amicode_ask TOOL CALL
+        // and no prose — the ask input IS the question the assertions probe for.
+        const askOut = (msg.parts ?? [])
+          .filter((p) => p.type === "tool" && p.tool === "amicode_ask")
+          .map((p) => {
+            const input = (p.state?.input ?? (p as Record<string, unknown>).input ?? {}) as Record<string, unknown>;
+            const opts = Array.isArray(input.options) ? input.options.join(" | ") : "";
+            return [input.question, opts].filter(Boolean).join("\n");
+          })
+          .join("\n");
+        return [textOut, askOut].filter(Boolean).join("\n");
       };
 
       const transcript: string[] = [];
