@@ -116,6 +116,18 @@ describe("nextActions — entitlement seam (§6 crit 4)", () => {
     expect(cz.action).not.toBe("redesign"); // has a fallback → calibrate the fallback
   });
 
+  it("locked premium node carries the Intonatissimo funnel (name + capability), not the method acronym", () => {
+    const r = nextActions(g, {}, emptyQueue, NOW, { entitled: false });
+    const cz = r.ranked_actions.find((a) => a.node === "cz_gate")!;
+    expect(cz.premium?.package).toBe("Intonatissimo");
+    expect(cz.premium?.capability).toBe("closed-loop calibration");
+    expect(cz.premium?.invite).toMatch(/Intonatissimo/);
+    // user-facing copy advertises the product, never the private method acronym
+    expect(cz.reason.toLowerCase()).not.toContain("qilc");
+    expect(cz.premium!.invite.toLowerCase()).not.toContain("qilc");
+    expect(cz.reason).toMatch(/Intonatissimo/);
+  });
+
   it("unentitled qilc node WITHOUT a fallback → redesign kick", () => {
     const cyclicFree = `
 [node.solo]

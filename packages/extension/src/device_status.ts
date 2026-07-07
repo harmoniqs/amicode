@@ -125,8 +125,13 @@ export interface NextAction {
   status: NodeStatus;
   action: RecommendedAction;
   impl: "standard" | "qilc";
-  /** qilc + unentitled → greyed/locked in the view; never recommends the qilc action. */
+  /** Premium + unentitled → locked, and carries the funnel (below). Never auto-runs
+   *  the premium action; the view shows the upsell rather than a dead grey-out. */
   locked: boolean;
+  /** The funnel shown on a locked premium node (Aaron 2026-07-07): name the product
+   *  + capability + invite. User-facing copy names "Intonatissimo" / "closed-loop
+   *  calibration" — NEVER the private method acronym. Absent on unlocked nodes. */
+  premium?: { package: string; capability: string; invite: string };
   reason: string;
 }
 
@@ -159,15 +164,21 @@ export function nextActions(
       reason: v.reason,
     };
     if (v.impl === "qilc" && !opts.entitled) {
-      base.locked = true; // rendered greyed; §5.2 access control
+      base.locked = true; // §5.2 access control — but a FUNNEL, not a dead grey-out
+      base.premium = {
+        package: "Intonatissimo",
+        capability: "closed-loop calibration",
+        invite: "Closed-loop calibration here is handled by Intonatissimo — contact Harmoniqs to enable it on this device.",
+      };
       if (v.fallback) {
-        // recommend the standard fallback node instead of the qilc action
+        // deterministic path still falls back to the standard node...
         base.recommendedNode = v.fallback;
         base.action = "calibrate";
-        base.reason = `qilc calibration locked (unentitled) → fall back to '${v.fallback}'`;
+        // ...while the user-facing copy advertises the premium package (funnel).
+        base.reason = `Closed-loop calibration via Intonatissimo (premium) — falling back to '${v.fallback}' until enabled`;
       } else {
         base.action = "redesign";
-        base.reason = "qilc calibration locked (unentitled), no fallback → redesign the pulse";
+        base.reason = "Closed-loop calibration via Intonatissimo (premium) not enabled, no fallback → redesign the pulse";
       }
     }
     ranked.push(base);
