@@ -56,6 +56,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // panel Device Inspector webview bundle (Spec A §3 — sibling to the Run Inspector)
+  {
+    entryPoints: ["src/device_inspector_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/device_inspector_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {
