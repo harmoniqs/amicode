@@ -13,6 +13,7 @@ export function statusBarLabel(serverReady: boolean, run?: RunState): { text: st
   switch (run?.status) {
     case "starting": return { text: "$(sync~spin) Amicode · warming…", tooltip: `Julia warming up in ${dir}` };
     case "running":  return { text: `$(gear~spin) Amicode · iter ${run.latestIter ?? "—"}`, tooltip: `Solve running in ${dir}` };
+    case "stalled":  return { text: "$(warning) Amicode · stalled", tooltip: `No progress for 10+ min in ${dir} — run may be wedged (OOM?)` };
     case "completed": {
       const f = run.fidelity;
       return { text: `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`, tooltip: `Last solve completed in ${dir}` };

@@ -24,3 +24,12 @@ describe("statusBarLabel", () => {
     expect(statusBarLabel(true, undefined).text).toMatch(/Amicode/);
   });
 });
+
+describe("statusBarLabel stalled", () => {
+  it("stalled shows a warning label, not a spinner", () => {
+    const { text, tooltip } = statusBarLabel(true, run("stalled", { latestIter: 8 }));
+    expect(text).toMatch(/stalled/i);
+    expect(text).not.toMatch(/spin/);
+    expect(tooltip).toMatch(/wedged|10\+ min/i);
+  });
+});

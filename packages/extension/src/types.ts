@@ -18,7 +18,7 @@ export interface QuickPickReply {
 /** Terminal + in-flight run statuses. `stopped` = cooperative user stop (STOP
  *  file → solver halted gracefully, partial pulse saved); distinct from
  *  `aborted` (a hard SIGTERM process kill). */
-export type RunStatus = "starting" | "running" | "completed" | "failed" | "aborted" | "stopped";
+export type RunStatus = "starting" | "running" | "stalled" | "completed" | "failed" | "aborted" | "stopped";
 
 /** Solve run state tracked by the extension. */
 export interface RunState {

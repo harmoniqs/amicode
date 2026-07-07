@@ -92,6 +92,7 @@ class RunPipeline implements vscode.Disposable {
 }
 
 export class RunsManager implements vscode.Disposable {
+  private static readonly STALL_AFTER_MS = 10 * 60 * 1000;
   private readonly registry = new RunRegistry();
   private readonly pipelines = new Map<string, RunPipeline>();
   private indexTailer?: LogTailer;
@@ -394,7 +395,7 @@ export class RunsManager implements vscode.Disposable {
       iter: (r: IterRecord) => {
         this.registry.noteIter(rid, r.iter);
         getInspector()?.postIterationRecord(rid, r);
-        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: "running", latestIter: r.iter });
+        this.opts.statusBar?.setRun({ runId: rid, outputDir: rec.runDir, startedAt: 0, status: this.liveStatus(rec.runDir), latestIter: r.iter });
       },
       run: (c: RunCompletion) => {
         getInspector()?.postCompletion(rid, c.status, c.fidelity);
@@ -408,6 +409,19 @@ export class RunsManager implements vscode.Disposable {
     };
   }
 
+
+  /** "running" only if run.log is actually moving. A FINISHED-less run whose
+   *  log has been silent >10 min is wedged (OOM, killed host) — never let a
+   *  boot replay of its old iter lines stamp "running · iter N" on the status
+   *  bar forever. Mirrors the fork's isStalled (problems.ts, one-spine). */
+  private liveStatus(runDir: string): "running" | "stalled" {
+    try {
+      const age = Date.now() - fs.statSync(path.join(runDir, "run.log")).mtimeMs;
+      if (age > RunsManager.STALL_AFTER_MS) return "stalled";
+    } catch { /* no run.log yet — brand-new run, trust the tailer */ }
+    return "running";
+  }
+
   private routeIter(p: RunPipeline, rec: IterRecord): void {
     p.dedup.noteIter(rec.iter);
     this.registry.noteIter(p.runId, rec.iter);
@@ -417,7 +431,7 @@ export class RunsManager implements vscode.Disposable {
     getInspector()?.postIterationRecord(p.runId, rec);
     if (this.selected === p.runId) {
       // Live status-bar update — "running · iter N" as it solves (#5 AC3).
-      this.opts.statusBar?.setRun({ runId: p.runId, outputDir: p.runDir, startedAt: 0, status: "running", latestIter: rec.iter });
+      this.opts.statusBar?.setRun({ runId: p.runId, outputDir: p.runDir, startedAt: 0, status: this.liveStatus(p.runDir), latestIter: rec.iter });
     }
   }
 
