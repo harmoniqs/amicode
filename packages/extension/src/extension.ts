@@ -15,7 +15,7 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, catalogPulsesDir } from "./run_controls";
+import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -316,11 +316,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       else if (pick.runId) runsManager?.selectRun(pick.runId);
       await vscode.commands.executeCommand("amicode.runInspector.focus");
     }),
-    vscode.commands.registerCommand("amicode.stopRun", () => {
+    vscode.commands.registerCommand("amicode.stopRun", async () => {
       const dir = runsManager?.getActiveRunDir();
       if (!dir) { vscode.window.showWarningMessage("Amicode: no active run to stop."); return; }
+      // Escalation ladder: cooperative STOP only works while a solver is alive
+      // to poll it — a stalled run gets the hard path immediately, a healthy
+      // one gets a grace window and then an explicit Force-stop offer (never a
+      // silent kill: one long Ipopt iteration can look wedged).
+      const plan = stopPlan(dir);
+      if (plan === "already-finished") {
+        vscode.window.showInformationMessage("Amicode: that run has already finished.");
+        return;
+      }
       writeStopFile(dir);
+      if (plan === "force") {
+        await forceStop(dir);
+        vscode.window.showInformationMessage("Amicode: run was stalled — force-stopped and marked aborted.");
+        return;
+      }
       vscode.window.showInformationMessage("Amicode: stop requested — the solve will halt at the next iteration.");
+      const mtimeAtStop = runLogMtime(dir);
+      setTimeout(async () => {
+        if (stopPlan(dir) === "already-finished") return;          // cooperative stop landed
+        if (runLogMtime(dir) !== mtimeAtStop) return;              // still iterating — let it reach the callback
+        const pick = await vscode.window.showWarningMessage(
+          "Amicode: the solver hasn't responded to stop.",
+          "Force stop",
+          "Keep waiting",
+        );
+        if (pick === "Force stop") {
+          await forceStop(dir);
+          vscode.window.showInformationMessage("Amicode: run force-stopped and marked aborted.");
+        }
+      }, 120_000);
     }),
     vscode.commands.registerCommand("amicode.openRunDir", async () => {
       const dir = runsManager?.getActiveRunDir();
