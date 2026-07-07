@@ -47,12 +47,12 @@ export function buildDistillerConfigContent(s: DistillerSetup): Record<string, u
       bash: "allow",
       edit: "allow",
       external_directory: {
-        [`${s.vaultDir}/amicode`]: "allow",    // the working root (dir listing)
+        [`${s.vaultDir}/amicode`]: "allow", // the working root (dir listing)
         [`${s.vaultDir}/amicode/**`]: "allow", // the ONLY place it writes
-        [`${s.vaultDir}/.git/**`]: "allow",    // pathspec-scoped commits (DISTILLER.md rule 1)
-        [`${s.opsDir}/**`]: "allow",           // onboarding stream + queue state
-        [`${s.problemsRoot}/**`]: "allow",     // events.jsonl reads
-        [`${s.runsRoot}/**`]: "allow",         // result.toml / run.toml / pulse.jld2 reads
+        [`${s.vaultDir}/.git/**`]: "allow", // pathspec-scoped commits (DISTILLER.md rule 1)
+        [`${s.opsDir}/**`]: "allow", // onboarding stream + queue state
+        [`${s.problemsRoot}/**`]: "allow", // events.jsonl reads
+        [`${s.runsRoot}/**`]: "allow", // result.toml / run.toml / pulse.jld2 reads
         [`${path.join(os.homedir(), "harmoniqs", "demos")}/**`]: "allow", // demo-ingest (L1 §3)
       },
     },

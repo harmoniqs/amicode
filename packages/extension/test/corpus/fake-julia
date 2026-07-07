@@ -1,0 +1,71 @@
+#!/usr/bin/env node
+// Smoke-corpus "julia" (1.4a, #61) — a seconds-scale stand-in for the real
+// solver so CI can exercise the FULL pipeline (Scheduler → LocalExecutor →
+// run-dir contract → RunsManager → RunInspector) with zero Julia/Piccolo cost.
+//
+// Invoked exactly like julia: `fake-julia [--project=…] <script.jl>` with
+// cwd = the run dir (executor contract). It reads the corpus script (LAST
+// argv, julia-style), parses its AMICODE_SMOKE directive, and then behaves
+// like an instrumented solve_template.jl run:
+//   - AMICODE_PULSE_META once (shape + bounds), then per iteration one
+//     AMICODE_ITER + one AMICODE_PULSE line on stdout (→ run.log via the
+//     executor's tail), with a small delay so the LIVE tail path is exercised
+//     (not just a single replay drain);
+//   - result.toml into cwd (the run dir), matching the result schema;
+//   - exit 0 (the executor writes FINISHED{completed} — never the script).
+//
+// Directive grammar (one line in the corpus script):
+//   # AMICODE_SMOKE iters=<n> drives=<n> knots=<n> fidelity=<f> [dt=<f>] [delay_ms=<n>] [exit=<code>]
+// exit≠0 makes a failure-lane fixture (no result.toml, nonzero exit).
+
+"use strict";
+const fs = require("node:fs");
+
+const script = process.argv[process.argv.length - 1];
+const src = fs.readFileSync(script, "utf8");
+const m = src.match(/^#\s*AMICODE_SMOKE\s+(.+)$/m);
+if (!m) {
+  process.stderr.write(`fake-julia: no AMICODE_SMOKE directive in ${script}\n`);
+  process.exit(2);
+}
+const d = {};
+for (const kv of m[1].trim().split(/\s+/)) {
+  const [k, v] = kv.split("=");
+  d[k] = Number(v);
+}
+const iters = d.iters ?? 3,
+  drives = d.drives ?? 1,
+  knots = d.knots ?? 4;
+const fidelity = d.fidelity ?? 0.999,
+  dt = d.dt ?? 0.2;
+const delayMs = d.delay_ms ?? 40,
+  exitCode = d.exit ?? 0;
+const bound = 0.2;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const say = (line) => process.stdout.write(line + "\n");
+
+(async () => {
+  const labels = Array.from({ length: drives }, (_, i) => `"a_${i + 1}"`).join(",");
+  const bounds = Array.from({ length: drives }, () => `${-bound}:${bound}`).join(",");
+  say(`AMICODE_PULSE_META drives=${drives} knots=${knots} labels=${labels} bounds=${bounds}`);
+
+  for (let k = 0; k <= iters; k++) {
+    // Deterministic, iteration-varying values inside the bounds band.
+    const row = (di) =>
+      Array.from({ length: knots }, (_, j) => (bound * 0.9 * Math.sin((j + 1) * (k + 1) + di)).toFixed(6)).join(",");
+    const vals = Array.from({ length: drives }, (_, di) => row(di)).join(";");
+    const f = 50 * Math.exp(-k) + (1 - fidelity);
+    say(
+      `AMICODE_ITER iter=${k} f=${f.toExponential(6)} inf_pr=${(1e-3 * Math.exp(-k)).toExponential(3)} inf_du=${(1e-2 * Math.exp(-k)).toExponential(3)}`,
+    );
+    say(`AMICODE_PULSE iter=${k} dt=${dt} a=${vals}`);
+    await sleep(delayMs);
+  }
+
+  if (exitCode === 0) {
+    // Same shape the template writes (result schema: schema_version/fidelity/iterations).
+    fs.writeFileSync("result.toml", `schema_version = "1"\nfidelity = ${fidelity}\niterations = ${iters}\n`);
+  }
+  process.exit(exitCode);
+})();

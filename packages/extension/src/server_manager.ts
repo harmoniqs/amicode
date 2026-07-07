@@ -40,9 +40,15 @@ export class ServerManager {
 
   constructor(private readonly opts: ServerOptions) {}
 
-  get port(): number | undefined { return this._port; }
-  get url(): URL | undefined { return this._port ? new URL(`http://127.0.0.1:${this._port}`) : undefined; }
-  get ready(): boolean { return this._ready; }
+  get port(): number | undefined {
+    return this._port;
+  }
+  get url(): URL | undefined {
+    return this._port ? new URL(`http://127.0.0.1:${this._port}`) : undefined;
+  }
+  get ready(): boolean {
+    return this._ready;
+  }
 
   async start(): Promise<URL> {
     if (this.child) {
@@ -91,13 +97,20 @@ export class ServerManager {
     this._ready = false;
     return new Promise((resolve) => {
       const killTimer = setTimeout(() => {
-        try { c.kill("SIGKILL"); } catch {}
+        try {
+          c.kill("SIGKILL");
+        } catch {}
       }, 3_000);
       c.once("exit", () => {
         clearTimeout(killTimer);
         resolve();
       });
-      try { c.kill("SIGTERM"); } catch { clearTimeout(killTimer); resolve(); }
+      try {
+        c.kill("SIGTERM");
+      } catch {
+        clearTimeout(killTimer);
+        resolve();
+      }
     });
   }
 }
@@ -145,4 +158,6 @@ async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
   }
 }
 
-function sleep(ms: number): Promise<void> { return new Promise((r) => setTimeout(r, ms)); }
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}

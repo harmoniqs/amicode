@@ -377,7 +377,10 @@ export function canonicalJson(value: unknown): string {
 
 /** Kebab-case slug from a problem name; empty result → "untitled". */
 export function deriveSlug(name: string): string {
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return slug || "untitled";
 }
 
@@ -422,8 +425,7 @@ export function truncateDiffForSentinel(
   diff: Record<string, { from: unknown; to: unknown }>,
   maxBytes = 1024,
 ): Record<string, { from: unknown; to: unknown }> {
-  const trunc = (v: unknown): unknown =>
-    typeof v === "string" && v.length > 120 ? v.slice(0, 120) + "…" : v;
+  const trunc = (v: unknown): unknown => (typeof v === "string" && v.length > 120 ? v.slice(0, 120) + "…" : v);
   const out: Record<string, { from: unknown; to: unknown }> = {};
   for (const [k, { from, to }] of Object.entries(diff)) out[k] = { from: trunc(from), to: trunc(to) };
   const keys = Object.keys(out);

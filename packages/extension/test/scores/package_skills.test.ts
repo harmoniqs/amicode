@@ -2,7 +2,12 @@ import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { resolvePackageSkills, resolveLibrarySkills, buildSkillIndexSection, stageOpencodeSkills } from "../../src/scores/package_skills";
+import {
+  resolvePackageSkills,
+  resolveLibrarySkills,
+  buildSkillIndexSection,
+  stageOpencodeSkills,
+} from "../../src/scores/package_skills";
 
 function mkRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "amicode-skillroot-"));
@@ -45,7 +50,8 @@ describe("resolvePackageSkills (spec-20260704-113005 §3)", () => {
     expect(idx.map((e) => e.name)).toEqual(["authoring"]);
   });
   it("first root containing <P>.jl/skills wins", () => {
-    const r1 = mkRoot(), r2 = mkRoot();
+    const r1 = mkRoot(),
+      r2 = mkRoot();
     writeSkill(r1, "Piccolissimo", "authoring", "from r1");
     writeSkill(r2, "Piccolissimo", "authoring", "from r2");
     const idx = resolvePackageSkills(["Piccolissimo"], [r1, r2]);
@@ -86,7 +92,13 @@ describe("buildSkillIndexSection", () => {
   it("renders both entry kinds, the heading, and the invoke-before-authoring instruction", () => {
     const s = buildSkillIndexSection([
       { source: "library", name: "atoms", description: "Rydberg physics", path: "/lib/atoms/SKILL.md" },
-      { source: "package", package: "Piccolissimo", name: "authoring", description: "Author solves", path: "/abs/SKILL.md" },
+      {
+        source: "package",
+        package: "Piccolissimo",
+        name: "authoring",
+        description: "Author solves",
+        path: "/abs/SKILL.md",
+      },
     ]);
     expect(s).toContain("## Skill index"); // registered opencode skills (platform + package)
     expect(s).toContain("atoms");

@@ -6,18 +6,20 @@ import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
+import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent } from "./opencode_config";
+import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, resolveModelPin } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
-import { RunsRootWatcher } from "./file_watcher";
+import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, catalogPulsesDir } from "./run_controls";
+import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
+import { readTomlSafe } from "./run_dir_reader";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -31,12 +33,15 @@ import * as os from "node:os";
 let serverManager: ServerManager | undefined;
 let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
-let watcher: RunsRootWatcher | undefined;
+let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
 
+/** Run dirs with a cooperative stop in flight (escalation timer armed) — a
+ *  second Stop click must not stack a second dialog. */
+const pendingStops = new Set<string>();
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -47,15 +52,63 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
 
   // 1. UI surfaces
-  registerTrees(ctx);
+  const trees = registerTrees(ctx);
   registerRunInspector(ctx);
+  registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  ctx.subscriptions.push(
+    // #47 session catalog: record the save (workspaceState + tree), then open
+    // the card. Both prompts (demo replay, live promote) route through here.
+    vscode.commands.registerCommand("amicode.catalog.save", async (runDir: string) => {
+      const manifest = readTomlSafe(path.join(runDir, "run.toml")) ?? {};
+      const result = readTomlSafe(path.join(runDir, "result.toml")) ?? {};
+      const params = (result.params ?? {}) as Record<string, unknown>;
+      const family = typeof params.system === "string" ? params.system : undefined;
+      // System identity is USER-NAMED (researchers think in named devices —
+      // "Emerald-Q3" — not families); the family prefills as the default and
+      // level counts stay in the card's params rows. Esc keeps the family.
+      const name = await vscode.window.showInputBox({
+        prompt: "Name this system (shown on the catalog entry)",
+        value: family ?? "",
+        placeHolder: "e.g. Emerald-Q3",
+      });
+      const system = name?.trim() ? name.trim() : family;
+      // Tags: the quick-digest handles for hyperparameter sweeps ("high-R",
+      // "T=8", "fast-ansatz") — optional, comma-separated.
+      const tagsRaw = await vscode.window.showInputBox({
+        prompt: "Tags (comma-separated, optional)",
+        placeHolder: "e.g. high-R, T=8, fast",
+      });
+      const tags =
+        tagsRaw
+          ?.split(",")
+          .map((t) => t.trim())
+          .filter(Boolean) ?? [];
+      await trees.catalog.save({
+        run_id: String(manifest.run_id ?? path.basename(runDir)),
+        runDir,
+        lab_id: String(manifest.lab_id ?? "default"),
+        gate: typeof params.gate === "string" ? params.gate : undefined,
+        system,
+        tags,
+        fidelity: Number(result.fidelity ?? 0),
+        saved_at: new Date().toISOString(),
+      });
+      await vscode.commands.executeCommand("amicode.catalogCard.open", runDir, system, tags);
+    }),
+    vscode.commands.registerCommand("amicode.catalog.refresh", () => trees.catalog.refresh()),
+    // Context-menu removal: unsave the pointer; run artifacts stay on disk.
+    vscode.commands.registerCommand("amicode.catalog.remove", async (entry?: { run_id?: string }) => {
+      if (entry?.run_id) await trees.catalog.remove(entry.run_id);
+    }),
+  );
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
-  // 2. Start watching the runs root immediately — solves may already exist
-  // from prior dev-host sessions, and watchers are cheap.
+  // 2. Start the multi-run RunsManager immediately — it tails the append-only
+  // runs/index (1.2, #57), so solves from prior dev-host sessions register and
+  // a still-live run resumes; every concurrent run is tracked to completion.
   fs.mkdirSync(runsRoot, { recursive: true });
-  watcher = new RunsRootWatcher({
+  runsManager = new RunsManager({
     runsRoot,
     channel: runsChannel,
     statusBar,
@@ -65,8 +118,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (distillerSetup) triggerRunDistill(distillerSetup, runId);
     },
   });
-  watcher.start();
-  ctx.subscriptions.push(watcher);
+  runsManager.start();
+  ctx.subscriptions.push(runsManager);
 
   // Validate lab.toml on load (0.1b / S17). A malformed hardware profile would
   // otherwise silently solve against the wrong hardware or fail opaquely mid-solve.
@@ -96,9 +149,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
-    juliaProject: resolveJuliaProject(
-      vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
-    ),
+    juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     platformSkills: cfgArr("platformSkills"),
     skillLibraryRoots: cfgArr("skillLibraryRoots"),
@@ -138,7 +189,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
     // and passes it as `--project`. PATH just needs to resolve the launcher.
     if (amicoRunBinDir === undefined) {
-      opencodeChannel.appendLine(`[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`);
+      opencodeChannel.appendLine(
+        `[boot] WARNING: amico-run launcher not found — chat can author but solves won't run (build amico-run or check the VSIX)`,
+      );
     }
     // opencode owns the LLM credential (0.3): amico injects NO key into the
     // spawn env — opencode resolves its provider from its own env / config /
@@ -159,7 +212,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(opencodeProject.agentsPath, opencodeProject.templatePath, runsRoot, undefined, undefined, opencodeProject.skillPaths, opencodeProject.skillsStageDir, opencodeProject.vaultDir),
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+          opencodeProject.agentsPath,
+          opencodeProject.templatePath,
+          runsRoot,
+          undefined,
+          undefined,
+          opencodeProject.skillPaths,
+          opencodeProject.skillsStageDir,
+          opencodeProject.vaultDir,
+          // Model pin (fallback-only, resolveModelPin): without it, default
+          // resolution gambles on provider ordering — with Google creds it
+          // picked a preview model that hung every headless/agent turn.
+          resolveModelPin(),
+        ),
       },
       channel: opencodeChannel,
     });
@@ -182,7 +248,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
         };
         initDistillerTransport(distillerSetup);
-        opencodeChannel.appendLine(`[boot] distiller armed (vault: ${opencodeProject.vaultDir}, model: ${distillerSetup.model})`);
+        opencodeChannel.appendLine(
+          `[boot] distiller armed (vault: ${opencodeProject.vaultDir}, model: ${distillerSetup.model})`,
+        );
       } catch (e) {
         opencodeChannel.appendLine(`[boot] distiller transport failed (memory disabled this session): ${e}`);
         distillerSetup = undefined;
@@ -199,6 +267,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // Open the chat as soon as the server is up (amicode.chat.autoOpen,
+      // default on) — the chat IS the product's front door.
+      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        ChatPanel.openOrReveal(ctx, url);
+      }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
       // chat box (Q129). Key-free; never logs a credential.
@@ -225,7 +298,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // openOrReveal as undefined (or reveal a panel bound to a stale server).
       const readyUrl = opencodeReadyUrl;
       if (!readyUrl) {
-        vscode.window.showWarningMessage("Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.");
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
         return;
       }
       // Creds gate — opencode serves HTTP 200 (→ "ready") even with zero
@@ -238,25 +313,136 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl, opencodeChannel);
+      ChatPanel.openOrReveal(ctx, readyUrl);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await vscode.commands.executeCommand("amicode.runInspector.focus");
     }),
-    vscode.commands.registerCommand("amicode.stopRun", () => {
-      const dir = watcher?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run to stop."); return; }
-      writeStopFile(dir);
-      vscode.window.showInformationMessage("Amicode: stop requested — the solve will halt at the next iteration.");
+    // Run picker (pre-UX4 utility): switch the inspector between tracked runs.
+    // Picking pins the selection (a background solve won't steal the view);
+    // "Follow latest" releases the pin and resumes newest-run auto-follow.
+    vscode.commands.registerCommand("amicode.selectRun", async () => {
+      const runs = runsManager?.runs() ?? [];
+      if (runs.length === 0) {
+        void vscode.window.showInformationMessage("Amicode: no runs tracked yet.");
+        return;
+      }
+      const items: (vscode.QuickPickItem & { runId?: string; follow?: boolean })[] = [
+        {
+          label: "$(radio-tower) Follow latest",
+          description: "auto-follow the newest run (release pin)",
+          follow: true,
+        },
+        ...[...runs].reverse().map((r) => {
+          // A "live" run whose log has gone cold is stalled — the picker must
+          // agree with the status bar, not advertise a wedge as live.
+          const stalled = r.phase === "live" && stopPlan(r.runDir) === "force";
+          return {
+            label: `${r.phase === "live" ? (stalled ? "$(warning)" : "$(pulse)") : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
+            description: [
+              r.phase === "live"
+                ? stalled
+                  ? `stalled · iter ${r.latestIter ?? 0}`
+                  : `live · iter ${r.latestIter ?? 0}`
+                : r.status,
+              r.fidelity !== undefined ? `F=${r.fidelity.toFixed(5)}` : undefined,
+              r.scriptPath ? path.basename(r.scriptPath) : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            runId: r.runId,
+          };
+        }),
+      ];
+      const pick = await vscode.window.showQuickPick(items, { placeHolder: "Amicode: select the run to inspect" });
+      if (!pick) return;
+      if (pick.follow) runsManager?.resumeAutoFollow();
+      else if (pick.runId) runsManager?.selectRun(pick.runId);
+      await vscode.commands.executeCommand("amicode.runInspector.focus");
+    }),
+    vscode.commands.registerCommand("amicode.stopRun", async () => {
+      const dir = runsManager?.getActiveRunDir();
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run to stop.");
+        return;
+      }
+      // Escalation ladder: cooperative STOP only works while a solver is alive
+      // to poll it — a stalled run gets the hard path immediately, a healthy
+      // one gets a grace window and then an explicit Force-stop offer (never a
+      // silent kill: one long Ipopt iteration can look wedged).
+      const label = path.basename(dir); // every toast names the run — stop A, start B, a nameless dialog at t+120s reads as "B is wedged"
+      if (pendingStops.has(dir)) {
+        vscode.window.showInformationMessage(`Amicode: stop already in progress for ${label}.`);
+        return;
+      }
+      const plan = stopPlan(dir);
+      if (plan === "already-finished") {
+        vscode.window.showInformationMessage(`Amicode: run ${label} has already finished.`);
+        return;
+      }
+      // Best-effort: a deleted run dir throws ENOENT here, and the force path
+      // below must still be reachable to clear the registry/UI entry.
+      try {
+        writeStopFile(dir);
+      } catch {
+        /* dir gone — force path handles it */
+      }
+      if (plan === "force") {
+        await forceStop(dir);
+        vscode.window.showInformationMessage(`Amicode: run ${label} was stalled — force-stopped and marked aborted.`);
+        return;
+      }
+      vscode.window.showInformationMessage(
+        `Amicode: stop requested for ${label} — the solve will halt at the next iteration.`,
+      );
+      const mtimeAtStop = runLogMtime(dir);
+      pendingStops.add(dir);
+      const timer = setTimeout(async () => {
+        pendingStops.delete(dir);
+        if (stopPlan(dir) === "already-finished") return; // cooperative stop landed
+        if (runLogMtime(dir) !== mtimeAtStop) return; // still iterating — let it reach the callback
+        const pick = await vscode.window.showWarningMessage(
+          `Amicode: run ${label} hasn't responded to stop.`,
+          "Force stop",
+          "Keep waiting",
+        );
+        if (pick === "Force stop") {
+          await forceStop(dir);
+          vscode.window.showInformationMessage(`Amicode: run ${label} force-stopped and marked aborted.`);
+        }
+      }, 120_000);
+      ctx.subscriptions.push({
+        dispose: () => {
+          clearTimeout(timer);
+          pendingStops.delete(dir);
+        },
+      });
     }),
     vscode.commands.registerCommand("amicode.openRunDir", async () => {
-      const dir = watcher?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
-      await vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(dir));
+      const dir = runsManager?.getActiveRunDir();
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run.");
+        return;
+      }
+      // revealFileInOS wants a FILE (a bare directory errors on macOS) — reveal
+      // the manifest, which every run dir has from birth; fall back to opening
+      // the folder externally if the reveal still fails.
+      const manifest = path.join(dir, "run.toml");
+      try {
+        await vscode.commands.executeCommand(
+          "revealFileInOS",
+          vscode.Uri.file(fs.existsSync(manifest) ? manifest : dir),
+        );
+      } catch {
+        await vscode.env.openExternal(vscode.Uri.file(dir));
+      }
     }),
     vscode.commands.registerCommand("amicode.savePulse", async () => {
-      const dir = watcher?.getActiveRunDir();
-      if (!dir) { vscode.window.showWarningMessage("Amicode: no active run."); return; }
+      const dir = runsManager?.getActiveRunDir();
+      if (!dir) {
+        vscode.window.showWarningMessage("Amicode: no active run.");
+        return;
+      }
       const catalog = catalogPulsesDir();
       const picks = [catalog ? "Save to catalog" : undefined, "Save to file…"].filter(Boolean) as string[];
       const choice = await vscode.window.showQuickPick(picks, { title: "Save pulse" });
@@ -271,7 +457,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             filters: { JLD2: ["jld2"] },
             defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
           });
-          if (uri) { savePulseTo(dir, uri.fsPath); vscode.window.showInformationMessage("Amicode: pulse saved."); }
+          if (uri) {
+            savePulseTo(dir, uri.fsPath);
+            vscode.window.showInformationMessage("Amicode: pulse saved.");
+          }
         }
       } catch (e) {
         vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
@@ -298,8 +487,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
     // On-site fallback (β.6): stage the bundled pre-baked solve into the runs
-    // root. The watcher already running on runsRoot follows `latest` →
-    // ingestRunDir replays the converged solve — no Julia, no opencode, no creds.
+    // root. Under the multi-run RunsManager (#57) a run that is FINISHED at
+    // discovery registers quietly (no auto-display), so the demo is shown by
+    // EXPLICIT selection: poke the index tail (same-tick registration), then
+    // selectRun → the display replay renders the converged solve — no Julia,
+    // no opencode, no creds. Promote stays suppressed (finished at discovery).
     vscode.commands.registerCommand("amicode.replayDemo", async () => {
       const demoDir = path.join(ctx.extensionPath, "demo", "run");
       if (!fs.existsSync(path.join(demoDir, "FINISHED"))) {
@@ -308,8 +500,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       try {
         const runDir = stageDemoRun(demoDir, runsRoot);
+        runsManager?.pokeDiscovery();
+        runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
         await vscode.commands.executeCommand("amicode.runInspector.focus");
+        // Save-to-catalog prompt (#47): the watcher suppresses the promote
+        // prompt for runs already finished at switch (anti-re-pop), so the
+        // explicit replay owns its own prompt → the catalog card.
+        const fid = Number((readTomlSafe(path.join(runDir, "result.toml")) ?? {}).fidelity ?? NaN);
+        if (fid >= 0.99) {
+          const choice = await vscode.window.showInformationMessage(
+            `Amicode: demo solve converged (F=${fid.toFixed(4)}). Save to catalog?`,
+            "Save to catalog",
+            "Not now",
+          );
+          if (choice === "Save to catalog") await vscode.commands.executeCommand("amicode.catalog.save", runDir);
+        }
       } catch (e) {
         void vscode.window.showErrorMessage(`Amicode: replay failed — ${(e as Error).message}`);
       }
@@ -325,7 +531,6 @@ export function deactivate(): void {
   if (distillerSetup) triggerSweep(distillerSetup, false);
   sseClient?.dispose();
   serverManager?.stop();
-  watcher?.dispose();
+  runsManager?.dispose();
   statusBar?.dispose();
 }
-

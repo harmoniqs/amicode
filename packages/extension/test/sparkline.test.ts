@@ -9,7 +9,9 @@ describe("makeSparkBuffer", () => {
   });
   it("reset clears", () => {
     const b = makeSparkBuffer(3);
-    b.push(1); b.push(2); b.reset();
+    b.push(1);
+    b.push(2);
+    b.reset();
     expect(b.values()).toEqual([]);
   });
   it("returns a copy (caller can't mutate internal state)", () => {

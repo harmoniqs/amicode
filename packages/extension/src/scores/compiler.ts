@@ -10,7 +10,7 @@ import { ScoreManifest, Stage } from "./schema";
 const INTERVIEW_CONTRACT = [
   "**Interview contract:** ONE question at a time — never batch. Ask, wait, record,",
   "advance. Questions with an options list go through `amicode_ask` (options in the",
-  "given order, default first and marked \"(recommended)\"); free-form questions stay",
+  'given order, default first and marked "(recommended)"); free-form questions stay',
   "plain text. A stage marked *(optional)* may be skipped. A stage with a gate must",
   "not be entered until the gate's checks pass.",
 ];
@@ -20,7 +20,10 @@ const INTERVIEW_CONTRACT = [
 function renderStages(stages: Stage[], dir: string, start: number): string[] {
   const lines: string[] = [];
   stages.forEach((s, i) => {
-    const flags = [s.optional ? "(optional)" : "", s.gate ? `🔒 gate: ${s.gate} — checks must pass before entering` : ""]
+    const flags = [
+      s.optional ? "(optional)" : "",
+      s.gate ? `🔒 gate: ${s.gate} — checks must pass before entering` : "",
+    ]
       .filter(Boolean)
       .join(" ");
     lines.push(`${start + i + 1}. **${s.id}**${flags ? " " + flags : ""}`);
@@ -35,7 +38,8 @@ function renderStages(stages: Stage[], dir: string, start: number): string[] {
           : "";
       lines.push(`   - Q \`${q.id}\`: "${q.prompt}"${choices}`);
       if (q.skip_if) lines.push(`     - skip if: ${q.skip_if}`);
-      if (q.memory_hooks?.length) lines.push(`     - [Why?] hooks: ${q.memory_hooks.join(", ")} (read \`scores/memory/<hook>.md\` on request)`);
+      if (q.memory_hooks?.length)
+        lines.push(`     - [Why?] hooks: ${q.memory_hooks.join(", ")} (read \`scores/memory/<hook>.md\` on request)`);
     }
   });
   return lines;

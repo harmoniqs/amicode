@@ -2,7 +2,9 @@
 
 import { defineStyle } from "../style";
 
-defineStyle("button", `
+defineStyle(
+  "button",
+  `
   .btn { font-family: var(--text-font); font-size: var(--text-small);
          color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
          background: var(--vscode-button-secondaryBackground, transparent);
@@ -11,7 +13,8 @@ defineStyle("button", `
          cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-xs); }
   .btn:hover:not(:disabled) { border-color: var(--color-accent); }
   .btn:disabled { opacity: 0.4; cursor: default; }
-`);
+`,
+);
 
 export interface ButtonAtom {
   el: HTMLButtonElement;
@@ -23,6 +26,13 @@ export function button(label: string, onClick: () => void): ButtonAtom {
   el.className = "btn";
   el.type = "button";
   el.textContent = label;
-  el.addEventListener("click", () => { if (!el.disabled) onClick(); });
-  return { el, enable: (on: boolean) => { el.disabled = !on; } };
+  el.addEventListener("click", () => {
+    if (!el.disabled) onClick();
+  });
+  return {
+    el,
+    enable: (on: boolean) => {
+      el.disabled = !on;
+    },
+  };
 }

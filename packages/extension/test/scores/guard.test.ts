@@ -46,7 +46,12 @@ describe("checkStagePrereqs — entity dependencies, not conversation order", ()
   });
   it("solve requires the formulation", () => {
     const r = checkStagePrereqs(STAGES, state(["model"]), "solve");
-    expect(r).toEqual({ ok: false, code: "stage_order", required_stage: "formulate", missing_entities: ["formulation"] });
+    expect(r).toEqual({
+      ok: false,
+      code: "stage_order",
+      required_stage: "formulate",
+      missing_entities: ["formulation"],
+    });
   });
   it("optional emitting stages do not block later stages", () => {
     // hardware is optional; nothing after it here, but ensure optional is excluded from blockers
@@ -60,11 +65,19 @@ describe("checkStagePrereqs — entity dependencies, not conversation order", ()
     expect(r).toEqual({ ok: false, code: "gate_required", gate: "light" });
   });
   it("gate stage with a pass record is allowed", () => {
-    const r = checkStagePrereqs(STAGES, state(["model", "formulate", "solve"], { light: { result: "pass" } }), "device-sim");
+    const r = checkStagePrereqs(
+      STAGES,
+      state(["model", "formulate", "solve"], { light: { result: "pass" } }),
+      "device-sim",
+    );
     expect(r).toEqual({ ok: true });
   });
   it("gate stage with an override record is allowed", () => {
-    const r = checkStagePrereqs(STAGES, state(["model", "formulate", "solve"], { light: { result: "override" } }), "device-sim");
+    const r = checkStagePrereqs(
+      STAGES,
+      state(["model", "formulate", "solve"], { light: { result: "override" } }),
+      "device-sim",
+    );
     expect(r).toEqual({ ok: true });
   });
   it("unknown stage id → ok (fail-open for forward compatibility)", () => {
@@ -76,7 +89,10 @@ describe("manifest + state IO (entitiesDir contract)", () => {
   it("loadManifest reads score_manifest.json, undefined when absent/corrupt", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-"));
     expect(loadManifest(dir)).toBeUndefined();
-    fs.writeFileSync(path.join(dir, "score_manifest.json"), JSON.stringify({ manifest: { id: "x", version: 1, stages: STAGES } }));
+    fs.writeFileSync(
+      path.join(dir, "score_manifest.json"),
+      JSON.stringify({ manifest: { id: "x", version: 1, stages: STAGES } }),
+    );
     expect(loadManifest(dir)?.id).toBe("x");
     fs.writeFileSync(path.join(dir, "score_manifest.json"), "{torn");
     expect(loadManifest(dir)).toBeUndefined();

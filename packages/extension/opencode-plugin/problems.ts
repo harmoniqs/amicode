@@ -126,9 +126,7 @@ export function openProblem(query: string): ProblemMeta | undefined {
     return exact;
   }
   const q = query.toLowerCase().trim();
-  const matches = listProblems().filter(
-    (m) => m.status !== "archived" && m.name.toLowerCase().includes(q),
-  );
+  const matches = listProblems().filter((m) => m.status !== "archived" && m.name.toLowerCase().includes(q));
   if (matches.length === 0) return undefined;
   matches.sort((a, b) => (b.recorded ?? "").localeCompare(a.recorded ?? ""));
   setActiveSlug(matches[0].slug);
@@ -197,7 +195,10 @@ export interface EventInput {
 export function lastEventSeq(slug: string): number {
   const file = path.join(problemDir(slug), "events.jsonl");
   if (!fs.existsSync(file)) return 0;
-  return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim() !== "").length;
+  return fs
+    .readFileSync(file, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() !== "").length;
 }
 
 /** Append one event to the problem's events.jsonl; returns its monotonic seq
@@ -206,7 +207,11 @@ export function appendEvent(slug: string, input: EventInput): number {
   const file = path.join(problemDir(slug), "events.jsonl");
   let seq = 1;
   if (fs.existsSync(file)) {
-    seq = fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim() !== "").length + 1;
+    seq =
+      fs
+        .readFileSync(file, "utf8")
+        .split("\n")
+        .filter((l) => l.trim() !== "").length + 1;
   }
   const record = {
     seq,

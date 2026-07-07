@@ -9,10 +9,16 @@ import { lintRepertoire } from "../../src/scores/lint";
 const EXT_ROOT = path.resolve(__dirname, "..", "..");
 const REAL_SCORES = path.join(EXT_ROOT, "scores");
 
-function mkScore(root: string, id: string, opts: { template?: string; hooks?: string[]; derived?: string; ents?: string[] } = {}) {
+function mkScore(
+  root: string,
+  id: string,
+  opts: { template?: string; hooks?: string[]; derived?: string; ents?: string[] } = {},
+) {
   const dir = path.join(root, id);
   fs.mkdirSync(dir, { recursive: true });
-  const q = opts.hooks ? `\n    questions:\n      - {id: q1, prompt: "P?", memory_hooks: [${opts.hooks.join(", ")}]}` : "";
+  const q = opts.hooks
+    ? `\n    questions:\n      - {id: q1, prompt: "P?", memory_hooks: [${opts.hooks.join(", ")}]}`
+    : "";
   const tpl = opts.template ? `\n    template: ${opts.template}` : "";
   fs.writeFileSync(
     path.join(dir, "SCORE.md"),
@@ -87,7 +93,9 @@ describe("lintRepertoire", () => {
   });
 
   it("the REAL shipped repertoire lints clean", () => {
-    const registry = parseToml(fs.readFileSync(path.join(REAL_SCORES, "entitlements.toml"), "utf8")) as { known: string[] };
+    const registry = parseToml(fs.readFileSync(path.join(REAL_SCORES, "entitlements.toml"), "utf8")) as {
+      known: string[];
+    };
     const load = loadRepertoire(REAL_SCORES);
     expect(lintRepertoire(load, path.join(REAL_SCORES, "memory"), registry.known)).toEqual([]);
   });

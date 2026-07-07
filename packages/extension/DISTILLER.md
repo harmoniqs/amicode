@@ -16,6 +16,7 @@ first run `KNOWLEDGE.md` / `problems/` may be empty or absent — that just mean
 no cards exist yet; create what you need under `amicode/`.
 
 Your input is ONE JSON job object (the message you were invoked with):
+
 - `{"kind":"run","run_id":"r...","runs_root":"...","vault":"...","ops":"..."}`
 - `{"kind":"sweep","session_ids":[...],"vault":"...","ops":"..."}` — distill these sessions
 - `{"kind":"onboarding","vault":"...","ops":"..."}` — materialize the profile
@@ -69,10 +70,12 @@ Your input is ONE JSON job object (the message you were invoked with):
 
 `run.toml` may carry `session_id` and `workspace` (newer runs — prefer them).
 Otherwise recover:
+
 ```
 sqlite3 "file:...opencode.db?mode=ro" \
   "SELECT DISTINCT session_id FROM part WHERE data LIKE '%<run_id>%';"
 ```
+
 ALL matched sessions are contributing `sessions:`. The **launching** session is
 the one whose matching part contains the launch command itself (`amico-run`);
 fallback: the earliest mention by `part.time_created`. The workspace is the
@@ -81,6 +84,7 @@ session's `amicode_*` records. A run that joins to nothing still gets a card
 (note "orphan run — no session recovered"); never drop it silently.
 
 Useful transcript queries (ids are 30 chars — never truncate them):
+
 ```
 -- substantive check / entity writes and launches for a session:
 SELECT json_extract(data,'$.tool') FROM part WHERE session_id='<id>'
@@ -99,19 +103,19 @@ SELECT json_extract(data,'$.text') FROM part WHERE session_id='<id>'
 type: amicode-problem
 slug: x-gate-transmon
 platform: transmon
-problem_kind: gate_synthesis          # gate_synthesis | state_prep
-target: X                             # gate name or state name (e.g. cat-state)
-status: solved                        # solved | attempted | failed
-best_fidelity: 0.99995                # ONLY from result.toml; omit if none
-best_run: r20260703-095831Z-e5b7      # omit if none
-pulse_ref: pulses/x-gate-transmon-v1  # null if no successful pulse
+problem_kind: gate_synthesis # gate_synthesis | state_prep
+target: X # gate name or state name (e.g. cat-state)
+status: solved # solved | attempted | failed
+best_fidelity: 0.99995 # ONLY from result.toml; omit if none
+best_run: r20260703-095831Z-e5b7 # omit if none
+pulse_ref: pulses/x-gate-transmon-v1 # null if no successful pulse
 solve_count: 8
 first_seen: 2026-07-03
 last_seen: 2026-07-04
 sessions: [ses_..., ses_...]
-sys_params:                           # STRUCTURED regime scalars (L1 §2.1.1) —
-  levels: 3                           # the deterministic "high"-confidence gate.
-  drive_max: 0.2                      # Emit the platform's gating scalars:
+sys_params: # STRUCTURED regime scalars (L1 §2.1.1) —
+  levels: 3 # the deterministic "high"-confidence gate.
+  drive_max: 0.2 # Emit the platform's gating scalars:
   # transmon: levels (int), drive_max (float)
   # cavity/bosonic: fock_cutoff (int), chi (float), alpha or fock_index
   # atoms: levels, rabi_max, delta_max, distance
@@ -122,15 +126,19 @@ sys_params:                           # STRUCTURED regime scalars (L1 §2.1.1) �
 # <Target> on <platform>
 
 ## System
+
 <levels, drive_max, couplings — from the System entity>
 
 ## Formulation
+
 <objective + constraints; T, N, max_iter — from the Formulation entity>
 
 ## History
+
 - <n> solves <dates>, <cold/warm starts>, F ∈ [<min>, <max>].
 
 ## Lessons
+
 - <one bullet per durable lesson; failures are first-class knowledge>
 ```
 
@@ -175,15 +183,17 @@ New `-v<N+1>` ONLY when fidelity strictly improves on the card's
 
 Entity → card mapping (`<ops>/onboarding/events.jsonl`; replay in order, later
 entries win — update-in-place, never duplicate):
+
 - `profile` entity (`name`,`role`,`org`,`platforms`,`goals`) → `PROFILE.md`:
 
 ```markdown
 # Profile — <name>
+
 - Role: <role>
 - Org / lab: <org>
 - Platforms: <platforms, comma-joined>
 - Environment: [<slug>](environment/<slug>.md) — <control_stack summary>
-- Devices: [<name>](devices/<name>.md)          # one line per device, if any
+- Devices: [<name>](devices/<name>.md) # one line per device, if any
 - Goals: <goals, the user's own words>
 - Onboarded: <today> (re-run onboarding to update)
 ```
@@ -240,6 +250,7 @@ params, write a **thin card** (platform + script pointer + "params not
 extracted") — never skip the demo, never fabricate.
 
 Demo card frontmatter (mirror the problem card + these):
+
 ```
 type: amicode-demo
 slug: stanford-bosonics-cat
@@ -254,6 +265,7 @@ sys_params: { fock_cutoff: 20, chi: 0.0000328, alpha: 2 }   # if readable
 ```
 
 DEMOS.md line:
+
 ```
 - [stanford-bosonics-cat](demos/stanford-bosonics-cat.md) — cavity state_prep cat-state, N_fock=20, script scripts/optimize_cat_alpha2.jl
 ```
@@ -265,4 +277,4 @@ but never merge with the user's own solves (source distinguishes them).
 ## Finishing a job
 
 1. Write the files. 2. Pathspec-scoped commit (Hard rule 1). 3. Final message:
-one line, e.g. `distilled r...-e5b7 → x-gate-transmon (updated, F=0.99995, v1 banked)`.
+   one line, e.g. `distilled r...-e5b7 → x-gate-transmon (updated, F=0.99995, v1 banked)`.

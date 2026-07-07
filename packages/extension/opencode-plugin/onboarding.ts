@@ -49,7 +49,10 @@ export function sanitizePayload(entity: OnboardingEntity, payload: Record<string
 
 function lastSeq(file: string): number {
   try {
-    return fs.readFileSync(file, "utf8").split("\n").filter((l) => l.trim()).length;
+    return fs
+      .readFileSync(file, "utf8")
+      .split("\n")
+      .filter((l) => l.trim()).length;
   } catch {
     return 0;
   }

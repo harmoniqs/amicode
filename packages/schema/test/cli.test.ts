@@ -12,7 +12,9 @@ const validDir = join(here, "fixtures", "valid");
 const invalidDir = join(here, "fixtures", "invalid");
 const KINDS = ["run", "result", "lab", "solvespec", "catalog-entry", "finished"];
 
-beforeAll(() => { execFileSync("node", [join(pkg, "esbuild.config.mjs")], { cwd: pkg }); });
+beforeAll(() => {
+  execFileSync("node", [join(pkg, "esbuild.config.mjs")], { cwd: pkg });
+});
 
 function run(args: string[]): { code: number; stdout: string; stderr: string } {
   try {
@@ -46,7 +48,7 @@ describe("amico-validate CLI", () => {
   it("file-role resolution by basename for the fixed-filename schemas (no --schema)", () => {
     expect(run([join(validDir, "run.toml")]).code).toBe(0);
     expect(run([join(validDir, "result.toml")]).code).toBe(0);
-    expect(run([join(invalidDir, "result.toml")]).code).toBe(64);   // missing schema_version
+    expect(run([join(invalidDir, "result.toml")]).code).toBe(64); // missing schema_version
   });
   it("FINISHED resolves by exact basename (no extension)", () => {
     const f = join(mkdtempSync(join(tmpdir(), "fin-")), "FINISHED");
@@ -54,7 +56,7 @@ describe("amico-validate CLI", () => {
     expect(run([f]).code).toBe(0);
   });
   it("a non-filename schema without --schema cannot infer → 64", () => {
-    const r = run([join(validDir, "solvespec.toml")]);   // solvespec.toml is not a canonical name
+    const r = run([join(validDir, "solvespec.toml")]); // solvespec.toml is not a canonical name
     expect(r.code).toBe(64);
     expect(r.stderr).toContain("cannot infer");
   });
@@ -63,10 +65,10 @@ describe("amico-validate CLI", () => {
     expect(r.stderr).toContain("/transmon/levels");
   });
   it("usage / bad-arg errors exit 64", () => {
-    expect(run([]).code).toBe(64);                          // no file
-    expect(run(["a.toml", "b.toml"]).code).toBe(64);        // multiple files
+    expect(run([]).code).toBe(64); // no file
+    expect(run(["a.toml", "b.toml"]).code).toBe(64); // multiple files
     expect(run(["f.toml", "--schema", "bogus"]).code).toBe(64); // unknown schema
-    expect(run(["f.toml", "--nope"]).code).toBe(64);        // unknown flag
+    expect(run(["f.toml", "--nope"]).code).toBe(64); // unknown flag
   });
   it("--help exits 0", () => expect(run(["--help"]).code).toBe(0));
 });

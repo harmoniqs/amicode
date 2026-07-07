@@ -1,9 +1,9 @@
-import { describe, it, expect } from 'vitest'
-import { execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { parse } from 'smol-toml'
+import { describe, it, expect } from "vitest";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { parse } from "smol-toml";
 
 // Live golden test for the tier-3 re-rollout harness (spec C). Gated on a real
 // Julia+Piccolo project (same gate the template slow test uses). Builds a
@@ -12,8 +12,8 @@ import { parse } from 'smol-toml'
 // pulse so the harness's re-rollout disagrees → agree=false. This exercises the
 // full harness plumbing (jld2 read → QuantumSystem reconstruction →
 // unitary_rollout → unitary_fidelity → verification.toml).
-const PROJECT = process.env.AMICO_TEST_JULIA_PROJECT
-const HARNESS = join(__dirname, '..', '..', 'julia', 'verify_rollout.jl')
+const PROJECT = process.env.AMICO_TEST_JULIA_PROJECT;
+const HARNESS = join(__dirname, "..", "..", "julia", "verify_rollout.jl");
 
 // Fixture builder (Julia): construct the SAME system the vetted template uses,
 // take a pulse, record its native-rollout fidelity, and serialize the tier-3
@@ -54,28 +54,29 @@ if scale != 1.0
 end
 JLD2.save(joinpath(run_dir, "pulse.jld2"), "traj", traj)
 println("FIXTURE fid=$(fid)")
-`
+`;
 
 function stageAndVerify(scale: number): Record<string, unknown> {
-  const runDir = mkdtempSync(join(tmpdir(), 'verify-golden-'))
-  writeFileSync(join(runDir, 'fixture.jl'), FIXTURE)
-  execFileSync('julia', [`--project=${PROJECT}`, join(runDir, 'fixture.jl'), runDir, String(scale)],
-    { encoding: 'utf8', timeout: 600_000 })
-  execFileSync('julia', [`--project=${PROJECT}`, HARNESS, runDir, '0.01'],
-    { encoding: 'utf8', timeout: 600_000 })
-  expect(existsSync(join(runDir, 'verification.toml'))).toBe(true)
-  return parse(readFileSync(join(runDir, 'verification.toml'), 'utf8')) as Record<string, unknown>
+  const runDir = mkdtempSync(join(tmpdir(), "verify-golden-"));
+  writeFileSync(join(runDir, "fixture.jl"), FIXTURE);
+  execFileSync("julia", [`--project=${PROJECT}`, join(runDir, "fixture.jl"), runDir, String(scale)], {
+    encoding: "utf8",
+    timeout: 600_000,
+  });
+  execFileSync("julia", [`--project=${PROJECT}`, HARNESS, runDir, "0.01"], { encoding: "utf8", timeout: 600_000 });
+  expect(existsSync(join(runDir, "verification.toml"))).toBe(true);
+  return parse(readFileSync(join(runDir, "verification.toml"), "utf8")) as Record<string, unknown>;
 }
 
-describe.skipIf(!PROJECT)('slow: verify_rollout.jl golden (spec C tier-3 harness)', () => {
-  it('unmodified pulse round-trips with agree=true', () => {
-    const v = stageAndVerify(1.0)
-    expect(v.integrator).toBe('piccolo_unitary_rollout')
-    expect(v.agree).toBe(true)
-    expect(Math.abs((v.fidelity_rerolled as number) - (v.fidelity_reported as number))).toBeLessThanOrEqual(0.01)
-  }, 600_000)
-  it('corrupted pulse (×0.5) → re-rollout disagrees, agree=false', () => {
-    const v = stageAndVerify(0.5)
-    expect(v.agree).toBe(false)
-  }, 600_000)
-})
+describe.skipIf(!PROJECT)("slow: verify_rollout.jl golden (spec C tier-3 harness)", () => {
+  it("unmodified pulse round-trips with agree=true", () => {
+    const v = stageAndVerify(1.0);
+    expect(v.integrator).toBe("piccolo_unitary_rollout");
+    expect(v.agree).toBe(true);
+    expect(Math.abs((v.fidelity_rerolled as number) - (v.fidelity_reported as number))).toBeLessThanOrEqual(0.01);
+  }, 600_000);
+  it("corrupted pulse (×0.5) → re-rollout disagrees, agree=false", () => {
+    const v = stageAndVerify(0.5);
+    expect(v.agree).toBe(false);
+  }, 600_000);
+});

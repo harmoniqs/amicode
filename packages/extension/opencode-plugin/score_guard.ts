@@ -152,7 +152,12 @@ export function guardAndRecordStage(manifestDir: string, stateDir: string, stage
   }
   if (!state) {
     state = freshScoreState(manifest.id, manifest.version);
-    appendUsage(stateDir, { kind: "session_started", ts: new Date().toISOString(), score_id: manifest.id, score_version: manifest.version });
+    appendUsage(stateDir, {
+      kind: "session_started",
+      ts: new Date().toISOString(),
+      score_id: manifest.id,
+      score_version: manifest.version,
+    });
   }
   const verdict = checkStagePrereqs(manifest.stages, state, stageId);
   if (!verdict.ok) {

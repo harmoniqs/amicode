@@ -11,16 +11,30 @@ export function statusBarLabel(serverReady: boolean, run?: RunState): { text: st
   if (!serverReady) return { text: "$(loading~spin) Amicode (booting)", tooltip: "Spawning opencode server…" };
   const dir = run?.outputDir ?? "";
   switch (run?.status) {
-    case "starting": return { text: "$(sync~spin) Amicode · warming…", tooltip: `Julia warming up in ${dir}` };
-    case "running":  return { text: `$(gear~spin) Amicode · iter ${run.latestIter ?? "—"}`, tooltip: `Solve running in ${dir}` };
+    case "starting":
+      return { text: "$(sync~spin) Amicode · warming…", tooltip: `Julia warming up in ${dir}` };
+    case "running":
+      return { text: `$(gear~spin) Amicode · iter ${run.latestIter ?? "—"}`, tooltip: `Solve running in ${dir}` };
+    case "stalled":
+      return {
+        text: "$(warning) Amicode · stalled",
+        tooltip: `No progress for 10+ min in ${dir} — run may be wedged (OOM?)`,
+      };
     case "completed": {
       const f = run.fidelity;
-      return { text: `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`, tooltip: `Last solve completed in ${dir}` };
+      return {
+        text: `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`,
+        tooltip: `Last solve completed in ${dir}`,
+      };
     }
-    case "stopped":  return { text: "$(circle-slash) Amicode · stopped", tooltip: `Solve stopped in ${dir}` };
-    case "failed":   return { text: "$(error) Amicode · solve failed", tooltip: `Solve failed in ${dir} — see run.log` };
-    case "aborted":  return { text: "$(circle-slash) Amicode · aborted", tooltip: `Solve aborted in ${dir}` };
-    default:         return { text: "$(comment-discussion) Amicode", tooltip: "Open the Run Inspector" };
+    case "stopped":
+      return { text: "$(circle-slash) Amicode · stopped", tooltip: `Solve stopped in ${dir}` };
+    case "failed":
+      return { text: "$(error) Amicode · solve failed", tooltip: `Solve failed in ${dir} — see run.log` };
+    case "aborted":
+      return { text: "$(circle-slash) Amicode · aborted", tooltip: `Solve aborted in ${dir}` };
+    default:
+      return { text: "$(comment-discussion) Amicode", tooltip: "Open the Run Inspector" };
   }
 }
 

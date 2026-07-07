@@ -11,7 +11,7 @@ never to model judgment.
 ## Resolution order (pick the highest available, then score it)
 
 1. **own-precedent** — a `## Your recent problems` card matching the full 3-tuple
-   `(platform, problem_kind, target)`. A match is a *candidate*; score by §high.
+   `(platform, problem_kind, target)`. A match is a _candidate_; score by §high.
 2. **demo** — a `## Reference demos` card matching the full 3-tuple → **medium**.
 3. **physics** — the platform skill's canonical value (speed limit, cutoff
    sizing) → **medium**.
@@ -20,6 +20,7 @@ never to model judgment.
 ## The `high` predicate (own-precedent only, mechanical)
 
 A candidate own-precedent card scores **high** iff:
+
 - `platform`, `problem_kind`, `target` all equal, AND
 - **every gating scalar for the platform** matches within tolerance (below), AND
 - for a **warm-start** rec additionally: the card's `pulse_ref` resolves to a
@@ -30,11 +31,11 @@ pulse). A bare 3-tuple match is NEVER high on its own.
 
 ### Gating scalars + tolerances (per platform)
 
-| Platform | Gating scalars (tolerance) |
-|---|---|
-| transmon | `levels` (exact), `drive_max` (±10%) |
-| cavity / bosonic | `fock_cutoff` (exact), `chi` (±10%), target `alpha` or Fock index (exact) |
-| atoms (Rydberg) | `levels` (exact), `rabi_max` (±10%), `delta_max` (±10%), distance/blockade (±10%) |
+| Platform         | Gating scalars (tolerance)                                                        |
+| ---------------- | --------------------------------------------------------------------------------- |
+| transmon         | `levels` (exact), `drive_max` (±10%)                                              |
+| cavity / bosonic | `fock_cutoff` (exact), `chi` (±10%), target `alpha` or Fock index (exact)         |
+| atoms (Rydberg)  | `levels` (exact), `rabi_max` (±10%), `delta_max` (±10%), distance/blockade (±10%) |
 
 **Fail-safe:** a platform NOT listed here, or a card missing any required
 `sys_params` field, scores **medium, never high**. Unknown regime → fail safe.

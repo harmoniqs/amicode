@@ -1,113 +1,118 @@
-import { describe, it, expect } from 'vitest'
-import { resolveLlmCreds, stripProviders, fetchProviderSignal } from '../src/llm_creds.mjs'
+import { describe, it, expect } from "vitest";
+import { resolveLlmCreds, stripProviders, fetchProviderSignal } from "../src/llm_creds.mjs";
 
 // 0.3 — the LLM-provider SIGNAL: amico stores/injects no credential; opencode
 // owns the secret, and amico computes the configured/missing/mismatch signal
 // from opencode's OWN live /config/providers. Tests cover the pure signal, the
 // no-leak strip boundary, and the async fetch against a stubbed endpoint.
 
-describe('resolveLlmCreds — pure signal from opencode-resolved providers', () => {
-  it('not configured → ONE explicit signal when opencode resolves no provider', () => {
-    const r = resolveLlmCreds({ providers: [] })
-    expect(r.ok).toBe(false)
+describe("resolveLlmCreds — pure signal from opencode-resolved providers", () => {
+  it("not configured → ONE explicit signal when opencode resolves no provider", () => {
+    const r = resolveLlmCreds({ providers: [] });
+    expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.reason).toMatch(/not configured/i)
-      expect(r.fix).toMatch(/provider|RUNBOOK/i)
+      expect(r.reason).toMatch(/not configured/i);
+      expect(r.fix).toMatch(/provider|RUNBOOK/i);
     }
-  })
-  it('configured → ok when a provider resolves and no model pins one', () => {
-    const r = resolveLlmCreds({ providers: [{ id: 'anthropic', source: 'env' }] })
-    expect(r).toMatchObject({ ok: true, provider: 'anthropic', source: 'env' })
-  })
-  it('configured → ok when the model provider is among the resolved ones', () => {
+  });
+  it("configured → ok when a provider resolves and no model pins one", () => {
+    const r = resolveLlmCreds({ providers: [{ id: "anthropic", source: "env" }] });
+    expect(r).toMatchObject({ ok: true, provider: "anthropic", source: "env" });
+  });
+  it("configured → ok when the model provider is among the resolved ones", () => {
     const r = resolveLlmCreds({
-      providers: [{ id: 'amazon-bedrock', source: 'config' }, { id: 'anthropic', source: 'env' }],
-      model: 'anthropic/claude-sonnet-4-6',
-    })
-    expect(r).toMatchObject({ ok: true, provider: 'anthropic', source: 'env' })
-  })
-  it('mismatch → explicit fail when the model points at an unresolved provider', () => {
+      providers: [
+        { id: "amazon-bedrock", source: "config" },
+        { id: "anthropic", source: "env" },
+      ],
+      model: "anthropic/claude-sonnet-4-6",
+    });
+    expect(r).toMatchObject({ ok: true, provider: "anthropic", source: "env" });
+  });
+  it("mismatch → explicit fail when the model points at an unresolved provider", () => {
     const r = resolveLlmCreds({
-      providers: [{ id: 'anthropic', source: 'env' }],
-      model: 'amazon-bedrock/us.anthropic.claude-sonnet-4-6',
-    })
-    expect(r.ok).toBe(false)
+      providers: [{ id: "anthropic", source: "env" }],
+      model: "amazon-bedrock/us.anthropic.claude-sonnet-4-6",
+    });
+    expect(r.ok).toBe(false);
     if (!r.ok) {
-      expect(r.reason).toMatch(/amazon-bedrock/)
-      expect(r.reason).toMatch(/no resolved credentials|resolved:/i)
+      expect(r.reason).toMatch(/amazon-bedrock/);
+      expect(r.reason).toMatch(/no resolved credentials|resolved:/i);
     }
-  })
+  });
   it('ignores a model with no provider prefix (falls back to "any resolved")', () => {
-    const r = resolveLlmCreds({ providers: [{ id: 'openai', source: 'env' }], model: 'weird-model-no-slash' })
-    expect(r).toMatchObject({ ok: true, provider: 'openai' })
-  })
-})
+    const r = resolveLlmCreds({ providers: [{ id: "openai", source: "env" }], model: "weird-model-no-slash" });
+    expect(r).toMatchObject({ ok: true, provider: "openai" });
+  });
+});
 
-describe('stripProviders — the no-leak boundary', () => {
-  it('keeps only {id, source} and DROPS the plaintext key + everything else', () => {
+describe("stripProviders — the no-leak boundary", () => {
+  it("keeps only {id, source} and DROPS the plaintext key + everything else", () => {
     const raw = {
       providers: [
-        { id: 'anthropic', source: 'env', key: 'sk-ant-SECRET', models: { a: {} }, options: {} },
-        { id: 'amazon-bedrock', source: 'config', env: ['AWS_ACCESS_KEY_ID'] },
+        { id: "anthropic", source: "env", key: "sk-ant-SECRET", models: { a: {} }, options: {} },
+        { id: "amazon-bedrock", source: "config", env: ["AWS_ACCESS_KEY_ID"] },
       ],
-    }
-    const stripped = stripProviders(raw)
+    };
+    const stripped = stripProviders(raw);
     expect(stripped).toEqual([
-      { id: 'anthropic', source: 'env' },
-      { id: 'amazon-bedrock', source: 'config' },
-    ])
+      { id: "anthropic", source: "env" },
+      { id: "amazon-bedrock", source: "config" },
+    ]);
     // The secret must not survive the strip — in ANY field.
-    expect(JSON.stringify(stripped)).not.toContain('sk-ant-SECRET')
-  })
-  it('tolerates a missing/empty providers array', () => {
-    expect(stripProviders({})).toEqual([])
-    expect(stripProviders(null)).toEqual([])
-    expect(stripProviders({ providers: [] })).toEqual([])
-  })
-})
+    expect(JSON.stringify(stripped)).not.toContain("sk-ant-SECRET");
+  });
+  it("tolerates a missing/empty providers array", () => {
+    expect(stripProviders({})).toEqual([]);
+    expect(stripProviders(null)).toEqual([]);
+    expect(stripProviders({ providers: [] })).toEqual([]);
+  });
+});
 
-describe('fetchProviderSignal — async, against a stubbed opencode server', () => {
-  const SECRET = 'sk-ant-DO-NOT-LEAK'
+describe("fetchProviderSignal — async, against a stubbed opencode server", () => {
+  const SECRET = "sk-ant-DO-NOT-LEAK";
   const stub = (routes: Record<string, unknown>, status = 200) =>
     (async (url: string) => {
-      const path = url.replace(/^https?:\/\/[^/]+/, '')
-      if (!(path in routes)) return { ok: false, status: 404, json: async () => ({}) } as Response
-      return { ok: status < 400, status, json: async () => routes[path] } as Response
-    }) as unknown as typeof fetch
+      const path = url.replace(/^https?:\/\/[^/]+/, "");
+      if (!(path in routes)) return { ok: false, status: 404, json: async () => ({}) } as Response;
+      return { ok: status < 400, status, json: async () => routes[path] } as Response;
+    }) as unknown as typeof fetch;
 
-  it('ok + which-provider when the live server resolves one, and NEVER returns a key', async () => {
+  it("ok + which-provider when the live server resolves one, and NEVER returns a key", async () => {
     const fetchImpl = stub({
-      '/config/providers': { providers: [{ id: 'anthropic', source: 'env', key: SECRET }] },
-      '/config': { model: 'anthropic/claude-sonnet-4-6' },
-    })
-    const sig = await fetchProviderSignal('http://127.0.0.1:9', { fetchImpl })
-    expect(sig).toMatchObject({ ok: true, provider: 'anthropic', source: 'env' })
+      "/config/providers": { providers: [{ id: "anthropic", source: "env", key: SECRET }] },
+      "/config": { model: "anthropic/claude-sonnet-4-6" },
+    });
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
+    expect(sig).toMatchObject({ ok: true, provider: "anthropic", source: "env" });
     // AC6: the secret in the raw response must not appear anywhere in the signal.
-    expect(JSON.stringify(sig)).not.toContain(SECRET)
-  })
-  it('not configured when the live server resolves zero providers', async () => {
-    const fetchImpl = stub({ '/config/providers': { providers: [] }, '/config': {} })
-    const sig = await fetchProviderSignal('http://127.0.0.1:9', { fetchImpl })
-    expect(sig.ok).toBe(false)
-    if (!sig.ok) expect(sig.reason).toMatch(/not configured/i)
-  })
-  it('mismatch surfaces through the async path too', async () => {
+    expect(JSON.stringify(sig)).not.toContain(SECRET);
+  });
+  it("not configured when the live server resolves zero providers", async () => {
+    const fetchImpl = stub({ "/config/providers": { providers: [] }, "/config": {} });
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
+    expect(sig.ok).toBe(false);
+    if (!sig.ok) expect(sig.reason).toMatch(/not configured/i);
+  });
+  it("mismatch surfaces through the async path too", async () => {
     const fetchImpl = stub({
-      '/config/providers': { providers: [{ id: 'anthropic', source: 'env' }] },
-      '/config': { model: 'amazon-bedrock/x' },
-    })
-    const sig = await fetchProviderSignal('http://127.0.0.1:9', { fetchImpl })
-    expect(sig.ok).toBe(false)
-  })
-  it('not-ok (not a throw) when /config/providers is unreachable', async () => {
-    const fetchImpl = (async () => { throw new Error('ECONNREFUSED') }) as unknown as typeof fetch
-    const sig = await fetchProviderSignal('http://127.0.0.1:9', { fetchImpl })
-    expect(sig.ok).toBe(false)
-    if (!sig.ok) expect(sig.reason).toMatch(/could not query|providers/i)
-  })
-  it('still ok when /config (model) is unavailable — model check is optional', async () => {
-    const fetchImpl = stub({ '/config/providers': { providers: [{ id: 'openai', source: 'env' }] } }) // no /config route → 404
-    const sig = await fetchProviderSignal('http://127.0.0.1:9', { fetchImpl })
-    expect(sig).toMatchObject({ ok: true, provider: 'openai' })
-  })
-})
+      "/config/providers": { providers: [{ id: "anthropic", source: "env" }] },
+      "/config": { model: "amazon-bedrock/x" },
+    });
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
+    expect(sig.ok).toBe(false);
+  });
+  it("not-ok (not a throw) when /config/providers is unreachable", async () => {
+    const fetchImpl = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
+    expect(sig.ok).toBe(false);
+    if (!sig.ok) expect(sig.reason).toMatch(/could not query|providers/i);
+  });
+  it("still ok when /config (model) is unavailable — model check is optional", async () => {
+    const fetchImpl = stub({ "/config/providers": { providers: [{ id: "openai", source: "env" }] } }); // no /config route → 404
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
+    expect(sig).toMatchObject({ ok: true, provider: "openai" });
+  });
+});

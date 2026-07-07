@@ -1,7 +1,15 @@
 // Score manifest schema — spec §3 (spec-20260703-025314-amicode-scores-front-of-chain).
 // Additive policy (spec §8): unknown fields are ignored; validation only rejects what is
 // present-and-wrong or required-and-missing, so older runtimes tolerate newer scores.
-export const KNOWN_ENTITIES = ["circuit", "system", "formulation", "pulse", "run", "device_session", "knowledge"] as const;
+export const KNOWN_ENTITIES = [
+  "circuit",
+  "system",
+  "formulation",
+  "pulse",
+  "run",
+  "device_session",
+  "knowledge",
+] as const;
 export const GATE_CLASSES = ["light", "heavy"] as const;
 export const SUPPORTED_SCHEMA_VERSIONS = [1] as const;
 
@@ -67,7 +75,8 @@ export function validateScoreManifest(raw: unknown): string[] {
     seen.add(s.id);
     for (const e of s.emits ?? [])
       if (!(KNOWN_ENTITIES as readonly string[]).includes(e)) errs.push(`stage ${s.id}: unknown entity in emits: ${e}`);
-    if (s.gate && !(GATE_CLASSES as readonly string[]).includes(s.gate)) errs.push(`stage ${s.id}: unknown gate class: ${s.gate}`);
+    if (s.gate && !(GATE_CLASSES as readonly string[]).includes(s.gate))
+      errs.push(`stage ${s.id}: unknown gate class: ${s.gate}`);
     for (const q of s.questions ?? []) {
       if (!q.id) errs.push(`stage ${s.id}: question missing id`);
       if (!q.prompt) errs.push(`stage ${s.id}: question ${q.id ?? "?"} missing prompt`);

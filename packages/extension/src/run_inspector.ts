@@ -4,54 +4,67 @@ import { inspectorResourceRootDirs } from "./opencode_paths";
 import type { PulseEvent, PulseMeta, PulseRecord } from "./run_dir_reader";
 
 // ============================================================================
-// Run Inspector — bottom-panel webview that shows the live pulse-plot stream
-// from spike_solve.jl plus a stats row driven by AMICODE_ITER parsing.
+// Run Inspector — bottom-panel webview showing the live pulse-plot stream +
+// an AMICODE_ITER stats row.
 //
-// Ported from amicode/src/spikes/spike_b_inspector.ts with the simulation
-// experiments stripped (we don't need ping/sim now that we have a real run
-// path). Keeps the throttled image swap + setImageSource / postIteration API.
+// 1.3 (#58): multi-run. The host↔webview message protocol is now runId-keyed
+// (freeze 2 = the protocol, not the DOM): every message carries `runId`, the
+// host keeps ONE buffer per runId, and the webview keeps ONE pane per runId.
+// RunsManager fans ALL runs in here runId-tagged and calls activate(runId) to
+// pick the visible pane. Per-run buffers make reopen (S36 buffer+replay) rebuild
+// EVERY pane, not just the active one; the 5 Hz pulse throttle is per-run so a
+// fast background run can't starve the foreground.
+//
+// Ported from the β single-run view (throttled record swap + native pulse #66).
 // ============================================================================
 
-const REFRESH_INTERVAL_MS = 200; // 5 Hz cap on pulse-record refresh
+const REFRESH_INTERVAL_MS = 200; // 5 Hz cap on pulse-record refresh (per run)
 
 /** Timing payload for the elapsed/rate/ETA strip. */
 export interface TimingInfo {
-  createdAtMs?: number;   // run.toml created_at → live elapsed base
-  maxIter?: number;       // parsed from the run script → ETA
-  wallSeconds?: number;   // result.toml wall_seconds → frozen elapsed on finish
-  terminal?: boolean;     // true once the run is finished
+  createdAtMs?: number; // run.toml created_at → live elapsed base
+  maxIter?: number; // parsed from the run script → ETA
+  wallSeconds?: number; // result.toml wall_seconds → frozen elapsed on finish
+  terminal?: boolean; // true once the run is finished
 }
 
 let INSPECTOR: InspectorView | undefined;
 
+/** Everything replayable about one run's pane. Kept current whether or not the
+ *  webview exists, so resolveWebviewView can rebuild the pane on reopen (S36).
+ *  `pulseTimer`/`pendingPulse` are live-only throttle state (per run). */
+interface PaneBuffer {
+  runId: string;
+  runLabel?: string;
+  warming: boolean;
+  completion?: { status: string; fidelity?: number };
+  pulseMeta?: PulseMeta;
+  pulseRecord?: PulseRecord; // newest record (throttle coalesces to this)
+  iterRecord?: { iter: number; f_val: number; kkt_error: number; eq_viol: number; ineq_viol: number; rho: number };
+  timing?: TimingInfo; // elapsed/rate/ETA strip state (his run_timing UI)
+  pulseTimer?: NodeJS.Timeout;
+  pendingPulse?: PulseRecord;
+}
+
 class InspectorView implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
 
-  /** Terminal state that arrived before the webview existed (e.g. on launch the
-   *  watcher follows `latest` → a finished run completes before the panel is
-   *  opened). Replayed after buffered pulse data so the badge isn't stuck "running". */
-  private bufferedCompletion?: { status: string; fidelity?: number };
-  /** A run started but hasn't emitted its first frame yet (Julia warming up).
-   *  Buffered so the warming state shows even if the panel opens late. */
-  private bufferedWarming = false;
-  /** Run label (runId) for the topbar — buffered so it shows even if the panel
-   *  opens after the run was selected. */
-  private bufferedRunLabel?: string;
-  /** Timing (created-at / max-iter / wall-seconds) — buffered like the run label
-   *  so the elapsed/ETA strip isn't blank when the panel opens after run start. */
-  private bufferedTiming?: TimingInfo;
-  /** Pulse events that arrived before the webview existed (#66 AC7). Unlike
-   *  PNGs (re-offered by the poll forever), the log line is the canonical
-   *  signal — dropped means gone. Meta + NEWEST record only. */
-  private bufferedPulseMeta?: PulseMeta;
-  private bufferedPulseRecord?: PulseRecord;
-  /** 5 Hz throttle for live pulse records — same REFRESH_INTERVAL_MS policy as
-   *  PNG frames: leading edge posts, the window coalesces (newest wins), the
-   *  trailing edge flushes. Meta is never throttled (once per run). */
-  private pulseTimer?: NodeJS.Timeout;
-  private pendingPulse?: PulseRecord;
+  /** One buffer per runId — the multi-run state. */
+  private readonly panes = new Map<string, PaneBuffer>();
+  /** The run whose pane is visible. Buffered until the webview materializes so
+   *  a late-opened panel still lands on the right pane. */
+  private activeRunId?: string;
 
   constructor(private readonly ctx: vscode.ExtensionContext) {}
+
+  private paneFor(runId: string): PaneBuffer {
+    let p = this.panes.get(runId);
+    if (!p) {
+      p = { runId, warming: false };
+      this.panes.set(runId, p);
+    }
+    return p;
+  }
 
   resolveWebviewView(view: vscode.WebviewView): void {
     this.view = view;
@@ -65,127 +78,147 @@ class InspectorView implements vscode.WebviewViewProvider {
 
     // Control row (Stop / Save pulse / Open dir): the view posts
     // {type:"control", action}; forward to the matching command, which resolves
-    // the target run from the watcher's activeRunDir.
+    // the target run from the manager's selected run.
     const msgSub = view.webview.onDidReceiveMessage((msg: { type?: string; action?: string }) => {
       if (msg?.type !== "control") return;
-      const cmd = ({ stop: "amicode.stopRun", save: "amicode.savePulse", open: "amicode.openRunDir" } as Record<string, string>)[msg.action ?? ""];
+      const cmd = (
+        { stop: "amicode.stopRun", save: "amicode.savePulse", open: "amicode.openRunDir" } as Record<string, string>
+      )[msg.action ?? ""];
       if (cmd) void vscode.commands.executeCommand(cmd);
     });
-    view.onDidDispose(() => { this.view = undefined; this.clearPulseTimer(); msgSub.dispose(); });
-
-    // Topbar run label — replay first so it's set regardless of run state.
-    if (this.bufferedRunLabel) {
-      view.webview.postMessage({ type: "runlabel", text: this.bufferedRunLabel });
-      this.bufferedRunLabel = undefined;
-    }
-    if (this.bufferedTiming) {
-      view.webview.postMessage({ type: "timing", ...this.bufferedTiming });
-      this.bufferedTiming = undefined;
-    }
-    // A run is warming up (no data yet) — show that until the first record.
-    if (this.bufferedWarming) {
-      this.bufferedWarming = false;
-      view.webview.postMessage({ type: "warming" });
-    }
-    // Replay buffered pulse events (#66): meta first, then the newest record —
-    // and BEFORE the buffered completion below, so terminal state stays the
-    // last word the webview hears.
-    if (this.bufferedPulseMeta) {
-      view.webview.postMessage({ type: "pulsemeta", ...this.bufferedPulseMeta });
-      this.bufferedPulseMeta = undefined;
-    }
-    if (this.bufferedPulseRecord) {
-      view.webview.postMessage({ type: "pulse", ...this.bufferedPulseRecord });
-      this.bufferedPulseRecord = undefined;
-    }
-    // Then replay a terminal state if the run already finished — after the
-    // pulse data so "converged"/"failed" is the last word the webview hears.
-    if (this.bufferedCompletion) {
-      const c = this.bufferedCompletion;
-      this.bufferedCompletion = undefined;
-      view.webview.postMessage({ type: "completed", status: c.status, fidelity: c.fidelity });
-    }
-  }
-
-  // -------- public surface used by RunsRootWatcher --------
-
-  postIterationRecord(rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
-    // Ok to drop iter records pre-materialization: the stats row refreshes on
-    // the next record (seconds away), and switchToRun's log replay re-ingests
-    // history whenever the run is re-selected. (Pulse events, by contrast, are
-    // buffered above — the log line is their only delivery.)
-    if (!this.view) return;
-    this.view.webview.postMessage({
-      type: "iteration",
-      iter:      rec.iter,
-      f_val:     rec.f_val,
-      kkt_error: rec.inf_du,
-      eq_viol:   rec.inf_pr,
-      ineq_viol: 0,
-      rho:       1.0,
-      t_post:    Date.now(),
+    view.onDidDispose(() => {
+      this.view = undefined;
+      this.clearAllTimers();
+      msgSub.dispose();
     });
+
+    // S36 replay: rebuild EVERY pane from its buffer (not just the active one),
+    // so switching to a background run after reopen shows its state too. Per
+    // pane the order mirrors the live stream: runlabel → timing → warming →
+    // pulsemeta → pulse → iteration → completed (terminal stays the last word).
+    for (const p of this.panes.values()) this.replayPane(view, p);
+    // Then pick the visible pane. activate is idempotent and last, so it wins
+    // regardless of pane-replay order above.
+    if (this.activeRunId) view.webview.postMessage({ type: "activate", runId: this.activeRunId });
   }
 
-  /** Terminal-state signal so the badge stops saying "running" — on live
-   *  finish AND when switching to an already-finished run. */
-  postCompletion(status: string, fidelity?: number): void {
-    if (!this.view) {
-      // Panel not open yet — stash; resolveWebviewView replays it after pulse data.
-      this.bufferedCompletion = { status, fidelity };
-      return;
-    }
-    this.view.webview.postMessage({ type: "completed", status, fidelity });
+  private replayPane(view: vscode.WebviewView, p: PaneBuffer): void {
+    const rid = p.runId;
+    if (p.runLabel !== undefined) view.webview.postMessage({ type: "runlabel", runId: rid, text: p.runLabel });
+    if (p.timing) view.webview.postMessage({ type: "timing", runId: rid, ...p.timing });
+    if (p.warming) view.webview.postMessage({ type: "warming", runId: rid });
+    if (p.pulseMeta) view.webview.postMessage({ type: "pulsemeta", runId: rid, ...p.pulseMeta });
+    if (p.pulseRecord) view.webview.postMessage({ type: "pulse", runId: rid, ...p.pulseRecord });
+    if (p.iterRecord) view.webview.postMessage({ type: "iteration", runId: rid, ...p.iterRecord, t_post: Date.now() });
+    if (p.completion)
+      view.webview.postMessage({
+        type: "completed",
+        runId: rid,
+        status: p.completion.status,
+        fidelity: p.completion.fidelity,
+      });
   }
 
-  /** A run started but has no data yet (Julia warming up) — show that instead
-   *  of an idle panel, so a ~minute of cold start doesn't read as frozen. */
-  setWarmingUp(): void {
+  // -------- public surface used by RunsManager (all runId-keyed) --------
+
+  postIterationRecord(runId: string, rec: { iter: number; f_val: number; inf_pr: number; inf_du: number }): void {
+    const p = this.paneFor(runId);
+    p.warming = false;
+    p.iterRecord = {
+      iter: rec.iter,
+      f_val: rec.f_val,
+      kkt_error: rec.inf_du,
+      eq_viol: rec.inf_pr,
+      ineq_viol: 0,
+      rho: 1.0,
+    };
+    if (!this.view) return; // buffered above; reopen replays it
+    this.view.webview.postMessage({ type: "iteration", runId, ...p.iterRecord, t_post: Date.now() });
+  }
+
+  /** Terminal-state signal (badge stops saying "running") — on live finish AND
+   *  when a run is selected already-finished. Buffered per run for reopen. */
+  postCompletion(runId: string, status: string, fidelity?: number): void {
+    const p = this.paneFor(runId);
+    p.warming = false;
+    p.completion = { status, fidelity };
+    if (!this.view) return;
+    this.view.webview.postMessage({ type: "completed", runId, status, fidelity });
+  }
+
+  /** A run started but has no data yet (Julia warming up) — show that instead of
+   *  an idle pane, so a ~minute of cold start doesn't read as frozen. */
+  setWarmingUp(runId: string): void {
+    const p = this.paneFor(runId);
+    // Warming means "no data yet". Never clobber a pane that already has terminal
+    // state or streamed data (a run selected after its pipeline fanned events in,
+    // or the stale-warming-after-completion race).
+    if (p.completion || p.iterRecord || p.pulseRecord) return;
+    p.warming = true;
     if (!this.view) {
-      // Buffer the warming state regardless — so it shows when the user DOES
-      // open the panel — but only steal focus when auto-open is enabled.
-      this.bufferedWarming = true;
+      // Buffered in the pane regardless (shows when the user opens the panel);
+      // only steal focus when the auto-open setting is enabled (his UX gate).
       if (autoOpenEnabled()) {
         vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
       }
       return;
     }
-    this.view.webview.postMessage({ type: "warming" });
+    this.view.webview.postMessage({ type: "warming", runId });
   }
 
-  /** Pulse-stream event (#66): forwarded to the view as pulsemeta/pulse
-   *  messages. Buffering for late materialization lands with AC7. */
-  postPulse(e: PulseEvent): void {
-    if (!this.view) {
-      // Buffer (newest record wins) — replayed in resolveWebviewView.
-      if (e.type === "meta") this.bufferedPulseMeta = e.meta;
-      else this.bufferedPulseRecord = e.record;
+  /** Pulse-stream event (#66) → pulsemeta/pulse messages, runId-tagged. Meta is
+   *  posted once; records are throttled to 5 Hz PER RUN (leading edge posts, the
+   *  window coalesces newest-wins, trailing edge flushes). The newest record is
+   *  always kept in the buffer for reopen even while the window is open. */
+  postPulse(runId: string, e: PulseEvent): void {
+    const p = this.paneFor(runId);
+    // NB: unlike postIterationRecord/postCompletion this deliberately does NOT
+    // clear p.warming — pulse is plot-only (#67), and the warming badge is
+    // iter-driven. setWarmingUp already treats a present pulseRecord as "has
+    // data", so a pulse still blocks a re-warm; the flag just isn't flipped here.
+    if (e.type === "meta") {
+      p.pulseMeta = e.meta;
+      if (this.view) this.view.webview.postMessage({ type: "pulsemeta", runId, ...e.meta });
       return;
     }
-    if (e.type === "meta") { this.view.webview.postMessage({ type: "pulsemeta", ...e.meta }); return; }
-    if (this.pulseTimer) { this.pendingPulse = e.record; return; }   // window open — coalesce, newest wins
-    this.view.webview.postMessage({ type: "pulse", ...e.record });
-    this.pulseTimer = setTimeout(() => {
-      this.pulseTimer = undefined;
-      if (this.pendingPulse && this.view) {
-        const rec = this.pendingPulse;
-        this.pendingPulse = undefined;
-        this.postPulse({ type: "record", record: rec });
+    // record
+    p.pulseRecord = e.record; // newest wins for reopen replay
+    if (!this.view) return;
+    if (p.pulseTimer) {
+      p.pendingPulse = e.record;
+      return;
+    } // window open — coalesce
+    this.view.webview.postMessage({ type: "pulse", runId, ...e.record });
+    p.pulseTimer = setTimeout(() => {
+      p.pulseTimer = undefined;
+      if (p.pendingPulse && this.view) {
+        const rec = p.pendingPulse;
+        p.pendingPulse = undefined;
+        this.postPulse(runId, { type: "record", record: rec });
       }
     }, REFRESH_INTERVAL_MS);
   }
 
-  /** Set the topbar run label (runId). Buffered until the webview materializes. */
-  setRunLabel(label: string): void {
-    if (!this.view) { this.bufferedRunLabel = label; return; }
-    this.view.webview.postMessage({ type: "runlabel", text: label });
+  /** Set a run's topbar label (runId). Buffered per run until materialize. */
+  setRunLabel(runId: string, label: string): void {
+    this.paneFor(runId).runLabel = label;
+    if (this.view) this.view.webview.postMessage({ type: "runlabel", runId, text: label });
   }
 
-  /** Feed the elapsed/rate/ETA strip. Non-terminal = run start (createdAtMs +
-   *  maxIter); terminal = finish (wallSeconds frozen). Buffered like the label. */
-  postTiming(t: TimingInfo): void {
-    if (!this.view) { this.bufferedTiming = { ...this.bufferedTiming, ...t }; return; }
-    this.view.webview.postMessage({ type: "timing", ...t });
+  /** Timing for the elapsed/rate/ETA strip (ported from the single-run host —
+   *  now runId-keyed + pane-buffered like every other message). */
+  postTiming(runId: string, t: TimingInfo): void {
+    const p = this.paneFor(runId);
+    p.timing = { ...p.timing, ...t };
+    if (this.view) this.view.webview.postMessage({ type: "timing", runId, ...p.timing });
+  }
+
+  /** Make `runId` the visible pane (1.3 selection seam). Buffered until the
+   *  webview materializes; resolveWebviewView replays it last. */
+  activate(runId: string): void {
+    this.paneFor(runId); // ensure a pane exists even before any data
+    this.activeRunId = runId;
+    if (this.view) this.view.webview.postMessage({ type: "activate", runId });
   }
 
   reveal(): void {
@@ -193,23 +226,23 @@ class InspectorView implements vscode.WebviewViewProvider {
     // default so a starting solve never steals focus; the status-bar item and
     // the explicit open command (which bypasses reveal) remain available.
     if (!autoOpenEnabled()) return;
-    vscode.commands.executeCommand("amicode.runInspector.focus")
-      .then(undefined, () => undefined);
+    vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
   }
 
   // -------- internal --------
 
-  private clearPulseTimer(): void {
-    if (this.pulseTimer) {
-      clearTimeout(this.pulseTimer);
-      this.pulseTimer = undefined;
+  private clearAllTimers(): void {
+    for (const p of this.panes.values()) {
+      if (p.pulseTimer) {
+        clearTimeout(p.pulseTimer);
+        p.pulseTimer = undefined;
+      }
+      p.pendingPulse = undefined;
     }
-    this.pendingPulse = undefined;
   }
 
   private renderHtml(webview: vscode.Webview): string {
-    const uri = (...parts: string[]) =>
-      webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, ...parts));
+    const uri = (...parts: string[]) => webview.asWebviewUri(vscode.Uri.joinPath(this.ctx.extensionUri, ...parts));
     const nonce = newNonce();
     // The view is TS-composed (media/ui/views/inspector.ts → dist bundle): the
     // script builds its own DOM from atoms/components and injects their styles
