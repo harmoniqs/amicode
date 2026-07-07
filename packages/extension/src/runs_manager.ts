@@ -8,10 +8,10 @@ import { parseMaxIter } from "./run_timing";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
-import { STALL_AFTER_MS } from "./run_controls";
   AMICODE_ITER_RE, ingestRunDir, readTerminalState, readTomlSafe, parseAmicoNum, PulseStream, SinkDedup,
   type IterRecord, type PulseEvent, type RunCompletion, type PromoteInfo, type RunSink,
 } from "./run_dir_reader";
+import { STALL_AFTER_MS } from "./run_controls";
 
 // ============================================================================
 // RunsManager (1.2, #57) — the multi-run evolution of β's RunsRootWatcher.
