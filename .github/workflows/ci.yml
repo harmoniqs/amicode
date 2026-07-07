@@ -18,6 +18,11 @@ jobs:
       # self-skipping — the skip was the #25 CI-level false-green (an injection or
       # config-merge regression would pass CI because the only test for it skipped).
       - run: pnpm --filter amicode-v2 fetch:opencode
+        env:
+          # gh release download pulls the vendored binary from the PRIVATE
+          # harmoniqs/opencode release; the default GITHUB_TOKEN is scoped to
+          # this repo only, so gh needs a cross-repo token (repo secret).
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
       - run: pnpm -r run test   # amico-run suite (incl. S31 grep rule) + extension unit suite (incl. the opencode inject/merge integration) + @amicode/schema conformance
       - name: amico-validate — shipped configs conform + linked bin works (0.1c gate)
         run: |
@@ -72,6 +77,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build   # amico-run + extension (same as fast — ensures dist/ is in place before vsce)
       - run: pnpm --filter amicode-v2 fetch:opencode   # vendor the opencode binary (explicit step, matches fast/boot-smoke)
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # private-fork release fetch (see fast)
       - run: pnpm --filter amicode-v2 exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
   boot-smoke:
@@ -86,4 +93,6 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode-v2 fetch:opencode
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # private-fork release fetch (see fast); one step covers both matrix legs
       - run: pnpm --filter amicode-v2 test:smoke
