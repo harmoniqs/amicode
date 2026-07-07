@@ -413,13 +413,20 @@ export class RunsManager implements vscode.Disposable {
   /** "running" only if run.log is actually moving. A FINISHED-less run whose
    *  log has been silent >10 min is wedged (OOM, killed host) — never let a
    *  boot replay of its old iter lines stamp "running · iter N" on the status
-   *  bar forever. Mirrors the fork's isStalled (problems.ts, one-spine). */
+   *  bar forever. Mirrors the fork's isStalled (problems.ts, one-spine).
+   *  2s TTL cache: a boot replay delivers thousands of iter lines back-to-back
+   *  and must not pay one statSync per line. */
+  private readonly liveStatusCache = new Map<string, { at: number; val: "running" | "stalled" }>();
   private liveStatus(runDir: string): "running" | "stalled" {
+    const now = Date.now();
+    const hit = this.liveStatusCache.get(runDir);
+    if (hit && now - hit.at < 2000) return hit.val;
+    let val: "running" | "stalled" = "running";
     try {
-      const age = Date.now() - fs.statSync(path.join(runDir, "run.log")).mtimeMs;
-      if (age > RunsManager.STALL_AFTER_MS) return "stalled";
+      if (now - fs.statSync(path.join(runDir, "run.log")).mtimeMs > RunsManager.STALL_AFTER_MS) val = "stalled";
     } catch { /* no run.log yet — brand-new run, trust the tailer */ }
-    return "running";
+    this.liveStatusCache.set(runDir, { at: now, val });
+    return val;
   }
 
   private routeIter(p: RunPipeline, rec: IterRecord): void {
