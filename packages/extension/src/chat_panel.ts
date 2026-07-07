@@ -57,6 +57,20 @@ export class ChatPanel {
           msg &&
           typeof msg === "object" &&
           (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "clipboard-request"
+        ) {
+          // Paste bridge: navigator.clipboard is unavailable to the framed app
+          // (the webview parent has no clipboard-read to delegate), so the app
+          // asks US — the extension host reads the OS clipboard and replies.
+          void vscode.env.clipboard.readText().then((text) =>
+            this.panel.webview.postMessage({ source: "amicode", kind: "clipboard", nonce: (msg as { nonce?: string }).nonce, text }),
+          );
+          return;
+        }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "command" &&
           typeof (msg as { command?: unknown }).command === "string" &&
           BRIDGE_ALLOWED_COMMANDS.has((msg as { command: string }).command)
@@ -137,7 +151,7 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          if (d && d.source === "amicode" && d.kind === "command" && typeof d.command === "string") {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request")) {
             vscode.postMessage(d);
           }
           return;
@@ -145,7 +159,7 @@ export class ChatPanel {
         // Lane 2 — extension → iframe (theme): posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
         // our own theme envelope, pinned to the opencode origin.
-        if (d && d.source === "amicode" && d.kind === "theme") {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
