@@ -221,10 +221,10 @@ describe("preferredModel", () => {
     const dir = mkdtempSync(join(tmpdir(), "auth-"));
     const authPath = join(dir, "auth.json");
     writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
-    expect(preferredModel(authPath)).toBe("google/gemini-2.5-flash");
+    expect(preferredModel(authPath)).toBe("opencode/deepseek-v4-flash-free");
     writeFileSync(authPath, JSON.stringify({ google: { type: "api" }, anthropic: { type: "api" } }));
     expect(preferredModel(authPath)).toBe("anthropic/claude-sonnet-5");
-    expect(preferredModel(join(dir, "missing.json"))).toBeUndefined();
+    expect(preferredModel(join(dir, "missing.json"))).toBe("opencode/deepseek-v4-flash-free");
   });
 });
 
@@ -237,7 +237,7 @@ describe("resolveModelPin (fallback-only)", () => {
     writeFileSync(cfgPath, JSON.stringify({ model: "anthropic/claude-sonnet-4-6" }));
     expect(resolveModelPin(cfgPath, authPath)).toBeUndefined();
     writeFileSync(cfgPath, JSON.stringify({}));
-    expect(resolveModelPin(cfgPath, authPath)).toBe("google/gemini-2.5-flash");
-    expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("google/gemini-2.5-flash");
+    expect(resolveModelPin(cfgPath, authPath)).toBe("opencode/deepseek-v4-flash-free");
+    expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("opencode/deepseek-v4-flash-free");
   });
 });

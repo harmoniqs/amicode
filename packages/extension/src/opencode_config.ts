@@ -237,11 +237,13 @@ export function preferredModel(
   try {
     const providers = Object.keys(JSON.parse(fs.readFileSync(authPath, "utf8")) as Record<string, unknown>);
     if (providers.includes("anthropic")) return "anthropic/claude-sonnet-5";
-    if (providers.includes("google")) return "google/gemini-2.5-flash";
   } catch {
-    /* no auth.json yet */
+    /* no auth.json — the free default below still works */
   }
-  return undefined;
+  // Creds-free default: the zen free tier rides no user quota — Gemini keys
+  // kept hitting capacity throttles ("model overloaded" → failed turns render
+  // as "model undefined" stubs), while this answered a tool-bearing turn in ~3s.
+  return "opencode/deepseek-v4-flash-free";
 }
 
 /** The model pin to inject, or undefined. FALLBACK-only: a model in the user's
