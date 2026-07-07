@@ -55,6 +55,15 @@ export function runScriptPath(runDir: string): string | undefined {
   }
 }
 
+/** lsof lives at /usr/sbin on macOS and /usr/bin on Linux (both supported
+ *  targets); a GUI-spawned extension host can't count on either being in PATH.
+ *  A wrong path here silently disables the kill path (findRunPids proves
+ *  nothing → returns []), so probe explicitly. */
+function lsofPath(): string {
+  for (const p of ["/usr/sbin/lsof", "/usr/bin/lsof"]) if (fs.existsSync(p)) return p;
+  return "lsof"; // last resort: PATH lookup
+}
+
 /** PIDs belonging to THIS run: command line references the run's solve script
  *  (or the run dir itself) AND the process cwd is the run dir. The two-key
  *  match is the safety property — sibling runs of the same problem share the
@@ -80,7 +89,7 @@ export function findRunPids(
     if (pid === process.pid) return false;
     try {
       // lsof -Fn prints the cwd as a line starting with "n"
-      const out = exec("/usr/sbin/lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
+      const out = exec(lsofPath(), ["-a", "-p", String(pid), "-d", "cwd", "-Fn"]);
       return out.split("\n").some((l) => l.startsWith("n") && path.resolve(l.slice(1)) === path.resolve(runDir));
     } catch {
       return false; // can't prove it's ours → don't kill it
