@@ -1,5 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
+import * as path from "node:path";
+import * as os from "node:os";
 
 // ============================================================================
 // ChatPanel — a single WebviewPanel that iframes opencode's SolidJS chat at
@@ -98,6 +100,34 @@ export class ChatPanel {
           msg &&
           typeof msg === "object" &&
           (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "save-file" &&
+          typeof (msg as { filename?: unknown }).filename === "string" &&
+          typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
+        ) {
+          // Save bridge (run-card PNG export): downloads are dead inside the
+          // framed app — the extension shows a save dialog and writes the file.
+          // PNG-only, basename-only, bounded size: the payload is untrusted.
+          const raw = msg as { filename: string; dataUrl: string };
+          const prefix = "data:image/png;base64,";
+          const base64 = raw.dataUrl.startsWith(prefix) ? raw.dataUrl.slice(prefix.length) : undefined;
+          const name = path.basename(raw.filename).replace(/[^\w.-]+/g, "-");
+          if (!base64 || base64.length > 24_000_000 || !name.endsWith(".png")) return;
+          void (async () => {
+            const target = await vscode.window.showSaveDialog({
+              defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", name)),
+              filters: { Images: ["png"] },
+            });
+            if (!target) return;
+            await vscode.workspace.fs.writeFile(target, Buffer.from(base64, "base64"));
+            const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
+            if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
+          })();
+          return;
+        }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "command" &&
           typeof (msg as { command?: unknown }).command === "string" &&
           BRIDGE_ALLOWED_COMMANDS.has((msg as { command: string }).command)
@@ -173,7 +203,7 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external" || d.kind === "save-file")) {
             vscode.postMessage(d);
           }
           return;
