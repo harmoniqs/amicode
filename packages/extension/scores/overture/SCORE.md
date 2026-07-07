@@ -24,7 +24,13 @@ stages:
     questions:
       - id: environment
         prompt: "How will pulses eventually reach hardware — what are we patching into?"
-        choices: ["extant QICK control code (on-prem, à la Stanford/UChicago)", "a cloud system with an emulator (à la Pasqal)", "simulation only for now", "something else"]
+        choices:
+          [
+            "extant QICK control code (on-prem, à la Stanford/UChicago)",
+            "a cloud system with an emulator (à la Pasqal)",
+            "simulation only for now",
+            "something else",
+          ]
         default: "simulation only for now"
         rationale_ref: "#environments"
   - id: devices
@@ -90,13 +96,13 @@ Per-stage guidance and the `amicode_profile` mapping:
      is available in-flow.
    - **`local-sim`** — simulation only for now (nothing to patch into yet).
    - **`other`** — record exactly what they say.
-   Record: `amicode_profile {entity:"environment", payload:{slug, archetype,
-   control_stack, integration, emulator, endpoints}}` — where `slug` is a short
-   kebab name (e.g. `stanford-qick-lab`) and **`endpoints` holds pointers only,
-   NEVER tokens, keys, or passwords** (Amico refuses to store secrets).
-4. **devices** *(optional)* — if they name a device, record
+     Record: `amicode_profile {entity:"environment", payload:{slug, archetype,
+control_stack, integration, emulator, endpoints}}` — where `slug` is a short
+     kebab name (e.g. `stanford-qick-lab`) and **`endpoints` holds pointers only,
+     NEVER tokens, keys, or passwords** (Amico refuses to store secrets).
+4. **devices** _(optional)_ — if they name a device, record
    `amicode_profile {entity:"device", payload:{name, platform, environment:<slug>,
-   qubits, params}}`. If they skip, move on — devices can be added any time.
+qubits, params}}`. If they skip, move on — devices can be added any time.
 5. **goals** — record `amicode_profile {entity:"profile", payload:{goals:"..."}}`
    in their own words.
 6. **handoff** — this is the pivot. FIRST record the completion marker:

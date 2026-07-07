@@ -8,7 +8,7 @@ net; rows 4–6 are the live run.
 
 - [ ] **Install clean** — followed `RUNBOOK.md` end-to-end on the target machine; total time recorded below (target ≤ 60 min).
 - [ ] **Healthcheck green** — `node packages/extension/scripts/healthcheck.mjs` exits `0` (julia + pinned Piccolo project · opencode `/event` · `amico-run` · Bedrock creds).
-- [ ] **Fallback armed** — Command Palette → **"Amicode: Replay demo run"** stages the bundled solve and the Run Inspector renders it (iter frames + final fidelity + promote prompt), with **no Julia, no opencode, no creds**. Confirm this works *before* relying on the live path.
+- [ ] **Fallback armed** — Command Palette → **"Amicode: Replay demo run"** stages the bundled solve and the Run Inspector renders it (iter frames + final fidelity + promote prompt), with **no Julia, no opencode, no creds**. Confirm this works _before_ relying on the live path.
 
 ## Live run
 
@@ -25,11 +25,11 @@ net; rows 4–6 are the live run.
 
 **Recorded timings (fill in at the dry-run):**
 
-| Step | Time |
-|---|---|
-| Julia install | |
-| `install.sh` (instantiate + precompile + VSIX) | |
-| Healthcheck | |
-| First live solve (cold) | |
-| Replay fallback | instant |
-| **Total** | |
+| Step                                           | Time    |
+| ---------------------------------------------- | ------- |
+| Julia install                                  |         |
+| `install.sh` (instantiate + precompile + VSIX) |         |
+| Healthcheck                                    |         |
+| First live solve (cold)                        |         |
+| Replay fallback                                | instant |
+| **Total**                                      |         |

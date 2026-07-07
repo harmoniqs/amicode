@@ -99,7 +99,10 @@ describe("hasOnboardingCompleted (spec §3 routing predicate, second disjunct)",
   it("malformed lines are skipped, not fatal", () => {
     const dir = path.join(mkTmp("ops-"), "onboarding");
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, "events.jsonl"), "not json\n" + JSON.stringify({ entity: "onboarding_completed" }) + "\n");
+    fs.writeFileSync(
+      path.join(dir, "events.jsonl"),
+      "not json\n" + JSON.stringify({ entity: "onboarding_completed" }) + "\n",
+    );
     expect(hasOnboardingCompleted(dir)).toBe(true);
   });
 });

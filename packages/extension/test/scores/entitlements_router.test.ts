@@ -9,9 +9,17 @@ import { Score } from "../../src/scores/loader";
 function score(id: string, ents: string[], extra: Partial<Score["manifest"]> = {}): Score {
   return {
     manifest: {
-      type: "score", schema_version: 1, id, version: 1, derived_from: null,
-      name: `Name of ${id}`, outcome: `Outcome of ${id}`, audience: ["t"],
-      entitlements: ents, stages: [{ id: "one" }], ...extra,
+      type: "score",
+      schema_version: 1,
+      id,
+      version: 1,
+      derived_from: null,
+      name: `Name of ${id}`,
+      outcome: `Outcome of ${id}`,
+      audience: ["t"],
+      entitlements: ents,
+      stages: [{ id: "one" }],
+      ...extra,
     },
     body: "",
     dir: `/scores/${id}`,
@@ -115,7 +123,11 @@ describe("packageAllowlist (spec C entitlement → package tiers)", () => {
 
   it("no entitlements → the five public packages", () => {
     expect(packageAllowlist(registry, [])).toEqual([
-      "Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt",
+      "Piccolo",
+      "Legato",
+      "Intonato",
+      "NamedTrajectories",
+      "DirectTrajOpt",
     ]);
   });
   it("issimo entitlement → adds the three gated packages", () => {
@@ -125,7 +137,11 @@ describe("packageAllowlist (spec C entitlement → package tiers)", () => {
   });
   it("missing file / malformed [packages] → public defaults, never throws", () => {
     expect(packageAllowlist(path.join(dir, "nope.toml"), ["issimo"])).toEqual([
-      "Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt",
+      "Piccolo",
+      "Legato",
+      "Intonato",
+      "NamedTrajectories",
+      "DirectTrajOpt",
     ]);
   });
 });

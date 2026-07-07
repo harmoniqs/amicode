@@ -52,16 +52,20 @@ function mkPkgSkillRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "pkgskill-"));
   const d = path.join(root, "Piccolissimo.jl", "skills", "authoring");
   fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(d, "SKILL.md"),
-    "---\nname: piccolissimo-authoring\ndescription: author piccolissimo solves\nagents: [experimenter]\n---\n# body\n");
+  fs.writeFileSync(
+    path.join(d, "SKILL.md"),
+    "---\nname: piccolissimo-authoring\ndescription: author piccolissimo solves\nagents: [experimenter]\n---\n# body\n",
+  );
   return root;
 }
 function mkLibRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "libskill-"));
   const d = path.join(root, "atoms");
   fs.mkdirSync(d, { recursive: true });
-  fs.writeFileSync(path.join(d, "SKILL.md"),
-    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\n---\n# body\n");
+  fs.writeFileSync(
+    path.join(d, "SKILL.md"),
+    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\n---\n# body\n",
+  );
   return root;
 }
 function entitledDir(): string {
@@ -120,7 +124,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(authoring.schema_version).toBe(1);
     expect(authoring.allowlist).toEqual(["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]);
     expect(authoring.support_set).toEqual(expect.arrayContaining(["JLD2", "CairoMakie", "TOML"]));
-    expect(authoring.verify_tolerance).toBe(0.001);   // spec-20260704-113005 §6 (resolves spec-C open q1)
+    expect(authoring.verify_tolerance).toBe(0.001); // spec-20260704-113005 §6 (resolves spec-C open q1)
     // the paths point at REAL bundled assets (Task 9 shipped them)
     expect(path.isAbsolute(authoring.registry) && fs.existsSync(authoring.registry)).toBe(true);
     expect(path.isAbsolute(authoring.exemplars) && fs.existsSync(authoring.exemplars)).toBe(true);
@@ -150,8 +154,11 @@ describe("buildOpencodeConfigContent × scores", () => {
   it("grants each indexed skill's OWN dir only — NOT a library root (spec §3, least-privilege)", () => {
     const cfg = JSON.parse(
       buildOpencodeConfigContent(
-        "/abs/AGENTS.md", "/abs/templates/solve_template.jl", "/home/u/.amico/runs/default",
-        undefined, undefined,
+        "/abs/AGENTS.md",
+        "/abs/templates/solve_template.jl",
+        "/home/u/.amico/runs/default",
+        undefined,
+        undefined,
         ["/lib/atoms/SKILL.md", "/pkgs/Piccolissimo.jl/skills/authoring/SKILL.md"],
       ),
     );
@@ -204,7 +211,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("Stages, in order:"); // score compile failed → fallback interview
-    expect(agents).toContain("## Skill index");     // yet the skill index is STILL present
+    expect(agents).toContain("## Skill index"); // yet the skill index is STILL present
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
     expect(pkgNames(skills)).toContain("Piccolissimo");

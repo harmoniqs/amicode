@@ -13,8 +13,8 @@
 
 :root {
   /* color */
-  --color-accent: #FFF676;
-  --color-on-accent: #000000;      
+  --color-accent: #fff676;
+  --color-on-accent: #000000;
   --color-ok: var(--vscode-testing-iconPassed);
   --color-fail: var(--vscode-errorForeground);
   --color-run: var(--vscode-progressBar-background);

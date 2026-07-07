@@ -1,0 +1,8 @@
+# generated / vendored — never hand-formatted
+node_modules
+dist
+packages/extension/vendor
+packages/extension/exemplars
+*.vsix
+pnpm-lock.yaml
+CHANGELOG.md

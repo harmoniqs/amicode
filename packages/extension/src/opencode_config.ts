@@ -7,9 +7,21 @@ import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./sco
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
 import {
-  resolveLibrarySkills, resolvePackageSkills, buildSkillIndexSection, stageOpencodeSkills, type SkillIndexEntry,
+  resolveLibrarySkills,
+  resolvePackageSkills,
+  buildSkillIndexSection,
+  stageOpencodeSkills,
+  type SkillIndexEntry,
 } from "./scores/package_skills";
-import { resolvePersonalVault, defaultVaultsRoot, readProfileMd, readKnowledgeLines, readDemoLines, hasOnboardingCompleted, onboardingDir } from "./substrate/vault_store";
+import {
+  resolvePersonalVault,
+  defaultVaultsRoot,
+  readProfileMd,
+  readKnowledgeLines,
+  readDemoLines,
+  hasOnboardingCompleted,
+  onboardingDir,
+} from "./substrate/vault_store";
 import { buildAboutUserSection, buildRecentProblemsSection, buildReferenceDemosSection } from "./substrate/user_splice";
 
 // ============================================================================
@@ -98,7 +110,7 @@ export function resolveJuliaProject(configValue: string): string {
  *      plugin wrote (the plugin's own fs writes are host-process calls and need
  *      no grant). Must stay derivation-identical to problemsDir() in
  *      opencode-plugin/problems.ts. */
-const SCRATCH_DIR = "/tmp/amicode-work";   // matches AGENTS.md step 2/3
+const SCRATCH_DIR = "/tmp/amicode-work"; // matches AGENTS.md step 2/3
 
 /** Root of the amicode_* Problem workspaces — MUST match problemsDir() in
  *  opencode-plugin/problems.ts ($AMICODE_PROBLEMS_DIR override included, so the
@@ -164,12 +176,27 @@ export function writeAuthoringConfig(
     const registry = AUTHORING_ASSETS.registry;
     const allowlist = packageAllowlist(entitlementsTablePath(scoresRoot), ents.entitlements);
     let tolerance = 0.01;
-    let support: string[] = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"];
+    let support: string[] = [
+      "JLD2",
+      "CairoMakie",
+      "Makie",
+      "TOML",
+      "Printf",
+      "LinearAlgebra",
+      "Random",
+      "Statistics",
+      "SparseArrays",
+    ];
     try {
-      const reg = parseToml(fs.readFileSync(registry, "utf8")) as { verify_tolerance?: number; support?: { packages?: string[] } };
+      const reg = parseToml(fs.readFileSync(registry, "utf8")) as {
+        verify_tolerance?: number;
+        support?: { packages?: string[] };
+      };
       if (typeof reg.verify_tolerance === "number") tolerance = reg.verify_tolerance;
       if (Array.isArray(reg.support?.packages)) support = reg.support!.packages!;
-    } catch { /* keep defaults */ }
+    } catch {
+      /* keep defaults */
+    }
     const file = authoringFilePath();
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(
@@ -236,14 +263,14 @@ export function buildOpencodeConfigContent(
       bash: "allow",
       edit: "allow",
       external_directory: {
-        [templatePath]: "allow",            // exact template file the agent reads
-        [`${templatesDir}/**`]: "allow",    // (belt-and-suspenders for the dir)
-        [`${SCRATCH_DIR}/**`]: "allow",     // solve.jl + solve.log it writes
-        [`/private${SCRATCH_DIR}/**`]: "allow",   // macOS: /tmp → /private/tmp
-        [`${runsRoot}/**`]: "allow",        // run read-backs: FINISHED/result.toml/run.log
-        [`${problemsRoot()}/**`]: "allow",   // amicode_* problem workspaces the agent reads back
-        [`${scoresRoot}/**`]: "allow",      // score templates + memory hooks ([Why?]) the agent reads
-        ...skillGrants,                     // per-indexed-skill dirs (spec §3, least-privilege)
+        [templatePath]: "allow", // exact template file the agent reads
+        [`${templatesDir}/**`]: "allow", // (belt-and-suspenders for the dir)
+        [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
+        [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
+        [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
+        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
+        [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
+        ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
         // User-memory substrate (spec-20260705-002847 §6): the interview reads
         // problem/environment cards on demand. Read-only BY CONTRACT — vault
         // writes are distiller-only (its own config); the permission surface
@@ -253,7 +280,6 @@ export function buildOpencodeConfigContent(
     },
   });
 }
-
 
 export interface OpencodeConfigOptions {
   /** Absolute path to packages/extension/AGENTS.md to substitute + write into the project dir. */
@@ -380,7 +406,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
     const allow = packageAllowlist(entitlementsTablePath(scoresRoot), readLocalEntitlements(entsDir).entitlements);
     skillEntries = [
-      ...resolveLibrarySkills(opts.platformSkills ?? DEFAULT_PLATFORM_SKILLS, opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS),
+      ...resolveLibrarySkills(
+        opts.platformSkills ?? DEFAULT_PLATFORM_SKILLS,
+        opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS,
+      ),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
     const section = buildSkillIndexSection(skillEntries);

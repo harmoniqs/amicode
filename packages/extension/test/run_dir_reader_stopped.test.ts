@@ -34,8 +34,14 @@ describe("ingestRunDir — stopped relabel", () => {
     const runs: Array<{ status: string; fidelity?: number }> = [];
     const promotes: unknown[] = [];
     return {
-      runs, promotes,
-      sink: { iter() {}, pulse() {}, run: (r: never) => runs.push(r as never), promote: (p: never) => promotes.push(p) },
+      runs,
+      promotes,
+      sink: {
+        iter() {},
+        pulse() {},
+        run: (r: never) => runs.push(r as never),
+        promote: (p: never) => promotes.push(p),
+      },
     };
   }
 

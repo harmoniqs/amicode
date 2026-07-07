@@ -84,16 +84,14 @@ export class ChatPanel {
           // panel must not be able to sample the clipboard in the background —
           // reads only answer while the user can see the chat.
           if (!this.panel.visible) return;
-          void vscode.env.clipboard
-            .readText()
-            .then((text) =>
-              this.panel.webview.postMessage({
-                source: "amicode",
-                kind: "clipboard",
-                nonce: (msg as { nonce?: string }).nonce,
-                text,
-              }),
-            );
+          void vscode.env.clipboard.readText().then((text) =>
+            this.panel.webview.postMessage({
+              source: "amicode",
+              kind: "clipboard",
+              nonce: (msg as { nonce?: string }).nonce,
+              text,
+            }),
+          );
           return;
         }
         if (

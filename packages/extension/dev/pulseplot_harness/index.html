@@ -1,40 +1,68 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>pulseplot harness (#66)</title>
-  <link rel="stylesheet" href="../../media/brand.css" />
-  <link rel="stylesheet" href="../../media/layout.css" />
-  <style>
-    /* Stand-ins for the VS Code theme variables the webview provides.
+  <head>
+    <meta charset="UTF-8" />
+    <title>pulseplot harness (#66)</title>
+    <link rel="stylesheet" href="../../media/brand.css" />
+    <link rel="stylesheet" href="../../media/layout.css" />
+    <style>
+      /* Stand-ins for the VS Code theme variables the webview provides.
        Light values validated (dataviz six checks) against the light surface;
        brand.css's --series-* fallbacks cover dark. */
-    body { --vscode-foreground: #333; --vscode-editor-background: #fcfcfb;
-           --vscode-descriptionForeground: #717171;
-           --vscode-charts-blue: #1a85ff; --vscode-charts-orange: #a05a00;
-           --vscode-charts-purple: #8b47b7; --vscode-charts-green: #2e7d32;
-           background: var(--vscode-editor-background); color: var(--vscode-foreground);
-           font-family: system-ui, sans-serif; font-size: 13px;
-           margin: 0; padding: 16px; height: 100vh; box-sizing: border-box;
-           display: flex; flex-direction: column; gap: 12px; }
-    body.dark { --vscode-foreground: #ccc; --vscode-editor-background: #1a1a19;
-                --vscode-descriptionForeground: #9d9d9d;
-                --vscode-charts-blue: #3794ff; --vscode-charts-orange: #c17800;
-                --vscode-charts-purple: #9b6bc4; --vscode-charts-green: #4d9e51; }
-    #controls { display: flex; gap: 8px; align-items: center; }
-    #plot-host { flex: 1; display: flex; min-height: 0; }
-    #bench-out { font-family: monospace; font-size: 12px; }
-  </style>
-</head>
-<body>
-  <div id="controls">
-    <button id="play">▶ play</button>
-    <button id="clear">clear</button>
-    <button id="theme">☀/☾ theme</button>
-    <button id="bench">⏱ bench (AC8)</button>
-    <span id="bench-out"></span>
-  </div>
-  <div id="plot-host"></div>
-  <script src="./main.js"></script>
-</body>
+      body {
+        --vscode-foreground: #333;
+        --vscode-editor-background: #fcfcfb;
+        --vscode-descriptionForeground: #717171;
+        --vscode-charts-blue: #1a85ff;
+        --vscode-charts-orange: #a05a00;
+        --vscode-charts-purple: #8b47b7;
+        --vscode-charts-green: #2e7d32;
+        background: var(--vscode-editor-background);
+        color: var(--vscode-foreground);
+        font-family: system-ui, sans-serif;
+        font-size: 13px;
+        margin: 0;
+        padding: 16px;
+        height: 100vh;
+        box-sizing: border-box;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      body.dark {
+        --vscode-foreground: #ccc;
+        --vscode-editor-background: #1a1a19;
+        --vscode-descriptionForeground: #9d9d9d;
+        --vscode-charts-blue: #3794ff;
+        --vscode-charts-orange: #c17800;
+        --vscode-charts-purple: #9b6bc4;
+        --vscode-charts-green: #4d9e51;
+      }
+      #controls {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      #plot-host {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+      #bench-out {
+        font-family: monospace;
+        font-size: 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="controls">
+      <button id="play">▶ play</button>
+      <button id="clear">clear</button>
+      <button id="theme">☀/☾ theme</button>
+      <button id="bench">⏱ bench (AC8)</button>
+      <span id="bench-out"></span>
+    </div>
+    <div id="plot-host"></div>
+    <script src="./main.js"></script>
+  </body>
 </html>

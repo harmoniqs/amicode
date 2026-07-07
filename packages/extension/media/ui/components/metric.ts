@@ -3,7 +3,9 @@
 import { defineStyle } from "../style";
 import { text } from "../atoms/text";
 
-defineStyle("metric", `
+defineStyle(
+  "metric",
+  `
   .metric { background: var(--bg-box);
             border: var(--border-width) solid var(--border-color);
             border-radius: var(--border-radius); padding: var(--space-sm) var(--space-md);
@@ -14,7 +16,8 @@ defineStyle("metric", `
   /* hero = the number that matters: accent border, larger value. */
   .metric-hero { border-color: var(--border-color-hero); }
   .metric-hero .v { font-size: var(--text-hero); font-weight: 600; }
-`);
+`,
+);
 
 export type MetricVariant = "counter" | "small" | "hero";
 

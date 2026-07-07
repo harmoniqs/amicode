@@ -88,7 +88,11 @@ export function releaseLock(opsDir: string): void {
 /** Reclaim a stale lock (older than 15 min, dead pid) by renaming it aside —
  *  only one reclaimer's rename succeeds — then claiming fresh. Returns true if
  *  THIS caller now holds the lock. */
-export function reclaimIfStale(opsDir: string, pid: number, clock: { now: number; isPidAlive: (pid: number) => boolean }): boolean {
+export function reclaimIfStale(
+  opsDir: string,
+  pid: number,
+  clock: { now: number; isPidAlive: (pid: number) => boolean },
+): boolean {
   let owner: { pid: number; ts: number };
   try {
     owner = JSON.parse(fs.readFileSync(path.join(lockDir(opsDir), "owner"), "utf8"));
@@ -227,7 +231,10 @@ export async function runDrainLoop(
   handler: (job: DistillJob) => Promise<void>,
   clock: DrainClock,
 ): Promise<boolean> {
-  if (!claimLock(opsDir, clock.pid) && !reclaimIfStale(opsDir, clock.pid, { now: clock.now(), isPidAlive: clock.isPidAlive })) {
+  if (
+    !claimLock(opsDir, clock.pid) &&
+    !reclaimIfStale(opsDir, clock.pid, { now: clock.now(), isPidAlive: clock.isPidAlive })
+  ) {
     return false;
   }
   // We hold the lock.

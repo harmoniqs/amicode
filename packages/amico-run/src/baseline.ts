@@ -6,32 +6,37 @@
 // convention's `# ── FILL IN` / `# ─────` pair; an index entry may override
 // with fill_begin/fill_end regex sources. Unterminated blocks mask to EOF
 // (conservative: an attacker deleting the end marker can't unmask anything).
-import { createHash } from 'node:crypto'
+import { createHash } from "node:crypto";
 
-const DEFAULT_BEGIN = '^# ── FILL IN'
-const DEFAULT_END = '^# ─────'
+const DEFAULT_BEGIN = "^# ── FILL IN";
+const DEFAULT_END = "^# ─────";
 
 export function maskFillPoints(text: string, beginSource?: string, endSource?: string): string {
-  const begin = new RegExp(beginSource ?? DEFAULT_BEGIN)
-  const end = new RegExp(endSource ?? DEFAULT_END)
-  const out: string[] = []
-  let inside = false
-  for (const line of text.split('\n')) {
+  const begin = new RegExp(beginSource ?? DEFAULT_BEGIN);
+  const end = new RegExp(endSource ?? DEFAULT_END);
+  const out: string[] = [];
+  let inside = false;
+  for (const line of text.split("\n")) {
     if (!inside && begin.test(line)) {
-      inside = true
-      out.push(line)
-      continue
+      inside = true;
+      out.push(line);
+      continue;
     }
     if (inside && end.test(line)) {
-      inside = false
-      out.push(line)
-      continue
+      inside = false;
+      out.push(line);
+      continue;
     }
-    out.push(inside ? '#MASKED' : line)
+    out.push(inside ? "#MASKED" : line);
   }
-  return out.join('\n')
+  return out.join("\n");
 }
 
 export function maskedHash(text: string, beginSource?: string, endSource?: string): string {
-  return 'sha256:' + createHash('sha256').update(maskFillPoints(text, beginSource, endSource)).digest('hex')
+  return (
+    "sha256:" +
+    createHash("sha256")
+      .update(maskFillPoints(text, beginSource, endSource))
+      .digest("hex")
+  );
 }

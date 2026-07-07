@@ -18,9 +18,9 @@ describe("production-path entitlement allowlist (bundled assets)", () => {
   });
 
   it("bundled scores/entitlements.toml carries the [packages] table", () => {
-    const parsed = parseToml(
-      fs.readFileSync(path.join(DEFAULT_SCORES_ROOT, "entitlements.toml"), "utf8"),
-    ) as { packages?: { default?: string[]; issimo?: string[] } };
+    const parsed = parseToml(fs.readFileSync(path.join(DEFAULT_SCORES_ROOT, "entitlements.toml"), "utf8")) as {
+      packages?: { default?: string[]; issimo?: string[] };
+    };
     expect(parsed.packages?.default).toContain("Piccolo");
     expect(parsed.packages?.issimo).toContain("Piccolissimo");
   });

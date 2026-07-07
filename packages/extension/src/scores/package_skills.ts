@@ -12,7 +12,7 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
   source: "library" | "package"; // platform library (public) vs co-located package skill (gated)
-  package?: string;              // absent for library entries (spec §3)
+  package?: string; // absent for library entries (spec §3)
   name: string;
   description: string;
   path: string; // absolute SKILL.md path
@@ -42,10 +42,20 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
   for (const pkg of allowlist) {
     const skillsDir = roots
       .map((r) => path.join(expandHome(r), `${pkg}.jl`, "skills"))
-      .find((d) => { try { return fs.statSync(d).isDirectory(); } catch { return false; } });
+      .find((d) => {
+        try {
+          return fs.statSync(d).isDirectory();
+        } catch {
+          return false;
+        }
+      });
     if (!skillsDir) continue; // no repo / no skills — silently skipped (spec §9)
     let names: string[] = [];
-    try { names = fs.readdirSync(skillsDir); } catch { continue; }
+    try {
+      names = fs.readdirSync(skillsDir);
+    } catch {
+      continue;
+    }
     for (const name of names.sort()) {
       const skillPath = path.join(skillsDir, name, "SKILL.md");
       if (!fs.existsSync(skillPath)) continue;
@@ -68,9 +78,7 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
 export function resolveLibrarySkills(names: string[], roots: string[]): SkillIndexEntry[] {
   const out: SkillIndexEntry[] = [];
   for (const name of names) {
-    const skillPath = roots
-      .map((r) => path.join(expandHome(r), name, "SKILL.md"))
-      .find((p) => fs.existsSync(p));
+    const skillPath = roots.map((r) => path.join(expandHome(r), name, "SKILL.md")).find((p) => fs.existsSync(p));
     if (!skillPath) continue; // configured-but-absent — silently skipped
     try {
       const fm = readFrontmatter(skillPath);

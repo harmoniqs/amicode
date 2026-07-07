@@ -40,7 +40,8 @@ function freePort() {
  * remaining fields explain why.
  */
 export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeoutMs = 30000 } = {}) {
-  if (!existsSync(bin)) return { binMissing: true, up: false, eventOk: false, log: `vendored binary missing at ${bin}` };
+  if (!existsSync(bin))
+    return { binMissing: true, up: false, eventOk: false, log: `vendored binary missing at ${bin}` };
 
   const proj = mkdtempSync(join(tmpdir(), "amicode-probe-"));
   mkdirSync(join(proj, ".opencode"), { recursive: true });
@@ -53,15 +54,23 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
   const port = await freePort();
   let log = "";
   const child = spawn(bin, ["serve", "--port", String(port)], { cwd: proj, stdio: ["ignore", "pipe", "pipe"] });
-  const onData = (d) => { log += d; };
+  const onData = (d) => {
+    log += d;
+  };
   child.stdout.on("data", onData);
   child.stderr.on("data", onData);
 
   const cleanup = () => {
-    try { child.kill("SIGTERM"); } catch {}
+    try {
+      child.kill("SIGTERM");
+    } catch {}
     // .unref() the SIGKILL fallback so it can't hold `node healthcheck.mjs` open
     // for 3s after it's otherwise done (the child usually exits on SIGTERM).
-    setTimeout(() => { try { child.kill("SIGKILL"); } catch {} }, 3000).unref();
+    setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+    }, 3000).unref();
   };
 
   try {
@@ -71,13 +80,17 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
       try {
         const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(500) });
         if (r.status < 500) up = true;
-      } catch { /* not up yet */ }
+      } catch {
+        /* not up yet */
+      }
       if (!up) await new Promise((r) => setTimeout(r, 200));
     }
     if (!up) return { up: false, eventOk: false, log };
 
     // /event gate (headers only; SSE body streaming doesn't block us).
-    let eventStatus, eventCtype, eventOk = false;
+    let eventStatus,
+      eventCtype,
+      eventOk = false;
     try {
       const ev = await fetch(`http://127.0.0.1:${port}/event`, { signal: AbortSignal.timeout(10000) });
       eventStatus = ev.status;

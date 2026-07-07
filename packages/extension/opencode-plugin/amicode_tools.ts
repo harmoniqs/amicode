@@ -186,13 +186,11 @@ export const AmicodeTools = async (_input: unknown) => ({
           items: { type: "string" },
           description:
             "Optional one-per-option short qualifier rendered dimly under each button " +
-            "(e.g. \"fully supported end-to-end\"). Same length as options; omit for none.",
+            '(e.g. "fully supported end-to-end"). Same length as options; omit for none.',
         },
       },
       async execute(a: { question: string; options: string[]; details?: string[] | null }) {
-        const opts = Array.isArray(a.options)
-          ? a.options.filter((o) => typeof o === "string" && o.trim() !== "")
-          : [];
+        const opts = Array.isArray(a.options) ? a.options.filter((o) => typeof o === "string" && o.trim() !== "") : [];
         if (!a.question || a.question.trim() === "") return "Cannot ask: empty question.";
         if (opts.length < 2 || opts.length > 6) return "Cannot ask: need 2-6 non-empty options.";
         if (Array.isArray(a.details) && a.details.length > 0 && a.details.length !== opts.length)
@@ -221,7 +219,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
         name: {
           type: "string",
-          description: "For create/open: the problem name (or slug) to create/find. For rename/archive: the target slug.",
+          description:
+            "For create/open: the problem name (or slug) to create/find. For rename/archive: the target slug.",
         },
         new_name: {
           type: ["string", "null"],
@@ -381,7 +380,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         params: {
           type: ["object", "null"],
           additionalProperties: { type: "number" },
-          description: "Extra named numeric model parameters to merge (e.g. {\"T1\": 80}); null for none.",
+          description: 'Extra named numeric model parameters to merge (e.g. {"T1": 80}); null for none.',
         },
       },
       async execute(a: { levels?: number | null; drive_max?: number | null; params?: Record<string, number> | null }) {
@@ -421,22 +420,22 @@ export const AmicodeTools = async (_input: unknown) => ({
       args: {
         problem: {
           type: "string",
-          description: "Problem kind, e.g. \"gate_synthesis\", \"state_prep\", \"min_time\".",
+          description: 'Problem kind, e.g. "gate_synthesis", "state_prep", "min_time".',
         },
         target: {
           type: "string",
-          description: "The target, e.g. \"X\", \"H\", \"sqrt(X)\", or a description of the unitary/state.",
+          description: 'The target, e.g. "X", "H", "sqrt(X)", or a description of the unitary/state.',
         },
         objective: {
           type: ["string", "null"],
-          description: "Objective; null for the default \"unitary infidelity\".",
+          description: 'Objective; null for the default "unitary infidelity".',
         },
         constraints: {
           // Optional nullable array — see the details field above. legacyJsonSchema
           // strips "null" → optional singular-typed array (provider-agnostic).
           type: ["array", "null"],
           items: { type: "string" },
-          description: "Constraint list; omit for the default [\"amplitude bound (drive_max)\"].",
+          description: 'Constraint list; omit for the default ["amplitude bound (drive_max)"].',
         },
       },
       async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
@@ -452,9 +451,7 @@ export const AmicodeTools = async (_input: unknown) => ({
           target: a.target,
           objective: given(a.objective) ? a.objective : "unitary infidelity",
           constraints:
-            Array.isArray(a.constraints) && a.constraints.length > 0
-              ? a.constraints
-              : ["amplitude bound (drive_max)"],
+            Array.isArray(a.constraints) && a.constraints.length > 0 ? a.constraints : ["amplitude bound (drive_max)"],
         };
         if (existing?.solve) entity.solve = existing.solve;
         const problems = validateFormulation(entity);
@@ -485,14 +482,17 @@ export const AmicodeTools = async (_input: unknown) => ({
         T: { type: ["number", "null"], description: "Gate time T in ns; null if not applicable." },
         N: { type: ["integer", "null"], description: "Number of timesteps N; null if not applicable." },
         max_iter: { type: ["integer", "null"], description: "Solver max iterations; null for the default." },
-        integrator: { type: ["string", "null"], description: "Integrator name (e.g. \"MagnusGL4\"); null for the default." },
+        integrator: {
+          type: ["string", "null"],
+          description: 'Integrator name (e.g. "MagnusGL4"); null for the default.',
+        },
         tier: {
           type: ["string", "null"],
-          description: "Authoring tier: \"vetted\" | \"composed\" | \"free\" (spec C); null if unknown.",
+          description: 'Authoring tier: "vetted" | "composed" | "free" (spec C); null if unknown.',
         },
         note: {
           type: ["string", "null"],
-          description: "Short free-text note, e.g. \"X gate, T=10ns, N=50, defaults\"; null for none.",
+          description: 'Short free-text note, e.g. "X gate, T=10ns, N=50, defaults"; null for none.',
         },
       },
       async execute(a: {
@@ -569,7 +569,7 @@ export const AmicodeTools = async (_input: unknown) => ({
     amicode_verify: {
       description:
         "Record the free-tier re-rollout VERIFICATION outcome on the Run entity (spec C). " +
-        "Call this AFTER a `tier=\"free\"` solve finishes: amico-run runs the fixed re-rollout " +
+        'Call this AFTER a `tier="free"` solve finishes: amico-run runs the fixed re-rollout ' +
         "harness and writes verification.toml; read it and pass agree + the two fidelities here. " +
         "Bookkeeping AFTER the fact — no stage gate (a verification record must never be lost). " +
         "Promotion of a free run is blocked until agree = true.",
@@ -651,9 +651,10 @@ export const AmicodeTools = async (_input: unknown) => ({
         } catch (err) {
           return `Cannot record device session: ${err instanceof Error ? err.message : String(err)}`;
         }
-        const warn = stub.pulse_ref || stub.run_dir
-          ? ""
-          : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
+        const warn =
+          stub.pulse_ref || stub.run_dir
+            ? ""
+            : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
         return (
           `Hardware intent noted for "${meta.slug}" — pending your sign-off.${warn}\n\n` +
           `The send-to-device gate, when wired: (1) automated checks — fidelity ≥ threshold, ` +
@@ -672,8 +673,7 @@ export const AmicodeTools = async (_input: unknown) => ({
       args: {
         device_session_ref: {
           type: ["string", "null"],
-          description:
-            "Path to the recorded device_session.toml; null to auto-reference the recorded one if present.",
+          description: "Path to the recorded device_session.toml; null to auto-reference the recorded one if present.",
         },
         note: {
           type: ["string", "null"],
@@ -782,11 +782,20 @@ export const AmicodeTools = async (_input: unknown) => ({
         param: { type: "string", description: "parameter name, e.g. N | T | levels | drive_max | warm_start" },
         value: { type: ["string", "number", "boolean", "null"], description: "recommended value (propose)" },
         confidence: { type: ["string", "null"], description: "high | medium | low (propose)" },
-        provenance: { type: ["array", "null"], description: "[{source, ref, note}] (propose) — cite where it came from" },
+        provenance: {
+          type: ["array", "null"],
+          description: "[{source, ref, note}] (propose) — cite where it came from",
+        },
         alternatives: { type: ["array", "null"], description: "optional [{value, note}] considered (propose)" },
         outcome: { type: ["string", "null"], description: "accepted | overridden (outcome)" },
-        applied_value: { type: ["string", "number", "boolean", "null"], description: "the value actually applied (outcome)" },
-        auto_accepted: { type: ["boolean", "null"], description: "true when Veloce (L2) auto-accepted this without asking (propose)" },
+        applied_value: {
+          type: ["string", "number", "boolean", "null"],
+          description: "the value actually applied (outcome)",
+        },
+        auto_accepted: {
+          type: ["boolean", "null"],
+          description: "true when Veloce (L2) auto-accepted this without asking (propose)",
+        },
       },
       async execute(a: {
         action: string;
@@ -802,7 +811,8 @@ export const AmicodeTools = async (_input: unknown) => ({
       }) {
         try {
           const slug = readActiveSlug();
-          if (!slug) return "No active problem yet — recommendation not recorded (recommendations begin at the problem stage).";
+          if (!slug)
+            return "No active problem yet — recommendation not recorded (recommendations begin at the problem stage).";
           const key = `${a.stage ?? "?"}/${a.param ?? "?"}`;
           if (a.action === "outcome") {
             const seq = appendEvent(slug, {
@@ -831,9 +841,10 @@ export const AmicodeTools = async (_input: unknown) => ({
             },
             source: { tool: "amicode_recommend", stage: a.stage },
           });
-          const prov = Array.isArray(a.provenance) && a.provenance.length
-            ? (a.provenance[0] as { source?: string }).source ?? "?"
-            : "none";
+          const prov =
+            Array.isArray(a.provenance) && a.provenance.length
+              ? ((a.provenance[0] as { source?: string }).source ?? "?")
+              : "none";
           const auto = a.auto_accepted ? " ⚡auto" : "";
           return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].`;
         } catch (err) {
@@ -870,7 +881,9 @@ export const AmicodeTools = async (_input: unknown) => ({
                 const e = JSON.parse(line);
                 if (e.entity === "veloce" && e.diff?.mode) mode = e.diff.mode;
               }
-            } catch { /* no events yet */ }
+            } catch {
+              /* no events yet */
+            }
             return `Veloce is ${mode}.`;
           }
           const mode = a.action === "on" ? "on" : "off";

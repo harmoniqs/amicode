@@ -11,7 +11,9 @@
 import { defineStyle } from "../style";
 import { text } from "../atoms/text";
 
-defineStyle("pulseplot", `
+defineStyle(
+  "pulseplot",
+  `
   .pulseplot { display: flex; flex-direction: column; gap: var(--space-xs);
                flex: 1 1 240px; min-width: 0; min-height: 240px;
                background: var(--bg-plot);
@@ -30,15 +32,25 @@ defineStyle("pulseplot", `
   .pulseplot.pp-empty .pp-panel, .pulseplot.pp-empty .pp-axis { display: none; }
   .pulseplot .pp-hint { place-self: center; margin: auto; opacity: 0.55; font-style: italic; }
   .pulseplot:not(.pp-empty) .pp-hint { display: none; }
-`);
+`,
+);
 
-const MAX_KNOTS = 512;   // above this, stride-decimate before rendering
-const W = 1000;          // viewBox coordinate space (preserveAspectRatio=none)
+const MAX_KNOTS = 512; // above this, stride-decimate before rendering
+const W = 1000; // viewBox coordinate space (preserveAspectRatio=none)
 const H = 100;
-const PAD = 0.08;        // y-domain padding around the bounds band
+const PAD = 0.08; // y-domain padding around the bounds band
 
-export interface PulsePlotMeta { drives: number; knots: number; labels: string[]; bounds: [number, number][] }
-export interface PulsePlotRecord { iter: number; dt: number; values: number[][] }
+export interface PulsePlotMeta {
+  drives: number;
+  knots: number;
+  labels: string[];
+  bounds: [number, number][];
+}
+export interface PulsePlotRecord {
+  iter: number;
+  dt: number;
+  values: number[][];
+}
 
 interface Panel {
   el: HTMLDivElement;
@@ -101,15 +113,18 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
       const y = yScale(lo, hi);
       const band = svgEl("rect");
       band.setAttribute("class", "pp-band");
-      band.setAttribute("x", "0"); band.setAttribute("width", String(W));
+      band.setAttribute("x", "0");
+      band.setAttribute("width", String(W));
       band.setAttribute("y", String(y(hi)));
       band.setAttribute("height", String(y(lo) - y(hi)));
 
       const mkLine = (cls: string, v: number): SVGLineElement => {
         const line = svgEl("line");
         line.setAttribute("class", cls);
-        line.setAttribute("x1", "0"); line.setAttribute("x2", String(W));
-        line.setAttribute("y1", String(y(v))); line.setAttribute("y2", String(y(v)));
+        line.setAttribute("x1", "0");
+        line.setAttribute("x2", String(W));
+        line.setAttribute("y1", String(y(v)));
+        line.setAttribute("y2", String(y(v)));
         return line;
       };
       const limits: [SVGLineElement, SVGLineElement] = [mkLine("pp-limit", hi), mkLine("pp-limit", lo)];
@@ -124,7 +139,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
       el.append(panel);
       return { el: panel, svg, step, band, limits, zero, bounds: m.bounds[i] };
     });
-    el.append(axis);   // shared time axis, bottom panel only
+    el.append(axis); // shared time axis, bottom panel only
   }
 
   function update(r: PulsePlotRecord): void {
@@ -156,7 +171,8 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
 /** y-scale: bounds band → viewBox with PAD headroom; non-finite clamps to edge. */
 function yScale(lo: number, hi: number): (v: number) => number {
   const pad = PAD * (hi - lo || 1);
-  const min = lo - pad, max = hi + pad;
+  const min = lo - pad,
+    max = hi + pad;
   return (v) => {
     const t = Number.isFinite(v) ? (v - min) / (max - min) : v > 0 ? 1 : 0;
     return H - Math.min(1, Math.max(0, t)) * H;

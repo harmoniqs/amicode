@@ -72,12 +72,32 @@ describe("overture routing predicate (spec §3)", () => {
 
 describe("compileChainedScore / chainManifest (unit)", () => {
   const head: Score = {
-    manifest: { type: "score", schema_version: 1, id: "overture", version: 1, derived_from: null, name: "O", outcome: "", audience: [], stages: [{ id: "identity" }, { id: "handoff" }] } as never,
+    manifest: {
+      type: "score",
+      schema_version: 1,
+      id: "overture",
+      version: 1,
+      derived_from: null,
+      name: "O",
+      outcome: "",
+      audience: [],
+      stages: [{ id: "identity" }, { id: "handoff" }],
+    } as never,
     body: "OVERTURE BODY",
     dir: "/scores/overture",
   };
   const tail: Score = {
-    manifest: { type: "score", schema_version: 1, id: "pulse-designer", version: 3, derived_from: null, name: "P", outcome: "", audience: [], stages: [{ id: "platform" }, { id: "solve", template: "templates/solve.jl" }] } as never,
+    manifest: {
+      type: "score",
+      schema_version: 1,
+      id: "pulse-designer",
+      version: 3,
+      derived_from: null,
+      name: "P",
+      outcome: "",
+      audience: [],
+      stages: [{ id: "platform" }, { id: "solve", template: "templates/solve.jl" }],
+    } as never,
     body: "PULSE BODY",
     dir: "/scores/pulse-designer",
   };

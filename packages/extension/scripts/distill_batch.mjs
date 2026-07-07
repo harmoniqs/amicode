@@ -66,7 +66,8 @@ function distillerConfig() {
     agent: {
       distiller: {
         description: "Amico's background memory distiller (headless; no subagents)",
-        prompt: "You are Amico's distiller. Follow the distiller instructions exactly. Your input is one JSON job object. Work silently; never spawn subagents; finish with a one-line summary.",
+        prompt:
+          "You are Amico's distiller. Follow the distiller instructions exactly. Your input is one JSON job object. Work silently; never spawn subagents; finish with a one-line summary.",
         model: MODEL,
       },
     },
@@ -115,7 +116,14 @@ function workspaceHygiene() {
         if (e.entity === "formulation" && e.diff?.target?.to) target = e.diff.target.to;
       } catch {}
     }
-    if (target && !ws.toLowerCase().includes(String(target).toLowerCase().replace(/[^a-z0-9]/g, "")))
+    if (
+      target &&
+      !ws.toLowerCase().includes(
+        String(target)
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, ""),
+      )
+    )
       flags.push(`${ws} → recorded target "${target}"`);
   }
   return flags;
@@ -157,7 +165,9 @@ console.log(`model:      ${MODEL}`);
 console.log(`runs w/ result.toml: ${runs.length}   substantive sessions: ${sessions.length}`);
 console.log(`workspace hygiene flags (${hygiene.length}):`);
 for (const f of hygiene) console.log(`   ⚠ ${f}`);
-console.log(`opencode server alive: ${serverAlive}  → DB archive step ${serverAlive ? "SKIPPED (deferred to a no-server window)" : "eligible"}`);
+console.log(
+  `opencode server alive: ${serverAlive}  → DB archive step ${serverAlive ? "SKIPPED (deferred to a no-server window)" : "eligible"}`,
+);
 
 if (has("--dry-run")) {
   console.log("\n[dry-run] no distills spawned.");
@@ -169,7 +179,8 @@ let ok = 0,
 if (has("--runs-only") || has("--all")) {
   const sel = runs.slice(0, limit === Infinity ? runs.length : limit);
   console.log(`\n[runs] distilling ${sel.length} run(s):`);
-  for (const r of sel) (distill({ kind: "run", run_id: r, vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, r) ? ok++ : fail++);
+  for (const r of sel)
+    distill({ kind: "run", run_id: r, vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, r) ? ok++ : fail++;
 }
 if (has("--demos-ingest")) {
   const DEMOS = path.join(HOME, "harmoniqs", "demos");
@@ -179,12 +190,17 @@ if (has("--demos-ingest")) {
   const sel = dirs.slice(0, limit === Infinity ? dirs.length : limit);
   console.log(`\n[demos] ingesting ${sel.length} demo(s) from ${DEMOS}:`);
   for (const d of sel)
-    (distill({ kind: "demo", demo_dir: path.join(DEMOS, d), vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, d) ? ok++ : fail++);
+    distill({ kind: "demo", demo_dir: path.join(DEMOS, d), vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, d)
+      ? ok++
+      : fail++;
 }
 if (has("--sweeps") || has("--all")) {
   const sel = sessions.slice(0, limit === Infinity ? sessions.length : limit);
   console.log(`\n[sweeps] distilling ${sel.length} session(s):`);
-  for (const s of sel) (distill({ kind: "sweep", session_ids: [s], vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, s.slice(0, 20)) ? ok++ : fail++);
+  for (const s of sel)
+    distill({ kind: "sweep", session_ids: [s], vault: VAULT, ops: OPS, runs_root: RUNS_ROOT }, s.slice(0, 20))
+      ? ok++
+      : fail++;
 }
 
 // Summary report (spec §5 step 5) — stdout + a vault notes/ file.
@@ -193,7 +209,8 @@ const report = [
   `# Batch retro-ingest report — ${stamp}`,
   ``,
   `- runs distilled ok: ${ok}, failed: ${fail}`,
-  `- substantive sessions seen: ${sessions.length}` + (has("--sweeps") || has("--all") ? "" : " (sweeps NOT run this pass)"),
+  `- substantive sessions seen: ${sessions.length}` +
+    (has("--sweeps") || has("--all") ? "" : " (sweeps NOT run this pass)"),
   `- workspace hygiene flags: ${hygiene.length}`,
   ...hygiene.map((f) => `   - ⚠ ${f}`),
   `- DB archive of empty sessions: ${serverAlive ? "DEFERRED (server alive) — run with server stopped to sweep empties + agent='distiller' rows" : "eligible"}`,

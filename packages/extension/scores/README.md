@@ -22,34 +22,35 @@ Body = prose (per-stage narration, physics, defaults rationale, off-path guidanc
 ```yaml
 ---
 type: score
-schema_version: 1          # supported: 1; unknown FIELDS are ignored (additive policy)
-id: my-score               # directory name must match
-version: 1                 # bump on revision; in-flight sessions stay pinned to theirs
-derived_from: null         # or a sibling score id — lineage for forks
+schema_version: 1 # supported: 1; unknown FIELDS are ignored (additive policy)
+id: my-score # directory name must match
+version: 1 # bump on revision; in-flight sessions stay pinned to theirs
+derived_from: null # or a sibling score id — lineage for forks
 name: "Shown on the entry card"
 outcome: "What the user will HAVE at the end"
 audience: [algorithms, no-physics-assumed]
 duration_estimate: "60–90 min"
-device: {backend: pasqal, qpu_runnable: true, emulators: [emu-mps]}   # optional
-entitlements: []           # empty/absent = public; ids must be in entitlements.toml
+device: { backend: pasqal, qpu_runnable: true, emulators: [emu-mps] } # optional
+entitlements: [] # empty/absent = public; ids must be in entitlements.toml
 stages:
-  - id: application        # ordered list; loopbacks OK, no DAGs (v1)
-    emits: [circuit]       # ONLY workflow-frames entities: circuit, system,
-                           # formulation, pulse, run, device_session, knowledge
+  - id: application # ordered list; loopbacks OK, no DAGs (v1)
+    emits:
+      [circuit] # ONLY workflow-frames entities: circuit, system,
+      # formulation, pulse, run, device_session, knowledge
     questions:
       - id: graph
         prompt: "Which graph?"
-        choices: [sample, upload]   # choices → rendered as amicode_ask buttons
-        default: sample             # must be one of choices; marked "(recommended)"
+        choices: [sample, upload] # choices → rendered as amicode_ask buttons
+        default: sample # must be one of choices; marked "(recommended)"
         skip_if: "mode == simulate" # optional
-        memory_hooks: [some-slug]   # optional; must resolve to memory/<slug>.md
+        memory_hooks: [some-slug] # optional; must resolve to memory/<slug>.md
   - id: solve
     emits: [run, pulse]
-    executor: cloud-altissimo      # or local
-    template: templates/solve.jl   # resolved relative to the score dir; must exist
+    executor: cloud-altissimo # or local
+    template: templates/solve.jl # resolved relative to the score dir; must exist
   - id: device-qpu
     emits: [device_session]
-    gate: heavy                    # light|heavy — checks must pass BEFORE entering
+    gate: heavy # light|heavy — checks must pass BEFORE entering
     optional: true
 ---
 [Amico's voice for this score — markdown + LaTeX, carried verbatim into the prompt]

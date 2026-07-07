@@ -8,7 +8,12 @@
   "required": ["schema_version", "fidelity", "iterations"],
   "properties": {
     "schema_version": { "enum": ["1"] },
-    "fidelity": { "type": "number", "minimum": 0, "maximum": 1.0001, "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)" },
+    "fidelity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1.0001,
+      "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)"
+    },
     "iterations": { "type": "integer", "minimum": 0 },
     "wall_seconds": { "type": "number", "minimum": 0 },
     "pulse_kind": {
@@ -20,11 +25,13 @@
       "description": "Which convention `fidelity` reports. Absent = fixed. free_phase requires free_phases + subsystem_levels."
     },
     "free_phases": {
-      "type": "array", "items": { "type": "number" },
+      "type": "array",
+      "items": { "type": "number" },
       "description": "Optimized virtual-Z phases (rad), one per subsystem in order; applied post-hoc by the harness — never in dynamics."
     },
     "subsystem_levels": {
-      "type": "array", "items": { "type": "integer", "minimum": 2 },
+      "type": "array",
+      "items": { "type": "integer", "minimum": 2 },
       "description": "Subsystem dimensions for the phase-operator construction."
     },
     "params": {
