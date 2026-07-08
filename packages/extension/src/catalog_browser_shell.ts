@@ -1,4 +1,4 @@
-// Catalog browser shell (#48, UX3 flat) — a seam-prototype panel, opened on
+// Catalog browser shell (#48, UX3) — a seam-prototype panel, opened on
 // demand via the command palette (not a persistent view). Fed entirely by
 // baked fixtures in the webview entry — no RunsManager/CatalogStore. This
 // module owns only the security/wiring shell: CSP, nonce, and the
@@ -18,7 +18,7 @@ export function registerCatalogBrowser(ctx: vscode.ExtensionContext): void {
       }
       panel = vscode.window.createWebviewPanel(
         "amicode.catalogBrowser",
-        "Amicode: Pulse Catalog (Prototype, flat)",
+        "Amicode: Pulse Catalog (Prototype)",
         vscode.ViewColumn.One,
         {
           enableScripts: true,

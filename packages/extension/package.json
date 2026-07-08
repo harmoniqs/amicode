@@ -79,7 +79,7 @@
       },
       {
         "command": "amicode.openCatalogBrowser",
-        "title": "Amicode: Open Pulse Catalog Browser (Prototype, flat)"
+        "title": "Amicode: Open Pulse Catalog Browser (Prototype)"
       },
       {
         "command": "amicode.selectRun",
