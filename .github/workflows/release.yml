@@ -1,0 +1,53 @@
+# Tag-triggered VSIX release. Push a `v*` tag → full package chain (amico-run +
+# extension + exemplars + vendored opencode via fetch:opencode), channel-gate
+# check on the vendored binary, packaging-manifest gate, then a GitHub release
+# with amicode.vsix attached.
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to package and release"
+        required: true
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+permissions:
+  contents: write
+
+jobs:
+  vsix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter amicode-v2 run package # amico-run + build + exemplars + fetch:opencode + vsce
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork release fetch (see ci.yml)
+      - name: Gate check — vendored binary ships the amicode UI ON
+        run: |
+          set -euo pipefail
+          BIN=packages/extension/vendor/opencode/linux-x64/opencode
+          cat packages/extension/vendor/opencode/linux-x64/.source
+          # minified shape: `...general?.newLayoutDesigns,<VAR>)` with `<VAR>=!0` (on) / `=!1` (off)
+          VAR=$(grep -aoh 'newLayoutDesigns,[A-Za-z$_]\{1,8\})' "$BIN" | head -1 | sed 's/newLayoutDesigns,//; s/)//')
+          test -n "$VAR" || { echo "FAIL: gate pattern not found (minifier drift? update this check)"; exit 1; }
+          grep -aq "[^A-Za-z0-9_\$]${VAR}=!0" "$BIN" \
+            || { echo "FAIL: channel gate OFF (${VAR}=!1) — vendored binary hides the amicode UI"; exit 1; }
+          echo "OK: gate ON (${VAR}=!0)"
+      - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          gh release create "$TAG" --title "amicode $TAG" --generate-notes \
+            packages/extension/amicode.vsix
