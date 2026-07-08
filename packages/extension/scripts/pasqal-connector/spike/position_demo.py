@@ -126,6 +126,7 @@ def sweep(pulse_dir: str = ".") -> None:
     fig.tight_layout()
     fig.savefig("position_sweep.png", facecolor=SURFACE)
     print("\nwrote position_sweep.png")
+    print("AMICODE_IMAGE: position_sweep.png")
 
 
 def visuals(pulse_path: str) -> None:
@@ -145,7 +146,9 @@ def visuals(pulse_path: str) -> None:
 
     seq.draw(mode="input", fig_name="sequence.png", show=False)
     plt.close("all")
-    print(f"wrote register.png (blockade radius {radius:.2f} µm) and sequence.png")
+    print(f"wrote register.png (blockade radius {radius:.2f} µm) and sequence_pulses.png")
+    print("AMICODE_IMAGE: register.png")
+    print("AMICODE_IMAGE: sequence_pulses.png")
 
 
 if __name__ == "__main__":

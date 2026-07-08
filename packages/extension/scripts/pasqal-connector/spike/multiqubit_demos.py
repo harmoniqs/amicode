@@ -109,6 +109,8 @@ def w_geometry(pulse_dir: str = ".") -> None:
                       f"{name} — all pairs blockaded" if name == "triangle"
                       else f"{name} — 10 µm ends NOT blockaded")
     print("\nwrote register_triangle.png, register_chain.png")
+    print("AMICODE_IMAGE: register_triangle.png")
+    print("AMICODE_IMAGE: register_chain.png")
 
 
 def packing(pulse_dir: str = ".") -> None:
@@ -166,6 +168,8 @@ def packing(pulse_dir: str = ".") -> None:
     draw_register([[0.0, 0.0], [SIDE, 0.0], [0.0, tight], [SIDE, tight]],
                   "register_pairs.png", f"Two Bell pairs, gap L = {tight:g} µm")
     print("\nwrote pair_packing.png, register_pairs.png")
+    print("AMICODE_IMAGE: pair_packing.png")
+    print("AMICODE_IMAGE: register_pairs.png")
 
 
 if __name__ == "__main__":
