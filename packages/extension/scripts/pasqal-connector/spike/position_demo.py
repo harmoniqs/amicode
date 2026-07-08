@@ -23,10 +23,7 @@ import re
 import sys
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import demo_style as style
 import numpy as np
 import pulser
 from pulser_simulation import QutipEmulator
@@ -35,13 +32,6 @@ from pulse_contract import build_sequence, load_knots
 
 DEVICE = pulser.AnalogDevice
 CHANNEL = DEVICE.channels["rydberg_global"]
-
-# Categorical pair, validated (dataviz six checks, light surface):
-COLOR_OPTIMIZED = "#2F5DA8"
-COLOR_NAIVE = "#B15C39"
-SURFACE = "#fcfcfb"
-INK = "#333333"
-INK_MUTED = "#767676"
 
 BELL = np.zeros(4, complex)
 BELL[1] = BELL[2] = 1 / np.sqrt(2)  # (|gr⟩+|rg⟩)/√2; basis (rr, rg, gr, gg)
@@ -89,63 +79,59 @@ def sweep(pulse_dir: str = ".") -> None:
         solve_col = f"{sf:8.4f}" if sf is not None else ""
         print(f"{d:7.1f}  {ratio:6.2f}  {nf:8.4f}  {opt_col}  {solve_col}")
 
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=160)
-    fig.patch.set_facecolor(SURFACE)
-    ax.set_facecolor(SURFACE)
+    fig, ax = style.figure()
 
     # Blockade-regime context bands (annotation, not a second axis)
-    ax.axvspan(5.0, 5.9, color="#2F5DA8", alpha=0.05, lw=0)
-    ax.text(5.42, 0.315, "moderate blockade", fontsize=8.5, color=INK_MUTED, ha="center")
-    ax.text(7.55, 0.315, "blockade too weak", fontsize=8.5, color=INK_MUTED, ha="center")
+    ax.axvspan(5.0, 5.9, color=style.BLUE, alpha=0.045, lw=0)
+    ax.text(5.42, 0.315, "moderate blockade", fontsize=8.5, color=style.INK_MUTED, ha="center")
+    ax.text(7.55, 0.315, "blockade too weak", fontsize=8.5, color=style.INK_MUTED, ha="center")
 
-    ax.plot(*zip(*naive), color=COLOR_NAIVE, lw=2, marker="o", ms=6,
-            label="naive blockade-π protocol")
+    nx, ny = zip(*naive)
+    style.series(ax, nx, ny, style.RUST, label="naive π")
     if optimized:
         pts = sorted((d, f) for d, f, _ in optimized)
-        ax.plot(*zip(*pts), color=COLOR_OPTIMIZED, lw=2, marker="o", ms=6,
-                label="Piccolo-optimized pulse")
-        # Best position: max fidelity, ties broken toward the SMALLEST spacing
-        # (5.0 and 5.5 µm both re-simulate at ≈1 to float precision).
+        ox, oy = zip(*pts)
+        style.series(ax, ox, oy, style.BLUE, label="optimized")
         best_d, best_f = max(pts, key=lambda p: (round(p[1], 6), -p[0]))
         infid = max(1 - best_f, 1e-9)
         ax.annotate(f"best position: {best_d:g} µm\n1 − F = {infid:.1e}",
-                    xy=(best_d, best_f), xytext=(best_d + 0.12, 0.855),
-                    fontsize=9, color=COLOR_OPTIMIZED,
-                    arrowprops={"arrowstyle": "-", "color": COLOR_OPTIMIZED, "lw": 1})
+                    xy=(best_d, best_f), xytext=(best_d + 0.42, 0.845),
+                    fontsize=9, color=style.BLUE,
+                    arrowprops={"arrowstyle": "-", "color": style.BLUE, "lw": 0.9})
 
-    ax.set_xlabel("atom spacing d (µm)", color=INK)
-    ax.set_ylabel("Bell-state fidelity  |⟨Φ|ψ⟩|²", color=INK)
-    ax.set_title("Atom positioning matters — and pulse optimization moves the curve",
-                 color=INK, fontsize=11.5, pad=12)
-    ax.set_ylim(0.28, 1.03)
-    ax.grid(True, color="#e6e6e3", lw=0.7)
-    ax.tick_params(colors=INK_MUTED)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.legend(frameon=False, loc="upper right", fontsize=9)
-    fig.tight_layout()
-    fig.savefig("position_sweep.png", facecolor=SURFACE)
+    ax.set_xlabel("atom spacing d (µm)", fontsize=9)
+    ax.set_ylabel(r"Bell-state fidelity  $|\langle\Phi|\psi\rangle|^2$", fontsize=9)
+    ax.set_xlim(4.8, 8.7)
+    ax.set_ylim(0.28, 1.04)
+    style.polish(ax)
+    style.headline(fig, "Atom positioning matters",
+                   "Bell-state preparation on AnalogDevice — naive blockade-π vs Piccolo-optimized pulse, 200 ns budget")
+    style.footer(fig)
+    fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
+    fig.savefig("position_sweep.png")
     print("\nwrote position_sweep.png")
     print("AMICODE_IMAGE: position_sweep.png")
 
 
 def visuals(pulse_path: str) -> None:
     data = load_knots(pulse_path)
-    seq = build_sequence(data)
+    build_sequence(data)  # contract validation before we draw anything
 
-    # Register with blockade radius at the pulse's peak amplitude
     omega_peak = max(data["amplitude"])
     radius = DEVICE.rydberg_blockade_radius(omega_peak)
-    seq.register.draw(
-        blockade_radius=radius, draw_half_radius=True, draw_graph=True,
-        show=False, custom_ax=None,
+    atoms = data.get("atoms", [[0.0, 0.0]])
+    spacing = data.get("atoms", [[0, 0], [5, 0]])
+    d = abs(spacing[-1][0] - spacing[0][0]) if len(atoms) > 1 else 0.0
+    style.draw_register(
+        atoms, "register.png", "The register",
+        f"two atoms at {d:g} µm — blockade radius {radius:.1f} µm at Ω_peak",
+        radius,
     )
-    plt.gcf().suptitle(f"Register — blockade radius {radius:.1f} µm at Ω_peak", fontsize=10)
-    plt.savefig("register.png", dpi=160, bbox_inches="tight")
-    plt.close("all")
-
-    seq.draw(mode="input", fig_name="sequence.png", show=False)
-    plt.close("all")
+    style.draw_waveforms(
+        data, "sequence_pulses.png", "The optimized pulse",
+        f"global rydberg channel — {data['n_knots']} knots on the {data['dt_ns']:g} ns clock, "
+        f"solve 1 − F = {max(1 - data.get('fidelity', 0), 1e-9):.1e}",
+    )
     print(f"wrote register.png (blockade radius {radius:.2f} µm) and sequence_pulses.png")
     print("AMICODE_IMAGE: register.png")
     print("AMICODE_IMAGE: sequence_pulses.png")

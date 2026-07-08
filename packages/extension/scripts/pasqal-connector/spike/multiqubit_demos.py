@@ -27,10 +27,7 @@ import re
 import sys
 from pathlib import Path
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import demo_style as style
 import numpy as np
 import pulser
 from pulser_simulation import QutipEmulator
@@ -39,12 +36,6 @@ from pulse_contract import build_sequence, load_knots
 
 DEVICE = pulser.AnalogDevice
 CHANNEL = DEVICE.channels["rydberg_global"]
-
-COLOR_OPTIMIZED = "#2F5DA8"
-COLOR_NAIVE = "#B15C39"
-SURFACE = "#fcfcfb"
-INK = "#333333"
-INK_MUTED = "#767676"
 
 SIDE = 5.0
 TRIANGLE = [[0.0, 0.0], [SIDE, 0.0], [SIDE / 2, SIDE * np.sqrt(3) / 2]]
@@ -84,15 +75,6 @@ def naive_sequence(atoms, enhancement: float, omega_frac: float = 0.9):
     return seq
 
 
-def draw_register(atoms, filename: str, title: str) -> None:
-    register = pulser.Register.from_coordinates([tuple(a) for a in atoms], prefix="q")
-    radius = DEVICE.rydberg_blockade_radius(0.9 * CHANNEL.max_amp)
-    register.draw(blockade_radius=radius, draw_half_radius=True, draw_graph=True, show=False)
-    plt.gcf().suptitle(title, fontsize=10)
-    plt.savefig(filename, dpi=160, bbox_inches="tight")
-    plt.close("all")
-
-
 def w_geometry(pulse_dir: str = ".") -> None:
     target = w_target()
     print(f"{'geometry':>10}  {'naive':>8}  {'optimized':>9}  {'solve':>8}")
@@ -105,9 +87,15 @@ def w_geometry(pulse_dir: str = ".") -> None:
             print(f"{name:>10}  {f_naive:8.4f}  {f_opt:9.4f}  {data.get('fidelity', float('nan')):8.4f}")
         else:
             print(f"{name:>10}  {f_naive:8.4f}  {'—':>9}")
-        draw_register(atoms, f"register_{name}.png",
-                      f"{name} — all pairs blockaded" if name == "triangle"
-                      else f"{name} — 10 µm ends NOT blockaded")
+        radius = DEVICE.rydberg_blockade_radius(0.9 * CHANNEL.max_amp)
+        style.draw_register(
+            atoms, f"register_{name}.png",
+            f"Geometry is the program — {name}",
+            "every pair blockaded — the W state is reachable" if name == "triangle"
+            else "the 10 µm end pair is NOT blockaded — no pulse can fix this",
+            radius,
+            broken_pairs=[] if name == "triangle" else [(0, 2)],
+        )
     print("\nwrote register_triangle.png, register_chain.png")
     print("AMICODE_IMAGE: register_triangle.png")
     print("AMICODE_IMAGE: register_chain.png")
@@ -143,30 +131,41 @@ def packing(pulse_dir: str = ".") -> None:
         solve_col = f"{sf:8.4f}" if sf is not None else ""
         print(f"{gap:10.1f}  {fid:12.4f}  {opt_col}  {solve_col}")
 
-    fig, ax = plt.subplots(figsize=(8, 5), dpi=160)
-    fig.patch.set_facecolor(SURFACE)
-    ax.set_facecolor(SURFACE)
-    ax.plot(*zip(*baseline), color=COLOR_NAIVE, lw=2, marker="o", ms=6,
-            label="2-atom pulse reused (crosstalk-blind)")
+    fig, ax = style.figure()
+    bx, by = zip(*baseline)
+    style.series(ax, bx, by, style.RUST, label="crosstalk-blind")
     if reopt:
         pts = sorted((g, f) for g, f, _ in reopt)
-        ax.plot(*zip(*pts), color=COLOR_OPTIMIZED, lw=0, marker="*", ms=16,
-                label="crosstalk-aware re-optimized")
-    ax.set_xlabel("inter-pair gap L (µm)", color=INK)
-    ax.set_ylabel("fidelity to |Bell⟩⊗|Bell⟩", color=INK)
-    ax.set_title("How densely can you pack parallel entangling operations?",
-                 color=INK, fontsize=11.5, pad=12)
-    ax.grid(True, color="#e6e6e3", lw=0.7)
-    ax.tick_params(colors=INK_MUTED)
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.legend(frameon=False, loc="lower right", fontsize=9)
-    fig.tight_layout()
-    fig.savefig("pair_packing.png", facecolor=SURFACE)
+        for g, f in pts:
+            ax.plot([g], [f], marker="*", ms=17, color=style.BLUE,
+                    markeredgecolor=style.SURFACE, markeredgewidth=1.2, zorder=4)
+        gx, fx = pts[-1]
+        ax.annotate("crosstalk-aware", xy=(gx, fx), xytext=(10, -4),
+                    textcoords="offset points", fontsize=9.5,
+                    color=style.BLUE, fontweight=550, va="center")
+        for g, f in pts:
+            blind = dict(baseline).get(g)
+            if blind is not None:
+                ax.annotate("", xy=(g, f - 0.012), xytext=(g, blind + 0.012),
+                            arrowprops={"arrowstyle": "->", "color": style.INK_FAINT, "lw": 0.9})
+    ax.set_xlabel("inter-pair gap L (µm)", fontsize=9)
+    ax.set_ylabel(r"fidelity to $|\mathrm{Bell}\rangle\!\otimes\!|\mathrm{Bell}\rangle$", fontsize=9)
+    ax.set_xlim(5.4, 21.6)
+    style.polish(ax)
+    style.headline(fig, "How densely can you pack parallel entangling operations?",
+                   "two Bell pairs, one global pulse — reusing the 2-atom pulse vs re-optimizing with cross-pair couplings in the model")
+    style.footer(fig)
+    fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
+    fig.savefig("pair_packing.png")
 
     tight = min((g for g, _, _ in reopt), default=6.0)
-    draw_register([[0.0, 0.0], [SIDE, 0.0], [0.0, tight], [SIDE, tight]],
-                  "register_pairs.png", f"Two Bell pairs, gap L = {tight:g} µm")
+    radius = DEVICE.rydberg_blockade_radius(0.9 * CHANNEL.max_amp)
+    style.draw_register(
+        [[0.0, 0.0], [SIDE, 0.0], [0.0, tight], [SIDE, tight]],
+        "register_pairs.png", "Two Bell pairs in one register",
+        f"pairs 5 µm wide, gap L = {tight:g} µm — cross-pair links carry the crosstalk",
+        radius, pair_labels=False,
+    )
     print("\nwrote pair_packing.png, register_pairs.png")
     print("AMICODE_IMAGE: pair_packing.png")
     print("AMICODE_IMAGE: register_pairs.png")
