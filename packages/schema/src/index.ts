@@ -36,11 +36,22 @@ const SCHEMAS = {
 export type SchemaKind = keyof typeof SCHEMAS;
 export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
 
-/** Versions the validators accept (Q87: tolerate known-prior within range, reject
- *  unknown/absent). Only v1 exists today; grows when the first bump lands. */
-export const SUPPORTED_SCHEMA_VERSIONS = ["1"] as const;
+/** Versions the validators accept, PER KIND (Q87: tolerate known-prior within
+ *  range, reject unknown/absent). Derived from the schema files' enums — the
+ *  schemas are the single source of truth; this export just surfaces them.
+ *  run + solvespec are at v2 (spec C: executor/tier/env/source/hashes); the
+ *  rest remain v1 and bump independently. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished">, string[]> = Object.fromEntries(
+  (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
+    kind,
+    (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
+  ]),
+) as Record<Exclude<SchemaKind, "finished">, string[]>;
 
-export interface Validation { ok: boolean; errors: string[] }
+export interface Validation {
+  ok: boolean;
+  errors: string[];
+}
 
 /** Resolve a schema kind from a file's basename, for the fixed-filename artifacts
  *  (run.toml, result.toml, lab.toml, FINISHED). Returns undefined for files
@@ -76,11 +87,17 @@ export function validate(artifact: unknown, kind: SchemaKind): Validation {
  *  Parse/read failures are themselves field-precise-ish errors, never a throw. */
 export function validateFile(filePath: string, kind: SchemaKind): Validation {
   let raw: string;
-  try { raw = readFileSync(filePath, "utf8"); }
-  catch (e) { return { ok: false, errors: [`cannot read ${filePath}: ${(e as Error).message}`] }; }
+  try {
+    raw = readFileSync(filePath, "utf8");
+  } catch (e) {
+    return { ok: false, errors: [`cannot read ${filePath}: ${(e as Error).message}`] };
+  }
   let parsed: unknown;
-  try { parsed = extname(filePath).toLowerCase() === ".json" ? JSON.parse(raw) : parseToml(raw); }
-  catch (e) { return { ok: false, errors: [`${filePath}: parse error — ${(e as Error).message}`] }; }
+  try {
+    parsed = extname(filePath).toLowerCase() === ".json" ? JSON.parse(raw) : parseToml(raw);
+  } catch (e) {
+    return { ok: false, errors: [`${filePath}: parse error — ${(e as Error).message}`] };
+  }
   return validate(normalizeDates(parsed), kind);
 }
 
@@ -105,7 +122,9 @@ function formatError(e: ErrorObject): string {
   // #17 AC3). An ABSENT version fails as `required` on the parent (handled below);
   // an UNRECOGNIZED version fails `enum` here.
   if (e.instancePath === "/schema_version" && e.keyword === "enum") {
-    return `/schema_version: unrecognized version (supported: ${SUPPORTED_SCHEMA_VERSIONS.join(", ")})`;
+    // Per-kind version sets: the enum error's own allowedValues IS the kind's set.
+    const allowed = (e.params as { allowedValues?: unknown[] }).allowedValues ?? [];
+    return `/schema_version: unrecognized version (supported: ${allowed.join(", ")})`;
   }
   switch (e.keyword) {
     case "required":

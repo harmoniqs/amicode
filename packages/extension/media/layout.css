@@ -1,13 +1,51 @@
 /* layout.css — formal layout selectors. Composition only; values from brand.css. */
-* { box-sizing: border-box; }
-.stack { display: flex; flex-direction: column; gap: var(--space-md); }
-.row { display: flex; align-items: center; gap: var(--space-md); }
-.wrap { flex-wrap: wrap; }
-.grid-fit { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--grid-min, 112px), 1fr)); gap: var(--space-sm); }
-.grow { flex: 1; }
-.push-end { margin-left: auto; }
-.scroll-y { overflow-y: auto; }
-.gap-xs { gap: var(--space-xs); }
-.gap-sm { gap: var(--space-sm); }
-.gap-lg { gap: var(--space-lg); }
-.pad-lg { padding: var(--space-lg); }
+* {
+  box-sizing: border-box;
+}
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+.wrap {
+  flex-wrap: wrap;
+}
+.grid-fit {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--grid-min, 112px), 1fr));
+  gap: var(--space-sm);
+}
+/* metric-row: content-width tiles, left-aligned, wrapping — NOT stretched to
+   fill (that made a scalar like the iteration count occupy a huge tile). */
+.metric-row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+.grow {
+  flex: 1;
+}
+.push-end {
+  margin-left: auto;
+}
+.scroll-y {
+  overflow-y: auto;
+}
+.gap-xs {
+  gap: var(--space-xs);
+}
+.gap-sm {
+  gap: var(--space-sm);
+}
+.gap-lg {
+  gap: var(--space-lg);
+}
+.pad-lg {
+  padding: var(--space-lg);
+}

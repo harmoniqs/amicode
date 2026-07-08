@@ -43,8 +43,16 @@ export class OpencodeEventClient implements vscode.Disposable {
   dispose(): void {
     this.disposed = true;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    try { this.req?.destroy(); } catch { /* noop */ }
-    try { this.res?.destroy(); } catch { /* noop */ }
+    try {
+      this.req?.destroy();
+    } catch {
+      /* noop */
+    }
+    try {
+      this.res?.destroy();
+    } catch {
+      /* noop */
+    }
   }
 
   private openOnce(): void {
@@ -113,8 +121,11 @@ export class OpencodeEventClient implements vscode.Disposable {
     if (dataLines.length === 0) return;
     const payload = dataLines.join("\n");
     let event: { type?: string; properties?: Record<string, unknown> };
-    try { event = JSON.parse(payload); }
-    catch { return; /* opencode sometimes sends ping/comment-only blocks */ }
+    try {
+      event = JSON.parse(payload);
+    } catch {
+      return; /* opencode sometimes sends ping/comment-only blocks */
+    }
     this.dispatch(event);
   }
 

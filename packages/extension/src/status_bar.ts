@@ -6,6 +6,38 @@ import type { RunState } from "./types";
 // Updated by the rest of the extension via setServerState / setRunState.
 // ============================================================================
 
+/** Pure label/tooltip for the status-bar item — unit-tested without VSCode. */
+export function statusBarLabel(serverReady: boolean, run?: RunState): { text: string; tooltip: string } {
+  if (!serverReady) return { text: "$(loading~spin) Amicode (booting)", tooltip: "Spawning opencode server…" };
+  const dir = run?.outputDir ?? "";
+  switch (run?.status) {
+    case "starting":
+      return { text: "$(sync~spin) Amicode · warming…", tooltip: `Julia warming up in ${dir}` };
+    case "running":
+      return { text: `$(gear~spin) Amicode · iter ${run.latestIter ?? "—"}`, tooltip: `Solve running in ${dir}` };
+    case "stalled":
+      return {
+        text: "$(warning) Amicode · stalled",
+        tooltip: `No progress for 10+ min in ${dir} — run may be wedged (OOM?)`,
+      };
+    case "completed": {
+      const f = run.fidelity;
+      return {
+        text: `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`,
+        tooltip: `Last solve completed in ${dir}`,
+      };
+    }
+    case "stopped":
+      return { text: "$(circle-slash) Amicode · stopped", tooltip: `Solve stopped in ${dir}` };
+    case "failed":
+      return { text: "$(error) Amicode · solve failed", tooltip: `Solve failed in ${dir} — see run.log` };
+    case "aborted":
+      return { text: "$(circle-slash) Amicode · aborted", tooltip: `Solve aborted in ${dir}` };
+    default:
+      return { text: "$(comment-discussion) Amicode", tooltip: "Open the Run Inspector" };
+  }
+}
+
 export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
   private serverReady = false;
@@ -13,7 +45,8 @@ export class StatusBarManager {
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    this.item.command = "amicode.openChat";
+    // A run-state item → clicking opens the run view (the Run Inspector).
+    this.item.command = "amicode.openInspector";
     this.item.show();
     this.render();
   }
@@ -33,33 +66,8 @@ export class StatusBarManager {
   }
 
   private render(): void {
-    if (!this.serverReady) {
-      this.item.text = "$(loading~spin) Amicode (booting)";
-      this.item.tooltip = "Spawning opencode server…";
-      return;
-    }
-    if (this.run && this.run.status === "running") {
-      this.item.text = `$(gear~spin) Amicode · iter ${this.run.latestIter ?? "—"}`;
-      this.item.tooltip = `Solve running in ${this.run.outputDir}`;
-      return;
-    }
-    if (this.run && this.run.status === "completed") {
-      const f = this.run.fidelity;
-      this.item.text = `$(check) Amicode · F=${f !== undefined ? f.toFixed(4) : "—"}`;
-      this.item.tooltip = `Last solve completed in ${this.run.outputDir}`;
-      return;
-    }
-    if (this.run && this.run.status === "failed") {
-      this.item.text = "$(error) Amicode · solve failed";
-      this.item.tooltip = `Solve failed in ${this.run.outputDir} — see run.log`;
-      return;
-    }
-    if (this.run && this.run.status === "aborted") {
-      this.item.text = "$(circle-slash) Amicode · aborted";
-      this.item.tooltip = `Solve aborted in ${this.run.outputDir}`;
-      return;
-    }
-    this.item.text = "$(comment-discussion) Amicode";
-    this.item.tooltip = "Open Amicode chat";
+    const { text, tooltip } = statusBarLabel(this.serverReady, this.run);
+    this.item.text = text;
+    this.item.tooltip = tooltip;
   }
 }

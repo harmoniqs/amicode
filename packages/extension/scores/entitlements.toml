@@ -1,0 +1,11 @@
+# Registered entitlement ids (spec §3 contract test: "every entitlements id is registered").
+# A score naming an unregistered id is a lint error — typos must fail CI, not silently hide a score.
+known = ["pasqal-hackathon-2026", "issimo"]
+
+# Entitlement → Harmoniqs package tiers (spec C). `default` is the public base
+# every session gets; each named entitlement adds its gated packages. The
+# resolver + the amico-run import scan consume packageAllowlist(this, ents);
+# filterRepertoire (score visibility) is unrelated and stays score-only.
+[packages]
+default = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]
+issimo = ["Piccolissimo", "Strettissimo", "Intonatissimo"]

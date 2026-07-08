@@ -1,0 +1,48 @@
+# Template registry (spec C tier 1) — shape key (platform × kind × size) → a
+# vetted solve template. `status` gates tier-1 eligibility: ONLY status="vetted"
+# entries resolve as tier 1; "experimental" entries are recorded for provenance
+# but never selected (amico-run resolve skips them → the shape falls to tier 2/3).
+# `packages` drives the entitlement check + sandbox generation; `entitlement`
+# (optional) names the entitlement a gated template requires.
+
+verify_tolerance = 0.001   # tier-3 re-rollout agreement (absolute; spec-20260704-113005 §6 — resolves spec-C open q1)
+
+[[template]]
+id = "transmon-gate-1q"
+platform = "transmon"
+kind = "gate_synthesis"
+size = 1
+path = "solve_template.jl"          # relative to this file's dir (packages/extension/templates/)
+status = "vetted"
+packages = ["Piccolo", "CairoMakie", "JLD2", "TOML", "Printf"]
+
+[[template]]
+id = "rydberg-cz-2q"
+platform = "rydberg"
+kind = "gate_synthesis"
+size = 2
+path = "solve_rydberg_cz.jl"
+status = "experimental"             # header: "⚠️ NOT YET VETTED" — NOT tier-1 eligible
+packages = ["Piccolo", "CairoMakie", "JLD2", "LinearAlgebra", "TOML", "Printf"]
+
+# Fixed support set — packages the run-dir contract itself requires (JLD2 for
+# pulse.jld2, CairoMakie for iter_<N>.png) plus common numeric stdlibs. The
+# import scan allows (entitlement allowlist ∪ this set ∪ Julia stdlibs); without
+# it the scan would block the vetted template's OWN launch.
+[support]
+packages = ["JLD2", "CairoMakie", "Makie", "TOML", "Printf", "LinearAlgebra", "Random", "Statistics", "SparseArrays"]
+
+# Sandbox uuid map (spec C) — name → uuid for [deps] in a generated env
+# Project.toml. Collected from the workspace package manifests.
+[uuids]
+Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
+Legato = "2220d95b-0ec6-412e-99be-c6a5d269006d"
+Intonato = "4c8581c7-0eaf-45eb-b8fa-a3474c50779c"
+NamedTrajectories = "538bc3a1-5ab9-4fc3-b776-35ca1e893e08"
+DirectTrajOpt = "c823fa1f-8872-4af5-b810-2b9b72bbbf56"
+Piccolissimo = "8458e44f-bc41-4eb2-9db1-f076c5323fd6"
+Strettissimo = "9423f871-5413-41e1-9397-0c868c1e660c"
+Intonatissimo = "e3ca2e84-f023-4239-b49b-696c14c5fc73"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"

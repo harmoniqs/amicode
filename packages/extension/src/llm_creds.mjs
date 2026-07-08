@@ -60,8 +60,7 @@ export function resolveLlmCreds({ providers, model }) {
  * carries provider keys) is touched; nothing but {id, source} escapes.
  */
 export function stripProviders(providersJson) {
-  const arr =
-    providersJson && Array.isArray(providersJson.providers) ? providersJson.providers : [];
+  const arr = providersJson && Array.isArray(providersJson.providers) ? providersJson.providers : [];
   return arr
     .map((p) => ({ id: p && p.id, source: p && p.source }))
     .filter((p) => typeof p.id === "string" && p.id.length > 0);

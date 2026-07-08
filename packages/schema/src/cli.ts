@@ -15,19 +15,30 @@ export function main(argv: string[]): number {
   let schema: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--help" || a === "-h") { console.log(USAGE); return 0; }
+    if (a === "--help" || a === "-h") {
+      console.log(USAGE);
+      return 0;
+    }
     if (a === "--schema") {
       schema = argv[++i];
-      if (schema === undefined) { console.error(`amico-validate: --schema requires a value\n${USAGE}`); return 64; }
+      if (schema === undefined) {
+        console.error(`amico-validate: --schema requires a value\n${USAGE}`);
+        return 64;
+      }
     } else if (a.startsWith("-")) {
-      console.error(`amico-validate: unknown flag ${a}\n${USAGE}`); return 64;
+      console.error(`amico-validate: unknown flag ${a}\n${USAGE}`);
+      return 64;
     } else if (file !== undefined) {
-      console.error(`amico-validate: multiple files given\n${USAGE}`); return 64;
+      console.error(`amico-validate: multiple files given\n${USAGE}`);
+      return 64;
     } else {
       file = a;
     }
   }
-  if (file === undefined) { console.error(`amico-validate: no file given\n${USAGE}`); return 64; }
+  if (file === undefined) {
+    console.error(`amico-validate: no file given\n${USAGE}`);
+    return 64;
+  }
 
   const inferred = schema ?? kindForFilename(file);
   if (inferred === undefined) {
@@ -41,7 +52,10 @@ export function main(argv: string[]): number {
   const kind = inferred as SchemaKind;
 
   const r = validateFile(file, kind);
-  if (r.ok) { console.log(`OK ${file} (${kind})`); return 0; }
+  if (r.ok) {
+    console.log(`OK ${file} (${kind})`);
+    return 0;
+  }
   console.error(`INVALID ${file} (${kind}):`);
   for (const e of r.errors) console.error(`  ${e}`);
   return 64;

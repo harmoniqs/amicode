@@ -3,7 +3,10 @@ import { join } from "node:path";
 
 export class OpencodeMissingError extends Error {}
 
-export interface ResolvedBinary { path: string; source: "config-override" | "vendored" }
+export interface ResolvedBinary {
+  path: string;
+  source: "config-override" | "vendored";
+}
 
 const SUPPORTED = ["darwin-arm64", "linux-x64"] as const;
 

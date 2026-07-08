@@ -24,10 +24,17 @@ function renderInspectorHtml(): string {
     webview: {
       options: {},
       cspSource: "vscode-webview://unit",
-      asWebviewUri: (u: { fsPath?: string }) => ({ toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)) }),
+      asWebviewUri: (u: { fsPath?: string }) => ({
+        toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)),
+      }),
       postMessage: () => undefined,
-      set html(v: string) { captured = v; },
-      get html() { return captured; },
+      onDidReceiveMessage: () => ({ dispose() {} }),
+      set html(v: string) {
+        captured = v;
+      },
+      get html() {
+        return captured;
+      },
     },
     onDidDispose: () => ({ dispose() {} }),
   };
@@ -47,11 +54,18 @@ describe("Run Inspector shell contract (plumbing ⇄ TS-composed view)", () => {
   it("keeps the CSP authorizing every grant the view depends on", () => {
     // Pin grants to their directive, not just "appears somewhere in the CSP".
     const styleSrc = html.match(/style-src([^;]*)/)?.[1] ?? "";
-    expect(styleSrc, "style-src must grant the webview source for the linked stylesheets").toContain("vscode-webview://unit");
+    expect(styleSrc, "style-src must grant the webview source for the linked stylesheets").toContain(
+      "vscode-webview://unit",
+    );
     expect(styleSrc, "style-src keeps 'unsafe-inline' for design-lane static style attrs").toContain("'unsafe-inline'");
 
     expect(html, "no image grants — the view renders from message data (#66)").not.toMatch(/img-src/);
     expect(html).toMatch(/script-src 'nonce-/);
+
+    // font-src must grant the webview source so the JuliaMono @font-face loads
+    // (under default-src 'none' a missing font-src silently blocks the fetch).
+    const fontSrc = html.match(/font-src([^;]*)/)?.[1] ?? "";
+    expect(fontSrc, "font-src must grant the webview source for @font-face").toContain("vscode-webview://unit");
   });
 
   it("design-owned stylesheets exist; brand.css carries the brand token", () => {
@@ -70,7 +84,11 @@ describe("Run Inspector shell contract (plumbing ⇄ TS-composed view)", () => {
 // throttle; resolve replays EVERY pane (S36) and activate names the visible one.
 describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
   const META = { drives: 1, knots: 2, labels: ["a_1"], bounds: [[-0.2, 0.2]] as [number, number][] };
-  const rec = (iter: number): { iter: number; dt: number; values: number[][] } => ({ iter, dt: 0.2, values: [[iter / 10, iter / 5]] });
+  const rec = (iter: number): { iter: number; dt: number; values: number[][] } => ({
+    iter,
+    dt: 0.2,
+    values: [[iter / 10, iter / 5]],
+  });
 
   function harness() {
     const ctx = { extensionUri: { fsPath: PKG_ROOT }, subscriptions: [] as unknown[] };
@@ -84,12 +102,24 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
         webview: {
           options: {},
           cspSource: "vscode-webview://unit",
-          asWebviewUri: (u: { fsPath?: string }) => ({ toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)) }),
-          postMessage: (m: Record<string, unknown>) => { posted.push(m); },
-          set html(_v: string) { /* ignore */ },
-          get html() { return ""; },
+          asWebviewUri: (u: { fsPath?: string }) => ({
+            toString: () => "vscode-webview://unit/" + (u?.fsPath ?? String(u)),
+          }),
+          postMessage: (m: Record<string, unknown>) => {
+            posted.push(m);
+          },
+          onDidReceiveMessage: () => ({ dispose() {} }),
+          set html(_v: string) {
+            /* ignore */
+          },
+          get html() {
+            return "";
+          },
         },
-        onDidDispose: (cb: () => void) => { disposeCb = cb; return { dispose() {} }; },
+        onDidDispose: (cb: () => void) => {
+          disposeCb = cb;
+          return { dispose() {} };
+        },
       };
       return { view, posted, dispose: () => disposeCb() };
     };
@@ -106,10 +136,10 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     inspector.resolveWebviewView(view as never);
 
     const r1 = posted.filter((m) => m.runId === "r1");
-    expect(r1.every((m) => m.runId === "r1")).toBe(true);                  // every message carries the runId
+    expect(r1.every((m) => m.runId === "r1")).toBe(true); // every message carries the runId
     const types = r1.map((m) => m.type);
     expect(types).toContain("pulsemeta");
-    expect(types.filter((t) => t === "pulse")).toHaveLength(1);            // newest-wins: iter 1 dropped
+    expect(types.filter((t) => t === "pulse")).toHaveLength(1); // newest-wins: iter 1 dropped
     expect(r1.find((m) => m.type === "pulse")).toMatchObject({ iter: 2 });
     expect(types.indexOf("pulsemeta")).toBeLessThan(types.indexOf("pulse"));
     expect(types.indexOf("pulse")).toBeLessThan(types.indexOf("completed")); // terminal state stays the last word
@@ -122,13 +152,13 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     inspector.postPulse("r1", { type: "meta", meta: META });
     posted.length = 0;
     inspector.postPulse("r1", { type: "record", record: rec(1) });
-    expect(posted.map((m) => m.type)).toEqual(["pulse"]);                      // leading edge posts immediately
+    expect(posted.map((m) => m.type)).toEqual(["pulse"]); // leading edge posts immediately
     inspector.postPulse("r1", { type: "record", record: rec(2) });
     inspector.postPulse("r1", { type: "record", record: rec(3) });
-    expect(posted).toHaveLength(1);                                            // inside the window: coalesced
+    expect(posted).toHaveLength(1); // inside the window: coalesced
     vi.advanceTimersByTime(200);
-    expect(posted).toHaveLength(2);                                            // trailing edge: exactly one flush
-    expect(posted[1]).toMatchObject({ type: "pulse", iter: 3, runId: "r1" });  // …carrying the newest
+    expect(posted).toHaveLength(2); // trailing edge: exactly one flush
+    expect(posted[1]).toMatchObject({ type: "pulse", iter: 3, runId: "r1" }); // …carrying the newest
   });
 
   it("posts straight through once the webview is live", () => {
@@ -159,8 +189,8 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     const { inspector, view, posted } = harness();
     inspector.resolveWebviewView(view as never);
     posted.length = 0;
-    inspector.postPulse("r1", { type: "record", record: rec(1) });   // opens r1's window (posts)
-    inspector.postPulse("r2", { type: "record", record: rec(1) });   // r2 has its OWN window (posts)
+    inspector.postPulse("r1", { type: "record", record: rec(1) }); // opens r1's window (posts)
+    inspector.postPulse("r2", { type: "record", record: rec(1) }); // r2 has its OWN window (posts)
     expect(posted.filter((m) => m.type === "pulse")).toHaveLength(2);
     expect(posted.map((m) => m.runId).sort()).toEqual(["r1", "r2"]);
   });
@@ -175,7 +205,7 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     const activate = posted.filter((m) => m.type === "activate");
     expect(activate).toHaveLength(1);
     expect(activate[0]).toMatchObject({ runId: "r2" });
-    expect(posted.indexOf(activate[0])).toBe(posted.length - 1);        // last word = the visible pane
+    expect(posted.indexOf(activate[0])).toBe(posted.length - 1); // last word = the visible pane
   });
 
   it("rebuilds EVERY pane on reopen (S36) — dispose then re-resolve replays all runs", () => {
@@ -188,10 +218,10 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     inspector.postPulse("r2", { type: "meta", meta: META });
     inspector.postPulse("r2", { type: "record", record: rec(9) });
     inspector.activate("r2");
-    a.dispose();                                    // user closes the panel
+    a.dispose(); // user closes the panel
 
     const b = makeView();
-    inspector.resolveWebviewView(b.view as never);   // reopen — fresh DOM
+    inspector.resolveWebviewView(b.view as never); // reopen — fresh DOM
     // Both panes rebuilt from buffers, each with its newest record, r1 terminal.
     expect(b.posted.filter((m) => m.type === "pulse" && m.runId === "r1")).toMatchObject([{ iter: 4 }]);
     expect(b.posted.filter((m) => m.type === "completed" && m.runId === "r1")).toHaveLength(1);
@@ -202,14 +232,16 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
   it("setWarmingUp no-ops once the pane has data or terminal state (no clobber of a fanned-in run)", () => {
     const { inspector, view, posted } = harness();
     inspector.resolveWebviewView(view as never);
-    inspector.postPulse("r1", { type: "record", record: rec(1) });   // r1 has data
-    inspector.postCompletion("r2", "completed", 0.99);               // r2 is terminal
+    inspector.postPulse("r1", { type: "record", record: rec(1) }); // r1 has data
+    inspector.postCompletion("r2", "completed", 0.99); // r2 is terminal
     posted.length = 0;
     inspector.setWarmingUp("r1");
     inspector.setWarmingUp("r2");
-    inspector.setWarmingUp("r3");                                    // fresh run → warming IS shown
+    inspector.setWarmingUp("r3"); // fresh run → warming IS shown
     expect(posted.filter((m) => m.type === "warming")).toMatchObject([{ runId: "r3" }]);
   });
 });
 
-afterEach(() => { vi.useRealTimers(); });
+afterEach(() => {
+  vi.useRealTimers();
+});

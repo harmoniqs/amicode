@@ -12,16 +12,22 @@ import { SessionCatalogTree, type SessionCatalogEntry } from "../src/trees";
 
 function stageRun(opts: { pulseLines?: string; gate?: string; system?: string }): string {
   const dir = mkdtempSync(join(tmpdir(), "card-run-"));
-  writeFileSync(join(dir, "run.toml"),
+  writeFileSync(
+    join(dir, "run.toml"),
     'schema_version = "1"\nrun_id = "r20260703-000000Z-cafe"\nlab_id = "default"\nscript_path = "/s.jl"\n' +
-    'lab = "default"\ncreated_at = "2026-07-03T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n');
+      'lab = "default"\ncreated_at = "2026-07-03T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n',
+  );
   const params = [
     opts.system ? `system = "${opts.system}"` : "",
     opts.gate ? `gate = "${opts.gate}"` : "",
     "levels = 3",
-  ].filter(Boolean).join("\n");
-  writeFileSync(join(dir, "result.toml"),
-    `schema_version = "1"\nfidelity = 0.9998\niterations = 60\nwall_seconds = 41.5\n[params]\n${params}\n`);
+  ]
+    .filter(Boolean)
+    .join("\n");
+  writeFileSync(
+    join(dir, "result.toml"),
+    `schema_version = "1"\nfidelity = 0.9998\niterations = 60\nwall_seconds = 41.5\n[params]\n${params}\n`,
+  );
   if (opts.pulseLines !== undefined) writeFileSync(join(dir, "run.log"), opts.pulseLines);
   return dir;
 }
@@ -29,7 +35,8 @@ function stageRun(opts: { pulseLines?: string; gate?: string; system?: string })
 describe("hydrateFromRunDir — entry from real run artifacts", () => {
   it("maps identity, fidelity, params (gate lifted to top level), proposed block, and the newest pulse", () => {
     const dir = stageRun({
-      gate: "X", system: "transmon",
+      gate: "X",
+      system: "transmon",
       pulseLines:
         'AMICODE_PULSE_META drives=1 knots=2 labels="u_1" bounds=-0.2:0.2\n' +
         "AMICODE_PULSE iter=1 dt=0.2 a=0.1,0.2\n" +
@@ -44,7 +51,7 @@ describe("hydrateFromRunDir — entry from real run artifacts", () => {
       proposed: { iterations: 60, wall_seconds: 41.5 },
     });
     expect((data.entry.params as Record<string, unknown>).system).toBe("transmon");
-    expect(data.pulse).toMatchObject({ record: { iter: 2 } });   // newest record, not the first
+    expect(data.pulse).toMatchObject({ record: { iter: 2 } }); // newest record, not the first
   });
 
   it("degrades: no run.log → no pulse; missing result.toml → undefined", () => {
@@ -64,13 +71,13 @@ describe("registerCatalogCard — reveal-or-create panel dedupe", () => {
 
     await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
     await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
-    expect(spy).toHaveBeenCalledTimes(1);                        // one panel per run_id
+    expect(spy).toHaveBeenCalledTimes(1); // one panel per run_id
     const panel = spy.mock.results[0].value as { revealCount: number; dispose: () => void };
-    expect(panel.revealCount).toBe(1);                           // second click re-focuses
+    expect(panel.revealCount).toBe(1); // second click re-focuses
 
-    panel.dispose();                                             // user closes the tab
+    panel.dispose(); // user closes the tab
     await vscode.commands.executeCommand("amicode.catalogCard.open", dir);
-    expect(spy).toHaveBeenCalledTimes(2);                        // closed → fresh panel
+    expect(spy).toHaveBeenCalledTimes(2); // closed → fresh panel
     spy.mockRestore();
   });
 });
@@ -81,20 +88,29 @@ describe("SessionCatalogTree — pointer records, newest first", () => {
     return {
       workspaceState: {
         get: (k: string, d: unknown) => (store.has(k) ? store.get(k) : d),
-        update: (k: string, v: unknown) => { store.set(k, v); return Promise.resolve(); },
+        update: (k: string, v: unknown) => {
+          store.set(k, v);
+          return Promise.resolve();
+        },
       },
     } as never;
   }
   const entry = (run_id: string, over: Partial<SessionCatalogEntry> = {}): SessionCatalogEntry => ({
-    run_id, runDir: `/runs/${run_id}`, lab_id: "default", fidelity: 0.999,
-    gate: "X", system: "transmon", saved_at: "2026-07-03T00:00:00Z", ...over,
+    run_id,
+    runDir: `/runs/${run_id}`,
+    lab_id: "default",
+    fidelity: 0.999,
+    gate: "X",
+    system: "transmon",
+    saved_at: "2026-07-03T00:00:00Z",
+    ...over,
   });
 
   it("saves newest-first, dedupes by run_id, and rows open the card for the run dir", async () => {
     const tree = new SessionCatalogTree(makeCtx());
     await tree.save(entry("r1"));
     await tree.save(entry("r2"));
-    await tree.save(entry("r1", { fidelity: 0.5 }));   // re-save moves to front, replaces
+    await tree.save(entry("r1", { fidelity: 0.5 })); // re-save moves to front, replaces
     const rows = tree.getChildren() as SessionCatalogEntry[];
     expect(rows.map((r) => r.run_id)).toEqual(["r1", "r2"]);
     expect(rows[0].fidelity).toBe(0.5);
@@ -102,7 +118,7 @@ describe("SessionCatalogTree — pointer records, newest first", () => {
     const item = tree.getTreeItem(rows[1]) as { label: string; command?: { command: string; arguments: unknown[] } };
     expect(item.label).toContain("transmon");
     expect(item.command?.command).toBe("amicode.catalogCard.open");
-    expect(item.command?.arguments).toEqual(["/runs/r2", "transmon", undefined]);   // runDir + name + tags → card
+    expect(item.command?.arguments).toEqual(["/runs/r2", "transmon", undefined]); // runDir + name + tags → card
   });
 
   it("remove() unsaves the pointer only — remaining entries and order survive", async () => {
@@ -113,7 +129,7 @@ describe("SessionCatalogTree — pointer records, newest first", () => {
     await tree.remove("r2");
     const rows = tree.getChildren() as SessionCatalogEntry[];
     expect(rows.map((r) => r.run_id)).toEqual(["r3", "r1"]);
-    await tree.remove("r2");   // idempotent — removing a gone entry is a no-op
+    await tree.remove("r2"); // idempotent — removing a gone entry is a no-op
     expect((tree.getChildren() as SessionCatalogEntry[]).length).toBe(2);
   });
 

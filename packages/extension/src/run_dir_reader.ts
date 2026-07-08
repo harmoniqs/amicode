@@ -34,7 +34,12 @@ export const AMICODE_PULSE_META_RE = new RegExp(
   String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)\s*$`,
 );
 
-export interface PulseMeta { drives: number; knots: number; labels: string[]; bounds: [number, number][] }
+export interface PulseMeta {
+  drives: number;
+  knots: number;
+  labels: string[];
+  bounds: [number, number][];
+}
 
 /** Parse an AMICODE_PULSE_META line. Returns undefined for anything malformed. */
 export function parsePulseMetaLine(line: string): PulseMeta | undefined {
@@ -52,7 +57,11 @@ export const AMICODE_PULSE_RE = new RegExp(
   String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=(${NUM})\s+a=(${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)*)\s*$`,
 );
 
-export interface PulseRecord { iter: number; dt: number; values: number[][] }
+export interface PulseRecord {
+  iter: number;
+  dt: number;
+  values: number[][];
+}
 
 /** Parse an AMICODE_PULSE record line. Returns undefined for anything malformed. */
 export function parsePulseRecordLine(line: string): PulseRecord | undefined {
@@ -62,9 +71,7 @@ export function parsePulseRecordLine(line: string): PulseRecord | undefined {
   return { iter: parseInt(m[1], 10), dt: parseAmicoNum(m[2]), values };
 }
 
-export type PulseEvent =
-  | { type: "meta"; meta: PulseMeta }
-  | { type: "record"; record: PulseRecord };
+export type PulseEvent = { type: "meta"; meta: PulseMeta } | { type: "record"; record: PulseRecord };
 
 /** Cross-line policy for the pulse stream — the single gate BOTH delivery
  *  paths (replay ingest, live tail) feed lines through. Policy (#66 AC4):
@@ -95,7 +102,7 @@ export class PulseStream {
     }
     const record = parsePulseRecordLine(line);
     if (record) {
-      if (!this.meta) return undefined;   // record before meta — nothing to interpret it against
+      if (!this.meta) return undefined; // record before meta — nothing to interpret it against
       if (record.values.length !== this.meta.drives) return undefined;
       if (record.values.some((d) => d.length !== this.meta!.knots)) return undefined;
       return { type: "record", record };
@@ -104,13 +111,27 @@ export class PulseStream {
   }
 }
 
-export interface IterRecord { iter: number; f_val: number; inf_pr: number; inf_du: number }
+export interface IterRecord {
+  iter: number;
+  f_val: number;
+  inf_pr: number;
+  inf_du: number;
+}
 /** Terminal completion, built by readTerminalState and flowed WHOLE to every
  *  consumer (never exploded into positional args mid-pipe) — the #84 funnel.
  *  Additive contract fields join HERE + readTerminalState and reach all paths
  *  by construction: #81's `formulation?` next, then #64 hashing / #41 usage. */
-export interface RunCompletion { runId: string; runDir: string; status: RunStatus; fidelity?: number }
-export interface PromoteInfo { runId: string; runDir: string; fidelity: number }
+export interface RunCompletion {
+  runId: string;
+  runDir: string;
+  status: RunStatus;
+  fidelity?: number;
+}
+export interface PromoteInfo {
+  runId: string;
+  runDir: string;
+  fidelity: number;
+}
 
 /** Where ingestRunDir routes its findings. The live impl carries the
  *  newest-wins + promote-once guards; the test impl is plain spies. */
@@ -132,30 +153,81 @@ export class SinkDedup {
     if (iter > this.latestIter) this.latestIter = iter;
   }
   /** Highest iteration seen. */
-  get high(): number { return this.latestIter; }
+  get high(): number {
+    return this.latestIter;
+  }
 }
 
 export function readTomlSafe(fp: string): Record<string, unknown> | undefined {
-  try { return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>; }
-  catch { return undefined; }
+  try {
+    return parse(fs.readFileSync(fp, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
 }
 
-/** Terminal state of a run dir, read + validated in ONE place (review #70: the
- *  FINISHED→status→result.toml→fidelity orchestration used to live both here
- *  and in RunsManager.readTerminal — a contract change had to be edited in two
- *  places or finished-at-discovery diverged from live-completed).
+/** spec C promote gate: rendering is tier-blind, PROMOTION is not. A `free`-tier
+ *  run (solvespec.json tier === "free") can only be promoted once its re-rollout
+ *  verification.toml records agree === true — the known optimizer-vs-rollout
+ *  divergence must never be promoted on the optimizer's number. Non-free runs
+ *  (or runs with no solvespec) are always eligible. "pending_verification" means
+ *  the harness hasn't written verification.toml yet (the FINISHED-before-verify
+ *  race) — the caller must NOT promote AND must re-check when it lands, never
+ *  mark the run permanently un-promotable. */
+export type PromoteEligibility = "eligible" | "pending_verification" | "suppressed";
+export function promoteEligibility(runDir: string): PromoteEligibility {
+  let spec: Record<string, unknown> | undefined;
+  try {
+    spec = JSON.parse(fs.readFileSync(path.join(runDir, "solvespec.json"), "utf8"));
+  } catch {
+    return "eligible";
+  } // no/unreadable spec → a bare run, unchanged behavior
+  if (spec?.tier !== "free") return "eligible";
+  const verification = readTomlSafe(path.join(runDir, "verification.toml"));
+  if (!verification) return "pending_verification";
+  return verification.agree === true ? "eligible" : "suppressed";
+}
+
+/** True iff the solve halted via the cooperative stop-file. The solver prints
+ *  AMICODE_STOPPED only when its Ipopt intermediate callback actually returned
+ *  false, so key on the marker — NOT the STOP file's presence, which only proves
+ *  the request was made and can race a genuine convergence. Shared by both
+ *  completion paths (ingestRunDir here + file_watcher.onFinished). */
+export function detectStopped(runDir: string): boolean {
+  try {
+    return fs.readFileSync(path.join(runDir, "run.log"), "utf8").includes("AMICODE_STOPPED");
+  } catch {
+    return false;
+  }
+}
+
+/** Terminal state of a run dir, read + validated in ONE place (review #70 —
+ *  the #84 funnel; RunsManager.readTerminal and ingestRunDir both delegate).
+ *
+ *  ONE-SPINE MIRROR: the opencode fork's run-status/run-series endpoints keep
+ *  a documented mirror of these semantics (harmoniqs/opencode,
+ *  packages/opencode/src/server/amicode/run-terminal.ts). If you change the
+ *  terminal semantics here — status field authority, torn-FINISHED retry, the
+ *  AMICODE_STOPPED relabel, fidelity-only-from-result.toml — change them there
+ *  in the same change-set. Also mirrored (same rule): the 10-min stall
+ *  threshold (STALL_AFTER_MS here in run_controls.ts / runs_manager.ts vs the
+ *  fork's problems.ts) and the display vocabulary (the fork maps
+ *  completed→"finished"; extension surfaces render RunStatus directly).
+ *  Folds the cooperative-stop relabel in: a user-stop exits 0 → FINISHED says
+ *  "completed"; relabel to "stopped" (AMICODE_STOPPED marker) so no consumer
+ *  reads it as a genuine convergence and promote is skipped by construction.
  *
  *  Returns undefined while FINISHED is absent OR present-but-torn/invalid
  *  (mid-write) — callers retry on their next pass. A present-but-invalid
- *  result.toml is NAMED via `onInvalidResult` (S4: say why, never silently
- *  drop fidelity); the default keeps this reader vscode-free via console.warn. */
+ *  result.toml is NAMED via `onInvalidResult` (S4). */
 export function readTerminalState(
   runDir: string,
   onInvalidResult: (why: string) => void = (why) => console.warn(`[amico] ${why}`),
 ): { status: RunStatus; fidelity?: number } | undefined {
   const finished = readTomlSafe(path.join(runDir, "FINISHED"));
   if (!finished || !validateFinished(finished).ok) return undefined;
-  const status = finished.status as RunStatus;
+  const rawStatus = finished.status as RunStatus;
+  const status: RunStatus = rawStatus === "completed" && detectStopped(runDir) ? "stopped" : rawStatus;
   let fidelity: number | undefined;
   if (status === "completed") {
     const result = readTomlSafe(path.join(runDir, "result.toml"));
@@ -175,12 +247,16 @@ export function readTerminalState(
  *  appended after the read are tailed) and no overlap (already-replayed lines). */
 export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0.99): number {
   const manifest = readTomlSafe(path.join(runDir, "run.toml"));
-  if (!manifest || !validateManifest(manifest).ok) return 0;   // no valid manifest → not a run dir yet
+  if (!manifest || !validateManifest(manifest).ok) return 0; // no valid manifest → not a run dir yet
   const runId = String(manifest.run_id);
 
   // run.log body → iter records (replay; the live tailer handles appended lines)
   let logBody: string | undefined;
-  try { logBody = fs.readFileSync(path.join(runDir, "run.log"), "utf8"); } catch { /* none yet */ }
+  try {
+    logBody = fs.readFileSync(path.join(runDir, "run.log"), "utf8");
+  } catch {
+    /* none yet */
+  }
   let logBytes = 0;
   if (logBody) {
     logBytes = Buffer.byteLength(logBody, "utf8");
@@ -192,9 +268,20 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
     let newestPulse: PulseEvent | undefined;
     for (const line of logBody.split("\n")) {
       const m = AMICODE_ITER_RE.exec(line);
-      if (m) { sink.iter({ iter: +m[1], f_val: parseAmicoNum(m[2]), inf_pr: parseAmicoNum(m[3]), inf_du: parseAmicoNum(m[4]) }); continue; }
+      if (m) {
+        sink.iter({
+          iter: +m[1],
+          f_val: parseAmicoNum(m[2]),
+          inf_pr: parseAmicoNum(m[3]),
+          inf_du: parseAmicoNum(m[4]),
+        });
+        continue;
+      }
       const e = pulses.onLine(line);
-      if (e?.type === "meta") { pulseMeta = e; newestPulse = undefined; }   // new meta governs; stale records don't cross it
+      if (e?.type === "meta") {
+        pulseMeta = e;
+        newestPulse = undefined;
+      } // new meta governs; stale records don't cross it
       else if (e?.type === "record") newestPulse = e;
     }
     if (pulseMeta) sink.pulse(pulseMeta);
@@ -202,12 +289,15 @@ export function ingestRunDir(runDir: string, sink: RunSink, promoteThreshold = 0
   }
 
   // FINISHED is the authoritative terminal signal — single orchestration point
-  // (readTerminalState) shared with the manager's finished-at-discovery path.
+  // (readTerminalState: status incl. stopped-relabel + fidelity) shared with
+  // the manager's finished-at-discovery path.
   const t = readTerminalState(runDir);
   if (!t) return logBytes;
-  sink.run({ runId, runDir, status: t.status, fidelity: t.fidelity });
+  sink.run({ runId, runDir, ...t });
   if (t.status === "completed" && t.fidelity !== undefined && t.fidelity >= promoteThreshold) {
-    sink.promote({ runId, runDir, fidelity: t.fidelity });
+    const eligibility = promoteEligibility(runDir); // tier-blind render, tier-aware promote (spec C)
+    if (eligibility === "eligible") sink.promote({ runId, runDir, fidelity: t.fidelity });
+    else console.warn(`[amico] promote skipped for ${runId}: free-tier verification ${eligibility}`);
   }
   return logBytes;
 }

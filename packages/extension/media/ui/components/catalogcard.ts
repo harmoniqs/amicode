@@ -16,7 +16,9 @@ import { metric } from "./metric";
 import { chip, type ChipFields } from "./chip";
 import { pulseplot, type PulsePlotMeta, type PulsePlotRecord } from "./pulseplot";
 
-defineStyle("catalogcard", `
+defineStyle(
+  "catalogcard",
+  `
   .catalogcard { display: flex; flex-direction: column; gap: var(--space-md);
                  padding: var(--space-lg); min-width: 0;
                  background: var(--bg-box);
@@ -48,7 +50,8 @@ defineStyle("catalogcard", `
                                     color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
                                     background: var(--vscode-button-secondaryBackground, var(--bg-box)); }
   .catalogcard .cc-actions button:hover { background: var(--vscode-button-secondaryHoverBackground, var(--bg-box)); }
-`);
+`,
+);
 
 /** Schema-true catalog-entry fields (catalog-entry.schema.json v1). */
 export interface CatalogEntry {
@@ -61,12 +64,20 @@ export interface CatalogEntry {
   created_at?: string;
   params?: Record<string, unknown>;
   /** NOT in the schema — proposed extensions, rendered visibly marked. */
-  proposed?: { tags?: string[]; index?: number; iterations?: number; wall_seconds?: number;
-               /** User-assigned system name — human identity over machine family. */
-               system_name?: string };
+  proposed?: {
+    tags?: string[];
+    index?: number;
+    iterations?: number;
+    wall_seconds?: number;
+    /** User-assigned system name — human identity over machine family. */
+    system_name?: string;
+  };
 }
 
-export interface CardPulse { meta: PulsePlotMeta; record: PulsePlotRecord }
+export interface CardPulse {
+  meta: PulsePlotMeta;
+  record: PulsePlotRecord;
+}
 
 export interface CatalogCard {
   el: HTMLDivElement;
@@ -101,8 +112,10 @@ export function catalogcard(entry: CatalogEntry, opts: CatalogCardOpts = {}): Ca
   // User-named system wins the identity slot (proposed-marked via `tag`
   // styling in the chip); the derived family is the fallback.
   const named = entry.proposed?.system_name;
-  head.append(chip({ gate: entry.gate, system: named ?? systemDescriptor(entry.params), ...entry.proposed }).el,
-              text("mono small dim", entry.run_id).el);
+  head.append(
+    chip({ gate: entry.gate, system: named ?? systemDescriptor(entry.params), ...entry.proposed }).el,
+    text("mono small dim", entry.run_id).el,
+  );
   // Pulse actions live in the header, right-justified — with the identity,
   // acting on the pulse it names. VS Code button styling, uniform secondary.
   if (opts.onAction) {
@@ -143,7 +156,9 @@ export function catalogcard(entry: CatalogEntry, opts: CatalogCardOpts = {}): Ca
       kv("created", entry.created_at ?? "—"),
       // solver telemetry — provenance, not pulse quality (proposed fields)
       ...(entry.proposed?.iterations !== undefined ? [kv("iterations", String(entry.proposed.iterations), true)] : []),
-      ...(entry.proposed?.wall_seconds !== undefined ? [kv("wall", `${entry.proposed.wall_seconds.toFixed(0)}s`, true)] : []),
+      ...(entry.proposed?.wall_seconds !== undefined
+        ? [kv("wall", `${entry.proposed.wall_seconds.toFixed(0)}s`, true)]
+        : []),
     ]),
     panel("pulse data", [
       kv("pulse", entry.pulse_path.split("/").slice(-2).join("/")),
@@ -198,7 +213,7 @@ function metricsPanel(entry: CatalogEntry, pulse?: CardPulse): HTMLDivElement {
   // All four wear the same hero metric styling; provisional ones (definition
   // or data source still a domain-owner decision) get a dashed border.
   const heroCard = (label: string, value: string, proposed = false): HTMLDivElement => {
-    const m = metric(label, { hero: true });
+    const m = metric(label, { variant: "hero" });
     m.value(value);
     if (proposed) m.el.classList.add("proposed");
     return m.el;
@@ -245,8 +260,10 @@ function spectralBandwidth(pulse?: CardPulse): number | undefined {
     const x = drive.map((v) => v - mean);
     const half = Math.floor(n / 2);
     const power: number[] = [];
-    for (let k = 1; k <= half; k++) {           // one-sided, DC excluded
-      let re = 0, im = 0;
+    for (let k = 1; k <= half; k++) {
+      // one-sided, DC excluded
+      let re = 0,
+        im = 0;
       for (let t = 0; t < n; t++) {
         const ph = (-2 * Math.PI * k * t) / n;
         re += x[t] * Math.cos(ph);
@@ -260,7 +277,7 @@ function spectralBandwidth(pulse?: CardPulse): number | undefined {
     for (let k = 0; k < power.length; k++) {
       cum += power[k];
       if (cum >= 0.95 * total) {
-        const f = (k + 1) / (n * dt);           // bin k+1 → frequency
+        const f = (k + 1) / (n * dt); // bin k+1 → frequency
         if (worst === undefined || f > worst) worst = f;
         break;
       }

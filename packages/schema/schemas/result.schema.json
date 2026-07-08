@@ -8,9 +8,32 @@
   "required": ["schema_version", "fidelity", "iterations"],
   "properties": {
     "schema_version": { "enum": ["1"] },
-    "fidelity": { "type": "number", "minimum": 0, "maximum": 1.0001, "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)" },
+    "fidelity": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1.0001,
+      "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)"
+    },
     "iterations": { "type": "integer", "minimum": 0 },
     "wall_seconds": { "type": "number", "minimum": 0 },
+    "pulse_kind": {
+      "enum": ["spline", "pwc"],
+      "description": "Declared pulse parameterization (spec-20260704-113005 §6). Absent = pwc. The verification harness dispatches on this — never inferred."
+    },
+    "fidelity_convention": {
+      "enum": ["fixed", "free_phase"],
+      "description": "Which convention `fidelity` reports. Absent = fixed. free_phase requires free_phases + subsystem_levels."
+    },
+    "free_phases": {
+      "type": "array",
+      "items": { "type": "number" },
+      "description": "Optimized virtual-Z phases (rad), one per subsystem in order; applied post-hoc by the harness — never in dynamics."
+    },
+    "subsystem_levels": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 2 },
+      "description": "Subsystem dimensions for the phase-operator construction."
+    },
     "params": {
       "type": "object",
       "description": "The regime the run actually solved (self-describing). Lenient by design — solve params vary by system/platform; the run-dir contract pins only fidelity + iterations.",

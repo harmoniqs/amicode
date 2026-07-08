@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as vscodeMock from "vscode";
@@ -22,6 +22,7 @@ import * as vscodeMock from "vscode";
 const { inspector } = vi.hoisted(() => ({
   inspector: {
     setWarmingUp: vi.fn(),
+    postTiming: vi.fn(),
     postCompletion: vi.fn(),
     postIterationRecord: vi.fn(),
     postPulse: vi.fn(),
@@ -38,20 +39,29 @@ const channel = { appendLine() {}, append() {} } as never;
 const META_LINE = 'AMICODE_PULSE_META drives=1 knots=2 labels="a_1" bounds=-0.2:0.2\n';
 
 /** Minimal StatusBarManager spy — only setRun is exercised. */
-function statusBarSpy() { return { setRun: vi.fn(), clear: vi.fn(), dispose: vi.fn() }; }
+function statusBarSpy() {
+  return { setRun: vi.fn(), clear: vi.fn(), dispose: vi.fn() };
+}
 
 function writeManifest(dir: string, runId: string): void {
-  writeFileSync(join(dir, "run.toml"),
+  writeFileSync(
+    join(dir, "run.toml"),
     `schema_version = "1"\nrun_id = "${runId}"\nscript_path = "/s.jl"\nlab = "default"\n` +
-    `lab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`);
+      `lab_id = "default"\ncreated_at = "2026-06-15T00:00:00Z"\norchestrator_version = "0.1.0"\n[julia]\nbinary = "julia"\n`,
+  );
 }
 /** Stage a run dir + its index line (the amico-run writer's TSV format). */
-function stageRun(root: string, runId: string, opts: { finished?: string; fidelity?: number; log?: string } = {}): string {
+function stageRun(
+  root: string,
+  runId: string,
+  opts: { finished?: string; fidelity?: number; log?: string } = {},
+): string {
   const dir = join(root, runId);
   mkdirSync(dir, { recursive: true });
   writeManifest(dir, runId);
   if (opts.log !== undefined) writeFileSync(join(dir, "run.log"), opts.log);
-  if (opts.fidelity !== undefined) writeFileSync(join(dir, "result.toml"), `schema_version = "1"\nfidelity = ${opts.fidelity}\niterations = 9\n`);
+  if (opts.fidelity !== undefined)
+    writeFileSync(join(dir, "result.toml"), `schema_version = "1"\nfidelity = ${opts.fidelity}\niterations = 9\n`);
   if (opts.finished) writeFileSync(join(dir, "FINISHED"), `status = "${opts.finished}"\nexit_code = 0\n`);
   appendFileSync(join(root, "index"), `${runId}\t2026-07-03T00:00:00Z\t/s.jl\n`);
   return dir;
@@ -59,7 +69,9 @@ function stageRun(root: string, runId: string, opts: { finished?: string; fideli
 const tick = (m: RunsManager): void => (m as unknown as { tick(): void }).tick();
 
 describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
-  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+  beforeEach(() => {
+    for (const f of Object.values(inspector)) f.mockClear();
+  });
 
   it("a run already FINISHED at launch stays idle — nothing re-rendered", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
@@ -70,19 +82,22 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     expect(inspector.postPulse).not.toHaveBeenCalled();
     expect(inspector.postCompletion).not.toHaveBeenCalled();
     expect(inspector.setWarmingUp).not.toHaveBeenCalled();
-    expect(m.runs()).toHaveLength(1);                       // …but it IS registered
+    expect(m.runs()).toHaveLength(1); // …but it IS registered
     expect(m.runs()[0]).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.9999 });
     m.dispose();
   });
 
   it("fresh run → warming-up → completion (FINISHED-keyed, not result.toml presence)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
-    const run = stageRun(root, "r2");                        // manifest only, no data yet
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
+    // Registered AFTER boot (a run that STARTS while the user works) — the
+    // boot-replay path is warming-quiet by design (see the boot test below).
+    const run = stageRun(root, "r2"); // manifest only, no data yet
+    tick(m);
     expect(inspector.setWarmingUp).toHaveBeenCalledWith("r2");
     expect(inspector.setRunLabel).toHaveBeenCalledWith("r2", "r2");
-    expect(inspector.activate).toHaveBeenCalledWith("r2");   // 1.3: selection = activate the pane
+    expect(inspector.activate).toHaveBeenCalledWith("r2"); // 1.3: selection = activate the pane
     expect(m.selectedRun).toBe("r2");
 
     // result.toml alone must NOT complete the run (FINISHED is authoritative).
@@ -93,6 +108,17 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     writeFileSync(join(run, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
     tick(m);
     expect(inspector.postCompletion).toHaveBeenCalledWith("r2", "completed", 0.9999);
+    m.dispose();
+  });
+
+  it("BOOT replay is warming/reveal-quiet: a live run discovered at start() is tracked but never steals focus", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    stageRun(root, "rBoot"); // live run exists BEFORE start
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    expect(m.selectedRun).toBe("rBoot"); // state still selects it…
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled(); // …but no warming focus
+    expect(inspector.reveal).not.toHaveBeenCalled(); // …and no reveal at boot
     m.dispose();
   });
 
@@ -107,12 +133,19 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     tick(m);
     expect(inspector.postPulse).toHaveBeenCalledTimes(2);
     expect(inspector.postPulse).toHaveBeenNthCalledWith(1, "p1", expect.objectContaining({ type: "meta" }));
-    expect(inspector.postPulse).toHaveBeenNthCalledWith(2, "p1", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 1 }) }));
+    expect(inspector.postPulse).toHaveBeenNthCalledWith(
+      2,
+      "p1",
+      expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 1 }) }),
+    );
 
     appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=2 dt=0.2 a=0.3,0.4\n");
     tick(m);
     expect(inspector.postPulse).toHaveBeenCalledTimes(3);
-    expect(inspector.postPulse).toHaveBeenLastCalledWith("p1", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 2 }) }));
+    expect(inspector.postPulse).toHaveBeenLastCalledWith(
+      "p1",
+      expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 2 }) }),
+    );
     m.dispose();
   });
 
@@ -121,19 +154,24 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     // Mid-flight discovery: meta + one record ALREADY on disk, run not finished.
     const run = stageRun(root, "p2", { log: META_LINE + "AMICODE_PULSE iter=3 dt=0.2 a=0.1,0.2\n" });
     const m = new RunsManager({ runsRoot: root, channel });
-    m.start();                                               // display replay → meta + newest record
+    m.start(); // display replay → meta + newest record
     expect(inspector.postPulse).toHaveBeenCalledTimes(2);
 
     appendFileSync(join(run, "run.log"), "AMICODE_PULSE iter=4 dt=0.2 a=0.3,0.4\n");
-    tick(m);                                                 // record parses against the armed meta
+    tick(m); // record parses against the armed meta
     expect(inspector.postPulse).toHaveBeenCalledTimes(3);
-    expect(inspector.postPulse).toHaveBeenLastCalledWith("p2", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 4 }) }));
+    expect(inspector.postPulse).toHaveBeenLastCalledWith(
+      "p2",
+      expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 4 }) }),
+    );
     m.dispose();
   });
 });
 
 describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
-  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+  beforeEach(() => {
+    for (const f of Object.values(inspector)) f.mockClear();
+  });
 
   it("two concurrent live runs: newest auto-selected; both fanned to the inspector, status bar tracks the selected only", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
@@ -143,9 +181,9 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     m.start();
     expect(m.selectedRun).toBe("rA");
 
-    const b = stageRun(root, "rB");                          // second solve starts
-    tick(m);                                                 // index tail discovers it
-    expect(m.selectedRun).toBe("rB");                        // auto-follow the newest start
+    const b = stageRun(root, "rB"); // second solve starts
+    tick(m); // index tail discovers it
+    expect(m.selectedRun).toBe("rB"); // auto-follow the newest start
     inspector.postIterationRecord.mockClear();
     statusBar.setRun.mockClear();
 
@@ -154,8 +192,8 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     appendFileSync(join(a, "run.log"), "AMICODE_ITER iter=7 f=0.1 inf_pr=1e-8 inf_du=1e-6\n");
     tick(m);
     expect(inspector.postIterationRecord).toHaveBeenCalledWith("rA", expect.objectContaining({ iter: 7 }));
-    expect(statusBar.setRun).not.toHaveBeenCalled();        // selection-gated: rB is selected
-    expect(m.runs().find(r => r.runId === "rA")?.latestIter).toBe(7);
+    expect(statusBar.setRun).not.toHaveBeenCalled(); // selection-gated: rB is selected
+    expect(m.runs().find((r) => r.runId === "rA")?.latestIter).toBe(7);
 
     // A finishes in the background: registry terminal, completion fanned to the
     // inspector (rA's pane badge), status bar still untouched…
@@ -164,8 +202,8 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
     tick(m);
     expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9995);
-    expect(statusBar.setRun).not.toHaveBeenCalled();        // still rB selected
-    expect(m.runs().find(r => r.runId === "rA")).toMatchObject({ phase: "finished", fidelity: 0.9995 });
+    expect(statusBar.setRun).not.toHaveBeenCalled(); // still rB selected
+    expect(m.runs().find((r) => r.runId === "rA")).toMatchObject({ phase: "finished", fidelity: 0.9995 });
     // …and the promote prompt STILL fires (fan-out is per-run, not per-selection).
     expect(promote).toHaveBeenCalledTimes(1);
 
@@ -185,53 +223,56 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     m.start();
     writeFileSync(join(a, "result.toml"), 'schema_version = "1"\nfidelity = 0.9999\niterations = 3\n');
     writeFileSync(join(a, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
-    tick(m);                                                 // live completion (promotes once)
+    tick(m); // live completion (promotes once)
     stageRun(root, "rB");
-    tick(m);                                                 // selection moves to rB
+    tick(m); // selection moves to rB
     expect(m.selectedRun).toBe("rB");
 
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
     inspector.postCompletion.mockClear();
-    m.selectRun("rA");                                       // user switches back (1.3 seam)
+    m.selectRun("rA"); // user switches back (1.3 seam)
     expect(inspector.activate).toHaveBeenCalledWith("rA");
     expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9999);
-    expect(promote).not.toHaveBeenCalled();                  // promote-once held
+    expect(promote).not.toHaveBeenCalled(); // promote-once held
     promote.mockRestore();
     m.dispose();
   });
 
   it("PULSE events are fanned to the inspector runId-tagged even for a background run (webview shows only the active pane)", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
-    const a = stageRun(root, "rA", { log: META_LINE });        // rA armed with meta
+    const a = stageRun(root, "rA", { log: META_LINE }); // rA armed with meta
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
     stageRun(root, "rB");
     tick(m);
-    expect(m.selectedRun).toBe("rB");                           // rA now background
+    expect(m.selectedRun).toBe("rB"); // rA now background
     inspector.postPulse.mockClear();
 
     // A background pulse RECORD on rA reaches the inspector TAGGED "rA" — the
     // webview routes it to rA's hidden pane, never the visible rB plot.
     appendFileSync(join(a, "run.log"), "AMICODE_PULSE iter=5 dt=0.2 a=0.1,0.2\n");
     tick(m);
-    expect(inspector.postPulse).toHaveBeenCalledWith("rA", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 5 }) }));
+    expect(inspector.postPulse).toHaveBeenCalledWith(
+      "rA",
+      expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 5 }) }),
+    );
     m.dispose();
   });
 
   it("selecting a run whose FINISHED landed inside the poll window shows completion, never warming", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
-    const a = stageRun(root, "rA");                             // live at discovery → pipeline + selected
+    const a = stageRun(root, "rA"); // live at discovery → pipeline + selected
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
     stageRun(root, "rB");
-    tick(m);                                                    // selection moves to rB (rA still "live" in registry)
+    tick(m); // selection moves to rB (rA still "live" in registry)
     inspector.setWarmingUp.mockClear();
     inspector.postCompletion.mockClear();
 
     // rA finishes on disk but the poll hasn't ticked (registry still says live).
     writeFileSync(join(a, "result.toml"), 'schema_version = "1"\nfidelity = 0.9999\niterations = 3\n');
     writeFileSync(join(a, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
-    m.selectRun("rA");                                          // user switches back BEFORE the tick
+    m.selectRun("rA"); // user switches back BEFORE the tick
     // selectRun re-checks disk → completion, NOT warming (no terminal-badge inversion).
     expect(inspector.postCompletion).toHaveBeenCalledWith("rA", "completed", 0.9999);
     expect(inspector.setWarmingUp).not.toHaveBeenCalled();
@@ -254,14 +295,22 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     m.start();
 
     let emit!: (e: SchedulerLifecycleEvent) => void;
-    const scheduler: SchedulerLike = { onEvent: (l) => { emit = l; return () => { /* dispose */ }; } };
+    const scheduler: SchedulerLike = {
+      onEvent: (l) => {
+        emit = l;
+        return () => {
+          /* dispose */
+        };
+      },
+    };
     m.attachScheduler(scheduler);
 
     // A scheduler-launched run — no index line yet (the executor appends it,
     // but the started event beats the fs).
     const dir = join(root, "rSched");
-    mkdirSync(dir); writeManifest(dir, "rSched");
-    emit({ kind: "queued", queueId: "q1", position: 0 });     // logged, no throw
+    mkdirSync(dir);
+    writeManifest(dir, "rSched");
+    emit({ kind: "queued", queueId: "q1", position: 0 }); // logged, no throw
     emit({ kind: "started", queueId: "q1", runId: "rSched", runDir: dir });
     expect(m.selectedRun).toBe("rSched");
     expect(inspector.setRunLabel).toHaveBeenCalledWith("rSched", "rSched");
@@ -271,7 +320,7 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     // The index line landing later is a no-op (registration is idempotent).
     appendFileSync(join(root, "index"), "rSched\t2026-07-03T00:00:00Z\t/s.jl\n");
     tick(m);
-    expect(m.runs().filter(r => r.runId === "rSched")).toHaveLength(1);
+    expect(m.runs().filter((r) => r.runId === "rSched")).toHaveLength(1);
     m.dispose();
   });
 
@@ -280,19 +329,23 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
     stageRun(root, "rDemo", {
-      finished: "completed", fidelity: 0.9998,
+      finished: "completed",
+      fidelity: 0.9998,
       log: META_LINE + "AMICODE_PULSE iter=60 dt=0.2 a=0.1,0.2\nAMICODE_ITER iter=60 f=2e-3 inf_pr=1e-9 inf_du=1e-6\n",
     });
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
-    m.pokeDiscovery();                                        // same-tick registration…
-    expect(inspector.postCompletion).not.toHaveBeenCalled();  // …but no auto-display
-    m.selectRun("rDemo");                                     // the replayDemo command's path
+    m.pokeDiscovery(); // same-tick registration…
+    expect(inspector.postCompletion).not.toHaveBeenCalled(); // …but no auto-display
+    m.selectRun("rDemo"); // the replayDemo command's path
     expect(inspector.setRunLabel).toHaveBeenCalledWith("rDemo", "rDemo");
     expect(inspector.activate).toHaveBeenCalledWith("rDemo");
-    expect(inspector.postPulse).toHaveBeenCalledWith("rDemo", expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 60 }) }));
+    expect(inspector.postPulse).toHaveBeenCalledWith(
+      "rDemo",
+      expect.objectContaining({ type: "record", record: expect.objectContaining({ iter: 60 }) }),
+    );
     expect(inspector.postCompletion).toHaveBeenCalledWith("rDemo", "completed", 0.9998);
-    expect(inspector.setWarmingUp).not.toHaveBeenCalled();    // finished — never "warming"
-    expect(promote).not.toHaveBeenCalled();                   // finished-at-discovery: no prompt
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled(); // finished — never "warming"
+    expect(promote).not.toHaveBeenCalled(); // finished-at-discovery: no prompt
     promote.mockRestore();
     m.dispose();
   });
@@ -300,25 +353,27 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
 
 // Review #70 findings — one test per fix (jack-champagne's static/design pass).
 describe("RunsManager review-#70 fixes", () => {
-  beforeEach(() => { for (const f of Object.values(inspector)) f.mockClear(); });
+  beforeEach(() => {
+    for (const f of Object.values(inspector)) f.mockClear();
+  });
 
   it("#1 explicit selection is PINNED — a new live run registering does not steal the view", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     stageRun(root, "rA", { finished: "completed", fidelity: 0.9 });
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
-    m.selectRun("rA");                                        // the user deliberately opens rA
+    m.selectRun("rA"); // the user deliberately opens rA
     expect(m.selectedRun).toBe("rA");
     inspector.setRunLabel.mockClear();
 
-    stageRun(root, "rB");                                     // background solve starts
+    stageRun(root, "rB"); // background solve starts
     tick(m);
-    expect(m.selectedRun).toBe("rA");                          // auto-follow deferred to the pin
+    expect(m.selectedRun).toBe("rA"); // auto-follow deferred to the pin
     expect(inspector.setRunLabel).not.toHaveBeenCalledWith("rB", "rB");
     expect(inspector.activate).not.toHaveBeenCalledWith("rB"); // visible pane untouched
-    expect(m.runs().find(r => r.runId === "rB")?.phase).toBe("live");   // …but rB IS tracked
+    expect(m.runs().find((r) => r.runId === "rB")?.phase).toBe("live"); // …but rB IS tracked
 
-    m.selectRun("rB");                                        // explicit switch still works
+    m.selectRun("rB"); // explicit switch still works
     expect(m.selectedRun).toBe("rB");
     m.dispose();
   });
@@ -330,7 +385,7 @@ describe("RunsManager review-#70 fixes", () => {
     m.start();
     stageRun(root, "rB");
     tick(m);
-    expect(m.selectedRun).toBe("rB");                          // no pin → newest live run wins
+    expect(m.selectedRun).toBe("rB"); // no pin → newest live run wins
     m.dispose();
   });
 
@@ -340,20 +395,24 @@ describe("RunsManager review-#70 fixes", () => {
     mkdirSync(dir, { recursive: true });
     writeManifest(dir, "rTorn");
     writeFileSync(join(dir, "result.toml"), 'schema_version = "1"\nfidelity = 0.9997\niterations = 5\n');
-    writeFileSync(join(dir, "FINISHED"), 'status = "comp');    // torn mid-write: invalid TOML
+    writeFileSync(join(dir, "FINISHED"), 'status = "comp'); // torn mid-write: invalid TOML
     appendFileSync(join(root, "index"), "rTorn\t2026-07-04T00:00:00Z\t/s.jl\n");
 
     const promote = vi.spyOn(vscodeMock.window, "showInformationMessage");
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
     // NOT finalized with an undefined status — held live so the retry lane owns it.
-    expect(m.runs().find(r => r.runId === "rTorn")).toMatchObject({ phase: "live" });
-    expect(inspector.setWarmingUp).not.toHaveBeenCalled();     // FINISHED exists on disk — never "warming"
+    expect(m.runs().find((r) => r.runId === "rTorn")).toMatchObject({ phase: "live" });
+    expect(inspector.setWarmingUp).not.toHaveBeenCalled(); // FINISHED exists on disk — never "warming"
 
-    writeFileSync(join(dir, "FINISHED"), 'status = "completed"\nexit_code = 0\n');   // the write completes
+    writeFileSync(join(dir, "FINISHED"), 'status = "completed"\nexit_code = 0\n'); // the write completes
     tick(m);
-    expect(m.runs().find(r => r.runId === "rTorn")).toMatchObject({ phase: "finished", status: "completed", fidelity: 0.9997 });
-    expect(promote).not.toHaveBeenCalled();                    // still a launch replay — promote suppressed
+    expect(m.runs().find((r) => r.runId === "rTorn")).toMatchObject({
+      phase: "finished",
+      status: "completed",
+      fidelity: 0.9997,
+    });
+    expect(promote).not.toHaveBeenCalled(); // still a launch replay — promote suppressed
     promote.mockRestore();
     m.dispose();
   });
@@ -368,10 +427,39 @@ describe("RunsManager review-#70 fixes", () => {
     const displayPass = vi.spyOn(RunsManager.prototype as never as { displaySink(): unknown }, "displaySink");
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
-    expect(displayPass).not.toHaveBeenCalled();                // was 1 per discovery
+    expect(displayPass).not.toHaveBeenCalled(); // was 1 per discovery
     // …and the single pass still displayed the history (meta + newest record):
     expect(inspector.postPulse).toHaveBeenCalledTimes(2);
     displayPass.mockRestore();
+    m.dispose();
+  });
+});
+
+describe("mid-session stall surfaces on the status bar", () => {
+  it("tick downgrades the selected run to 'stalled' once run.log goes cold (and never upgrades)", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const statusBar = statusBarSpy();
+    const m = new RunsManager({ runsRoot: root, channel, statusBar: statusBar as never });
+    m.start();
+    const dir = stageRun(root, "r-wedge", { log: "AMICODE_ITER iter=8 f=1.07e+01 inf_pr=1e-3 inf_du=1e-2\n" });
+    tick(m); // registers + replays → status bar sees running/iter 8 via routeIter
+    statusBar.setRun.mockClear();
+
+    // age run.log past the stall threshold, then let the poll backstop fire
+    const cold = new Date(Date.now() - 11 * 60 * 1000);
+    utimesSync(join(dir, "run.log"), cold, cold);
+    (m as unknown as { liveStatusCache: Map<string, unknown> }).liveStatusCache.clear();
+    tick(m);
+    const stalledCall = statusBar.setRun.mock.calls.find((c) => c[0]?.status === "stalled");
+    expect(stalledCall?.[0]).toMatchObject({ runId: "r-wedge", status: "stalled", latestIter: 8 });
+
+    // a finished run must NOT be re-stamped by the backstop
+    writeFileSync(join(dir, "FINISHED"), 'status = "completed"\nexit_code = 0\n');
+    tick(m);
+    statusBar.setRun.mockClear();
+    (m as unknown as { liveStatusCache: Map<string, unknown> }).liveStatusCache.clear();
+    tick(m);
+    expect(statusBar.setRun.mock.calls.every((c) => c[0]?.status !== "stalled")).toBe(true);
     m.dispose();
   });
 });

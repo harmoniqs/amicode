@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "exemplars": [
+    {
+      "id": "rydberg-cz",
+      "platform": "rydberg",
+      "kind": "gate_synthesis",
+      "size": 2,
+      "path": "rydberg-cz/script.jl",
+      "packages": [
+        "Piccolo",
+        "CairoMakie",
+        "JLD2",
+        "LinearAlgebra",
+        "TOML",
+        "Printf"
+      ],
+      "notes": "EXPERIMENTAL exemplar — the NLP's first iteration is pathologically slow at this size in the current Piccolo path (see the script header); splice params but expect long solves until vetted.",
+      "baseline_hash": "sha256:b059453d448cbdfd4ca167d065a57682d49c1ad9ee41a1bf53a83e3fb0bbdda8"
+    }
+  ]
+}

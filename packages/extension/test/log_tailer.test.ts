@@ -22,12 +22,12 @@ function harness(content?: string, startOffset = 0) {
 
 describe("LogTailer", () => {
   it("emits complete lines once; a torn final line (no newline yet) waits and heals", () => {
-    const { p, t, lines } = harness("a\t1\t/s.jl\nb\t2\t/s");   // second line torn mid-write
+    const { p, t, lines } = harness("a\t1\t/s.jl\nb\t2\t/s"); // second line torn mid-write
     t.poke();
-    expect(lines).toEqual(["a\t1\t/s.jl"]);                     // torn tail NOT emitted
-    appendFileSync(p, ".jl\nc\t3\t/t.jl\n");                    // writer finishes + appends
+    expect(lines).toEqual(["a\t1\t/s.jl"]); // torn tail NOT emitted
+    appendFileSync(p, ".jl\nc\t3\t/t.jl\n"); // writer finishes + appends
     t.poke();
-    expect(lines).toEqual(["a\t1\t/s.jl", "b\t2\t/s.jl", "c\t3\t/t.jl"]);   // healed, no split
+    expect(lines).toEqual(["a\t1\t/s.jl", "b\t2\t/s.jl", "c\t3\t/t.jl"]); // healed, no split
     t.dispose();
   });
 
@@ -35,9 +35,9 @@ describe("LogTailer", () => {
     const { p, t, lines } = harness("one\ntwo\n");
     t.poke();
     expect(lines).toEqual(["one", "two"]);
-    writeFileSync(p, "one\n");                                  // file shrank (rewrite)
+    writeFileSync(p, "one\n"); // file shrank (rewrite)
     t.poke();
-    expect(lines).toEqual(["one", "two", "one"]);               // full re-read from 0
+    expect(lines).toEqual(["one", "two", "one"]); // full re-read from 0
     t.dispose();
   });
 
@@ -50,11 +50,11 @@ describe("LogTailer", () => {
   });
 
   it("poke() self-attaches when the file appears after start()", () => {
-    const { p, t, lines } = harness(undefined);                  // file doesn't exist yet
+    const { p, t, lines } = harness(undefined); // file doesn't exist yet
     t.poke();
     expect(lines).toEqual([]);
     writeFileSync(p, "late\n");
-    t.poke();                                                    // attaches + drains
+    t.poke(); // attaches + drains
     expect(lines).toEqual(["late"]);
     t.dispose();
   });

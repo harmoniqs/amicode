@@ -12,8 +12,16 @@
     "lab_id": { "type": "string", "minLength": 1 },
     "gate": { "type": "string", "description": "target gate label, if recorded" },
     "fidelity": { "type": "number", "minimum": 0, "maximum": 1.0001 },
-    "pulse_path": { "type": "string", "minLength": 1, "description": "path/ref to the promoted pulse artifact (e.g. pulse.jld2)" },
+    "pulse_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "path/ref to the promoted pulse artifact (e.g. pulse.jld2)"
+    },
     "created_at": { "type": "string", "minLength": 1, "format": "date-time" },
-    "params": { "type": "object", "additionalProperties": true, "description": "the regime solved (self-describing), copied from result.toml" }
+    "params": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "the regime solved (self-describing), copied from result.toml"
+    }
   }
 }

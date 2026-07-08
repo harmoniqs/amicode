@@ -5,9 +5,36 @@
   "description": "Per-run identity + provenance, written FIRST by amico-run (formerly manifest.toml — renamed to avoid colliding with Julia's Manifest.toml on case-insensitive filesystems). The per-run schema_version carrier for the run-dir contract.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "run_id", "script_path", "lab", "lab_id", "created_at", "orchestrator_version", "julia"],
+  "required": [
+    "schema_version",
+    "run_id",
+    "script_path",
+    "lab",
+    "lab_id",
+    "created_at",
+    "orchestrator_version",
+    "julia"
+  ],
   "properties": {
-    "schema_version": { "enum": ["1"], "description": "run-dir contract version (enum = the supported-version SET; grows by one entry per bump)" },
+    "schema_version": {
+      "enum": ["1", "2"],
+      "description": "run-dir contract version (enum = the supported-version SET; grows by one entry per bump). v2 (spec C) adds tier + [hashes] for --spec launches"
+    },
+    "tier": {
+      "enum": ["vetted", "composed", "free"],
+      "description": "trust tier stamped by amico-run when launched via --spec (v2)"
+    },
+    "hashes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "system_hash": { "type": "string" },
+        "formulation_hash": { "type": "string" },
+        "warm_start_hash": { "type": "string" },
+        "spec_hash": { "type": "string" }
+      },
+      "description": "amicode#64 provenance hashes; spec_hash is gate-computed over the canonical solvespec.json (v2)"
+    },
     "run_id": { "type": "string", "minLength": 1 },
     "script_path": { "type": "string", "minLength": 1 },
     "lab": { "type": "string", "minLength": 1 },

@@ -21,10 +21,30 @@
       "additionalProperties": false,
       "required": ["omega_GHz", "delta_GHz", "levels", "drive_max_GHz"],
       "properties": {
-        "omega_GHz": { "type": "number", "exclusiveMinimum": 0, "maximum": 100, "description": "qubit transition frequency (GHz)" },
-        "delta_GHz": { "type": "number", "minimum": -2, "maximum": 2, "description": "anharmonicity (GHz; positive convention in the beta template). Bounded to catch garbage/sign-flipped values — physical |δ| is ~0.1–0.5 GHz; the sign convention itself isn't enforced." },
-        "levels": { "type": "integer", "minimum": 2, "maximum": 10, "description": "transmon levels modeled (qubit + leakage)" },
-        "drive_max_GHz": { "type": "number", "exclusiveMinimum": 0, "maximum": 10, "description": "per-quadrature drive bound (GHz)" }
+        "omega_GHz": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 100,
+          "description": "qubit transition frequency (GHz)"
+        },
+        "delta_GHz": {
+          "type": "number",
+          "minimum": -2,
+          "maximum": 2,
+          "description": "anharmonicity (GHz; positive convention in the beta template). Bounded to catch garbage/sign-flipped values — physical |δ| is ~0.1–0.5 GHz; the sign convention itself isn't enforced."
+        },
+        "levels": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 10,
+          "description": "transmon levels modeled (qubit + leakage)"
+        },
+        "drive_max_GHz": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 10,
+          "description": "per-quadrature drive bound (GHz)"
+        }
       }
     }
   }
