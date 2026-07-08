@@ -329,6 +329,7 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
         [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
+        [`${path.join(os.homedir(), ".amico", "library")}/**`]: "allow", // uploaded papers ("read my latest paper" — home Library card)
         [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
