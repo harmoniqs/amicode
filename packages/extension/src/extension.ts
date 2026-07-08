@@ -7,6 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
+import { registerCatalogBrowser } from "./catalog_browser_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, resolveModelPin } from "./opencode_config";
@@ -55,6 +56,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  registerCatalogBrowser(ctx); // #48 seam prototype — flat pulse/run catalog browser
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
     // the card. Both prompts (demo replay, live promote) route through here.

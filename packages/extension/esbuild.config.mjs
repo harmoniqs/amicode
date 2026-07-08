@@ -56,6 +56,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // pulse/run catalog browser webview bundle (#48 seam prototype, flat)
+  {
+    entryPoints: ["src/catalog_browser_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/catalog_browser_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {

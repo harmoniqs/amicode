@@ -19,6 +19,7 @@
   "activationEvents": [
     "onCommand:amicode.openChat",
     "onCommand:amicode.openInspector",
+    "onCommand:amicode.openCatalogBrowser",
     "onView:amicode.runInspector",
     "onView:amicode.vault",
     "onStartupFinished"
@@ -75,6 +76,10 @@
       {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
+      },
+      {
+        "command": "amicode.openCatalogBrowser",
+        "title": "Amicode: Open Pulse Catalog Browser (Prototype, flat)"
       },
       {
         "command": "amicode.selectRun",

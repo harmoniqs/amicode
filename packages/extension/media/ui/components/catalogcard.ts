@@ -71,6 +71,10 @@ export interface CatalogEntry {
     wall_seconds?: number;
     /** User-assigned system name — human identity over machine family. */
     system_name?: string;
+    /** 6-char identity hash (Krishna's interview, p2: tags → timestamps →
+     *  hashes). Not derived here — the catalog browser's list is the first
+     *  surface that needs it; carried through to the card for confirmation. */
+    hash6?: string;
   };
 }
 
@@ -153,6 +157,7 @@ export function catalogcard(entry: CatalogEntry, opts: CatalogCardOpts = {}): Ca
       // the user-assigned name (chip identity) vs the derived family above
       ...(entry.proposed?.system_name ? [kv("name", entry.proposed.system_name, true)] : []),
       ...(entry.proposed?.tags?.length ? [kv("tags", entry.proposed.tags.join(", "), true)] : []),
+      ...(entry.proposed?.hash6 ? [kv("hash", entry.proposed.hash6, true)] : []),
       kv("created", entry.created_at ?? "—"),
       // solver telemetry — provenance, not pulse quality (proposed fields)
       ...(entry.proposed?.iterations !== undefined ? [kv("iterations", String(entry.proposed.iterations), true)] : []),
