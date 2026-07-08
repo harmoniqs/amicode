@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # Keep workflow actions off deprecated runtimes (the Node 20 sweep of
+  # 2026-07 was manual — this automates the next one).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # pnpm workspace — dependabot reads pnpm-lock.yaml from the root and covers
+  # every workspace package. Grouped so a week's updates arrive as at most two
+  # PRs (prod / dev) instead of one per dependency.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    versioning-strategy: increase
+    open-pull-requests-limit: 5
+    groups:
+      prod-dependencies:
+        dependency-type: production
+      dev-dependencies:
+        dependency-type: development
+
+  # NOT covered on purpose:
+  # - Julia (packages/schema/julia, ~/.amico project) — no dependabot ecosystem
+  #   exists; the Manifest pin is deliberate (AGENTS.md sharp edge).
+  # - The vendored opencode binary — pinned by packages/extension/opencode.lock.json
+  #   (fork ref + release sha256), updated through the fork release flow.
