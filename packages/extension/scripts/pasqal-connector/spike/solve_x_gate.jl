@@ -76,6 +76,7 @@ detuning = collect(A[2, :]) .* 1e3
 
 open("pulse.toml", "w") do io
     TOML.print(io, Dict(
+        "schema_version" => 1,   # pulse_contract.py checks this exactly
         "spike" => "piccolo-to-pulser-x-gate",
         "fidelity" => fid,
         "T_ns" => T,

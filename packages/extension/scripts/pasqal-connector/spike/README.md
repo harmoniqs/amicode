@@ -34,6 +34,43 @@ PASQAL_USERNAME=... PASQAL_PASSWORD=... PASQAL_PROJECT_ID=... \
   python3 submit_optimized.py                           # submits to EMU_FREE
 ```
 
+## Architecture: the pulse contract
+
+`pulse_contract.py` is the single source of truth for pulse.toml →
+`pulser.Sequence`. Both consumers (local sim, cloud submit) import it, so
+validation cannot drift between them. Rules:
+
+- **Device limits are read off the `pulser` Device object at call time**
+  (clock period, min duration, max sequence duration, amplitude/detuning
+  bounds) — never hardcoded, so a device-spec update propagates for free.
+- **Dust vs. violation**: optimizer bound-riding dust (< 1e-6 rad/µs) is
+  clipped silently; anything larger RAISES `ContractError` with the index
+  and magnitude. A bad solve fails loudly instead of being silently clipped
+  to the bound and submitted.
+- **Versioned schema**: pulse.toml carries `schema_version = 1` (checked
+  exactly); unknown keys are ignored (additive policy, matching the amicode
+  scores/run-dir contracts).
+- `submit_optimized.py --dry-run` builds + validates without touching the
+  network — no credentials needed.
+
+## Test harness
+
+```bash
+python3 -m unittest discover -s tests -v        # tier 1+2: 28 tests, ~5 s
+                                                # hermetic: no Julia/network/creds
+AMICO_TEST_JULIA_PROJECT=$HOME/.amico/julia \
+  python3 tests/slow_e2e.py                     # tier 3: fresh solve → agreement
+```
+
+Tier 1+2 covers: golden-fixture round-trip (a committed real solve output —
+the seeded solve is deterministic), every schema corruption, every device-
+limit violation, dust-clipping behavior, CLI exit codes, `--dry-run`, the
+credential guard, and two physics regressions (transfer probability > 0.999
+with and without the 8 MHz modulation filter). Tier 3 re-runs the actual
+Julia solve and fails on exporter↔contract drift or solve↔sim disagreement
+> 1e-4. The live-cloud path is exercised manually (chat session or
+`submit_optimized.py` with credentials) — it is deliberately not in CI.
+
 Python deps: `../requirements.txt` (pulser 1.8.0). Julia deps: the standard
 amicode project (`~/.amico/julia`, provisioned by `install.sh`).
 
