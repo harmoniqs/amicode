@@ -1,6 +1,6 @@
 // Inspector view — per-run panes (1.3) over the post-#67 native pulse protocol.
 // Owns the runId-keyed message protocol shared with run_inspector.ts:
-//   runlabel · iteration · warming · completed · pulsemeta · pulse   (+ activate/ping)
+//   runlabel · tags · iteration · warming · completed · pulsemeta · pulse   (+ activate/ping)
 // every message carries `runId`; the view keeps ONE `panel` per runId and shows
 // the ACTIVE one (host sends `activate`). A late/throttled message for a
 // background run updates ITS pane only — never the visible pane's badge/plot
@@ -31,6 +31,11 @@ defineStyle(
      these win over .stack on specificity — not on stylesheet order. */
   .pane:not(.active) { display: none; }
   .pane.active { display: flex; }
+  /* Tags aren't in any run schema yet (Krishna's field-selection question) —
+     the dashed underline is the project's established "proposed" treatment
+     (chip.ts, catalogcard.ts use the same visual language). */
+  .tag { border-bottom: 1px dashed var(--color-dim); opacity: 0.85; }
+  .tags:empty { display: none; }
 `,
 );
 
@@ -75,10 +80,26 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   brand.className = "row gap-sm brand";
   brand.append(mark(), text("", "Run Inspector").el);
 
+  // "run" caption so the label reads as an identity, not stray metadata — the
+  // label itself is currently just the runId (setRunLabel(runId, runId) on the
+  // host); a friendlier value is a later data-model question, not this PR's.
+  const runLabelRow = document.createElement("div");
+  runLabelRow.className = "row gap-xs";
+  runLabelRow.append(text("label-k", "run").el, runLabel.el);
+
   const topbar = document.createElement("div");
   topbar.className = "row wrap";
   status.el.classList.add("push-end");
-  topbar.append(brand, runLabel.el, status.el);
+  topbar.append(brand, runLabelRow, status.el);
+
+  // Pulse tags (#49, UX4 — Krishna p1/p2). Not in any run schema yet, so they
+  // render with the project's established "proposed" dashed treatment
+  // (chip.ts, catalogcard.ts) — visibly present, visibly not-yet-real.
+  const tagsRow = document.createElement("div");
+  tagsRow.className = "row gap-xs tags";
+  function renderTags(tags: string[]): void {
+    tagsRow.replaceChildren(...tags.map((t) => text("tag small", t).el));
+  }
 
   const grid = document.createElement("div");
   grid.className = "metric-row";
@@ -139,7 +160,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const el = document.createElement("div");
   el.className = "pane stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid, footer);
+  el.append(topbar, tagsRow, pulse.el, grid, footer);
 
   return {
     el,
@@ -157,6 +178,9 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
       switch (msg.type) {
         case "runlabel":
           runLabel.set(String(msg.text ?? ""));
+          break;
+        case "tags":
+          renderTags(Array.isArray(msg.tags) ? (msg.tags as string[]) : []);
           break;
         case "timing": {
           if (msg.terminal) {

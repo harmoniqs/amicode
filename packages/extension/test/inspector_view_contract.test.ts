@@ -240,6 +240,37 @@ describe("Run Inspector host buffering (#66 pulse events, runId-keyed)", () => {
     inspector.setWarmingUp("r3"); // fresh run → warming IS shown
     expect(posted.filter((m) => m.type === "warming")).toMatchObject([{ runId: "r3" }]);
   });
+
+  it("postTags buffers pre-materialization and replays on resolve, runId-tagged", () => {
+    const { inspector, view, posted } = harness();
+    inspector.postTags("r1", ["smooth", "fast"]);
+    inspector.resolveWebviewView(view as never);
+    expect(posted.filter((m) => m.type === "tags")).toMatchObject([{ runId: "r1", tags: ["smooth", "fast"] }]);
+  });
+
+  it("postTags posts straight through once the webview is live, per-run isolated", () => {
+    const { inspector, view, posted } = harness();
+    inspector.resolveWebviewView(view as never);
+    posted.length = 0;
+    inspector.postTags("r1", ["smooth"]);
+    inspector.postTags("r2", ["fast"]);
+    expect(posted).toMatchObject([
+      { type: "tags", runId: "r1", tags: ["smooth"] },
+      { type: "tags", runId: "r2", tags: ["fast"] },
+    ]);
+  });
+
+  it("postTags survives reopen (S36) — replayed alongside the rest of the pane", () => {
+    const { inspector, makeView } = harness();
+    const a = makeView();
+    inspector.resolveWebviewView(a.view as never);
+    inspector.postTags("r1", ["smooth"]);
+    a.dispose();
+
+    const b = makeView();
+    inspector.resolveWebviewView(b.view as never);
+    expect(b.posted.filter((m) => m.type === "tags")).toMatchObject([{ runId: "r1", tags: ["smooth"] }]);
+  });
 });
 
 afterEach(() => {

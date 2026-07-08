@@ -24,6 +24,7 @@ const iter = (runId: string, n: number) => ({
 const panes = (v: { el: HTMLElement }) => [...v.el.querySelectorAll(".pane")];
 const activePane = (v: { el: HTMLElement }) => v.el.querySelector(".pane.active");
 const pillText = (pane: Element | null | undefined) => pane?.querySelector(".pill")?.textContent;
+const tagTexts = (pane: Element | null | undefined) => [...(pane?.querySelectorAll(".tags .tag") ?? [])].map((n) => n.textContent);
 
 describe("Inspector webview router (1.3 per-run panes)", () => {
   it("activate shows exactly one pane and hides the empty-state hint", () => {
@@ -90,5 +91,40 @@ describe("Inspector webview router (1.3 per-run panes)", () => {
     expect(pillText(activePane(v))).toBe("running"); // now r2 is visible
     const r1 = panes(v).find((p) => !p.classList.contains("active"))!;
     expect(pillText(r1)).toBe("converged"); // r1 untouched by the switch
+  });
+});
+
+describe("Pulse tags (#49, UX4)", () => {
+  it("renders tags in the tags row", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    expect(tagTexts(activePane(v))).toEqual([]);
+    v.onMessage({ type: "tags", runId: "r1", tags: ["smooth", "fast"] });
+    expect(tagTexts(activePane(v))).toEqual(["smooth", "fast"]);
+  });
+
+  it("a later tags message replaces the set, not appends", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "tags", runId: "r1", tags: ["smooth"] });
+    v.onMessage({ type: "tags", runId: "r1", tags: ["robust"] });
+    expect(tagTexts(activePane(v))).toEqual(["robust"]);
+  });
+
+  it("a background run's tags never land on the active pane (no cross-talk)", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "tags", runId: "r1", tags: ["smooth"] });
+    v.onMessage({ type: "tags", runId: "r2", tags: ["fast", "warmstart"] });
+    expect(tagTexts(activePane(v))).toEqual(["smooth"]);
+    const r2 = panes(v).find((p) => !p.classList.contains("active"))!;
+    expect(tagTexts(r2)).toEqual(["fast", "warmstart"]);
+  });
+
+  it("a malformed tags payload (non-array) degrades to no tags, not a crash", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "tags", runId: "r1", tags: "not-an-array" });
+    expect(tagTexts(activePane(v))).toEqual([]);
   });
 });

@@ -36,6 +36,7 @@ let INSPECTOR: InspectorView | undefined;
 interface PaneBuffer {
   runId: string;
   runLabel?: string;
+  tags?: string[];
   warming: boolean;
   completion?: { status: string; fidelity?: number };
   pulseMeta?: PulseMeta;
@@ -105,6 +106,7 @@ class InspectorView implements vscode.WebviewViewProvider {
   private replayPane(view: vscode.WebviewView, p: PaneBuffer): void {
     const rid = p.runId;
     if (p.runLabel !== undefined) view.webview.postMessage({ type: "runlabel", runId: rid, text: p.runLabel });
+    if (p.tags) view.webview.postMessage({ type: "tags", runId: rid, tags: p.tags });
     if (p.timing) view.webview.postMessage({ type: "timing", runId: rid, ...p.timing });
     if (p.warming) view.webview.postMessage({ type: "warming", runId: rid });
     if (p.pulseMeta) view.webview.postMessage({ type: "pulsemeta", runId: rid, ...p.pulseMeta });
@@ -203,6 +205,15 @@ class InspectorView implements vscode.WebviewViewProvider {
   setRunLabel(runId: string, label: string): void {
     this.paneFor(runId).runLabel = label;
     if (this.view) this.view.webview.postMessage({ type: "runlabel", runId, text: label });
+  }
+
+  /** Pulse tags (#49, UX4). Not sourced from any real run schema yet (Phase-3
+   *  CatalogStore question) — real plumbing, ready for whenever a tag INPUT
+   *  exists; no fake caller wired in this seam-prototype PR. Buffered per run
+   *  until materialize, like every other pane field. */
+  postTags(runId: string, tags: string[]): void {
+    this.paneFor(runId).tags = tags;
+    if (this.view) this.view.webview.postMessage({ type: "tags", runId, tags });
   }
 
   /** Timing for the elapsed/rate/ETA strip (ported from the single-run host —
