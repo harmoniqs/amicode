@@ -74,6 +74,18 @@ def validate_schema(data: dict) -> None:
     if fid is not None and not (isinstance(fid, (int, float)) and 0.0 <= fid <= 1.0):
         raise ContractError(f"fidelity, if present, must be in [0, 1], got {fid!r}")
 
+    atoms = data.get("atoms")
+    if atoms is not None:
+        if not isinstance(atoms, list) or len(atoms) < 1:
+            raise ContractError(f"atoms, if present, must be a non-empty list of [x, y] pairs")
+        for i, pos in enumerate(atoms):
+            if (
+                not isinstance(pos, list)
+                or len(pos) != 2
+                or not all(isinstance(c, (int, float)) and math.isfinite(c) for c in pos)
+            ):
+                raise ContractError(f"atoms[{i}] must be a finite [x, y] pair (µm), got {pos!r}")
+
 
 def validate_against_device(
     data: dict, device: pulser.devices.Device = pulser.AnalogDevice,
@@ -112,6 +124,22 @@ def validate_against_device(
         "detuning", data["detuning"],
         -channel.max_abs_detuning, channel.max_abs_detuning,
     )
+
+    atoms = data.get("atoms")
+    if atoms is not None:
+        max_atoms = device.max_atom_num
+        if max_atoms is not None and len(atoms) > max_atoms:
+            raise ContractError(
+                f"{len(atoms)} atoms exceeds the device's max atom number ({max_atoms})"
+            )
+        for i in range(len(atoms)):
+            for j in range(i + 1, len(atoms)):
+                dist = math.dist(atoms[i], atoms[j])
+                if dist < device.min_atom_distance:
+                    raise ContractError(
+                        f"atoms[{i}] and atoms[{j}] are {dist:.3g} µm apart — below the "
+                        f"device's minimum atom distance ({device.min_atom_distance} µm)"
+                    )
 
 
 def _check_bounds(name: str, values: list, lo: float, hi: float) -> None:
@@ -154,7 +182,8 @@ def build_sequence(
     amp = np.clip(amp, 0.0, channel.max_amp)          # dust only, per above
     det = np.clip(det, -channel.max_abs_detuning, channel.max_abs_detuning)
 
-    register = pulser.Register.from_coordinates([(0, 0)], prefix="q")
+    coords = [tuple(pos) for pos in data.get("atoms", [[0, 0]])]
+    register = pulser.Register.from_coordinates(coords, prefix="q")
     sequence = pulser.Sequence(register, device)
     sequence.declare_channel(channel_name, channel_name)
     pulse = pulser.Pulse(

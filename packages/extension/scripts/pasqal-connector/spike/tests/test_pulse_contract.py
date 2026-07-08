@@ -187,5 +187,40 @@ class TestGoldenSimulation(unittest.TestCase):
         self.assertGreater(p_r, 0.999)  # 8 MHz filter must not break the gate
 
 
+
+
+class TestAtomsKey(unittest.TestCase):
+    """Additive `atoms` register key: absent = single atom (back-compat)."""
+
+    def corrupt(self, **changes):
+        data = copy.deepcopy(golden())
+        data.update(changes)
+        return data
+
+    def test_absent_atoms_builds_single_atom(self):
+        seq = build_sequence(golden())  # golden has no atoms key
+        self.assertEqual(len(seq.register.qubits), 1)
+
+    def test_two_atom_register_builds(self):
+        seq = build_sequence(self.corrupt(atoms=[[0.0, 0.0], [5.0, 0.0]]))
+        self.assertEqual(len(seq.register.qubits), 2)
+
+    def test_below_min_distance_raises(self):
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=[[0.0, 0.0], [3.0, 0.0]]))
+        self.assertIn("minimum atom distance", str(ctx.exception))
+
+    def test_too_many_atoms_raises(self):
+        atoms = [[float(6 * i), float(6 * j)] for i in range(10) for j in range(10)]
+        with self.assertRaises(ContractError) as ctx:
+            build_sequence(self.corrupt(atoms=atoms))
+        self.assertIn("max atom number", str(ctx.exception))
+
+    def test_malformed_atoms_raise(self):
+        for bad in ([], [[0.0]], [[0.0, float("nan")]], [["x", 0.0]], "atoms"):
+            with self.assertRaises(ContractError):
+                validate_schema(self.corrupt(atoms=bad))
+
+
 if __name__ == "__main__":
     unittest.main()
