@@ -19,6 +19,7 @@
   "activationEvents": [
     "onCommand:amicode.openChat",
     "onCommand:amicode.openInspector",
+    "onCommand:amicode.openStoryboard",
     "onView:amicode.runInspector",
     "onView:amicode.vault",
     "onStartupFinished"
@@ -75,6 +76,10 @@
       {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
+      },
+      {
+        "command": "amicode.openStoryboard",
+        "title": "Amicode: Open Onboarding Storyboard (Prototype)"
       },
       {
         "command": "amicode.selectRun",

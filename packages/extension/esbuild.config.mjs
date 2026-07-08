@@ -56,6 +56,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // onboarding/pulse-design storyboard webview bundle (#46 seam prototype)
+  {
+    entryPoints: ["src/storyboard_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/storyboard_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {
