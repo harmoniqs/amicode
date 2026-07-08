@@ -149,12 +149,20 @@ def packing(pulse_dir: str = ".") -> None:
                 if blind is not None:
                     ax.annotate("", xy=(g, f - 0.012), xytext=(g, blind + 0.012),
                                 arrowprops={"arrowstyle": "->", "color": style.INK_FAINT, "lw": 0.9})
-        ax.set_xlabel("inter-pair gap L (µm)", fontsize=9)
-        ax.set_ylabel(r"fidelity to $|\mathrm{Bell}\rangle\!\otimes\!|\mathrm{Bell}\rangle$", fontsize=9)
+        ax.set_xlabel("inter-pair gap L (µm)", fontsize=9, color=style.INK_FAINT)
         ax.set_xlim(5.4, 21.6)
-        style.polish(ax)
+        ax.set_ylim(0.42, 1.06)
+        ax.axhline(1.0, color=style.GRID, lw=0.8, zorder=1)
+        style.declutter(ax, xticks=[6, 8, 10, 12, 15, 20], yticks=[0.5, 0.75, 1.0])
+        if reopt:
+            g6 = dict((g, f) for g, f, _ in reopt).get(6.0)
+            if g6 is not None:
+                blind6 = dict(baseline).get(6.0)
+                t6 = f"{blind6:.2f}" + r" $\rightarrow$ " + f"{g6:.2f}"
+                style.hero_stat(fig, t6,
+                                "at L = 6 µm · crosstalk-aware recovery")
         style.headline(fig, "How densely can you pack parallel entangling operations?",
-                       "two Bell pairs, one global pulse — reusing the 2-atom pulse vs re-optimizing with cross-pair couplings in the model")
+                       "two Bell pairs, one global pulse — crosstalk-blind vs crosstalk-aware")
         style.footer(fig)
         fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
 

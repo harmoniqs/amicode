@@ -105,6 +105,41 @@ def polish(ax, ygrid_only: bool = True) -> None:
     ax.tick_params(length=0)
 
 
+def declutter(ax, xticks=None, yticks=None) -> None:
+    """UI-graphic mode: no frame, no grid, only the ticks that earn their ink."""
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.grid(False)
+    ax.tick_params(length=0, colors=INK_FAINT, labelsize=8.5)
+    if xticks is not None:
+        ax.set_xticks(xticks)
+    if yticks is not None:
+        ax.set_yticks(yticks)
+
+
+def hero_stat(fig, value: str, caption: str, x=0.94) -> None:
+    """Stat-tile element: one big number with a whisper caption, top-right."""
+    fig.text(x, 0.935, value, fontsize=17, fontweight=650, color=BLUE, ha="right")
+    fig.text(x, 0.885, caption, fontsize=8.5, color=INK_MUTED, ha="right")
+
+
+def ring(ax, x, y, radius_pts=11) -> None:
+    """Highlight a data point with a soft ring instead of a leader arrow."""
+    ax.plot([x], [y], marker="o", ms=radius_pts, markerfacecolor="none",
+            markeredgecolor=BLUE, markeredgewidth=1.6, zorder=5)
+
+
+def scale_bar(ax, length_um: float, label: str) -> None:
+    """Bottom-right physical scale reference for axis-free register graphics."""
+    x1 = ax.get_xlim()[1] - length_um - 0.6
+    y = ax.get_ylim()[0] + 0.9
+    ax.plot([x1, x1 + length_um], [y, y], color=INK_MUTED, lw=1.6,
+            solid_capstyle="butt", zorder=5)
+    ax.annotate(label, xy=(x1 + length_um / 2, y), xytext=(0, 6),
+                textcoords="offset points", ha="center", fontsize=8.5,
+                color=INK_MUTED, family=MONO, zorder=5)
+
+
 def series(ax, xs, ys, color, label=None, marker=True) -> None:
     """2px line, 7px markers with a white surface ring (dataviz mark spec)."""
     ax.plot(xs, ys, color=color, lw=2, zorder=3,
@@ -174,14 +209,13 @@ def _register_figure(atoms, title, subtitle, blockade_radius, broken_pairs, pair
     xs = [a[0] for a in atoms]; ys = [a[1] for a in atoms]
     pad = blockade_radius / 2 + 1.5
     ax.set_xlim(min(xs) - pad, max(xs) + pad)
-    ax.set_ylim(min(ys) - pad, max(ys) + pad)
+    ax.set_ylim(min(ys) - pad - 0.8, max(ys) + pad)
     ax.set_aspect("equal")
-    ax.set_xlabel("x (µm)", fontsize=9)
-    ax.set_ylabel("y (µm)", fontsize=9)
-    polish(ax, ygrid_only=False)
+    ax.axis("off")
+    scale_bar(ax, 5.0, "5 µm")
     headline(fig, title, subtitle)
     footer(fig, "blockade disks drawn at r_b/2 — overlapping disks mean the pair is blockaded")
-    fig.subplots_adjust(top=0.84, bottom=0.15, left=0.1, right=0.96)
+    fig.subplots_adjust(top=0.86, bottom=0.05, left=0.04, right=0.96)
     return fig
 
 
@@ -196,17 +230,23 @@ def _waveform_figure(data, title, subtitle):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.2, 4.6), dpi=170,
                                    sharex=True, height_ratios=[1, 1])
     fig.patch.set_facecolor(SURFACE)
-    for ax, values, color, label in (
-        (ax1, data["amplitude"], BLUE, "Ω amplitude (rad/µs)"),
-        (ax2, data["detuning"], RUST, "Δ detuning (rad/µs)"),
+    for ax, values, color, glyph, unit in (
+        (ax1, data["amplitude"], BLUE, "Ω", "amplitude"),
+        (ax2, data["detuning"], RUST, "Δ", "detuning"),
     ):
         ax.set_facecolor(SURFACE)
         ax.step(t, values, where="post", color=color, lw=1.8, zorder=3)
         ax.fill_between(t, values, step="post", color=color, alpha=0.10, zorder=2)
         ax.axhline(0, color=INK_FAINT, lw=0.7, zorder=1)
-        ax.set_ylabel(label, fontsize=9)
-        polish(ax)
-    ax2.set_xlabel("t (ns)", fontsize=9)
+        peak = max(abs(v) for v in values)
+        ax.text(0.005, 0.86, glyph, transform=ax.transAxes, fontsize=15,
+                fontweight=650, color=color)
+        ax.text(0.032, 0.88, f"{unit} · peak {peak:.1f} rad/µs",
+                transform=ax.transAxes, fontsize=8, color=INK_MUTED)
+        declutter(ax, yticks=[])
+    total = float(t[-1])
+    declutter(ax2, xticks=[0, total / 2, total], yticks=[])
+    ax2.set_xticklabels(["0", f"{total/2:g}", f"{total:g} ns"])
     headline(fig, title, subtitle)
     footer(fig)
     fig.subplots_adjust(top=0.82, bottom=0.13, left=0.1, right=0.96, hspace=0.18)

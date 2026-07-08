@@ -95,18 +95,17 @@ def sweep(pulse_dir: str = ".") -> None:
             style.series(ax, ox, oy, style.BLUE, label="optimized")
             best_d, best_f = max(pts, key=lambda p: (round(p[1], 6), -p[0]))
             infid = max(1 - best_f, 1e-9)
-            ax.annotate(f"best position: {best_d:g} µm\n1 − F = {infid:.1e}",
-                        xy=(best_d, best_f), xytext=(best_d + 0.42, 0.845),
-                        fontsize=9, color=style.BLUE,
-                        arrowprops={"arrowstyle": "-", "color": style.BLUE, "lw": 0.9})
+            style.ring(ax, best_d, best_f)
+            style.hero_stat(fig, f"1 − F = {infid:.1e}",
+                            f"best position · {best_d:g} µm")
 
-        ax.set_xlabel("atom spacing d (µm)", fontsize=9)
-        ax.set_ylabel(r"Bell-state fidelity  $|\langle\Phi|\psi\rangle|^2$", fontsize=9)
+        ax.set_xlabel("atom spacing d (µm)", fontsize=9, color=style.INK_FAINT)
         ax.set_xlim(4.8, 8.7)
-        ax.set_ylim(0.28, 1.04)
-        style.polish(ax)
+        ax.set_ylim(0.26, 1.06)
+        ax.axhline(1.0, color=style.GRID, lw=0.8, zorder=1)
+        style.declutter(ax, xticks=[5, 6, 7, 8], yticks=[0.4, 0.6, 0.8, 1.0])
         style.headline(fig, "Atom positioning matters",
-                       "Bell-state preparation on AnalogDevice — naive blockade-π vs Piccolo-optimized pulse, 200 ns budget")
+                       "Bell-state prep on AnalogDevice — naive π vs optimized, 200 ns budget")
         style.footer(fig)
         fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
 
