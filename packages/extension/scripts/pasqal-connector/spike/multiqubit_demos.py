@@ -131,32 +131,36 @@ def packing(pulse_dir: str = ".") -> None:
         solve_col = f"{sf:8.4f}" if sf is not None else ""
         print(f"{gap:10.1f}  {fid:12.4f}  {opt_col}  {solve_col}")
 
-    fig, ax = style.figure()
-    bx, by = zip(*baseline)
-    style.series(ax, bx, by, style.RUST, label="crosstalk-blind")
-    if reopt:
-        pts = sorted((g, f) for g, f, _ in reopt)
-        for g, f in pts:
-            ax.plot([g], [f], marker="*", ms=17, color=style.BLUE,
-                    markeredgecolor=style.SURFACE, markeredgewidth=1.2, zorder=4)
-        gx, fx = pts[-1]
-        ax.annotate("crosstalk-aware", xy=(gx, fx), xytext=(10, -4),
-                    textcoords="offset points", fontsize=9.5,
-                    color=style.BLUE, fontweight=550, va="center")
-        for g, f in pts:
-            blind = dict(baseline).get(g)
-            if blind is not None:
-                ax.annotate("", xy=(g, f - 0.012), xytext=(g, blind + 0.012),
-                            arrowprops={"arrowstyle": "->", "color": style.INK_FAINT, "lw": 0.9})
-    ax.set_xlabel("inter-pair gap L (µm)", fontsize=9)
-    ax.set_ylabel(r"fidelity to $|\mathrm{Bell}\rangle\!\otimes\!|\mathrm{Bell}\rangle$", fontsize=9)
-    ax.set_xlim(5.4, 21.6)
-    style.polish(ax)
-    style.headline(fig, "How densely can you pack parallel entangling operations?",
-                   "two Bell pairs, one global pulse — reusing the 2-atom pulse vs re-optimizing with cross-pair couplings in the model")
-    style.footer(fig)
-    fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
-    fig.savefig("pair_packing.png")
+    def build():
+        fig, ax = style.figure()
+        bx, by = zip(*baseline)
+        style.series(ax, bx, by, style.RUST, label="crosstalk-blind")
+        if reopt:
+            pts = sorted((g, f) for g, f, _ in reopt)
+            for g, f in pts:
+                ax.plot([g], [f], marker="*", ms=17, color=style.BLUE,
+                        markeredgecolor=style.SURFACE, markeredgewidth=1.2, zorder=4)
+            gx, fx = pts[-1]
+            ax.annotate("crosstalk-aware", xy=(gx, fx), xytext=(10, -4),
+                        textcoords="offset points", fontsize=9.5,
+                        color=style.BLUE, fontweight=550, va="center")
+            for g, f in pts:
+                blind = dict(baseline).get(g)
+                if blind is not None:
+                    ax.annotate("", xy=(g, f - 0.012), xytext=(g, blind + 0.012),
+                                arrowprops={"arrowstyle": "->", "color": style.INK_FAINT, "lw": 0.9})
+        ax.set_xlabel("inter-pair gap L (µm)", fontsize=9)
+        ax.set_ylabel(r"fidelity to $|\mathrm{Bell}\rangle\!\otimes\!|\mathrm{Bell}\rangle$", fontsize=9)
+        ax.set_xlim(5.4, 21.6)
+        style.polish(ax)
+        style.headline(fig, "How densely can you pack parallel entangling operations?",
+                       "two Bell pairs, one global pulse — reusing the 2-atom pulse vs re-optimizing with cross-pair couplings in the model")
+        style.footer(fig)
+        fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
+
+        return fig
+
+    style.render_both(build, "pair_packing.png")
 
     tight = min((g for g, _, _ in reopt), default=6.0)
     radius = DEVICE.rydberg_blockade_radius(0.9 * CHANNEL.max_amp)

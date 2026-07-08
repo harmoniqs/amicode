@@ -18,32 +18,67 @@ import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.patches import Circle
 
-# ── Palette (validated) ───────────────────────────────────────────────────
-BLUE = "#2F5DA8"       # optimized / primary series
-RUST = "#B15C39"       # naive / comparison series
-SURFACE = "#fcfcfb"
-INK = "#26251f"
-INK_MUTED = "#767470"
-INK_FAINT = "#a8a6a0"
-GRID = "#ecebe7"
+# ── Palettes (both validated via the dataviz six-checks on their surface) ──
+# Light surface #fcfcfb; dark surface #131010 (the app's dark theme-color).
+LIGHT = {
+    "name": "light", "BLUE": "#2F5DA8", "RUST": "#B15C39",
+    "SURFACE": "#fcfcfb", "INK": "#26251f", "INK_MUTED": "#767470",
+    "INK_FAINT": "#a8a6a0", "GRID": "#ecebe7",
+}
+DARK = {
+    "name": "dark", "BLUE": "#5E8FD8", "RUST": "#C97F4E",
+    "SURFACE": "#131010", "INK": "#e8e6e1", "INK_MUTED": "#9a9792",
+    "INK_FAINT": "#6b6863", "GRID": "#2a2825",
+}
+THEMES = (LIGHT, DARK)
+
+# Mutable current theme — these one-shot scripts render each figure once per
+# theme via use(); module-level names keep the call sites readable.
+BLUE = LIGHT["BLUE"]; RUST = LIGHT["RUST"]; SURFACE = LIGHT["SURFACE"]
+INK = LIGHT["INK"]; INK_MUTED = LIGHT["INK_MUTED"]
+INK_FAINT = LIGHT["INK_FAINT"]; GRID = LIGHT["GRID"]
+_CURRENT = LIGHT
 
 FONT = "Helvetica Neue"
 MONO = "Menlo"
 
-matplotlib.rcParams.update({
-    "font.family": FONT,
-    "figure.facecolor": SURFACE,
-    "axes.facecolor": SURFACE,
-    "savefig.facecolor": SURFACE,
-    "savefig.dpi": 170,
-    "axes.edgecolor": GRID,
-    "text.color": INK,
-    "axes.labelcolor": INK_MUTED,
-    "xtick.color": INK_MUTED,
-    "ytick.color": INK_MUTED,
-    "xtick.labelsize": 9,
-    "ytick.labelsize": 9,
-})
+matplotlib.rcParams.update({"font.family": FONT, "savefig.dpi": 170,
+                            "xtick.labelsize": 9, "ytick.labelsize": 9})
+
+
+def use(theme: dict) -> None:
+    """Switch the active theme; figures built afterwards pick it up."""
+    global BLUE, RUST, SURFACE, INK, INK_MUTED, INK_FAINT, GRID, _CURRENT
+    _CURRENT = theme
+    BLUE, RUST, SURFACE = theme["BLUE"], theme["RUST"], theme["SURFACE"]
+    INK, INK_MUTED = theme["INK"], theme["INK_MUTED"]
+    INK_FAINT, GRID = theme["INK_FAINT"], theme["GRID"]
+    matplotlib.rcParams.update({
+        "figure.facecolor": SURFACE, "axes.facecolor": SURFACE,
+        "savefig.facecolor": SURFACE, "axes.edgecolor": GRID,
+        "text.color": INK, "axes.labelcolor": INK_MUTED,
+        "xtick.color": INK_MUTED, "ytick.color": INK_MUTED,
+    })
+
+
+use(LIGHT)
+
+
+def out(filename: str) -> str:
+    """Theme-variant filename: foo.png (light) / foo.dark.png (dark)."""
+    if _CURRENT["name"] == "dark" and filename.endswith(".png"):
+        return filename[: -len(".png")] + ".dark.png"
+    return filename
+
+
+def render_both(build, filename: str) -> None:
+    """Build and save a figure once per theme. `build` returns a Figure."""
+    for theme in THEMES:
+        use(theme)
+        fig = build()
+        fig.savefig(out(filename))
+        plt.close(fig)
+    use(LIGHT)
 
 
 def figure(width=8.2, height=5.0):
@@ -83,8 +118,15 @@ def series(ax, xs, ys, color, label=None, marker=True) -> None:
 
 def draw_register(atoms, filename: str, title: str, subtitle: str,
                   blockade_radius: float, broken_pairs=(), pair_labels=True) -> None:
-    """Cohesive register figure: ink atoms with surface rings, soft blockade
-    disks, distance-labeled links; broken (non-blockaded) links in dashed rust."""
+    """Cohesive register figure, rendered once per theme (light + dark)."""
+    render_both(
+        lambda: _register_figure(atoms, title, subtitle, blockade_radius,
+                                 broken_pairs, pair_labels),
+        filename,
+    )
+
+
+def _register_figure(atoms, title, subtitle, blockade_radius, broken_pairs, pair_labels):
     atoms = [tuple(a) for a in atoms]
     fig, ax = figure(6.4, 5.4)
 
@@ -140,12 +182,15 @@ def draw_register(atoms, filename: str, title: str, subtitle: str,
     headline(fig, title, subtitle)
     footer(fig, "blockade disks drawn at r_b/2 — overlapping disks mean the pair is blockaded")
     fig.subplots_adjust(top=0.84, bottom=0.15, left=0.1, right=0.96)
-    fig.savefig(filename)
-    plt.close(fig)
+    return fig
 
 
 def draw_waveforms(data: dict, filename: str, title: str, subtitle: str) -> None:
-    """Ω/Δ zero-order-hold waveforms from a pulse.toml dict, stacked panels."""
+    """Ω/Δ ZOH waveform figure, rendered once per theme (light + dark)."""
+    render_both(lambda: _waveform_figure(data, title, subtitle), filename)
+
+
+def _waveform_figure(data, title, subtitle):
     n = data["n_knots"]; dt = data["dt_ns"]
     t = np.arange(n) * dt
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8.2, 4.6), dpi=170,
@@ -165,5 +210,4 @@ def draw_waveforms(data: dict, filename: str, title: str, subtitle: str) -> None
     headline(fig, title, subtitle)
     footer(fig)
     fig.subplots_adjust(top=0.82, bottom=0.13, left=0.1, right=0.96, hspace=0.18)
-    fig.savefig(filename)
-    plt.close(fig)
+    return fig

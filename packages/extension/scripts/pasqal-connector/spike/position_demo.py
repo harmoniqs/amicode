@@ -79,36 +79,40 @@ def sweep(pulse_dir: str = ".") -> None:
         solve_col = f"{sf:8.4f}" if sf is not None else ""
         print(f"{d:7.1f}  {ratio:6.2f}  {nf:8.4f}  {opt_col}  {solve_col}")
 
-    fig, ax = style.figure()
+    def build():
+        fig, ax = style.figure()
 
-    # Blockade-regime context bands (annotation, not a second axis)
-    ax.axvspan(5.0, 5.9, color=style.BLUE, alpha=0.045, lw=0)
-    ax.text(5.42, 0.315, "moderate blockade", fontsize=8.5, color=style.INK_MUTED, ha="center")
-    ax.text(7.55, 0.315, "blockade too weak", fontsize=8.5, color=style.INK_MUTED, ha="center")
+        # Blockade-regime context bands (annotation, not a second axis)
+        ax.axvspan(5.0, 5.9, color=style.BLUE, alpha=0.045, lw=0)
+        ax.text(5.42, 0.315, "moderate blockade", fontsize=8.5, color=style.INK_MUTED, ha="center")
+        ax.text(7.55, 0.315, "blockade too weak", fontsize=8.5, color=style.INK_MUTED, ha="center")
 
-    nx, ny = zip(*naive)
-    style.series(ax, nx, ny, style.RUST, label="naive π")
-    if optimized:
-        pts = sorted((d, f) for d, f, _ in optimized)
-        ox, oy = zip(*pts)
-        style.series(ax, ox, oy, style.BLUE, label="optimized")
-        best_d, best_f = max(pts, key=lambda p: (round(p[1], 6), -p[0]))
-        infid = max(1 - best_f, 1e-9)
-        ax.annotate(f"best position: {best_d:g} µm\n1 − F = {infid:.1e}",
-                    xy=(best_d, best_f), xytext=(best_d + 0.42, 0.845),
-                    fontsize=9, color=style.BLUE,
-                    arrowprops={"arrowstyle": "-", "color": style.BLUE, "lw": 0.9})
+        nx, ny = zip(*naive)
+        style.series(ax, nx, ny, style.RUST, label="naive π")
+        if optimized:
+            pts = sorted((d, f) for d, f, _ in optimized)
+            ox, oy = zip(*pts)
+            style.series(ax, ox, oy, style.BLUE, label="optimized")
+            best_d, best_f = max(pts, key=lambda p: (round(p[1], 6), -p[0]))
+            infid = max(1 - best_f, 1e-9)
+            ax.annotate(f"best position: {best_d:g} µm\n1 − F = {infid:.1e}",
+                        xy=(best_d, best_f), xytext=(best_d + 0.42, 0.845),
+                        fontsize=9, color=style.BLUE,
+                        arrowprops={"arrowstyle": "-", "color": style.BLUE, "lw": 0.9})
 
-    ax.set_xlabel("atom spacing d (µm)", fontsize=9)
-    ax.set_ylabel(r"Bell-state fidelity  $|\langle\Phi|\psi\rangle|^2$", fontsize=9)
-    ax.set_xlim(4.8, 8.7)
-    ax.set_ylim(0.28, 1.04)
-    style.polish(ax)
-    style.headline(fig, "Atom positioning matters",
-                   "Bell-state preparation on AnalogDevice — naive blockade-π vs Piccolo-optimized pulse, 200 ns budget")
-    style.footer(fig)
-    fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
-    fig.savefig("position_sweep.png")
+        ax.set_xlabel("atom spacing d (µm)", fontsize=9)
+        ax.set_ylabel(r"Bell-state fidelity  $|\langle\Phi|\psi\rangle|^2$", fontsize=9)
+        ax.set_xlim(4.8, 8.7)
+        ax.set_ylim(0.28, 1.04)
+        style.polish(ax)
+        style.headline(fig, "Atom positioning matters",
+                       "Bell-state preparation on AnalogDevice — naive blockade-π vs Piccolo-optimized pulse, 200 ns budget")
+        style.footer(fig)
+        fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
+
+        return fig
+
+    style.render_both(build, "position_sweep.png")
     print("\nwrote position_sweep.png")
     print("AMICODE_IMAGE: position_sweep.png")
 
