@@ -1,0 +1,2 @@
+pulser==1.8.0
+pasqal-cloud==0.23.0
