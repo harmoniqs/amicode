@@ -12,10 +12,16 @@ of the Pasqal connector: the wire, and the payload.
 | Piccolo solve (X gate on {\|g⟩,\|r⟩}, 400 ns, Pasqal constraints) | 0.99999999 |
 | Pulser + QuTiP re-simulation of the translated sequence | 0.999999 |
 | Same, with the 8 MHz output-modulation filter enabled | 0.999835 |
+| Cloud submission of the optimized pulse (EMU_FREE) | job completed ✓ |
 
 Agreement solve↔translation: ~7e-07. Verdict: **translation of a
 single-channel (Ω, Δ) pulse is trivial** when the solve is parameterized for
 it — see the trick below.
+
+The whole chain was also driven end-to-end through a live opencode (Amico)
+chat session on 2026-07-08: the agent sequenced solve → translate → submit
+itself, and authored `submit_optimized.py` from the two reference scripts
+(adopted here after review).
 
 ## How to run
 
@@ -23,6 +29,9 @@ it — see the trick below.
 cd <scratch dir>
 julia --project=$HOME/.amico/julia solve_x_gate.jl     # writes pulse.toml
 python3 translate_and_simulate.py                       # validates + simulates
+# optional cloud leg (Pasqal Explorer credentials, env vars only):
+PASQAL_USERNAME=... PASQAL_PASSWORD=... PASQAL_PROJECT_ID=... \
+  python3 submit_optimized.py                           # submits to EMU_FREE
 ```
 
 Python deps: `../requirements.txt` (pulser 1.8.0). Julia deps: the standard
