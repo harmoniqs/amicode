@@ -6,9 +6,9 @@ jobs:
   fast:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4   # version pinned by packageManager in package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
+      - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
@@ -46,11 +46,11 @@ jobs:
     # fixtures), (3) AC6 drift check (perturb the shared schema → BOTH TS and Julia flip).
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
-      - uses: julia-actions/setup-julia@v2
+      - uses: julia-actions/setup-julia@v3
         with: { version: '1.12' }
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build   # amico-run + the validate launcher's bundle
@@ -70,9 +70,9 @@ jobs:
     # and the manifest check accepts any platform there.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build   # amico-run + extension (same as fast — ensures dist/ is in place before vsce)
@@ -87,9 +87,9 @@ jobs:
         os: [ubuntu-latest, macos-14]   # linux-x64 + darwin-arm64 — both pins machine-gated (spec §5)
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode-v2 fetch:opencode
