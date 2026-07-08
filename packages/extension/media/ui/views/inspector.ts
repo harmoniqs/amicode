@@ -31,8 +31,43 @@ defineStyle(
      these win over .stack on specificity — not on stylesheet order. */
   .pane:not(.active) { display: none; }
   .pane.active { display: flex; }
+  .phase-stepper .phase-current { color: var(--color-accent); font-weight: 600; }
+  .phase-stepper .phase-done { color: var(--color-dim); }
+  .phase-stepper .phase-done::before { content: "✓ "; }
 `,
 );
+
+// Phase-panel stepper (#49, UX4 — Krishna p1: "phase panel with a stepper
+// row"). Derived entirely from the existing status transitions already
+// driving the pill badge (warming/iteration/completed) — no new message
+// type, per the issue's "no new backend" seam-prototype approach. The
+// terminal step's label reflects the actual outcome (Converged/Stopped/
+// Failed), not a generic "Done", so a failed run doesn't read as success.
+type Phase = "warming" | "running" | "done";
+const PHASE_ORDER: Phase[] = ["warming", "running", "done"];
+const PHASE_LABELS: Record<Phase, string> = { warming: "Warming up", running: "Iterating", done: "Done" };
+
+function createPhaseStepper(): { el: HTMLElement; set(phase: Phase, terminalLabel?: string): void } {
+  const el = document.createElement("div");
+  el.className = "row gap-xs phase-stepper";
+  const steps = PHASE_ORDER.map((p, i) => {
+    const s = text("small", PHASE_LABELS[p]);
+    el.append(s.el);
+    if (i < PHASE_ORDER.length - 1) el.append(text("small dim", "→").el);
+    return s;
+  });
+  return {
+    el,
+    set(phase, terminalLabel = PHASE_LABELS.done) {
+      steps[PHASE_ORDER.indexOf("done")].set(terminalLabel);
+      const idx = PHASE_ORDER.indexOf(phase);
+      steps.forEach((s, i) => {
+        s.el.classList.toggle("phase-current", i === idx);
+        s.el.classList.toggle("phase-done", i < idx);
+      });
+    },
+  };
+}
 
 const IDLE_HINT = "No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.";
 const WARMING_HINT = "Julia warming up — compiling the solver (~1–2 min). The pulse will stream here.";
@@ -79,6 +114,8 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   topbar.className = "row wrap";
   status.el.classList.add("push-end");
   topbar.append(brand, runLabel.el, status.el);
+
+  const stepper = createPhaseStepper();
 
   const grid = document.createElement("div");
   grid.className = "metric-row";
@@ -139,7 +176,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const el = document.createElement("div");
   el.className = "pane stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid, footer);
+  el.append(topbar, stepper.el, pulse.el, grid, footer);
 
   return {
     el,
@@ -178,6 +215,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           feasibility.value((msg.eq_viol as number).toExponential(2));
           optimality.value((msg.kkt_error as number).toExponential(2));
           status.set("running", "running");
+          stepper.set("running");
           controlStatus = "running";
           hasData = true;
           applyControls();
@@ -194,6 +232,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           for (const m of metrics) m.clear();
           hero.label("objective");
           status.set("running", "warming up");
+          stepper.set("warming");
           controlStatus = "warming";
           hasData = false;
           applyControls();
@@ -207,6 +246,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           // stopped = graceful user stop (neutral, dim); completed = success;
           // anything else = failure.
           status.set(ok ? "done" : stopped ? "idle" : "failed", ok ? "converged" : String(msg.status));
+          stepper.set("done", ok ? "Converged" : stopped ? "Stopped" : "Failed");
           // Promote the hero card to the final fidelity — the number that matters.
           if (ok && typeof msg.fidelity === "number") {
             hero.label("fidelity");

@@ -24,6 +24,11 @@ const iter = (runId: string, n: number) => ({
 const panes = (v: { el: HTMLElement }) => [...v.el.querySelectorAll(".pane")];
 const activePane = (v: { el: HTMLElement }) => v.el.querySelector(".pane.active");
 const pillText = (pane: Element | null | undefined) => pane?.querySelector(".pill")?.textContent;
+// Phase-label spans only — excludes the "→" separators, which carry .dim and
+// nothing else (phase-label spans never get .dim toggled onto them).
+const phaseSteps = (pane: Element | null | undefined) => [...(pane?.querySelectorAll(".phase-stepper span:not(.dim)") ?? [])];
+const currentPhaseText = (pane: Element | null | undefined) =>
+  phaseSteps(pane).find((s) => s.classList.contains("phase-current"))?.textContent;
 
 describe("Inspector webview router (1.3 per-run panes)", () => {
   it("activate shows exactly one pane and hides the empty-state hint", () => {
@@ -90,5 +95,50 @@ describe("Inspector webview router (1.3 per-run panes)", () => {
     expect(pillText(activePane(v))).toBe("running"); // now r2 is visible
     const r1 = panes(v).find((p) => !p.classList.contains("active"))!;
     expect(pillText(r1)).toBe("converged"); // r1 untouched by the switch
+  });
+});
+
+describe("Phase stepper (#49, UX4) — derived from existing status transitions", () => {
+  it("warming → running → converged advances the stepper in order", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    const pane = activePane(v);
+    expect(phaseSteps(pane)).toHaveLength(3);
+
+    v.onMessage({ type: "warming", runId: "r1" });
+    expect(currentPhaseText(pane)).toBe("Warming up");
+    expect(phaseSteps(pane).filter((s) => s.classList.contains("phase-done"))).toHaveLength(0);
+
+    v.onMessage(iter("r1", 1));
+    expect(currentPhaseText(pane)).toBe("Iterating");
+    expect(phaseSteps(pane)[0].classList.contains("phase-done")).toBe(true); // warming step now done
+
+    v.onMessage({ type: "completed", runId: "r1", status: "completed", fidelity: 0.999 });
+    expect(currentPhaseText(pane)).toBe("Converged"); // terminal label, not a generic "Done"
+    expect(phaseSteps(pane).slice(0, 2).every((s) => s.classList.contains("phase-done"))).toBe(true);
+  });
+
+  it("a failed run's terminal step reads Failed, not Done — no false success signal", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "completed", runId: "r1", status: "error" });
+    expect(currentPhaseText(activePane(v))).toBe("Failed");
+  });
+
+  it("a stopped run's terminal step reads Stopped", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "completed", runId: "r1", status: "stopped" });
+    expect(currentPhaseText(activePane(v))).toBe("Stopped");
+  });
+
+  it("background runs advance their own stepper independently (no cross-talk)", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage(iter("r1", 1));
+    v.onMessage({ type: "completed", runId: "r2", status: "completed", fidelity: 0.9 }); // r2 is backgrounded
+    expect(currentPhaseText(activePane(v))).toBe("Iterating"); // r1 unaffected by r2's completion
+    const r2 = panes(v).find((p) => !p.classList.contains("active"))!;
+    expect(currentPhaseText(r2)).toBe("Converged");
   });
 });
