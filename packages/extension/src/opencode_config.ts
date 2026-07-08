@@ -161,7 +161,9 @@ export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT):
  *  WIZARD (or the About-You card) saved it, so the chat overture must not
  *  re-ask session-zero questions. Complements hasOnboardingCompleted (which
  *  tracks the conversational path's marker). */
-export function profileHasIdentity(profilePath: string = path.join(os.homedir(), ".amico", "profile.json")): boolean {
+export function profileHasIdentity(
+  profilePath: string = process.env.AMICO_PROFILE_FILE?.trim() || path.join(os.homedir(), ".amico", "profile.json"),
+): boolean {
   try {
     const p = JSON.parse(fs.readFileSync(profilePath, "utf8")) as Record<string, unknown>;
     return ["name", "affiliation", "focus", "scholar"].some(
