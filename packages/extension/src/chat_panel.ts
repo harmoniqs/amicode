@@ -31,6 +31,26 @@ function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";
 }
 
+// Theme-adaptive tab icon for the chat WebviewPanel. The `logo` atom
+// (media/ui/atoms/logo.ts) themes via fill="currentColor", but that only
+// resolves inside a live webview DOM — a native tab icon is a static image
+// with no DOM, so currentColor renders dark (the bug we hit). VS Code's only
+// theme-adaptive path for a native icon is a literal {light, dark} URI pair,
+// and — verified empirically via a probe — the files MUST live inside the
+// extension folder (an icon in globalStorageUri renders as nothing). Since a
+// shipped .vsix's extension folder is read-only, the two colored files can't
+// be generated at runtime; they're committed under media/, derived from
+// amico_reduced.svg (small context → reduced) with currentColor swapped for a
+// theme-appropriate foreground gray. A unit test keeps them in sync with the
+// source geometry. `light` is shown on light themes (dark mark), `dark` on
+// dark themes (light mark).
+function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; dark: vscode.Uri } {
+  return {
+    light: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-light.svg"),
+    dark: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-dark.svg"),
+  };
+}
+
 export class ChatPanel {
   private static current?: ChatPanel;
   private readonly disposables: vscode.Disposable[] = [];
@@ -155,7 +175,7 @@ export class ChatPanel {
       // itself — we only host one extension-local asset (the loading splash).
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
-    panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, "media", "amico.svg");
+    panel.iconPath = tabIconPath(ctx);
     ChatPanel.current = new ChatPanel(panel, opencodeUrl);
     return ChatPanel.current;
   }

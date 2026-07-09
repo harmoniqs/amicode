@@ -43,6 +43,7 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    loader: { ".svg": "text" },
   },
   // bottom-panel Run Inspector webview bundle
   {
@@ -55,6 +56,7 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    loader: { ".svg": "text" },
   },
 ];
 
