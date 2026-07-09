@@ -133,8 +133,8 @@ describe("amico router — resolve/sandbox delegate verbatim to the subcommands"
   });
 });
 
-describe("amico router — spine verbs are B1 stubs (print intent, exit 0)", () => {
-  for (const name of ["catalog", "vault", "device", "note"]) {
+describe("amico router — spine verbs vault/device/note are still B1 stubs (print intent, exit 0)", () => {
+  for (const name of ["vault", "device", "note"]) {
     it(`${name} routes, prints stub intent JSON, exits 0`, () => {
       const r = run([name, "some", "args"]);
       expect(r.code).toBe(0);
@@ -144,6 +144,39 @@ describe("amico router — spine verbs are B1 stubs (print intent, exit 0)", () 
       expect(typeof out.intent).toBe("string");
     });
   }
+});
+
+describe("amico router — catalog is REAL (B2), no longer a stub", () => {
+  it("catalog with no subcommand → usage error, exit 64", () => {
+    const r = run(["catalog"]);
+    expect(r.code).toBe(64);
+    const out = JSON.parse(r.stdout);
+    expect(out.verb).toBe("catalog");
+    expect(out.stub).toBeUndefined();
+    expect(out.error).toMatch(/unknown subcommand/);
+  });
+  it("catalog query routes to the repertoire body (empty catalog → count 0, exit 0)", () => {
+    const empty = mkdtempSync(join(tmpdir(), "amico-cat-empty-"));
+    const r = run(["catalog", "query", "--platform", "transmon", "--kind", "X"], { AMICO_CATALOG_DIR: empty });
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ verb: "catalog", subcommand: "query", platform: "transmon", gate: "X", count: 0 });
+    expect(out.incumbent).toBeNull();
+    rmSync(empty, { recursive: true, force: true });
+  });
+  it("catalog ingest blocks when verification did not agree, exit 64", () => {
+    const empty = mkdtempSync(join(tmpdir(), "amico-cat-ingest-"));
+    const pulse = join(empty, "pulse.jld2");
+    writeFileSync(pulse, "binary");
+    const r = run(
+      ["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--artifact", pulse, "--fidelity", "0.99", "--agree", "false"],
+      { AMICO_CATALOG_DIR: join(empty, "pulses") },
+    );
+    expect(r.code).toBe(64);
+    const out = JSON.parse(r.stdout);
+    expect(out).toMatchObject({ verb: "catalog", subcommand: "ingest", promoted: false, blocked: true });
+    rmSync(empty, { recursive: true, force: true });
+  });
 });
 
 describe("amico router — mcp-serve facade", () => {
