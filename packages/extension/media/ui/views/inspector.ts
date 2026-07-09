@@ -11,7 +11,7 @@
 // reshape (freeze 2: the runId-keyed protocol, not the DOM).
 
 import { defineStyle } from "../style";
-import { mark } from "../atoms/icon";
+import { logo } from "../atoms/logo";
 import { pill } from "../atoms/pill";
 import { text } from "../atoms/text";
 import { button } from "../atoms/button";
@@ -73,7 +73,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
 
   const brand = document.createElement("div");
   brand.className = "row gap-sm brand";
-  brand.append(mark(), text("", "Run Inspector").el);
+  brand.append(logo({ variant: "reduced" }), text("", "Run Inspector").el);
 
   const topbar = document.createElement("div");
   topbar.className = "row wrap";

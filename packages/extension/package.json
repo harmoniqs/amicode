@@ -30,14 +30,14 @@
         {
           "id": "amicode",
           "title": "Amicode",
-          "icon": "media/amico.svg"
+          "icon": "media/amico_reduced.svg"
         }
       ],
       "panel": [
         {
           "id": "amicode-panel",
           "title": "Amicode",
-          "icon": "media/amico.svg"
+          "icon": "media/amico_reduced.svg"
         }
       ]
     },
