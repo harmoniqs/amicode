@@ -7,8 +7,10 @@
 // B1 SCOPE: `run` / `resolve` / `sandbox` delegate VERBATIM to the existing amico-run launch
 // path (src/launch.ts): `amico <verb> <args>` is exactly `amico-run <equivalent-args>`, so
 // there is no behavior fork and the amico-run test suite still covers the real bodies. The
-// spine verbs (catalog/vault/device/note) and `mcp-serve` are STUB seams (see verbs.ts,
-// mcp_serve.ts) — routing works today; real bodies land in later spine slices.
+// spine verbs (catalog/vault/device/note) are STUB seams (see verbs.ts) — routing works
+// today; real bodies land in later spine slices.
+// B5 SCOPE (issue #112): `mcp-serve` is now REAL — it stands up an MCP stdio transport that
+// exposes the same spine verbs as MCP tools (see mcp_serve.ts). One impl, two transports.
 import { launch } from "./launch.js";
 import { SPINE_VERBS } from "./verbs.js";
 import { serve } from "./mcp_serve.js";
@@ -19,7 +21,7 @@ function usage(): string {
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ...SPINE_VERBS.map((v) => [`${v.name} …`, `${v.summary} [stub → ${v.slice}]`] as [string, string]),
-    ["mcp-serve [--list]", "expose the spine verbs as MCP tools (optional facade) [stub]"],
+    ["mcp-serve [--list]", "serve the spine verbs as MCP tools over stdio (optional facade; --list = mapping only)"],
     ["--help, -h", "show this verb surface"],
   ];
   const width = Math.max(...rows.map(([u]) => u.length));
