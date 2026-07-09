@@ -51,13 +51,83 @@ export interface SolveParams {
   pinned_globals?: string[];
 }
 
-export interface FormulationEntity {
+/** Legacy free-form Formulation (on-disk pre-spec-20260709). Migrated by
+ *  normalizeFormulation; no longer written. */
+export interface LegacyFormulationEntity {
   problem: string;
   target: string;
   objective: string;
   constraints: string[];
+  solve?: SolveParams;
+}
+
+// ---- Formulation typed facets (spec-20260709 §3) ---------------------------
+export type TrajectoryType = "ket" | "multiket" | "gate" | "density" | "multidensity";
+export type TimeMode = "fixed" | "min_time";
+export type Parameterization = "smooth" | "linear_spline" | "cubic_spline" | "bang_bang";
+export type RobustnessKind = "none" | "ensemble" | "sensitivity";
+export type ConstraintKind =
+  | "bounds"
+  | "du_bound"
+  | "ddu_bound"
+  | "dt_bounds"
+  | "final_fidelity"
+  | "calibration_pin"
+  | "custom";
+export type ObjectiveKind = "reg_u" | "reg_du" | "reg_ddu" | "sensitivity" | "custom";
+
+export const TRAJECTORY_TYPES: TrajectoryType[] = ["ket", "multiket", "gate", "density", "multidensity"];
+export const TIME_MODES: TimeMode[] = ["fixed", "min_time"];
+export const PARAMETERIZATIONS: Parameterization[] = ["smooth", "linear_spline", "cubic_spline", "bang_bang"];
+export const ROBUSTNESS_KINDS: RobustnessKind[] = ["none", "ensemble", "sensitivity"];
+export const CONSTRAINT_KINDS: ConstraintKind[] = [
+  "bounds",
+  "du_bound",
+  "ddu_bound",
+  "dt_bounds",
+  "final_fidelity",
+  "calibration_pin",
+  "custom",
+];
+export const OBJECTIVE_KINDS: ObjectiveKind[] = ["reg_u", "reg_du", "reg_ddu", "sensitivity", "custom"];
+
+export interface Robustness {
+  kind: RobustnessKind;
+  params: Record<string, number | string>;
+}
+export interface ObjectiveTerm {
+  kind: ObjectiveKind;
+  params: Record<string, number>;
+  label?: string;
+}
+export interface Constraint {
+  kind: ConstraintKind;
+  params: Record<string, number>;
+  label?: string;
+}
+
+/** Structured Formulation (spec-20260709 §3). Legacy free-form entities migrate
+ *  via normalizeFormulation. The PRIMARY objective is DERIVED (trajectory_type +
+ *  free_phase + time_mode), never stored; `objectives[]` holds ADDED terms only.
+ *  Leakage's sole home is the flag + leakage_params. */
+export interface FormulationEntity {
+  trajectory_type: TrajectoryType;
+  time_mode: TimeMode;
+  /** {final_fidelity?, D?} — used/editable when time_mode === "min_time". */
+  time_params?: Record<string, number>;
+  parameterization: Parameterization;
+  robustness: Robustness;
+  free_phase: boolean;
+  leakage: boolean;
+  /** {value?, cost?} when leakage=true — encodes both the constraint and objective. */
+  leakage_params?: Record<string, number>;
+  target: string;
+  /** ADDED terms only (regularizers/sensitivity/custom); primary is derived. */
+  objectives: ObjectiveTerm[];
+  constraints: Constraint[];
   /** Solve params (spec A) — present once amicode_solve has recorded them. */
   solve?: SolveParams;
+  notes?: string;
 }
 
 export interface RunStub {
