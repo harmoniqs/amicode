@@ -140,13 +140,18 @@ def scale_bar(ax, length_um: float, label: str) -> None:
                 color=INK_MUTED, family=MONO, zorder=5)
 
 
-def series(ax, xs, ys, color, label=None, marker=True) -> None:
-    """2px line, 7px markers with a white surface ring (dataviz mark spec)."""
+def series(ax, xs, ys, color, label=None, marker=True, label_at=None, label_offset=(7, 0)) -> None:
+    """2px line, 7px markers with a white surface ring (dataviz mark spec).
+
+    label_at: (x, y) to anchor the direct label — defaults to the last point,
+    which is wrong whenever that point falls outside a cropped x-range.
+    """
     ax.plot(xs, ys, color=color, lw=2, zorder=3,
             marker="o" if marker else None, ms=6.5,
             markerfacecolor=color, markeredgecolor=SURFACE, markeredgewidth=1.4)
     if label:
-        ax.annotate(label, xy=(xs[-1], ys[-1]), xytext=(7, 0),
+        anchor = label_at if label_at is not None else (xs[-1], ys[-1])
+        ax.annotate(label, xy=anchor, xytext=label_offset,
                     textcoords="offset points", fontsize=9.5, color=color,
                     fontweight=550, va="center")
 

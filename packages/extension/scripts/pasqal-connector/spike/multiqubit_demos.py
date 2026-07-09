@@ -131,41 +131,41 @@ def packing(pulse_dir: str = ".") -> None:
         solve_col = f"{sf:8.4f}" if sf is not None else ""
         print(f"{gap:10.1f}  {fid:12.4f}  {opt_col}  {solve_col}")
 
+    XMAX = 11.2  # crop — the plateau past this is a flat line a hero stat says better
+
     def build():
         fig, ax = style.figure()
-        bx, by = zip(*baseline)
-        style.series(ax, bx, by, style.RUST, label="crosstalk-blind")
+        # Only plot within the cropped window: an off-canvas point would still
+        # anchor a direct label there (invisible) if left in the data.
+        visible_baseline = [(g, f) for g, f in baseline if g <= XMAX]
+        bx, by = zip(*visible_baseline)
+        style.series(ax, bx, by, style.RUST, label="crosstalk-blind",
+                    label_at=visible_baseline[-1], label_offset=(8, 6))
+
         if reopt:
             pts = sorted((g, f) for g, f, _ in reopt)
+            style.series(ax, [p[0] for p in pts], [p[1] for p in pts],
+                        style.BLUE, label="crosstalk-aware", label_offset=(14, 4))
             for g, f in pts:
-                ax.plot([g], [f], marker="*", ms=17, color=style.BLUE,
-                        markeredgecolor=style.SURFACE, markeredgewidth=1.2, zorder=4)
-            gx, fx = pts[-1]
-            ax.annotate("crosstalk-aware", xy=(gx, fx), xytext=(10, -4),
-                        textcoords="offset points", fontsize=9.5,
-                        color=style.BLUE, fontweight=550, va="center")
-            for g, f in pts:
-                blind = dict(baseline).get(g)
-                if blind is not None:
-                    ax.annotate("", xy=(g, f - 0.012), xytext=(g, blind + 0.012),
-                                arrowprops={"arrowstyle": "->", "color": style.INK_FAINT, "lw": 0.9})
+                style.ring(ax, g, f)
+
         ax.set_xlabel("inter-pair gap L (µm)", fontsize=9, color=style.INK_FAINT)
-        ax.set_xlim(5.4, 21.6)
+        ax.set_xlim(5.4, XMAX)
         ax.set_ylim(0.42, 1.06)
         ax.axhline(1.0, color=style.GRID, lw=0.8, zorder=1)
-        style.declutter(ax, xticks=[6, 8, 10, 12, 15, 20], yticks=[0.5, 0.75, 1.0])
+        style.declutter(ax, xticks=[6, 7, 8, 9, 10, 11], yticks=[0.5, 0.75, 1.0])
+
         if reopt:
             g6 = dict((g, f) for g, f, _ in reopt).get(6.0)
             if g6 is not None:
                 blind6 = dict(baseline).get(6.0)
                 t6 = f"{blind6:.2f}" + r" $\rightarrow$ " + f"{g6:.2f}"
-                style.hero_stat(fig, t6,
-                                "at L = 6 µm · crosstalk-aware recovery")
-        style.headline(fig, "How densely can you pack parallel entangling operations?",
-                       "two Bell pairs, one global pulse — crosstalk-blind vs crosstalk-aware")
+                style.hero_stat(fig, t6, "at L = 6 µm · crosstalk-aware recovery")
+
+        style.headline(fig, "How densely can you pack entangling operations?",
+                       "two Bell pairs, one global pulse — plateaus at 1.0 past ~11 µm")
         style.footer(fig)
         fig.subplots_adjust(top=0.84, bottom=0.11, left=0.09, right=0.94)
-
         return fig
 
     style.render_both(build, "pair_packing.png")
