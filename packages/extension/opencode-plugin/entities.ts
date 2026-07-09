@@ -379,13 +379,36 @@ export function validateSystem(e: SystemEntity): string[] {
 /** Problems with a FormulationEntity; [] means valid. */
 export function validateFormulation(e: FormulationEntity): string[] {
   const problems: string[] = [];
-  if (typeof e.problem !== "string" || e.problem.trim() === "") problems.push("problem must be non-empty");
-  if (typeof e.target !== "string" || e.target.trim() === "") problems.push("target must be non-empty");
-  if (typeof e.objective !== "string" || e.objective.trim() === "") problems.push("objective must be non-empty");
-  if (!Array.isArray(e.constraints) || e.constraints.some((c) => typeof c !== "string")) {
-    problems.push("constraints must be an array of strings");
-  }
+  if (!TRAJECTORY_TYPES.includes(e.trajectory_type)) problems.push(`trajectory_type must be one of ${TRAJECTORY_TYPES.join(", ")}`);
+  if (!TIME_MODES.includes(e.time_mode)) problems.push(`time_mode must be one of ${TIME_MODES.join(", ")}`);
+  if (!PARAMETERIZATIONS.includes(e.parameterization)) problems.push(`parameterization must be one of ${PARAMETERIZATIONS.join(", ")}`);
+  if (!e.robustness || !ROBUSTNESS_KINDS.includes(e.robustness.kind)) problems.push(`robustness.kind must be one of ${ROBUSTNESS_KINDS.join(", ")}`);
+  if (typeof e.free_phase !== "boolean") problems.push("free_phase must be a boolean");
+  if (typeof e.leakage !== "boolean") problems.push("leakage must be a boolean");
+  if (typeof e.target !== "string") problems.push("target must be a string");
+  if (!Array.isArray(e.objectives)) problems.push("objectives must be an array");
+  else e.objectives.forEach((o, i) => { if (!OBJECTIVE_KINDS.includes(o.kind)) problems.push(`objectives[${i}].kind invalid: ${o.kind}`); });
+  if (!Array.isArray(e.constraints)) problems.push("constraints must be an array");
+  else e.constraints.forEach((c, i) => { if (!CONSTRAINT_KINDS.includes(c.kind)) problems.push(`constraints[${i}].kind invalid: ${c.kind}`); });
   return problems;
+}
+
+/** Soft, non-blocking warnings (spec §3.2). `componentCount` (N, from the
+ *  sibling System entity) is optional; the free_phase-on-N=1 warning fires only
+ *  when it is exactly 1, and is skipped when componentCount is undefined. */
+export function formulationWarnings(e: FormulationEntity, componentCount?: number): string[] {
+  const warnings: string[] = [];
+  if (e.trajectory_type === "density" || e.trajectory_type === "multidensity")
+    warnings.push("density trajectory — the System should be an open quantum system (dissipators)");
+  if (e.time_mode === "min_time") {
+    if (!e.time_params || typeof e.time_params.final_fidelity !== "number")
+      warnings.push("min_time without a time_params.final_fidelity floor");
+    if (!Array.isArray(e.constraints) || !e.constraints.some((c) => c.kind === "dt_bounds"))
+      warnings.push("min_time needs free Δt — add a dt_bounds constraint");
+  }
+  if (e.free_phase && componentCount === 1)
+    warnings.push("free_phase on a single-component system has no virtual-Z freedom");
+  return warnings;
 }
 
 // --- merge (amicode_set_model) ------------------------------------------------

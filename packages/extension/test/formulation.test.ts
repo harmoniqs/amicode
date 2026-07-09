@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { normalizeFormulation, updateFormulation } from "../opencode-plugin/entities";
+import { normalizeFormulation, updateFormulation, validateFormulation, formulationWarnings } from "../opencode-plugin/entities";
 
 const corpus = JSON.parse(
   readFileSync(new URL("./fixtures/formulation-migration.json", import.meta.url), "utf8"),
@@ -41,5 +41,35 @@ describe("updateFormulation", () => {
     expect(merged.objectives).toEqual([{ kind: "reg_du", params: { R: 1e-5 } }]);
     expect(merged.leakage).toBe(true);
     expect(merged.leakage_params).toEqual({ value: 1e-3, cost: 1e-2 }); // shallow-merged
+  });
+});
+
+describe("validateFormulation", () => {
+  const good = normalizeFormulation({ problem: "gate_synthesis", target: "CZ", objective: "unitary infidelity", constraints: [] });
+  it("passes a good entity", () => {
+    expect(validateFormulation(good)).toEqual([]);
+  });
+  it("flags an unknown enum value", () => {
+    const bad = { ...good, trajectory_type: "bogus" as any };
+    expect(validateFormulation(bad).length).toBeGreaterThan(0);
+  });
+  it("flags an unknown objective kind", () => {
+    const bad = { ...good, objectives: [{ kind: "nope" as any, params: {} }] };
+    expect(validateFormulation(bad).some((p) => p.includes("objectives[0]"))).toBe(true);
+  });
+});
+
+describe("formulationWarnings", () => {
+  it("min_time without final_fidelity and without dt_bounds → two warnings", () => {
+    const e = normalizeFormulation({ trajectory_type: "gate", time_mode: "min_time" });
+    const w = formulationWarnings(e);
+    expect(w.some((x) => /final_fidelity/.test(x))).toBe(true);
+    expect(w.some((x) => /dt_bounds/.test(x))).toBe(true);
+  });
+  it("free_phase warning fires only when componentCount === 1", () => {
+    const e = normalizeFormulation({ trajectory_type: "gate", free_phase: true });
+    expect(formulationWarnings(e, 1).some((x) => /free_phase/.test(x))).toBe(true);
+    expect(formulationWarnings(e, 2).some((x) => /free_phase/.test(x))).toBe(false);
+    expect(formulationWarnings(e).some((x) => /free_phase/.test(x))).toBe(false); // undefined N → skipped
   });
 });
