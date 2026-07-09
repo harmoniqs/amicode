@@ -5,7 +5,7 @@ import { LocalExecutor } from "./local_executor.js";
 import { ConfigError, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
-import { runVerification } from "./verify.js";
+import { isVerifiedTier, runVerification } from "./verify.js";
 import { trySubcommand } from "./subcommands.js";
 
 function readTomlSafe(fp: string): Record<string, unknown> | undefined {
@@ -173,11 +173,18 @@ export async function main(argv: string[]): Promise<number> {
     console.error(`amico-run: FINISHED missing in ${handle.runDir} (write fault)`);
     return 64;
   }
-  // spec C: free-tier re-rollout verification runs AFTER FINISHED, BEFORE the
-  // AMICODE_FINISHED line — so consumers see a settled verification state. The
-  // harness (or the fallback) always writes verification.toml; the promote gate
-  // keys off agree==true.
-  if (opts.spec?.tier === "free") {
+  // spec C + spec-20260708-112732 §4.3: re-rollout verification runs AFTER
+  // FINISHED, BEFORE the AMICODE_FINISHED line — so consumers see a settled
+  // verification state. The harness (or the fallback) always writes
+  // verification.toml; the promote gate keys off agree==true.
+  //
+  // TIERS VERIFIED: "free" (author-first, the original tier-3 trust anchor) AND
+  // "composed" (tier-2). The depth-1 redesign extends the gate to tier-2 because
+  // splicing params into an exemplar is exactly where a subtle mangle survives
+  // the masked-baseline check — a wrong fill can still re-roll to a different
+  // pulse. "vetted" (tier-1) skips it (the template is the trust anchor). Keep
+  // this set in sync with SolveSpec.tier (schema enum: vetted|composed|free).
+  if (opts.spec && isVerifiedTier(opts.spec.tier)) {
     const { config: authoring } = readAuthoring();
     await runVerification(handle.runDir, opts.spec, authoring);
     const verified = readTomlSafe(join(handle.runDir, "verification.toml"));

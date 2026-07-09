@@ -1,16 +1,29 @@
-// Free-tier re-rollout verification invoke (spec C). After FINISHED, when the
-// SolveSpec is tier "free", amico-run runs the FIXED, VETTED re-rollout harness
+// Re-rollout verification invoke (spec C; extended to tier-2 by
+// spec-20260708-112732 §4.3). After FINISHED, when the SolveSpec is a verified
+// tier (see isVerifiedTier), amico-run runs the FIXED, VETTED re-rollout harness
 // (a Julia asset shipped with the extension, path from authoring.json) against
 // the run dir's system_verify.jld2 + pulse.jld2. The harness writes
 // verification.toml itself; if it is missing, fails to run, or exits without
 // writing, we write a fallback verification.toml with agree=false + a reason —
-// a free run must NEVER end verification-less (absence would read as "pending"
-// forever and mask a failure, and the auto-promote gate keys off agree==true).
+// a verified run must NEVER end verification-less (absence would read as
+// "pending" forever and mask a failure, and the auto-promote gate keys off
+// agree==true).
 import { spawn } from "node:child_process";
 import { existsSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AuthoringConfig } from "./authoring.js";
 import type { SpecStamp } from "./types.js";
+
+/** Which trust tiers get the independent re-rollout gate after FINISHED.
+ *  free = author-first (tier-3, the original trust anchor); composed = exemplar-
+ *  spliced (tier-2 — added by spec-20260708-112732 §4.3, because a wrong fill can
+ *  still re-roll to a different pulse and pass the masked-baseline check). vetted
+ *  (tier-1) is trusted by its template and skips it. Single source of truth for
+ *  the policy — cli.ts gates on it, and the harness driver reads it to know
+ *  whether a run will emit an AMICODE_VERIFIED line. */
+export function isVerifiedTier(tier: string | undefined): boolean {
+  return tier === "free" || tier === "composed";
+}
 
 function tomlEscape(s: string): string {
   return JSON.stringify(s);

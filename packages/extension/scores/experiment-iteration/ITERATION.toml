@@ -1,0 +1,31 @@
+# Experiment-iteration score — the DATA half of the harness reframe.
+#
+# spec-20260708-112732 §3.2/§4.3 · plan slice B4 · amicode#109 (prototype).
+#
+# This is a HARNESS score, not an interview SCORE.md: it declares one autonomous
+# experiment iteration as data. The interview repertoire loader only reads
+# `SCORE.md`, so this file never enters that machinery. The deterministic driver
+# that WALKS these fields is code — `@amicode/amico-run`'s harness module
+# (src/harness/experiment_iteration.ts) — NOT an LLM orchestrator.
+#
+# G-1 (amicode#107): score-first for flow + a thin TS driver only for what the
+# stage model can't express. The iteration loop is that exception.
+
+schema_version = 1
+id = "experiment-iteration"
+name = "Single experiment iteration (tier-2, re-rollout gated)"
+
+# ── the target the iteration solves for (the harness receives it; no LLM picks it) ──
+[target]
+platform = "rydberg"
+gate = "CZ"
+kind = "gate_synthesis"
+size = 2
+tier = "composed"                 # tier-2 → the re-rollout gate MUST run (§4.3)
+exemplar_id = "rydberg-cz"        # the shipped exemplar the experimenter leaf splices
+target_fidelity = 0.9999
+env = { kind = "provisioned" }    # tier-2 runs in the provisioned project
+
+# ── promotion policy (enforced in code, not prose) ──
+[verify]
+promote_on = "agree"              # save to catalog ONLY when the re-rollout agrees
