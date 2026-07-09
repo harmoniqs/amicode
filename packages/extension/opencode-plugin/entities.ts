@@ -202,6 +202,151 @@ export function updateSystem(existing: SystemEntity, patch: SystemPatch): System
   return merged;
 }
 
+// --- composite system (spec-20260709-023819) ---------------------------------
+// The System entity becomes a COMPOSITE: components[] + couplings[] + topology +
+// drive-arch, with single-qubit the degenerate N=1 case. Introduced alongside the
+// flat SystemEntity above; normalizeSystem (below) migrates a flat on-disk entity
+// to a composite on read. `Role`/`CouplingKind`/`Topology`/`DriveArch` are CLOSED
+// validated sets; `platform` stays OPEN (any non-empty string), as the flat entity
+// always was (spec §2.1).
+
+export const ROLES = ["qubit", "cavity", "resonator", "mode", "atom"] as const;
+export type Role = (typeof ROLES)[number];
+
+export const COUPLING_KINDS = ["exchange", "ZZ", "cross-resonance", "dispersive-chi", "vdW", "mode-mediated"] as const;
+export type CouplingKind = (typeof COUPLING_KINDS)[number];
+
+/** v1 presets only; ring/grid/star/all-to-all are deferred (spec §9). */
+export const TOPOLOGIES = ["single-pair", "linear-chain", "custom"] as const;
+export type Topology = (typeof TOPOLOGIES)[number];
+
+export const DRIVE_ARCHS = ["global", "per-component", "zoned"] as const;
+export type DriveArch = (typeof DRIVE_ARCHS)[number];
+
+export interface Component {
+  id: string;
+  role: Role;
+  /** Optional, per-component; when given an integer >= MIN_LEVELS. Absent = "levels TBD". */
+  levels?: number;
+  params: Record<string, number>;
+}
+
+export interface Coupling {
+  /** >=2 component ids. Pairwise = 2 ids; a mode-mediated hyperedge lists the
+   *  coupled components PLUS the shared mode's OWN component id. */
+  between: string[];
+  kind: CouplingKind;
+  params: Record<string, number>;
+}
+
+export interface CompositeSystem {
+  /** Open platform string (spec A), same rule as the flat entity. */
+  platform: string;
+  components: Component[];
+  couplings: Coupling[];
+  /** Provenance: which preset generated `couplings` (undefined for hand-authored). */
+  topology?: Topology;
+  drive: { arch: DriveArch };
+  /** Free text; excluded from the canonical hash (like the flat entity). */
+  notes?: string;
+}
+
+/** Roles that carry a bosonic mode (the shared member of a mode-mediated edge). */
+const MODE_ROLES = new Set<Role>(["mode", "resonator"]);
+
+function isFiniteNumber(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+/** Problems with a CompositeSystem; [] means valid. Closed sets for
+ *  role/kind/topology/drive.arch; platform open; levels optional but >= 2. */
+export function validateCompositeSystem(e: CompositeSystem): string[] {
+  const problems: string[] = [];
+  if (typeof e.platform !== "string" || e.platform.trim() === "") {
+    problems.push("platform must be a non-empty string");
+  }
+  if (!Array.isArray(e.components) || e.components.length < 1) {
+    problems.push("components must be a non-empty array");
+    return problems; // nothing below is checkable without components
+  }
+  const ids = new Set<string>();
+  for (const c of e.components) {
+    if (typeof c.id !== "string" || c.id.trim() === "") problems.push(`component id must be a non-empty string`);
+    else if (ids.has(c.id)) problems.push(`duplicate component id "${c.id}"`);
+    else ids.add(c.id);
+    if (!(ROLES as readonly string[]).includes(c.role)) {
+      problems.push(`component "${c.id}" role must be one of ${ROLES.join("|")}, got ${JSON.stringify(c.role)}`);
+    }
+    if (c.levels !== undefined && (!Number.isInteger(c.levels) || c.levels < MIN_LEVELS)) {
+      problems.push(`component "${c.id}" levels, when given, must be an integer >= ${MIN_LEVELS}, got ${c.levels}`);
+    }
+    for (const [k, v] of Object.entries(c.params ?? {})) {
+      if (!isFiniteNumber(v)) problems.push(`component "${c.id}" param "${k}" must be a finite number, got ${v}`);
+    }
+  }
+  if (!Array.isArray(e.couplings)) {
+    problems.push("couplings must be an array");
+  } else {
+    for (const cp of e.couplings) {
+      if (!Array.isArray(cp.between) || cp.between.length < 2) {
+        problems.push(`coupling.between must list >= 2 component ids`);
+        continue;
+      }
+      for (const id of cp.between) {
+        if (!ids.has(id)) problems.push(`coupling references unknown component id "${id}"`);
+      }
+      if (!(COUPLING_KINDS as readonly string[]).includes(cp.kind)) {
+        problems.push(`coupling.kind must be one of ${COUPLING_KINDS.join("|")}, got ${JSON.stringify(cp.kind)}`);
+      }
+      if (cp.kind === "mode-mediated") {
+        const modeMembers = cp.between.filter((id) => {
+          const comp = e.components.find((c) => c.id === id);
+          return comp !== undefined && MODE_ROLES.has(comp.role);
+        });
+        if (modeMembers.length !== 1) {
+          problems.push(
+            `mode-mediated coupling must include exactly one component of role mode|resonator, found ${modeMembers.length}`,
+          );
+        }
+      }
+      for (const [k, v] of Object.entries(cp.params ?? {})) {
+        if (!isFiniteNumber(v)) problems.push(`coupling param "${k}" must be a finite number, got ${v}`);
+      }
+    }
+  }
+  if (e.topology !== undefined && !(TOPOLOGIES as readonly string[]).includes(e.topology)) {
+    problems.push(`topology must be one of ${TOPOLOGIES.join("|")}, got ${JSON.stringify(e.topology)}`);
+  }
+  if (!e.drive || !(DRIVE_ARCHS as readonly string[]).includes(e.drive.arch)) {
+    problems.push(`drive.arch must be one of ${DRIVE_ARCHS.join("|")}, got ${JSON.stringify(e.drive?.arch)}`);
+  }
+  return problems;
+}
+
+/** Soft per-role level guidance (NOT validation errors) — mirrors the flat
+ *  entity's MAX_LEVELS soft-cap posture (spec §2.2). */
+const ROLE_LEVEL_HINTS: Partial<Record<Role, { min?: number; max?: number; note: string }>> = {
+  qubit: { max: 5, note: "many levels for a qubit — worsens conditioning/leakage/cost" },
+  atom: { max: 5, note: "many levels for an atom — worsens conditioning/leakage/cost" },
+  cavity: { min: 4, note: "low Fock truncation for a cavity — may under-resolve the mode" },
+  resonator: { min: 4, note: "low Fock truncation for a resonator — may under-resolve the mode" },
+  mode: { min: 4, note: "low Fock truncation for a mode — may under-resolve the mode" },
+};
+
+/** Soft warnings for a (valid) composite — never a rejection. */
+export function compositeSystemWarnings(e: CompositeSystem): string[] {
+  const warnings: string[] = [];
+  for (const c of e.components ?? []) {
+    if (c.levels === undefined) continue;
+    const hint = ROLE_LEVEL_HINTS[c.role];
+    if (!hint) continue;
+    if ((hint.max !== undefined && c.levels > hint.max) || (hint.min !== undefined && c.levels < hint.min)) {
+      warnings.push(`component "${c.id}" (${c.role}, ${c.levels} levels): ${hint.note}`);
+    }
+  }
+  return warnings;
+}
+
 // --- TOML emission -------------------------------------------------------------
 
 /** Escape a string for a TOML basic (double-quoted) string. */

@@ -23,6 +23,9 @@ import {
   validateSystem,
   validateFormulation,
   updateSystem,
+  validateCompositeSystem,
+  compositeSystemWarnings,
+  type CompositeSystem,
   canonicalJson,
   deriveSlug,
   entityDiff,
@@ -319,5 +322,117 @@ describe("problem + run-ref serializers", () => {
   it("round-trips runs.toml appends", () => {
     const t = runRefsToml([{ run_id: "r1", lab: "default", tier: "vetted", recorded: "x" }]);
     expect((parse(t) as any).runs[0].tier).toBe("vetted");
+  });
+});
+
+describe("composite system schema + validation (spec-20260709)", () => {
+  const COMP: CompositeSystem = {
+    platform: "transmon",
+    components: [
+      { id: "q1", role: "qubit", levels: 3, params: { omega: 4.8, delta: -0.2 } },
+      { id: "q2", role: "qubit", levels: 3, params: { omega: 4.9, delta: -0.2 } },
+    ],
+    couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+    topology: "single-pair",
+    drive: { arch: "per-component" },
+  };
+
+  it("accepts a valid composite", () => {
+    expect(validateCompositeSystem(COMP)).toEqual([]);
+  });
+
+  it("N=1 (degenerate single-qubit) is valid with empty couplings", () => {
+    expect(
+      validateCompositeSystem({
+        platform: "transmon",
+        components: [{ id: "q1", role: "qubit", levels: 3, params: {} }],
+        couplings: [],
+        drive: { arch: "per-component" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("accepts an arbitrary (open) platform string; rejects empty", () => {
+    expect(validateCompositeSystem({ ...COMP, platform: "fluxonium-xyz" })).toEqual([]);
+    expect(validateCompositeSystem({ ...COMP, platform: "" }).join(" ")).toMatch(/platform/);
+  });
+
+  it("rejects unknown role / kind / topology / drive.arch (closed sets)", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "spin" as any, params: {} }] }).join(" "),
+    ).toMatch(/role/);
+    expect(
+      validateCompositeSystem({
+        ...COMP,
+        couplings: [{ between: ["q1", "q2"], kind: "banana" as any, params: {} }],
+      }).join(" "),
+    ).toMatch(/kind/);
+    expect(validateCompositeSystem({ ...COMP, topology: "grid" as any }).join(" ")).toMatch(/topology/);
+    expect(validateCompositeSystem({ ...COMP, drive: { arch: "telepathy" as any } }).join(" ")).toMatch(/drive/);
+  });
+
+  it("rejects a coupling referencing an unknown component id", () => {
+    expect(
+      validateCompositeSystem({
+        ...COMP,
+        couplings: [{ between: ["q1", "q9"], kind: "cross-resonance", params: {} }],
+      }).join(" "),
+    ).toMatch(/unknown component/);
+  });
+
+  it("rejects duplicate component ids", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [COMP.components[0], COMP.components[0]] }).join(" "),
+    ).toMatch(/duplicate/);
+  });
+
+  it("mode-mediated requires exactly one mode/resonator member (ion + motional mode)", () => {
+    const ok: CompositeSystem = {
+      platform: "ion",
+      components: [
+        { id: "i1", role: "atom", params: {} },
+        { id: "i2", role: "atom", params: {} },
+        { id: "m1", role: "mode", levels: 8, params: {} },
+      ],
+      couplings: [{ between: ["i1", "i2", "m1"], kind: "mode-mediated", params: { eta: 0.1 } }],
+      drive: { arch: "global" },
+    };
+    expect(validateCompositeSystem(ok)).toEqual([]);
+    const bad = { ...ok, couplings: [{ between: ["i1", "i2"], kind: "mode-mediated" as const, params: {} }] };
+    expect(validateCompositeSystem(bad).join(" ")).toMatch(/mode-mediated/);
+  });
+
+  it("rejects non-integer / <2 component levels", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "qubit", levels: 1, params: {} }] }).join(" "),
+    ).toMatch(/levels/);
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "qubit", levels: 3.5, params: {} }] }).join(" "),
+    ).toMatch(/levels/);
+  });
+
+  it("heterogeneous cavity+qubit (bosonic) is native", () => {
+    const bosonic: CompositeSystem = {
+      platform: "bosonic",
+      components: [
+        { id: "q1", role: "qubit", levels: 2, params: {} },
+        { id: "cav", role: "cavity", levels: 12, params: { kerr: -0.001 } },
+      ],
+      couplings: [{ between: ["q1", "cav"], kind: "dispersive-chi", params: { chi: 0.002 } }],
+      drive: { arch: "per-component" },
+    };
+    expect(validateCompositeSystem(bosonic)).toEqual([]);
+  });
+
+  it("compositeSystemWarnings are soft (never a rejection)", () => {
+    const lowCav: CompositeSystem = {
+      platform: "bosonic",
+      components: [{ id: "cav", role: "cavity", levels: 2, params: {} }],
+      couplings: [],
+      drive: { arch: "per-component" },
+    };
+    expect(validateCompositeSystem(lowCav)).toEqual([]); // valid...
+    expect(compositeSystemWarnings(lowCav).join(" ")).toMatch(/Fock/); // ...but warned
+    expect(compositeSystemWarnings(COMP)).toEqual([]); // clean 3-level qubits, no warning
   });
 });
