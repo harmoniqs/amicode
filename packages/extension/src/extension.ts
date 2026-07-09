@@ -5,7 +5,7 @@ import { ServerManager } from "./server_manager";
 import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
-import { registerRunInspector } from "./run_inspector";
+import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
@@ -316,7 +316,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       ChatPanel.openOrReveal(ctx, readyUrl);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
-      await vscode.commands.executeCommand("amicode.runInspector.focus");
+      await revealInspector();
     }),
     // Run picker (pre-UX4 utility): switch the inspector between tracked runs.
     // Picking pins the selection (a background solve won't steal the view);
@@ -358,7 +358,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (!pick) return;
       if (pick.follow) runsManager?.resumeAutoFollow();
       else if (pick.runId) runsManager?.selectRun(pick.runId);
-      await vscode.commands.executeCommand("amicode.runInspector.focus");
+      await revealInspector();
     }),
     vscode.commands.registerCommand("amicode.stopRun", async () => {
       const dir = runsManager?.getActiveRunDir();
@@ -503,7 +503,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         runsManager?.pokeDiscovery();
         runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
-        await vscode.commands.executeCommand("amicode.runInspector.focus");
+        await revealInspector();
         // Save-to-catalog prompt (#47): the watcher suppresses the promote
         // prompt for runs already finished at switch (anti-re-pop), so the
         // explicit replay owns its own prompt → the catalog card.

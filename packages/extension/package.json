@@ -63,7 +63,8 @@
         {
           "id": "amicode.runInspector",
           "name": "Run Inspector",
-          "type": "webview"
+          "type": "webview",
+          "when": "amicode.inspectorRevealed"
         }
       ]
     },
