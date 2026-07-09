@@ -130,6 +130,144 @@ export interface FormulationEntity {
   notes?: string;
 }
 
+// ---- Formulation migration + merge (spec §3.1.3, §8, §10) ------------------
+
+function normRobustness(r: unknown): Robustness {
+  if (r && typeof r === "object" && typeof (r as any).kind === "string") {
+    const o = r as any;
+    return { kind: o.kind, params: o.params && typeof o.params === "object" ? o.params : {} };
+  }
+  return { kind: "none", params: {} };
+}
+function normTerm<T extends { kind: string; params: Record<string, number>; label?: string }>(o: any): T {
+  const out: any = { kind: o.kind, params: o.params && typeof o.params === "object" ? o.params : {} };
+  if (typeof o.label === "string") out.label = o.label;
+  return out as T;
+}
+function inferTypeFromTarget(target: string): TrajectoryType {
+  return /^\s*\||prep|state/i.test(target) ? "ket" : "gate";
+}
+function constraintKindFor(lc: string): ConstraintKind {
+  if (/slew|\bdu\b/.test(lc)) return "du_bound";
+  if (/ddu|accel/.test(lc)) return "ddu_bound";
+  if (/Δt|timestep|\bdt\b/.test(lc)) return "dt_bounds";
+  if (/calibration|\bpin\b/.test(lc)) return "calibration_pin";
+  if (/amplitude|bound/.test(lc)) return "bounds";
+  return "custom";
+}
+
+/** Legacy free-form → structured; structured passes through (defaults filled).
+ *  §10 mapping table. Idempotent. Never throws. */
+export function normalizeFormulation(raw: unknown): FormulationEntity {
+  const r = (raw ?? {}) as Record<string, any>;
+
+  // Already structured → normalize sub-shapes, fill defaults, pass through.
+  if (typeof r.trajectory_type === "string") {
+    const out: FormulationEntity = {
+      trajectory_type: r.trajectory_type,
+      time_mode: r.time_mode === "min_time" ? "min_time" : "fixed",
+      parameterization: typeof r.parameterization === "string" ? r.parameterization : "smooth",
+      robustness: normRobustness(r.robustness),
+      free_phase: r.free_phase === true,
+      leakage: r.leakage === true,
+      target: typeof r.target === "string" ? r.target : "",
+      objectives: Array.isArray(r.objectives) ? r.objectives.map((o: any) => normTerm<ObjectiveTerm>(o)) : [],
+      constraints: Array.isArray(r.constraints) ? r.constraints.map((c: any) => normTerm<Constraint>(c)) : [],
+    };
+    if (r.time_params && typeof r.time_params === "object") out.time_params = r.time_params;
+    if (r.leakage_params && typeof r.leakage_params === "object") out.leakage_params = r.leakage_params;
+    if (r.solve && typeof r.solve === "object") out.solve = r.solve;
+    if (typeof r.notes === "string") out.notes = r.notes;
+    return out;
+  }
+
+  // Legacy free-form.
+  const problem = typeof r.problem === "string" ? r.problem : "";
+  const target = typeof r.target === "string" ? r.target : "";
+  let trajectory_type: TrajectoryType = "gate";
+  let time_mode: TimeMode = "fixed";
+  if (problem === "state_prep") trajectory_type = "ket";
+  else if (problem === "min_time") {
+    time_mode = "min_time";
+    trajectory_type = inferTypeFromTarget(target);
+  }
+
+  const objectives: ObjectiveTerm[] = [];
+  const objStr = typeof r.objective === "string" ? r.objective.trim() : "";
+  if (objStr && !/infidelity/i.test(objStr)) objectives.push({ kind: "custom", params: {}, label: objStr });
+
+  const constraints: Constraint[] = [];
+  let leakage = false;
+  let time_params: Record<string, number> | undefined;
+  for (const c of Array.isArray(r.constraints) ? r.constraints : []) {
+    if (typeof c !== "string") continue;
+    const lc = c.toLowerCase();
+    if (/leakage/.test(lc)) {
+      leakage = true;
+      continue;
+    }
+    if (/final.?fidelity/.test(lc)) {
+      const m = c.match(/[\d.]+/);
+      time_params = { ...(time_params ?? {}), final_fidelity: m ? Number(m[0]) : 0.99 };
+      continue;
+    }
+    constraints.push({ kind: constraintKindFor(lc), params: {}, label: c });
+  }
+
+  const out: FormulationEntity = {
+    trajectory_type,
+    time_mode,
+    parameterization: "smooth",
+    robustness: { kind: "none", params: {} },
+    free_phase: false,
+    leakage,
+    target,
+    objectives,
+    constraints,
+  };
+  if (time_params) out.time_params = time_params;
+  if (r.solve && typeof r.solve === "object") out.solve = r.solve;
+  if (typeof r.notes === "string") out.notes = r.notes;
+  return out;
+}
+
+export interface FormulationPatch {
+  trajectory_type?: TrajectoryType;
+  time_mode?: TimeMode;
+  time_params?: Record<string, number>;
+  parameterization?: Parameterization;
+  robustness?: Robustness;
+  free_phase?: boolean;
+  leakage?: boolean;
+  leakage_params?: Record<string, number>;
+  target?: string;
+  objectives?: ObjectiveTerm[];
+  constraints?: Constraint[];
+  solve?: SolveParams;
+  notes?: string;
+}
+
+/** Normalize the (possibly legacy) existing, then upsert: scalar modes replace,
+ *  sets replace-whole when provided, param bags shallow-merge. */
+export function updateFormulation(existing: unknown, patch: FormulationPatch): FormulationEntity {
+  const base = normalizeFormulation(existing);
+  const merged: FormulationEntity = { ...base };
+  if (patch.trajectory_type !== undefined) merged.trajectory_type = patch.trajectory_type;
+  if (patch.time_mode !== undefined) merged.time_mode = patch.time_mode;
+  if (patch.parameterization !== undefined) merged.parameterization = patch.parameterization;
+  if (patch.robustness !== undefined) merged.robustness = patch.robustness;
+  if (patch.free_phase !== undefined) merged.free_phase = patch.free_phase;
+  if (patch.leakage !== undefined) merged.leakage = patch.leakage;
+  if (patch.target !== undefined) merged.target = patch.target;
+  if (patch.objectives !== undefined) merged.objectives = patch.objectives;
+  if (patch.constraints !== undefined) merged.constraints = patch.constraints;
+  if (patch.time_params !== undefined) merged.time_params = { ...(base.time_params ?? {}), ...patch.time_params };
+  if (patch.leakage_params !== undefined) merged.leakage_params = { ...(base.leakage_params ?? {}), ...patch.leakage_params };
+  if (patch.solve !== undefined) merged.solve = { ...(base.solve ?? {}), ...patch.solve };
+  if (patch.notes !== undefined) merged.notes = patch.notes;
+  return merged;
+}
+
 export interface RunStub {
   formulation_ref?: string;
   system_ref?: string;
