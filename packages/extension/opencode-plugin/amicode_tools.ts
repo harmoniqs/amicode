@@ -72,6 +72,7 @@ import {
   statusSummary,
   triggerOnboardingDistill,
 } from "./onboarding";
+import { makeTraceHooks } from "./traces";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -160,6 +161,9 @@ const RYDBERG_SCOPE_NOTE =
 // The plugin: exactly one export (see header). opencode calls it on session
 // creation with PluginInput; we need nothing from it today.
 export const AmicodeTools = async (_input: unknown) => ({
+  // Turn-level traces (traces.ts): every model call + tool call as a timed
+  // span in ~/.amico/amicode/traces/<session>.jsonl. AMICODE_TRACES=0 disables.
+  ...makeTraceHooks(),
   tool: {
     amicode_ask: {
       description:
