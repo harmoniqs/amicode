@@ -201,9 +201,31 @@ Stages, in order:
      scan, slow at 2 qubits (splice params into the exemplar; the gate's
      masked-baseline check keeps its physics intact). Don't tell the user Rydberg is
      unsupported.
-2. **MODEL** — levels (default 3; warn at 5+ per the guidance below), drive
-   parameterization + `drive_max`. Convention: **`T` = scalar gate time (ns),
-   `N` = number of timesteps** — never conflate them. Record via `amicode_set_model`.
+2. **MODEL (structure-first, then batch)** — the System is a **composite**:
+   components + couplings + drive-architecture, with a single qubit as the
+   degenerate **N=1** case. Ask the STRUCTURE first (it gates everything, so keep
+   these conversational/singular): **how many components** (single / a pair / a
+   chain of N / custom) · **are they homogeneous** (all identical)? · **topology**
+   if N>1 (`single-pair` | `linear-chain` | `custom`) · **drive-arch**
+   (`global` | `per-component` | `zoned`, platform-defaulted). THEN batch the
+   mechanical params in one `question` form: per-component `levels` (default 3;
+   warn 5+), `drive_max`, ω/δ — **if homogeneous, ask once and replicate to N**
+   (a 10-qubit chain is one form, not ten). Record it all in ONE
+   `amicode_set_model` call: `components` (upserted by id, ids `q1..qN`),
+   `couplings` (or a `topology` preset + `coupling_kind` — the preset expands to
+   edges), `drive_arch`. Single-qubit stays the old one-component flow
+   (`levels`/`drive_max` fold onto the first component). Convention: **`T` = scalar
+   gate time (ns), `N` = number of timesteps** — never conflate them.
+   - **Frontier-batching:** batch questions whose prerequisites are already
+     answered into ONE `question` call, but keep the *semantic/branching* picks
+     singular — platform, target-gate, objective. Never batch a question whose
+     OPTIONS depend on an unanswered prior (e.g. the gate list needs the platform),
+     nor one whose RELEVANCE depends on a pending answer (e.g. topology only if
+     N>1). Batch the mechanical (numbers), converse on the judgment.
+   - **Stage-gate note:** STRUCTURE / COMPONENT-PARAMS / COUPLINGS are all
+     sub-steps of this one `MODEL` gate (recorded via `amicode_set_model`) — the
+     interview's `platform → model → formulate → solve → hardware` gate sequence
+     is unchanged.
 3. **MODE** — simulate first, or straight to solve? Warm start available?
    (If yes: the warm-start idiom below, `load_traj`.)
 4. **PROBLEM** — gate synthesis vs state prep; the target (X, Y, Z, H, S, T,

@@ -186,8 +186,15 @@ Per-stage notes:
      **invoke it by name** for the physics before authoring — do not hand-roll the
      Hamiltonian from memory when a skill carries it.
 
-2. **model** — convention: **`T` = scalar gate time (ns), `N` = number of
-   timesteps** — never conflate them. Record via `amicode_set_model`.
+2. **model** — the System is a **composite** (components + couplings + drive-arch;
+   single qubit = N=1). Go **structure-first** (how many components · homogeneous? ·
+   topology if N>1 · drive-arch — asked singly), THEN **batch** the mechanical
+   per-component params in one `question` form (homogeneous → ask once, replicate to
+   N). Record it all in ONE `amicode_set_model` call (`components` upserted by id
+   `q1..qN`; `couplings` or a `topology` preset + `coupling_kind` that expands to
+   edges; `drive_arch`). STRUCTURE/COMPONENT-PARAMS/COUPLINGS are sub-steps of THIS
+   `model` gate — not new gates. Convention: **`T` = scalar gate time (ns), `N` =
+   number of timesteps** — never conflate them.
    <a id="levels-guidance"></a>Levels are **platform-dependent** — do not default
    to 3 blindly. A **transmon** qubit keeps 3 (default) or 4 for leakage realism;
    avoid 5+ (worse conditioning/leakage, higher solve cost). A **cavity / bosonic
