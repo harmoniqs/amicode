@@ -28,6 +28,8 @@ import {
   normalizeSystem,
   updateCompositeSystem,
   compositeSystemToml,
+  expandTopology,
+  replicateHomogeneous,
   type CompositeSystem,
   canonicalJson,
   deriveSlug,
@@ -508,5 +510,41 @@ describe("normalizeSystem + composite merge/toml/hash (spec-20260709)", () => {
     const a = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "x" });
     const b = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "DIFFERENT" });
     expect(canonicalJson(a)).toBe(canonicalJson(b));
+  });
+});
+
+describe("topology expansion + homogeneous replicate (spec-20260709)", () => {
+  it("single-pair → 1 edge over [q1,q2]", () => {
+    const edges = expandTopology("single-pair", ["q1", "q2"], "cross-resonance", { g: 0.005 });
+    expect(edges).toEqual([{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }]);
+  });
+  it("linear-chain(N) → N-1 edges in canonical order", () => {
+    const edges = expandTopology("linear-chain", ["q1", "q2", "q3", "q4"], "exchange");
+    expect(edges.map((e) => e.between)).toEqual([
+      ["q1", "q2"],
+      ["q2", "q3"],
+      ["q3", "q4"],
+    ]);
+    expect(edges.every((e) => e.kind === "exchange")).toBe(true);
+  });
+  it("custom → [] (edges authored directly)", () => {
+    expect(expandTopology("custom", ["q1", "q2"], "ZZ")).toEqual([]);
+  });
+  it("single-pair with wrong arity throws", () => {
+    expect(() => expandTopology("single-pair", ["q1", "q2", "q3"], "ZZ")).toThrow(/single-pair/);
+  });
+  it("deferred presets (e.g. ring) throw §9", () => {
+    expect(() => expandTopology("ring" as any, ["q1", "q2"], "ZZ")).toThrow(/deferred/);
+  });
+  it("replicateHomogeneous → N components identical except id (q1..qN)", () => {
+    const comps = replicateHomogeneous({ role: "qubit", levels: 3, params: { omega: 4.8 } }, 3);
+    expect(comps.map((c) => c.id)).toEqual(["q1", "q2", "q3"]);
+    expect(comps.every((c) => c.role === "qubit" && c.levels === 3 && c.params.omega === 4.8)).toBe(true);
+    // mutating one component's params must not alias the others
+    comps[0].params.omega = 9;
+    expect(comps[1].params.omega).toBe(4.8);
+  });
+  it("replicateHomogeneous rejects n < 1", () => {
+    expect(() => replicateHomogeneous({ role: "qubit", params: {} }, 0)).toThrow(/n >= 1/);
   });
 });

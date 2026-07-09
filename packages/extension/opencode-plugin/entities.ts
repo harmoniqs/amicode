@@ -463,6 +463,56 @@ export function compositeSystemToml(e: CompositeSystem, now?: Date): string {
   return lines.join("\n") + "\n";
 }
 
+// --- topology + replicate (spec §2.3, §4.2) ----------------------------------
+
+/** Expand a v1 topology preset into explicit edges over `componentIds` (canonical order),
+ *  each stamped with `kind` + shared `params`. `custom` returns [] (edges authored directly).
+ *  ring/grid/star/all-to-all are deferred (spec §9) and throw. Bad arity throws. */
+export function expandTopology(
+  topology: Topology,
+  componentIds: string[],
+  kind: CouplingKind,
+  params: Record<string, number> = {},
+): Coupling[] {
+  switch (topology) {
+    case "custom":
+      return [];
+    case "single-pair":
+      if (componentIds.length !== 2) {
+        throw new Error(`single-pair topology needs exactly 2 components, got ${componentIds.length}`);
+      }
+      return [{ between: [componentIds[0], componentIds[1]], kind, params: { ...params } }];
+    case "linear-chain": {
+      if (componentIds.length < 2) {
+        throw new Error(`linear-chain topology needs >= 2 components, got ${componentIds.length}`);
+      }
+      const edges: Coupling[] = [];
+      for (let i = 0; i + 1 < componentIds.length; i++) {
+        edges.push({ between: [componentIds[i], componentIds[i + 1]], kind, params: { ...params } });
+      }
+      return edges;
+    }
+    default:
+      throw new Error(`topology "${topology}" is deferred (spec §9); v1 supports single-pair|linear-chain|custom`);
+  }
+}
+
+/** Replicate a homogeneous component template into N components identical except `id`
+ *  (`${prefix}1..${prefix}N`) — so couplings/topology can reference them (spec §4.2). */
+export function replicateHomogeneous(
+  template: Omit<Component, "id">,
+  n: number,
+  prefix = "q",
+): Component[] {
+  if (!Number.isInteger(n) || n < 1) throw new Error(`replicateHomogeneous needs n >= 1, got ${n}`);
+  return Array.from({ length: n }, (_, i) => ({
+    id: `${prefix}${i + 1}`,
+    role: template.role,
+    ...(template.levels !== undefined ? { levels: template.levels } : {}),
+    params: { ...template.params },
+  }));
+}
+
 // --- TOML emission -------------------------------------------------------------
 
 /** Escape a string for a TOML basic (double-quoted) string. */
