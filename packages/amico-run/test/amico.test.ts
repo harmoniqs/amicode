@@ -156,11 +156,13 @@ describe("amico router — mcp-serve facade", () => {
       expect.arrayContaining(["amico_catalog", "amico_vault", "amico_device", "amico_note"]),
     );
   });
-  it("no flag → stub note + tool list, exit 0 (cleanly)", () => {
-    const r = run(["mcp-serve"]);
-    expect(r.code).toBe(0);
-    const out = JSON.parse(r.stdout);
-    expect(out.stub).toBe(true);
-    expect(out.tools).toEqual(expect.arrayContaining(["amico_catalog"]));
+  it("no flag → stands up the real stdio server, exits 0 on stdin EOF (empty stdin)", () => {
+    // The real facade (B5) blocks on stdin serving the MCP protocol; feeding an immediate
+    // EOF (empty input) is a disconnected client → the server shuts down and exits cleanly.
+    // stdout is the MCP JSON-RPC channel, so with no client messages it stays silent. The
+    // full protocol round-trip (tools/list + tools/call over real stdio) lives in
+    // mcp_serve.test.ts. A timeout guards against a regression that would hang the server.
+    const out = execFileSync("node", [BUNDLE, "mcp-serve"], { encoding: "utf8", input: "", timeout: 20000 });
+    expect(out).toBe("");
   });
 });
