@@ -157,6 +157,23 @@ export function entitlementsTablePath(scoresRoot: string = DEFAULT_SCORES_ROOT):
 
 /** Where amico-run reads the authoring config (spec C seam). $AMICO_AUTHORING_FILE
  *  overrides (tests + parity with amico-run's own reader). */
+/** True when ~/.amico/profile.json already carries identity — the onboarding
+ *  WIZARD (or the About-You card) saved it, so the chat overture must not
+ *  re-ask session-zero questions. Complements hasOnboardingCompleted (which
+ *  tracks the conversational path's marker). */
+export function profileHasIdentity(
+  profilePath: string = process.env.AMICO_PROFILE_FILE?.trim() || path.join(os.homedir(), ".amico", "profile.json"),
+): boolean {
+  try {
+    const p = JSON.parse(fs.readFileSync(profilePath, "utf8")) as Record<string, unknown>;
+    return ["name", "affiliation", "focus", "scholar"].some(
+      (k) => typeof p[k] === "string" && (p[k] as string).trim() !== "",
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function authoringFilePath(): string {
   const env = process.env.AMICO_AUTHORING_FILE;
   if (env && env.trim() !== "") return env;
@@ -222,7 +239,6 @@ export function writeAuthoringConfig(
     console.warn(`amicode: failed to write authoring.json (amico-run will use built-in defaults): ${e}`);
   }
 }
-
 
 /** Default model pin for the generated config. Without one, opencode's
  *  default-resolution gambles on provider ordering and (with Google creds)
@@ -313,6 +329,7 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
         [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
+        [`${path.join(os.homedir(), ".amico", "library")}/**`]: "allow", // uploaded papers ("read my latest paper" — home Library card)
         [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
@@ -409,7 +426,8 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       !!score0 &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
-      !hasOnboardingCompleted(onboardingDir());
+      !hasOnboardingCompleted(onboardingDir()) &&
+      !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
     if (shouldOnboard && overture && score0) {
       // Chained: ONE compiled section, ONE manifest (id `overture`, stages =
       // overture ++ pulse-designer) so the score guard sees the whole flow.

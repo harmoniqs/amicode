@@ -3,7 +3,14 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 
 import { tmpdir, homedir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { execFileSync } from "node:child_process";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, preferredModel, resolveModelPin } from "../src/opencode_config";
+import {
+  prepareOpencodeProject,
+  resolveJuliaProject,
+  buildOpencodeConfigContent,
+  preferredModel,
+  resolveModelPin,
+  profileHasIdentity,
+} from "../src/opencode_config";
 
 function fakeExtRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "extroot-"));
@@ -239,5 +246,21 @@ describe("resolveModelPin (fallback-only)", () => {
     writeFileSync(cfgPath, JSON.stringify({}));
     expect(resolveModelPin(cfgPath, authPath)).toBe("opencode/deepseek-v4-flash-free");
     expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("opencode/deepseek-v4-flash-free");
+  });
+});
+
+describe("profileHasIdentity (wizard → overture gate)", () => {
+  it("true only when an identity field is a non-empty string", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prof-"));
+    const fp = join(dir, "profile.json");
+    expect(profileHasIdentity(fp)).toBe(false); // absent
+    writeFileSync(fp, JSON.stringify({}));
+    expect(profileHasIdentity(fp)).toBe(false); // empty
+    writeFileSync(fp, JSON.stringify({ affiliation: "  " }));
+    expect(profileHasIdentity(fp)).toBe(false); // whitespace
+    writeFileSync(fp, JSON.stringify({ affiliation: "NYU" }));
+    expect(profileHasIdentity(fp)).toBe(true);
+    writeFileSync(fp, "not json");
+    expect(profileHasIdentity(fp)).toBe(false); // corrupt → safe default (onboard)
   });
 });
