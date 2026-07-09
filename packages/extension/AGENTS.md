@@ -232,13 +232,21 @@ Stages, in order:
    √X, or an arbitrary single-qubit unitary via the vetted template). Multi-qubit
    and other-platform gates are **not out of bounds** — they route through the
    free-tier offer (author from scratch, unvetted, verified), per the scope section.
-5. **FORMULATION** — objective and constraints. The vetted template optimizes
-   unitary infidelity under the amplitude bound `drive_max`; record any further
-   objectives/constraints the user wants in the Formulation entity as follow-ups
-   — do not improvise unvetted physics into the script. **Never silently
-   co-optimize global model parameters** (frequencies, anharmonicities) — if
-   the user wants that, it's a recorded follow-up, not a tonight-edit. Record via
-   `amicode_formulate`.
+5. **FORMULATION** — the optimization problem as **typed facets**, not prose.
+   Settle: the **trajectory type** (ket | multiket | gate | density), the **time
+   mode** (fixed | min-time — orthogonal to type), the **parameterization**
+   (smooth | linear/cubic spline | bang-bang), and the flags **free-phase**
+   (virtual-Z; the honest primary metric for entangling gates) and **leakage**
+   (suppression). The **primary infidelity objective is DERIVED** from the type +
+   free-phase — do NOT pass it; `objectives` carries only ADDED terms
+   (regularizers `R_u`/`R_du`, sensitivity). Constraints are **typed** (amplitude
+   / du / ddu bounds, `dt_bounds`, `final_fidelity`, calibration-pin). Going
+   **min-time** demotes the infidelity to a hard `final_fidelity` constraint and
+   needs free Δt (a `dt_bounds` constraint). Still respect the tier: don't
+   improvise unvetted physics into a vetted script. **Never silently co-optimize
+   global model parameters** (frequencies, anharmonicities) — that's a recorded
+   follow-up, not a tonight-edit. Record all of it via `amicode_formulate` (typed
+   args — it upserts, derives the primary objective, and surfaces soft warnings).
 6. **SOLVE PARAMS** — `T`, `N`, `max_iter` (defaults per the regime guidance
    below); pass them to `amicode_solve` (it records them on the Formulation and
    writes the Run entity, stamped with the resolved `tier`), then author
@@ -281,6 +289,28 @@ Constructor map (guidance, not a lookup you follow blindly):
 
 Golden reference skeletons for the canonical cases (2-transmon CZ, Rydberg CZ, cavity+qubit)
 live in `test/fixtures/composite-skeletons/` — the intended authoring output, snapshot-checked.
+
+## Formulation authoring map (facets → Piccolo template)
+
+The recorded Formulation facets tell you which Piccolo template + kwargs to author.
+Same honesty caveat as the composite map: **authoring-aware bookkeeping, NOT wired into
+tier resolution** — a non-stock problem still resolves to the **free tier** and is
+**unvetted / re-rollout-checked**. Map each facet:
+
+| facet | Piccolo authoring |
+| --- | --- |
+| `trajectory_type` | `KetTrajectory` / `MultiKetTrajectory` / `UnitaryTrajectory` (+`EmbeddedOperator`) / `DensityTrajectory` (+`OpenQuantumSystem`) |
+| `parameterization` | `SmoothPulseProblem` / `SplinePulseProblem` (linear\|cubic) / `BangBangPulseProblem` |
+| `time_mode: min_time` | wrap the solved problem in `MinimumTimeProblem(qcp; final_fidelity, D, Δt_bounds)` |
+| `robustness: ensemble` | `SamplingProblem(qcp, systems; weights)` |
+| `robustness: sensitivity` | `UnitarySensitivityObjective` / `AdjointRobustnessObjective` (Piccolissimo) |
+| `free_phase` | `…Problem(...; free_phase = true)` — one virtual-Z per component; objective-only |
+| `leakage` (flag) | `PiccoloOptions(leakage_constraint = true, leakage_constraint_value, leakage_cost)` |
+| constraint `calibration_pin` | `calibration_targets = […]` (pins globals via `fix_global_variable!`) |
+
+The **primary infidelity objective is derived** from `trajectory_type` + `free_phase`
+(min-time makes the min-time term primary and demotes fidelity to a `final_fidelity`
+constraint) — author it from the type, never from a stored objective string.
 
 ## Scope & parameter guidance
 
