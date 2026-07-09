@@ -58,6 +58,14 @@ import {
   type Topology,
   type DriveArch,
   type FormulationEntity,
+  normalizeFormulation,
+  updateFormulation,
+  formulationWarnings,
+  type FormulationPatch,
+  type TrajectoryType,
+  type TimeMode,
+  type Parameterization,
+  type Robustness,
   type RunStub,
   type DeviceSessionStub,
   type CalibrationStub,
@@ -152,12 +160,17 @@ function recordEntity(
   source: { tool: string; stage?: string },
 ): string {
   const before0 = readEntityJson<Record<string, unknown>>(slug, kind);
-  // F1 (spec §6): normalize a system `before` snapshot to composite so the diff is
-  // composite-vs-composite, not a spurious flat→composite restructure on first touch.
+  // F1 (spec §6 / §3.3): normalize a system OR formulation `before` snapshot so the
+  // diff is structured-vs-structured, not a spurious legacy→structured restructure
+  // on first touch.
   const before =
-    kind === "system" && before0 !== undefined
-      ? (normalizeSystem(before0) as unknown as Record<string, unknown>)
-      : before0;
+    before0 === undefined
+      ? before0
+      : kind === "system"
+        ? (normalizeSystem(before0) as unknown as Record<string, unknown>)
+        : kind === "formulation"
+          ? (normalizeFormulation(before0) as unknown as Record<string, unknown>)
+          : before0;
   const action: "created" | "updated" = before ? "updated" : "created";
   writeEntityFiles(slug, kind, toml, JSON.stringify(entity, null, 2) + "\n");
   const diff = entityDiff(before, entity);
@@ -533,56 +546,139 @@ export const AmicodeTools = async (_input: unknown) => ({
 
     amicode_formulate: {
       description:
-        "Record the Formulation entity (interview stages 4–5: PROBLEM + FORMULATION): " +
-        "problem kind, target, objective, constraints. Bookkeeping only.",
+        "Record the Formulation entity (interview stages 4–5: PROBLEM + FORMULATION) as TYPED " +
+        "facets. The primary infidelity objective is DERIVED from trajectory_type + free_phase + " +
+        "time_mode — do NOT pass it; `objectives` holds only ADDED terms (regularizers, etc.). " +
+        "Upsert: any omitted facet keeps its existing/default value. Bookkeeping only.",
       args: {
-        problem: {
-          type: "string",
-          description: 'Problem kind, e.g. "gate_synthesis", "state_prep", "min_time".',
+        trajectory_type: {
+          type: ["string", "null"],
+          description: "ket | multiket | gate | density | multidensity. null keeps existing (default gate).",
+        },
+        time_mode: {
+          type: ["string", "null"],
+          description: "fixed | min_time (orthogonal to type). null keeps existing (default fixed).",
+        },
+        time_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "{final_fidelity, D} — the min-time fidelity floor + duration weight. null to skip.",
+        },
+        parameterization: {
+          type: ["string", "null"],
+          description: "smooth | linear_spline | cubic_spline | bang_bang. null keeps existing (default smooth).",
+        },
+        robustness: {
+          // Loose object (kind + params) — kept schema-shallow to avoid the nested
+          // legacyJsonSchema union gotcha; normalized in execute.
+          type: ["object", "null"],
+          description: "{ kind: none|ensemble|sensitivity, params: {...} }. null keeps existing (default none).",
+        },
+        free_phase: {
+          type: ["boolean", "null"],
+          description: "Virtual-Z free phase (objective-only, never in the ODE). null keeps existing (default false).",
+        },
+        leakage: {
+          type: ["boolean", "null"],
+          description: "Leakage suppression (its sole home — not an objective/constraint kind). null keeps existing.",
+        },
+        leakage_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "{value, cost} for the leakage flag. null to skip.",
         },
         target: {
-          type: "string",
-          description: 'The target, e.g. "X", "H", "sqrt(X)", or a description of the unitary/state.',
-        },
-        objective: {
           type: ["string", "null"],
-          description: 'Objective; null for the default "unitary infidelity".',
+          description: 'Target gate/state, e.g. "CZ", "H", "|1>". null keeps existing.',
+        },
+        objectives: {
+          // Array-of-objects. legacyJsonSchema strips "null" only at THIS top level, not
+          // inside `items` — per-object optionals (label) are expressed by OMITTING from
+          // `required`, NEVER a nested type:[...,"null"]. Replaces the ADDED-terms set.
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+              label: { type: "string" },
+            },
+            required: ["kind", "params"],
+          },
+          description: "ADDED objective terms: kind ∈ reg_u|reg_du|reg_ddu|sensitivity|custom. Replaces the set.",
         },
         constraints: {
-          // Optional nullable array — see the details field above. legacyJsonSchema
-          // strips "null" → optional singular-typed array (provider-agnostic).
           type: ["array", "null"],
-          items: { type: "string" },
-          description: 'Constraint list; omit for the default ["amplitude bound (drive_max)"].',
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+              label: { type: "string" },
+            },
+            required: ["kind", "params"],
+          },
+          description:
+            "Typed constraints: kind ∈ bounds|du_bound|ddu_bound|dt_bounds|final_fidelity|calibration_pin|custom. " +
+            "Replaces the set. final_fidelity is normally derived from time_params, not authored here.",
         },
       },
-      async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
+      async execute(a: {
+        trajectory_type?: string | null;
+        time_mode?: string | null;
+        time_params?: Record<string, number> | null;
+        parameterization?: string | null;
+        robustness?: { kind?: string; params?: Record<string, number | string> } | null;
+        free_phase?: boolean | null;
+        leakage?: boolean | null;
+        leakage_params?: Record<string, number> | null;
+        target?: string | null;
+        objectives?: FormulationPatch["objectives"] | null;
+        constraints?: FormulationPatch["constraints"] | null;
+      }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
         const blocked = guardAndRecordStage(problemsDir(), dir, "formulate");
         if (blocked) return blocked;
-        // Preserve any solve sub-object already recorded (stage 6 writes it via
-        // amicode_solve; re-running formulate must not wipe it).
-        const existing = readEntityJson<FormulationEntity>(meta.slug, "formulation");
-        const entity: FormulationEntity = {
-          problem: a.problem,
-          target: a.target,
-          objective: given(a.objective) ? a.objective : "unitary infidelity",
-          constraints:
-            Array.isArray(a.constraints) && a.constraints.length > 0 ? a.constraints : ["amplitude bound (drive_max)"],
-        };
-        if (existing?.solve) entity.solve = existing.solve;
-        const problems = validateFormulation(entity);
+        // Upsert onto the existing (legacy-tolerant) entity via the pure merge.
+        const existing = readEntityJson<Record<string, unknown>>(meta.slug, "formulation");
+        const patch: FormulationPatch = {};
+        if (given(a.trajectory_type)) patch.trajectory_type = a.trajectory_type as TrajectoryType;
+        if (given(a.time_mode)) patch.time_mode = a.time_mode as TimeMode;
+        if (given(a.time_params)) patch.time_params = a.time_params;
+        if (given(a.parameterization)) patch.parameterization = a.parameterization as Parameterization;
+        if (given(a.robustness))
+          patch.robustness = {
+            kind: (a.robustness.kind ?? "none") as Robustness["kind"],
+            params: a.robustness.params ?? {},
+          };
+        if (given(a.free_phase)) patch.free_phase = a.free_phase;
+        if (given(a.leakage)) patch.leakage = a.leakage;
+        if (given(a.leakage_params)) patch.leakage_params = a.leakage_params;
+        if (given(a.target)) patch.target = a.target;
+        if (given(a.objectives)) patch.objectives = a.objectives;
+        if (given(a.constraints)) patch.constraints = a.constraints;
+
+        const merged = updateFormulation(existing, patch);
+        const problems = validateFormulation(merged);
         if (problems.length) return `Cannot record formulation: ${problems.join("; ")}`;
-        const sentinel = recordEntity(meta.slug, "formulation", entity as any, formulationToml(entity), {
+        const sentinel = recordEntity(meta.slug, "formulation", merged as any, formulationToml(merged), {
           tool: "amicode_formulate",
           stage: "formulate",
         });
         completeStage(dir, "formulate");
-        return (
-          `Formulation's locked for "${meta.slug}" — ${entity.problem}, targeting ${entity.target}; ` +
-          `objective: ${entity.objective}; constraints: ${entity.constraints.join(" · ")}\n\n${sentinel}`
-        );
+        // Surface soft warnings (spec §3.2) — N comes from the sibling System.
+        const sysRaw = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+        const componentCount = sysRaw ? normalizeSystem(sysRaw).components.length : undefined;
+        const warnings = formulationWarnings(merged, componentCount);
+        const warn = warnings.length ? ` ⚠️ ${warnings.join("; ")}` : "";
+        const modes = [
+          merged.trajectory_type,
+          merged.time_mode === "min_time" ? "min-time" : undefined,
+          merged.robustness.kind !== "none" ? merged.robustness.kind : undefined,
+          merged.free_phase ? "free-phase" : undefined,
+        ].filter(Boolean).join(" · ");
+        return `Formulation's locked for "${meta.slug}" — ${modes}, target ${merged.target}${warn}\n\n${sentinel}`;
       },
     },
 
@@ -631,8 +727,12 @@ export const AmicodeTools = async (_input: unknown) => ({
         // half of #64's formulation_hash). One event, no sentinel (the Run
         // sentinel below is this call's receipt).
         if (given(a.T) || given(a.N) || given(a.max_iter) || given(a.integrator)) {
-          const form = readEntityJson<FormulationEntity>(meta.slug, "formulation");
-          if (form) {
+          const formRaw = readEntityJson<Record<string, unknown>>(meta.slug, "formulation");
+          if (formRaw) {
+            // Normalize a possibly-legacy on-disk formulation before re-serializing
+            // (spec §3.1.3 "all read sites normalize") — else the structured
+            // formulationToml would reject/misserialize the legacy shape.
+            const form = normalizeFormulation(formRaw);
             const solve = { ...(form.solve ?? {}) };
             if (given(a.T)) solve.T = a.T;
             if (given(a.N)) solve.N = a.N;
