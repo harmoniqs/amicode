@@ -25,6 +25,9 @@ import {
   updateSystem,
   validateCompositeSystem,
   compositeSystemWarnings,
+  normalizeSystem,
+  updateCompositeSystem,
+  compositeSystemToml,
   type CompositeSystem,
   canonicalJson,
   deriveSlug,
@@ -434,5 +437,76 @@ describe("composite system schema + validation (spec-20260709)", () => {
     expect(validateCompositeSystem(lowCav)).toEqual([]); // valid...
     expect(compositeSystemWarnings(lowCav).join(" ")).toMatch(/Fock/); // ...but warned
     expect(compositeSystemWarnings(COMP)).toEqual([]); // clean 3-level qubits, no warning
+  });
+});
+
+describe("normalizeSystem + composite merge/toml/hash (spec-20260709)", () => {
+  const COMPOSITE: CompositeSystem = {
+    platform: "transmon",
+    components: [
+      { id: "q1", role: "qubit", levels: 3, params: { omega: 4.8, delta: -0.2 } },
+      { id: "q2", role: "qubit", levels: 3, params: { omega: 4.9, delta: -0.2 } },
+    ],
+    couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+    topology: "single-pair",
+    drive: { arch: "per-component" },
+  };
+
+  it("flat → N=1 composite (levels→components[0], notes carried, role/arch from platform)", () => {
+    const c = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "prose" });
+    expect(c.components).toHaveLength(1);
+    expect(c.components[0]).toMatchObject({ id: "q1", role: "qubit", levels: 3, params: { omega: 4.8 } });
+    expect(c.couplings).toEqual([]);
+    expect(c.drive.arch).toBe("per-component");
+    expect(c.notes).toBe("prose");
+    expect(validateCompositeSystem(c)).toEqual([]);
+  });
+
+  it("rydberg→atom/global; unknown→qubit/per-component; absent flat levels stays absent", () => {
+    const r = normalizeSystem({ platform: "rydberg", levels: 3, params: {} });
+    expect(r.components[0].role).toBe("atom");
+    expect(r.drive.arch).toBe("global");
+    const u = normalizeSystem({ platform: "fluxonium", params: {} });
+    expect(u.components[0].role).toBe("qubit");
+    expect(u.components[0].levels).toBeUndefined();
+    expect(u.drive.arch).toBe("per-component");
+  });
+
+  it("is idempotent on an already-composite entity", () => {
+    expect(normalizeSystem(COMPOSITE)).toEqual(COMPOSITE);
+  });
+
+  it("updateCompositeSystem tolerates a FLAT existing (F1) + merges a composite patch", () => {
+    const merged = updateCompositeSystem(
+      { platform: "transmon", levels: 3, params: { omega: 4.8 } },
+      {
+        components: [{ id: "q2", role: "qubit", levels: 3, params: { omega: 4.9 } }],
+        couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+        topology: "single-pair",
+        drive: { arch: "per-component" },
+      },
+    );
+    expect(merged.components.map((c) => c.id).sort()).toEqual(["q1", "q2"]);
+    expect(merged.couplings).toHaveLength(1);
+    expect(merged.topology).toBe("single-pair");
+    expect(validateCompositeSystem(merged)).toEqual([]);
+  });
+
+  it("compositeSystemToml round-trips through smol-toml (AoT + inline params)", () => {
+    const doc = parse(compositeSystemToml(COMPOSITE)) as any;
+    expect(doc.system.platform).toBe("transmon");
+    expect(doc.system.topology).toBe("single-pair");
+    expect(doc.system.drive.arch).toBe("per-component");
+    expect(doc.system.components).toHaveLength(2);
+    expect(doc.system.components[0].id).toBe("q1");
+    expect(doc.system.components[0].params.omega).toBe(4.8);
+    expect(doc.system.couplings[0].kind).toBe("cross-resonance");
+    expect(doc.system.couplings[0].between).toEqual(["q1", "q2"]);
+  });
+
+  it("canonicalJson drops notes → composites differing only in notes hash-equal", () => {
+    const a = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "x" });
+    const b = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "DIFFERENT" });
+    expect(canonicalJson(a)).toBe(canonicalJson(b));
   });
 });

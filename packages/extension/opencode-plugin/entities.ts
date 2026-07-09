@@ -347,6 +347,122 @@ export function compositeSystemWarnings(e: CompositeSystem): string[] {
   return warnings;
 }
 
+// --- migration + merge (spec §6, §2.3) ---------------------------------------
+
+/** Platform → default component role (spec §2.1 table). Unknown → qubit. */
+export function platformDefaultRole(platform: string): Role {
+  return platform.toLowerCase() === "rydberg" ? "atom" : "qubit";
+}
+
+/** Platform → default drive arch (spec §2.1 table). rydberg/ion → global; else per-component. */
+export function platformDefaultArch(platform: string): DriveArch {
+  const p = platform.toLowerCase();
+  return p === "rydberg" || p === "ion" ? "global" : "per-component";
+}
+
+/** Read-shim (spec §6): a flat on-disk `{platform, levels, params, notes}` becomes an N=1
+ *  composite; an already-composite value passes through (idempotent), filling a default
+ *  `drive` if absent. Pure; tolerant of raw JSON (never throws). This is the sole flat→composite
+ *  path — the plugin invokes it at every read site (amicode_tools.ts). */
+export function normalizeSystem(raw: unknown): CompositeSystem {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const platform = typeof r.platform === "string" ? r.platform : "";
+  if (Array.isArray(r.components)) {
+    const rawDrive = r.drive as { arch?: unknown } | undefined;
+    const drive =
+      rawDrive && typeof rawDrive.arch === "string"
+        ? { arch: rawDrive.arch as DriveArch }
+        : { arch: platformDefaultArch(platform) };
+    const out: CompositeSystem = {
+      platform,
+      components: r.components as Component[],
+      couplings: Array.isArray(r.couplings) ? (r.couplings as Coupling[]) : [],
+      drive,
+    };
+    if (typeof r.topology === "string") out.topology = r.topology as Topology;
+    if (typeof r.notes === "string") out.notes = r.notes;
+    return out;
+  }
+  // flat → N=1 composite
+  const comp: Component = {
+    id: "q1",
+    role: platformDefaultRole(platform),
+    params: (r.params as Record<string, number>) ?? {},
+  };
+  if (typeof r.levels === "number") comp.levels = r.levels;
+  const out: CompositeSystem = { platform, components: [comp], couplings: [], drive: { arch: platformDefaultArch(platform) } };
+  if (typeof r.notes === "string") out.notes = r.notes;
+  return out;
+}
+
+export interface CompositeSystemPatch {
+  /** Upserted by `id` (existing component of that id is field-merged; else appended). */
+  components?: Component[];
+  /** Replaces the coupling set wholesale (edges are a set, not field-merged). */
+  couplings?: Coupling[];
+  topology?: Topology;
+  drive?: { arch: DriveArch };
+  notes?: string;
+}
+
+/** Merge a composite patch into an existing System (pure; input never mutated). F1: `existing`
+ *  is `normalizeSystem`d first, so a legacy FLAT on-disk entity merges cleanly with a composite
+ *  patch. Throws if the RESULT is invalid (a bad patch can't corrupt a valid recorded entity). */
+export function updateCompositeSystem(existing: unknown, patch: CompositeSystemPatch): CompositeSystem {
+  const base = normalizeSystem(existing);
+  const components = base.components.map((c) => ({ ...c }));
+  for (const pc of patch.components ?? []) {
+    const i = components.findIndex((c) => c.id === pc.id);
+    if (i >= 0) components[i] = { ...components[i], ...pc, params: { ...components[i].params, ...(pc.params ?? {}) } };
+    else components.push(pc);
+  }
+  const merged: CompositeSystem = {
+    platform: base.platform,
+    components,
+    couplings: patch.couplings ?? base.couplings,
+    drive: patch.drive ?? base.drive,
+  };
+  const topology = patch.topology ?? base.topology;
+  if (topology !== undefined) merged.topology = topology;
+  const notes = patch.notes ?? base.notes;
+  if (notes !== undefined) merged.notes = notes;
+  const problems = validateCompositeSystem(merged);
+  if (problems.length) throw new Error(`invalid composite system after merge: ${problems.join("; ")}`);
+  return merged;
+}
+
+/** Serialize a CompositeSystem: [system] platform/topology/notes/recorded + [system.drive] +
+ *  [[system.components]] (params as an inline table) + [[system.couplings]]. Throws on invalid.
+ *  (tomlEscape/tomlKey/tomlNumber/isoNow are hoisted function declarations below.) */
+export function compositeSystemToml(e: CompositeSystem, now?: Date): string {
+  const problems = validateCompositeSystem(e);
+  if (problems.length) throw new Error(`invalid composite system: ${problems.join("; ")}`);
+  const inlineParams = (p: Record<string, number>): string => {
+    const entries = Object.entries(p);
+    return entries.length === 0 ? "{}" : `{ ${entries.map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`).join(", ")} }`;
+  };
+  const lines: string[] = ["[system]", `platform = ${tomlEscape(e.platform)}`];
+  if (e.topology !== undefined) lines.push(`topology = ${tomlEscape(e.topology)}`);
+  if (e.notes !== undefined) lines.push(`notes = ${tomlEscape(e.notes)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  lines.push("", "[system.drive]", `arch = ${tomlEscape(e.drive.arch)}`);
+  for (const c of e.components) {
+    lines.push("", "[[system.components]]", `id = ${tomlEscape(c.id)}`, `role = ${tomlEscape(c.role)}`);
+    if (c.levels !== undefined) lines.push(`levels = ${c.levels}`);
+    lines.push(`params = ${inlineParams(c.params)}`);
+  }
+  for (const cp of e.couplings) {
+    lines.push(
+      "",
+      "[[system.couplings]]",
+      `between = [${cp.between.map(tomlEscape).join(", ")}]`,
+      `kind = ${tomlEscape(cp.kind)}`,
+      `params = ${inlineParams(cp.params)}`,
+    );
+  }
+  return lines.join("\n") + "\n";
+}
+
 // --- TOML emission -------------------------------------------------------------
 
 /** Escape a string for a TOML basic (double-quoted) string. */
