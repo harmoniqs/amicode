@@ -133,17 +133,34 @@ describe("amico router — resolve/sandbox delegate verbatim to the subcommands"
   });
 });
 
-describe("amico router — spine verbs vault/device/note are still B1 stubs (print intent, exit 0)", () => {
+describe("amico router — spine verbs vault/device/note are REAL (B3), no longer stubs", () => {
+  // The ROUTER seam only: an unknown subcommand routes into the real body (→ usage
+  // error, exit 64, no `stub` marker). The per-verb bodies are covered end-to-end in
+  // vault_verb / device_verb / note_verb test files.
   for (const name of ["vault", "device", "note"]) {
-    it(`${name} routes, prints stub intent JSON, exits 0`, () => {
-      const r = run([name, "some", "args"]);
-      expect(r.code).toBe(0);
+    it(`${name} routes to its real body: unknown subcommand → usage error, exit 64, no stub`, () => {
+      const r = run([name, "frobnicate"]);
+      expect(r.code).toBe(64);
       const out = JSON.parse(r.stdout);
-      expect(out).toMatchObject({ verb: name, stub: true });
-      expect(out.args).toEqual(["some", "args"]);
-      expect(typeof out.intent).toBe("string");
+      expect(out.verb).toBe(name);
+      expect(out.stub).toBeUndefined();
+      expect(out.error).toMatch(/unknown subcommand/);
     });
   }
+  it("device status routes to the real body (no graph → uncharacterized + 64)", () => {
+    const root = mkdtempSync(join(tmpdir(), "amico-router-dev-"));
+    const r = run(["device", "status", "--device", "ghost"], { AMICO_DEVICE_DIR: root });
+    expect(r.code).toBe(64);
+    expect(JSON.parse(r.stdout)).toMatchObject({ verb: "device", subcommand: "status", overall: "uncharacterized" });
+    rmSync(root, { recursive: true, force: true });
+  });
+  it("vault query routes to the real body (empty vault → count 0, exit 0)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "amico-router-vault-"));
+    const r = run(["vault", "query", "--q", "anything"], { AMICO_VAULT_DIR: dir });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout)).toMatchObject({ verb: "vault", subcommand: "query", count: 0 });
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe("amico router — catalog is REAL (B2), no longer a stub", () => {

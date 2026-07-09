@@ -3,17 +3,20 @@
 // filesystem/vault work: callable by agents via bash, by the deterministic harness
 // directly, and by cron/CI/Julia.
 //
-// SLICE STATUS: `catalog` is REAL (issue #111, slice B2 — its body lives in
-// catalog_verb.ts / repertoire.ts). `vault` / `device` / `note` are still STUBS:
-// each is a routing seam that prints its intent (the module it will generalize +
-// the slice that lands the body) and exits 0. Do not add real reads/writes for a
-// stubbed verb in this file without its corresponding slice — put the body in a
-// dedicated module and wire it here, as catalog does.
+// SLICE STATUS: ALL FOUR spine verbs are now REAL. `catalog` landed in B2 (issue
+// #111 — body in catalog_verb.ts / repertoire.ts); `vault` / `device` / `note`
+// land in B3 (issue #113 — bodies in vault_verb.ts / device_verb.ts / note_verb.ts,
+// pure cores in vault_query.ts / device_graph.ts / note.ts). The B1 `stub()` helper
+// remains for any FUTURE seam, but no spine verb uses it today. Keep each verb's
+// real body in its dedicated module and wire it here, never inline in this file.
 //
 // Each verb is a plain (args) => {json, code} function so the SAME function backs both the
 // CLI dispatch (amico.ts) and the MCP facade (mcp_serve.ts). One impl, two transports.
 
 import { catalogVerb } from "./catalog_verb.js";
+import { vaultVerb } from "./vault_verb.js";
+import { deviceVerb } from "./device_verb.js";
+import { noteVerb } from "./note_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -61,27 +64,34 @@ const catalog: Verb = {
 };
 
 // vault — retrieval over the knowledge graph (query tools, not front-loading context).
-const vault = stub({
+// REAL as of B3: `query` ranks insights/experiments by relevance to a free-text query.
+const vault: Verb = {
   name: "vault",
-  summary: "query the knowledge graph (insights/experiments/strategy) — retrieval, not front-load",
-  generalizes: "the amicode_* vault plugin tools",
+  summary: "query the knowledge graph (insights/experiments) by relevance — retrieval, not front-load",
+  generalizes: "the amicode_* vault plugin tools (retrieval half)",
   slice: "spine bookkeeping (B3)",
-});
+  run: vaultVerb,
+};
 
-// device — the dispatcher successor (device status / next-actions; benchmark-exclusivity lock).
-const device = stub({
+// device — the dispatcher successor. REAL as of B3: `status` (honesty rule:
+// uncharacterized/stale), `next` (ranked actions via pure evaluate()), `lock`
+// (benchmark-exclusivity: a locked device accepts no concurrent submission).
+const device: Verb = {
   name: "device",
-  summary: "device status / next-actions (dispatcher successor; benchmark-exclusivity lock)",
-  generalizes: "the amicode_* device/dispatcher plugin tools",
-  slice: "spine bookkeeping (B5)",
-});
-
-// note — write an experiment note / bump best_gates (librarian bookkeeping half).
-const note = stub({
-  name: "note",
-  summary: "write experiment note / update best_gates (librarian bookkeeping → deterministic)",
-  generalizes: "the amicode_* librarian/note plugin tools",
+  summary: "device status / next-actions / benchmark-exclusivity lock (dispatcher successor)",
+  generalizes: "the amicode_* device/dispatcher plugin tools + the dispatcher agent",
   slice: "spine bookkeeping (B3)",
-});
+  run: deviceVerb,
+};
+
+// note — librarian bookkeeping. REAL as of B3: `write` (experiment note) +
+// `bump-best` (best_gates), both deterministic.
+const note: Verb = {
+  name: "note",
+  summary: "write experiment note / bump best_gates (librarian bookkeeping → deterministic)",
+  generalizes: "the amicode_* librarian/note plugin tools (bookkeeping half)",
+  slice: "spine bookkeeping (B3)",
+  run: noteVerb,
+};
 
 export const SPINE_VERBS: Verb[] = [catalog, vault, device, note];
