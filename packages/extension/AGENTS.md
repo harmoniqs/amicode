@@ -254,6 +254,34 @@ Stages, in order:
    `amicode_calibrate` (bookkeeping stubs — they perform NO device I/O), set no
    expectations of device I/O in this build.
 
+## Composite authoring map (System → solve.jl)
+
+The recorded composite System tells you how to author the multi-component `solve.jl`.
+This is **authoring-aware bookkeeping — NOT wired into tier resolution**: a multipartite
+gate still resolves to the **free tier** and is honestly **unvetted / re-rollout-checked**,
+exactly as a multi-qubit transmon gate is today. Read the composite like so:
+
+- `components[].role` + `levels` → `subsystem_levels` + which Piccolo system.
+- `couplings` (kind + params) → the interaction terms / coupling constructor.
+- `drive.arch` → control-channel count / addressability.
+- Formulation target → `EmbeddedOperator` on the computational subspace, and
+  `free_phase = N` (one virtual-Z per component) for entangling gates.
+
+Constructor map (guidance, not a lookup you follow blindly):
+
+| composite shape | Piccolo constructor |
+| --- | --- |
+| single transmon (N=1, qubit) | `TransmonSystem` (the vetted single-qubit template) |
+| N transmons + `cross-resonance` / `ZZ` | `MultiTransmonSystem` / a from-scratch coupled model |
+| Rydberg atoms + `vdW`, drive `global` | `GlobalRydbergSystem` (3-level variant for leakage) |
+| Rydberg + `vdW`, drive `per-component` | `LocalDetuneRydbergSystem` |
+| Rydberg + `vdW`, drive `zoned` | `ZonedDetuneRydbergSystem` |
+| cavity + qubit + `dispersive-chi` | the bosonic cavity+qubit system (invoke the `bosonic` skill) |
+| ion / bus `mode-mediated` | a shared-mode model (the mode is its own component) |
+
+Golden reference skeletons for the canonical cases (2-transmon CZ, Rydberg CZ, cavity+qubit)
+live in `test/fixtures/composite-skeletons/` — the intended authoring output, snapshot-checked.
+
 ## Scope & parameter guidance
 
 **Transmon: single qubit only via the vetted template.** The bundled vetted
