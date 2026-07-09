@@ -41,7 +41,22 @@ import {
   truncateDiffForSentinel,
   KNOWN_PLATFORMS,
   MAX_LEVELS,
+  compositeSystemToml,
+  validateCompositeSystem,
+  compositeSystemWarnings,
+  normalizeSystem,
+  updateCompositeSystem,
+  expandTopology,
+  platformDefaultRole,
+  platformDefaultArch,
   type SystemEntity,
+  type CompositeSystem,
+  type Component,
+  type Coupling,
+  type CompositeSystemPatch,
+  type CouplingKind,
+  type Topology,
+  type DriveArch,
   type FormulationEntity,
   type RunStub,
   type DeviceSessionStub,
@@ -136,7 +151,13 @@ function recordEntity(
   toml: string,
   source: { tool: string; stage?: string },
 ): string {
-  const before = readEntityJson<Record<string, unknown>>(slug, kind);
+  const before0 = readEntityJson<Record<string, unknown>>(slug, kind);
+  // F1 (spec §6): normalize a system `before` snapshot to composite so the diff is
+  // composite-vs-composite, not a spurious flat→composite restructure on first touch.
+  const before =
+    kind === "system" && before0 !== undefined
+      ? (normalizeSystem(before0) as unknown as Record<string, unknown>)
+      : before0;
   const action: "created" | "updated" = before ? "updated" : "created";
   writeEntityFiles(slug, kind, toml, JSON.stringify(entity, null, 2) + "\n");
   const diff = entityDiff(before, entity);
@@ -319,20 +340,26 @@ export const AmicodeTools = async (_input: unknown) => ({
         const params: Record<string, number> = {};
         if (given(a.omega)) params.omega = a.omega;
         if (given(a.delta)) params.delta = a.delta;
-        // Known platforms default to a sensible model size; unknown ones get no
-        // levels default (recorded honestly — spec A).
+        // Seed an N=1 COMPOSITE (spec §2/§3): one component with the platform's default role.
+        // Known platforms default to 3 levels; unknown ones stay "levels TBD" (recorded honestly).
         const known = (KNOWN_PLATFORMS as readonly string[]).includes(a.platform);
-        const entity: SystemEntity = { platform: a.platform, params };
-        if (known) entity.levels = 3;
+        const seed: Component = { id: "q1", role: platformDefaultRole(a.platform), params };
+        if (known) seed.levels = 3;
+        const entity: CompositeSystem = {
+          platform: a.platform,
+          components: [seed],
+          couplings: [],
+          drive: { arch: platformDefaultArch(a.platform) },
+        };
         if (given(a.notes)) entity.notes = a.notes;
-        const problems = validateSystem(entity);
+        const problems = validateCompositeSystem(entity);
         if (problems.length) return `Cannot record system: ${problems.join("; ")}`;
-        const sentinel = recordEntity(meta.slug, "system", entity as any, systemToml(entity), {
+        const sentinel = recordEntity(meta.slug, "system", entity as any, compositeSystemToml(entity), {
           tool: "amicode_pick_system",
           stage: "platform",
         });
         completeStage(dir, "platform");
-        const levelsDesc = entity.levels !== undefined ? `${entity.levels} levels` : "levels TBD";
+        const levelsDesc = seed.levels !== undefined ? `${seed.levels} levels` : "levels TBD";
         if (a.platform === "transmon") {
           return (
             `Transmon it is — ${levelsDesc}, ${paramsSummary(params)}. Filed under "${meta.slug}".\n\n` +
@@ -365,48 +392,139 @@ export const AmicodeTools = async (_input: unknown) => ({
 
     amicode_set_model: {
       description:
-        "Merge model details (interview stage 2: MODEL) into the recorded System entity: " +
-        "levels, drive_max, and any extra named numeric parameters. Requires " +
-        "amicode_pick_system to have run first. Bookkeeping only.",
+        "Merge model details into the recorded COMPOSITE System entity (interview stages MODEL / " +
+        "STRUCTURE / COMPONENT-PARAMS / COUPLINGS — all sub-steps of the `model` gate). Requires " +
+        "amicode_pick_system first. Two ways to use it, mixable in one call: (a) single-qubit " +
+        "back-compat — `levels`/`drive_max`/`params` fold onto the first component; (b) composite — " +
+        "`components` (upserted by id), `couplings` (replaces the set), `topology` (a preset expands " +
+        "to edges — pass `coupling_kind`), `drive_arch`. Bookkeeping only.",
       args: {
         levels: {
           type: ["integer", "null"],
-          description: "Number of levels to model (>=2, default 3); null to leave unchanged.",
+          description: "Back-compat: levels for the FIRST component (>=2); null to leave unchanged.",
         },
         drive_max: {
           type: ["number", "null"],
-          description: "Drive amplitude bound (GHz); null to leave unchanged.",
+          description: "Back-compat: drive amplitude bound (GHz) onto the first component; null to skip.",
         },
         params: {
           type: ["object", "null"],
           additionalProperties: { type: "number" },
-          description: 'Extra named numeric model parameters to merge (e.g. {"T1": 80}); null for none.',
+          description: "Back-compat: extra numeric params merged onto the FIRST component; null for none.",
+        },
+        components: {
+          // Array-of-objects arg. legacyJsonSchema only strips "null" at THIS top level (not inside
+          // `items`), so per-object optionals (levels) are expressed by OMITTING from `required`,
+          // NEVER a nested type:["integer","null"] (that re-trips the Gemini rejection).
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              role: { type: "string" },
+              levels: { type: "integer" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+            },
+            required: ["id", "role", "params"],
+          },
+          description:
+            "Components to upsert by id. role ∈ qubit|cavity|resonator|mode|atom. levels optional. " +
+            "For N identical components, list them all (ids q1..qN).",
+        },
+        couplings: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              between: { type: "array", items: { type: "string" } },
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+            },
+            required: ["between", "kind", "params"],
+          },
+          description:
+            "Explicit coupling edges (replaces the set). between = >=2 component ids (a mode-mediated " +
+            "hyperedge includes the shared mode's id). kind ∈ exchange|ZZ|cross-resonance|dispersive-chi|vdW|mode-mediated.",
+        },
+        topology: {
+          type: ["string", "null"],
+          description: "Preset provenance: single-pair | linear-chain | custom. A non-custom preset expands to edges (pass coupling_kind).",
+        },
+        coupling_kind: {
+          type: ["string", "null"],
+          description: "Edge kind stamped when a topology preset expands into couplings (e.g. cross-resonance, vdW).",
+        },
+        coupling_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "Shared numeric params for the edges an expanding topology preset generates.",
+        },
+        drive_arch: {
+          type: ["string", "null"],
+          description: "Drive architecture: global | per-component | zoned.",
         },
       },
-      async execute(a: { levels?: number | null; drive_max?: number | null; params?: Record<string, number> | null }) {
+      async execute(a: {
+        levels?: number | null;
+        drive_max?: number | null;
+        params?: Record<string, number> | null;
+        components?: Component[] | null;
+        couplings?: Coupling[] | null;
+        topology?: Topology | null;
+        coupling_kind?: CouplingKind | null;
+        coupling_params?: Record<string, number> | null;
+        drive_arch?: DriveArch | null;
+      }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
         const blocked = guardAndRecordStage(problemsDir(), dir, "model");
         if (blocked) return blocked;
-        const existing = readEntityJson<SystemEntity>(meta.slug, "system");
-        if (!existing) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
-        const patchParams: Record<string, number> = { ...(given(a.params) ? a.params : {}) };
-        if (given(a.drive_max)) patchParams.drive_max = a.drive_max;
+        const existingRaw = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+        if (!existingRaw) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
+        const existing = normalizeSystem(existingRaw); // F1: tolerate a legacy flat on-disk entity
+
+        const patch: CompositeSystemPatch = {};
+        if (given(a.components)) patch.components = a.components;
+        if (given(a.couplings)) patch.couplings = a.couplings;
+        if (given(a.topology)) patch.topology = a.topology;
+        if (given(a.drive_arch)) patch.drive = { arch: a.drive_arch };
+        // Back-compat single-field path: fold levels/drive_max/params onto the FIRST component
+        // (only when no explicit `components` array was given).
+        if (!given(a.components) && (given(a.levels) || given(a.drive_max) || given(a.params))) {
+          const first = existing.components[0];
+          const c: Component = { id: first.id, role: first.role, params: { ...(given(a.params) ? a.params : {}) } };
+          if (given(a.drive_max)) c.params.drive_max = a.drive_max;
+          if (given(a.levels)) c.levels = a.levels;
+          patch.components = [c];
+        }
+
         try {
-          const merged = updateSystem(existing, {
-            levels: given(a.levels) ? a.levels : undefined,
-            params: patchParams,
-          });
-          const sentinel = recordEntity(meta.slug, "system", merged as any, systemToml(merged), {
+          let merged = updateCompositeSystem(existing, patch);
+          // F2 (spec §2.3): a non-custom topology preset expands to explicit couplings when none
+          // were supplied. Needs coupling_kind; without it we record the topology and note it.
+          let couplingNote = "";
+          if (given(a.topology) && a.topology !== "custom" && !given(a.couplings)) {
+            if (given(a.coupling_kind)) {
+              const ids = merged.components.map((c) => c.id);
+              const edges = expandTopology(a.topology, ids, a.coupling_kind, given(a.coupling_params) ? a.coupling_params : {});
+              merged = updateCompositeSystem(merged, { couplings: edges });
+            } else {
+              couplingNote = ` (topology recorded — pass coupling_kind to expand it into edges)`;
+            }
+          }
+          const sentinel = recordEntity(meta.slug, "system", merged as any, compositeSystemToml(merged), {
             tool: "amicode_set_model",
             stage: "model",
           });
           completeStage(dir, "model");
-          const warn =
-            merged.levels !== undefined && merged.levels > MAX_LEVELS
-              ? ` ⚠️ ${merged.levels} levels worsens conditioning/leakage and solve cost — convergence may degrade.`
-              : "";
-          return `Tweaked — ${merged.platform}, ${merged.levels ?? "levels TBD"}, ${paramsSummary(merged.params)}.${warn}\n\n${sentinel}`;
+          const warnings = compositeSystemWarnings(merged);
+          const warn = warnings.length ? ` ⚠️ ${warnings.join("; ")}` : "";
+          const nC = merged.components.length;
+          const nK = merged.couplings.length;
+          return (
+            `Tweaked — ${merged.platform}: ${nC} component${nC === 1 ? "" : "s"}, ${nK} coupling${nK === 1 ? "" : "s"}, ` +
+            `drive ${merged.drive.arch}.${couplingNote}${warn}\n\n${sentinel}`
+          );
         } catch (err) {
           return `Cannot update model: ${err instanceof Error ? err.message : String(err)}`;
         }
