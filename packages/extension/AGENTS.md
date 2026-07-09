@@ -201,7 +201,7 @@ Stages, in order:
      scan, slow at 2 qubits (splice params into the exemplar; the gate's
      masked-baseline check keeps its physics intact). Don't tell the user Rydberg is
      unsupported.
-2. **MODEL (structure-first, then batch)** — the System is a **composite**:
+2. **MODEL** — structure-first, then batch. The System is a **composite**:
    components + couplings + drive-architecture, with a single qubit as the
    degenerate **N=1** case. Ask the STRUCTURE first (it gates everything, so keep
    these conversational/singular): **how many components** (single / a pair / a
@@ -214,10 +214,10 @@ Stages, in order:
    `amicode_set_model` call: `components` (upserted by id, ids `q1..qN`),
    `couplings` (or a `topology` preset + `coupling_kind` — the preset expands to
    edges), `drive_arch`. Single-qubit stays the old one-component flow
-   (`levels`/`drive_max` fold onto the first component). Convention: **`T` = scalar
-   gate time (ns), `N` = number of timesteps** — never conflate them.
+   (`levels`/`drive_max` fold onto the first component). Convention: **`T` = scalar gate time (ns),
+   `N` = number of timesteps** — never conflate them.
    - **Frontier-batching:** batch questions whose prerequisites are already
-     answered into ONE `question` call, but keep the *semantic/branching* picks
+     answered into ONE `question` call, but keep the _semantic/branching_ picks
      singular — platform, target-gate, objective. Never batch a question whose
      OPTIONS depend on an unanswered prior (e.g. the gate list needs the platform),
      nor one whose RELEVANCE depends on a pending answer (e.g. topology only if
