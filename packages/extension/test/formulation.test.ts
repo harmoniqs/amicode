@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { normalizeFormulation, updateFormulation, validateFormulation, formulationWarnings } from "../opencode-plugin/entities";
+import { parse } from "smol-toml";
+import { normalizeFormulation, updateFormulation, validateFormulation, formulationWarnings, formulationToml } from "../opencode-plugin/entities";
 
 const corpus = JSON.parse(
   readFileSync(new URL("./fixtures/formulation-migration.json", import.meta.url), "utf8"),
@@ -71,5 +72,34 @@ describe("formulationWarnings", () => {
     expect(formulationWarnings(e, 1).some((x) => /free_phase/.test(x))).toBe(true);
     expect(formulationWarnings(e, 2).some((x) => /free_phase/.test(x))).toBe(false);
     expect(formulationWarnings(e).some((x) => /free_phase/.test(x))).toBe(false); // undefined N → skipped
+  });
+});
+
+describe("formulationToml round-trip (§8)", () => {
+  it("round-trips modes, inline param bags, and array-of-table sets", () => {
+    const e = normalizeFormulation({
+      trajectory_type: "gate",
+      time_mode: "min_time",
+      time_params: { final_fidelity: 0.999, D: 100 },
+      parameterization: "cubic_spline",
+      robustness: { kind: "ensemble", params: { n_systems: 3 } },
+      free_phase: true,
+      leakage: true,
+      leakage_params: { value: 0.001, cost: 0.01 },
+      target: "CZ",
+      objectives: [{ kind: "reg_du", params: { R: 0.00001 }, label: "smooth" }],
+      constraints: [{ kind: "bounds", params: {} }, { kind: "dt_bounds", params: {} }],
+      solve: { T: 0.5, N: 51, max_iter: 500, integrator: "MagnusGL4" },
+    });
+    const doc = parse(formulationToml(e)) as any;
+    expect(doc.formulation.trajectory_type).toBe("gate");
+    expect(doc.formulation.time_mode).toBe("min_time");
+    expect(doc.formulation.time_params).toEqual({ final_fidelity: 0.999, D: 100 });
+    expect(doc.formulation.robustness).toEqual({ kind: "ensemble", params: { n_systems: 3 } });
+    expect(doc.formulation.free_phase).toBe(true);
+    expect(doc.formulation.leakage_params).toEqual({ value: 0.001, cost: 0.01 });
+    expect(doc.formulation.objectives).toEqual([{ kind: "reg_du", params: { R: 0.00001 }, label: "smooth" }]);
+    expect(doc.formulation.constraints.map((c: any) => c.kind)).toEqual(["bounds", "dt_bounds"]);
+    expect(doc.formulation.solve.integrator).toBe("MagnusGL4");
   });
 });

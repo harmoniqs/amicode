@@ -49,10 +49,15 @@ const SYS: SystemEntity = {
 };
 
 const FORM: FormulationEntity = {
-  problem: "gate_synthesis",
+  trajectory_type: "gate",
+  time_mode: "fixed",
+  parameterization: "smooth",
+  robustness: { kind: "none", params: {} },
+  free_phase: false,
+  leakage: false,
   target: "X",
-  objective: "unitary infidelity",
-  constraints: ["amplitude bound (drive_max)", "smoothness"],
+  objectives: [],
+  constraints: [{ kind: "bounds", params: {}, label: "amplitude bound (drive_max)" }],
 };
 
 describe("systemToml", () => {
@@ -93,26 +98,21 @@ describe("systemToml", () => {
 });
 
 describe("formulationToml", () => {
-  it("round-trips problem/target/objective/constraints under [formulation]", () => {
+  it("round-trips the structured facets under [formulation]", () => {
     const doc = parse(formulationToml(FORM)) as any;
-    expect(doc.formulation.problem).toBe("gate_synthesis");
+    expect(doc.formulation.trajectory_type).toBe("gate");
     expect(doc.formulation.target).toBe("X");
-    expect(doc.formulation.objective).toBe("unitary infidelity");
-    expect(doc.formulation.constraints).toEqual(FORM.constraints);
+    expect(doc.formulation.robustness).toEqual({ kind: "none", params: {} });
+    expect(doc.formulation.constraints[0].kind).toBe("bounds");
     expect(Number.isNaN(Date.parse(doc.formulation.recorded))).toBe(false);
   });
   it("escapes quotes, backslashes, and newlines in string values (round-trip exact)", () => {
     const nasty = 'say "hi" \\ then\nnewline\ttab';
-    const doc = parse(formulationToml({ ...FORM, target: nasty, constraints: [nasty] })) as any;
+    const doc = parse(formulationToml({ ...FORM, target: nasty })) as any;
     expect(doc.formulation.target).toBe(nasty);
-    expect(doc.formulation.constraints).toEqual([nasty]);
   });
-  it("rejects an empty or whitespace-only target", () => {
-    expect(() => formulationToml({ ...FORM, target: "" })).toThrow(/target/);
-    expect(() => formulationToml({ ...FORM, target: "   " })).toThrow(/target/);
-  });
-  it("rejects an empty problem", () => {
-    expect(() => formulationToml({ ...FORM, problem: "" })).toThrow(/problem/);
+  it("rejects an unknown enum value", () => {
+    expect(() => formulationToml({ ...FORM, trajectory_type: "bogus" as any })).toThrow(/trajectory_type/);
   });
 });
 
@@ -124,7 +124,7 @@ describe("validateSystem / validateFormulation", () => {
   it("name the offending field in each problem message", () => {
     expect(validateSystem({ ...SYS, platform: "" as any }).join(" ")).toMatch(/platform/);
     expect(validateSystem({ ...SYS, levels: 1 }).join(" ")).toMatch(/levels/);
-    expect(validateFormulation({ ...FORM, target: "" }).join(" ")).toMatch(/target/);
+    expect(validateFormulation({ ...FORM, time_mode: "nope" as any }).join(" ")).toMatch(/time_mode/);
   });
 });
 
@@ -262,10 +262,15 @@ describe("opened entity model (spec A)", () => {
   });
   it("round-trips formulation.solve through TOML", () => {
     const f: FormulationEntity = {
-      problem: "min_time",
+      trajectory_type: "gate",
+      time_mode: "min_time",
+      parameterization: "smooth",
+      robustness: { kind: "none", params: {} },
+      free_phase: false,
+      leakage: false,
       target: "CZ",
-      objective: "unitary infidelity",
-      constraints: ["amplitude bound"],
+      objectives: [],
+      constraints: [{ kind: "dt_bounds", params: {} }],
       solve: { T: 10, N: 50, max_iter: 60, integrator: "MagnusGL4" },
     };
     const parsed = parse(formulationToml(f)) as any;

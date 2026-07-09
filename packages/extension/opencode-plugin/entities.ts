@@ -797,14 +797,42 @@ export function systemToml(e: SystemEntity, now?: Date): string {
 export function formulationToml(e: FormulationEntity, now?: Date): string {
   const problems = validateFormulation(e);
   if (problems.length) throw new Error(`invalid formulation: ${problems.join("; ")}`);
-  const lines = [
+  const inlineNum = (p: Record<string, number>): string => {
+    const entries = Object.entries(p);
+    return entries.length === 0 ? "{}" : `{ ${entries.map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`).join(", ")} }`;
+  };
+  const inlineMixed = (p: Record<string, number | string>): string => {
+    const entries = Object.entries(p);
+    return entries.length === 0
+      ? "{}"
+      : `{ ${entries.map(([k, v]) => `${tomlKey(k)} = ${typeof v === "number" ? tomlNumber(v) : tomlEscape(v)}`).join(", ")} }`;
+  };
+  const lines: string[] = [
     "[formulation]",
-    `problem = ${tomlEscape(e.problem)}`,
+    `trajectory_type = ${tomlEscape(e.trajectory_type)}`,
+    `time_mode = ${tomlEscape(e.time_mode)}`,
+    `parameterization = ${tomlEscape(e.parameterization)}`,
+    `free_phase = ${e.free_phase}`,
+    `leakage = ${e.leakage}`,
     `target = ${tomlEscape(e.target)}`,
-    `objective = ${tomlEscape(e.objective)}`,
-    `constraints = [${e.constraints.map(tomlEscape).join(", ")}]`,
-    `recorded = ${tomlEscape(isoNow(now))}`,
+    `robustness = { kind = ${tomlEscape(e.robustness.kind)}, params = ${inlineMixed(e.robustness.params)} }`,
   ];
+  if (e.time_params !== undefined) lines.push(`time_params = ${inlineNum(e.time_params)}`);
+  if (e.leakage_params !== undefined) lines.push(`leakage_params = ${inlineNum(e.leakage_params)}`);
+  if (e.notes !== undefined) lines.push(`notes = ${tomlEscape(e.notes)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  // Array-of-tables + [formulation.solve] MUST follow all [formulation] scalar
+  // keys (TOML: no scalar key may be added after a sub-table opens).
+  for (const o of e.objectives) {
+    lines.push("", "[[formulation.objectives]]", `kind = ${tomlEscape(o.kind)}`);
+    if (o.label !== undefined) lines.push(`label = ${tomlEscape(o.label)}`);
+    lines.push(`params = ${inlineNum(o.params)}`);
+  }
+  for (const c of e.constraints) {
+    lines.push("", "[[formulation.constraints]]", `kind = ${tomlEscape(c.kind)}`);
+    if (c.label !== undefined) lines.push(`label = ${tomlEscape(c.label)}`);
+    lines.push(`params = ${inlineNum(c.params)}`);
+  }
   // [formulation.solve] sub-table (spec A) — MUST follow all [formulation]
   // scalar keys (TOML: no keys added to a table after a sub-table opens).
   if (e.solve) {
