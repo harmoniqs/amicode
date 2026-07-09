@@ -2,7 +2,7 @@
   "version": "1.17.3",
   "repo": "harmoniqs/opencode",
   "tag": "v1.17.3-amicode.4",
-  "source": "local",
+  "source": "release",
   "ref": "e9b695191120365f7592a7885308bb333b85df0f",
   "platforms": {
     "darwin-arm64": {
