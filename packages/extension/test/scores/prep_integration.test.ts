@@ -36,7 +36,6 @@ function prep(overrides: Partial<Parameters<typeof prepareOpencodeProject>[0]> =
     // hermetic by default: no skill index unless a test opts in (otherwise these
     // default to the machine's ~/harmoniqs/{packages,amico-plugin/skills}).
     skillRoots: [],
-    platformSkills: [],
     skillLibraryRoots: [],
     // hermetic: personalization off (else auto-resolve hits the machine's real
     // personal vault and, absent a profile there, routes to the overture score —
@@ -60,11 +59,19 @@ function mkPkgSkillRoot(): string {
 }
 function mkLibRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "libskill-"));
-  const d = path.join(root, "atoms");
-  fs.mkdirSync(d, { recursive: true });
+  // atoms is surface:product → staged; pr is surface:internal → the leak hazard
+  // that surface-tag discovery must drop (spec-20260708-112732 §4.5).
+  const atoms = path.join(root, "atoms");
+  fs.mkdirSync(atoms, { recursive: true });
   fs.writeFileSync(
-    path.join(d, "SKILL.md"),
-    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\n---\n# body\n",
+    path.join(atoms, "SKILL.md"),
+    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\nsurface: product\n---\n# body\n",
+  );
+  const pr = path.join(root, "pr");
+  fs.mkdirSync(pr, { recursive: true });
+  fs.writeFileSync(
+    path.join(pr, "SKILL.md"),
+    "---\nname: pr\ndescription: open a PR\nagents: [engineer]\nsurface: internal\n---\n# body\n",
   );
   return root;
 }
@@ -182,7 +189,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
@@ -191,6 +197,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     expect(proj.skillPaths.some((p) => p.endsWith("/atoms/SKILL.md"))).toBe(true);
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
+    expect(libNames(skills)).not.toContain("pr"); // surface:internal never stages (leak guard, §4.5)
     expect(pkgNames(skills)).toContain("Piccolissimo");
     expect(skills[0].source).toBe("library"); // platform entries first (spec §3)
   });
@@ -206,7 +213,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       scoresRoot: badRoot,
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
@@ -221,7 +227,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: fs.mkdtempSync(path.join(os.tmpdir(), "no-ents-")), // public
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");
@@ -230,6 +235,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     expect(skills.length).toBeGreaterThan(0);
     expect(skills.every((e) => e.source === "library")).toBe(true); // platform only, no package
     expect(libNames(skills)).toContain("atoms");
+    expect(libNames(skills)).not.toContain("pr"); // surface:internal never stages (leak guard, §4.5)
     expect(authoring.allowlist).not.toContain("Piccolissimo");
   });
 
@@ -237,7 +243,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: ["/nonexistent-lib"],
     });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");

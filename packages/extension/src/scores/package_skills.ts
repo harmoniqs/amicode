@@ -5,9 +5,12 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Dual-source skill index (spec-20260704-113005 §1/§3). Two skill TYPES:
 //   - PACKAGE skills: co-located at packages/<P>.jl/skills/<name>/SKILL.md,
 //     discovered ONLY for entitlement-allowlisted packages (gated).
-//   - PLATFORM skills: cross-package physics refs in the central amico-plugin
-//     library, discovered by an explicit CONFIGURED NAME LIST (public), never a
-//     whole-dir scan — the library holds ~50 process skills that must not leak.
+//   - LIBRARY (product) skills: cross-package refs in the central amico-plugin
+//     library, discovered by SURFACE TAG (spec-20260708-112732 §4.5/§7.1): the
+//     library dir is scanned, but ONLY skills whose frontmatter carries
+//     `surface: product` are staged. `internal` and untagged skills — the ~44
+//     process skills in the same library — MUST NOT leak into Amicode; the tag
+//     IS the least-privilege guard (superseding the old hardcoded name list).
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
@@ -24,15 +27,22 @@ function expandHome(p: string): string {
   return p;
 }
 
-/** Parse a SKILL.md's frontmatter; throw on anything malformed (caller skips). */
-function readFrontmatter(skillPath: string): { name: string; description: string } {
+/** Parse a SKILL.md's frontmatter; throw on anything malformed (caller skips).
+ *  `surface` (spec-20260708-112732 §4.5) is optional — a string tag
+ *  (`product` | `internal`) or undefined when the skill is untagged. It drives
+ *  library-skill staging (see resolveLibrarySkills). */
+function readFrontmatter(skillPath: string): { name: string; description: string; surface?: string } {
   const raw = fs.readFileSync(skillPath, "utf8");
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
   if (!m) throw new Error("missing frontmatter");
-  const fm = parseYaml(m[1]) as { name?: string; description?: string };
+  const fm = parseYaml(m[1]) as { name?: string; description?: string; surface?: string };
   if (typeof fm.name !== "string" || typeof fm.description !== "string")
     throw new Error("frontmatter needs name + description");
-  return { name: fm.name, description: fm.description };
+  return {
+    name: fm.name,
+    description: fm.description,
+    surface: typeof fm.surface === "string" ? fm.surface : undefined,
+  };
 }
 
 /** Package skills for allowlisted packages (gated). First root containing
@@ -70,21 +80,64 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
   return out;
 }
 
-/** Platform skills from the central library (spec §3, Rev 2). PUBLIC by
- *  construction — NO entitlement input. Only the CONFIGURED names are looked
- *  up: the library dir also holds ~50 process skills that must never leak into
- *  the Amicode prompt (explicit list is the guard; marker-based discovery is a
- *  recorded follow-up). First root containing `<name>/SKILL.md` wins. */
-export function resolveLibrarySkills(names: string[], roots: string[]): SkillIndexEntry[] {
+/** Library (product) skills gated behind an entitlement — the future-gated-
+ *  product seam (spec-20260708-112732 §7.1). EMPTY today: every `surface:
+ *  product` skill is public, so the entitlement filter is a no-op and all
+ *  product skills stage. Maps skill name → the entitlement code required to
+ *  stage it; adding one row here gates that skill WITHOUT touching discovery. */
+export const GATED_PRODUCT_SKILLS: Readonly<Record<string, string>> = {};
+
+/** Entitlement predicate for library (product) skill staging (§7.1 seam). A
+ *  product skill absent from GATED_PRODUCT_SKILLS is public (always staged); a
+ *  gated one stages only when its required entitlement is held. Wired at the
+ *  call site even while the map is empty, so gating later is a one-row edit. */
+export function isProductSkillEntitled(name: string, entitlements: readonly string[] = []): boolean {
+  const required = GATED_PRODUCT_SKILLS[name];
+  return required === undefined || entitlements.includes(required);
+}
+
+/** Library skills from the central amico-plugin library, discovered by SURFACE
+ *  TAG (spec-20260708-112732 §4.5/§7.1). The library root is SCANNED, but ONLY
+ *  skills whose frontmatter carries `surface: product` are returned — `internal`
+ *  and untagged skills (the ~44 process skills) are the leak hazard and are
+ *  DROPPED. The tag is the least-privilege guard that the old hardcoded name
+ *  list used to be; staging (stageOpencodeSkills) still copies only THIS
+ *  selected set to the per-session stage dir — `skills.paths` never points at
+ *  the library root itself. First root holding a given `<name>/SKILL.md` wins.
+ *
+ *  `isEntitled` is the entitlement seam: a product skill is included only when
+ *  the predicate admits its name. The default admits every product skill (the
+ *  public-today behaviour); production wires isProductSkillEntitled so a future
+ *  GATED_PRODUCT_SKILLS row gates without a code change. */
+export function resolveLibrarySkills(
+  roots: string[],
+  isEntitled: (name: string) => boolean = () => true,
+): SkillIndexEntry[] {
   const out: SkillIndexEntry[] = [];
-  for (const name of names) {
-    const skillPath = roots.map((r) => path.join(expandHome(r), name, "SKILL.md")).find((p) => fs.existsSync(p));
-    if (!skillPath) continue; // configured-but-absent — silently skipped
+  const seen = new Set<string>(); // first-root-wins, keyed by dir name
+  for (const r of roots) {
+    const root = expandHome(r);
+    let names: string[] = [];
     try {
-      const fm = readFrontmatter(skillPath);
+      names = fs.readdirSync(root);
+    } catch {
+      continue; // missing library root — silently skipped (session proceeds)
+    }
+    for (const name of names.sort()) {
+      if (seen.has(name)) continue;
+      const skillPath = path.join(root, name, "SKILL.md");
+      if (!fs.existsSync(skillPath)) continue;
+      let fm: { name: string; description: string; surface?: string };
+      try {
+        fm = readFrontmatter(skillPath);
+      } catch (e) {
+        console.warn(`amicode: skipping malformed library skill ${skillPath}: ${e}`);
+        continue;
+      }
+      if (fm.surface !== "product") continue; // THE GUARD: internal/untagged never stage
+      seen.add(name); // this dir is the authoritative product skill (earlier root wins)
+      if (!isEntitled(fm.name)) continue; // §7.1 entitlement seam (no-op today)
       out.push({ source: "library", name: fm.name, description: fm.description, path: skillPath });
-    } catch (e) {
-      console.warn(`amicode: skipping malformed library skill ${skillPath}: ${e}`);
     }
   }
   return out;
