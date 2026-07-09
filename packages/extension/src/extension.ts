@@ -21,7 +21,7 @@ import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
-import { watchSolverMode, applyEntitlementForMode } from "./solver_mode";
+import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -154,7 +154,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-    templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
+    // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
+    // (same run-dir contract, spline solver layer). An AGENTS.md instruction
+    // can't beat the procedural template path — the file itself must swap.
+    templateSrc: path.resolve(
+      ctx.extensionPath,
+      "templates",
+      readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
+    ),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     platformSkills: cfgArr("platformSkills"),
@@ -248,7 +255,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         applyEntitlementForMode(mode, path.join(os.homedir(), ".amico", "amicode"));
         const project2 = prepareOpencodeProject({
           agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-          templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
+          // Same mode-selection as boot; `mode` is the requested target of THIS
+          // switch (the state file still reads status:"switching" here).
+          templateSrc: path.resolve(
+            ctx.extensionPath,
+            "templates",
+            mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
+          ),
           juliaProject: resolveJuliaProject(
             vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
           ),
