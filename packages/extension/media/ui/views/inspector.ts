@@ -31,6 +31,16 @@ defineStyle(
      these win over .stack on specificity — not on stylesheet order. */
   .pane:not(.active) { display: none; }
   .pane.active { display: flex; }
+  /* Body = metrics rail (left) + pulse plot (right). The plot is the star, so it
+     grows; the metrics read as a deliberate stacked column instead of a wrapping
+     row of uneven tiles. Wraps to a single column when the panel is docked narrow. */
+  .insp-body { display: flex; gap: var(--space-md); align-items: stretch; flex-wrap: wrap; }
+  .insp-metrics { display: flex; flex-direction: column; gap: var(--space-sm);
+                  flex: 1 1 160px; min-width: 148px; max-width: 220px; }
+  .insp-body > .pulseplot { flex: 3 1 320px; }
+  /* Objective's convergence trace fills the rail width (the 120px intrinsic SVG
+     left dead space in the column); aspect ratio carries the height. */
+  .insp-metrics .sparkline { width: 100%; height: auto; }
 `,
 );
 
@@ -58,16 +68,23 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const status = pill("idle");
   const runLabel = text("mono small dim");
   const pulse = pulseplot(IDLE_HINT);
-  // Layout order (left→right): ITER counter · OBJECTIVE hero · FEAS · OPT.
+  // Layout order (left→right): FIDELITY hero · OBJECTIVE (+trace) · ITER · FEAS · OPT.
+  // The hero is the OUTCOME (fidelity) — the number that matters — pending until
+  // the run finishes. The live optimization signal (objective + its convergence
+  // trace) sits beside it, never inside it.
+  const fidelity = metric("fidelity", { variant: "hero" });
+  const objective = metric("objective", { variant: "small" });
   const iteration = metric("iteration", { variant: "counter" });
-  const hero = metric("objective", { variant: "hero" });
   const feasibility = metric("feasibility", { variant: "small" });
   const optimality = metric("optimality", { variant: "small" });
-  const metrics = [iteration, hero, feasibility, optimality];
+  const metrics = [fidelity, objective, iteration, feasibility, optimality];
 
-  // Convergence sparkline lives inside the hero, under the objective value.
+  // The convergence sparkline traces the OBJECTIVE, not the fidelity — so it
+  // lives on the objective card. (Before, it sat inside the hero, which got
+  // relabeled to "fidelity" on completion, leaving a fidelity card sitting over
+  // a plot of the objective. Fidelity is not the objective function.)
   const spark = sparkline();
-  hero.el.append(spark.el);
+  objective.el.append(spark.el);
 
   let gotPulse = false; // per-pane: decides the completed-without-data hint
 
@@ -81,7 +98,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   topbar.append(brand, runLabel.el, status.el);
 
   const grid = document.createElement("div");
-  grid.className = "metric-row";
+  grid.className = "insp-metrics";
   grid.append(...metrics.map((m) => m.el));
 
   // Control row — Stop / Save pulse / Open run dir. Each posts to the extension
@@ -136,10 +153,14 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   footer.className = "row wrap";
   footer.append(timing.el, controls);
 
+  const body = document.createElement("div");
+  body.className = "insp-body";
+  body.append(grid, pulse.el);
+
   const el = document.createElement("div");
   el.className = "pane stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid, footer);
+  el.append(topbar, body, footer);
 
   return {
     el,
@@ -172,8 +193,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           break;
         }
         case "iteration": {
-          hero.label("objective");
-          hero.value((msg.f_val as number).toExponential(4));
+          objective.value((msg.f_val as number).toExponential(4));
           iteration.value(String(msg.iter));
           feasibility.value((msg.eq_viol as number).toExponential(2));
           optimality.value((msg.kkt_error as number).toExponential(2));
@@ -192,7 +212,6 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           gotPulse = false;
           pulse.waiting(WARMING_HINT);
           for (const m of metrics) m.clear();
-          hero.label("objective");
           status.set("running", "warming up");
           controlStatus = "warming";
           hasData = false;
@@ -207,10 +226,10 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           // stopped = graceful user stop (neutral, dim); completed = success;
           // anything else = failure.
           status.set(ok ? "done" : stopped ? "idle" : "failed", ok ? "converged" : String(msg.status));
-          // Promote the hero card to the final fidelity — the number that matters.
+          // Fill in the fidelity hero — the outcome. The objective card keeps its
+          // final value + convergence trace; the two are never conflated.
           if (ok && typeof msg.fidelity === "number") {
-            hero.label("fidelity");
-            hero.value((msg.fidelity as number).toFixed(5));
+            fidelity.value((msg.fidelity as number).toFixed(5));
           }
           if (!gotPulse) pulse.waiting(NO_DATA_HINT); // old runs / non-emitting scripts
           controlStatus = ok ? "completed" : stopped ? "stopped" : "failed";
