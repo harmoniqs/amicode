@@ -9,7 +9,7 @@
 // (brand.css) — NO external CDN.
 
 import { defineStyle } from "../style";
-import { mark } from "../atoms/icon";
+import { logo } from "../atoms/logo";
 import { text } from "../atoms/text";
 import { button } from "../atoms/button";
 import { metric } from "../components/metric";
@@ -124,7 +124,7 @@ function createPane(device: string, post: (msg: unknown) => void): Pane {
 
   const brand = document.createElement("div");
   brand.className = "row gap-sm brand";
-  brand.append(mark(), text("", "Device Inspector").el);
+  brand.append(logo({ variant: "reduced" }), text("", "Device Inspector").el);
 
   const refreshBtn = button("↻ Refresh", () => post({ type: "control", action: "refresh", device }));
   refreshBtn.el.classList.add("push-end");
