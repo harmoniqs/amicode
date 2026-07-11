@@ -168,6 +168,69 @@ describe("buildOpencodeConfigContent × scores", () => {
   });
 });
 
+describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1–C4, three-state vaultDir)", () => {
+  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory splice (regression guard)', () => {
+    const proj = prep({ vaultDir: "" });
+    expect(proj.mounts).toEqual([]);
+    expect(proj.vaultDir).toBe("");
+    const agents = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(agents).not.toContain("## Mount stack (Armonia");
+    expect(agents).not.toContain("## Memory index");
+  });
+
+  it("vaultDir path → single forced personal mount at that path; returns mounts + splices the mount stack", () => {
+    const vault = fs.mkdtempSync(path.join(os.tmpdir(), "forced-vault-"));
+    fs.mkdirSync(path.join(vault, "amicode", "memory"), { recursive: true });
+    fs.writeFileSync(
+      path.join(vault, "amicode", "memory", "MEMORY.md"),
+      "# Memory index\n- [user-role](user_role.md) — Aaron is CEO\n",
+    );
+    const proj = prep({ vaultDir: vault });
+    expect(proj.mounts).toHaveLength(1);
+    expect(proj.mounts[0]).toMatchObject({ kind: "personal", path: vault, writable: true });
+    expect(proj.vaultDir).toBe(vault); // vaultDir === personalMount path
+    const agents = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
+    expect(agents).toContain(`kind=personal · rw · ${vault}`);
+    // memory index reads from the personal mount:
+    expect(agents).toContain("## Memory index");
+    expect(agents).toContain("- [user-role](user_role.md) — Aaron is CEO");
+  });
+
+  it("vaultDir undefined → auto-resolves the full stack from ~/.amico/vaults; vaultDir === personal mount", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "home-"));
+    const vaults = path.join(home, ".amico", "vaults");
+    const personal = path.join(vaults, "armonia-me");
+    fs.mkdirSync(path.join(personal, "amicode"), { recursive: true });
+    fs.writeFileSync(path.join(personal, ".amico-vault.toml"), 'kind = "personal"\nname = "armonia-me"\n');
+    // a PROFILE.md suppresses the overture routing predicate (keeps this a plain
+    // pulse-designer compile — onboarding routing has its own suite).
+    fs.writeFileSync(path.join(personal, "amicode", "PROFILE.md"), "# Profile — A\n- Role: CEO\n");
+    const team = path.join(vaults, "armonissima");
+    fs.mkdirSync(team, { recursive: true });
+    fs.writeFileSync(path.join(team, ".amico-vault.toml"), 'kind = "team"\nname = "armonissima"\n');
+
+    const prevHome = process.env.HOME;
+    const prevProfile = process.env.AMICO_PROFILE_FILE;
+    process.env.HOME = home;
+    process.env.AMICO_PROFILE_FILE = path.join(home, "no-profile.json"); // wizard gate off
+    try {
+      const proj = prep({ vaultDir: undefined });
+      expect(proj.mounts.map((m) => m.name)).toEqual(["armonia-me", "armonissima"]); // kind-rank: personal(0) < team(4)
+      expect(proj.vaultDir).toBe(personal);
+      const agents = fs.readFileSync(proj.agentsPath, "utf8");
+      expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
+      expect(agents).toContain(`- armonia-me · kind=personal · rw · ${personal}`);
+      expect(agents).toContain(`- armonissima · kind=team · ro · ${team}`);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevProfile === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prevProfile;
+    }
+  });
+});
+
 describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source)", () => {
   // NOTE: presence/absence is asserted on the STRUCTURED authoring.json skills
   // array (source/name/package), not raw prompt text — the author-first prose
