@@ -9,6 +9,7 @@ import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } 
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
+  isProductSkillEntitled,
   buildSkillIndexSection,
   stageOpencodeSkills,
   type SkillIndexEntry,
@@ -132,11 +133,28 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
 /** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
- *  in the workspace package repos; platform skills are the configured names in
- *  the central amico-plugin library. Overridable via settings (Task 6). */
+ *  in the workspace package repos; library (product) skills are discovered by
+ *  `surface: product` tag from the central amico-plugin library. Overridable
+ *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
-export const DEFAULT_PLATFORM_SKILLS = ["atoms", "transmon", "fluxonium", "ions", "bosonic"];
 export const DEFAULT_LIBRARY_ROOTS = [path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills")];
+/** The canonical `surface: product` skill set (spec-20260708-112732 §4.5) — a
+ *  documentation/reference anchor for what tag-based discovery is expected to
+ *  surface, NOT a selection input (selection is now purely by frontmatter tag,
+ *  see resolveLibrarySkills). Kept as the golden expectation the discovery test
+ *  asserts against the real library root. */
+export const DEFAULT_PLATFORM_SKILLS = [
+  "atoms",
+  "bosonic",
+  "fluxonium",
+  "ions",
+  "transmon",
+  "setup",
+  "solve",
+  "plot",
+  "objectives",
+  "demo",
+];
 
 /** Bundled spec-C authoring assets (absolute), resolved relative to this module.
  *  At runtime __dirname is the extension's dist/src dir; the assets ship one
@@ -358,9 +376,8 @@ export interface OpencodeConfigOptions {
   entitlementsDir?: string;
   /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
   skillRoots?: string[];
-  /** Configured platform-skill names to index from the library (spec §3). Default: DEFAULT_PLATFORM_SKILLS. */
-  platformSkills?: string[];
-  /** Roots for the central platform-skill library (spec §3). Default: DEFAULT_LIBRARY_ROOTS. */
+  /** Roots for the central library, scanned for `surface: product` skills
+   *  (spec-20260708-112732 §4.5). Default: DEFAULT_LIBRARY_ROOTS. */
   skillLibraryRoots?: string[];
   /** Personal vault dir for the user-memory substrate (spec-20260705-002847).
    *  undefined → auto-resolve (kind=personal marker scan under ~/.amico/vaults);
@@ -467,11 +484,15 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   try {
     const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
-    const allow = packageAllowlist(entitlementsTablePath(scoresRoot), readLocalEntitlements(entsDir).entitlements);
+    const ents = readLocalEntitlements(entsDir).entitlements;
+    const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
     skillEntries = [
-      ...resolveLibrarySkills(
-        opts.platformSkills ?? DEFAULT_PLATFORM_SKILLS,
-        opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS,
+      // Library (product) skills by `surface: product` tag (spec-20260708-112732
+      // §4.5). The entitlement seam (§7.1) is wired but a no-op today — every
+      // product skill is public, so all stage; a future GATED_PRODUCT_SKILLS row
+      // gates without touching this call.
+      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, (name) =>
+        isProductSkillEntitled(name, ents),
       ),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];

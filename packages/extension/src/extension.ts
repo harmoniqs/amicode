@@ -151,7 +151,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
-    platformSkills: cfgArr("platformSkills"),
     skillLibraryRoots: cfgArr("skillLibraryRoots"),
     // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
     // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
