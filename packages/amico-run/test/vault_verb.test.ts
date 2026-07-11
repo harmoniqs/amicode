@@ -121,3 +121,109 @@ describe("amico vault query (bundle)", () => {
     expect(JSON.parse(r.stdout).error).toMatch(/unknown subcommand/);
   });
 });
+
+// ── mount-aware verbs (Task 7): multi-mount fixtures reach the bundle via the env seam ──
+/** Seed a vault dir under `root` with an `.amico-vault.toml` marker. */
+function seedMarker(root: string, name: string, markerBody: string): string {
+  const dir = join(root, name);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, ".amico-vault.toml"), markerBody);
+  return dir;
+}
+
+describe("amico vault status (bundle) — field-compatible with amico-vault status --json", () => {
+  it("emits {ok, mounts:[{id,path,kind,writable,last_sync,warnings}], error} with drift warnings", () => {
+    const root = mkdtempSync(join(tmpdir(), "amico-mstatus-"));
+    seedMarker(root, "me", 'kind = "personal"\nname = "me"');
+    seedMarker(root, "shared", 'kind = "project"\nname = "shared"'); // marker says project…
+    const manifest = join(root, "mounts.toml");
+    writeFileSync(manifest, ["[[mount]]", 'id = "shared"', 'kind = "team"', `path = "${join(root, "shared")}"`].join("\n")); // …manifest says team
+
+    const r = run(["vault", "status", "--json"], { AMICO_VAULTS_ROOT: root, AMICO_MOUNTS_TOML: manifest, AMICO_VAULT_DIR: "" });
+    expect(r.code).toBe(0);
+    const out = JSON.parse(r.stdout);
+    expect(out.ok).toBe(true);
+    expect(out.error).toBeNull();
+    expect(Array.isArray(out.mounts)).toBe(true);
+
+    const shared = out.mounts.find((m: { id: string }) => m.id === "shared");
+    expect(shared).toMatchObject({ kind: "team", writable: false });
+    expect(shared.warnings.join(" ")).toMatch(/drift.*project.*team/i);
+    expect(typeof shared.last_sync).toBe("string"); // "unknown" for a non-git temp dir (tolerated)
+    expect(Object.keys(shared).sort()).toEqual(["id", "kind", "last_sync", "path", "warnings", "writable"]);
+
+    const me = out.mounts.find((m: { id: string }) => m.id === "me");
+    expect(me).toMatchObject({ kind: "personal", writable: true });
+    expect(me.warnings).toEqual([]); // no manifest override ⇒ no drift
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("amico vault resolve (bundle) — first-hit across precedence", () => {
+  it("resolves to the highest-precedence mount that has the relpath; reports misses otherwise", () => {
+    const root = mkdtempSync(join(tmpdir(), "amico-mresolve-"));
+    seedMarker(root, "a", 'kind = "personal"\nname = "a"'); // rank 0 — wins collisions
+    seedMarker(root, "b", 'kind = "team"\nname = "b"'); // rank 4
+    seedNote(join(root, "a"), "insights", "shared.md", "type: insight", "# a copy");
+    seedNote(join(root, "b"), "insights", "shared.md", "type: insight", "# b copy");
+    seedNote(join(root, "b"), "insights", "bonly.md", "type: insight", "# b only");
+    const env = { AMICO_VAULTS_ROOT: root, AMICO_MOUNTS_TOML: join(root, "none.toml"), AMICO_VAULT_DIR: "" };
+
+    const hit = JSON.parse(run(["vault", "resolve", "insights/shared.md"], env).stdout);
+    expect(hit).toMatchObject({ found: true, mount: "a", path: join(root, "a", "insights", "shared.md") });
+
+    const hitB = JSON.parse(run(["vault", "resolve", "insights/bonly.md"], env).stdout);
+    expect(hitB).toMatchObject({ found: true, mount: "b" });
+
+    const miss = JSON.parse(run(["vault", "resolve", "insights/ghost.md"], env).stdout);
+    expect(miss).toMatchObject({ found: false, path: null });
+    expect(miss.misses).toEqual([join(root, "a"), join(root, "b")]);
+    rmSync(root, { recursive: true, force: true });
+  });
+  it("missing relpath → 64 (checked before any stack resolution)", () => {
+    expect(run(["vault", "resolve"], { AMICO_VAULT_DIR: "" }).code).toBe(64);
+  });
+});
+
+describe("amico vault query — union over the mount stack (bundle)", () => {
+  it("searches all mounts in precedence order; a same-relpath collision is won by the higher-precedence mount", () => {
+    const root = mkdtempSync(join(tmpdir(), "amico-mquery-"));
+    seedMarker(root, "a", 'kind = "personal"\nname = "a"');
+    seedMarker(root, "b", 'kind = "team"\nname = "b"');
+    seedNote(join(root, "a"), "insights", "shared.md", "type: insight", "# shared alpha\nkeyword rydberg here");
+    seedNote(join(root, "b"), "insights", "shared.md", "type: insight", "# shared beta\nkeyword rydberg here");
+    seedNote(join(root, "b"), "insights", "bonly.md", "type: insight", "# b only\nkeyword rydberg here");
+    const env = { AMICO_VAULTS_ROOT: root, AMICO_MOUNTS_TOML: join(root, "none.toml"), AMICO_VAULT_DIR: "" };
+
+    const out = JSON.parse(run(["vault", "query", "--q", "rydberg"], env).stdout);
+    expect(out.count).toBe(2); // a/shared (b/shared shadowed) + b/bonly
+    expect(out.mounts).toEqual(["a", "b"]);
+    const shared = out.hits.find((h: { file: string }) => h.file === "shared.md");
+    expect(shared.mount).toBe("a"); // personal (rank 0) wins the collision
+    expect(shared.title).toBe("shared alpha");
+    expect(out.hits.find((h: { file: string }) => h.file === "bonly.md").mount).toBe("b");
+
+    // --mount restricts to a single mount
+    const restricted = JSON.parse(run(["vault", "query", "--q", "rydberg", "--mount", "b"], env).stdout);
+    expect(restricted.count).toBe(2); // b/shared + b/bonly
+    expect(restricted.hits.every((h: { mount: string }) => h.mount === "b")).toBe(true);
+    expect(restricted.hits.find((h: { file: string }) => h.file === "shared.md").title).toBe("shared beta");
+    rmSync(root, { recursive: true, force: true });
+  });
+  it("$AMICO_VAULT_DIR forces a single mount and wins over $AMICO_VAULTS_ROOT (back-compat)", () => {
+    const single = mkdtempSync(join(tmpdir(), "amico-single-"));
+    const multi = mkdtempSync(join(tmpdir(), "amico-multi-"));
+    seedNote(single, "insights", "only.md", "type: insight", "# only\nkeyword photon");
+    seedMarker(multi, "x", 'kind = "personal"\nname = "x"');
+    seedNote(join(multi, "x"), "insights", "other.md", "type: insight", "# other\nkeyword photon");
+
+    const out = JSON.parse(
+      run(["vault", "query", "--q", "photon"], { AMICO_VAULT_DIR: single, AMICO_VAULTS_ROOT: multi, AMICO_MOUNTS_TOML: join(multi, "none.toml") }).stdout,
+    );
+    expect(out.count).toBe(1);
+    expect(out.hits[0].file).toBe("only.md");
+    expect(out.vault).toBe(single); // the forced single mount root
+    rmSync(single, { recursive: true, force: true });
+    rmSync(multi, { recursive: true, force: true });
+  });
+});

@@ -260,3 +260,11 @@ export function resolveMountStack(vaultsRoot?: string, mountsTomlPath?: string):
 export function personalMount(stack: MountStack): Mount | undefined {
   return stack.mounts.find((m) => m.kind === "personal");
 }
+
+/** Read a vault directory's `.amico-vault.toml` marker (kind/name). Amico-run-only
+ *  helper (not part of the shared twin API): `vault status` uses the raw marker
+ *  kind to detect drift against the manifest-resolved kind. Never throws. */
+export function readVaultMarker(vaultDir: string): { kind?: string; name?: string } {
+  const m = readMarker(join(vaultDir, ".amico-vault.toml"));
+  return { kind: m.kind, name: m.name };
+}

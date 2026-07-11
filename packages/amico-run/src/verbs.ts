@@ -63,12 +63,14 @@ const catalog: Verb = {
   run: catalogVerb,
 };
 
-// vault — retrieval over the knowledge graph (query tools, not front-loading context).
-// REAL as of B3: `query` ranks insights/experiments by relevance to a free-text query.
+// vault — retrieval over the knowledge graph + Armonia mount-stack introspection.
+// REAL as of B3: `query` (union-over-mounts relevance ranking), `status` (resolved
+// mount stack, field-compatible with `amico-vault status --json`), `resolve`
+// (first-hit relpath lookup across the stack).
 const vault: Verb = {
   name: "vault",
-  summary: "query the knowledge graph (insights/experiments) by relevance — retrieval, not front-load",
-  generalizes: "the amicode_* vault plugin tools (retrieval half)",
+  summary: "query the knowledge graph (union over mounts) / mount-stack status / resolve a relpath",
+  generalizes: "the amicode_* vault plugin tools (retrieval half) + amico-vault status",
   slice: "spine bookkeeping (B3)",
   run: vaultVerb,
 };

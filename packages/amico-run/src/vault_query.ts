@@ -15,7 +15,9 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** A vault note projected for retrieval. `body` is the markdown after the
- *  frontmatter; `title` is the first `# ` heading (else the filename). */
+ *  frontmatter; `title` is the first `# ` heading (else the filename). `mount` is
+ *  the name of the mount the note came from (stamped by loadNotesAcross; undefined
+ *  for a single-mount `loadNotes`). */
 export interface NoteRecord {
   path: string; // ABS path
   file: string; // basename
@@ -26,6 +28,7 @@ export interface NoteRecord {
   gate?: string;
   tags: string[];
   body: string;
+  mount?: string;
 }
 
 /** The vault root. `$AMICO_VAULT_DIR` overrides it (tests point it at a temp
@@ -136,6 +139,28 @@ export function loadNotes(dir: string, folders: readonly string[] = NOTE_FOLDERS
   return records;
 }
 
+/** Union the note folders across an ordered list of mounts (highest precedence
+ *  first). Each record is stamped with its mount's name. A collision on the same
+ *  `<folder>/<file>` relpath is won by the higher-precedence (earlier) mount — the
+ *  lower one is dropped, so retrieval never surfaces a shadowed note. Never throws.
+ *  This is the read side of the Armonia mount stack (plan Task 7). */
+export function loadNotesAcross(
+  mounts: readonly { name: string; path: string }[],
+  folders: readonly string[] = NOTE_FOLDERS,
+): NoteRecord[] {
+  const out: NoteRecord[] = [];
+  const seen = new Set<string>();
+  for (const m of mounts) {
+    for (const rec of loadNotes(m.path, folders)) {
+      const key = `${rec.folder}/${rec.file}`;
+      if (seen.has(key)) continue; // a higher-precedence mount already provided this relpath
+      seen.add(key);
+      out.push({ ...rec, mount: m.name });
+    }
+  }
+  return out;
+}
+
 // ── relevance ranking ─────────────────────────────────────────────────────────
 
 export interface RankedNote {
@@ -147,6 +172,7 @@ export interface RankedNote {
   tags: string[];
   score: number;
   snippet: string;
+  mount?: string; // which mount the hit came from (union query); undefined single-mount
 }
 
 export interface QueryOpts {
@@ -223,5 +249,6 @@ export function rankNotes(notes: NoteRecord[], query: string, opts: QueryOpts = 
       tags: note.tags,
       score,
       snippet: snippetFor(note, terms),
+      mount: note.mount,
     }));
 }
