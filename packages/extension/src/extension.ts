@@ -159,6 +159,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
   opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
+  opencodeChannel.appendLine(
+    `[boot] armonia mounts: ${opencodeProject.mounts.length} (${opencodeProject.mounts.map((m) => m.name).join(", ")})`,
+  );
 
   // 4. Spawn opencode — the VENDORED binary by default (spec §4; S35, kills
   // Assumption 4). Config override is a dev-only escape hatch. On a missing
@@ -220,6 +223,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeProject.skillPaths,
           opencodeProject.skillsStageDir,
           opencodeProject.vaultDir,
+          // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
+          opencodeProject.mounts,
           // Model pin (fallback-only, resolveModelPin): without it, default
           // resolution gambles on provider ordering — with Google creds it
           // picked a preview model that hung every headless/agent turn.

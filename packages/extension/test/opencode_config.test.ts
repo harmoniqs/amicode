@@ -112,6 +112,27 @@ describe("buildOpencodeConfigContent", () => {
       else process.env.AMICODE_PROBLEMS_DIR = prev;
     }
   });
+  it("grants external_directory <path>/** for EVERY Armonia mount, retaining the personal-vault amicode grant", () => {
+    const mounts = [
+      { name: "me", kind: "personal", path: "/v/me", writable: true },
+      { name: "team", kind: "team", path: "/v/team", writable: false },
+    ];
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me", mounts),
+    );
+    const ed = cfg.permission.external_directory;
+    expect(ed["/v/me/**"]).toBe("allow"); // personal mount read grant
+    // a read-only mount STILL gets a read grant — the permission surface has no
+    // r/w split; write discipline stays distiller-side (documented posture).
+    expect(ed["/v/team/**"]).toBe("allow");
+    expect(ed["/v/me/amicode/**"]).toBe("allow"); // existing personal-vault grant retained
+  });
+  it("no mounts → no per-mount grants (only the personal amicode grant when a vaultDir is given)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me"));
+    const ed = cfg.permission.external_directory;
+    expect(ed["/v/me/**"]).toBeUndefined(); // no mount list → no whole-mount grant
+    expect(ed["/v/me/amicode/**"]).toBe("allow");
+  });
   it("never embeds a credential in the config content (D11 no-store/no-inject regression guard)", () => {
     // amico owns no secret: the config it writes into OPENCODE_CONFIG_CONTENT must
     // never carry a provider key, even when one is present in the environment.
