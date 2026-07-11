@@ -400,6 +400,11 @@ export function buildOpencodeConfigContent(
     permission: {
       bash: "allow",
       edit: "allow",
+      // The staged skill set is already curated by us (surface: product +
+      // entitlement filter), so the skill tool's default per-name "ask" adds
+      // friction without a security boundary — and hangs headless sessions,
+      // same class as the external_directory default documented above.
+      skill: "allow",
       external_directory: {
         [templatePath]: "allow", // exact template file the agent reads
         [`${templatesDir}/**`]: "allow", // (belt-and-suspenders for the dir)
