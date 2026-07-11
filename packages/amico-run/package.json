@@ -6,7 +6,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "bin": {
-    "amico-run": "./launcher/amico-run"
+    "amico-run": "./launcher/amico-run",
+    "amico": "./launcher/amico"
   },
   "engines": {
     "node": ">=20"
