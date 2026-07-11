@@ -69,6 +69,7 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    loader: { ".svg": "text" },
   },
 ];
 
