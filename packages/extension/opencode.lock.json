@@ -3,7 +3,7 @@
   "repo": "harmoniqs/opencode",
   "tag": "v1.17.3-amicode.4",
   "source": "local",
-  "ref": "153278891c756cc6568faaa3087c8d435b481ecc",
+  "ref": "c42043e5558d879a6f8f395e499e43df13e4af8f",
   "platforms": {
     "darwin-arm64": {
       "asset": "opencode-darwin-arm64.zip",
