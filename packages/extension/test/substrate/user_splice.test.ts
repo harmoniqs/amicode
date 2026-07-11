@@ -6,7 +6,10 @@ import {
   buildAboutUserSection,
   buildRecentProblemsSection,
   buildReferenceDemosSection,
+  buildMountStackSection,
+  buildMemoryIndexSection,
 } from "../../src/substrate/user_splice";
+import type { MountStack } from "../../src/substrate/mount_store";
 import { buildOpencodeConfigContent, prepareOpencodeProject } from "../../src/opencode_config";
 
 describe("buildAboutUserSection (spec §6)", () => {
@@ -81,6 +84,67 @@ describe("vault wiring (grant + splice + return)", () => {
     // the agent to anchor on it. The actual spliced sections carry these lines:
     expect(agents).not.toContain("Greet and recommend with this context");
     expect(agents).not.toContain("Before recommending parameters, check whether");
+  });
+});
+
+describe("buildMountStackSection (spec §3 C3 read side)", () => {
+  const stack = (mounts: MountStack["mounts"], warnings: string[] = []): MountStack => ({ mounts, warnings });
+
+  it("empty stack → empty string (no section)", () => {
+    expect(buildMountStackSection(stack([]))).toBe("");
+    // warnings alone (nothing discovered) still render nothing — parity with the
+    // "Empty stack → ''" contract.
+    expect(buildMountStackSection(stack([], ["skipped 'x': no marker"]))).toBe("");
+  });
+
+  it("renders the header + one precedence line per mount with rw/ro + path", () => {
+    const s = buildMountStackSection(
+      stack([
+        { name: "armonia-aaron", kind: "personal", path: "/v/armonia-aaron", writable: true },
+        { name: "armonissima", kind: "team", path: "/v/armonissima", writable: false },
+      ]),
+    );
+    expect(s).toContain("## Mount stack (Armonia — read precedence top→bottom)");
+    expect(s).toContain("- armonia-aaron · kind=personal · rw · /v/armonia-aaron");
+    expect(s).toContain("- armonissima · kind=team · ro · /v/armonissima");
+    // top→bottom = read precedence: the personal line precedes the team line.
+    expect(s.indexOf("armonia-aaron")).toBeLessThan(s.indexOf("armonissima"));
+  });
+
+  it("renders warning lines beneath the mounts", () => {
+    const s = buildMountStackSection(
+      stack(
+        [{ name: "p", kind: "personal", path: "/v/p", writable: true }],
+        ["skipped 'junk': marker missing 'kind'"],
+      ),
+    );
+    expect(s).toContain("skipped 'junk': marker missing 'kind'");
+  });
+
+  it("appends the condensed routing-rules block (union/first-hit, intent routing, route_intent, ask-once)", () => {
+    const s = buildMountStackSection(stack([{ name: "p", kind: "personal", path: "/v/p", writable: true }]));
+    expect(s).toMatch(/union/i); // union reads across mounts
+    expect(s).toMatch(/first hit/i); // first-hit precedence
+    expect(s).toMatch(/route_intent/); // the fallback stamp
+    expect(s).toMatch(/writable/i); // routes to first WRITABLE mount of that kind
+    expect(s).toMatch(/ask once/i); // ambiguous → ask once
+    expect(s).toMatch(/default(?:s)?(?: to)? personal/i); // else default (to) personal
+  });
+});
+
+describe("buildMemoryIndexSection (spec §3 C4 read side)", () => {
+  it("no lines → empty string", () => {
+    expect(buildMemoryIndexSection([])).toBe("");
+  });
+  it("renders the heading + index lines + a load-on-demand instruction", () => {
+    const s = buildMemoryIndexSection([
+      "- [user-role](user_role.md) — Aaron is CEO of Harmoniqs",
+      "- [feedback-latex](feedback_latex.md) — use LaTeX in chat",
+    ]);
+    expect(s).toContain("## Memory index");
+    expect(s).toContain("- [user-role](user_role.md) — Aaron is CEO of Harmoniqs");
+    expect(s).toContain("- [feedback-latex](feedback_latex.md) — use LaTeX in chat");
+    expect(s).toMatch(/load on demand from the granted vault path/i);
   });
 });
 
