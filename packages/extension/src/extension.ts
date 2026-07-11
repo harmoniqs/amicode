@@ -20,6 +20,13 @@ import { amicodeOpsDir } from "./substrate/vault_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
+import { parse as parseYaml } from "yaml";
+import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
+import { loadGraph } from "./calibration_graph";
+import { parseStateJson } from "./device_registry";
+import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
+import { SchusterJobServer } from "./qick_client";
+import type { QueueView } from "./qick_job_server";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -38,6 +45,105 @@ let opencodeReadyUrl: URL | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
+/** Device Inspector poll timer (Spec A §5.1) — cleared on deactivate. */
+let devicePollTimer: ReturnType<typeof setInterval> | undefined;
+
+const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
+
+/** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
+ *  card is durable knowledge (vault); this only READS it. Never throws. */
+function readDeviceCard(cardPath: string): { driveLines: DriveLine[]; qubits: string[] } | undefined {
+  try {
+    const md = fs.readFileSync(cardPath, "utf8");
+    const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (!m) return undefined;
+    const fm = parseYaml(m[1]) as Record<string, unknown>;
+    const dlRaw = Array.isArray(fm.drive_lines) ? (fm.drive_lines as Record<string, unknown>[]) : [];
+    const driveLines: DriveLine[] = dlRaw
+      .filter((d) => d && typeof d === "object" && typeof d.id === "string")
+      .map((d) => ({ id: String(d.id), target: typeof d.target === "string" ? d.target : undefined, kind: typeof d.kind === "string" ? d.kind : undefined }));
+    const qubits =
+      typeof fm.qubits === "number"
+        ? Array.from({ length: fm.qubits }, (_v, i) => `Q${i + 1}`)
+        : Array.isArray(fm.qubits)
+          ? (fm.qubits as unknown[]).map(String)
+          : [...new Set(driveLines.map((d) => d.target).filter((t): t is string => !!t))];
+    return { driveLines, qubits };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Poll tick (Spec A §3, §5.1). Dormant until `amicode.device.name` +
+ *  `amicode.device.graph` are set. All I/O is never-reject: a dead endpoint /
+ *  missing file degrades the projection to uncharacterized/offline, never
+ *  crashes the session. The heavy package-resolution entitlement authority
+ *  (qick_client.isQilcEntitled) runs at session prep, not this hot path — here
+ *  the fast health() capability flag is the advisory hint (§5.2). */
+async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<void> {
+  const inspector = getDeviceInspector();
+  if (!inspector) return;
+  const cfg = vscode.workspace.getConfiguration("amicode");
+  const deviceName = (cfg.get<string>("device.name", "") || "").trim();
+  const graphPath = (cfg.get<string>("device.graph", "") || "").trim();
+  if (!deviceName || !graphPath) return; // dormant until a device is configured
+
+  try {
+    const loaded = loadGraph(fs.readFileSync(graphPath, "utf8"));
+    if (!loaded.ok) {
+      channel.appendLine(`[device] graph ${graphPath} failed to load: ${loaded.error}`);
+      return;
+    }
+    // rolling ops state (§4.2): ~/.amico/amicode/devices/<name>/state.json
+    const stateFile = path.join(amicodeOpsDir(), "devices", deviceName, "state.json");
+    let state = {};
+    try {
+      state = parseStateJson(fs.readFileSync(stateFile, "utf8"));
+    } catch {
+      /* no state yet → everything reads uncharacterized (honest) */
+    }
+    const card = readDeviceCard((cfg.get<string>("device.card", "") || "").trim());
+
+    // queue + health from the configured job-server endpoint (never-reject); no
+    // endpoint → empty queue (idle) + no online channels (all drive lines offline).
+    let queue: QueueView = { running: undefined, pending: [] };
+    let onlineChannels: string[] | undefined;
+    let capabilities: string[] | undefined;
+    let mainConfig;
+    const endpoint = (cfg.get<string>("device.endpoint", "") || "").trim();
+    if (endpoint) {
+      const client = new SchusterJobServer({ baseUrl: endpoint });
+      const q = await client.queue();
+      if (q.ok) queue = q.value;
+      const h = await client.health();
+      if (h.ok) {
+        onlineChannels = h.value.channels;
+        capabilities = h.value.capabilities;
+      }
+      const mc = await client.mainConfig("hw");
+      if (mc.ok) mainConfig = mc.value ?? undefined;
+    }
+
+    const now = Date.now();
+    const status = buildDeviceStatus({
+      graph: loaded.graph,
+      state,
+      now,
+      driveLines: card?.driveLines ?? [],
+      qubits: card?.qubits,
+      onlineChannels,
+      mainConfig,
+    });
+    const entitled = capabilityHint("qilc", capabilities); // advisory hint; authority = package resolution (prep)
+    const { ranked_actions } = nextActions(loaded.graph, state, queue, now, { entitled });
+
+    inspector.postDeviceStatus(deviceName, status);
+    inspector.postActions(deviceName, ranked_actions);
+    inspector.activate(deviceName);
+  } catch (e) {
+    channel.appendLine(`[device] refresh error: ${(e as Error).message}`);
+  }
+}
 
 /** Run dirs with a cooperative stop in flight (escalation timer armed) — a
  *  second Stop click must not stack a second dialog. */
@@ -46,7 +152,8 @@ const pendingStops = new Set<string>();
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
-  ctx.subscriptions.push(opencodeChannel, runsChannel);
+  const devicesChannel = vscode.window.createOutputChannel("Amicode — devices");
+  ctx.subscriptions.push(opencodeChannel, runsChannel, devicesChannel);
 
   // Runs root (resolved early — the inspector needs it for its CSP resource roots).
   const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
@@ -54,6 +161,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
+  registerDeviceInspector(ctx);   // Spec A §3 — device dashboard, sibling to the Run Inspector
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
@@ -151,7 +259,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
-    platformSkills: cfgArr("platformSkills"),
     skillLibraryRoots: cfgArr("skillLibraryRoots"),
     // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
     // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
@@ -160,6 +267,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
   opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
+  opencodeChannel.appendLine(
+    `[boot] armonia mounts: ${opencodeProject.mounts.length} (${opencodeProject.mounts.map((m) => m.name).join(", ")})`,
+  );
 
   // 4. Spawn opencode — the VENDORED binary by default (spec §4; S35, kills
   // Assumption 4). Config override is a dev-only escape hatch. On a missing
@@ -221,6 +331,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeProject.skillPaths,
           opencodeProject.skillsStageDir,
           opencodeProject.vaultDir,
+          // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
+          opencodeProject.mounts,
           // Model pin (fallback-only, resolveModelPin): without it, default
           // resolution gambles on provider ordering — with Google creds it
           // picked a preview model that hung every headless/agent turn.
@@ -522,10 +634,36 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
 
+  // Device Inspector commands + poll loop (Spec A §3, §5.1).
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.openDeviceInspector", async () => {
+      await revealDeviceInspector();
+      void refreshDeviceInspector(devicesChannel);
+    }),
+    vscode.commands.registerCommand("amicode.device.refresh", () => {
+      void refreshDeviceInspector(devicesChannel);
+    }),
+  );
+  // Fixed-cadence poll; DORMANT (early-return) until a device is configured, so
+  // this is always safe to run. Cleared on deactivate.
+  devicePollTimer = setInterval(() => void refreshDeviceInspector(devicesChannel), DEVICE_POLL_MS);
+  ctx.subscriptions.push({
+    dispose: () => {
+      if (devicePollTimer) {
+        clearInterval(devicePollTimer);
+        devicePollTimer = undefined;
+      }
+    },
+  });
+
   opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; amicoRunBinDir=${amicoRunBinDir ?? "(none)"}`);
 }
 
 export function deactivate(): void {
+  if (devicePollTimer) {
+    clearInterval(devicePollTimer);
+    devicePollTimer = undefined;
+  }
   // Distill trigger 2 (session close): queue-only — a drain must not delay
   // shutdown; the next activation or trigger drains the queue.
   if (distillerSetup) triggerSweep(distillerSetup, false);

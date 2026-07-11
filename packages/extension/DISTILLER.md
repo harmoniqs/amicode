@@ -170,13 +170,27 @@ run_id = "r20260703-095831Z-e5b7"
 New `-v<N+1>` ONLY when fidelity strictly improves on the card's
 `best_fidelity` or the formulation materially changed. Otherwise no new binary.
 
-### `KNOWLEDGE.md` line (insert newest-first; update in place on card update; cap 50 lines)
+### `KNOWLEDGE.md` — FROZEN (read-only; superseded by the typed memory store)
+
+`KNOWLEDGE.md` is **no longer written**. It stays readable for back-compat — the
+session bootstrap still splices its existing lines as "Your recent problems" —
+but the distiller does not append to it. Problem cards are still written to
+`problems/` (the card frontmatter is the source of truth, Hard rule 7); only the
+flat index is frozen. Durable *facts* now live in the typed memory store
+(`memory/`, see below). Historical line shape, for reading only:
 
 ```markdown
 - [x-gate-transmon](problems/x-gate-transmon.md) — transmon gate X, solved 8×,
   best F=0.99995, pulse: x-gate-transmon-v1
-- [cat-state-transmon-cavity](problems/cat-state-transmon-cavity.md) — cavity-transmon
-  state_prep, ATTEMPTED (launch failed: no solvespec), no pulse yet
+```
+
+On each run, make `KNOWLEDGE.md` carry a single migration pointer to the new
+store — **append the line below ONLY if that exact line is not already present**
+(this prompt runs on every distill, so the presence check is what keeps it
+idempotent → zero diff on re-run; never append a second copy):
+
+```markdown
+> Superseded — durable memory now lives in `memory/` (index: `memory/MEMORY.md`).
 ```
 
 ### Onboarding materialization (only per Hard rule 4)
@@ -264,7 +278,10 @@ script: <relative path to the representative script>
 sys_params: { fock_cutoff: 20, chi: 0.0000328, alpha: 2 }   # if readable
 ```
 
-DEMOS.md line:
+DEMOS.md line — **FROZEN** (read-only; superseded by the typed memory store).
+Keep writing the demo *card* to `demos/<slug>.md` as before; the distiller no
+longer appends to `DEMOS.md` (the bootstrap still reads its existing lines as
+"Reference demos"). Historical line shape, for reading only:
 
 ```
 - [stanford-bosonics-cat](demos/stanford-bosonics-cat.md) — cavity state_prep cat-state, N_fock=20, script scripts/optimize_cat_alpha2.jl
@@ -273,6 +290,65 @@ DEMOS.md line:
 Match/idempotency: a `demo` job for a `demo_dir` already carded (same slug) with
 no change is a no-op. Demo cards use the same 3-tuple identity as problem cards
 but never merge with the user's own solves (source distinguishes them).
+
+## Typed memory store (durable facts) — `<vault>/amicode/memory/` (spec-20260707-002846 C4)
+
+Beyond problem/demo cards (which capture *solves*), record durable **facts**
+about the user and the work in a typed memory store — the write side of the
+"Memory index" the session bootstrap splices. This SUPERSEDES the flat
+`KNOWLEDGE.md`/`DEMOS.md` indices (now frozen). Keep it lean and
+non-duplicative: a fact worth remembering across future sessions, not the state
+of the current one.
+
+Four types — pick the best fit:
+
+- **user** — the user's role, goals, preferences, environment (who they are, how
+  they like to work). File: `memory/user_<topic>.md`.
+- **feedback** — a correction the user gave OR an approach they confirmed ("do
+  X", "never Y", "yes, that was right"). Lead with the rule, then a **Why:** line
+  (the reason/incident) and a **How to apply:** line. File: `memory/feedback_<topic>.md`.
+- **project** — an ongoing initiative, decision, deadline, or incident not
+  derivable from the artifacts or git history. File: `memory/project_<topic>.md`.
+- **reference** — a pointer to where information lives outside the vault (a repo,
+  dashboard, or channel) and what it is for. File: `memory/reference_<topic>.md`.
+
+Each card's frontmatter (then the body):
+
+```markdown
+---
+name: <short-kebab-slug>
+description: <one-line summary — used to judge relevance in future sessions>
+type: user | feedback | project | reference
+---
+
+<body — for feedback/project, structure as: rule/fact, then **Why:** + **How to apply:**>
+```
+
+Maintain `memory/MEMORY.md` as the one-line index (this is the exact file the
+session bootstrap reads and splices). One entry per card, newest-first, ≤~150
+chars each, cap ~50 lines:
+
+```markdown
+- [user-role](user_role.md) — Aaron is CEO of Harmoniqs; frame for a senior IC
+- [feedback-latex](feedback_latex.md) — use LaTeX math in chat, not just docs
+```
+
+Rules for the typed store (same discipline as problem cards):
+
+- **Match before create.** Read `memory/MEMORY.md` and the frontmatter of every
+  file in `memory/` first. If a card already covers the fact, UPDATE it in place
+  (never write a second card, never a duplicate index line). Remove a card only
+  when the fact is explicitly retracted.
+- **Idempotent.** Re-running any job must produce zero diff once a fact is
+  recorded — the MEMORY.md line is updated in place, appended only when new.
+- **No secrets** (Hard rule 5) and **no fabrication** — record only facts the
+  job's artifacts/transcript actually establish.
+- **Identity gate.** Only an `onboarding` job may write **user**-type identity
+  facts that mirror `PROFILE.md` (parity with Hard rule 4). `run`/`sweep`/
+  `batch`/`demo` jobs may record **feedback**/**project**/**reference** facts
+  they legitimately observe, but never touch `PROFILE.md` or user-identity cards.
+- Writes stay under `<vault>/amicode/` → the pathspec-scoped commit (Hard rule 1)
+  and the existing grant already cover them; **no new permission is needed**.
 
 ## Finishing a job
 

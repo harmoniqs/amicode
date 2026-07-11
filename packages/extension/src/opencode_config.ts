@@ -9,20 +9,27 @@ import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } 
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
+  isProductSkillEntitled,
   buildSkillIndexSection,
   stageOpencodeSkills,
   type SkillIndexEntry,
 } from "./scores/package_skills";
 import {
-  resolvePersonalVault,
-  defaultVaultsRoot,
   readProfileMd,
   readKnowledgeLines,
   readDemoLines,
+  readMemoryIndexLines,
   hasOnboardingCompleted,
   onboardingDir,
 } from "./substrate/vault_store";
-import { buildAboutUserSection, buildRecentProblemsSection, buildReferenceDemosSection } from "./substrate/user_splice";
+import { resolveMountStack, personalMount, type Mount, type MountStack } from "./substrate/mount_store";
+import {
+  buildAboutUserSection,
+  buildRecentProblemsSection,
+  buildReferenceDemosSection,
+  buildMountStackSection,
+  buildMemoryIndexSection,
+} from "./substrate/user_splice";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -132,11 +139,28 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
 /** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
- *  in the workspace package repos; platform skills are the configured names in
- *  the central amico-plugin library. Overridable via settings (Task 6). */
+ *  in the workspace package repos; library (product) skills are discovered by
+ *  `surface: product` tag from the central amico-plugin library. Overridable
+ *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
-export const DEFAULT_PLATFORM_SKILLS = ["atoms", "transmon", "fluxonium", "ions", "bosonic"];
 export const DEFAULT_LIBRARY_ROOTS = [path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills")];
+/** The canonical `surface: product` skill set (spec-20260708-112732 §4.5) — a
+ *  documentation/reference anchor for what tag-based discovery is expected to
+ *  surface, NOT a selection input (selection is now purely by frontmatter tag,
+ *  see resolveLibrarySkills). Kept as the golden expectation the discovery test
+ *  asserts against the real library root. */
+export const DEFAULT_PLATFORM_SKILLS = [
+  "atoms",
+  "bosonic",
+  "fluxonium",
+  "ions",
+  "transmon",
+  "setup",
+  "solve",
+  "plot",
+  "objectives",
+  "demo",
+];
 
 /** Bundled spec-C authoring assets (absolute), resolved relative to this module.
  *  At runtime __dirname is the extension's dist/src dir; the assets ship one
@@ -291,6 +315,7 @@ export function buildOpencodeConfigContent(
   skillPaths: string[] = [],
   skillsStageDir: string = "",
   vaultDir: string = "",
+  mounts: Mount[] = [],
   modelPin?: string,
 ): string {
   const templatesDir = path.dirname(templatePath);
@@ -333,6 +358,12 @@ export function buildOpencodeConfigContent(
         [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
         [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
+        // Armonia mount stack (spec-20260707-002846 C1): a READ grant per mount
+        // so the agent can read cards/notes on demand across the WHOLE stack.
+        // The permission surface has no read/write split, so even a read-only
+        // mount gets a grant here (read posture); write discipline stays
+        // distiller-side (its own config), same contract as the vault grant below.
+        ...Object.fromEntries(mounts.map((m) => [`${m.path}/**`, "allow"])),
         // User-memory substrate (spec-20260705-002847 §6): the interview reads
         // problem/environment cards on demand. Read-only BY CONTRACT — vault
         // writes are distiller-only (its own config); the permission surface
@@ -358,13 +389,15 @@ export interface OpencodeConfigOptions {
   entitlementsDir?: string;
   /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
   skillRoots?: string[];
-  /** Configured platform-skill names to index from the library (spec §3). Default: DEFAULT_PLATFORM_SKILLS. */
-  platformSkills?: string[];
-  /** Roots for the central platform-skill library (spec §3). Default: DEFAULT_LIBRARY_ROOTS. */
+  /** Roots for the central library, scanned for `surface: product` skills
+   *  (spec-20260708-112732 §4.5). Default: DEFAULT_LIBRARY_ROOTS. */
   skillLibraryRoots?: string[];
-  /** Personal vault dir for the user-memory substrate (spec-20260705-002847).
-   *  undefined → auto-resolve (kind=personal marker scan under ~/.amico/vaults);
-   *  "" → personalization disabled; a path → used as-is. */
+  /** Personal vault dir for the user-memory substrate (spec-20260705-002847),
+   *  three-state (spec-20260707-002846 C1):
+   *    undefined → auto-resolve the full Armonia mount stack under
+   *                ~/.amico/vaults; vaultDir = the personal mount ("" if none);
+   *    ""        → personalization disabled (empty stack, no grants, no splice);
+   *    a path    → a single forced personal mount at that path (dev escape hatch). */
   vaultDir?: string;
 }
 
@@ -379,8 +412,13 @@ export interface OpencodeProject {
    *  buildOpencodeConfigContent as `skills.paths`. "" if none staged. */
   skillsStageDir: string;
   /** Resolved personal vault ("" when personalization is off) — thread into
-   *  buildOpencodeConfigContent for the read grant. */
+   *  buildOpencodeConfigContent for the read grant. Equals `personalMount(mounts)`
+   *  path (unchanged behavior for the distiller + onboarding consumers). */
   vaultDir: string;
+  /** The resolved Armonia mount stack (spec-20260707-002846 C1) — thread into
+   *  buildOpencodeConfigContent for the per-mount read grants. [] when
+   *  personalization is disabled ("" vaultDir). */
+  mounts: Mount[];
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
@@ -402,10 +440,27 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // transport for the Bun-side plugin. FALLBACK: any failure leaves the substituted
   // AGENTS.md exactly as before — the hardcoded section IS the fallback content;
   // score trouble must never brick the boot.
-  // User-memory substrate (spec-20260705-002847): resolve the personal vault
-  // ONCE, up front — the routing predicate (§3) and the splice (§6) both need
-  // it. undefined → auto-resolve (kind=personal marker scan); "" → off.
-  const vaultDir = opts.vaultDir !== undefined ? opts.vaultDir : resolvePersonalVault(defaultVaultsRoot(), "");
+  // Armonia mount stack (spec-20260707-002846 C1) + user-memory substrate
+  // (spec-20260705-002847): resolve ONCE, up front — the routing predicate (§3),
+  // the per-mount read grants, and the splice (§6, C3/C4) all need it. The
+  // three-state opts.vaultDir contract is preserved EXACTLY:
+  //   undefined → auto-resolve the FULL stack (personal mount → vaultDir);
+  //   ""        → personalization OFF (empty stack, no grants, no splice);
+  //   a path    → a single forced personal mount at that path (dev escape hatch).
+  let stack: MountStack;
+  if (opts.vaultDir === undefined) {
+    stack = resolveMountStack();
+  } else if (opts.vaultDir === "") {
+    stack = { mounts: [], warnings: [] };
+  } else {
+    stack = {
+      mounts: [{ name: path.basename(opts.vaultDir), kind: "personal", path: opts.vaultDir, writable: true }],
+      warnings: [],
+    };
+  }
+  // vaultDir === the personal mount path (unchanged behavior for the distiller +
+  // onboarding predicate consumers); "" when there is no personal mount.
+  const vaultDir = personalMount(stack)?.path ?? "";
 
   let finalContent = filled;
   try {
@@ -467,11 +522,15 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   try {
     const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
-    const allow = packageAllowlist(entitlementsTablePath(scoresRoot), readLocalEntitlements(entsDir).entitlements);
+    const ents = readLocalEntitlements(entsDir).entitlements;
+    const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
     skillEntries = [
-      ...resolveLibrarySkills(
-        opts.platformSkills ?? DEFAULT_PLATFORM_SKILLS,
-        opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS,
+      // Library (product) skills by `surface: product` tag (spec-20260708-112732
+      // §4.5). The entitlement seam (§7.1) is wired but a no-op today — every
+      // product skill is public, so all stage; a future GATED_PRODUCT_SKILLS row
+      // gates without touching this call.
+      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, (name) =>
+        isProductSkillEntitled(name, ents),
       ),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
@@ -517,6 +576,23 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     }
   }
 
+  // Mount-stack + memory-index splice (spec-20260707-002846 C3/C4 read side):
+  // its OWN try/catch — mount-parity trouble must never brick the boot. The
+  // mount-stack section renders whenever the stack has mounts (mounts can exist
+  // without a personal vault — e.g. a team-only stack); the typed-memory index
+  // is read from the personal mount, so it is gated on vaultDir. Empty stack
+  // ("" vaultDir) → both builders return "" → nothing is spliced.
+  try {
+    const mountSection = buildMountStackSection(stack);
+    if (mountSection) finalContent = finalContent + "\n\n" + mountSection;
+    if (vaultDir) {
+      const memorySection = buildMemoryIndexSection(readMemoryIndexLines(vaultDir));
+      if (memorySection) finalContent = finalContent + "\n\n" + memorySection;
+    }
+  } catch (e) {
+    console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
+  }
+
   fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
@@ -528,5 +604,6 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     skillPaths: skillEntries.map((e) => e.path),
     skillsStageDir,
     vaultDir,
+    mounts: stack.mounts,
   };
 }

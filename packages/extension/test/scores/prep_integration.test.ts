@@ -36,7 +36,6 @@ function prep(overrides: Partial<Parameters<typeof prepareOpencodeProject>[0]> =
     // hermetic by default: no skill index unless a test opts in (otherwise these
     // default to the machine's ~/harmoniqs/{packages,amico-plugin/skills}).
     skillRoots: [],
-    platformSkills: [],
     skillLibraryRoots: [],
     // hermetic: personalization off (else auto-resolve hits the machine's real
     // personal vault and, absent a profile there, routes to the overture score —
@@ -60,11 +59,19 @@ function mkPkgSkillRoot(): string {
 }
 function mkLibRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "libskill-"));
-  const d = path.join(root, "atoms");
-  fs.mkdirSync(d, { recursive: true });
+  // atoms is surface:product → staged; pr is surface:internal → the leak hazard
+  // that surface-tag discovery must drop (spec-20260708-112732 §4.5).
+  const atoms = path.join(root, "atoms");
+  fs.mkdirSync(atoms, { recursive: true });
   fs.writeFileSync(
-    path.join(d, "SKILL.md"),
-    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\n---\n# body\n",
+    path.join(atoms, "SKILL.md"),
+    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\nsurface: product\n---\n# body\n",
+  );
+  const pr = path.join(root, "pr");
+  fs.mkdirSync(pr, { recursive: true });
+  fs.writeFileSync(
+    path.join(pr, "SKILL.md"),
+    "---\nname: pr\ndescription: open a PR\nagents: [engineer]\nsurface: internal\n---\n# body\n",
   );
   return root;
 }
@@ -168,6 +175,69 @@ describe("buildOpencodeConfigContent × scores", () => {
   });
 });
 
+describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1–C4, three-state vaultDir)", () => {
+  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory splice (regression guard)', () => {
+    const proj = prep({ vaultDir: "" });
+    expect(proj.mounts).toEqual([]);
+    expect(proj.vaultDir).toBe("");
+    const agents = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(agents).not.toContain("## Mount stack (Armonia");
+    expect(agents).not.toContain("## Memory index");
+  });
+
+  it("vaultDir path → single forced personal mount at that path; returns mounts + splices the mount stack", () => {
+    const vault = fs.mkdtempSync(path.join(os.tmpdir(), "forced-vault-"));
+    fs.mkdirSync(path.join(vault, "amicode", "memory"), { recursive: true });
+    fs.writeFileSync(
+      path.join(vault, "amicode", "memory", "MEMORY.md"),
+      "# Memory index\n- [user-role](user_role.md) — Aaron is CEO\n",
+    );
+    const proj = prep({ vaultDir: vault });
+    expect(proj.mounts).toHaveLength(1);
+    expect(proj.mounts[0]).toMatchObject({ kind: "personal", path: vault, writable: true });
+    expect(proj.vaultDir).toBe(vault); // vaultDir === personalMount path
+    const agents = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
+    expect(agents).toContain(`kind=personal · rw · ${vault}`);
+    // memory index reads from the personal mount:
+    expect(agents).toContain("## Memory index");
+    expect(agents).toContain("- [user-role](user_role.md) — Aaron is CEO");
+  });
+
+  it("vaultDir undefined → auto-resolves the full stack from ~/.amico/vaults; vaultDir === personal mount", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "home-"));
+    const vaults = path.join(home, ".amico", "vaults");
+    const personal = path.join(vaults, "armonia-me");
+    fs.mkdirSync(path.join(personal, "amicode"), { recursive: true });
+    fs.writeFileSync(path.join(personal, ".amico-vault.toml"), 'kind = "personal"\nname = "armonia-me"\n');
+    // a PROFILE.md suppresses the overture routing predicate (keeps this a plain
+    // pulse-designer compile — onboarding routing has its own suite).
+    fs.writeFileSync(path.join(personal, "amicode", "PROFILE.md"), "# Profile — A\n- Role: CEO\n");
+    const team = path.join(vaults, "armonissima");
+    fs.mkdirSync(team, { recursive: true });
+    fs.writeFileSync(path.join(team, ".amico-vault.toml"), 'kind = "team"\nname = "armonissima"\n');
+
+    const prevHome = process.env.HOME;
+    const prevProfile = process.env.AMICO_PROFILE_FILE;
+    process.env.HOME = home;
+    process.env.AMICO_PROFILE_FILE = path.join(home, "no-profile.json"); // wizard gate off
+    try {
+      const proj = prep({ vaultDir: undefined });
+      expect(proj.mounts.map((m) => m.name)).toEqual(["armonia-me", "armonissima"]); // kind-rank: personal(0) < team(4)
+      expect(proj.vaultDir).toBe(personal);
+      const agents = fs.readFileSync(proj.agentsPath, "utf8");
+      expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
+      expect(agents).toContain(`- armonia-me · kind=personal · rw · ${personal}`);
+      expect(agents).toContain(`- armonissima · kind=team · ro · ${team}`);
+    } finally {
+      if (prevHome === undefined) delete process.env.HOME;
+      else process.env.HOME = prevHome;
+      if (prevProfile === undefined) delete process.env.AMICO_PROFILE_FILE;
+      else process.env.AMICO_PROFILE_FILE = prevProfile;
+    }
+  });
+});
+
 describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source)", () => {
   // NOTE: presence/absence is asserted on the STRUCTURED authoring.json skills
   // array (source/name/package), not raw prompt text — the author-first prose
@@ -182,7 +252,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
@@ -191,6 +260,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     expect(proj.skillPaths.some((p) => p.endsWith("/atoms/SKILL.md"))).toBe(true);
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
+    expect(libNames(skills)).not.toContain("pr"); // surface:internal never stages (leak guard, §4.5)
     expect(pkgNames(skills)).toContain("Piccolissimo");
     expect(skills[0].source).toBe("library"); // platform entries first (spec §3)
   });
@@ -206,7 +276,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       scoresRoot: badRoot,
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
@@ -221,7 +290,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: fs.mkdtempSync(path.join(os.tmpdir(), "no-ents-")), // public
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: [mkLibRoot()],
     });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");
@@ -230,6 +298,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     expect(skills.length).toBeGreaterThan(0);
     expect(skills.every((e) => e.source === "library")).toBe(true); // platform only, no package
     expect(libNames(skills)).toContain("atoms");
+    expect(libNames(skills)).not.toContain("pr"); // surface:internal never stages (leak guard, §4.5)
     expect(authoring.allowlist).not.toContain("Piccolissimo");
   });
 
@@ -237,7 +306,6 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const proj = prep({
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
-      platformSkills: ["atoms"],
       skillLibraryRoots: ["/nonexistent-lib"],
     });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## Skill index");
