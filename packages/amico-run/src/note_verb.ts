@@ -18,19 +18,35 @@
 //         replacing the incumbent gate entry iff the candidate has higher
 //         fidelity. Surgical text edit — the rest of the note is untouched.
 //
+//   amico note route --type <spec|plan|insight|method|note|hopper> --title <t>
+//                    (--body <s> | --body-file <f>) [--intent <kind>]
+//                    [--stamp YYYYMMDD-HHMMSS] [--commit] [--dry-run]
+//       → the routed GENERIC writer (plan Task 8): pick the first WRITABLE mount of
+//         the intent kind, else fall back to the personal mount and stamp
+//         `route_intent`. `experiment` is NOT a valid --type (that is `note write`'s
+//         job). `--stamp` is injectable (clock injected at this verb layer, not the
+//         pure core). NEW subcommand — `note write`/`bump-best` are untouched.
+//
 // FLAG NAMES (S31 guard): the physics-knob double-dash flags (gate/pulse/system)
 // are banned in src/; the gate discriminator is `--kind` (mapping onto the note
 // `gate` field, as `amico catalog` does).
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import {
+  ROUTE_FOLDERS,
   bumpBestGatesInText,
   experimentId,
+  isRoutableType,
   renderExperimentNote,
+  renderRoutedNote,
+  routeNote,
+  routedNoteBasename,
   type BestGate,
   type ExperimentFields,
 } from "./note.js";
+import { resolveMountStack } from "./mounts.js";
 import { vaultDir } from "./vault_query.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -201,6 +217,103 @@ export function noteBumpBest(argv: string[]): VerbResult {
   return { json: { ...common, written: true }, code: 0 };
 }
 
+// ── route (routed generic writer) ────────────────────────────────────────────
+/** A `YYYYMMDD-HHMMSS` stamp from the system clock (UTC — matches `today()`). The
+ *  clock lives HERE, not in the pure core (note.ts), which takes the stamp as a
+ *  parameter (b3 house rule). */
+function nowStamp(): string {
+  const iso = new Date().toISOString(); // 2026-07-11T01:30:00.000Z
+  return iso.slice(0, 10).replace(/-/g, "") + "-" + iso.slice(11, 19).replace(/:/g, "");
+}
+
+/** `git add <file> && git commit -m <message>` in the mount. Tolerates a non-repo
+ *  (or any git failure): returns a warning, never throws — the note is already on
+ *  disk, so a failed commit is a warning, not a verb failure. */
+function gitCommit(mountPath: string, file: string, message: string): { committed: boolean; warning?: string } {
+  try {
+    execFileSync("git", ["-C", mountPath, "add", file], { stdio: ["ignore", "ignore", "ignore"] });
+    execFileSync("git", ["-C", mountPath, "commit", "-m", message], { stdio: ["ignore", "ignore", "ignore"] });
+    return { committed: true };
+  } catch (e) {
+    return { committed: false, warning: `git commit skipped: ${e instanceof Error ? e.message : String(e)}` };
+  }
+}
+
+export function noteRoute(argv: string[]): VerbResult {
+  const fail = (error: string, extra: Record<string, unknown> = {}): VerbResult => ({
+    json: { verb: "note", subcommand: "route", error, ...extra },
+    code: 64,
+  });
+
+  const type = flagValue(argv, "--type");
+  if (!type) return fail("--type is required (spec|plan|insight|method|note|hopper)");
+  if (type === "experiment") {
+    return fail("`experiment` is not a routable type — schema-complete experiment notes are written by `note write`", {
+      use: "amico note write --platform <p> --kind <g> --fidelity <f>",
+    });
+  }
+  if (!isRoutableType(type)) return fail(`unknown --type "${type}" (want: spec|plan|insight|method|note|hopper)`);
+  const folder = ROUTE_FOLDERS[type];
+
+  const title = flagValue(argv, "--title");
+  if (!title) return fail("--title <t> is required");
+
+  const bodyInline = flagValue(argv, "--body");
+  const bodyFile = flagValue(argv, "--body-file");
+  let body: string;
+  if (bodyInline !== undefined) {
+    body = bodyInline;
+  } else if (bodyFile !== undefined) {
+    if (!existsSync(bodyFile)) return fail(`--body-file not found: ${bodyFile}`);
+    try {
+      body = readFileSync(bodyFile, "utf8");
+    } catch (e) {
+      return fail(`cannot read --body-file: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  } else {
+    return fail("a body is required: --body <s> or --body-file <f>");
+  }
+
+  const intent = flagValue(argv, "--intent") ?? "personal";
+  const stamp = flagValue(argv, "--stamp") ?? nowStamp();
+
+  const stack = resolveMountStack();
+  const decision = routeNote(stack.mounts, intent);
+  if ("error" in decision) return fail(decision.error);
+  const { mount, routeIntent } = decision;
+
+  const content = renderRoutedNote({ type, title, body, stamp, route_intent: routeIntent, session_id: null });
+  const dir = join(mount.path, folder);
+  const file = join(dir, `${routedNoteBasename(type, stamp, title)}.md`);
+
+  const common = {
+    verb: "note",
+    subcommand: "route",
+    type,
+    intent,
+    mount: mount.name,
+    route_intent: routeIntent ?? null,
+    path: file,
+  };
+
+  if (argv.includes("--dry-run")) {
+    return { json: { ...common, written: false, dry_run: true, content }, code: 0 };
+  }
+
+  try {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(file, content);
+  } catch (e) {
+    return fail(`failed to write note: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  const result: Record<string, unknown> = { ...common, written: true };
+  if (argv.includes("--commit")) {
+    result.commit = gitCommit(mount.path, file, `note: add ${routedNoteBasename(type, stamp, title)}`);
+  }
+  return { json: result, code: 0 };
+}
+
 // ── dispatch ─────────────────────────────────────────────────────────────────
 /** The `note` verb body: dispatch on the subcommand. Backs BOTH the CLI
  *  (amico.ts) and the MCP facade (mcp_serve.ts). */
@@ -209,12 +322,13 @@ export function noteVerb(argv: string[]): VerbResult {
   const rest = argv.slice(1);
   if (sub === "write") return noteWrite(rest);
   if (sub === "bump-best") return noteBumpBest(rest);
+  if (sub === "route") return noteRoute(rest);
   return {
     json: {
       verb: "note",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico note write --platform <p> --kind <g> --fidelity <f>  |  amico note bump-best --platform <p> --kind <g> --fidelity <f> [--source <link>]",
+        "amico note write --platform <p> --kind <g> --fidelity <f>  |  amico note bump-best --platform <p> --kind <g> --fidelity <f> [--source <link>]  |  amico note route --type <t> --title <t> (--body <s> | --body-file <f>) [--intent <kind>] [--stamp <s>] [--commit]",
     },
     code: 64,
   };

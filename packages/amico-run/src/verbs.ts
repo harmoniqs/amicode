@@ -87,10 +87,11 @@ const device: Verb = {
 };
 
 // note — librarian bookkeeping. REAL as of B3: `write` (experiment note) +
-// `bump-best` (best_gates), both deterministic.
+// `bump-best` (best_gates); `route` (routed generic note by intent, Task 8) — all
+// deterministic.
 const note: Verb = {
   name: "note",
-  summary: "write experiment note / bump best_gates (librarian bookkeeping → deterministic)",
+  summary: "write experiment note / bump best_gates / route a generic note by intent (librarian bookkeeping)",
   generalizes: "the amicode_* librarian/note plugin tools (bookkeeping half)",
   slice: "spine bookkeeping (B3)",
   run: noteVerb,

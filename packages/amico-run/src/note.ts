@@ -9,6 +9,13 @@
 // Two operations: (1) render an experiment note with full frontmatter from a
 // finished-run row; (2) bump the `best_gates` list in a system-context note,
 // replacing the incumbent gate entry iff the candidate has higher fidelity.
+//
+// B-slice addition (plan Task 8): the routed GENERIC writer behind `amico note
+// route` — the amico-vault skill's write-routing table mechanized. It is a SEPARATE
+// subcommand from `note write`: the experiment writer above is byte-for-byte
+// untouched. The routing logic here is pure (mount stack + intent in, decision out;
+// clock/fs stay in note_verb.ts).
+import type { Mount } from "./mounts.js";
 
 // ── experiment note rendering ─────────────────────────────────────────────────
 
@@ -258,4 +265,94 @@ export function bumpBestGatesInText(text: string, entry: BestGate): BumpTextResu
     merge.gates.length === 0 ? ["best_gates: []"] : ["best_gates:", ...merge.gates.map(serializeBestGate)];
   const rebuilt = [...lines.slice(0, keyIdx), ...newBlock, ...lines.slice(blockEnd)].join("\n");
   return { ok: true, text: rebuilt, bumped: true, previous: merge.previous, reason: merge.reason };
+}
+
+// ── routed generic note (`amico note route`) ─────────────────────────────────────
+// The amico-vault skill's write-routing table, mechanized. `experiment` is
+// deliberately absent — schema-complete experiment notes are `note write`'s job.
+// The skill's folder table lacks notes/hopper rows, so the explicit map is stated
+// here (plan Task 8).
+export const ROUTE_FOLDERS: Record<string, string> = {
+  spec: "specs",
+  plan: "plans",
+  insight: "insights",
+  method: "methods",
+  note: "notes",
+  hopper: "hopper",
+};
+
+/** A route type is valid iff it has a folder in the explicit map (excludes
+ *  `experiment`, which is `note write`'s exclusive job). */
+export function isRoutableType(type: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ROUTE_FOLDERS, type);
+}
+
+/** The routing decision: which mount to write to, plus the `route_intent` to stamp
+ *  when we fall back to personal (target kind absent or read-only). */
+export interface RouteDecision {
+  mount: Mount;
+  routeIntent?: string; // set only on a personal fallback (never silently dropped)
+}
+
+/** Route by intent kind → the first WRITABLE mount of that kind in stack order. If
+ *  none exists (kind absent or read-only), fall back to the personal mount and mark
+ *  `routeIntent` so the note records where it wanted to go. Never writes a ro mount;
+ *  never silently drops the intent. Pure — the stack is resolved by the caller. */
+export function routeNote(mounts: readonly Mount[], intent: string): RouteDecision | { error: string } {
+  const target = mounts.find((m) => m.kind === intent && m.writable);
+  if (target) return { mount: target };
+  const personal = mounts.find((m) => m.kind === "personal" && m.writable);
+  if (!personal) return { error: `no writable personal mount to route a '${intent}' note to` };
+  // intent === "personal" reaching here means there is no writable personal mount
+  // (handled above), so any fallback here is a genuine cross-kind reroute.
+  return { mount: personal, routeIntent: intent };
+}
+
+/** ISO date derived from a `YYYYMMDD-HHMMSS` stamp: "20260711-013000" → "2026-07-11". */
+export function stampToDate(stamp: string): string {
+  const day = stamp.slice(0, 8);
+  return `${day.slice(0, 4)}-${day.slice(4, 6)}-${day.slice(6, 8)}`;
+}
+
+/** A filesystem-safe kebab slug from a title (empty → "note"). */
+export function slugify(title: string): string {
+  return (
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "note"
+  );
+}
+
+/** `<type>-<stamp>-<slug>` — the routed note's basename (no folder, no extension). */
+export function routedNoteBasename(type: string, stamp: string, title: string): string {
+  return `${type}-${stamp}-${slugify(title)}`;
+}
+
+export interface RoutedNoteFields {
+  type: string;
+  title: string;
+  body: string;
+  stamp: string; // YYYYMMDD-HHMMSS
+  route_intent?: string; // stamped only on a personal fallback
+  session_id?: string | null; // routed notes are agent-agnostic → null
+}
+
+/** Render a routed generic note: minimal frontmatter (`type`, `date`,
+ *  `session_id: null`, `tags: [<type>]`, and `route_intent` only when set) + an H1
+ *  title and the supplied body. Deterministic — stamp/date/intent come from the
+ *  caller, nothing is invented. */
+export function renderRoutedNote(f: RoutedNoteFields): string {
+  const fm = [
+    "---",
+    `type: ${f.type}`,
+    `date: ${stampToDate(f.stamp)}`,
+    `session_id: ${f.session_id ? `"${f.session_id}"` : "null"}`,
+    `tags: [${f.type}]`,
+  ];
+  if (f.route_intent) fm.push(`route_intent: ${f.route_intent}`);
+  fm.push("---");
+
+  const body = ["", `# ${f.title}`, "", f.body.trim(), ""].join("\n");
+  return fm.join("\n") + "\n" + body + "\n";
 }
