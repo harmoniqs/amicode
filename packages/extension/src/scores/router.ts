@@ -11,8 +11,8 @@ export function buildRouterSection(visible: Score[]): string {
     "## Onset router",
     "",
     "When a session opens without a specific request, after your one-line Amico",
-    'intro ask exactly one question — "What do you want to do today?" — via',
-    "`amicode_ask` when available, with these options:",
+    'intro ask exactly one question — "What do you want to do today?" — via the',
+    "native `question` tool, with these options:",
     "",
   ];
   if (cards.length > 0) {
