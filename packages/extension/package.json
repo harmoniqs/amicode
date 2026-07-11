@@ -70,7 +70,8 @@
         {
           "id": "amicode.deviceInspector",
           "name": "Device Inspector",
-          "type": "webview"
+          "type": "webview",
+          "when": "amicode.deviceInspectorRevealed"
         }
       ]
     },

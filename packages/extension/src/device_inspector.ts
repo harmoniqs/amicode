@@ -94,7 +94,7 @@ class DeviceInspectorView implements vscode.WebviewViewProvider {
   }
 
   reveal(): void {
-    vscode.commands.executeCommand("amicode.deviceInspector.focus").then(undefined, () => undefined);
+    void revealDeviceInspector();
   }
 
   private renderHtml(webview: vscode.Webview): string {
@@ -128,6 +128,23 @@ function newNonce(): string {
   const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
   for (let i = 0; i < 32; i++) s += chars[Math.floor(Math.random() * chars.length)];
   return s;
+}
+
+/** Context key gating the Device Inspector view (package.json `when`). It starts
+ *  false on every window load and is NOT persisted, so VS Code never restores
+ *  the panel on its own — the view only materializes once a reveal path flips
+ *  it. That is what makes the device inspector strictly button-press-only.
+ *  Mirrors the Run Inspector's INSPECTOR_CONTEXT_KEY (run_inspector.ts). */
+export const DEVICE_INSPECTOR_CONTEXT_KEY = "amicode.deviceInspectorRevealed";
+
+/** The one way the Device Inspector is ever shown: flip the gate context key on
+ *  (so the gated view is allowed to appear), then focus it. Every reveal path —
+ *  the open command and the (unused) reveal() shim — funnels through here, so the
+ *  panel is only ever shown deliberately and never by VS Code's own view-state
+ *  restoration. Structurally identical to revealInspector (run_inspector.ts). */
+export async function revealDeviceInspector(): Promise<void> {
+  await vscode.commands.executeCommand("setContext", DEVICE_INSPECTOR_CONTEXT_KEY, true);
+  await vscode.commands.executeCommand("amicode.deviceInspector.focus");
 }
 
 export function registerDeviceInspector(ctx: vscode.ExtensionContext): DeviceInspectorView {

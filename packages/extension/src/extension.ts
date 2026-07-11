@@ -21,7 +21,7 @@ import { initDistillerTransport, triggerRunDistill, triggerSweep, type Distiller
 import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
-import { registerDeviceInspector, getDeviceInspector } from "./device_inspector";
+import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -633,7 +633,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Device Inspector commands + poll loop (Spec A §3, §5.1).
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openDeviceInspector", async () => {
-      await vscode.commands.executeCommand("amicode.deviceInspector.focus");
+      await revealDeviceInspector();
       void refreshDeviceInspector(devicesChannel);
     }),
     vscode.commands.registerCommand("amicode.device.refresh", () => {

@@ -1,9 +1,10 @@
 // @vitest-environment happy-dom
 import { describe, it, expect } from "vitest";
+import * as vscode from "vscode";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createDeviceInspectorView } from "../media/ui/views/device_inspector";
-import { registerDeviceInspector } from "../src/device_inspector";
+import { registerDeviceInspector, revealDeviceInspector, DEVICE_INSPECTOR_CONTEXT_KEY } from "../src/device_inspector";
 import type { DeviceStatus, NextAction } from "../src/device_status";
 
 // C4/C5 — the device view IS unit-tested here (happy-dom, mirroring
@@ -173,5 +174,43 @@ describe("Device Inspector host buffering (replay-on-reopen, device-keyed)", () 
     expect(b.posted.filter((m) => m.type === "device-status" && m.device === "snowbird")).toHaveLength(1);
     expect(b.posted.filter((m) => m.type === "actions" && m.device === "snowbird")).toHaveLength(1);
     expect(b.posted[b.posted.length - 1]).toMatchObject({ type: "activate", device: "snowbird" });
+  });
+});
+
+// --- Open-on-button gate (aligns to #117's run-inspector idiom) ------------
+// The view is gated in package.json behind a `when` context key that starts
+// false and is never persisted, so VS Code can't restore/auto-open the panel;
+// the ONLY reveal path flips the key true then focuses. Mirrors run_inspector's
+// INSPECTOR_CONTEXT_KEY / revealInspector, so the device panel is button-only.
+
+describe("Device Inspector open-on-button gate", () => {
+  it("revealDeviceInspector flips the reveal context key true, then focuses the view", async () => {
+    const calls: Array<{ cmd: string; args: unknown[] }> = [];
+    const d1 = vscode.commands.registerCommand("setContext", (...a: unknown[]) => {
+      calls.push({ cmd: "setContext", args: a });
+    });
+    const d2 = vscode.commands.registerCommand("amicode.deviceInspector.focus", (...a: unknown[]) => {
+      calls.push({ cmd: "focus", args: a });
+    });
+    try {
+      await revealDeviceInspector();
+    } finally {
+      d1.dispose();
+      d2.dispose();
+    }
+    // setContext(<key>, true) fires FIRST (allow the gated view), THEN focus.
+    expect(calls).toEqual([
+      { cmd: "setContext", args: [DEVICE_INSPECTOR_CONTEXT_KEY, true] },
+      { cmd: "focus", args: [] },
+    ]);
+    expect(DEVICE_INSPECTOR_CONTEXT_KEY).toBe("amicode.deviceInspectorRevealed");
+  });
+
+  it("package.json gates the deviceInspector view behind the reveal context key", () => {
+    const pkg = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
+    const view = (pkg.contributes.views["amicode-panel"] as Array<{ id: string; when?: string }>).find(
+      (v) => v.id === "amicode.deviceInspector",
+    );
+    expect(view?.when).toBe(DEVICE_INSPECTOR_CONTEXT_KEY);
   });
 });
