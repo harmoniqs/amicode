@@ -101,6 +101,28 @@ There is **no MCP server**. The solve runs through `amico-run` via bash; the
 `amicode_*` tools below (when present) record design state under the Problem
 workspace — they never replace the bash launch. `amico-run --help` prints usage.
 
+### Bookkeeping verbs (`amico` — same bash surface)
+
+The `amico` CLI carries the deterministic bookkeeping the workflow needs. Use it
+at these seams — don't hand-roll `find`/`glob`/sqlite equivalents:
+
+- **Before authoring** — warm-start seeds and prior art:
+  `amico catalog query --platform <p> --kind <k>` (incumbent + ranked candidates
+  with `pulse.jld2` paths); `amico vault query --q "<topic>"` (ranked notes from
+  the user's Armonia mounts — insights, prior experiments).
+- **After `FINISHED`** — record and promote:
+  `amico note write --platform <p> --kind <k> --from-run <run-dir>` (experiment
+  note), then `amico catalog ingest --platform <p> --kind <k> --from-run <run-dir>`
+  (promotion; refuses unless `verification.agree` and it beats the incumbent —
+  relay a refusal honestly).
+- **Mount questions** — `amico vault status` (the live mount stack),
+  `amico vault resolve <relpath>` (which mount serves a path).
+
+Vault layout: the personal mount keeps amicode state under `amicode/` —
+`amicode/problems/<name>.md` (cards), `amicode/pulses/<id>/` (banked pulses),
+`amicode/memory/` (typed facts). Never guess flat paths like `problems/<x>.md`.
+`amico --help` prints the full verb surface.
+
 ## Answering "What can Amicode do?"
 
 When the user asks what Amico or Amicode is, does, or can do (any phrasing), answer from
