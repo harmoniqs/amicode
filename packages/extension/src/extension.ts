@@ -333,10 +333,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeProject.vaultDir,
           // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
           opencodeProject.mounts,
-          // Model pin (fallback-only, resolveModelPin): without it, default
-          // resolution gambles on provider ordering — with Google creds it
-          // picked a preview model that hung every headless/agent turn.
-          resolveModelPin(),
+          // Model pin. Explicit `amicode.defaultModel` setting wins (the
+          // discoverable, user-facing default); empty falls back to
+          // resolveModelPin (respects a model in the global opencode.json, else
+          // a creds-based default — without any pin, resolution gambles on
+          // provider ordering and with Google creds picked a preview model that
+          // hung every headless/agent turn). The in-chat picker still overrides
+          // per session.
+          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
         ),
       },
       channel: opencodeChannel,

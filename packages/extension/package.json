@@ -128,6 +128,11 @@
     "configuration": {
       "title": "Amicode",
       "properties": {
+        "amicode.defaultModel": {
+          "type": "string",
+          "default": "",
+          "description": "Default model for new chats, as \"provider/model-id\" (e.g. \"anthropic/claude-sonnet-5\", \"opencode/deepseek-v4-flash-free\"). Empty = auto (a model in your global ~/.config/opencode/opencode.json if set, else a sensible fallback from your available credentials). The in-chat model picker still overrides per session."
+        },
         "amicode.inspector.autoOpen": {
           "type": "boolean",
           "default": false,
