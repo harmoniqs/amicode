@@ -264,46 +264,21 @@ export function writeAuthoringConfig(
   }
 }
 
-/** Default model pin for the generated config. Without one, opencode's
- *  default-resolution gambles on provider ordering and (with Google creds)
- *  lands on preview variants — gemini-3.1-pro-preview-customtools rejected or
- *  HUNG every turn. Preference: Anthropic if the user has creds for it, else
- *  the boring-but-available GA Gemini flash (the newest flash is capacity-throttled at peak; 2.5 answered in 1.4s while 3.5 returned overloaded). The app's
- *  model picker still overrides per session; undefined leaves opencode's own
- *  default (no creds yet — nothing sane to pin). */
-export function preferredModel(
-  authPath: string = path.join(os.homedir(), ".local", "share", "opencode", "auth.json"),
-): string | undefined {
-  try {
-    const providers = Object.keys(JSON.parse(fs.readFileSync(authPath, "utf8")) as Record<string, unknown>);
-    if (providers.includes("anthropic")) return "anthropic/claude-sonnet-5";
-  } catch {
-    /* no auth.json — the free default below still works */
-  }
-  // Creds-free default: the zen free tier rides no user quota — Gemini keys
-  // kept hitting capacity throttles ("model overloaded" → failed turns render
-  // as "model undefined" stubs), while this answered a tool-bearing turn in ~3s.
-  return "opencode/deepseek-v4-flash-free";
-}
-
-/** The model pin to inject, or undefined. FALLBACK-only: a model in the user's
- *  global opencode config wins (our injected config would override it in the
- *  merge — the 1.17.3 preserve-user-model contract), so we pin nothing then. */
-export function resolveModelPin(
-  globalConfigPath: string = path.join(
-    process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"),
-    "opencode",
-    "opencode.json",
-  ),
-  authPath?: string,
-): string | undefined {
-  try {
-    const cfg = JSON.parse(fs.readFileSync(globalConfigPath, "utf8")) as { model?: unknown };
-    if (typeof cfg.model === "string" && cfg.model) return undefined; // user chose — never override
-  } catch {
-    /* no global config — fall through to the creds-based pin */
-  }
-  return authPath === undefined ? preferredModel() : preferredModel(authPath);
+/** The model pin to inject into the generated config, or undefined.
+ *
+ *  We deliberately DO NOT force a fallback model here. `config.model` is the
+ *  authoritative default in opencode's resolution — it outranks the user's
+ *  recent-model pick (local.tsx: `configuredModel() ?? recentModel() ?? …`).
+ *  A hardcoded fallback in that slot therefore OVERRODE the user's own
+ *  selection permanently (report: "set to qwen but defaults to deepseek").
+ *
+ *  So: the only explicit default is `amicode.defaultModel` (handled by the
+ *  caller, which passes it ahead of this). With no explicit default we return
+ *  undefined and let opencode resolve it — the user's recent pick, else the
+ *  provider default. A user who wants a fixed default sets amicode.defaultModel
+ *  (or a model in their global opencode.json, which opencode reads natively). */
+export function resolveModelPin(): string | undefined {
+  return undefined;
 }
 
 export function buildOpencodeConfigContent(

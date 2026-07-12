@@ -7,7 +7,6 @@ import {
   prepareOpencodeProject,
   resolveJuliaProject,
   buildOpencodeConfigContent,
-  preferredModel,
   resolveModelPin,
   profileHasIdentity,
 } from "../src/opencode_config";
@@ -244,29 +243,11 @@ describe("prepareOpencodeProject", () => {
   });
 });
 
-describe("preferredModel", () => {
-  it("anthropic wins, google falls back to GA flash, absent auth pins nothing", () => {
-    const dir = mkdtempSync(join(tmpdir(), "auth-"));
-    const authPath = join(dir, "auth.json");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
-    expect(preferredModel(authPath)).toBe("opencode/deepseek-v4-flash-free");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" }, anthropic: { type: "api" } }));
-    expect(preferredModel(authPath)).toBe("anthropic/claude-sonnet-5");
-    expect(preferredModel(join(dir, "missing.json"))).toBe("opencode/deepseek-v4-flash-free");
-  });
-});
-
-describe("resolveModelPin (fallback-only)", () => {
-  it("a user global model suppresses the pin; no global model → creds-based pin", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-"));
-    const cfgPath = join(dir, "opencode.json");
-    const authPath = join(dir, "auth.json");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
-    writeFileSync(cfgPath, JSON.stringify({ model: "anthropic/claude-sonnet-4-6" }));
-    expect(resolveModelPin(cfgPath, authPath)).toBeUndefined();
-    writeFileSync(cfgPath, JSON.stringify({}));
-    expect(resolveModelPin(cfgPath, authPath)).toBe("opencode/deepseek-v4-flash-free");
-    expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("opencode/deepseek-v4-flash-free");
+describe("resolveModelPin (no forced fallback)", () => {
+  it("never forces a model pin — the default comes from amicode.defaultModel or opencode's own resolution", () => {
+    // A hardcoded fallback in config.model outranked the user's recent pick
+    // (configuredModel ?? recentModel ?? default), overriding their choice.
+    expect(resolveModelPin()).toBeUndefined();
   });
 });
 
