@@ -155,6 +155,24 @@ export class ChatPanel {
           void vscode.commands.executeCommand((msg as { command: string }).command);
           return;
         }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "set-default-model" &&
+          typeof (msg as { model?: unknown }).model === "string"
+        ) {
+          // Dashboard "Default model" control mirrors its choice into the
+          // amicode.defaultModel setting, so the config pin (headless / first
+          // turn) tracks the UI. "provider/model-id" only, bounded — untrusted.
+          const model = (msg as { model: string }).model.trim();
+          if (model.length > 0 && model.length <= 200 && /^[\w.-]+\/[\w.:-]+$/.test(model)) {
+            void vscode.workspace
+              .getConfiguration("amicode")
+              .update("defaultModel", model, vscode.ConfigurationTarget.Global);
+          }
+          return;
+        }
         console.log("[amicode/chat] webview msg:", msg);
       },
       null,
@@ -223,7 +241,7 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external" || d.kind === "save-file")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external" || d.kind === "save-file" || d.kind === "set-default-model")) {
             vscode.postMessage(d);
           }
           return;
