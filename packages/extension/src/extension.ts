@@ -156,6 +156,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
     // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
     vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
+    // Stable across activations: the app persists the selected project per
+    // server workspace, so a fresh mkdtemp every boot leaves that selection
+    // dangling — its bootstrap fails, the agent list stays empty, and the
+    // composer blocks with "Select an agent and model". storageUri scopes the
+    // dir per workspace (window isolation); globalStorageUri covers
+    // no-workspace windows. F5 dev hosts never showed this because their
+    // webview storage is ephemeral.
+    projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);

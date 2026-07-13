@@ -221,6 +221,22 @@ describe("prepareOpencodeProject", () => {
     expect(existsSync(join(p.projectDir, "solve_template.jl"))).toBe(false);
     expect(existsSync(join(p.projectDir, ".opencode", "opencode.json"))).toBe(false);
   });
+  it("reuses an explicit projectDir across activations (creates it, re-prepare is idempotent)", () => {
+    const ext = fakeExtRoot();
+    const stable = join(mkdtempSync(join(tmpdir(), "storage-")), "opencode-project"); // does not exist yet
+    const opts = {
+      agentsSrc: join(ext, "AGENTS.md"),
+      templateSrc: join(ext, "templates", "solve_template.jl"),
+      juliaProject: "/opt/piccolo",
+      vaultDir: "",
+      projectDir: stable,
+    };
+    const first = prepareOpencodeProject(opts);
+    expect(first.projectDir).toBe(stable); // no mkdtemp — the dir the app persists stays valid
+    const second = prepareOpencodeProject(opts); // second activation: same dir, no throw
+    expect(second.projectDir).toBe(stable);
+    expect(readFileSync(second.agentsPath, "utf8")).toContain("/opt/piccolo");
+  });
 });
 
 describe("preferredModel", () => {
