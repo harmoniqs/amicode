@@ -5,7 +5,6 @@ import * as path from "node:path";
 import {
   resolvePackageSkills,
   resolveLibrarySkills,
-  isProductSkillEntitled,
   buildSkillIndexSection,
   stageOpencodeSkills,
 } from "../../src/scores/package_skills";
@@ -21,15 +20,48 @@ function writeSkill(root: string, pkg: string, name: string, description = "desc
   fs.writeFileSync(p, `---\nname: ${name}\ndescription: ${description}\nagents: [experimenter]\n---\n\n# body\n`);
   return p;
 }
-/** Write a library skill. `surface` is one of "product" | "internal" | null
+/** Write a library skill. `surface` is one of "public" | "internal" | null
  *  (null = untagged frontmatter, the pre-tagging state). */
-function writeLibSkill(root: string, name: string, surface: "product" | "internal" | null = "product"): string {
+function writeLibSkill(root: string, name: string, surface: "public" | "internal" | null = "public"): string {
   const dir = path.join(root, name);
   fs.mkdirSync(dir, { recursive: true });
   const p = path.join(dir, "SKILL.md");
   const surfaceLine = surface === null ? "" : `surface: ${surface}\n`;
   fs.writeFileSync(p, `---\nname: ${name}\ndescription: ${name} physics\nagents: [experimenter]\n${surfaceLine}---\n\n# body\n`);
   return p;
+}
+
+/** The real amico-plugin library root, but ONLY when it is present AND already retagged for
+ *  spec-20260713-003804 (no `surface: product` remains). Returns null otherwise so the real-root
+ *  assertions skip rather than false-fail: on CI there is no checkout, and on a machine whose
+ *  amico-plugin predates the retag (e.g. on `main`) `product` tags still exist. The amico-plugin
+ *  retag PR and this PR are a coupled merge — post-merge (or on the tiering branch) this returns
+ *  the root and the assertions run for real. */
+function retaggedLibraryRoot(): string | null {
+  const root = DEFAULT_LIBRARY_ROOTS[0];
+  if (!fs.existsSync(root)) return null;
+  for (const name of fs.readdirSync(root)) {
+    const p = path.join(root, name, "SKILL.md");
+    if (!fs.existsSync(p)) continue;
+    if (/^surface:\s*product\b/m.test(fs.readFileSync(p, "utf8"))) return null;
+  }
+  return root;
+}
+/** Count on-disk library skills tagged `surface: public`, mirroring the resolver's tolerance
+ *  (well-formed frontmatter carrying name+description; malformed dirs skipped). Derives the
+ *  expected real-root count without a brittle hardcoded golden list. */
+function countPublicSkills(root: string): number {
+  let n = 0;
+  for (const name of fs.readdirSync(root)) {
+    const p = path.join(root, name, "SKILL.md");
+    if (!fs.existsSync(p)) continue;
+    const m = fs.readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
+    if (!m) continue;
+    const fm = m[1];
+    const ok = /^name:\s*\S/m.test(fm) && /^description:\s*\S/m.test(fm);
+    if (ok && /^surface:\s*public\b/m.test(fm)) n++;
+  }
+  return n;
 }
 
 describe("resolvePackageSkills (spec-20260704-113005 §3)", () => {
@@ -71,11 +103,11 @@ describe("resolvePackageSkills (spec-20260704-113005 §3)", () => {
   });
 });
 
-describe("resolveLibrarySkills (spec-20260708-112732 §4.5/§7.1 — surface-tag discovery)", () => {
-  it("stages ONLY surface:product skills — internal + untagged in the same root must NOT leak", () => {
+describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discovery)", () => {
+  it("stages ONLY surface:public skills — internal + untagged in the same root must NOT leak", () => {
     const root = mkRoot();
-    writeLibSkill(root, "atoms", "product");
-    writeLibSkill(root, "transmon", "product");
+    writeLibSkill(root, "atoms", "public");
+    writeLibSkill(root, "transmon", "public");
     writeLibSkill(root, "pr", "internal"); // process skill tagged internal — the leak hazard
     writeLibSkill(root, "debugging", "internal");
     writeLibSkill(root, "legacy", null); // untagged (pre-tagging) — also excluded
@@ -88,7 +120,7 @@ describe("resolveLibrarySkills (spec-20260708-112732 §4.5/§7.1 — surface-tag
   });
   it("EXCLUDES a known internal skill explicitly (the least-privilege leak guard)", () => {
     const root = mkRoot();
-    writeLibSkill(root, "atoms", "product");
+    writeLibSkill(root, "atoms", "public");
     writeLibSkill(root, "pr", "internal");
     writeLibSkill(root, "dream", "internal");
     const names = resolveLibrarySkills([root]).map((e) => e.name);
@@ -98,68 +130,68 @@ describe("resolveLibrarySkills (spec-20260708-112732 §4.5/§7.1 — surface-tag
   });
   it("EXCLUDES an untagged skill (no surface frontmatter)", () => {
     const root = mkRoot();
-    writeLibSkill(root, "atoms", "product");
+    writeLibSkill(root, "atoms", "public");
     writeLibSkill(root, "mystery", null);
     expect(resolveLibrarySkills([root]).map((e) => e.name)).toEqual(["atoms"]);
   });
   it("missing library root → empty, no throw (session proceeds)", () => {
     expect(resolveLibrarySkills(["/nonexistent-lib"])).toEqual([]);
   });
-  it("malformed frontmatter skips that skill, keeps the product ones", () => {
+  it("malformed frontmatter skips that skill, keeps the public ones", () => {
     const root = mkRoot();
     const bad = path.join(root, "broken");
     fs.mkdirSync(bad, { recursive: true });
     fs.writeFileSync(path.join(bad, "SKILL.md"), "no frontmatter here");
-    writeLibSkill(root, "atoms", "product");
+    writeLibSkill(root, "atoms", "public");
     expect(resolveLibrarySkills([root]).map((e) => e.name)).toEqual(["atoms"]);
   });
-  it("first root containing a product skill wins", () => {
+  it("first root containing a public skill wins", () => {
     const r1 = mkRoot(),
       r2 = mkRoot();
-    writeLibSkill(r1, "atoms", "product");
+    writeLibSkill(r1, "atoms", "public");
     const p2 = path.join(r2, "atoms");
     fs.mkdirSync(p2, { recursive: true });
     fs.writeFileSync(
       path.join(p2, "SKILL.md"),
-      `---\nname: atoms\ndescription: from r2\nsurface: product\n---\n# body\n`,
+      `---\nname: atoms\ndescription: from r2\nsurface: public\n---\n# body\n`,
     );
     const idx = resolveLibrarySkills([r1, r2]);
     expect(idx).toHaveLength(1);
     expect(idx[0].description).toBe("atoms physics"); // r1's copy
   });
-  describe("entitlement seam (§7.1)", () => {
-    it("default predicate admits every product skill (public today)", () => {
-      const root = mkRoot();
-      writeLibSkill(root, "atoms", "product");
-      writeLibSkill(root, "transmon", "product");
-      expect(resolveLibrarySkills([root]).map((e) => e.name).sort()).toEqual(["atoms", "transmon"]);
-    });
-    it("a predicate can gate a product skill without touching discovery", () => {
-      const root = mkRoot();
-      writeLibSkill(root, "atoms", "product");
-      writeLibSkill(root, "premium", "product");
-      const idx = resolveLibrarySkills([root], (name) => name !== "premium");
-      expect(idx.map((e) => e.name)).toEqual(["atoms"]); // product-tagged but not entitled → dropped
-    });
-    it("isProductSkillEntitled: public product skills (empty GATED_PRODUCT_SKILLS) always admitted", () => {
-      expect(isProductSkillEntitled("atoms", [])).toBe(true);
-      expect(isProductSkillEntitled("solve", ["some-code"])).toBe(true);
-    });
-  });
-  it("discovers exactly the product-skill set from the real amico-plugin library root", () => {
-    const root = DEFAULT_LIBRARY_ROOTS[0];
-    if (!fs.existsSync(root)) {
-      // machine without the amico-plugin checkout (e.g. CI) — the hermetic tests
-      // above cover the discovery logic; skip the real-root assertion.
-      return;
-    }
+
+  // Real-library-root assertions. Skip on CI (no checkout) and on any pre-retag working tree
+  // (see retaggedLibraryRoot). DEFAULT_PLATFORM_SKILLS is retained as a documentation anchor
+  // of the physics/opt subset but is NO LONGER the selection input — discovery is purely by tag.
+  it("discovers a non-empty public set from the real, retagged amico-plugin root", () => {
+    const root = retaggedLibraryRoot();
+    if (!root) return;
+    const expected = countPublicSkills(root); // tag-derived, same tolerance as the resolver
     const names = resolveLibrarySkills(DEFAULT_LIBRARY_ROOTS).map((e) => e.name).sort();
-    expect(names).toEqual([...DEFAULT_PLATFORM_SKILLS].sort());
-    expect(names).toHaveLength(10);
-    // explicit leak-guard on real data: known internal skills must be absent
-    for (const internal of ["pr", "debugging", "dream", "meeting", "tdd"]) {
-      expect(names).not.toContain(internal);
+    expect(names).toHaveLength(expected);
+    expect(expected).toBeGreaterThan(0);
+    // every physics/opt anchor is public → present in the discovered set (superset check)
+    for (const p of DEFAULT_PLATFORM_SKILLS) expect(names).toContain(p);
+    // explicit leak-guard on real data: a genuinely internal skill must be absent
+    expect(names).not.toContain("develop");
+  });
+
+  // spec-20260713-003804 §6 tag-required check. The tag-derived count above is near-tautological
+  // (an untagged skill is invisible to BOTH sides), so it cannot catch a public-intended skill
+  // left untagged — which under default-deny silently fails to ship. This is that regression guard:
+  // every real library skill MUST carry an explicit surface ∈ {public, internal}.
+  it("every real library skill carries an explicit surface: public|internal", () => {
+    const root = retaggedLibraryRoot();
+    if (!root) return;
+    const offenders: string[] = [];
+    for (const name of fs.readdirSync(root).sort()) {
+      const p = path.join(root, name, "SKILL.md");
+      if (!fs.existsSync(p)) continue;
+      const m = fs.readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
+      const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
+      if (surface !== "public" && surface !== "internal") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
     }
+    expect(offenders, `untagged/mis-tagged library skills: ${offenders.join(", ")}`).toEqual([]);
   });
 });
 

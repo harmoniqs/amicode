@@ -59,13 +59,13 @@ function mkPkgSkillRoot(): string {
 }
 function mkLibRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "libskill-"));
-  // atoms is surface:product → staged; pr is surface:internal → the leak hazard
-  // that surface-tag discovery must drop (spec-20260708-112732 §4.5).
+  // atoms is surface:public → staged; pr is surface:internal → the leak hazard
+  // that surface-tag discovery must drop (spec-20260713-003804).
   const atoms = path.join(root, "atoms");
   fs.mkdirSync(atoms, { recursive: true });
   fs.writeFileSync(
     path.join(atoms, "SKILL.md"),
-    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\nsurface: product\n---\n# body\n",
+    "---\nname: atoms\ndescription: rydberg physics\nagents: [experimenter]\nsurface: public\n---\n# body\n",
   );
   const pr = path.join(root, "pr");
   fs.mkdirSync(pr, { recursive: true });
