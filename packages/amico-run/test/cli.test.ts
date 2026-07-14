@@ -3,6 +3,7 @@ import { execFileSync, execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
+import { maskedHash } from "../src/baseline.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
 beforeAll(() => {
@@ -187,6 +188,67 @@ describe("amico-run CLI", () => {
     expect(rVet.stdout).not.toMatch(/AMICODE_VERIFIED/);
     const vetDir = /runDir=(\S+)/.exec(rVet.stdout)![1];
     expect(existsSync(join(vetDir, "verification.toml"))).toBe(false);
+  });
+  it("--spec tier=composed: verification runs too (spec-20260708-112732 §4.3 tier-2 extension)", () => {
+    const root = tmpRoot();
+    // exemplar with the template's default fill-point markers
+    const exemplar = `using Piccolo\nusing JLD2, TOML\n# ── FILL IN ──────\nT = 10.0\n# ─────────────────\nsolve()\n`;
+    const index = join(root, "exemplars.json");
+    writeFileSync(
+      index,
+      JSON.stringify({
+        schema_version: 1,
+        exemplars: [
+          {
+            id: "ex-cz",
+            platform: "rydberg",
+            kind: "gate_synthesis",
+            size: 2,
+            path: "ex-cz/script.jl",
+            packages: ["Piccolo", "JLD2", "TOML"],
+            baseline_hash: maskedHash(exemplar),
+          },
+        ],
+      }),
+    );
+    const harness = fakeJulia(
+      root,
+      "h.js",
+      `const fs=require('fs'),p=require('path');fs.writeFileSync(p.join(process.argv[process.argv.length-2],'verification.toml'),'schema_version = "1"\\nagree = true\\n')`,
+    );
+    writeFileSync(
+      join(root, "authoring.json"),
+      JSON.stringify({
+        schema_version: 1,
+        allowlist: ["Piccolo"],
+        support_set: ["JLD2", "TOML"],
+        exemplars: index,
+        verify_harness: harness,
+        verify_tolerance: 0.01,
+      }),
+    );
+    // authored script: an inside-fill-point edit → passes the masked-baseline gate
+    const script = fakeJulia(root, "s.jl", "");
+    writeFileSync(script, exemplar.replace("T = 10.0", "T = 25.0"));
+    const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
+    const spec = {
+      schema_version: "2",
+      script_path: script,
+      lab_id: "default",
+      executor: "local",
+      tier: "composed",
+      env: { kind: "provisioned" },
+      source: { exemplar_id: "ex-cz" },
+    };
+    writeFileSync(join(root, "composed.json"), JSON.stringify(spec));
+    const r = run([script, "--runs-root", join(root, "runs"), "--spec", join(root, "composed.json"), "--julia", julia], {
+      AMICO_AUTHORING_FILE: join(root, "authoring.json"),
+      AMICO_VERIFY_RUNNER: harness,
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/AMICODE_VERIFIED agree=true/);
+    const dir = /runDir=(\S+)/.exec(r.stdout)![1];
+    expect(existsSync(join(dir, "verification.toml"))).toBe(true);
   });
   it("SIGTERM to the CLI → abort lane, exit 130", async () => {
     const root = tmpRoot();

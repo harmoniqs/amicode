@@ -9,11 +9,22 @@ import { join } from "node:path";
 // NOT a physics knob; all physics stays in the script.)
 const FORBIDDEN = [/--gate\b/, /--system\b/, /--pulse\b/, /modelcontextprotocol/i, /node:https?\b/, /\bfetch\s*\(/];
 
+/** Every .ts under src/, recursively — the guard must cover subdirs (e.g.
+ *  src/harness/) too, so the tool layer stays CLI/spawn: no HTTP, no MCP. */
+function srcFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name);
+    if (e.isDirectory()) out.push(...srcFiles(p));
+    else if (e.name.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+
 describe("S31 grep rule", () => {
   it("src/ contains no forbidden tool-layer patterns", () => {
-    const srcDir = join(__dirname, "..", "src");
-    for (const f of readdirSync(srcDir)) {
-      const text = readFileSync(join(srcDir, f), "utf8");
+    for (const f of srcFiles(join(__dirname, "..", "src"))) {
+      const text = readFileSync(f, "utf8");
       for (const re of FORBIDDEN) {
         expect(text, `${f} matches forbidden ${re}`).not.toMatch(re);
       }

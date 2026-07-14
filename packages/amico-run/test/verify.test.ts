@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, existsSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runVerification } from "../src/verify.js";
+import { isVerifiedTier, runVerification } from "../src/verify.js";
 import { readToml } from "./helpers.js";
 import type { AuthoringConfig } from "../src/authoring.js";
 import type { SpecStamp } from "../src/types.js";
@@ -72,5 +72,14 @@ describe("runVerification", () => {
     await runVerification(runDir, FREE_SPEC, authoring(undefined));
     expect(existsSync(join(runDir, "verification.toml"))).toBe(true);
     expect(readToml(join(runDir, "verification.toml")).agree).toBe(false);
+  });
+});
+
+describe("isVerifiedTier (spec-20260708-112732 §4.3)", () => {
+  it("verifies free (tier-3) AND composed (tier-2); vetted (tier-1) is trusted", () => {
+    expect(isVerifiedTier("free")).toBe(true);
+    expect(isVerifiedTier("composed")).toBe(true); // the §4.3 extension
+    expect(isVerifiedTier("vetted")).toBe(false);
+    expect(isVerifiedTier(undefined)).toBe(false);
   });
 });

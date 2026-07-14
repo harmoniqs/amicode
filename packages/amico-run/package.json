@@ -15,7 +15,8 @@
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
-    "test:slow": "vitest run test/slow"
+    "test:slow": "vitest run test/slow",
+    "demo:harness": "node esbuild.config.mjs && node dist/harness-demo.js"
   },
   "dependencies": {
     "@amicode/schema": "workspace:*",
