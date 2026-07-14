@@ -390,6 +390,14 @@ export interface OpencodeConfigOptions {
    *    ""        → personalization disabled (empty stack, no grants, no splice);
    *    a path    → a single forced personal mount at that path (dev escape hatch). */
   vaultDir?: string;
+  /** Stable project dir to (re)use across activations; created if missing and
+   *  safe to re-prepare (every write below is overwrite-idempotent). Default:
+   *  a fresh mkdtemp — but note the app PERSISTS the selected project per
+   *  server workspace, so an ephemeral dir dangles after the next activation
+   *  and its bootstrap failure leaves the agent list empty (the fresh-profile
+   *  "Select an agent and model" dead-end). Installed extensions must pass a
+   *  stable dir. */
+  projectDir?: string;
 }
 
 export interface OpencodeProject {
@@ -413,7 +421,8 @@ export interface OpencodeProject {
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
-  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "amicode-v2-"));
+  const projectDir = opts.projectDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "amicode-v2-"));
+  if (opts.projectDir) fs.mkdirSync(projectDir, { recursive: true });
 
   // AGENTS.md: read → substitute {{JULIA_PROJECT}} + {{TEMPLATE_PATH}} → write.
   // This file is the target of opencode's `instructions` config (absolute path).
@@ -546,7 +555,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // into an absolute per-session dir, pointed at by config `skills.paths` (see
   // buildOpencodeConfigContent). Makes them invocable by name (the agent's
   // instinct — observed 2026-07-04); the guard holds because we stage the
-  // resolved set, never a whole library root.
+  // resolved set, never a whole library root. Clear first: a STABLE projectDir
+  // re-prepares, and skills staged under a previous (wider) entitlement set
+  // must not survive into this session's guarded set.
+  fs.rmSync(path.join(projectDir, "skills"), { recursive: true, force: true });
   const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
 
   // User-memory splice (spec-20260705-002847 §6): About-this-user + Your-recent-
