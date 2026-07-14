@@ -13,6 +13,7 @@ import {
   stageOpencodeSkills,
   type SkillIndexEntry,
 } from "./scores/package_skills";
+import { readSolverModeState } from "./solver_mode";
 import {
   resolvePersonalVault,
   defaultVaultsRoot,
@@ -262,6 +263,21 @@ export function preferredModel(
   return "opencode/deepseek-v4-flash-free";
 }
 
+/** Solver-mode section for AGENTS.md (rchari/solver-wire): in HP mode the
+ *  agent authors with the Piccolissimo stack by default — the entitlement
+ *  gate (issimo) has already admitted the packages by the time this renders. */
+function solverModeSection(): string {
+  if (readSolverModeState().mode !== "hp") return "";
+  return (
+    "\n\n## Solver mode\n" +
+    "**HIGH-PERFORMANCE (Piccolissimo + Altissimo).** The user selected the HP solver. " +
+    "Author solves with the **Piccolissimo** stack by default (SplinePulseProblem, free-phase paths, " +
+    "`using Piccolissimo`) rather than plain Piccolo, falling back to Piccolo only when Piccolissimo " +
+    "cannot express the problem (say so when you do). The Altissimo GPU executor is provisioned but " +
+    "dispatches locally until the cloud endpoint ships — never claim cloud execution.\n"
+  );
+}
+
 /** The model pin to inject, or undefined. FALLBACK-only: a model in the user's
  *  global opencode config wins (our injected config would override it in the
  *  merge — the 1.17.3 preserve-user-model contract), so we pin nothing then. */
@@ -481,7 +497,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent, "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -517,7 +533,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     }
   }
 
-  fs.writeFileSync(agentsPath, finalContent, "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).

@@ -9,13 +9,19 @@ import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, resolveModelPin } from "./opencode_config";
+import {
+  prepareOpencodeProject,
+  resolveJuliaProject,
+  buildOpencodeConfigContent,
+  resolveModelPin,
+} from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
+import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -148,7 +154,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-    templateSrc: path.resolve(ctx.extensionPath, "templates", "solve_template.jl"),
+    // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
+    // (same run-dir contract, spline solver layer). An AGENTS.md instruction
+    // can't beat the procedural template path — the file itself must swap.
+    templateSrc: path.resolve(
+      ctx.extensionPath,
+      "templates",
+      readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
+    ),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     platformSkills: cfgArr("platformSkills"),
@@ -230,6 +243,66 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       channel: opencodeChannel,
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
+
+    // Solver-mode switcher (rchari/solver-wire): the app's toggle POSTs
+    // {status:"switching"}; we do the REAL switch — grant/revoke the issimo
+    // entitlement, re-prep the session project (skills/scores/allowlist follow
+    // the entitlement), restart the server, and only then report ready (the
+    // watcher writes it). The app's switch wizard polls through the gap.
+    ctx.subscriptions.push(
+      watchSolverMode(async (mode) => {
+        opencodeChannel.appendLine(`[solver] switching → ${mode}`);
+        applyEntitlementForMode(mode, path.join(os.homedir(), ".amico", "amicode"));
+        const project2 = prepareOpencodeProject({
+          agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
+          // Same mode-selection as boot; `mode` is the requested target of THIS
+          // switch (the state file still reads status:"switching" here).
+          templateSrc: path.resolve(
+            ctx.extensionPath,
+            "templates",
+            mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
+          ),
+          juliaProject: resolveJuliaProject(
+            vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+          ),
+          skillRoots: cfgArr("skillRoots"),
+          platformSkills: cfgArr("platformSkills"),
+          skillLibraryRoots: cfgArr("skillLibraryRoots"),
+          vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
+        });
+        await serverManager?.stop();
+        serverManager = new ServerManager({
+          binary: binary!,
+          cwd: project2.projectDir,
+          port: configuredPort > 0 ? configuredPort : undefined,
+          env: {
+            PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
+            OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+              project2.agentsPath,
+              project2.templatePath,
+              runsRoot,
+              undefined,
+              undefined,
+              project2.skillPaths,
+              project2.skillsStageDir,
+              project2.vaultDir,
+              resolveModelPin(),
+            ),
+          },
+          channel: opencodeChannel,
+        });
+        serverManager.onReady((url) => {
+          opencodeReadyUrl = url;
+        });
+        await serverManager.start();
+        opencodeChannel.appendLine(`[solver] switched → ${mode} (server back up)`);
+        void vscode.window.showInformationMessage(
+          mode === "hp"
+            ? "Amicode: High-Performance Solver active (Piccolissimo unlocked)."
+            : "Amicode: back on the Piccolo stack.",
+        );
+      }),
+    );
 
     // Distiller transport (spec-20260705-002847 §4): written once per
     // activation so every spawner — the run-finished trigger here, the plugin's
