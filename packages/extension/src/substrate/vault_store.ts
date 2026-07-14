@@ -9,6 +9,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 export const KNOWLEDGE_LINE_CAP = 50;
+export const MEMORY_INDEX_LINE_CAP = 50;
 
 export function defaultVaultsRoot(): string {
   return path.join(os.homedir(), ".amico", "vaults");
@@ -77,6 +78,14 @@ export function readKnowledgeLines(vaultDir: string, cap: number = KNOWLEDGE_LIN
  *  age against KNOWLEDGE.md's problem cap. Capped tighter (splice budget ≤~2KB). */
 export function readDemoLines(vaultDir: string, cap = 30): string[] {
   return readIndexLines(vaultDir, "DEMOS.md", cap);
+}
+
+/** Typed-memory index list lines (spec-20260707-002846 C4). The distiller writes
+ *  durable facts as typed cards under `<vault>/amicode/memory/` and maintains a
+ *  one-line index at `memory/MEMORY.md`; only that index is spliced (the cards
+ *  load on demand). Subdir-capable reuse of the readIndexLines pattern. */
+export function readMemoryIndexLines(vaultDir: string, cap: number = MEMORY_INDEX_LINE_CAP): string[] {
+  return readIndexLines(vaultDir, path.join("memory", "MEMORY.md"), cap);
 }
 
 /** Second disjunct of the routing predicate (§3): completed marker in the
