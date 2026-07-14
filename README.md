@@ -1,35 +1,83 @@
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amico-tab-dark.svg">
+  <img alt="Amicode" src="packages/extension/media/amico-tab-light.svg" width="96">
+</picture>
+
 # Amicode
 
-A VS Code extension for agentic quantum-control pulse optimization — natural-language chat → LLM-authored Julia solve (Piccolo/Piccolissimo) → live run inspector → per-lab pulse catalog. Deployed onto partner-lab machines; a vendored [opencode](https://github.com/sst/opencode) binary provides the chat/LLM harness.
+### Quantum optimal control, driven by conversation.
 
-> ## ⚠️ Source of truth = the design docs, not this code
->
-> This repository's **authoritative design lives in the `harmoniqs/amico` vault**, in this order of authority (architecture → context → diagrams → interfaces → planning → plans → specs). When code and docs disagree, **the docs win.** Scope, architecture, and interface changes happen in the vault docs first, then flow to code and issues.
+Describe the gate you want in plain language. Amicode designs the pulse, runs the
+solve, and shows you the result — without leaving your editor.
 
-| # | Authority | Location in `harmoniqs/amico` |
-|---|-----------|------------------------------|
-| 1 | **Architecture + diagrams + interfaces** (container, solve lifecycle, chat→solve→inspector sequence, run-dir contract, provisioning flow, module decomposition §5, dependency graph §7) | [`vault/specs/spec-20260529-amicode-architecture.md`](https://github.com/harmoniqs/amico/blob/main/vault/specs/spec-20260529-amicode-architecture.md) |
-| 2 | **Context / requirements** (problem, solution, user stories S1–S38 with acceptance criteria, stable interface contracts, risks) | [`vault/specs/spec-20260529-amicode-prd.md`](https://github.com/harmoniqs/amico/blob/main/vault/specs/spec-20260529-amicode-prd.md) |
-| 3 | **Decisions** (decision log D1–D10; 157 resolved/deferred open questions) | [`vault/specs/spec-20260529-amicode-open-questions.md`](https://github.com/harmoniqs/amico/blob/main/vault/specs/spec-20260529-amicode-open-questions.md) |
-| 4 | **Project-management plan** (phases β→4, tasks β.1–4.2, per-phase Definition of Done, dependency-ordered parallel-engineer schedule, ~56-pd estimate) | [`vault/plans/plan-20260603-124231-amicode-phased-build.md`](https://github.com/harmoniqs/amico/blob/main/vault/plans/plan-20260603-124231-amicode-phased-build.md) |
-| 5 | **Review / QA** (60-agent swarm review; consolidated findings) | [`vault/reviews/review-20260603-amicode-plan-swarm.md`](https://github.com/harmoniqs/amico/blob/main/vault/reviews/review-20260603-amicode-plan-swarm.md) |
+<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · chat harness vendored from [opencode](https://github.com/sst/opencode)</sub>
 
-Access requires the `harmoniqs/amico` vault repo. (We chose reference-only over copying the docs in, to keep a single source of truth and avoid drift.)
+</div>
 
-## Status of the code in this repo
+---
 
-`src/` is the **v2 spike** — a working chat→solve→inspector prototype (CLI-direct, after the pivot away from MCP + callback-HTTP). It is a **starting point, not the authority.** Per the design audit (vault decision log D9/D10), the following are explicitly in flux or superseded — do not treat them as canonical:
+Amicode turns a natural-language description of a control problem into an
+LLM-authored Julia optimization, runs it, and streams the result back into native
+editor panels. The physics, the solver idioms, and your lab's accumulated
+knowledge all ride along as context — so the script it writes is correct by
+construction, not by luck.
 
-- **`bin/amico-run`** — being re-architected into the **D9 thin orchestrator** (spawns `julia <script>`, writes `manifest.toml` + `FINISHED` from outside Julia; passes a lab *pointer*, never parsed params). The current flag-parsing form is pre-D9.
-- **`spike_solve.jl`** (in the legacy `amico/amicode/julia/` tree, not extracted here) — a **frozen demo spike**, superseded. Production solves are **LLM-authored Julia scripts** using Piccolo's existing public API (`TransmonSystem(; ω, δ, levels)`, `load_pulse`, JLD2 `save`, the Ipopt callback) per **D10** — not a parameterized `spike_solve.jl`.
-- **MCP / callback-HTTP references** in `test/` — vestigial from the pre-pivot design; slated for removal.
+## What it does
 
-## Build & distribution
+**Conversational solves.** Ask for a gate or a state preparation; Amicode writes a
+self-contained Piccolo script, runs the Ipopt solve, and captures the result. No
+boilerplate, no parameter-guessing.
 
-- **Phased build:** see the plan (authority #4). **Phase β (Schuster demo)** is first — gated by packaging/glue (vendor opencode, bundle the solve script, provision the Julia project), not by Julia solver work (which already ships in Piccolo `main`).
-- **Issues** are generated from the PRD + plan (authorities #2/#4) via the `amico:prd-to-issues` skill — *driven by the plan's phase/task decomposition, not by reading this spike code* — onto GitHub Projects board #4 (org `harmoniqs`), labeled `phase:β`…`phase:4` + `area:*`.
+**Physics that ships with the tool.** Platform references for neutral-atom Rydberg,
+transmon, fluxonium, trapped-ion, and bosonic systems load on demand — the
+Hamiltonians, drive conventions, and construction patterns are inlined into each
+script so it stands on its own.
 
-## Dev quickstart (spike)
+**Your knowledge, mounted.** Amicode reads your **Armonia** — the stack of vaults
+you mount (personal, team, public). Notes, specs, experiment history, and your
+pulse catalog become first-class context the assistant plans against.
+
+**A live run inspector.** Watch a solve converge in real time: overlaid pulse
+plots, fidelity and constraint-violation traces, per-run metrics. Every run is
+captured and revisitable.
+
+**A pulse catalog.** A versioned, warm-startable library of your best pulses —
+retrieve the incumbent for a `(platform, gate)`, warm-start from it, and promote a
+new best when you beat it.
+
+**Straight to hardware.** Drive real RFSoC devices through the QICK backend, or run
+the *entire* closed loop against a pure-Julia mock with zero hardware for
+development and CI.
+
+## Hardware — QICK / RFSoC
+
+Amicode's hardware path is [**IntonatoQICK.jl**](https://github.com/harmoniqs/IntonatoQICK.jl),
+a QICK backend that bridges an optimized pulse to an RFSoC board over a deliberately
+**coarse three-verb boundary** (`upload_pulse!` / `trigger!` / `readout`). All tProc-v2
+specifics live board-side, so the firewall between you and the lab is just a transport.
+The whole loop runs — and is tested — with **no Python and no board** via the built-in
+mock, then swaps to real hardware unchanged.
+
+> **QICK v2 backend & docs → [github.com/harmoniqs/IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**
+
+## Try it
+
+Open the Amicode panel and paste:
+
+> Design a minimum-time single-qubit X gate for a transmon (3 levels, penalize
+> leakage to |2⟩). Then run the optimized pulse through the IntonatoQICK mock
+> backend, read out the populations, and plot both the pulse and the readout.
+
+## Open core
+
+The extension and its platform skills are open. **Entitled builds** add
+Harmoniqs's proprietary capabilities — GPU-accelerated solvers and **closed-loop
+hardware calibration** — unlocked by the packages you have access to. Same
+editor, same workflow; what you can reach is set by your entitlements.
+
+## Develop
 
 ```bash
 pnpm install
@@ -37,4 +85,11 @@ pnpm run build      # esbuild → dist/extension.js
 pnpm test           # vscode-shim smoke tests
 ```
 
-See [`AGENTS.md`](./AGENTS.md) for the in-editor opencode project conventions the extension sets up.
+See [`AGENTS.md`](./AGENTS.md) for the in-editor project conventions the extension
+sets up.
+
+---
+
+<div align="center">
+<sub>Built by <a href="https://harmoniqs.co">Harmoniqs</a> · quantum control, composed.</sub>
+</div>
