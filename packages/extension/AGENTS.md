@@ -219,6 +219,10 @@ Stages, in order:
    cavities, anything. **Never coerce** an unfamiliar platform into a known one,
    and never decline for lack of a template. Record the **actual platform string**
    via `amicode_pick_system` (the arg is free-form; e.g. `platform = "spin"`).
+   `pick_system` takes **only** `platform`, `omega`, `delta`, `notes` — nothing
+   else. `drive_max`, `levels`, and any composite structure belong to
+   `amicode_set_model` in the MODEL stage; passing them to `pick_system` is
+   rejected as invalid input. One field per stage — don't over-pack stage 1.
    Then route, in order:
    1. a matching **platform skill** in the `## Skill index` → skill-guided authoring;
    2. `issimo` held + a package skill applies → recommend the private path (e.g. the
