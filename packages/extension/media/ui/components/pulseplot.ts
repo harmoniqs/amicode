@@ -18,6 +18,11 @@
 // Hand-rolled SVG (series are tens of points; >512 knots per drive decimated by
 // stride). preserveAspectRatio=none stretches the plot to the box, so NO <text>
 // lives in the SVG — axis/scale labels are HTML siblings (they must not distort).
+//
+// OVERLAY interaction: a crosshair snaps to the nearest knot and a readout
+// lists every drive's value there (hover or arrow keys — same detail on both);
+// legend keys emphasize a drive on hover/focus and toggle it dim on click.
+// Toggling never removes: the scale, legend, and color assignments hold still.
 
 import { defineStyle } from "../style";
 import { text } from "../atoms/text";
@@ -30,14 +35,57 @@ defineStyle(
                background: var(--bg-plot);
                border: var(--border-width) solid var(--border-color);
                border-radius: var(--border-radius); padding: var(--space-sm); }
-  /* Overlay legend — categorical identity for the overlaid drives. */
+  /* Overlay legend — categorical identity for the overlaid drives. Keys are
+     BUTTONS: hover/focus emphasizes that drive, click toggles it dim. */
   .pulseplot .pp-legend { display: flex; flex-wrap: wrap; gap: var(--space-xs) var(--space-md); }
   .pulseplot .pp-key { display: flex; align-items: center; gap: var(--space-xs); }
+  .pulseplot button.pp-key { background: none; border: none; padding: 2px var(--space-xs);
+                             font: inherit; color: inherit; cursor: pointer;
+                             border-radius: var(--border-radius); }
+  .pulseplot button.pp-key:hover {
+    background: color-mix(in srgb, var(--vscode-foreground, #ccc) 8%, transparent); }
+  .pulseplot .pp-key[aria-pressed="false"] { opacity: 0.45; }
+  .pulseplot .pp-key[aria-pressed="false"] .label-k { text-decoration: line-through; }
   .pulseplot .pp-chip { width: var(--square-dot); height: var(--square-dot);
                         border-radius: 2px; flex: none; }
+  /* Overlay holder — a real flex item, so the plot region fills the panel's
+     height instead of collapsing to the SVG's intrinsic size (pp-multi already
+     did this; the overlay's anonymous holder didn't). */
+  .pulseplot .pp-overlay { flex: 1; min-height: 0; display: flex; flex-direction: column;
+                           gap: var(--space-sm); }
   /* Overlay plot region — relative so the amplitude labels can flank the SVG. */
   .pulseplot .pp-plot { position: relative; flex: 1; min-height: 0; }
   .pulseplot .pp-plot > svg { width: 100%; height: 100%; min-height: 0; display: block; }
+  .pulseplot .pp-key:focus-visible,
+  .pulseplot .pp-plot:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--color-accent));
+                                      outline-offset: 1px; }
+  /* Hover/keyboard readout — a crosshair snaps to the nearest knot; the readout
+     lists EVERY drive at that time (the pointer never has to hit a 2px line). */
+  .pulseplot .pp-cursor { stroke: var(--color-dim); stroke-width: 1;
+                          vector-effect: non-scaling-stroke; }
+  /* One flat strip pinned to the plot's top edge (a tall row-per-series card
+     would overflow a short bottom panel and occlude the data). It flips
+     left/right so it stays out of the crosshair's half. */
+  .pulseplot .pp-readout { position: absolute; top: var(--space-xs); pointer-events: none;
+                           max-width: calc(100% - var(--space-md));
+                           background: var(--vscode-editorWidget-background, var(--bg-plot));
+                           border: var(--border-width) solid var(--border-color);
+                           border-radius: var(--border-radius);
+                           box-shadow: 0 2px 8px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.25));
+                           padding: 2px var(--space-sm);
+                           display: flex; flex-wrap: wrap; align-items: center;
+                           gap: 2px var(--space-md);
+                           font-size: var(--text-small); z-index: 1; }
+  .pulseplot .pp-ro-row { display: flex; align-items: center; gap: var(--space-xs); }
+  /* Tooltip rows key their series with a short LINE of the series color (a
+     filled box at this density is data-weight ink doing a label's job). */
+  .pulseplot .pp-ro-key { width: 10px; height: 2px; border-radius: 1px; flex: none; }
+  .pulseplot .pp-ro-v { font-family: var(--text-mono); }
+  @media (prefers-reduced-motion: no-preference) {
+    .pulseplot .pp-step { transition: opacity 0.15s ease-out; }
+    .pulseplot.pp-busy .pp-hint { animation: pp-breathe 2.2s ease-in-out infinite; }
+  }
+  @keyframes pp-breathe { 0%, 100% { opacity: 0.55; } 50% { opacity: 0.25; } }
   .pulseplot .pp-ylab { position: absolute; left: 0; padding: 0 var(--space-xs); pointer-events: none; }
   .pulseplot .pp-ylab.hi { top: 0; }
   .pulseplot .pp-ylab.lo { bottom: 0; }
@@ -96,8 +144,21 @@ export interface PulsePlot {
   meta(m: PulsePlotMeta): void;
   update(r: PulsePlotRecord): void;
   clear(): void;
-  /** Empty-state with a hint — idle / warming / no-pulse-data messaging. */
-  waiting(hint: string): void;
+  /** Empty-state with a hint — idle / warming / no-pulse-data messaging.
+   *  `busy` adds a gentle breathing animation (reduced-motion gated) for
+   *  states where work is happening off-screen (Julia warming up). */
+  waiting(hint: string, busy?: boolean): void;
+}
+
+/** Overlay-mode interaction handles — rebuilt per meta(), undefined in
+ *  small-multiples mode (position + per-strip labels disambiguate there). */
+interface OverlayRefs {
+  plot: HTMLElement;
+  svg: SVGSVGElement;
+  cursor: SVGLineElement;
+  readout: HTMLDivElement;
+  timeValue: HTMLSpanElement;
+  rows: { row: HTMLDivElement; value: HTMLSpanElement }[];
 }
 
 export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
@@ -119,12 +180,26 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
   let series: Series[] = [];
   let currentMeta: PulsePlotMeta | undefined;
 
+  // Interaction state (overlay mode). The record cache keeps the DECIMATED
+  // values — the crosshair snaps to rendered knots, so readout and path agree.
+  let overlay: OverlayRefs | undefined;
+  let lastValues: number[][] | undefined;
+  let lastStride = 1;
+  let lastDt = 0;
+  let cursorIdx = -1;
+  let seriesOff: boolean[] = [];
+
   el.append(hint.el, axis);
 
   function reset(): void {
     if (body) body.remove();
     body = undefined;
     series = [];
+    overlay = undefined;
+    lastValues = undefined;
+    lastStride = 1;
+    cursorIdx = -1;
+    seriesOff = [];
   }
 
   function meta(m: PulsePlotMeta): void {
@@ -139,6 +214,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
   /** OVERLAY: one shared amplitude axis for every drive. */
   function buildOverlay(m: PulsePlotMeta): HTMLElement {
     const holder = document.createElement("div");
+    holder.className = "pp-overlay";
 
     const legend = document.createElement("div");
     legend.className = "pp-legend";
@@ -159,6 +235,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
     if (lo < 0 && hi > 0) svg.append(hLine("pp-zero", y(0)));
     for (const v of distinctEdges(m.bounds)) svg.append(hLine("pp-limit", y(v)));
 
+    seriesOff = m.labels.map(() => false);
     series = m.labels.map((label, i) => {
       legend.append(legendKey(label, i));
       const step = mkStep(i);
@@ -166,11 +243,120 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
       return { step, y };
     });
 
+    // Crosshair hairline sits above the steps; hidden until hover/keyboard.
+    const cursor = svgEl("line");
+    cursor.setAttribute("class", "pp-cursor");
+    cursor.setAttribute("y1", "0");
+    cursor.setAttribute("y2", String(H));
+    cursor.style.display = "none";
+    svg.append(cursor);
+
+    // Readout: time first, then one row per drive — values lead, labels follow.
+    const readout = document.createElement("div");
+    readout.className = "pp-readout";
+    readout.style.display = "none";
+    readout.setAttribute("aria-live", "polite");
+    const timeRow = document.createElement("div");
+    timeRow.className = "pp-ro-row";
+    const timeValue = text("pp-ro-v", "");
+    timeRow.append(text("label-k", "t").el, timeValue.el);
+    readout.append(timeRow);
+    const rows = m.labels.map((label, i) => {
+      const row = document.createElement("div");
+      row.className = "pp-ro-row";
+      const key = document.createElement("span");
+      key.className = "pp-ro-key";
+      key.style.background = seriesVar(i);
+      const value = text("pp-ro-v", "");
+      row.append(key, text("label-k", label).el, value.el);
+      readout.append(row);
+      return { row, value: value.el };
+    });
+
+    // The whole plot is the hit target; keyboard gets the same readout as hover.
+    plot.tabIndex = 0;
+    plot.setAttribute("role", "group");
+    plot.addEventListener("pointermove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      moveCursor((e.clientX - rect.left) / rect.width);
+    });
+    plot.addEventListener("pointerleave", () => hideCursor());
+    plot.addEventListener("blur", () => hideCursor());
+    plot.addEventListener("keydown", (e) => {
+      const n = lastValues?.[0]?.length ?? 0;
+      if (n === 0) return;
+      const start = cursorIdx >= 0 ? cursorIdx : n >> 1;
+      const jump: Record<string, number> = { ArrowLeft: start - 1, ArrowRight: start + 1, Home: 0, End: n - 1 };
+      if (e.key === "Escape") {
+        hideCursor();
+      } else if (e.key in jump) {
+        showCursor(Math.min(n - 1, Math.max(0, jump[e.key])));
+      } else {
+        return;
+      }
+      e.preventDefault();
+    });
+
+    overlay = { plot, svg, cursor, readout, timeValue: timeValue.el, rows };
+
     const yHi = text("label-k pp-ylab hi", formatAmp(hi));
     const yLo = text("label-k pp-ylab lo", formatAmp(lo));
-    plot.append(svg, yHi.el, yLo.el);
+    plot.append(svg, yHi.el, yLo.el, readout);
     holder.append(legend, plot);
     return holder;
+  }
+
+  /** Hover/focus emphasizes one drive; a toggled-off drive stays at a trace
+   *  opacity (never removed — the scale, the legend, and every drive's color
+   *  assignment are unchanged by toggling). */
+  function applySeriesEmphasis(focus?: number): void {
+    series.forEach((s, i) => {
+      const off = seriesOff[i];
+      const faded = focus !== undefined && focus !== i;
+      s.step.style.opacity = off ? "0.12" : faded ? "0.25" : "1";
+    });
+  }
+
+  function moveCursor(frac: number): void {
+    const n = lastValues?.[0]?.length ?? 0;
+    if (!overlay || n === 0) return;
+    showCursor(Math.min(n - 1, Math.max(0, Math.floor(frac * n))));
+  }
+
+  function showCursor(k: number): void {
+    const values = lastValues;
+    if (!overlay || !values || values.length === 0) return;
+    const n = values[0].length;
+    if (n === 0) return;
+    cursorIdx = k;
+    const fracMid = (k + 0.5) / n;
+    overlay.cursor.setAttribute("x1", String(fracMid * W));
+    overlay.cursor.setAttribute("x2", String(fracMid * W));
+    overlay.cursor.style.display = "";
+    overlay.timeValue.textContent = formatT(k * lastStride * lastDt);
+    overlay.rows.forEach((r, i) => {
+      r.value.textContent = formatAmp(values[i]?.[k] ?? NaN);
+      r.row.style.opacity = seriesOff[i] ? "0.45" : "";
+    });
+    // Flip the readout across the crosshair so it never clips at an edge.
+    const width = overlay.svg.getBoundingClientRect().width;
+    const px = fracMid * width;
+    if (fracMid <= 0.55) {
+      overlay.readout.style.left = `${Math.round(px + 10)}px`;
+      overlay.readout.style.right = "auto";
+    } else {
+      overlay.readout.style.right = `${Math.round(width - px + 10)}px`;
+      overlay.readout.style.left = "auto";
+    }
+    overlay.readout.style.display = "";
+  }
+
+  function hideCursor(): void {
+    cursorIdx = -1;
+    if (!overlay) return;
+    overlay.cursor.style.display = "none";
+    overlay.readout.style.display = "none";
   }
 
   /** SMALL MULTIPLES: one strip per drive, each on its own bounds. */
@@ -217,10 +403,23 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
     c.style.background = seriesVar(i);
     return c;
   };
-  const legendKey = (label: string, i: number): HTMLDivElement => {
-    const key = document.createElement("div");
+  const legendKey = (label: string, i: number): HTMLButtonElement => {
+    const key = document.createElement("button");
+    key.type = "button";
     key.className = "pp-key";
+    key.setAttribute("aria-pressed", "true");
+    key.title = `Toggle ${label}`;
     key.append(chip(i), text("label-k", label).el);
+    key.addEventListener("click", () => {
+      seriesOff[i] = !seriesOff[i];
+      key.setAttribute("aria-pressed", String(!seriesOff[i]));
+      applySeriesEmphasis();
+      if (cursorIdx >= 0) showCursor(cursorIdx); // readout mirrors the toggle
+    });
+    key.addEventListener("mouseenter", () => applySeriesEmphasis(i));
+    key.addEventListener("focus", () => applySeriesEmphasis(i));
+    key.addEventListener("mouseleave", () => applySeriesEmphasis());
+    key.addEventListener("blur", () => applySeriesEmphasis());
     return key;
   };
   const band = (y: number, h: number): SVGRectElement => {
@@ -235,22 +434,36 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
 
   function update(r: PulsePlotRecord): void {
     if (!currentMeta || r.values.length !== series.length || series.length === 0) return;
-    el.classList.remove("pp-empty");
+    el.classList.remove("pp-empty", "pp-busy");
     tEndLabel.set(formatT(r.dt * currentMeta.knots));
-    r.values.forEach((drive, i) => {
-      series[i].step.setAttribute("d", stairsPath(decimate(drive), series[i].y));
+    lastDt = r.dt;
+    // stride mirrors decimate(): the readout's k-th knot must be the k-th RENDERED knot
+    lastStride = r.values[0] ? Math.max(1, Math.ceil(r.values[0].length / MAX_KNOTS)) : 1;
+    lastValues = r.values.map(decimate);
+    r.values.forEach((_, i) => {
+      series[i].step.setAttribute("d", stairsPath(lastValues![i], series[i].y));
     });
+    if (overlay) {
+      overlay.plot.setAttribute(
+        "aria-label",
+        `Pulse plot — ${currentMeta.drives} drives over ${formatT(r.dt * currentMeta.knots)} time units, iteration ${r.iter}. Arrow keys read values.`,
+      );
+      if (cursorIdx >= 0) showCursor(Math.min(cursorIdx, lastValues[0].length - 1)); // live-refresh an open readout
+    }
   }
 
   function clear(): void {
     el.classList.add("pp-empty");
     for (const s of series) s.step.removeAttribute("d");
     tEndLabel.set("");
+    lastValues = undefined;
+    hideCursor();
   }
 
-  function waiting(hintText: string): void {
+  function waiting(hintText: string, busy = false): void {
     hint.set(hintText);
     clear();
+    el.classList.toggle("pp-busy", busy);
   }
 
   return { el, meta, update, clear, waiting };
