@@ -28,6 +28,16 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
+      # Version guard: the tag's base (v0.0.3 or v0.0.3-alpha.1 -> 0.0.3) MUST equal the
+      # extension manifest version, so the installed extension's shown version matches the
+      # release tag. Prevents the confusing "tag says alpha.3 but the extension says 0.0.2".
+      - name: Version guard — tag base must equal the extension manifest version
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          BASE="${TAG#v}"; BASE="${BASE%%-*}"
+          MANIFEST="$(node -p "require('./packages/extension/package.json').version")"
+          echo "tag=$TAG  tag-base=$BASE  manifest=$MANIFEST"
+          [ "$BASE" = "$MANIFEST" ] || { echo "FAIL: tag base '$BASE' != extension manifest '$MANIFEST' — bump packages/extension/package.json to match the tag (or retag)."; exit 1; }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode-v2 run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + vsce
         env:
