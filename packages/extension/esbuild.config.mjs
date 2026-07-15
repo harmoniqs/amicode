@@ -22,6 +22,11 @@ if (existsSync(`${arRoot}/dist/amico-run.js`)) {
     cpSync(`${arRoot}/launcher/amico`, "bin/launcher/amico", { dereference: true });
     cpSync(`${arRoot}/dist/amico.js`, "bin/dist/amico.js", { dereference: true });
     chmodSync("bin/launcher/amico", 0o755);
+    // `amico-vault` == `amico vault` (reuses dist/amico.js). Lets opencode's
+    // /amicode/vaults (the Vaults tab) resolve a vault CLI via Bun.which without
+    // depending on the ops-repo ~/.amico/ops/scripts/amico-vault script.
+    cpSync(`${arRoot}/launcher/amico-vault`, "bin/launcher/amico-vault", { dereference: true });
+    chmodSync("bin/launcher/amico-vault", 0o755);
   } else {
     console.warn("[esbuild] amico-run/dist/amico.js not built — spine verbs will be absent from the package");
   }

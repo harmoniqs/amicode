@@ -7,6 +7,8 @@ const VSIX = join(__dirname, "..", "amicode.vsix");
 const REQUIRED = [
   "extension/bin/dist/amico-run.js",
   "extension/bin/launcher/amico-run",
+  "extension/bin/launcher/amico-vault", // amico-vault == `amico vault`; opencode's Vaults tab resolves it
+
   "extension/templates/solve_template.jl",
   "extension/templates/solve_template_hp.jl", // HP-mode vetted template (Piccolissimo) — mode-selected at prep time
   // spec C authoring assets — the tiered resolver + verification chain break

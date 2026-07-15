@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Thin launcher: `amico-vault <args>` == `amico vault <args>`. Field-compatible with
+# the ops `amico-vault status --json`, so opencode's /amicode/vaults (the Vaults tab)
+# resolves a vault CLI out of the box — no ops-repo shim needed. Mirror of launcher/amico.
+set -euo pipefail
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do                       # resolve symlink chains (node_modules/.bin)
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "amico-vault: node >= 20 not found on PATH (install node or fix PATH; see provisioning runbook)" >&2
+  exit 64
+fi
+exec node "$DIR/../dist/amico.js" vault "$@"
