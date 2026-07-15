@@ -12,13 +12,16 @@ defineStyle(
           text-transform: uppercase; padding: var(--space-xs) var(--space-md);
           border-radius: var(--border-radius-round);
           border: var(--border-width) solid currentColor;
+          background: color-mix(in srgb, currentColor 10%, transparent);
           display: inline-flex; align-items: center; gap: var(--space-sm); }
   .pill::before { content: ""; width: var(--square-dot); height: var(--square-dot);
                   border-radius: 50%; background: currentColor; }
   .pill.no-dot::before { content: none; }
   .pill.idle    { color: var(--color-dim); }
   .pill.running { color: var(--color-run); }
-  .pill.running::before { animation: pill-pulse 1.1s ease-in-out infinite; }
+  @media (prefers-reduced-motion: no-preference) {
+    .pill.running::before { animation: pill-pulse 1.1s ease-in-out infinite; }
+  }
   .pill.done    { color: var(--color-ok); }
   .pill.failed  { color: var(--color-fail); }
   @keyframes pill-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
