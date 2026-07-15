@@ -47,9 +47,9 @@ stages:
   - id: formulate
     emits: [formulation]
     questions:
-      - id: objective
-        prompt: "Objective and constraints? (gate → unitary infidelity; state preparation → ket infidelity to the target state; both under the amplitude bound)"
-        default: "the standard objective for this problem type"
+      - id: formulation
+        prompt: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)"
+        default: "a fixed-time gate, free-phase on for entangling gates"
         memory_hooks: [free-phase-objective-only, pin-globals-first-solve]
   - id: solve
     emits: [run, pulse]
@@ -186,8 +186,15 @@ Per-stage notes:
      **invoke it by name** for the physics before authoring — do not hand-roll the
      Hamiltonian from memory when a skill carries it.
 
-2. **model** — convention: **`T` = scalar gate time (ns), `N` = number of
-   timesteps** — never conflate them. Record via `amicode_set_model`.
+2. **model** — the System is a **composite** (components + couplings + drive-arch;
+   single qubit = N=1). Go **structure-first** (how many components · homogeneous? ·
+   topology if N>1 · drive-arch — asked singly), THEN **batch** the mechanical
+   per-component params in one `question` form (homogeneous → ask once, replicate to
+   N). Record it all in ONE `amicode_set_model` call (`components` upserted by id
+   `q1..qN`; `couplings` or a `topology` preset + `coupling_kind` that expands to
+   edges; `drive_arch`). STRUCTURE/COMPONENT-PARAMS/COUPLINGS are sub-steps of THIS
+   `model` gate — not new gates. Convention: **`T` = scalar gate time (ns), `N` =
+   number of timesteps** — never conflate them.
    <a id="levels-guidance"></a>Levels are **platform-dependent** — do not default
    to 3 blindly. A **transmon** qubit keeps 3 (default) or 4 for leakage realism;
    avoid 5+ (worse conditioning/leakage, higher solve cost). A **cavity / bosonic
@@ -220,13 +227,16 @@ Per-stage notes:
      (invoke `piccolissimo-authoring`) with the platform physics skill (`bosonic`
      for a cavity). Name the problem for the target (e.g. `cat-state-transmon-cavity`)
      — the strip slug follows the name, so a wrong name reads as a wrong problem.
-5. **formulate** — the objective matches the problem TYPE: **gate synthesis** →
-   unitary infidelity under the amplitude bound `drive_max` (the vetted template);
-   **state preparation** → **ket infidelity** to the target state (a `KetTrajectory`
-   solve). Record any further objectives/constraints as follow-ups in the
-   Formulation entity — do not improvise unvetted physics into the script. **Never silently co-optimize global model parameters**
-   (frequencies, anharmonicities) — if the user wants that, it's a recorded
-   follow-up, not a live edit. Record via `amicode_formulate`.
+5. **formulate** — record the problem as **typed facets**: **trajectory type**
+   (gate → unitary infidelity; state-prep → ket infidelity; open-system → density),
+   **time mode** (fixed vs min-time), **parameterization**, and the **free-phase** /
+   **leakage** flags. The infidelity objective is **DERIVED from the type** (+ free-phase)
+   — don't state it; `objectives` carries only added terms (regularizers). Constraints
+   are typed (default: the amplitude bound `drive_max`); min-time adds a `final_fidelity`
+   constraint + needs a `dt_bounds` (free Δt). Do not improvise unvetted physics into a
+   vetted script. **Never silently co-optimize global model parameters** (frequencies,
+   anharmonicities) — that's a recorded follow-up, not a live edit. Record via
+   `amicode_formulate`.
 6. **solve** — <a id="regime-guidance"></a>defaults converge to F > 0.999 in
    the default regime. `N`: keep ~5–10 steps/ns (`N = 50` suits `T ≈ 10 ns`;
    `T = 30 ns` → `N ≈ 200`, else the pulse is under-resolved and fidelity

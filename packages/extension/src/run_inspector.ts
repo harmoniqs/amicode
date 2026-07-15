@@ -159,7 +159,7 @@ class InspectorView implements vscode.WebviewViewProvider {
       // Buffered in the pane regardless (shows when the user opens the panel);
       // only steal focus when the auto-open setting is enabled (his UX gate).
       if (autoOpenEnabled()) {
-        vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
+        void revealInspector();
       }
       return;
     }
@@ -226,7 +226,7 @@ class InspectorView implements vscode.WebviewViewProvider {
     // default so a starting solve never steals focus; the status-bar item and
     // the explicit open command (which bypasses reveal) remain available.
     if (!autoOpenEnabled()) return;
-    vscode.commands.executeCommand("amicode.runInspector.focus").then(undefined, () => undefined);
+    void revealInspector();
   }
 
   // -------- internal --------
@@ -277,6 +277,22 @@ class InspectorView implements vscode.WebviewViewProvider {
  *  points. The explicit open command bypasses reveal(), so it always works. */
 export function autoOpenEnabled(): boolean {
   return vscode.workspace.getConfiguration("amicode").get<boolean>("inspector.autoOpen", false);
+}
+
+/** Context key gating the Run Inspector view (package.json `when`). It starts
+ *  false on every window load and is NOT persisted, so VS Code never restores
+ *  the panel on its own — the view only materializes once a reveal path flips
+ *  it. That is what makes the inspector strictly button-press-only. */
+export const INSPECTOR_CONTEXT_KEY = "amicode.inspectorRevealed";
+
+/** The one way the Run Inspector is ever shown: flip the gate context key on
+ *  (so the gated view is allowed to appear), then focus it. Every reveal path —
+ *  the open command, the run picker, demo replay, and the opted-in auto-reveal —
+ *  funnels through here, so the panel is only ever shown deliberately and never
+ *  by VS Code's own view-state restoration. */
+export async function revealInspector(): Promise<void> {
+  await vscode.commands.executeCommand("setContext", INSPECTOR_CONTEXT_KEY, true);
+  await vscode.commands.executeCommand("amicode.runInspector.focus");
 }
 
 function newNonce(): string {

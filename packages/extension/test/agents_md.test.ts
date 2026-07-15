@@ -61,6 +61,14 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
     expect(AGENTS).not.toMatch(/--system\b/);
     expect(AGENTS).not.toMatch(/load_pulse/);
   });
+  it("teaches the Formulation → Piccolo authoring map (typed facets)", () => {
+    expect(AGENTS).toMatch(/Formulation authoring map/);
+    expect(AGENTS).toMatch(/MinimumTimeProblem/);
+    expect(AGENTS).toMatch(/SamplingProblem/);
+    expect(AGENTS).toMatch(/trajectory_type/);
+    expect(AGENTS).toMatch(/free_phase = true/);
+    expect(AGENTS).toMatch(/primary infidelity objective is derived/i);
+  });
 });
 
 describe("AGENTS.md pulse-designer interview (Layer 0)", () => {

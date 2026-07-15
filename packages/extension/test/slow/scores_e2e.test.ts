@@ -71,6 +71,7 @@ async function serveWithScores(port: number) {
     [],
     "",
     "",
+    [], // mounts (spec-20260707-002846 C1) — none in this e2e
     // production model pin (fallback-only) — without it the live turns ride
     // opencode's default resolution, which picks a hanging preview model here
     resolveModelPin(),

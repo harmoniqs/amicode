@@ -34,6 +34,11 @@ function prep(vaultDir: string, opsDir: string) {
   }
 }
 
+// Hermetic: the routing predicate consults ~/.amico/profile.json (wizard
+// identity gate) — point it at a nonexistent file so a dev machine's real
+// profile can't flip shouldOnboard under the tests.
+process.env.AMICO_PROFILE_FILE = path.join(os.tmpdir(), "amicode-tests-no-profile", "profile.json");
+
 describe("overture routing predicate (spec §3)", () => {
   it("no PROFILE.md + no marker → chained overture→pulse-designer session", () => {
     const proj = prep(mkVault(), fs.mkdtempSync(path.join(os.tmpdir(), "ops-")));

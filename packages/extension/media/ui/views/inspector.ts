@@ -11,13 +11,12 @@
 // reshape (freeze 2: the runId-keyed protocol, not the DOM).
 
 import { defineStyle } from "../style";
-import { mark } from "../atoms/icon";
+import { logo } from "../atoms/logo";
 import { pill } from "../atoms/pill";
 import { text } from "../atoms/text";
 import { button } from "../atoms/button";
 import { metric } from "../components/metric";
 import { pulseplot } from "../components/pulseplot";
-import { sparkline } from "../components/sparkline";
 import { controlEnablement, type ControlStatus } from "../control-state";
 import { formatElapsed, computeEta, ratePerSec } from "../../../src/run_timing";
 
@@ -27,14 +26,42 @@ defineStyle(
   body { margin: 0; height: 100vh; font-family: var(--text-font);
          font-size: var(--text-body); color: var(--vscode-foreground); }
   .brand { font-weight: 600; }
+  /* Theme-native scrollbars — the default webview scrollbar reads as a web
+     page; these track VS Code's slider tokens like every built-in panel. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--vscode-scrollbarSlider-background); }
+  ::-webkit-scrollbar-thumb:hover { background: var(--vscode-scrollbarSlider-hoverBackground); }
+  ::-webkit-scrollbar-thumb:active { background: var(--vscode-scrollbarSlider-activeBackground); }
+  ::-webkit-scrollbar-corner { background: transparent; }
   /* Panes carry .stack (display:flex from layout.css). Use two-class selectors so
      these win over .stack on specificity — not on stylesheet order. */
   .pane:not(.active) { display: none; }
   .pane.active { display: flex; }
+  /* Body = metrics rail (left) + pulse plot (right). The plot is the star, so it
+     grows; the metrics read as a deliberate stacked column instead of a wrapping
+     row of uneven tiles. Wraps to a single column when the panel is docked narrow. */
+  /* Grows to spend a tall panel's height on the plot, but never shrinks below
+     its content — a short panel scrolls the pane instead of painting the
+     overflowing rail/plot beneath the footer. */
+  .insp-body { display: flex; gap: var(--space-md); align-items: stretch; flex-wrap: wrap;
+               flex: 1 0 auto; }
+  .insp-metrics { display: flex; flex-direction: column; gap: var(--space-sm);
+                  flex: 1 1 160px; min-width: 148px; max-width: 220px; }
+  .insp-body > .pulseplot { flex: 3 1 320px; }
+  /* Empty state — a deliberate centered composition (mark + label + hint), not
+     a bare sentence in the corner. */
+  .insp-empty { height: 100%; display: flex; flex-direction: column; align-items: center;
+                justify-content: center; gap: var(--space-sm); padding: var(--space-lg);
+                text-align: center; }
+  .insp-empty .logo { opacity: 0.45; }
+  .insp-empty .logo svg { width: 28px; height: 28px; }
+  .insp-empty .small { max-width: 46ch; }
 `,
 );
 
-const IDLE_HINT = "No solve in progress — fire one from the Amicode chat, or run “Replay demo run”.";
+const IDLE_TITLE = "No solve in progress";
+const IDLE_ACTION = "Fire one from the Amicode chat, or run “Replay demo run”.";
+const IDLE_HINT = `${IDLE_TITLE} — fire one from the Amicode chat, or run “Replay demo run”.`;
 const WARMING_HINT = "Julia warming up — compiling the solver (~1–2 min). The pulse will stream here.";
 const NO_DATA_HINT = "This run carries no pulse data — re-run with the current solve template to see the live pulse.";
 
@@ -56,24 +83,25 @@ interface Panel {
 
 function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const status = pill("idle");
+  status.el.setAttribute("role", "status"); // announce run-state changes to screen readers
   const runLabel = text("mono small dim");
   const pulse = pulseplot(IDLE_HINT);
-  // Layout order (left→right): ITER counter · OBJECTIVE hero · FEAS · OPT.
+  // Layout order (left→right): FIDELITY hero · OBJECTIVE (+trace) · ITER · FEAS · OPT.
+  // The hero is the OUTCOME (fidelity) — the number that matters — pending until
+  // the run finishes. The live optimization signal (objective + its convergence
+  // trace) sits beside it, never inside it.
+  const fidelity = metric("fidelity", { variant: "hero", flag: true });
+  const objective = metric("objective", { variant: "small" });
   const iteration = metric("iteration", { variant: "counter" });
-  const hero = metric("objective", { variant: "hero" });
   const feasibility = metric("feasibility", { variant: "small" });
   const optimality = metric("optimality", { variant: "small" });
-  const metrics = [iteration, hero, feasibility, optimality];
-
-  // Convergence sparkline lives inside the hero, under the objective value.
-  const spark = sparkline();
-  hero.el.append(spark.el);
+  const metrics = [fidelity, objective, iteration, feasibility, optimality];
 
   let gotPulse = false; // per-pane: decides the completed-without-data hint
 
   const brand = document.createElement("div");
   brand.className = "row gap-sm brand";
-  brand.append(mark(), text("", "Run Inspector").el);
+  brand.append(logo({ variant: "reduced" }), text("", "Run Inspector").el);
 
   const topbar = document.createElement("div");
   topbar.className = "row wrap";
@@ -81,7 +109,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   topbar.append(brand, runLabel.el, status.el);
 
   const grid = document.createElement("div");
-  grid.className = "metric-row";
+  grid.className = "insp-metrics";
   grid.append(...metrics.map((m) => m.el));
 
   // Control row — Stop / Save pulse / Open run dir. Each posts to the extension
@@ -89,6 +117,10 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   const stopBtn = button("■ Stop", () => post({ type: "control", action: "stop", runId }));
   const saveBtn = button("↓ Save pulse", () => post({ type: "control", action: "save", runId }));
   const openBtn = button("↗ Open run dir", () => post({ type: "control", action: "open", runId }));
+  // Glyph-free names for screen readers ("black square Stop" is noise).
+  stopBtn.el.setAttribute("aria-label", "Stop run");
+  saveBtn.el.setAttribute("aria-label", "Save pulse");
+  openBtn.el.setAttribute("aria-label", "Open run directory");
   const controls = document.createElement("div");
   controls.className = "row gap-sm wrap push-end";
   controls.append(stopBtn.el, saveBtn.el, openBtn.el);
@@ -136,10 +168,14 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   footer.className = "row wrap";
   footer.append(timing.el, controls);
 
+  const body = document.createElement("div");
+  body.className = "insp-body";
+  body.append(grid, pulse.el);
+
   const el = document.createElement("div");
   el.className = "pane stack pad-lg scroll-y";
   el.style.height = "100vh";
-  el.append(topbar, pulse.el, grid, footer);
+  el.append(topbar, body, footer);
 
   return {
     el,
@@ -172,8 +208,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           break;
         }
         case "iteration": {
-          hero.label("objective");
-          hero.value((msg.f_val as number).toExponential(4));
+          objective.value((msg.f_val as number).toExponential(4));
           iteration.value(String(msg.iter));
           feasibility.value((msg.eq_viol as number).toExponential(2));
           optimality.value((msg.kkt_error as number).toExponential(2));
@@ -185,21 +220,18 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           iterStamps.push(Date.now());
           if (iterStamps.length > 12) iterStamps.shift();
           renderTiming();
-          spark.update(msg.f_val as number);
           break;
         }
         case "warming":
           gotPulse = false;
-          pulse.waiting(WARMING_HINT);
+          pulse.waiting(WARMING_HINT, true);
           for (const m of metrics) m.clear();
-          hero.label("objective");
           status.set("running", "warming up");
           controlStatus = "warming";
           hasData = false;
           applyControls();
           iterStamps.length = 0;
           latestIter = 0; // new run — reset rate history
-          spark.reset();
           break;
         case "completed": {
           const ok = msg.status === "completed";
@@ -207,10 +239,10 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
           // stopped = graceful user stop (neutral, dim); completed = success;
           // anything else = failure.
           status.set(ok ? "done" : stopped ? "idle" : "failed", ok ? "converged" : String(msg.status));
-          // Promote the hero card to the final fidelity — the number that matters.
+          // Fill in the fidelity hero — the outcome. The objective card keeps its
+          // final value + convergence trace; the two are never conflated.
           if (ok && typeof msg.fidelity === "number") {
-            hero.label("fidelity");
-            hero.value((msg.fidelity as number).toFixed(5));
+            fidelity.value((msg.fidelity as number).toFixed(5));
           }
           if (!gotPulse) pulse.waiting(NO_DATA_HINT); // old runs / non-emitting scripts
           controlStatus = ok ? "completed" : stopped ? "stopped" : "failed";
@@ -242,13 +274,15 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
   const panels = new Map<string, Panel>();
   let active: string | undefined;
 
-  // Shell holds the panes; an empty-state hint shows until the first run.
-  const empty = text("dim", IDLE_HINT);
-  empty.el.className = "pad-lg dim";
+  // Shell holds the panes; an empty state (mark + label + hint, centered)
+  // shows until the first run. Stays the shell's FIRST child (contract).
+  const empty = document.createElement("div");
+  empty.className = "insp-empty";
+  empty.append(logo({ variant: "reduced" }), text("label-k", IDLE_TITLE).el, text("dim small", IDLE_ACTION).el);
 
   const el = document.createElement("div");
   el.style.height = "100vh";
-  el.append(empty.el);
+  el.append(empty);
 
   const panelFor = (runId: string): Panel => {
     let p = panels.get(runId);
@@ -262,7 +296,7 @@ export function createInspectorView(post: (msg: unknown) => void): InspectorView
 
   const activate = (runId: string): void => {
     active = runId;
-    empty.el.style.display = "none";
+    empty.style.display = "none";
     for (const [id, p] of panels) {
       p.el.classList.toggle("active", id === runId);
       p.setActive(id === runId);

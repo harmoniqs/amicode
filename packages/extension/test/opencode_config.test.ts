@@ -3,7 +3,13 @@ import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from 
 import { tmpdir, homedir } from "node:os";
 import { join, isAbsolute } from "node:path";
 import { execFileSync } from "node:child_process";
-import { prepareOpencodeProject, resolveJuliaProject, buildOpencodeConfigContent, preferredModel, resolveModelPin } from "../src/opencode_config";
+import {
+  prepareOpencodeProject,
+  resolveJuliaProject,
+  buildOpencodeConfigContent,
+  resolveModelPin,
+  profileHasIdentity,
+} from "../src/opencode_config";
 
 function fakeExtRoot(): string {
   const root = mkdtempSync(join(tmpdir(), "extroot-"));
@@ -104,6 +110,27 @@ describe("buildOpencodeConfigContent", () => {
       if (prev === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
       else process.env.AMICODE_PROBLEMS_DIR = prev;
     }
+  });
+  it("grants external_directory <path>/** for EVERY Armonia mount, retaining the personal-vault amicode grant", () => {
+    const mounts = [
+      { name: "me", kind: "personal", path: "/v/me", writable: true },
+      { name: "team", kind: "team", path: "/v/team", writable: false },
+    ];
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me", mounts),
+    );
+    const ed = cfg.permission.external_directory;
+    expect(ed["/v/me/**"]).toBe("allow"); // personal mount read grant
+    // a read-only mount STILL gets a read grant — the permission surface has no
+    // r/w split; write discipline stays distiller-side (documented posture).
+    expect(ed["/v/team/**"]).toBe("allow");
+    expect(ed["/v/me/amicode/**"]).toBe("allow"); // existing personal-vault grant retained
+  });
+  it("no mounts → no per-mount grants (only the personal amicode grant when a vaultDir is given)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me"));
+    const ed = cfg.permission.external_directory;
+    expect(ed["/v/me/**"]).toBeUndefined(); // no mount list → no whole-mount grant
+    expect(ed["/v/me/amicode/**"]).toBe("allow");
   });
   it("never embeds a credential in the config content (D11 no-store/no-inject regression guard)", () => {
     // amico owns no secret: the config it writes into OPENCODE_CONFIG_CONTENT must
@@ -214,30 +241,44 @@ describe("prepareOpencodeProject", () => {
     expect(existsSync(join(p.projectDir, "solve_template.jl"))).toBe(false);
     expect(existsSync(join(p.projectDir, ".opencode", "opencode.json"))).toBe(false);
   });
-});
-
-describe("preferredModel", () => {
-  it("anthropic wins, google falls back to GA flash, absent auth pins nothing", () => {
-    const dir = mkdtempSync(join(tmpdir(), "auth-"));
-    const authPath = join(dir, "auth.json");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
-    expect(preferredModel(authPath)).toBe("opencode/deepseek-v4-flash-free");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" }, anthropic: { type: "api" } }));
-    expect(preferredModel(authPath)).toBe("anthropic/claude-sonnet-5");
-    expect(preferredModel(join(dir, "missing.json"))).toBe("opencode/deepseek-v4-flash-free");
+  it("reuses an explicit projectDir across activations (creates it, re-prepare is idempotent)", () => {
+    const ext = fakeExtRoot();
+    const stable = join(mkdtempSync(join(tmpdir(), "storage-")), "opencode-project"); // does not exist yet
+    const opts = {
+      agentsSrc: join(ext, "AGENTS.md"),
+      templateSrc: join(ext, "templates", "solve_template.jl"),
+      juliaProject: "/opt/piccolo",
+      vaultDir: "",
+      projectDir: stable,
+    };
+    const first = prepareOpencodeProject(opts);
+    expect(first.projectDir).toBe(stable); // no mkdtemp — the dir the app persists stays valid
+    const second = prepareOpencodeProject(opts); // second activation: same dir, no throw
+    expect(second.projectDir).toBe(stable);
+    expect(readFileSync(second.agentsPath, "utf8")).toContain("/opt/piccolo");
   });
 });
 
-describe("resolveModelPin (fallback-only)", () => {
-  it("a user global model suppresses the pin; no global model → creds-based pin", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pin-"));
-    const cfgPath = join(dir, "opencode.json");
-    const authPath = join(dir, "auth.json");
-    writeFileSync(authPath, JSON.stringify({ google: { type: "api" } }));
-    writeFileSync(cfgPath, JSON.stringify({ model: "anthropic/claude-sonnet-4-6" }));
-    expect(resolveModelPin(cfgPath, authPath)).toBeUndefined();
-    writeFileSync(cfgPath, JSON.stringify({}));
-    expect(resolveModelPin(cfgPath, authPath)).toBe("opencode/deepseek-v4-flash-free");
-    expect(resolveModelPin(join(dir, "missing.json"), authPath)).toBe("opencode/deepseek-v4-flash-free");
+describe("resolveModelPin (no forced fallback)", () => {
+  it("never forces a model pin — the default comes from amicode.defaultModel or opencode's own resolution", () => {
+    // A hardcoded fallback in config.model outranked the user's recent pick
+    // (configuredModel ?? recentModel ?? default), overriding their choice.
+    expect(resolveModelPin()).toBeUndefined();
+  });
+});
+
+describe("profileHasIdentity (wizard → overture gate)", () => {
+  it("true only when an identity field is a non-empty string", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prof-"));
+    const fp = join(dir, "profile.json");
+    expect(profileHasIdentity(fp)).toBe(false); // absent
+    writeFileSync(fp, JSON.stringify({}));
+    expect(profileHasIdentity(fp)).toBe(false); // empty
+    writeFileSync(fp, JSON.stringify({ affiliation: "  " }));
+    expect(profileHasIdentity(fp)).toBe(false); // whitespace
+    writeFileSync(fp, JSON.stringify({ affiliation: "NYU" }));
+    expect(profileHasIdentity(fp)).toBe(true);
+    writeFileSync(fp, "not json");
+    expect(profileHasIdentity(fp)).toBe(false); // corrupt → safe default (onboard)
   });
 });

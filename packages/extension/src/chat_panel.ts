@@ -31,6 +31,26 @@ function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";
 }
 
+// Theme-adaptive tab icon for the chat WebviewPanel. The `logo` atom
+// (media/ui/atoms/logo.ts) themes via fill="currentColor", but that only
+// resolves inside a live webview DOM — a native tab icon is a static image
+// with no DOM, so currentColor renders dark (the bug we hit). VS Code's only
+// theme-adaptive path for a native icon is a literal {light, dark} URI pair,
+// and — verified empirically via a probe — the files MUST live inside the
+// extension folder (an icon in globalStorageUri renders as nothing). Since a
+// shipped .vsix's extension folder is read-only, the two colored files can't
+// be generated at runtime; they're committed under media/, derived from
+// amico_reduced.svg (small context → reduced) with currentColor swapped for a
+// theme-appropriate foreground gray. A unit test keeps them in sync with the
+// source geometry. `light` is shown on light themes (dark mark), `dark` on
+// dark themes (light mark).
+function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; dark: vscode.Uri } {
+  return {
+    light: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-light.svg"),
+    dark: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-dark.svg"),
+  };
+}
+
 export class ChatPanel {
   private static current?: ChatPanel;
   private readonly disposables: vscode.Disposable[] = [];
@@ -100,6 +120,24 @@ export class ChatPanel {
           msg &&
           typeof msg === "object" &&
           (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "clipboard-write" &&
+          typeof (msg as { text?: unknown }).text === "string"
+        ) {
+          // Copy bridge (mirror of clipboard-request): the framed app's native
+          // copy can't reach the OS clipboard, so an in-chat ⌘C posts the text
+          // here and we write it via vscode.env.clipboard — otherwise the paste
+          // bridge above reads back stale content. Same visibility gate as the
+          // read side, and the payload is untrusted (LLM-rendered), so bound it.
+          if (!this.panel.visible) return;
+          const text = (msg as { text: string }).text;
+          if (text.length > 5_000_000) return;
+          void vscode.env.clipboard.writeText(text);
+          return;
+        }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
           (msg as { kind?: unknown }).kind === "save-file" &&
           typeof (msg as { filename?: unknown }).filename === "string" &&
           typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
@@ -135,6 +173,24 @@ export class ChatPanel {
           void vscode.commands.executeCommand((msg as { command: string }).command);
           return;
         }
+        if (
+          msg &&
+          typeof msg === "object" &&
+          (msg as { source?: unknown }).source === "amicode" &&
+          (msg as { kind?: unknown }).kind === "set-default-model" &&
+          typeof (msg as { model?: unknown }).model === "string"
+        ) {
+          // Dashboard "Default model" control mirrors its choice into the
+          // amicode.defaultModel setting, so the config pin (headless / first
+          // turn) tracks the UI. "provider/model-id" only, bounded — untrusted.
+          const model = (msg as { model: string }).model.trim();
+          if (model.length > 0 && model.length <= 200 && /^[\w.-]+\/[\w.:-]+$/.test(model)) {
+            void vscode.workspace
+              .getConfiguration("amicode")
+              .update("defaultModel", model, vscode.ConfigurationTarget.Global);
+          }
+          return;
+        }
         console.log("[amicode/chat] webview msg:", msg);
       },
       null,
@@ -155,7 +211,7 @@ export class ChatPanel {
       // itself — we only host one extension-local asset (the loading splash).
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
-    panel.iconPath = vscode.Uri.joinPath(ctx.extensionUri, "media", "amico.svg");
+    panel.iconPath = tabIconPath(ctx);
     ChatPanel.current = new ChatPanel(panel, opencodeUrl);
     return ChatPanel.current;
   }
@@ -203,7 +259,15 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "open-external" || d.kind === "save-file")) {
+          // Image paste: the outer webview CAN read clipboard images
+          // (navigator.clipboard.read is granted here); the sandboxed iframe
+          // can't, and vscode.env.clipboard is text-only. So we answer this one
+          // client-side instead of forwarding it to the host.
+          if (d && d.source === "amicode" && d.kind === "clipboard-image-request") {
+            replyClipboardImage(d.nonce);
+            return;
+          }
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "save-file" || d.kind === "set-default-model")) {
             vscode.postMessage(d);
           }
           return;
@@ -216,6 +280,44 @@ export class ChatPanel {
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
       });
+
+      // Answer a clipboard-image-request from the framed app: read the first
+      // image/* item off the OS clipboard (client-side; clipboard-read is
+      // granted to this webview) and post it into the frame as a data URL. On
+      // any failure we still reply with dataUrl:null so the app falls back to
+      // text paste rather than hanging on its timeout.
+      function blobToDataUrl(blob) {
+        return new Promise(function (res) {
+          var r = new FileReader();
+          r.onload = function () { res(typeof r.result === "string" ? r.result : null); };
+          r.onerror = function () { res(null); };
+          r.readAsDataURL(blob);
+        });
+      }
+      async function replyClipboardImage(nonce) {
+        var payload = { source: "amicode", kind: "clipboard-image", nonce: nonce, dataUrl: null, mime: null, filename: null };
+        try {
+          if (navigator.clipboard && navigator.clipboard.read) {
+            var items = await navigator.clipboard.read();
+            for (var i = 0; i < items.length && !payload.dataUrl; i++) {
+              var types = items[i].types || [];
+              for (var j = 0; j < types.length; j++) {
+                if (types[j].indexOf("image/") !== 0) continue;
+                var blob = await items[i].getType(types[j]);
+                var dataUrl = await blobToDataUrl(blob);
+                if (dataUrl) {
+                  payload.dataUrl = dataUrl;
+                  payload.mime = types[j];
+                  payload.filename = "pasted-image." + (types[j].split("/")[1] || "png");
+                }
+                break;
+              }
+            }
+          }
+        } catch (e) { /* reply with dataUrl:null → app falls back to text paste */ }
+        var f = document.querySelector("iframe");
+        if (f && f.contentWindow) f.contentWindow.postMessage(payload, ${origin});
+      }
     })();
   </script>
 </body>

@@ -41,8 +41,31 @@ import {
   truncateDiffForSentinel,
   KNOWN_PLATFORMS,
   MAX_LEVELS,
+  compositeSystemToml,
+  validateCompositeSystem,
+  compositeSystemWarnings,
+  normalizeSystem,
+  updateCompositeSystem,
+  expandTopology,
+  platformDefaultRole,
+  platformDefaultArch,
   type SystemEntity,
+  type CompositeSystem,
+  type Component,
+  type Coupling,
+  type CompositeSystemPatch,
+  type CouplingKind,
+  type Topology,
+  type DriveArch,
   type FormulationEntity,
+  normalizeFormulation,
+  updateFormulation,
+  formulationWarnings,
+  type FormulationPatch,
+  type TrajectoryType,
+  type TimeMode,
+  type Parameterization,
+  type Robustness,
   type RunStub,
   type DeviceSessionStub,
   type CalibrationStub,
@@ -136,7 +159,18 @@ function recordEntity(
   toml: string,
   source: { tool: string; stage?: string },
 ): string {
-  const before = readEntityJson<Record<string, unknown>>(slug, kind);
+  const before0 = readEntityJson<Record<string, unknown>>(slug, kind);
+  // F1 (spec §6 / §3.3): normalize a system OR formulation `before` snapshot so the
+  // diff is structured-vs-structured, not a spurious legacy→structured restructure
+  // on first touch.
+  const before =
+    before0 === undefined
+      ? before0
+      : kind === "system"
+        ? (normalizeSystem(before0) as unknown as Record<string, unknown>)
+        : kind === "formulation"
+          ? (normalizeFormulation(before0) as unknown as Record<string, unknown>)
+          : before0;
   const action: "created" | "updated" = before ? "updated" : "created";
   writeEntityFiles(slug, kind, toml, JSON.stringify(entity, null, 2) + "\n");
   const diff = entityDiff(before, entity);
@@ -319,20 +353,26 @@ export const AmicodeTools = async (_input: unknown) => ({
         const params: Record<string, number> = {};
         if (given(a.omega)) params.omega = a.omega;
         if (given(a.delta)) params.delta = a.delta;
-        // Known platforms default to a sensible model size; unknown ones get no
-        // levels default (recorded honestly — spec A).
+        // Seed an N=1 COMPOSITE (spec §2/§3): one component with the platform's default role.
+        // Known platforms default to 3 levels; unknown ones stay "levels TBD" (recorded honestly).
         const known = (KNOWN_PLATFORMS as readonly string[]).includes(a.platform);
-        const entity: SystemEntity = { platform: a.platform, params };
-        if (known) entity.levels = 3;
+        const seed: Component = { id: "q1", role: platformDefaultRole(a.platform), params };
+        if (known) seed.levels = 3;
+        const entity: CompositeSystem = {
+          platform: a.platform,
+          components: [seed],
+          couplings: [],
+          drive: { arch: platformDefaultArch(a.platform) },
+        };
         if (given(a.notes)) entity.notes = a.notes;
-        const problems = validateSystem(entity);
+        const problems = validateCompositeSystem(entity);
         if (problems.length) return `Cannot record system: ${problems.join("; ")}`;
-        const sentinel = recordEntity(meta.slug, "system", entity as any, systemToml(entity), {
+        const sentinel = recordEntity(meta.slug, "system", entity as any, compositeSystemToml(entity), {
           tool: "amicode_pick_system",
           stage: "platform",
         });
         completeStage(dir, "platform");
-        const levelsDesc = entity.levels !== undefined ? `${entity.levels} levels` : "levels TBD";
+        const levelsDesc = seed.levels !== undefined ? `${seed.levels} levels` : "levels TBD";
         if (a.platform === "transmon") {
           return (
             `Transmon it is — ${levelsDesc}, ${paramsSummary(params)}. Filed under "${meta.slug}".\n\n` +
@@ -365,48 +405,139 @@ export const AmicodeTools = async (_input: unknown) => ({
 
     amicode_set_model: {
       description:
-        "Merge model details (interview stage 2: MODEL) into the recorded System entity: " +
-        "levels, drive_max, and any extra named numeric parameters. Requires " +
-        "amicode_pick_system to have run first. Bookkeeping only.",
+        "Merge model details into the recorded COMPOSITE System entity (interview stages MODEL / " +
+        "STRUCTURE / COMPONENT-PARAMS / COUPLINGS — all sub-steps of the `model` gate). Requires " +
+        "amicode_pick_system first. Two ways to use it, mixable in one call: (a) single-qubit " +
+        "back-compat — `levels`/`drive_max`/`params` fold onto the first component; (b) composite — " +
+        "`components` (upserted by id), `couplings` (replaces the set), `topology` (a preset expands " +
+        "to edges — pass `coupling_kind`), `drive_arch`. Bookkeeping only.",
       args: {
         levels: {
           type: ["integer", "null"],
-          description: "Number of levels to model (>=2, default 3); null to leave unchanged.",
+          description: "Back-compat: levels for the FIRST component (>=2); null to leave unchanged.",
         },
         drive_max: {
           type: ["number", "null"],
-          description: "Drive amplitude bound (GHz); null to leave unchanged.",
+          description: "Back-compat: drive amplitude bound (GHz) onto the first component; null to skip.",
         },
         params: {
           type: ["object", "null"],
           additionalProperties: { type: "number" },
-          description: 'Extra named numeric model parameters to merge (e.g. {"T1": 80}); null for none.',
+          description: "Back-compat: extra numeric params merged onto the FIRST component; null for none.",
+        },
+        components: {
+          // Array-of-objects arg. legacyJsonSchema only strips "null" at THIS top level (not inside
+          // `items`), so per-object optionals (levels) are expressed by OMITTING from `required`,
+          // NEVER a nested type:["integer","null"] (that re-trips the Gemini rejection).
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              role: { type: "string" },
+              levels: { type: "integer" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+            },
+            required: ["id", "role", "params"],
+          },
+          description:
+            "Components to upsert by id. role ∈ qubit|cavity|resonator|mode|atom. levels optional. " +
+            "For N identical components, list them all (ids q1..qN).",
+        },
+        couplings: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              between: { type: "array", items: { type: "string" } },
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+            },
+            required: ["between", "kind", "params"],
+          },
+          description:
+            "Explicit coupling edges (replaces the set). between = >=2 component ids (a mode-mediated " +
+            "hyperedge includes the shared mode's id). kind ∈ exchange|ZZ|cross-resonance|dispersive-chi|vdW|mode-mediated.",
+        },
+        topology: {
+          type: ["string", "null"],
+          description: "Preset provenance: single-pair | linear-chain | custom. A non-custom preset expands to edges (pass coupling_kind).",
+        },
+        coupling_kind: {
+          type: ["string", "null"],
+          description: "Edge kind stamped when a topology preset expands into couplings (e.g. cross-resonance, vdW).",
+        },
+        coupling_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "Shared numeric params for the edges an expanding topology preset generates.",
+        },
+        drive_arch: {
+          type: ["string", "null"],
+          description: "Drive architecture: global | per-component | zoned.",
         },
       },
-      async execute(a: { levels?: number | null; drive_max?: number | null; params?: Record<string, number> | null }) {
+      async execute(a: {
+        levels?: number | null;
+        drive_max?: number | null;
+        params?: Record<string, number> | null;
+        components?: Component[] | null;
+        couplings?: Coupling[] | null;
+        topology?: Topology | null;
+        coupling_kind?: CouplingKind | null;
+        coupling_params?: Record<string, number> | null;
+        drive_arch?: DriveArch | null;
+      }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
         const blocked = guardAndRecordStage(problemsDir(), dir, "model");
         if (blocked) return blocked;
-        const existing = readEntityJson<SystemEntity>(meta.slug, "system");
-        if (!existing) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
-        const patchParams: Record<string, number> = { ...(given(a.params) ? a.params : {}) };
-        if (given(a.drive_max)) patchParams.drive_max = a.drive_max;
+        const existingRaw = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+        if (!existingRaw) return "No system recorded yet — call amicode_pick_system first (interview stage 1).";
+        const existing = normalizeSystem(existingRaw); // F1: tolerate a legacy flat on-disk entity
+
+        const patch: CompositeSystemPatch = {};
+        if (given(a.components)) patch.components = a.components;
+        if (given(a.couplings)) patch.couplings = a.couplings;
+        if (given(a.topology)) patch.topology = a.topology;
+        if (given(a.drive_arch)) patch.drive = { arch: a.drive_arch };
+        // Back-compat single-field path: fold levels/drive_max/params onto the FIRST component
+        // (only when no explicit `components` array was given).
+        if (!given(a.components) && (given(a.levels) || given(a.drive_max) || given(a.params))) {
+          const first = existing.components[0];
+          const c: Component = { id: first.id, role: first.role, params: { ...(given(a.params) ? a.params : {}) } };
+          if (given(a.drive_max)) c.params.drive_max = a.drive_max;
+          if (given(a.levels)) c.levels = a.levels;
+          patch.components = [c];
+        }
+
         try {
-          const merged = updateSystem(existing, {
-            levels: given(a.levels) ? a.levels : undefined,
-            params: patchParams,
-          });
-          const sentinel = recordEntity(meta.slug, "system", merged as any, systemToml(merged), {
+          let merged = updateCompositeSystem(existing, patch);
+          // F2 (spec §2.3): a non-custom topology preset expands to explicit couplings when none
+          // were supplied. Needs coupling_kind; without it we record the topology and note it.
+          let couplingNote = "";
+          if (given(a.topology) && a.topology !== "custom" && !given(a.couplings)) {
+            if (given(a.coupling_kind)) {
+              const ids = merged.components.map((c) => c.id);
+              const edges = expandTopology(a.topology, ids, a.coupling_kind, given(a.coupling_params) ? a.coupling_params : {});
+              merged = updateCompositeSystem(merged, { couplings: edges });
+            } else {
+              couplingNote = ` (topology recorded — pass coupling_kind to expand it into edges)`;
+            }
+          }
+          const sentinel = recordEntity(meta.slug, "system", merged as any, compositeSystemToml(merged), {
             tool: "amicode_set_model",
             stage: "model",
           });
           completeStage(dir, "model");
-          const warn =
-            merged.levels !== undefined && merged.levels > MAX_LEVELS
-              ? ` ⚠️ ${merged.levels} levels worsens conditioning/leakage and solve cost — convergence may degrade.`
-              : "";
-          return `Tweaked — ${merged.platform}, ${merged.levels ?? "levels TBD"}, ${paramsSummary(merged.params)}.${warn}\n\n${sentinel}`;
+          const warnings = compositeSystemWarnings(merged);
+          const warn = warnings.length ? ` ⚠️ ${warnings.join("; ")}` : "";
+          const nC = merged.components.length;
+          const nK = merged.couplings.length;
+          return (
+            `Tweaked — ${merged.platform}: ${nC} component${nC === 1 ? "" : "s"}, ${nK} coupling${nK === 1 ? "" : "s"}, ` +
+            `drive ${merged.drive.arch}.${couplingNote}${warn}\n\n${sentinel}`
+          );
         } catch (err) {
           return `Cannot update model: ${err instanceof Error ? err.message : String(err)}`;
         }
@@ -415,56 +546,139 @@ export const AmicodeTools = async (_input: unknown) => ({
 
     amicode_formulate: {
       description:
-        "Record the Formulation entity (interview stages 4–5: PROBLEM + FORMULATION): " +
-        "problem kind, target, objective, constraints. Bookkeeping only.",
+        "Record the Formulation entity (interview stages 4–5: PROBLEM + FORMULATION) as TYPED " +
+        "facets. The primary infidelity objective is DERIVED from trajectory_type + free_phase + " +
+        "time_mode — do NOT pass it; `objectives` holds only ADDED terms (regularizers, etc.). " +
+        "Upsert: any omitted facet keeps its existing/default value. Bookkeeping only.",
       args: {
-        problem: {
-          type: "string",
-          description: 'Problem kind, e.g. "gate_synthesis", "state_prep", "min_time".',
+        trajectory_type: {
+          type: ["string", "null"],
+          description: "ket | multiket | gate | density | multidensity. null keeps existing (default gate).",
+        },
+        time_mode: {
+          type: ["string", "null"],
+          description: "fixed | min_time (orthogonal to type). null keeps existing (default fixed).",
+        },
+        time_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "{final_fidelity, D} — the min-time fidelity floor + duration weight. null to skip.",
+        },
+        parameterization: {
+          type: ["string", "null"],
+          description: "smooth | linear_spline | cubic_spline | bang_bang. null keeps existing (default smooth).",
+        },
+        robustness: {
+          // Loose object (kind + params) — kept schema-shallow to avoid the nested
+          // legacyJsonSchema union gotcha; normalized in execute.
+          type: ["object", "null"],
+          description: "{ kind: none|ensemble|sensitivity, params: {...} }. null keeps existing (default none).",
+        },
+        free_phase: {
+          type: ["boolean", "null"],
+          description: "Virtual-Z free phase (objective-only, never in the ODE). null keeps existing (default false).",
+        },
+        leakage: {
+          type: ["boolean", "null"],
+          description: "Leakage suppression (its sole home — not an objective/constraint kind). null keeps existing.",
+        },
+        leakage_params: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "{value, cost} for the leakage flag. null to skip.",
         },
         target: {
-          type: "string",
-          description: 'The target, e.g. "X", "H", "sqrt(X)", or a description of the unitary/state.',
-        },
-        objective: {
           type: ["string", "null"],
-          description: 'Objective; null for the default "unitary infidelity".',
+          description: 'Target gate/state, e.g. "CZ", "H", "|1>". null keeps existing.',
+        },
+        objectives: {
+          // Array-of-objects. legacyJsonSchema strips "null" only at THIS top level, not
+          // inside `items` — per-object optionals (label) are expressed by OMITTING from
+          // `required`, NEVER a nested type:[...,"null"]. Replaces the ADDED-terms set.
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+              label: { type: "string" },
+            },
+            required: ["kind", "params"],
+          },
+          description: "ADDED objective terms: kind ∈ reg_u|reg_du|reg_ddu|sensitivity|custom. Replaces the set.",
         },
         constraints: {
-          // Optional nullable array — see the details field above. legacyJsonSchema
-          // strips "null" → optional singular-typed array (provider-agnostic).
           type: ["array", "null"],
-          items: { type: "string" },
-          description: 'Constraint list; omit for the default ["amplitude bound (drive_max)"].',
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              params: { type: "object", additionalProperties: { type: "number" } },
+              label: { type: "string" },
+            },
+            required: ["kind", "params"],
+          },
+          description:
+            "Typed constraints: kind ∈ bounds|du_bound|ddu_bound|dt_bounds|final_fidelity|calibration_pin|custom. " +
+            "Replaces the set. final_fidelity is normally derived from time_params, not authored here.",
         },
       },
-      async execute(a: { problem: string; target: string; objective?: string | null; constraints?: string[] | null }) {
+      async execute(a: {
+        trajectory_type?: string | null;
+        time_mode?: string | null;
+        time_params?: Record<string, number> | null;
+        parameterization?: string | null;
+        robustness?: { kind?: string; params?: Record<string, number | string> } | null;
+        free_phase?: boolean | null;
+        leakage?: boolean | null;
+        leakage_params?: Record<string, number> | null;
+        target?: string | null;
+        objectives?: FormulationPatch["objectives"] | null;
+        constraints?: FormulationPatch["constraints"] | null;
+      }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
         const blocked = guardAndRecordStage(problemsDir(), dir, "formulate");
         if (blocked) return blocked;
-        // Preserve any solve sub-object already recorded (stage 6 writes it via
-        // amicode_solve; re-running formulate must not wipe it).
-        const existing = readEntityJson<FormulationEntity>(meta.slug, "formulation");
-        const entity: FormulationEntity = {
-          problem: a.problem,
-          target: a.target,
-          objective: given(a.objective) ? a.objective : "unitary infidelity",
-          constraints:
-            Array.isArray(a.constraints) && a.constraints.length > 0 ? a.constraints : ["amplitude bound (drive_max)"],
-        };
-        if (existing?.solve) entity.solve = existing.solve;
-        const problems = validateFormulation(entity);
+        // Upsert onto the existing (legacy-tolerant) entity via the pure merge.
+        const existing = readEntityJson<Record<string, unknown>>(meta.slug, "formulation");
+        const patch: FormulationPatch = {};
+        if (given(a.trajectory_type)) patch.trajectory_type = a.trajectory_type as TrajectoryType;
+        if (given(a.time_mode)) patch.time_mode = a.time_mode as TimeMode;
+        if (given(a.time_params)) patch.time_params = a.time_params;
+        if (given(a.parameterization)) patch.parameterization = a.parameterization as Parameterization;
+        if (given(a.robustness))
+          patch.robustness = {
+            kind: (a.robustness.kind ?? "none") as Robustness["kind"],
+            params: a.robustness.params ?? {},
+          };
+        if (given(a.free_phase)) patch.free_phase = a.free_phase;
+        if (given(a.leakage)) patch.leakage = a.leakage;
+        if (given(a.leakage_params)) patch.leakage_params = a.leakage_params;
+        if (given(a.target)) patch.target = a.target;
+        if (given(a.objectives)) patch.objectives = a.objectives;
+        if (given(a.constraints)) patch.constraints = a.constraints;
+
+        const merged = updateFormulation(existing, patch);
+        const problems = validateFormulation(merged);
         if (problems.length) return `Cannot record formulation: ${problems.join("; ")}`;
-        const sentinel = recordEntity(meta.slug, "formulation", entity as any, formulationToml(entity), {
+        const sentinel = recordEntity(meta.slug, "formulation", merged as any, formulationToml(merged), {
           tool: "amicode_formulate",
           stage: "formulate",
         });
         completeStage(dir, "formulate");
-        return (
-          `Formulation's locked for "${meta.slug}" — ${entity.problem}, targeting ${entity.target}; ` +
-          `objective: ${entity.objective}; constraints: ${entity.constraints.join(" · ")}\n\n${sentinel}`
-        );
+        // Surface soft warnings (spec §3.2) — N comes from the sibling System.
+        const sysRaw = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+        const componentCount = sysRaw ? normalizeSystem(sysRaw).components.length : undefined;
+        const warnings = formulationWarnings(merged, componentCount);
+        const warn = warnings.length ? ` ⚠️ ${warnings.join("; ")}` : "";
+        const modes = [
+          merged.trajectory_type,
+          merged.time_mode === "min_time" ? "min-time" : undefined,
+          merged.robustness.kind !== "none" ? merged.robustness.kind : undefined,
+          merged.free_phase ? "free-phase" : undefined,
+        ].filter(Boolean).join(" · ");
+        return `Formulation's locked for "${meta.slug}" — ${modes}, target ${merged.target}${warn}\n\n${sentinel}`;
       },
     },
 
@@ -513,8 +727,12 @@ export const AmicodeTools = async (_input: unknown) => ({
         // half of #64's formulation_hash). One event, no sentinel (the Run
         // sentinel below is this call's receipt).
         if (given(a.T) || given(a.N) || given(a.max_iter) || given(a.integrator)) {
-          const form = readEntityJson<FormulationEntity>(meta.slug, "formulation");
-          if (form) {
+          const formRaw = readEntityJson<Record<string, unknown>>(meta.slug, "formulation");
+          if (formRaw) {
+            // Normalize a possibly-legacy on-disk formulation before re-serializing
+            // (spec §3.1.3 "all read sites normalize") — else the structured
+            // formulationToml would reject/misserialize the legacy shape.
+            const form = normalizeFormulation(formRaw);
             const solve = { ...(form.solve ?? {}) };
             if (given(a.T)) solve.T = a.T;
             if (given(a.N)) solve.N = a.N;

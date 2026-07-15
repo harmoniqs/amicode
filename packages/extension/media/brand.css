@@ -12,9 +12,18 @@
 }
 
 :root {
-  /* color */
-  --color-accent: #fff676;
-  --color-on-accent: #000000;
+  /* color — the brand yellow, split into three honest roles. brand_accent.ts
+   * overrides fill/edge/ink at :root per the live theme; these are the DARK
+   * defaults (the dev harness + no-JS render on the dark surface). The rule:
+   * yellow is a FILL, never an ink. On light surfaces the lemon can't define
+   * its own edge (1.1:1 vs white), so the edge comes from a dark hairline; on
+   * dark it separates itself (14.8:1), so the edge is transparent. */
+  --brand-yellow: #fff676;
+  --color-accent-fill: var(--brand-yellow); /* the swatch — true lemon, both themes */
+  --color-on-accent: #000000; /* dark ink on the swatch — 18.7:1, never yellow text */
+  --color-accent-edge: transparent; /* dark default; light → dark hairline (theme fg) */
+  --color-accent-ink: var(--brand-yellow); /* thin lines that can't be fills; light → neutral fg */
+  --color-accent: var(--color-accent-ink); /* back-compat alias — strokes get legible ink, never gold */
   --color-ok: var(--vscode-testing-iconPassed);
   --color-fail: var(--vscode-errorForeground);
   --color-run: var(--vscode-progressBar-background);
@@ -27,7 +36,7 @@
   --text-label: 0.72em;
   --text-small: 0.8em;
   --text-value: 1.08em;
-  --text-hero: 1.3em;
+  --text-hero: 1.55em;
 
   /* space */
   --space-xs: 4px;
@@ -44,19 +53,24 @@
   --border-radius: 4px;
   --border-radius-round: 1000px;
   --border-color: var(--vscode-widget-border, var(--vscode-panel-border));
-  --border-color-hero: color-mix(in srgb, var(--color-accent) 45%, var(--vscode-panel-border));
 
   /* background */
   --bg-box: var(--vscode-editorWidget-background, transparent);
   --bg-plot: var(--vscode-editor-background);
 
-  /* series — categorical, FIXED order (drive 1..4), never cycled. Primary
+  /* series — categorical, FIXED order (drive 1..6), never cycled. Primary
    * values ride VS Code's theme-aware chart tokens; the hex fallbacks are the
-   * dev-harness set, validated (dataviz six checks) against the dark surface. */
+   * dev-harness set, validated (dataviz six checks) against the dark surface.
+   * Order is deliberate: yellow precedes red so green (4) neighbours yellow, not
+   * red — keeping the red/green pair (CVD's weakest) non-adjacent. Six is the
+   * ceiling: VS Code exposes exactly these six chart hues, so past it the pulse
+   * plot facets into small multiples rather than inventing a 7th hue. */
   --series-1: var(--vscode-charts-blue, #3794ff);
   --series-2: var(--vscode-charts-orange, #c17800);
   --series-3: var(--vscode-charts-purple, #9b6bc4);
   --series-4: var(--vscode-charts-green, #4d9e51);
+  --series-5: var(--vscode-charts-yellow, #b0881a);
+  --series-6: var(--vscode-charts-red, #cc5a5a);
   --plot-grid: var(--vscode-charts-lines, color-mix(in srgb, var(--vscode-foreground, #ccc) 18%, transparent));
   --plot-band: color-mix(in srgb, var(--vscode-foreground, #ccc) 6%, transparent);
 }

@@ -14,6 +14,17 @@ if (existsSync(`${arRoot}/dist/amico-run.js`)) {
   cpSync(`${arRoot}/launcher/amico-run`, "bin/launcher/amico-run", { dereference: true });
   cpSync(`${arRoot}/dist/amico-run.js`, "bin/dist/amico-run.js", { dereference: true });
   chmodSync("bin/launcher/amico-run", 0o755); // guarantee +x survives pack/unpack
+  // The `amico` spine verbs (catalog/vault/device/note) ship beside amico-run:
+  // same launcher dir, so the single PATH prepend resolves both bins. Without
+  // this block the verb surface is unreachable in the installed build
+  // (spec-20260711-132200 §1 finding 1: implemented, undiscoverable, unshipped).
+  if (existsSync(`${arRoot}/dist/amico.js`)) {
+    cpSync(`${arRoot}/launcher/amico`, "bin/launcher/amico", { dereference: true });
+    cpSync(`${arRoot}/dist/amico.js`, "bin/dist/amico.js", { dereference: true });
+    chmodSync("bin/launcher/amico", 0o755);
+  } else {
+    console.warn("[esbuild] amico-run/dist/amico.js not built — spine verbs will be absent from the package");
+  }
 } else {
   console.warn("[esbuild] amico-run/dist not built — run `pnpm --filter @amicode/amico-run build` before packaging");
 }
@@ -43,6 +54,7 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    loader: { ".svg": "text" },
   },
   // bottom-panel Run Inspector webview bundle
   {
@@ -55,6 +67,20 @@ const targets = [
     sourcemap: true,
     minify: false,
     logLevel: "info",
+    loader: { ".svg": "text" },
+  },
+  // panel Device Inspector webview bundle (Spec A §3 — sibling to the Run Inspector)
+  {
+    entryPoints: ["src/device_inspector_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/device_inspector_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+    loader: { ".svg": "text" },
   },
 ];
 

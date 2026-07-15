@@ -11,8 +11,16 @@ defineStyle(
          border: var(--border-width) solid var(--border-color);
          border-radius: var(--border-radius); padding: var(--space-xs) var(--space-sm);
          cursor: pointer; display: inline-flex; align-items: center; gap: var(--space-xs); }
-  .btn:hover:not(:disabled) { border-color: var(--color-accent); }
+  /* Hover/active use the ink role (lemon on dark, neutral fg on light) — a
+     hover border can't be a fill, and the raw lemon would vanish on light. */
+  .btn:hover:not(:disabled) { border-color: var(--color-accent-ink);
+                              background: color-mix(in srgb, var(--color-accent-ink) 8%, transparent); }
+  .btn:active:not(:disabled) { background: color-mix(in srgb, var(--color-accent-ink) 16%, transparent); }
+  .btn:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--color-accent-ink)); outline-offset: 1px; }
   .btn:disabled { opacity: 0.4; cursor: default; }
+  @media (prefers-reduced-motion: no-preference) {
+    .btn { transition: border-color 0.15s ease-out, background 0.15s ease-out; }
+  }
 `,
 );
 

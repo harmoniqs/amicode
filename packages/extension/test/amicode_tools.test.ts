@@ -23,6 +23,14 @@ import {
   validateSystem,
   validateFormulation,
   updateSystem,
+  validateCompositeSystem,
+  compositeSystemWarnings,
+  normalizeSystem,
+  updateCompositeSystem,
+  compositeSystemToml,
+  expandTopology,
+  replicateHomogeneous,
+  type CompositeSystem,
   canonicalJson,
   deriveSlug,
   entityDiff,
@@ -41,10 +49,15 @@ const SYS: SystemEntity = {
 };
 
 const FORM: FormulationEntity = {
-  problem: "gate_synthesis",
+  trajectory_type: "gate",
+  time_mode: "fixed",
+  parameterization: "smooth",
+  robustness: { kind: "none", params: {} },
+  free_phase: false,
+  leakage: false,
   target: "X",
-  objective: "unitary infidelity",
-  constraints: ["amplitude bound (drive_max)", "smoothness"],
+  objectives: [],
+  constraints: [{ kind: "bounds", params: {}, label: "amplitude bound (drive_max)" }],
 };
 
 describe("systemToml", () => {
@@ -85,26 +98,21 @@ describe("systemToml", () => {
 });
 
 describe("formulationToml", () => {
-  it("round-trips problem/target/objective/constraints under [formulation]", () => {
+  it("round-trips the structured facets under [formulation]", () => {
     const doc = parse(formulationToml(FORM)) as any;
-    expect(doc.formulation.problem).toBe("gate_synthesis");
+    expect(doc.formulation.trajectory_type).toBe("gate");
     expect(doc.formulation.target).toBe("X");
-    expect(doc.formulation.objective).toBe("unitary infidelity");
-    expect(doc.formulation.constraints).toEqual(FORM.constraints);
+    expect(doc.formulation.robustness).toEqual({ kind: "none", params: {} });
+    expect(doc.formulation.constraints[0].kind).toBe("bounds");
     expect(Number.isNaN(Date.parse(doc.formulation.recorded))).toBe(false);
   });
   it("escapes quotes, backslashes, and newlines in string values (round-trip exact)", () => {
     const nasty = 'say "hi" \\ then\nnewline\ttab';
-    const doc = parse(formulationToml({ ...FORM, target: nasty, constraints: [nasty] })) as any;
+    const doc = parse(formulationToml({ ...FORM, target: nasty })) as any;
     expect(doc.formulation.target).toBe(nasty);
-    expect(doc.formulation.constraints).toEqual([nasty]);
   });
-  it("rejects an empty or whitespace-only target", () => {
-    expect(() => formulationToml({ ...FORM, target: "" })).toThrow(/target/);
-    expect(() => formulationToml({ ...FORM, target: "   " })).toThrow(/target/);
-  });
-  it("rejects an empty problem", () => {
-    expect(() => formulationToml({ ...FORM, problem: "" })).toThrow(/problem/);
+  it("rejects an unknown enum value", () => {
+    expect(() => formulationToml({ ...FORM, trajectory_type: "bogus" as any })).toThrow(/trajectory_type/);
   });
 });
 
@@ -116,7 +124,7 @@ describe("validateSystem / validateFormulation", () => {
   it("name the offending field in each problem message", () => {
     expect(validateSystem({ ...SYS, platform: "" as any }).join(" ")).toMatch(/platform/);
     expect(validateSystem({ ...SYS, levels: 1 }).join(" ")).toMatch(/levels/);
-    expect(validateFormulation({ ...FORM, target: "" }).join(" ")).toMatch(/target/);
+    expect(validateFormulation({ ...FORM, time_mode: "nope" as any }).join(" ")).toMatch(/time_mode/);
   });
 });
 
@@ -254,10 +262,15 @@ describe("opened entity model (spec A)", () => {
   });
   it("round-trips formulation.solve through TOML", () => {
     const f: FormulationEntity = {
-      problem: "min_time",
+      trajectory_type: "gate",
+      time_mode: "min_time",
+      parameterization: "smooth",
+      robustness: { kind: "none", params: {} },
+      free_phase: false,
+      leakage: false,
       target: "CZ",
-      objective: "unitary infidelity",
-      constraints: ["amplitude bound"],
+      objectives: [],
+      constraints: [{ kind: "dt_bounds", params: {} }],
       solve: { T: 10, N: 50, max_iter: 60, integrator: "MagnusGL4" },
     };
     const parsed = parse(formulationToml(f)) as any;
@@ -319,5 +332,224 @@ describe("problem + run-ref serializers", () => {
   it("round-trips runs.toml appends", () => {
     const t = runRefsToml([{ run_id: "r1", lab: "default", tier: "vetted", recorded: "x" }]);
     expect((parse(t) as any).runs[0].tier).toBe("vetted");
+  });
+});
+
+describe("composite system schema + validation (spec-20260709)", () => {
+  const COMP: CompositeSystem = {
+    platform: "transmon",
+    components: [
+      { id: "q1", role: "qubit", levels: 3, params: { omega: 4.8, delta: -0.2 } },
+      { id: "q2", role: "qubit", levels: 3, params: { omega: 4.9, delta: -0.2 } },
+    ],
+    couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+    topology: "single-pair",
+    drive: { arch: "per-component" },
+  };
+
+  it("accepts a valid composite", () => {
+    expect(validateCompositeSystem(COMP)).toEqual([]);
+  });
+
+  it("N=1 (degenerate single-qubit) is valid with empty couplings", () => {
+    expect(
+      validateCompositeSystem({
+        platform: "transmon",
+        components: [{ id: "q1", role: "qubit", levels: 3, params: {} }],
+        couplings: [],
+        drive: { arch: "per-component" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("accepts an arbitrary (open) platform string; rejects empty", () => {
+    expect(validateCompositeSystem({ ...COMP, platform: "fluxonium-xyz" })).toEqual([]);
+    expect(validateCompositeSystem({ ...COMP, platform: "" }).join(" ")).toMatch(/platform/);
+  });
+
+  it("rejects unknown role / kind / topology / drive.arch (closed sets)", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "spin" as any, params: {} }] }).join(" "),
+    ).toMatch(/role/);
+    expect(
+      validateCompositeSystem({
+        ...COMP,
+        couplings: [{ between: ["q1", "q2"], kind: "banana" as any, params: {} }],
+      }).join(" "),
+    ).toMatch(/kind/);
+    expect(validateCompositeSystem({ ...COMP, topology: "grid" as any }).join(" ")).toMatch(/topology/);
+    expect(validateCompositeSystem({ ...COMP, drive: { arch: "telepathy" as any } }).join(" ")).toMatch(/drive/);
+  });
+
+  it("rejects a coupling referencing an unknown component id", () => {
+    expect(
+      validateCompositeSystem({
+        ...COMP,
+        couplings: [{ between: ["q1", "q9"], kind: "cross-resonance", params: {} }],
+      }).join(" "),
+    ).toMatch(/unknown component/);
+  });
+
+  it("rejects duplicate component ids", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [COMP.components[0], COMP.components[0]] }).join(" "),
+    ).toMatch(/duplicate/);
+  });
+
+  it("mode-mediated requires exactly one mode/resonator member (ion + motional mode)", () => {
+    const ok: CompositeSystem = {
+      platform: "ion",
+      components: [
+        { id: "i1", role: "atom", params: {} },
+        { id: "i2", role: "atom", params: {} },
+        { id: "m1", role: "mode", levels: 8, params: {} },
+      ],
+      couplings: [{ between: ["i1", "i2", "m1"], kind: "mode-mediated", params: { eta: 0.1 } }],
+      drive: { arch: "global" },
+    };
+    expect(validateCompositeSystem(ok)).toEqual([]);
+    const bad = { ...ok, couplings: [{ between: ["i1", "i2"], kind: "mode-mediated" as const, params: {} }] };
+    expect(validateCompositeSystem(bad).join(" ")).toMatch(/mode-mediated/);
+  });
+
+  it("rejects non-integer / <2 component levels", () => {
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "qubit", levels: 1, params: {} }] }).join(" "),
+    ).toMatch(/levels/);
+    expect(
+      validateCompositeSystem({ ...COMP, components: [{ id: "q1", role: "qubit", levels: 3.5, params: {} }] }).join(" "),
+    ).toMatch(/levels/);
+  });
+
+  it("heterogeneous cavity+qubit (bosonic) is native", () => {
+    const bosonic: CompositeSystem = {
+      platform: "bosonic",
+      components: [
+        { id: "q1", role: "qubit", levels: 2, params: {} },
+        { id: "cav", role: "cavity", levels: 12, params: { kerr: -0.001 } },
+      ],
+      couplings: [{ between: ["q1", "cav"], kind: "dispersive-chi", params: { chi: 0.002 } }],
+      drive: { arch: "per-component" },
+    };
+    expect(validateCompositeSystem(bosonic)).toEqual([]);
+  });
+
+  it("compositeSystemWarnings are soft (never a rejection)", () => {
+    const lowCav: CompositeSystem = {
+      platform: "bosonic",
+      components: [{ id: "cav", role: "cavity", levels: 2, params: {} }],
+      couplings: [],
+      drive: { arch: "per-component" },
+    };
+    expect(validateCompositeSystem(lowCav)).toEqual([]); // valid...
+    expect(compositeSystemWarnings(lowCav).join(" ")).toMatch(/Fock/); // ...but warned
+    expect(compositeSystemWarnings(COMP)).toEqual([]); // clean 3-level qubits, no warning
+  });
+});
+
+describe("normalizeSystem + composite merge/toml/hash (spec-20260709)", () => {
+  const COMPOSITE: CompositeSystem = {
+    platform: "transmon",
+    components: [
+      { id: "q1", role: "qubit", levels: 3, params: { omega: 4.8, delta: -0.2 } },
+      { id: "q2", role: "qubit", levels: 3, params: { omega: 4.9, delta: -0.2 } },
+    ],
+    couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+    topology: "single-pair",
+    drive: { arch: "per-component" },
+  };
+
+  it("flat → N=1 composite (levels→components[0], notes carried, role/arch from platform)", () => {
+    const c = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "prose" });
+    expect(c.components).toHaveLength(1);
+    expect(c.components[0]).toMatchObject({ id: "q1", role: "qubit", levels: 3, params: { omega: 4.8 } });
+    expect(c.couplings).toEqual([]);
+    expect(c.drive.arch).toBe("per-component");
+    expect(c.notes).toBe("prose");
+    expect(validateCompositeSystem(c)).toEqual([]);
+  });
+
+  it("rydberg→atom/global; unknown→qubit/per-component; absent flat levels stays absent", () => {
+    const r = normalizeSystem({ platform: "rydberg", levels: 3, params: {} });
+    expect(r.components[0].role).toBe("atom");
+    expect(r.drive.arch).toBe("global");
+    const u = normalizeSystem({ platform: "fluxonium", params: {} });
+    expect(u.components[0].role).toBe("qubit");
+    expect(u.components[0].levels).toBeUndefined();
+    expect(u.drive.arch).toBe("per-component");
+  });
+
+  it("is idempotent on an already-composite entity", () => {
+    expect(normalizeSystem(COMPOSITE)).toEqual(COMPOSITE);
+  });
+
+  it("updateCompositeSystem tolerates a FLAT existing (F1) + merges a composite patch", () => {
+    const merged = updateCompositeSystem(
+      { platform: "transmon", levels: 3, params: { omega: 4.8 } },
+      {
+        components: [{ id: "q2", role: "qubit", levels: 3, params: { omega: 4.9 } }],
+        couplings: [{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }],
+        topology: "single-pair",
+        drive: { arch: "per-component" },
+      },
+    );
+    expect(merged.components.map((c) => c.id).sort()).toEqual(["q1", "q2"]);
+    expect(merged.couplings).toHaveLength(1);
+    expect(merged.topology).toBe("single-pair");
+    expect(validateCompositeSystem(merged)).toEqual([]);
+  });
+
+  it("compositeSystemToml round-trips through smol-toml (AoT + inline params)", () => {
+    const doc = parse(compositeSystemToml(COMPOSITE)) as any;
+    expect(doc.system.platform).toBe("transmon");
+    expect(doc.system.topology).toBe("single-pair");
+    expect(doc.system.drive.arch).toBe("per-component");
+    expect(doc.system.components).toHaveLength(2);
+    expect(doc.system.components[0].id).toBe("q1");
+    expect(doc.system.components[0].params.omega).toBe(4.8);
+    expect(doc.system.couplings[0].kind).toBe("cross-resonance");
+    expect(doc.system.couplings[0].between).toEqual(["q1", "q2"]);
+  });
+
+  it("canonicalJson drops notes → composites differing only in notes hash-equal", () => {
+    const a = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "x" });
+    const b = normalizeSystem({ platform: "transmon", levels: 3, params: { omega: 4.8 }, notes: "DIFFERENT" });
+    expect(canonicalJson(a)).toBe(canonicalJson(b));
+  });
+});
+
+describe("topology expansion + homogeneous replicate (spec-20260709)", () => {
+  it("single-pair → 1 edge over [q1,q2]", () => {
+    const edges = expandTopology("single-pair", ["q1", "q2"], "cross-resonance", { g: 0.005 });
+    expect(edges).toEqual([{ between: ["q1", "q2"], kind: "cross-resonance", params: { g: 0.005 } }]);
+  });
+  it("linear-chain(N) → N-1 edges in canonical order", () => {
+    const edges = expandTopology("linear-chain", ["q1", "q2", "q3", "q4"], "exchange");
+    expect(edges.map((e) => e.between)).toEqual([
+      ["q1", "q2"],
+      ["q2", "q3"],
+      ["q3", "q4"],
+    ]);
+    expect(edges.every((e) => e.kind === "exchange")).toBe(true);
+  });
+  it("custom → [] (edges authored directly)", () => {
+    expect(expandTopology("custom", ["q1", "q2"], "ZZ")).toEqual([]);
+  });
+  it("single-pair with wrong arity throws", () => {
+    expect(() => expandTopology("single-pair", ["q1", "q2", "q3"], "ZZ")).toThrow(/single-pair/);
+  });
+  it("deferred presets (e.g. ring) throw §9", () => {
+    expect(() => expandTopology("ring" as any, ["q1", "q2"], "ZZ")).toThrow(/deferred/);
+  });
+  it("replicateHomogeneous → N components identical except id (q1..qN)", () => {
+    const comps = replicateHomogeneous({ role: "qubit", levels: 3, params: { omega: 4.8 } }, 3);
+    expect(comps.map((c) => c.id)).toEqual(["q1", "q2", "q3"]);
+    expect(comps.every((c) => c.role === "qubit" && c.levels === 3 && c.params.omega === 4.8)).toBe(true);
+    // mutating one component's params must not alias the others
+    comps[0].params.omega = 9;
+    expect(comps[1].params.omega).toBe(4.8);
+  });
+  it("replicateHomogeneous rejects n < 1", () => {
+    expect(() => replicateHomogeneous({ role: "qubit", params: {} }, 0)).toThrow(/n >= 1/);
   });
 });
