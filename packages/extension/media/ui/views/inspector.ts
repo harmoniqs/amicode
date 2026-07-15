@@ -90,7 +90,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   // The hero is the OUTCOME (fidelity) — the number that matters — pending until
   // the run finishes. The live optimization signal (objective + its convergence
   // trace) sits beside it, never inside it.
-  const fidelity = metric("fidelity", { variant: "hero" });
+  const fidelity = metric("fidelity", { variant: "hero", flag: true });
   const objective = metric("objective", { variant: "small" });
   const iteration = metric("iteration", { variant: "counter" });
   const feasibility = metric("feasibility", { variant: "small" });

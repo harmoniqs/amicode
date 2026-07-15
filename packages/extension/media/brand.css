@@ -12,9 +12,18 @@
 }
 
 :root {
-  /* color */
-  --color-accent: #fff676;
-  --color-on-accent: #000000;
+  /* color — the brand yellow, split into three honest roles. brand_accent.ts
+   * overrides fill/edge/ink at :root per the live theme; these are the DARK
+   * defaults (the dev harness + no-JS render on the dark surface). The rule:
+   * yellow is a FILL, never an ink. On light surfaces the lemon can't define
+   * its own edge (1.1:1 vs white), so the edge comes from a dark hairline; on
+   * dark it separates itself (14.8:1), so the edge is transparent. */
+  --brand-yellow: #fff676;
+  --color-accent-fill: var(--brand-yellow); /* the swatch — true lemon, both themes */
+  --color-on-accent: #000000; /* dark ink on the swatch — 18.7:1, never yellow text */
+  --color-accent-edge: transparent; /* dark default; light → dark hairline (theme fg) */
+  --color-accent-ink: var(--brand-yellow); /* thin lines that can't be fills; light → neutral fg */
+  --color-accent: var(--color-accent-ink); /* back-compat alias — strokes get legible ink, never gold */
   --color-ok: var(--vscode-testing-iconPassed);
   --color-fail: var(--vscode-errorForeground);
   --color-run: var(--vscode-progressBar-background);
@@ -44,7 +53,6 @@
   --border-radius: 4px;
   --border-radius-round: 1000px;
   --border-color: var(--vscode-widget-border, var(--vscode-panel-border));
-  --border-color-hero: color-mix(in srgb, var(--color-accent) 45%, var(--vscode-panel-border));
 
   /* background */
   --bg-box: var(--vscode-editorWidget-background, transparent);

@@ -47,7 +47,7 @@ export function sparkline(capacity = 60): Sparkline {
   svg.classList.add("sparkline");
   const poly = document.createElementNS(SVGNS, "polyline");
   poly.setAttribute("fill", "none");
-  poly.setAttribute("stroke", "var(--color-accent)");
+  poly.setAttribute("stroke", "var(--color-accent-ink)");
   poly.setAttribute("stroke-width", "1.5");
   svg.append(poly);
 
