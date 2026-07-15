@@ -28,14 +28,13 @@ Interview flows are data (`packages/extension/scores/`). Schemas: `packages/sche
 
 ```bash
 git clone git@github.com:harmoniqs/amicode.git && cd amicode
-git checkout aaron/night-l0-pulse-designer   # the testing branch (PR #75) until merged
 corepack enable && pnpm install               # check: exits 0, lockfile untouched
 pnpm -r build                                 # check: packages/extension/dist/extension.js exists
 pnpm --filter amicode-v2 run fetch:opencode   # check: vendor/opencode/<platform>/opencode exists
-                                              # (lock source=local: builds from a harmoniqs/opencode
-                                              # clone at the locked ref — sibling ../opencode, or
-                                              # AMICODE_OPENCODE_SRC / --local <path>; needs bun.
-                                              # No clone → falls back to the gh release download)
+                                              # Default lock source=release: downloads the pinned,
+                                              # features-ON binary from the harmoniqs/opencode release.
+                                              # No clone, no bun. Only changing the fork needs those —
+                                              # see "Changing opencode (the vendored fork)" below.
 pnpm --filter amicode-v2 test                 # check: 200+ tests pass, 0 fail
 bash packages/extension/scripts/install.sh    # Julia project (~15 min first precompile) + VSIX + lab.toml
 node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico-run, creds)
@@ -60,7 +59,8 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
   server runs on **fixed port 43117** (`amicode.opencodePort`); Remote-SSH users forward it once.
 - **The vendored binary is a build artifact** — never edit it; it comes from
   `harmoniqs/opencode` (thin fork, patch stack in its `AMICODE-PATCHES.md`). Rebrand/UI work
-  happens THERE, product logic lives HERE in config/plugin/scores (Layer 0).
+  happens THERE, product logic lives HERE in config/plugin/scores (Layer 0). To change the
+  fork, see "Changing opencode (the vendored fork)" below.
 - `packages/extension/opencode-plugin/` executes inside opencode's Bun runtime — it is NOT
   part of the extension bundle; keep it dependency-free; exactly one export.
 - `packages/extension/scores/` — interview flows as data. New user path = new `SCORE.md`
@@ -68,7 +68,34 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 - Run artifacts land in `~/.amico/runs/default/<runId>/` (contract: `run.toml`, `AMICODE_ITER`
   lines, `iter_*.png`, `result.toml`, `pulse.jld2`, `FINISHED`). Validate files with
   `packages/schema/launcher/amico-validate <file>`.
-- Never commit to `main`; branch + PR. Testing feedback → PR #75 thread.
+- Never commit to `main`; branch + PR.
+
+## Changing opencode (the vendored fork)
+
+Default vendoring is `release` — `pnpm install` / `package` / F5 download the pinned,
+features-ON binary; **no clone or bun needed**. You enter source mode only when you are
+changing the fork, and you do it by running a command — **never** by editing the committed
+`opencode.lock.json` `source` field (committing `local` forces a clone+bun build on everyone
+and breaks fork-PR CI).
+
+1. Clone the fork as a sibling and install bun:
+   `git clone git@github.com:harmoniqs/opencode.git ../opencode` (or set `AMICODE_OPENCODE_SRC`);
+   `curl -fsSL https://bun.sh/install | bash`.
+2. Edit `../opencode`, then rebuild + re-vendor: **`pnpm --filter amicode-v2 opencode:build`**
+   (builds with `OPENCODE_CHANNEL=dev` → amicode UI gate ON; `--any-ref` so your in-progress
+   clone is accepted). Reload the Extension Dev Host (Cmd/Ctrl+R) to pick it up. This rebuilds
+   the **compiled binary** — the only path that shows web-app surfaces (`packages/app`: home
+   cards, v2 titlebar, draft flow), whose channel define is baked at build time (no `serve`-time
+   hot path for those).
+3. Ship it: push the opencode branch, tag a release (its workflow builds both binaries and
+   gate-checks them), then **`pnpm --filter amicode-v2 opencode:pin <tag>`** here — it downloads
+   and sha256-verifies both assets and rewrites the lock. Commit the lock bump + PR.
+
+**Why `dev` matters:** every amicode surface is gated at runtime on
+`settings.general.newLayoutDesigns`, whose default is `VITE_OPENCODE_CHANNEL !== "prod"`. A binary
+built with `OPENCODE_CHANNEL=latest` (→ `"prod"`) compiles the features in but hides them.
+`opencode:build` and the release workflow both force `dev`; `scripts/assert_ui_gate.sh` fails
+CI and release if a binary ever ships with the gate off.
 
 ## Known sharp edges
 

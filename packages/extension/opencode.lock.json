@@ -2,8 +2,8 @@
   "version": "1.17.3",
   "repo": "harmoniqs/opencode",
   "tag": "v1.17.3-amicode.4",
-  "source": "local",
-  "ref": "f78155a060ce83ffb8fad6f0980ade1528b9d9cf",
+  "source": "release",
+  "ref": "e9b695191120365f7592a7885308bb333b85df0f",
   "platforms": {
     "darwin-arm64": {
       "asset": "opencode-darwin-arm64.zip",

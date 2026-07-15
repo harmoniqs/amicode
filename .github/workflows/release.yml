@@ -34,15 +34,8 @@ jobs:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork release fetch (see ci.yml)
       - name: Gate check — vendored binary ships the amicode UI ON
         run: |
-          set -euo pipefail
-          BIN=packages/extension/vendor/opencode/linux-x64/opencode
           cat packages/extension/vendor/opencode/linux-x64/.source
-          # minified shape: `...general?.newLayoutDesigns,<VAR>)` with `<VAR>=!0` (on) / `=!1` (off)
-          VAR=$(grep -aoh 'newLayoutDesigns,[A-Za-z$_]\{1,8\})' "$BIN" | head -1 | sed 's/newLayoutDesigns,//; s/)//')
-          test -n "$VAR" || { echo "FAIL: gate pattern not found (minifier drift? update this check)"; exit 1; }
-          grep -aq "[^A-Za-z0-9_\$]${VAR}=!0" "$BIN" \
-            || { echo "FAIL: channel gate OFF (${VAR}=!1) — vendored binary hides the amicode UI"; exit 1; }
-          echo "OK: gate ON (${VAR}=!0)"
+          bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/linux-x64/opencode
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
       - name: Create GitHub release
         env:
