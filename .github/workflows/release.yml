@@ -49,5 +49,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
-          gh release create "$TAG" --title "amicode $TAG" --generate-notes \
+          # Pre-release tags (v…-alpha / -beta / -rc) must not become the repo's "latest".
+          PRERELEASE=""
+          case "$TAG" in *-alpha*|*-beta*|*-rc*) PRERELEASE=--prerelease ;; esac
+          gh release create "$TAG" --title "amicode $TAG" --generate-notes $PRERELEASE \
             packages/extension/amicode.vsix
