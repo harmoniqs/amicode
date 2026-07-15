@@ -37,7 +37,7 @@ defineStyle(
   .catalogcard .cc-kv .v { font-family: var(--text-mono); overflow: hidden;
                            text-overflow: ellipsis; white-space: nowrap; }
   .catalogcard .proposed { border-bottom: 1px dashed var(--color-dim); opacity: 0.75; }
-  .catalogcard .metric.proposed { border-style: dashed; border-bottom: var(--border-width) dashed var(--border-color-hero); opacity: 0.8; }
+  .catalogcard .metric.proposed { border-style: dashed; border-bottom: var(--border-width) dashed var(--color-accent-ink); opacity: 0.8; }
   .catalogcard .cc-metrics { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
   .catalogcard .cc-metrics .metric { flex: 1 1 120px; min-width: 0; }
   .catalogcard .cc-siblings { display: flex; gap: var(--space-sm); overflow-x: auto;

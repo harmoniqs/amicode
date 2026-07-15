@@ -57,7 +57,7 @@ defineStyle(
   .pulseplot .pp-plot { position: relative; flex: 1; min-height: 0; }
   .pulseplot .pp-plot > svg { width: 100%; height: 100%; min-height: 0; display: block; }
   .pulseplot .pp-key:focus-visible,
-  .pulseplot .pp-plot:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--color-accent));
+  .pulseplot .pp-plot:focus-visible { outline: 1px solid var(--vscode-focusBorder, var(--color-accent-ink));
                                       outline-offset: 1px; }
   /* Hover/keyboard readout — a crosshair snaps to the nearest knot; the readout
      lists EVERY drive at that time (the pointer never has to hit a 2px line). */
