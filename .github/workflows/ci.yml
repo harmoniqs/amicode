@@ -8,7 +8,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
@@ -48,7 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - uses: julia-actions/setup-julia@v3
         with: { version: '1.12' }
@@ -72,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       # Build the .vsix via the SAME recipe release.yml ships — `pnpm run package`
@@ -101,7 +101,7 @@ jobs:
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
       # The installable artifact: a cross-platform .vsix downloadable from every CI run.
       - name: Upload amicode.vsix
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: amicode-vsix
           path: packages/extension/amicode.vsix
@@ -114,7 +114,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode fetch:opencode

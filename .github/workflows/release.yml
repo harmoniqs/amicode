@@ -26,7 +26,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       # Version guard: the tag's base (v0.0.3 or v0.0.3-alpha.1 -> 0.0.3) MUST equal the
       # extension manifest version, so the installed extension's shown version matches the
