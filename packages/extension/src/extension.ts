@@ -14,6 +14,7 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
@@ -23,7 +24,7 @@ import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
+import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -604,8 +605,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
-  // First-run offer: no personal vault resolved + not dismissed → prompt (non-blocking).
-  if (!opencodeProject.vaultDir && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") !== true) {
+  // Auto-offer ONLY for a returning user: a profile exists here but no personal
+  // vault (changed machines / set up elsewhere). First-timers (no profile) get the
+  // onboarding wizard instead; a resolved vault needs nothing. (Command bypasses.)
+  if (
+    shouldOfferVaultSetup({
+      hasPersonalVault: !!opencodeProject.vaultDir,
+      hasProfile: profileHasIdentity(),
+      dismissed: ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true,
+    })
+  ) {
     void runVaultSetup(false);
   }
 

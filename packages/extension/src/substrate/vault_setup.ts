@@ -40,6 +40,22 @@ function safeUsername(): string {
   }
 }
 
+/**
+ * Whether to AUTO-offer vault setup (the first-run notification). Fires ONLY for a
+ * returning user — a profile already exists on this machine but no personal vault
+ * resolves (e.g. they set up elsewhere / changed machines). Two cases deliberately
+ * do NOT notify: a resolved vault (nothing to do), and a genuine first-timer with no
+ * profile (the onboarding WIZARD walks them through vault creation, not this popup).
+ * The `amicode.setupVault` command bypasses this — it's an explicit user action.
+ */
+export function shouldOfferVaultSetup(o: {
+  hasPersonalVault: boolean;
+  hasProfile: boolean;
+  dismissed: boolean;
+}): boolean {
+  return !o.hasPersonalVault && o.hasProfile && !o.dismissed;
+}
+
 export interface CreatedVault {
   path: string;
   name: string;
