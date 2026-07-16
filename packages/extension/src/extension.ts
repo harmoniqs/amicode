@@ -25,6 +25,14 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
+import {
+  pinnedJuliaMinor,
+  hasJuliaup,
+  hasChannel,
+  projectInstantiated,
+  shouldOfferJuliaSetup,
+  buildSetupSteps,
+} from "./substrate/julia_setup";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -616,6 +624,74 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     })
   ) {
     void runVaultSetup(false);
+  }
+
+  // Julia setup (#8): amicode manages the Julia toolchain via juliaup — install
+  // juliaup if absent, add the channel pinned to the Manifest's MINOR, and
+  // instantiate the Piccolo project. Runs in a visible terminal (the consent
+  // surface for the network installer). We pin the MINOR channel (latest patch,
+  // e.g. 1.12.6 vs the Manifest's 1.12.3) — a patch drift install.sh already
+  // treats as fine. On a fresh machine juliaup makes this the default, so bare
+  // `julia` resolves to it; routing the runtime explicitly through the channel
+  // for pre-existing-juliaup setups is a follow-up (--julia / {{JULIA_BINARY}}).
+  const runJuliaSetup = async (fromCommand: boolean): Promise<void> => {
+    const manifestSrc = path.resolve(ctx.extensionPath, "julia", "Manifest.toml");
+    const projectSrc = path.resolve(ctx.extensionPath, "julia", "Project.toml");
+    const minor = pinnedJuliaMinor(manifestSrc);
+    if (!minor) {
+      if (fromCommand)
+        void vscode.window.showErrorMessage("Amicode: could not read the pinned Julia version (julia/Manifest.toml).");
+      return;
+    }
+    const project = resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""));
+    const juliaupPresent = hasJuliaup();
+    const channelPresent = juliaupPresent && hasChannel(minor);
+    const ready = juliaupPresent && channelPresent && projectInstantiated(project);
+    if (ready) {
+      if (fromCommand) void vscode.window.showInformationMessage(`Amicode: Julia ${minor} is already set up.`);
+      return;
+    }
+    if (!fromCommand && ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true) return;
+    if (!fromCommand) {
+      const choice = await vscode.window.showInformationMessage(
+        `Amicode uses Julia ${minor} (via juliaup) to run solves. Set it up now? The first run installs and precompiles the Piccolo project (a few minutes).`,
+        "Set up Julia",
+        "Not now",
+        "Don't ask again",
+      );
+      if (choice === "Don't ask again") {
+        await ctx.globalState.update("amicode.juliaSetup.dismissed", true);
+        return;
+      }
+      if (choice !== "Set up Julia") return;
+    }
+    const steps = buildSetupSteps({ minor, juliaupPresent, channelPresent, project, projectSrc, manifestSrc });
+    // Run in a visible terminal: the user watches the network installer + the
+    // precompile, and cancels by closing it. We deliberately DON'T pipe to a
+    // hidden task — transparency is the consent.
+    const term = vscode.window.createTerminal({ name: "Amicode: Julia setup" });
+    term.show();
+    term.sendText(steps.map((s) => `echo '[amicode] ${s.label}...' && ${s.command}`).join(" && \\\n"));
+    opencodeChannel.appendLine(`[julia] setup started (channel ${minor}, ${steps.length} step(s)) — see the terminal`);
+    void vscode.window.showInformationMessage(
+      `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (or reload the window).`,
+    );
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
+  // Auto-offer on first run when the toolchain isn't ready (juliaup/channel/
+  // project missing) and the user hasn't dismissed. Command bypasses the gate.
+  if (
+    shouldOfferJuliaSetup({
+      juliaupPresent: hasJuliaup(),
+      channelPresent: (() => {
+        const m = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
+        return m ? hasChannel(m) : false;
+      })(),
+      projectInstantiated: projectInstantiated(resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""))),
+      dismissed: ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true,
+    })
+  ) {
+    void runJuliaSetup(false);
   }
 
   // 5. Commands
