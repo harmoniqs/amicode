@@ -33,6 +33,7 @@ import {
   shouldOfferJuliaSetup,
   buildSetupSteps,
 } from "./substrate/julia_setup";
+import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
@@ -674,7 +675,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     term.sendText(steps.map((s) => `echo '[amicode] ${s.label}...' && ${s.command}`).join(" && \\\n"));
     opencodeChannel.appendLine(`[julia] setup started (channel ${minor}, ${steps.length} step(s)) — see the terminal`);
     void vscode.window.showInformationMessage(
-      `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (or reload the window).`,
+      `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (Command Palette) to verify.`,
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
@@ -693,6 +694,74 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ) {
     void runJuliaSetup(false);
   }
+
+  // Healthcheck (the real `amicode.healthcheck`): verify the managed Julia
+  // toolchain (Piccolo loads), the opencode server, and LLM creds. This is what
+  // the Julia-setup notification points users at to confirm setup worked.
+  const runHealthcheck = async (): Promise<void> => {
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Amicode: running healthcheck…" },
+      async () => {
+        const results: HealthResult[] = [];
+
+        // Julia: managed toolchain + `using Piccolo` loads (async; can precompile for minutes).
+        const minor = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
+        const project = resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""));
+        if (!minor) {
+          results.push({ name: "Julia", ok: false, detail: "could not read pinned version (julia/Manifest.toml)" });
+        } else if (!projectInstantiated(project)) {
+          results.push({ name: "Julia", ok: false, detail: `project not instantiated — run "Amicode: Set up Julia"` });
+        } else {
+          const channel = hasJuliaup() && hasChannel(minor);
+          const args = channel
+            ? [`+${minor}`, `--project=${project}`, "-e", "using Piccolo"]
+            : [`--project=${project}`, "-e", "using Piccolo"];
+          const r = await probeCommand("julia", args, 180_000);
+          results.push({
+            name: "Julia",
+            ok: r.ok,
+            detail: r.ok
+              ? `Piccolo loads (${channel ? `juliaup ${minor}` : "system julia"})`
+              : `Piccolo did not load (${r.err ?? `exit ${r.code}`})`,
+          });
+        }
+
+        // opencode server (in-extension readiness state).
+        results.push({
+          name: "opencode server",
+          ok: opencodeReadyUrl !== undefined,
+          detail: opencodeReadyUrl ? `up at ${opencodeReadyUrl.toString()}` : 'down — try "Amicode: Restart opencode server"',
+        });
+
+        // LLM provider (opencode's own resolution).
+        if (opencodeReadyUrl) {
+          try {
+            const sig = await fetchProviderSignal(opencodeReadyUrl.toString());
+            results.push({
+              name: "LLM creds",
+              ok: sig.ok,
+              detail: sig.ok ? `configured (${sig.provider})` : `${sig.reason} → ${sig.fix}`,
+            });
+          } catch (e) {
+            results.push({ name: "LLM creds", ok: false, detail: `check failed: ${(e as Error).message}` });
+          }
+        } else {
+          results.push({ name: "LLM creds", ok: false, detail: "skipped (server down)" });
+        }
+
+        const report = formatHealthReport(results);
+        opencodeChannel.appendLine("[healthcheck]");
+        report.lines.forEach((l) => opencodeChannel.appendLine(`  ${l}`));
+        if (report.allOk) {
+          void vscode.window.showInformationMessage(report.summary);
+        } else {
+          const c = await vscode.window.showWarningMessage(report.summary, "Show details");
+          if (c === "Show details") opencodeChannel.show();
+        }
+      },
+    );
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.healthcheck", () => void runHealthcheck()));
 
   // 5. Commands
   ctx.subscriptions.push(
