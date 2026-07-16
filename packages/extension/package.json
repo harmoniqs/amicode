@@ -97,6 +97,10 @@
         "title": "Amicode: Set up a personal vault"
       },
       {
+        "command": "amicode.setupJulia",
+        "title": "Amicode: Set up Julia (juliaup)"
+      },
+      {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
       },
