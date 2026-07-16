@@ -55,4 +55,15 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
     for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p);
     expect(/extension\/vendor\/opencode\/.+\/opencode/.test(listing), "missing vendored opencode").toBe(true);
   });
+  // The bundled OSS skill subset (fetch:skills -> vendor/skills-public) is the
+  // ONLY library root a Marketplace user has — if it's dropped, a published
+  // extension silently ships with zero library skills.
+  it("bundles the leak-guarded public skill subset (vendor/skills-public)", () => {
+    const listing = execFileSync("unzip", ["-Z1", VSIX], { encoding: "utf8" });
+    expect(listing, "missing bundled skills manifest").toContain("extension/vendor/skills-public/MANIFEST.json");
+    expect(
+      /extension\/vendor\/skills-public\/skills\/.+\/SKILL\.md/.test(listing),
+      "no bundled public skill SKILL.md — fetch:skills did not run or shipped empty",
+    ).toBe(true);
+  });
 });

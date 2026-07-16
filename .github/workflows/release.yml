@@ -39,9 +39,9 @@ jobs:
           echo "tag=$TAG  tag-base=$BASE  manifest=$MANIFEST"
           [ "$BASE" = "$MANIFEST" ] || { echo "FAIL: tag base '$BASE' != extension manifest '$MANIFEST' — bump packages/extension/package.json to match the tag (or retag)."; exit 1; }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter amicode run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + vsce
+      - run: pnpm --filter amicode run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + fetch:skills + vsce
         env:
-          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork release fetch (see ci.yml)
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork fetch; must ALSO read harmoniqs/amico-plugin releases (fetch:skills)
       # Also vendor darwin-arm64 and repackage, so the RELEASED .vsix installs on mac too
       # (the package chain above only fetches the ubuntu runner's linux-x64 binary).
       - run: node packages/extension/scripts/fetch_opencode.mjs --platform darwin-arm64 --release
