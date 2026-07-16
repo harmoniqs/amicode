@@ -81,6 +81,10 @@
         "title": "Amicode: Open Chat"
       },
       {
+        "command": "amicode.setupVault",
+        "title": "Amicode: Set up a personal vault"
+      },
+      {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
       },
