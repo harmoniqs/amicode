@@ -9,7 +9,6 @@ import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } 
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
-  isProductSkillEntitled,
   buildSkillIndexSection,
   stageOpencodeSkills,
   type SkillIndexEntry,
@@ -140,16 +139,15 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
 /** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
- *  in the workspace package repos; library (product) skills are discovered by
- *  `surface: product` tag from the central amico-plugin library. Overridable
+ *  in the workspace package repos; library (public) skills are discovered by
+ *  `surface: public` tag from the central amico-plugin library. Overridable
  *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
 export const DEFAULT_LIBRARY_ROOTS = [path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills")];
-/** The canonical `surface: product` skill set (spec-20260708-112732 §4.5) — a
- *  documentation/reference anchor for what tag-based discovery is expected to
- *  surface, NOT a selection input (selection is now purely by frontmatter tag,
- *  see resolveLibrarySkills). Kept as the golden expectation the discovery test
- *  asserts against the real library root. */
+/** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
+ *  a documentation/reference anchor, NOT a selection input (selection is purely by
+ *  frontmatter `surface: public`, see resolveLibrarySkills). The discovery test uses it
+ *  as a superset check: each of these must appear in the discovered public set. */
 export const DEFAULT_PLATFORM_SKILLS = [
   "atoms",
   "bosonic",
@@ -380,8 +378,8 @@ export interface OpencodeConfigOptions {
   entitlementsDir?: string;
   /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
   skillRoots?: string[];
-  /** Roots for the central library, scanned for `surface: product` skills
-   *  (spec-20260708-112732 §4.5). Default: DEFAULT_LIBRARY_ROOTS. */
+  /** Roots for the central library, scanned for `surface: public` skills
+   *  (spec-20260713-003804). Default: DEFAULT_LIBRARY_ROOTS. */
   skillLibraryRoots?: string[];
   /** Personal vault dir for the user-memory substrate (spec-20260705-002847),
    *  three-state (spec-20260707-002846 C1):
@@ -525,13 +523,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const ents = readLocalEntitlements(entsDir).entitlements;
     const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
     skillEntries = [
-      // Library (product) skills by `surface: product` tag (spec-20260708-112732
-      // §4.5). The entitlement seam (§7.1) is wired but a no-op today — every
-      // product skill is public, so all stage; a future GATED_PRODUCT_SKILLS row
-      // gates without touching this call.
-      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, (name) =>
-        isProductSkillEntitled(name, ents),
-      ),
+      // Library (public) skills by `surface: public` tag (spec-20260713-003804) — the
+      // OSS-shippable surface (Armonia vault layer + physics/opt + generic craft). The
+      // private tier is package-gated below (resolvePackageSkills), never here.
+      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
     const section = buildSkillIndexSection(skillEntries);

@@ -5,12 +5,12 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Dual-source skill index (spec-20260704-113005 §1/§3). Two skill TYPES:
 //   - PACKAGE skills: co-located at packages/<P>.jl/skills/<name>/SKILL.md,
 //     discovered ONLY for entitlement-allowlisted packages (gated).
-//   - LIBRARY (product) skills: cross-package refs in the central amico-plugin
-//     library, discovered by SURFACE TAG (spec-20260708-112732 §4.5/§7.1): the
-//     library dir is scanned, but ONLY skills whose frontmatter carries
-//     `surface: product` are staged. `internal` and untagged skills — the ~44
-//     process skills in the same library — MUST NOT leak into Amicode; the tag
-//     IS the least-privilege guard (superseding the old hardcoded name list).
+//   - LIBRARY (public) skills: cross-package refs in the central amico-plugin
+//     library, discovered by SURFACE TAG (spec-20260713-003804): the library dir
+//     is scanned, but ONLY skills whose frontmatter carries `surface: public` are
+//     staged. `internal`, untagged, and any other value — the internal-only process
+//     skills in the same library — MUST NOT leak into Amicode; the tag IS the
+//     least-privilege guard. `public` = the OSS-shippable surface.
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
@@ -28,8 +28,8 @@ function expandHome(p: string): string {
 }
 
 /** Parse a SKILL.md's frontmatter; throw on anything malformed (caller skips).
- *  `surface` (spec-20260708-112732 §4.5) is optional — a string tag
- *  (`product` | `internal`) or undefined when the skill is untagged. It drives
+ *  `surface` (spec-20260713-003804) is optional — a string tag
+ *  (`public` | `internal`) or undefined when the skill is untagged. It drives
  *  library-skill staging (see resolveLibrarySkills). */
 function readFrontmatter(skillPath: string): { name: string; description: string; surface?: string } {
   const raw = fs.readFileSync(skillPath, "utf8");
@@ -80,39 +80,19 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
   return out;
 }
 
-/** Library (product) skills gated behind an entitlement — the future-gated-
- *  product seam (spec-20260708-112732 §7.1). EMPTY today: every `surface:
- *  product` skill is public, so the entitlement filter is a no-op and all
- *  product skills stage. Maps skill name → the entitlement code required to
- *  stage it; adding one row here gates that skill WITHOUT touching discovery. */
-export const GATED_PRODUCT_SKILLS: Readonly<Record<string, string>> = {};
-
-/** Entitlement predicate for library (product) skill staging (§7.1 seam). A
- *  product skill absent from GATED_PRODUCT_SKILLS is public (always staged); a
- *  gated one stages only when its required entitlement is held. Wired at the
- *  call site even while the map is empty, so gating later is a one-row edit. */
-export function isProductSkillEntitled(name: string, entitlements: readonly string[] = []): boolean {
-  const required = GATED_PRODUCT_SKILLS[name];
-  return required === undefined || entitlements.includes(required);
-}
-
 /** Library skills from the central amico-plugin library, discovered by SURFACE
- *  TAG (spec-20260708-112732 §4.5/§7.1). The library root is SCANNED, but ONLY
- *  skills whose frontmatter carries `surface: product` are returned — `internal`
- *  and untagged skills (the ~44 process skills) are the leak hazard and are
- *  DROPPED. The tag is the least-privilege guard that the old hardcoded name
- *  list used to be; staging (stageOpencodeSkills) still copies only THIS
- *  selected set to the per-session stage dir — `skills.paths` never points at
- *  the library root itself. First root holding a given `<name>/SKILL.md` wins.
+ *  TAG (spec-20260713-003804). The library root is SCANNED, but ONLY skills whose
+ *  frontmatter carries `surface: public` are returned — `internal`, untagged, and
+ *  any other value are the leak hazard and are DROPPED. `public` = the OSS-shippable
+ *  surface (the Armonia vault-management layer + physics/opt + generic craft); the
+ *  tag IS the least-privilege guard. Staging (stageOpencodeSkills) copies only THIS
+ *  selected set to the per-session stage dir — `skills.paths` never points at the
+ *  library root itself. First root holding a given `<name>/SKILL.md` wins.
  *
- *  `isEntitled` is the entitlement seam: a product skill is included only when
- *  the predicate admits its name. The default admits every product skill (the
- *  public-today behaviour); production wires isProductSkillEntitled so a future
- *  GATED_PRODUCT_SKILLS row gates without a code change. */
-export function resolveLibrarySkills(
-  roots: string[],
-  isEntitled: (name: string) => boolean = () => true,
-): SkillIndexEntry[] {
+ *  The private tier is NOT a library concern: private-package skills live co-located
+ *  in their package repos and are gated by resolvePackageSkills (entitlement-derived
+ *  allowlist ∩ repo presence). There is deliberately no library-level entitlement seam. */
+export function resolveLibrarySkills(roots: string[]): SkillIndexEntry[] {
   const out: SkillIndexEntry[] = [];
   const seen = new Set<string>(); // first-root-wins, keyed by dir name
   for (const r of roots) {
@@ -134,9 +114,8 @@ export function resolveLibrarySkills(
         console.warn(`amicode: skipping malformed library skill ${skillPath}: ${e}`);
         continue;
       }
-      if (fm.surface !== "product") continue; // THE GUARD: internal/untagged never stage
-      seen.add(name); // this dir is the authoritative product skill (earlier root wins)
-      if (!isEntitled(fm.name)) continue; // §7.1 entitlement seam (no-op today)
+      if (fm.surface !== "public") continue; // THE GUARD: internal/untagged/product never stage
+      seen.add(name); // this dir is the authoritative public skill (earlier root wins)
       out.push({ source: "library", name: fm.name, description: fm.description, path: skillPath });
     }
   }
