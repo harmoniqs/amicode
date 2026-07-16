@@ -421,7 +421,7 @@ export interface OpencodeProject {
 }
 
 export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodeProject {
-  const projectDir = opts.projectDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "amicode-v2-"));
+  const projectDir = opts.projectDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "amicode-"));
   if (opts.projectDir) fs.mkdirSync(projectDir, { recursive: true });
 
   // AGENTS.md: read → substitute {{JULIA_PROJECT}} + {{TEMPLATE_PATH}} → write.

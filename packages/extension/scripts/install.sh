@@ -37,7 +37,7 @@ julia --project="$JULIA_PROJECT" -e 'using Pkg; Pkg.instantiate()' || die "Pkg.i
 
 # 3. Install the VSIX
 if command -v code >/dev/null 2>&1; then
-  [ -f "$VSIX" ] || die "VSIX not found at $VSIX - build it: pnpm --filter amicode-v2 package"
+  [ -f "$VSIX" ] || die "VSIX not found at $VSIX - build it: pnpm --filter amicode package"
   code --install-extension "$VSIX" || die "code --install-extension failed"
   say "installed VSIX: $VSIX"
 else

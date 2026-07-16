@@ -17,7 +17,7 @@ jobs:
       # test (opencode config injection + merge) actually RUNS in CI instead of
       # self-skipping — the skip was the #25 CI-level false-green (an injection or
       # config-merge regression would pass CI because the only test for it skipped).
-      - run: pnpm --filter amicode-v2 fetch:opencode
+      - run: pnpm --filter amicode fetch:opencode
         env:
           # gh release download pulls the vendored binary from the PRIVATE
           # harmoniqs/opencode release; the default GITHUB_TOKEN is scoped to
@@ -28,7 +28,7 @@ jobs:
         run: |
           # Exercise the LINKED bin via a dependent (the bin links into amico-run /
           # extension, not the root) so a broken bin entry reds. (Jack's #30.)
-          pnpm --filter amicode-v2 exec amico-validate --help
+          pnpm --filter amicode exec amico-validate --help
           # File validations via the launcher (root-relative paths, real bin target).
           V="packages/schema/launcher/amico-validate"
           $V packages/extension/scripts/lab.toml.example --schema lab
@@ -79,7 +79,7 @@ jobs:
       # Vendor BOTH platform binaries so the packaged .vsix installs on linux-x64 AND
       # darwin-arm64. The runner only fetches its own platform by default; darwin is a
       # cross-platform fetch, so force --release (a local build can only emit the host arch).
-      - run: pnpm --filter amicode-v2 fetch:opencode   # native (linux-x64)
+      - run: pnpm --filter amicode fetch:opencode   # native (linux-x64)
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # private-fork release fetch (see fast)
       - run: node packages/extension/scripts/fetch_opencode.mjs --platform darwin-arm64 --release
@@ -91,8 +91,8 @@ jobs:
       - run: |
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/linux-x64/opencode
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/darwin-arm64/opencode
-      - run: pnpm --filter amicode-v2 exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
-      - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode-v2 exec vitest run test/packaging.test.ts
+      - run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
+      - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
       # The installable artifact: a cross-platform .vsix downloadable from every CI run.
       - name: Upload amicode.vsix
         uses: actions/upload-artifact@v4
@@ -111,7 +111,7 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter amicode-v2 fetch:opencode
+      - run: pnpm --filter amicode fetch:opencode
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # private-fork release fetch (see fast); one step covers both matrix legs
-      - run: pnpm --filter amicode-v2 test:smoke
+      - run: pnpm --filter amicode test:smoke

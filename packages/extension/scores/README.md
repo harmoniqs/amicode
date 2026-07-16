@@ -56,7 +56,7 @@ stages:
 [Amico's voice for this score — markdown + LaTeX, carried verbatim into the prompt]
 ```
 
-## Rules the lint enforces (`pnpm --filter amicode-v2 test -- repertoire_lint`)
+## Rules the lint enforces (`pnpm --filter amicode test -- repertoire_lint`)
 
 - manifest validates (schema_version supported, version ≥ 1, no duplicate stages,
   defaults ∈ choices, `emits` only known entities, `gate` only known classes)

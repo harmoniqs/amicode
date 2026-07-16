@@ -19,7 +19,7 @@ untouched.
 git clone git@github.com:harmoniqs/amicode.git && cd amicode
 git checkout aaron/night-l0-pulse-designer
 corepack enable && pnpm install
-pnpm --filter amicode-v2 package          # builds + fetches the BRANDED binary from the mirror release
+pnpm --filter amicode package          # builds + fetches the BRANDED binary from the mirror release
 bash packages/extension/scripts/install.sh # Julia project + VSIX install + lab.toml
 node packages/extension/scripts/healthcheck.mjs   # expect 4/4 ✓
 ```
