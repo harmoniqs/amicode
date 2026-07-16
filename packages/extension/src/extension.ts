@@ -23,6 +23,8 @@ import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { amicodeOpsDir } from "./substrate/vault_store";
+import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
+import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
@@ -486,6 +488,125 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
       opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
     });
+  }
+
+  // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
+  // a LOCAL personal vault (dotfolder-style; no GitHub). This is the first step of
+  // a broader workspace setup — synced tiers (team/public) and the Julia env are
+  // intended follow-ups. Hot-refresh (no window reload): re-prep + respawn the
+  // server + re-arm the distiller, mirroring the solver-mode switch above.
+  const respawnForVault = async (): Promise<void> => {
+    if (!binary || !serverManager) {
+      const c = await vscode.window.showInformationMessage(
+        "Amicode: personal vault created. Reload the window to activate it.",
+        "Reload window",
+      );
+      if (c === "Reload window") void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      return;
+    }
+    const port = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+    const project2 = prepareOpencodeProject({
+      agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
+      templateSrc: path.resolve(
+        ctx.extensionPath,
+        "templates",
+        readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
+      ),
+      juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+      skillRoots: cfgArr("skillRoots"),
+      skillLibraryRoots: cfgArr("skillLibraryRoots"),
+      vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
+      projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+    });
+    await serverManager.stop();
+    serverManager = new ServerManager({
+      binary,
+      cwd: project2.projectDir,
+      port: port > 0 ? port : undefined,
+      env: {
+        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
+        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+          project2.agentsPath,
+          project2.templatePath,
+          runsRoot,
+          undefined,
+          undefined,
+          project2.skillPaths,
+          project2.skillsStageDir,
+          project2.vaultDir,
+          project2.mounts,
+          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+        ),
+      },
+      channel: opencodeChannel,
+    });
+    serverManager.onReady((url) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      sseClient?.connect(url);
+    });
+    await serverManager.start();
+    if (project2.vaultDir) {
+      try {
+        distillerSetup = {
+          binary,
+          distillerMdPath: path.resolve(ctx.extensionPath, "DISTILLER.md"),
+          vaultDir: project2.vaultDir,
+          opsDir: amicodeOpsDir(),
+          problemsRoot: path.join(os.homedir(), ".amico", "problems"),
+          runsRoot,
+          model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
+        };
+        initDistillerTransport(distillerSetup);
+        opencodeChannel.appendLine(`[vault] distiller armed (vault: ${project2.vaultDir})`);
+      } catch (e) {
+        opencodeChannel.appendLine(`[vault] distiller transport failed: ${e}`);
+        distillerSetup = undefined;
+      }
+    }
+  };
+
+  const runVaultSetup = async (fromCommand: boolean): Promise<void> => {
+    if (personalMount(resolveMountStack())) {
+      if (fromCommand) void vscode.window.showInformationMessage("Amicode: a personal vault is already set up.");
+      return;
+    }
+    if (!fromCommand && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true) return;
+    if (!fromCommand) {
+      const choice = await vscode.window.showInformationMessage(
+        "Set up a personal vault? Amico will remember your systems, pulses, and problems across sessions — stored locally under ~/.amico/vaults.",
+        "Create vault",
+        "Not now",
+        "Don't ask again",
+      );
+      if (choice === "Don't ask again") {
+        await ctx.globalState.update("amicode.vaultSetup.dismissed", true);
+        return;
+      }
+      if (choice !== "Create vault") return;
+    }
+    const raw = await vscode.window.showInputBox({
+      title: "Set up a personal vault",
+      prompt: "Name your vault — created locally at ~/.amico/vaults/<name> (no GitHub)",
+      value: suggestVaultName(),
+      validateInput: (v) => (v && sanitizeVaultName(v) ? undefined : "enter a name"),
+    });
+    if (!raw) return;
+    let created;
+    try {
+      created = createLocalPersonalVault(defaultVaultsRoot(), raw);
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Amicode: vault setup failed — ${(e as Error).message}`);
+      return;
+    }
+    opencodeChannel.appendLine(`[vault] created local personal vault: ${created.path} (git=${created.gitInit})`);
+    await respawnForVault();
+    void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
+  // First-run offer: no personal vault resolved + not dismissed → prompt (non-blocking).
+  if (!opencodeProject.vaultDir && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") !== true) {
+    void runVaultSetup(false);
   }
 
   // 5. Commands
