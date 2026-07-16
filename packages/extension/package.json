@@ -6,7 +6,8 @@
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
-  "private": true,
+  "private": false,
+  "preview": true,
   "repository": {
     "type": "git",
     "url": "https://github.com/harmoniqs/amicode"
