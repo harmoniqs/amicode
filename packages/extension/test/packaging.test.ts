@@ -7,6 +7,7 @@ const VSIX = join(__dirname, "..", "amicode.vsix");
 const REQUIRED = [
   "extension/bin/dist/amico-run.js",
   "extension/bin/launcher/amico-run",
+  "extension/THIRD_PARTY_LICENSES.md", // MIT notice for the vendored opencode binary — must ship (license compliance)
   "extension/templates/solve_template.jl",
   "extension/templates/solve_template_hp.jl", // HP-mode vetted template (Piccolissimo) — mode-selected at prep time
   // spec C authoring assets — the tiered resolver + verification chain break
