@@ -101,6 +101,10 @@
         "title": "Amicode: Set up Julia (juliaup)"
       },
       {
+        "command": "amicode.healthcheck",
+        "title": "Amicode: Healthcheck"
+      },
+      {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
       },
