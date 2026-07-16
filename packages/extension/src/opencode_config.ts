@@ -143,7 +143,17 @@ export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
  *  `surface: public` tag from the central amico-plugin library. Overridable
  *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
-export const DEFAULT_LIBRARY_ROOTS = [path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills")];
+/** Library roots scanned (first-root-wins) for `surface: public` skills:
+ *   1. the dev's live amico-plugin checkout — full public set incl. the held
+ *      physics skills (present locally, just excluded from the OSS artifact);
+ *   2. the vsix-bundled OSS subset (fetch_skills.mjs -> vendor/skills-public),
+ *      the ONLY root a Marketplace user has. A dev has both; the checkout wins
+ *      per dir name, so the bundle is a pure fallback. Missing roots are
+ *      silently skipped (resolveLibrarySkills). */
+export const DEFAULT_LIBRARY_ROOTS = [
+  path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills"),
+  path.resolve(__dirname, "..", "vendor", "skills-public", "skills"),
+];
 /** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
  *  a documentation/reference anchor, NOT a selection input (selection is purely by
  *  frontmatter `surface: public`, see resolveLibrarySkills). The discovery test uses it

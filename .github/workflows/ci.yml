@@ -75,13 +75,19 @@ jobs:
       - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm -r run build   # amico-run + extension (same as fast — ensures dist/ is in place before vsce)
-      # Vendor BOTH platform binaries so the packaged .vsix installs on linux-x64 AND
-      # darwin-arm64. The runner only fetches its own platform by default; darwin is a
-      # cross-platform fetch, so force --release (a local build can only emit the host arch).
-      - run: pnpm --filter amicode fetch:opencode   # native (linux-x64)
+      # Build the .vsix via the SAME recipe release.yml ships — `pnpm run package`
+      # (build + exemplars + fetch:opencode linux-x64 + fetch:skills + vsce). One
+      # build definition, so the gate tests the real release artifact and there's
+      # nothing to keep in sync by hand (the drift trap this job used to be).
+      # NOTE: this token must ALSO have read access to harmoniqs/amico-plugin
+      # releases (fetch:skills) — if OPENCODE_FETCH_TOKEN is scoped only to the
+      # opencode fork, broaden it or add a dedicated SKILLS_FETCH_TOKEN secret.
+      - run: pnpm --filter amicode run package
         env:
-          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # private-fork release fetch (see fast)
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
+      # package only vendors the host binary (linux-x64); add darwin-arm64 so the
+      # gated .vsix is cross-platform, then repackage. --release: a cross-platform
+      # fetch can't build the non-host arch locally.
       - run: node packages/extension/scripts/fetch_opencode.mjs --platform darwin-arm64 --release
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
