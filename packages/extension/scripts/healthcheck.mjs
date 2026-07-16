@@ -73,7 +73,7 @@ function opencodeChecks(boot) {
     const miss = {
       ok: false,
       reason: "vendored opencode binary missing",
-      fix: "pnpm --filter amicode-v2 fetch:opencode",
+      fix: "pnpm --filter amicode fetch:opencode",
     };
     return { opencode: miss, creds: { ok: false, reason: "opencode unavailable (binary missing)", fix: miss.fix } };
   }
@@ -82,7 +82,7 @@ function opencodeChecks(boot) {
     : {
         ok: false,
         reason: `vendored opencode did not serve /event 200 (${boot.up ? `status ${boot.eventStatus}` : "server not up"})`,
-        fix: "pnpm --filter amicode-v2 fetch:opencode",
+        fix: "pnpm --filter amicode fetch:opencode",
       };
   const creds = boot.signal ?? {
     ok: false,

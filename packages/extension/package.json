@@ -1,6 +1,6 @@
 {
-  "name": "amicode-v2",
-  "displayName": "Amicode v2",
+  "name": "amicode",
+  "displayName": "Amicode",
   "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
   "version": "0.0.2",
   "publisher": "harmoniqs",
@@ -15,7 +15,19 @@
     "vscode": "^1.95.0"
   },
   "categories": [
+    "AI",
+    "Chat",
+    "Data Science",
     "Other"
+  ],
+  "keywords": [
+    "quantum",
+    "quantum computing",
+    "pulse design",
+    "optimal control",
+    "Piccolo",
+    "opencode",
+    "AI agent"
   ],
   "activationEvents": [
     "onCommand:amicode.openChat",

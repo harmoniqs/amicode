@@ -23,7 +23,7 @@ const fail = (msg, code = 1) => {
 
 const boot = await bootOpencodeAndProbe({ timeoutMs: 30_000 });
 if (boot.binMissing)
-  fail(`vendored binary missing at ${vendoredOpencodeBin()} — run \`pnpm --filter amicode-v2 fetch:opencode\``, 10);
+  fail(`vendored binary missing at ${vendoredOpencodeBin()} — run \`pnpm --filter amicode fetch:opencode\``, 10);
 if (!boot.up) fail(`server not up within 30s\n--- server output ---\n${boot.log}`);
 console.log(`[smoke] GET /event → ${boot.eventStatus} (${boot.eventCtype})`);
 if (boot.eventStatus !== 200) fail(`/event status ${boot.eventStatus}, want 200\n--- server output ---\n${boot.log}`);

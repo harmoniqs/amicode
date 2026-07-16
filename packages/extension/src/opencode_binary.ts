@@ -24,7 +24,7 @@ export function resolveOpencodeBinary(extensionRoot: string, configValue: string
     accessSync(vendored, constants.X_OK);
   } catch {
     throw new OpencodeMissingError(
-      `vendored opencode missing at ${vendored} — run \`pnpm --filter amicode-v2 fetch:opencode\` (dev) or reinstall the extension`,
+      `vendored opencode missing at ${vendored} — run \`pnpm --filter amicode fetch:opencode\` (dev) or reinstall the extension`,
     );
   }
   return { path: vendored, source: "vendored" };
