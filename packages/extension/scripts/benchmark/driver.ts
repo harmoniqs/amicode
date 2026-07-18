@@ -416,9 +416,13 @@ async function runCell(
     };
     write(done);
   } catch (e) {
+    // The server is guaranteed up before runCell is called (boot is a separate
+    // step in the batch loop), so a failure HERE is always a turn failure —
+    // most often turn 1's POST exceeding the per-turn timeout. Never mislabel
+    // it "boot" (that lie masked the real turn-timeout in v1's "S3" crashes).
     const er: ErrorRecord = {
       kind: "error",
-      phase: turnsCompleted === 0 ? "boot" : `turn:${turnsCompleted + 1}`,
+      phase: `turn:${turnsCompleted + 1}`,
       message: String((e as Error)?.message ?? e).slice(0, 500),
       turnsCompleted,
     };
@@ -456,17 +460,21 @@ async function main(): Promise<void> {
 
   for (const model of models) {
     console.error(`\n[driver] === model: ${model} ===`);
-    let server: Server | undefined;
-    try {
-      server = await bootServer(model);
-      console.error(`[driver] serve up on :${server.port}`);
-    } catch (e) {
-      // Boot failure: write an error cell for every (scenario × run) so the
-      // batch is complete and the report shows the model as failed.
-      console.error(`[driver] BOOT FAILED for ${model}: ${(e as Error).message}`);
-      for (const scenario of scenarios) {
-        for (let run = 1; run <= runs; run++) {
-          const outFile = path.join(outDir, `${cellName(model, scenario.id, run)}.jsonl`);
+    // Reboot serve BEFORE EACH CELL, not once per model. The hard v2 scenarios
+    // do real work per turn (author + launch a solve, ~90s each); stacking many
+    // long cells on one reused serve process degrades it until turns hang (the
+    // earlier all-cells-"boot"-timeout was exactly this — a wedged reused
+    // server, not a real boot failure). A fresh server per cell isolates each.
+    for (const scenario of scenarios) {
+      for (let run = 1; run <= runs; run++) {
+        const label = cellName(model, scenario.id, run);
+        const outFile = path.join(outDir, `${label}.jsonl`);
+        let server: Server | undefined;
+        try {
+          server = await bootServer(model);
+        } catch (e) {
+          // A genuine boot failure (serve never came up) — this IS a boot error.
+          console.error(`[driver] BOOT FAILED for ${label}: ${(e as Error).message}`);
           const er: ErrorRecord = {
             kind: "error",
             phase: "boot",
@@ -474,22 +482,17 @@ async function main(): Promise<void> {
             turnsCompleted: 0,
           };
           fs.writeFileSync(outFile, JSON.stringify(er) + "\n");
+          continue;
         }
-      }
-      continue;
-    }
-    try {
-      for (const scenario of scenarios) {
-        for (let run = 1; run <= runs; run++) {
-          const label = cellName(model, scenario.id, run);
+        try {
           const t0 = Date.now();
-          process.stderr.write(`[driver] cell ${label} … `);
+          process.stderr.write(`[driver] cell ${label} (serve :${server.port}) … `);
           await runCell(server, model, scenario, run, outDir, turnTimeoutMs);
           console.error(`done (${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+        } finally {
+          server.kill();
         }
       }
-    } finally {
-      server.kill();
     }
   }
   console.error(`\n[driver] batch complete → ${outDir}`);
