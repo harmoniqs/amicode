@@ -1,6 +1,6 @@
 // packages/amico-run/test/remote_executor.test.ts
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
 import { FakeCloud } from "./fake_cloud.js";
@@ -158,5 +158,64 @@ describe("poll streaming — stats/frames fed into the mirror (Δ4)", () => {
       expect(await h.finished).toEqual({ status: "completed", exitCode: 0 });
       expect(readdirSync(h.runDir).filter((f) => f.endsWith(".png"))).toHaveLength(0);
     });
+  });
+});
+
+describe("liveness lanes — resolutions (c) and (d)", () => {
+  it("heartbeat: a successful status poll re-touches run.log's mtime (cloud liveness → disk signal)", async () => {
+    await withCloud(async (fake) => {
+      const root = tmpRoot(); // Pending, alive, no iters: pure warming
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(2);
+      const cold = new Date(Date.now() - 11 * 60 * 1000); // age past the inspector's 10-min knob
+      utimesSync(join(h.runDir, "run.log"), cold, cold);
+      const seen = fake.statusPolls;
+      await fake.waitForPolls(seen + 2); // ≥1 full poll after aging
+      expect(Date.now() - statSync(join(h.runDir, "run.log")).mtimeMs).toBeLessThan(60_000);
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+    });
+  });
+
+  it("resolution (d): liveness=gone without FINISHED → inferred terminal failed/255 + breadcrumb", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.liveness = "gone";
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      expect(await h.finished).toEqual({ status: "failed", exitCode: EXIT_INFERRED });
+      const fin = readToml(join(h.runDir, "FINISHED"));
+      expect(fin).toEqual({ status: "failed", exit_code: EXIT_INFERRED });
+      expect(readFileSync(join(h.runDir, "run.log"), "utf8")).toContain(
+        "AMICODE_REMOTE_LOST instance gone without FINISHED",
+      );
+    });
+  });
+
+  it("resolution (c): warming budget exhausted (Pending forever) → inferred terminal + best-effort abort", async () => {
+    await withCloud(async (fake) => {
+      const root = tmpRoot(); // stays Pending with no iters — never shows life
+      const h = await ex(fake, { warmingBudgetMs: 150 }).submit(fakeJulia(root, "s.jl", ""), {
+        runsRoot: join(root, "runs"),
+      });
+      expect(await h.finished).toEqual({ status: "failed", exitCode: EXIT_INFERRED });
+      expect(readFileSync(join(h.runDir, "run.log"), "utf8")).toContain("warming budget exhausted");
+      // best-effort abort fired is asserted in Task 6 (postAbort is a no-op until then)
+    });
+  });
+
+  it("resolution (d) client half: endpoint gone after life was seen → bounded inferred terminal", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    fake.state.task_status = "Running";
+    fake.state.iters = [{ iter: 1, f: "1e-2", inf_pr: "1e-8", inf_du: "1e-6" }];
+    const root = tmpRoot();
+    const h = await ex(fake, { lostAfterMs: 200 }).submit(fakeJulia(root, "s.jl", ""), {
+      runsRoot: join(root, "runs"),
+    });
+    await fake.waitForPolls(2); // life seen — the warming budget is out of play
+    await fake.stop(); // the endpoint disappears
+    expect(await h.finished).toEqual({ status: "failed", exitCode: EXIT_INFERRED }); // bounded, no forever-pump
+    expect(readFileSync(join(h.runDir, "run.log"), "utf8")).toContain("poll endpoint unreachable");
   });
 });

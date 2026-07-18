@@ -213,7 +213,22 @@ export class RemoteExecutor implements Executor {
       } catch {
         /* frames are best-effort by contract */
       }
-      // Δ8 Task 5 inserts here: heartbeat mtime touch; instance-gone inferred terminal
+      // heartbeat: a successful status poll proves the cloud channel is alive.
+      // Mirror that into run.log's MTIME (content untouched) so the inspector's
+      // disk-keyed stall logic (liveStatus/stopPlan, STALL_AFTER_MS) measures
+      // CLOUD silence — remote warming stays the executor's budget (resolution (c)).
+      try {
+        const now = new Date();
+        utimesSync(join(runDir, "run.log"), now, now);
+      } catch {
+        /* mirror deleted underneath us — the terminal lanes still settle */
+      }
+      // resolution (d): instance gone without FINISHED → inferred terminal
+      if (s.liveness === "gone" && s.finished === undefined) {
+        emitLine(`AMICODE_REMOTE_LOST instance gone without FINISHED (task ${taskId})`);
+        settle("failed", EXIT_INFERRED);
+        return;
+      }
       const f = s.finished?.status;
       if (f === "completed" || f === "failed" || f === "aborted") settle(f, EXIT[f]);
     };
@@ -227,7 +242,22 @@ export class RemoteExecutor implements Executor {
           // advanced, so a sustained outage honestly reads "stalled" downstream.
         }
         if (settled) return;
-        // Δ8 Task 5 inserts here: warming-budget + lost-endpoint inferred terminals
+        // resolution (c): the executor OWNS its warming budget — no Scheduler
+        // timer exists to do this (pinned by scheduler.test.ts:285).
+        if (!sawLife && Date.now() - startedAt > this.warmingBudgetMs) {
+          emitLine(`AMICODE_REMOTE_LOST warming budget exhausted (${this.warmingBudgetMs}ms, task ${taskId})`);
+          void postAbort(); // best-effort: stop paying for the instance
+          settle("failed", EXIT_INFERRED);
+          return;
+        }
+        // resolution (d) client half: observability lost. S3 keeps the cloud
+        // truth; the mirror records an inferred verdict + breadcrumb rather
+        // than polling a dead endpoint forever (bounded pump).
+        if (Date.now() - lastOkPollAt > this.lostAfterMs) {
+          emitLine(`AMICODE_REMOTE_LOST poll endpoint unreachable for ${this.lostAfterMs}ms (task ${taskId})`);
+          settle("failed", EXIT_INFERRED);
+          return;
+        }
         await new Promise((r) => setTimeout(r, this.pollMs));
       }
     };
