@@ -109,3 +109,54 @@ describe("terminal resolution (d) — status poll is authoritative, FINISHED mir
     });
   }
 });
+
+describe("poll streaming — stats/frames fed into the mirror (Δ4)", () => {
+  it("stats become AMICODE_ITER lines in run.log AND iter events; re-served history is deduped", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.iters = [
+        { iter: 1, f: "1.0e-2", inf_pr: "1e-8", inf_du: "1e-6" },
+        { iter: 2, f: "3.0e-4", inf_pr: "1e-9", inf_du: "1e-7" },
+      ];
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(4); // several polls over the SAME stats — dedup must hold
+      fake.state.finished = { status: "completed" };
+      const evs = await collect(h.events);
+      const iters = evs.filter((e) => e.kind === "iter");
+      expect(iters).toHaveLength(2); // not 2 × polls
+      expect(iters[0]).toMatchObject({ fields: { iter: "1", f: "1.0e-2", inf_pr: "1e-8", inf_du: "1e-6" } });
+      expect(evs.at(-1)!.kind).toBe("finished");
+      // the mirror's run.log carries the exact synthesized lines (tail/backstop food)
+      const log = readFileSync(join(h.runDir, "run.log"), "utf8");
+      expect(log).toContain("AMICODE_ITER iter=1 f=1.0e-2 inf_pr=1e-8 inf_du=1e-6");
+      expect(log.match(/AMICODE_ITER iter=1 /g)).toHaveLength(1);
+    });
+  });
+
+  it("frames land as iter_NNN.png (S3 layout name); newest-wins high-water", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.frame = { iter: 7, png_base64: Buffer.from("png-bytes-7").toString("base64") };
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(2);
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+      expect(readFileSync(join(h.runDir, "iter_007.png"), "utf8")).toBe("png-bytes-7");
+      expect(readdirSync(h.runDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0); // atomic write
+    });
+  });
+
+  it("resolution (a): a 500ing frames endpoint changes NOTHING — run completes, no png, no error event", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.framesBroken = true;
+      fake.state.finished = { status: "completed" };
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      expect(await h.finished).toEqual({ status: "completed", exitCode: 0 });
+      expect(readdirSync(h.runDir).filter((f) => f.endsWith(".png"))).toHaveLength(0);
+    });
+  });
+});

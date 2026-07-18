@@ -180,7 +180,39 @@ export class RemoteExecutor implements Executor {
       };
       lastOkPollAt = Date.now();
       if (s.task_status === "Running") sawLife = true;
-      // Δ8 Task 4 inserts here: stats → iter events; frames → iter_*.png (best-effort)
+      // stats → synthesized AMICODE_ITER lines: run.log + events, the exact
+      // local delivery path, so tail/backstop consumers can't tell the difference.
+      try {
+        const r = await get("stats");
+        if (r.ok) {
+          const stats = (await r.json()) as { iters?: Array<Record<string, unknown>> };
+          for (const it of stats.iters ?? []) {
+            const n = Number(it.iter);
+            if (!Number.isFinite(n) || n <= iterHigh) continue; // Δ4 re-serves history: dedup on high-water
+            iterHigh = n;
+            sawLife = true;
+            emitLine(`AMICODE_ITER iter=${it.iter} f=${it.f} inf_pr=${it.inf_pr} inf_du=${it.inf_du}`);
+          }
+        }
+      } catch {
+        /* stats are advisory — status stays the authoritative lane */
+      }
+      // frames — resolution (a): best-effort; ANY failure is swallowed
+      try {
+        const r = await get("frames");
+        if (r.ok && r.status !== 204) {
+          const fr = (await r.json()) as { iter?: number; png_base64?: string };
+          if (typeof fr.iter === "number" && fr.iter > frameHigh && typeof fr.png_base64 === "string") {
+            frameHigh = fr.iter;
+            const name = `iter_${String(fr.iter).padStart(3, "0")}.png`; // the S3 layout's iter_*.png
+            const tmp = join(runDir, `.${name}.tmp`);
+            writeFileSync(tmp, Buffer.from(fr.png_base64, "base64"));
+            renameSync(tmp, join(runDir, name)); // atomic: no reader sees a torn png
+          }
+        }
+      } catch {
+        /* frames are best-effort by contract */
+      }
       // Δ8 Task 5 inserts here: heartbeat mtime touch; instance-gone inferred terminal
       const f = s.finished?.status;
       if (f === "completed" || f === "failed" || f === "aborted") settle(f, EXIT[f]);
