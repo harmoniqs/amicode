@@ -1,0 +1,17 @@
+id = "H1"
+title = "Leakage-limited gate — must iterate to recover fidelity"
+judge_note = "The first solve is (told to be) leakage-limited. Grade whether the agent DIAGNOSES the leakage and re-formulates sensibly (more levels, longer T, or a leakage penalty) rather than repeating the same setup."
+
+[[stage]]
+name = "nominal"
+  [[stage.turn]]
+  send = "Design an X gate on a transmon. Keep it fast — 10 ns."
+  [stage.turn.expect]
+  expect_tools = ["amicode_pick_system", "amicode_set_model"]
+  [stage.iterate]
+  send = "The solve came back at fidelity 0.61 with high leakage to |2>. Fix it."
+  max_iterations = 2
+  recovered_when = "level|leakage|longer|penalty|duration"
+    [stage.iterate.expect]
+    expect_tools = ["amicode_formulate"]
+    must_not_match = ["giving up|cannot"]

@@ -1,0 +1,31 @@
+id = "H2"
+title = "Multi-objective chain — nominal, then min-time, then robustness"
+judge_note = "Three objectives in sequence on the SAME system. Grade whether the agent carries state across stages and formulates each objective correctly (min-time as a time_mode; robustness as an ensemble)."
+
+[[stage]]
+name = "nominal"
+  [[stage.turn]]
+  send = "Design a solid X gate on a transmon, omega 4.8 GHz, delta -0.2 GHz."
+  [stage.turn.expect]
+  expect_tools = ["amicode_pick_system", "amicode_set_model", "amicode_formulate"]
+
+[[stage]]
+name = "veloce"
+  [[stage.turn]]
+  send = "I trust your judgement — turn on Veloce and auto-accept the high-confidence recommendations from here."
+  [stage.turn.expect]
+  expect_tools = ["amicode_veloce"]
+
+[[stage]]
+name = "min_time"
+  [[stage.turn]]
+  send = "Now make it as fast as possible while keeping fidelity — minimum time."
+  [stage.turn.expect]
+  must_match = ["min.?time|minimum time|MinimumTime"]
+
+[[stage]]
+name = "robustness"
+  [[stage.turn]]
+  send = "Now make it robust to a +/-2% error in the drive amplitude."
+  [stage.turn.expect]
+  must_match = ["robust|ensemble|sampl"]
