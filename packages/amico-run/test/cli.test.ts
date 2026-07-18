@@ -3,6 +3,7 @@ import { execFileSync, execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
+import { FakeCloud } from "./fake_cloud.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
 beforeAll(() => {
@@ -53,11 +54,71 @@ describe("amico-run CLI", () => {
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/unknown flag/);
   });
-  it("--executor remote → 64 (only local in β)", () => {
+  it("--executor remote without cloud config → 64 (config-class), no run dir", () => {
     const root = tmpRoot();
-    const r = run([fakeJulia(root, "s.jl", ""), "--executor", "remote"]);
+    const r = run([fakeJulia(root, "s.jl", ""), "--executor", "remote", "--runs-root", join(root, "runs")], {
+      AMICO_CLOUD_FILE: join(root, "no-such-cloud.json"), // hermetic: ignore any real ~/.amico/cloud.json
+      AMICO_CLOUD_URL: "",
+      AMICO_CLOUD_TOKEN: "",
+    });
     expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(/cloud config/);
+    expect(existsSync(join(root, "runs"))).toBe(false);
   });
+
+  it("--executor bogus → 64 naming the supported set", () => {
+    const root = tmpRoot();
+    const r = run([fakeJulia(root, "s.jl", ""), "--executor", "bogus"]);
+    expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(/local, remote/);
+  });
+
+  it("--spec with --executor remote → 64 (named seam: verification is local-only)", () => {
+    const root = tmpRoot();
+    writeFileSync(join(root, "spec.json"), "{}");
+    const r = run(
+      [fakeJulia(root, "s.jl", ""), "--executor", "remote", "--spec", join(root, "spec.json")],
+      { AMICO_CLOUD_URL: "http://127.0.0.1:1", AMICO_CLOUD_TOKEN: "t" },
+    );
+    expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(/--spec .*remote/);
+  });
+
+  it("--executor remote full lane through the bundle (fake cloud): iter relay + AMICODE_FINISHED, exit 0", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    fake.state = {
+      task_status: "Running",
+      liveness: "alive",
+      iters: [{ iter: 1, f: "1.0e-2", inf_pr: "1e-8", inf_du: "1e-6" }],
+      finished: { status: "completed" },
+    };
+    try {
+      const root = tmpRoot();
+      const script = fakeJulia(root, "s.jl", "");
+      // ASYNC lane (the SIGTERM-test pattern, cli.test.ts:191-196) — NEVER the
+      // sync run() helper here: FakeCloud runs IN this test process, and
+      // execFileSync would block the event loop, so the fake could never answer
+      // the child CLI's HTTP requests (deadlock until undici's timeout).
+      const r = await new Promise<{ code: number; stdout: string }>((resolveP) => {
+        let stdout = "";
+        const child = execFile(
+          "node",
+          [BUNDLE, script, "--executor", "remote", "--runs-root", join(root, "runs")],
+          { env: { ...process.env, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token } },
+        );
+        child.stdout!.on("data", (d: string) => {
+          stdout += d;
+        });
+        child.on("exit", (c) => resolveP({ code: c ?? -1, stdout }));
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain("AMICODE_ITER iter=1 f=1.0e-2");
+      expect(r.stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0 runDir=.+/);
+    } finally {
+      await fake.stop();
+    }
+  }, 15000);
   it("--spec: gate failure → 64, one-line stderr reason, NO run dir (spec C)", () => {
     const root = tmpRoot();
     const script = fakeJulia(root, "s.jl", "");
