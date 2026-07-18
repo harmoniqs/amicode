@@ -165,8 +165,16 @@ export class RemoteExecutor implements Executor {
 
     let abortPosted = false;
     const postAbort = async (): Promise<void> => {
-      // Δ8 Task 6 inserts here (resolution (b): abort is a REQUEST, not a kill)
-      void abortPosted;
+      if (abortPosted) return; // idempotent, like LocalExecutor's settled-guard
+      abortPosted = true;
+      try {
+        await fetch(`${cfg.baseUrl}/solves/${taskId}/abort`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${cfg.token}` },
+        });
+      } catch {
+        /* the request is best-effort; the status poll still owns the terminal */
+      }
     };
 
     const pollOnce = async (): Promise<void> => {

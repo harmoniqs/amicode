@@ -219,3 +219,45 @@ describe("liveness lanes — resolutions (c) and (d)", () => {
     expect(readFileSync(join(h.runDir, "run.log"), "utf8")).toContain("poll endpoint unreachable");
   });
 });
+
+describe("abort() — resolution (b): a REQUEST; the run is live until the real terminal", () => {
+  it("posts …/abort once (idempotent), keeps streaming, settles ONLY when the poll reports aborted", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(1);
+      const aborting = h.abort(); // request…
+      void h.abort(); // …idempotent: no second POST
+      await fake.waitForPolls(fake.statusPolls + 2); // the pump is STILL polling post-abort
+      expect(fake.aborts).toBe(1);
+      expect(existsSync(join(h.runDir, "FINISHED"))).toBe(false); // not terminal yet — request ≠ kill
+      // the run keeps streaming after the abort request (still live)
+      fake.state.iters = [{ iter: 3, f: "5e-3", inf_pr: "1e-8", inf_du: "1e-6" }];
+      const seen = fake.statusPolls;
+      await fake.waitForPolls(seen + 2);
+      expect(readFileSync(join(h.runDir, "run.log"), "utf8")).toContain("AMICODE_ITER iter=3");
+      // the cloud finally reports the terminal — NOW everything settles
+      fake.state.finished = { status: "aborted" };
+      await aborting; // abort() resolves with the terminal, like LocalExecutor's
+      expect(await h.finished).toEqual({ status: "aborted", exitCode: 130 });
+      expect(readToml(join(h.runDir, "FINISHED"))).toEqual({ status: "aborted", exit_code: 130 });
+    });
+  });
+
+  it("warming-budget exhaustion fires the best-effort abort request (Task 5 leftover)", async () => {
+    await withCloud(async (fake) => {
+      const root = tmpRoot();
+      const h = await ex(fake, { warmingBudgetMs: 120 }).submit(fakeJulia(root, "s.jl", ""), {
+        runsRoot: join(root, "runs"),
+      });
+      await h.finished;
+      // the abort POST is fire-and-forget (`void postAbort()` — settle must not
+      // depend on it), so the in-flight request can land AFTER finished resolves;
+      // spin until it arrives (the FakeCloud.waitForPolls idiom; vitest's 5s
+      // timeout bounds a never-fired request as a failure).
+      while (fake.aborts < 1) await new Promise((r) => setTimeout(r, 5));
+      expect(fake.aborts).toBe(1);
+    });
+  });
+});
