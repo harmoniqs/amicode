@@ -15,6 +15,13 @@ name = "verify"
   send = "The solve finished. Is this result trustworthy?"
   [stage.turn.expect]
   must_match = ["verif|re-?rollout|untrusted|independent"]
+  # Give the agent an actual verification RESULT to record — without data in
+  # hand, models correctly talk about verification but have nothing to file
+  # via amicode_verify (first smoke: 3 of 4 dead tools fired, verify didn't).
+  [[stage.turn]]
+  send = "The re-rollout verification came back: agree = true, original fidelity 0.9935, re-rolled 0.9931. Record the verification outcome."
+  [stage.turn.expect]
+  expect_tools = ["amicode_verify"]
 
 [[stage]]
 name = "hardware"
