@@ -1,0 +1,51 @@
+# ============================================================================
+# S4 — Run to a solve (best-effort; long, may be skipped in a quick batch).
+#
+# Full interview → formulate → launch. The answers are staged to drive a clean
+# transmon X-gate all the way to amicode_solve. This scenario can be LONG (each
+# turn is a live LLM round-trip) and a launch may not complete inside the batch;
+# run it selectively (--scenarios S4). We assert the tool CHAIN was recorded, not
+# that a Julia solve FINISHED (that's the slow e2e's tier D job, not the harness's).
+# ============================================================================
+id = "S4"
+title = "Full chain — interview through amicode_solve"
+exclude_from_headline = false
+judge_note = """
+Score whether the agent can carry a transmon X-gate from cold open all the way
+to a launched solve, recording System → Formulation → Run via the amicode_* tools
+in the right order and with correct physics. Partial chains earn partial credit;
+note where it stalls or skips a bookkeeping step.
+"""
+
+[[turn]]
+send = "help me design a pulse for my transmon — walk me through it"
+  [turn.expect]
+  must_match = ["system|platform|transmon|hamiltonian|\\\\hat"]
+
+[[turn]]
+send = "transmon"
+  [turn.expect]
+  expect_tools = ["amicode_pick_system"]
+
+[[turn]]
+send = "omega = 4.8 GHz, delta = -0.2 GHz"
+
+[[turn]]
+send = "3 levels, default drives"
+
+[[turn]]
+send = "an X gate"
+
+[[turn]]
+send = "gate_synthesis, defaults are fine — formulate it"
+  [turn.expect]
+  expect_tools = ["amicode_formulate"]
+
+[[turn]]
+send = "straight to solve, no warm start"
+
+[[turn]]
+send = "T = 10 ns, N = 50, max_iter = 60 — launch it"
+  [turn.expect]
+  expect_tools = ["amicode_solve"]
+  judge_note = "This turn should record/launch the run via amicode_solve."

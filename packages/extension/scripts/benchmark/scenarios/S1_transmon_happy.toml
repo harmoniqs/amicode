@@ -1,0 +1,51 @@
+# ============================================================================
+# S1 — Transmon happy-path (the canonical interview→formulate cadence).
+#
+# Probes the core protocol: turn 1 asks ONE platform question with no stage-
+# batching; after "transmon" the agent shows the transmon Hamiltonian (LaTeX
+# \hat / H/\hbar) and/or records the system with amicode_pick_system. Then we
+# push it toward a formulation.
+# ============================================================================
+id = "S1"
+title = "Transmon happy-path (one-question cadence + Hamiltonian)"
+exclude_from_headline = false
+judge_note = """
+Score how well the agent runs a disciplined pulse-design interview on a transmon:
+one atomic question per turn, correct transmon physics (Hamiltonian, drives),
+and progress toward a solvable formulation. Penalize stage-batching (asking
+several unrelated parameters at once), wrong physics, and skipped tool bookkeeping.
+"""
+
+[[turn]]
+send = "help me design a pulse"
+  [turn.expect]
+  # Turn 1 must be the platform/system question…
+  must_match = ["system|platform"]
+  # …and MUST NOT batch stage-2+ params into it (the real protocol violation).
+  must_not_match = ["max_iter|timestep|objective|constraint|drive_max|how many levels"]
+  # opencode plugin exposes the question either as prose or as an amicode_ask call.
+  # We do not REQUIRE the tool here (some models ask in prose) — captured, judged.
+  forbid_tools = ["amicode_solve", "amicode_formulate"]
+  judge_note = "The opening turn should ask exactly one thing: which platform/system."
+
+[[turn]]
+send = "transmon"
+  [turn.expect]
+  # Expect the transmon Hamiltonian in LaTeX OR the system-record tool call.
+  must_match = ["\\\\hat|H\\s*/\\s*\\\\hbar|hamiltonian"]
+  expect_tools = ["amicode_pick_system"]
+  judge_note = "Should present/confirm the transmon Hamiltonian and record the system."
+
+[[turn]]
+send = "omega = 4.8 GHz, delta = -0.2 GHz, 3 levels"
+  [turn.expect]
+  # Continues the interview toward a formulation; must not hallucinate a solve yet.
+  forbid_tools = ["amicode_solve"]
+  judge_note = "Should accept the params and advance one step (e.g. ask the target gate)."
+
+[[turn]]
+send = "an X gate, defaults are fine — formulate it"
+  [turn.expect]
+  # By now it should record the formulation.
+  expect_tools = ["amicode_formulate"]
+  judge_note = "Should record the gate_synthesis formulation for an X gate."

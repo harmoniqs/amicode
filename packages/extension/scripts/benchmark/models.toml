@@ -1,0 +1,43 @@
+# ============================================================================
+# Candidate model set for the amicode agent benchmark — DATA, not code.
+#
+# These are the LLMs driven AS the amicode pulse-designer agent (interview →
+# formulate → solve). Each was probed live and confirmed INVOKABLE on this
+# account (2026-07-17). The driver forces each via the opencode config `model`
+# pin (buildOpencodeConfigContent's `model` field) with a serve restart per model.
+#
+# NOT available on this account (do NOT add): claude-sonnet-5, claude-opus-4-8,
+# claude-fable-5, deepseek.v3.2.
+# ============================================================================
+
+# Fixed LLM judge for the scorer's protocol/completion axes. The spec's intended
+# judge (anthropic.claude-opus-4-8) is NOT available on this account — Sonnet 4.6
+# is the substitute, and IT is available (also serves as the best-in-class anchor
+# candidate below).
+judge = "amazon-bedrock/anthropic.claude-sonnet-4-6"
+
+# Default runs per (model × scenario) cell (report.ts aggregates median + min/max).
+runs = 3
+
+# DROPPED from the default matrix (2026-07-17): moonshot.kimi-k2-thinking.
+# Its reasoning tokens made it ~8x the per-interview cost of Haiku (~$0.53 vs
+# ~$0.066) and ~5x its own k2.5 sibling — too expensive to be a realistic
+# default. The 12 cells already captured before it was cut remain on disk and
+# still get scored; we just don't complete its full matrix. Re-add here to
+# revisit if the quality delta ever justifies the cost.
+# id = "amazon-bedrock/moonshot.kimi-k2-thinking"
+
+[[model]]
+id = "amazon-bedrock/moonshotai.kimi-k2.5"             # the affordable Kimi (in the matrix)
+
+[[model]]
+id = "amazon-bedrock/anthropic.claude-sonnet-4-6"      # best-in-class anchor (also the judge)
+
+[[model]]
+id = "amazon-bedrock/anthropic.claude-haiku-4-5-20251001-v1:0"
+
+[[model]]
+id = "google/gemini-2.5-flash"
+
+[[model]]
+id = "opencode/deepseek-v4-flash-free"                 # current amicode default = baseline to beat

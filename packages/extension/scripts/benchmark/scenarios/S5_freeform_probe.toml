@@ -1,0 +1,22 @@
+# ============================================================================
+# S5 — Free-form probe (captured, judged, EXCLUDED from the head-to-head number).
+#
+# One open-ended request. No fixed protocol expectations — this measures the
+# model's "feel" as Amico (voice, initiative, physics instinct) on an unscripted
+# prompt. Its score is reported separately and never folded into the ranking.
+# ============================================================================
+id = "S5"
+title = "Free-form probe (open-ended, excluded from headline)"
+exclude_from_headline = true
+judge_note = """
+Open-ended, no scripted protocol. Score holistically as Amico: does it engage
+like a knowledgeable pulse-design collaborator — right instinct (fast X gate on a
+transmon = short T, watch leakage/anharmonicity, DRAG-style thinking), on-voice
+(witty, honest, first-person, no emoji spam), and does it start the interview
+rather than lecturing? This is a vibe/initiative probe, reported separately.
+"""
+
+[[turn]]
+send = "design me a fast X gate on a transmon"
+  [turn.expect]
+  judge_note = "Holistic: physics instinct + Amico voice + moves toward a concrete design."

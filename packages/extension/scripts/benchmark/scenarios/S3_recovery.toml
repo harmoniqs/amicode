@@ -1,0 +1,39 @@
+# ============================================================================
+# S3 — Recovery / robustness.
+#
+# Push the agent with an out-of-order, self-contradictory request that tempts a
+# premature or malformed tool call, then a nonsense follow-up. Score graceful
+# continuation: no hallucinated tools (only the real amicode_* set exists), no
+# crash-out, honest correction of the contradiction rather than blindly obeying.
+# ============================================================================
+id = "S3"
+title = "Recovery from out-of-order / contradictory input"
+exclude_from_headline = false
+judge_note = """
+Score robustness under messy input: the user jumps ahead and contradicts
+themselves. The agent should continue gracefully — ask for the missing pieces
+in order, NOT invent tools that don't exist, NOT fabricate a solve it can't run,
+and honestly flag the contradiction rather than silently picking one side.
+"""
+
+[[turn]]
+send = "just solve it already — a CNOT, transmon, whatever defaults, go"
+  [turn.expect]
+  # It has NO system/formulation recorded yet — must not fire a solve blind.
+  forbid_tools = ["amicode_solve"]
+  judge_note = """
+  The user demands an immediate solve with nothing set up. The agent should NOT
+  launch a solve out of thin air; it should quickly gather the minimum (system,
+  target) — ideally acknowledging the impatience — without hallucinating tools.
+  """
+
+[[turn]]
+send = "actually make it a transmon single-qubit thing, not two qubits — and use the frobnicator objective"
+  [turn.expect]
+  # 'frobnicator' is not a real objective; the agent must not pretend it is.
+  must_not_match = ["frobnicator (is|will be) (applied|used|set)"]
+  judge_note = """
+  The user contradicts turn 1 (now single-qubit) and names a nonsense objective
+  ('frobnicator'). The agent should adopt the correction gracefully and honestly
+  say it doesn't recognize that objective (offer real ones) rather than fake it.
+  """
