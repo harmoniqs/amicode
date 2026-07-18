@@ -111,7 +111,19 @@ export interface DoneRecord {
   finishedAt: string;
 }
 
-export type TranscriptRecord = MetaRecord | TurnRecord | ErrorRecord | DoneRecord;
+/** v2: an iterate stage that never matched recovered_when within max_iterations. */
+export interface StageUnrecoveredRecord {
+  kind: "stage_unrecovered";
+  stage: string;
+  iterations: number;
+}
+
+export type TranscriptRecord =
+  | MetaRecord
+  | TurnRecord
+  | ErrorRecord
+  | DoneRecord
+  | StageUnrecoveredRecord;
 
 // ---- Scenario shape (parsed from scenarios/*.toml) --------------------------
 
