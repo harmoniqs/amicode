@@ -167,10 +167,3 @@ export class LocalExecutor implements Executor {
     return { runId, runDir, events, finished, abort };
   }
 }
-
-/** Spec §3: interface seam only — implementation is post-β. */
-export class RemoteExecutor implements Executor {
-  submit(): Promise<RunHandle> {
-    return Promise.reject(new Error("RemoteExecutor: not implemented in β (D9 plan, Phase 2+)"));
-  }
-}
