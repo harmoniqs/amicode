@@ -106,6 +106,10 @@
         "title": "Amicode: Healthcheck"
       },
       {
+        "command": "amicode.setCloudKey",
+        "title": "Amico: Connect Cloud (Piccolissimo + Altissimo)"
+      },
+      {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
       },
@@ -177,6 +181,11 @@
           "type": "string",
           "default": "",
           "description": "Julia project (--project) the agent passes to amico-run. Empty = defaults to ~/.amico/julia (the provisioned project)."
+        },
+        "amicode.cloudUrl": {
+          "type": "string",
+          "default": "https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com",
+          "description": "Base URL of the Amico cloud Solve Service, used by \"Amico: Connect Cloud\" to validate your API key and written into ~/.amico/cloud.json (where RemoteExecutor reads it). Empty = the built-in production endpoint."
         },
         "amicode.runsRoot": {
           "type": "string",
