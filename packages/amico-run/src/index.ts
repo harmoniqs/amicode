@@ -5,3 +5,5 @@ export * from "./schemas.js";
 export * from "./event_queue.js";
 export * from "./local_executor.js";
 export * from "./scheduler.js";
+export * from "./remote_config.js";
+export * from "./remote_executor.js";

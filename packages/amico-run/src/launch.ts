@@ -9,7 +9,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { LocalExecutor } from "./local_executor.js";
-import { ConfigError, type Finished, type SubmitOpts } from "./types.js";
+import { RemoteExecutor } from "./remote_executor.js";
+import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
 import { runVerification } from "./verify.js";
@@ -23,7 +24,7 @@ function readTomlSafe(fp: string): Record<string, unknown> | undefined {
   }
 }
 
-const USAGE = `usage: amico-run <script.jl> [--executor local] [--lab <id-or-path>]
+const USAGE = `usage: amico-run <script.jl> [--executor local|remote] [--lab <id-or-path>]
                  [--runs-root <path>] [--julia <path>] [--project <path>] [--sysimage <path>]
                  [--spec <solvespec.json>]   (spec C: validate + gate before launch)
        amico-run resolve --platform <p> --kind <k> --size <n>   (tier resolution → JSON)
@@ -99,9 +100,19 @@ export async function launch(argv: string[]): Promise<number> {
     console.error(`amico-run: no script given\n${USAGE}`);
     return 64;
   }
-  if (executor !== "local") {
-    console.error(`amico-run: only --executor local is supported in β`);
+  if (executor !== "local" && executor !== "remote") {
+    console.error(`amico-run: unknown --executor ${executor} (supported: local, remote)`);
     return 64;
+  }
+  if (executor === "remote" && specPath !== undefined) {
+    // Named seam: the gate could run pre-submit, but free-tier re-rollout
+    // verification (runVerification) replays LOCAL artifacts the mirror
+    // doesn't have. Reject loudly rather than half-verify.
+    console.error(`amico-run: --spec with --executor remote is not supported yet (verification is local-only)`);
+    return 64;
+  }
+  if (executor === "remote" && (opts.julia!.julia || opts.julia!.project || opts.julia!.sysimage)) {
+    console.error(`amico-run: --julia/--project/--sysimage are ignored with --executor remote (the runner image owns the environment)`);
   }
 
   // ── spec C: the launch gate. Failures leave NO run dir and exit 64. ──
@@ -152,7 +163,8 @@ export async function launch(argv: string[]): Promise<number> {
 
   let handle;
   try {
-    handle = await new LocalExecutor().submit(script, opts);
+    const exec: Executor = executor === "remote" ? new RemoteExecutor() : new LocalExecutor();
+    handle = await exec.submit(script, opts);
   } catch (e) {
     if (e instanceof ConfigError) {
       console.error(`amico-run: ${e.message}`);
