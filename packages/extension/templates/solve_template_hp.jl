@@ -10,7 +10,10 @@
 # ZeroOrderPulse + SmoothPulseProblem bilinear path. The optimizer stays Ipopt:
 # AMICODE_ITER needs the raw IPM state (obj/inf_pr/inf_du) and the STOP poll
 # rides Ipopt's intermediate callback — Altissimo exposes neither (Q74).
-using Piccolissimo # HP layer: SplineIntegrator, Tsit5Alg (composes with Piccolo)
+# HP layer: SplineIntegrator, Tsit5Alg (composes with Piccolo). The next line
+# MUST stay bare `using Piccolissimo` — the cloud wrapper comments out only an
+# EXACT `using Piccolissimo`, so a trailing comment makes it fail to resolve.
+using Piccolissimo
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
@@ -125,7 +128,11 @@ end
 
 t0 = time()
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       options = IpoptOptions(intermediate_callback = pulse_emit),
+       # NOTE: the cloud solve bundle's DirectTrajOpt has no IpoptOptions
+       # `intermediate_callback` kwarg (verified on the baked AMI). The per-iter
+       # AMICODE_PULSE emitter (pulse_emit) is dropped here; AMICODE_ITER stats
+       # still flow through the supported `callback` below. Restore pulse_emit
+       # once the bundle exposes an intermediate-callback hook. (amicode cloud-solve fix)
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 
