@@ -40,6 +40,16 @@ export function writeSolverModeReady(mode: SolverMode, file: string = solverMode
   fs.writeFileSync(file, JSON.stringify({ mode, status: "ready", switched_at: new Date().toISOString() }));
 }
 
+/** Request a switch to `mode` — the SAME {status:"switching"} write the app's
+ *  toggle POSTs, so the running watchSolverMode picks it up and does the real
+ *  re-prep (entitlement + project + server restart) exactly once. Used by
+ *  amicode.setCloudKey to flip to HP after connecting cloud, without
+ *  reimplementing the switch. */
+export function writeSolverModeSwitching(mode: SolverMode, file: string = solverModeFile()): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ mode, status: "switching" }));
+}
+
 /** Grant (hp) or revoke (piccolo) the `issimo` entitlement, PRESERVING any
  *  other codes in entitlements.toml (a real license file may carry more). */
 export function applyEntitlementForMode(mode: SolverMode, entitlementsDir: string): { codes: string[] } {

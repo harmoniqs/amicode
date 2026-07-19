@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import {
   readSolverModeState,
   writeSolverModeReady,
+  writeSolverModeSwitching,
   applyEntitlementForMode,
   watchSolverMode,
   solverModeFile,
@@ -16,6 +17,12 @@ describe("solver mode state", () => {
     expect(readSolverModeState(f)).toEqual({ mode: "piccolo", status: "ready" });
     writeSolverModeReady("hp", f);
     expect(readSolverModeState(f)).toEqual({ mode: "hp", status: "ready" });
+  });
+
+  it("switching write is what the watcher reacts to (mode + status:switching)", () => {
+    const f = join(mkdtempSync(join(tmpdir(), "sm-")), "solver-mode.json");
+    writeSolverModeSwitching("hp", f);
+    expect(readSolverModeState(f)).toEqual({ mode: "hp", status: "switching" });
   });
 });
 
