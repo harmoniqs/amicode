@@ -131,7 +131,8 @@ end
 
 t0 = time()
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       options = IpoptOptions(intermediate_callback = pulse_emit),
+       # cloud bundle's DirectTrajOpt has no IpoptOptions intermediate_callback
+       # (verified on the baked AMI); pulse_emit dropped, AMICODE_ITER still flows.
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 

@@ -109,7 +109,11 @@ end
 
 t0 = time()
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       options = IpoptOptions(intermediate_callback = pulse_emit),
+       # NOTE: the cloud solve bundle's DirectTrajOpt has no IpoptOptions
+       # `intermediate_callback` kwarg (verified on the baked AMI). The per-iter
+       # AMICODE_PULSE emitter (pulse_emit) is dropped here; AMICODE_ITER stats
+       # still flow through the supported `callback` below. Restore pulse_emit
+       # once the bundle exposes an intermediate-callback hook. (amicode cloud-solve fix)
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 
