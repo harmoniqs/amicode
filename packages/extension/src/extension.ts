@@ -17,6 +17,7 @@ import {
   profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
+import { mintServerPassword, buildServerSpawnEnv } from "./server_auth";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
@@ -327,6 +328,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     } else throw e;
   }
 
+  // Per-boot server password (#163, ADR 0002 graft 1): arms the fork's route
+  // auth, which is a no-op without OPENCODE_SERVER_PASSWORD in the spawn env.
+  // Minted fresh each activation, held in memory only — never persisted, never
+  // logged. ONE value for the whole activation: respawns (solver switch, vault
+  // refresh, restart) reuse it, because the open chat iframe carries the boot
+  // credential and a mid-session rotation would strand it on 401s.
+  const serverPassword = mintServerPassword();
+
   if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37). The agent
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
@@ -338,8 +347,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     // opencode owns the LLM credential (0.3): amico injects NO key into the
     // spawn env — opencode resolves its provider from its own env / config /
-    // auth.json. The spawn env carries only PATH (so amico-run resolves) and the
-    // amico instructions/permission config.
+    // auth.json. The spawn env carries only PATH (so amico-run resolves), the
+    // amico instructions/permission config, and the per-boot server password
+    // that arms the fork's route auth (#163).
     const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
     if (configuredPort > 0) {
       opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
@@ -348,14 +358,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: opencodeProject.projectDir,
       port: configuredPort > 0 ? configuredPort : undefined,
-      env: {
-        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
+      env: buildServerSpawnEnv({
+        amicoRunBinDir,
+        serverPassword,
         // Inject the amico solve workflow as opencode `instructions` (loaded for
         // every session regardless of its cwd) — merges over the user's global
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+        configContent: buildOpencodeConfigContent(
           opencodeProject.agentsPath,
           opencodeProject.templatePath,
           runsRoot,
@@ -374,7 +385,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // picker still overrides per session.
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
         ),
-      },
+      }),
       channel: opencodeChannel,
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
@@ -409,9 +420,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           binary: binary!,
           cwd: project2.projectDir,
           port: configuredPort > 0 ? configuredPort : undefined,
-          env: {
-            PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
-            OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+          env: buildServerSpawnEnv({
+            amicoRunBinDir,
+            serverPassword, // per-boot value survives the switch (chat iframe keeps its credential)
+            configContent: buildOpencodeConfigContent(
               project2.agentsPath,
               project2.templatePath,
               runsRoot,
@@ -425,7 +437,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
               vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
             ),
-          },
+          }),
           channel: opencodeChannel,
         });
         serverManager.onReady((url) => {
@@ -533,9 +545,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: project2.projectDir,
       port: port > 0 ? port : undefined,
-      env: {
-        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+      env: buildServerSpawnEnv({
+        amicoRunBinDir,
+        serverPassword, // per-boot value survives the vault respawn too
+        configContent: buildOpencodeConfigContent(
           project2.agentsPath,
           project2.templatePath,
           runsRoot,
@@ -547,7 +560,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.mounts,
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
         ),
-      },
+      }),
       channel: opencodeChannel,
     });
     serverManager.onReady((url) => {
