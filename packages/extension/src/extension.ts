@@ -22,7 +22,8 @@ import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
-import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
+import { watchSolverMode, applyEntitlementForMode, readSolverModeState, writeSolverModeSwitching } from "./solver_mode";
+import { validateCloudKey, buildCloudConfig, DEFAULT_CLOUD_URL } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
 import {
@@ -762,6 +763,67 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.healthcheck", () => void runHealthcheck()));
+
+  // Connect Cloud (amicode.setCloudKey): prompt for the cloud API key, VALIDATE
+  // it against the live Solve Service BEFORE saving, write it where
+  // RemoteExecutor reads it (~/.amico/cloud.json, {base_url, token}), then flip
+  // to HP so Piccolissimo + Altissimo (cloud) solves become usable.
+  // SECURITY: the token never enters a log line or the opencodeChannel — only
+  // the Authorization header inside validateCloudKey and the on-disk file.
+  const runSetCloudKey = async (): Promise<void> => {
+    const key = await vscode.window.showInputBox({
+      prompt: "Paste your Amico cloud API key",
+      password: true,
+      ignoreFocusOut: true,
+    });
+    if (!key || key.trim() === "") return; // empty / cancel → no-op
+    const token = key.trim();
+    const cloudUrl = (
+      vscode.workspace.getConfiguration("amicode").get<string>("cloudUrl", "").trim() || DEFAULT_CLOUD_URL
+    );
+
+    const outcome = await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Amicode: validating cloud key…" },
+      () => validateCloudKey(cloudUrl, token),
+    );
+    if (outcome.kind === "invalid") {
+      void vscode.window.showErrorMessage(`Amicode: ${outcome.message}`);
+      return; // do NOT save
+    }
+    if (outcome.kind === "error") {
+      void vscode.window.showErrorMessage(`Amicode: cloud key not saved — ${outcome.message}`);
+      return; // do NOT save
+    }
+
+    // Valid → write ~/.amico/cloud.json (0600) with the exact remote_config shape.
+    const cloudFile = path.join(os.homedir(), ".amico", "cloud.json");
+    try {
+      fs.mkdirSync(path.dirname(cloudFile), { recursive: true });
+      fs.writeFileSync(cloudFile, JSON.stringify(buildCloudConfig(cloudUrl, token)) + "\n", { mode: 0o600 });
+      fs.chmodSync(cloudFile, 0o600); // enforce perms even if the file pre-existed
+    } catch (e) {
+      // (e).message can't contain the token (it's never passed to fs paths).
+      void vscode.window.showErrorMessage(`Amicode: could not write cloud config — ${(e as Error).message}`);
+      return;
+    }
+    opencodeChannel.appendLine(`[cloud] connected — wrote ${cloudFile} (0600); base_url=${cloudUrl}`);
+
+    // Flip to HP so cloud/Piccolissimo solves are actually usable: grant the
+    // issimo entitlement now, then request a switch so the running watcher does
+    // the full re-prep (project + server restart) exactly once — reusing the
+    // solver-mode machinery rather than reimplementing it.
+    try {
+      const ents = applyEntitlementForMode("hp", path.join(os.homedir(), ".amico", "amicode"));
+      opencodeChannel.appendLine(`[cloud] HP entitlement granted (codes: ${ents.codes.join(", ")})`);
+      writeSolverModeSwitching("hp");
+      opencodeChannel.appendLine(`[cloud] HP switch requested (watcher will re-prep the session)`);
+    } catch (e) {
+      opencodeChannel.appendLine(`[cloud] HP enable failed: ${(e as Error).message}`);
+    }
+
+    void vscode.window.showInformationMessage("Cloud connected — Piccolissimo + Altissimo solves enabled.");
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setCloudKey", () => void runSetCloudKey()));
 
   // 5. Commands
   ctx.subscriptions.push(
