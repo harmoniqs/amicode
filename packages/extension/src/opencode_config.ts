@@ -14,6 +14,7 @@ import {
   type SkillIndexEntry,
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
+import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
   readKnowledgeLines,
@@ -284,11 +285,10 @@ export function writeAuthoringConfig(
 function solverModeSection(): string {
   if (readSolverModeState().mode !== "hp") return "";
   const cloudConnected =
-    !!process.env.AMICO_CLOUD_URL ||
-    fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
+    !!process.env.AMICO_CLOUD_URL || fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
   const routing = cloudConnected
     ? "The cloud is CONNECTED. Launch HP solves in the cloud with a High-Performance + Cloud spec: " +
-      "`tier=\"hpc\"`, `executor=\"remote\"`, `env.kind=\"provisioned\"` (via `amico-run --spec <spec> " +
+      '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
       "is NO local precompile and NO sandbox — never author a sandbox env for HP. Live iteration frames " +
       "stream to the Inspector; note that per-iteration AMICODE_ITER stats + the cooperative Stop are not " +
@@ -297,17 +297,28 @@ function solverModeSection(): string {
     : "The cloud is NOT connected (no API key). High-Performance + Cloud is a PAID cloud tier and CANNOT " +
       "run locally — do NOT attempt a local Piccolissimo solve (it will fail: the private package can't be " +
       "instantiated in a sandbox, and the gate rejects a local hpc run). Instead, STOP and tell the user: " +
-      "\"High-Performance + Cloud needs a cloud connection — run **Amico: Connect Cloud** to enter your API " +
+      '"High-Performance + Cloud needs a cloud connection — run **Amico: Connect Cloud** to enter your API ' +
       "key.\" Offer to switch back to the free local Piccolo solver if they'd rather not connect now.";
   return (
     "\n\n## Solver mode\n" +
     "**HIGH-PERFORMANCE + CLOUD (Piccolissimo + Altissimo).** The user selected the paid " +
-    "\"High-Performance + Cloud\" solver. Author solves with the **Piccolissimo** stack " +
+    '"High-Performance + Cloud" solver. Author solves with the **Piccolissimo** stack ' +
     "(SplinePulseProblem, free-phase paths, `using Piccolissimo`) rather than plain Piccolo, falling back " +
     "to Piccolo only when Piccolissimo cannot express the problem (say so when you do). " +
     routing +
     "\n"
   );
+}
+
+/** Δ10 (#63): the per-solve routing guidance appended to the agent's AGENTS.md.
+ *  Reads the live solver mode + Company Compute connection status (both
+ *  token-free — status only, never the token) and renders the remote-routing
+ *  offer only when both admit it (mode = hp AND connection connected); "" in
+ *  every other case, so piccolo / disconnected sessions stay byte-identical to
+ *  before. The estimate SUGGESTS the confirm's default; the researcher always
+ *  confirms, per-solve, never auto-routed. */
+export function routingSection(): string {
+  return buildRoutingSection(readRoutingContext(readSolverModeState().mode));
 }
 
 /** The model pin to inject into the generated config, or undefined.
@@ -567,7 +578,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -623,7 +634,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).

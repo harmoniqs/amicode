@@ -71,6 +71,33 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   });
 });
 
+describe("AGENTS.md teaches the Δ10 (#63) per-solve routing UX", () => {
+  it("runs amico-run estimate at solve-assembly and surfaces the estimate at the decision point", () => {
+    expect(AGENTS).toMatch(/amico-run estimate/);
+    expect(AGENTS).toMatch(/sizeClass/);
+    expect(AGENTS).toMatch(/offloadSuggested/);
+    expect(AGENTS).toMatch(/local RAM/i);
+  });
+  it("routing is PER-SOLVE and EXPLICIT — default local, never auto-route", () => {
+    expect(AGENTS).toMatch(/per-solve/i);
+    expect(AGENTS).toMatch(/default (to )?local/i);
+    expect(AGENTS).toMatch(/never auto-route|never routes a solve/i);
+  });
+  it("offers company compute ONLY when it is connected, and confirms every time (estimate suggests, never decides)", () => {
+    expect(AGENTS).toMatch(/only when.*connected|when.*company compute is connected/i);
+    expect(AGENTS).toMatch(/confirm/i);
+    expect(AGENTS).toMatch(/suggests|only suggests/i);
+  });
+  it("sets executor per the confirmed choice on the SolveSpec (remote only on explicit confirmation)", () => {
+    expect(AGENTS).toMatch(/executor.*"remote"/);
+    expect(AGENTS).toMatch(/executor.*"local"/);
+    expect(AGENTS).toMatch(/explicit/i);
+  });
+  it("entering a cloud key never routes a solve (7/19 design note)", () => {
+    expect(AGENTS).toMatch(/key.*never routes a solve|never routes a solve/i);
+  });
+});
+
 describe("AGENTS.md pulse-designer interview (Layer 0)", () => {
   it("scopes the interview to the pulse-designer persona and never forces it on a specific ask", () => {
     expect(AGENTS).toMatch(/pulse-designer/);

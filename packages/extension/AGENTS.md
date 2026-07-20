@@ -69,12 +69,26 @@ workspace owns `solve.jl` — never author in `/tmp`).
    amico-run sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
    # then run the printed  JULIA_PKG_USE_CLI_GIT=true julia --project=… Pkg.instantiate()  line
    ```
-5. **Assemble `~/.amico/problems/<slug>/solvespec.json`**:
-   `{schema_version:"2", script_path:"…/solve.jl", lab_id:"default",
-executor:"local", tier:"<tier>", env:{kind, project?}, source:<from resolve>,
-hashes:{system_hash, formulation_hash}}` — read the hashes from the LAST
-   matching events in `~/.amico/problems/<slug>/events.jsonl` (the `hash` field on
-   the newest `system`/`formulation` events).
+5. **Estimate, confirm routing, then assemble `~/.amico/problems/<slug>/solvespec.json`.**
+   Routing is **PER-SOLVE and EXPLICIT**: you confirm where EVERY solve runs, and
+   nothing auto-routes — a large estimate never routes a solve, and entering a cloud
+   key never routes a solve. You **default to local** unless the researcher confirms otherwise.
+   - **Estimate (informs, never decides).** Run
+     `amico-run estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
+     `{sizeClass, estimatedBytes, localRamBytes, offloadSuggested, reason, …}`. Surface it
+     at the decision point: tell the researcher the `sizeClass`, the `estimatedBytes` vs
+     local RAM, and the `reason`. The estimate only **suggests**.
+   - **Confirm the route.** Offer company compute **only when it is connected** —
+     the `## Routing (where THIS solve runs)` section is present in your context only
+     then; if it is absent, run local and do NOT offer remote. When it IS present:
+     when `offloadSuggested` is true default the confirm to company compute, otherwise
+     to local — then ask, and let the researcher's **explicit** answer decide, every solve.
+   - **Assemble** `{schema_version:"2", script_path:"…/solve.jl", lab_id:"default",
+     executor:"<local|remote>", tier:"<tier>", env:{kind, project?}, source:<from resolve>,
+     hashes:{system_hash, formulation_hash}}` — set `executor:"remote"` ONLY on explicit
+     confirmation of company compute, else `executor:"local"`. Read the hashes from the
+     LAST matching events in `~/.amico/problems/<slug>/events.jsonl` (the `hash` field on
+     the newest `system`/`formulation` events).
 6. **Launch through the gate, detached.** Pass `--project` matching the tier's
    env: `{{JULIA_PROJECT}}` (the provisioned env) for vetted/composed, or the
    sandbox env from step 4 for free (it must equal the spec's `env.project`).

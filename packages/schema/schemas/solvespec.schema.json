@@ -22,7 +22,7 @@
     },
     "executor": {
       "enum": ["local", "remote"],
-      "description": "whose machine runs it — per-solve and explicit (Δ10). local = this machine; remote = the cloud runner (required by tier=hpc)"
+      "description": "whose machine runs it — per-solve and explicit (Δ10, #63). local = this machine; remote = company compute / the cloud runner (required by tier=hpc), set upstream only when the researcher confirms the routing offer. The estimator only suggests; it never sets this."
     },
     "tier": {
       "enum": ["vetted", "composed", "free", "hpc"],

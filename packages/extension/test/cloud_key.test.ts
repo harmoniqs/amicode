@@ -329,11 +329,11 @@ describe("runSetCloudKeyCommand — UX preserved (AC2)", () => {
 });
 
 describe("runSetCloudKeyCommand — outcome rendering", () => {
-  it("connected → success toast mentioning HP (Piccolissimo + Altissimo)", async () => {
+  it("connected → success toast mentioning High-Performance (Piccolissimo + Altissimo)", async () => {
     const s = uiStub(SECRET);
     await runSetCloudKeyCommand({ ui: s.ui, cloudUrl: "", server: SERVER, fetchImpl: routeFetch(200, connectedBody).fetchImpl });
     expect(s.info.length).toBe(1);
-    expect(s.info[0]).toMatch(/HP/);
+    expect(s.info[0]).toMatch(/High-Performance/);
     expect(s.info[0]).toMatch(/Piccolissimo/);
     expect(s.warn).toEqual([]);
     expect(s.error).toEqual([]);
