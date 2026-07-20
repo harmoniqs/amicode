@@ -115,4 +115,25 @@ describe("fetchProviderSignal — async, against a stubbed opencode server", () 
     const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
     expect(sig).toMatchObject({ ok: true, provider: "openai" });
   });
+  it("carries the caller's auth headers on BOTH endpoint fetches (fork route auth, #163)", async () => {
+    // With OPENCODE_SERVER_PASSWORD armed, /config/providers and /config 401
+    // without the Basic credential — the extension's signal probes would read
+    // "server unreachable" forever. The headers option is how extension.ts
+    // authenticates them.
+    const seen: Record<string, unknown> = {};
+    const fetchImpl = (async (url: string, init?: RequestInit) => {
+      const path = String(url).replace(/^https?:\/\/[^/]+/, "");
+      seen[path] = init?.headers;
+      const routes: Record<string, unknown> = {
+        "/config/providers": { providers: [{ id: "anthropic", source: "env" }] },
+        "/config": { model: "anthropic/claude-sonnet-4-6" },
+      };
+      return { ok: true, status: 200, json: async () => routes[path] } as Response;
+    }) as unknown as typeof fetch;
+    const headers = { Authorization: `Basic ${Buffer.from("opencode:pw").toString("base64")}` };
+    const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl, headers });
+    expect(sig.ok).toBe(true);
+    expect(seen["/config/providers"]).toMatchObject(headers); // the signal probe authenticates
+    expect(seen["/config"]).toMatchObject(headers); // …and so does the model read
+  });
 });

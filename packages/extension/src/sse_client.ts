@@ -22,6 +22,10 @@ import type { StatusBarManager } from "./status_bar";
 export interface SseClientOptions {
   channel: vscode.OutputChannel;
   statusBar?: StatusBarManager;
+  /** `Authorization` header value for the per-boot server password (#163) —
+   *  without it the fork 401s /event and the reconnect loop spins forever.
+   *  Never logged; the value exists only on the wire. */
+  authorization?: string;
 }
 
 export class OpencodeEventClient implements vscode.Disposable {
@@ -63,7 +67,10 @@ export class OpencodeEventClient implements vscode.Disposable {
         port: this.url.port,
         path: this.url.pathname,
         method: "GET",
-        headers: { Accept: "text/event-stream" },
+        headers: {
+          Accept: "text/event-stream",
+          ...(this.opts.authorization ? { Authorization: this.opts.authorization } : {}),
+        },
       },
       (res) => {
         this.res = res;
