@@ -21,8 +21,8 @@
       "description": "lenient solve-knob block (T, N, max_iter, …)"
     },
     "executor": {
-      "enum": ["local"],
-      "description": "whose machine runs it — per-solve and explicit (Δ10); only local exists today"
+      "enum": ["local", "remote"],
+      "description": "whose machine runs it — per-solve and explicit (Δ10, #63): local, or remote (company compute) when the researcher confirms the routing offer. Set upstream by the routing confirm; the estimator only suggests, it never sets this."
     },
     "tier": {
       "enum": ["vetted", "composed", "free"],

@@ -248,6 +248,11 @@ describe("v2 (spec C)", () => {
     expect(validate(specV2, "solvespec").errors).toEqual([]);
     expect(validate({ schema_version: "1", script_path: "/s.jl", lab_id: "default" }, "solvespec").ok).toBe(true);
   });
+  it('accepts executor "remote" — the Δ10 (#63) routing choice the SolveSpec carries upstream', () => {
+    // The routing confirm sets executor to "remote" when the researcher picks
+    // company compute; only "local" existed before this slice.
+    expect(validate({ ...specV2, executor: "remote" }, "solvespec").errors).toEqual([]);
+  });
   it("rejects bad tier / executor / env.kind field-precisely", () => {
     expect(validate({ ...specV2, tier: "trusted" }, "solvespec").errors.join()).toMatch(/tier/);
     expect(validate({ ...specV2, executor: "cloud" }, "solvespec").errors.join()).toMatch(/executor/);
