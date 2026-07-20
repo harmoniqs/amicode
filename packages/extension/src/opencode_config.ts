@@ -275,16 +275,38 @@ export function writeAuthoringConfig(
 
 /** Solver-mode section for AGENTS.md (rchari/solver-wire): in HP mode the
  *  agent authors with the Piccolissimo stack by default — the entitlement
- *  gate (issimo) has already admitted the packages by the time this renders. */
+ *  gate (issimo) has already admitted the packages by the time this renders.
+ *
+ *  Routing (Δ10-lite): HP solves run on the CLOUD runner when the cloud is
+ *  connected (~/.amico/cloud.json or AMICO_CLOUD_URL — the same config
+ *  RemoteExecutor reads). The runner AMI has Piccolissimo/Altissimo pre-baked
+ *  (no local precompile, which SIGTERMs on laptops), and the cloud HP path is
+ *  E2E-verified (poll completed/0). Without cloud config the agent must not
+ *  claim cloud execution. */
 function solverModeSection(): string {
   if (readSolverModeState().mode !== "hp") return "";
+  const cloudConnected =
+    !!process.env.AMICO_CLOUD_URL ||
+    fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
+  const routing = cloudConnected
+    ? "The cloud runner is CONNECTED: launch HP solves with `--executor remote` " +
+      "(e.g. `amico-run --spec <spec> <script.jl> --executor remote`) — the runner image has the " +
+      "Piccolissimo/Altissimo stack pre-baked, so there is no local precompile cost. Note for cloud runs: " +
+      "live iteration frames stream to the Inspector, but AMICODE_ITER stats and the cooperative Stop are " +
+      "not available (the cloud bundle's DirectTrajOpt lacks the intermediate callback), and free-tier " +
+      "re-rollout verification is skipped (local-only) — say so when reporting. Only claim cloud execution " +
+      "when the launch actually used `--executor remote`."
+    : "The cloud runner is NOT connected (no cloud key configured): dispatch locally and never claim " +
+      "cloud execution. Warn the user that the HP stack precompiles locally on first use (slow on laptops) " +
+      "and that connecting a cloud key routes HP solves to the pre-baked cloud runner.";
   return (
     "\n\n## Solver mode\n" +
     "**HIGH-PERFORMANCE (Piccolissimo + Altissimo).** The user selected the HP solver. " +
     "Author solves with the **Piccolissimo** stack by default (SplinePulseProblem, free-phase paths, " +
     "`using Piccolissimo`) rather than plain Piccolo, falling back to Piccolo only when Piccolissimo " +
-    "cannot express the problem (say so when you do). The Altissimo GPU executor is provisioned but " +
-    "dispatches locally until the cloud endpoint ships — never claim cloud execution.\n"
+    "cannot express the problem (say so when you do). " +
+    routing +
+    "\n"
   );
 }
 

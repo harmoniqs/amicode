@@ -104,13 +104,11 @@ export async function launch(argv: string[]): Promise<number> {
     console.error(`amico-run: unknown --executor ${executor} (supported: local, remote)`);
     return 64;
   }
-  if (executor === "remote" && specPath !== undefined) {
-    // Named seam: the gate could run pre-submit, but free-tier re-rollout
-    // verification (runVerification) replays LOCAL artifacts the mirror
-    // doesn't have. Reject loudly rather than half-verify.
-    console.error(`amico-run: --spec with --executor remote is not supported yet (verification is local-only)`);
-    return 64;
-  }
+  // --spec + --executor remote: the launch gate (static spec/script/tier check)
+  // runs identically for both executors. Only the free-tier re-rollout
+  // verification is local-only (it replays LOCAL artifacts the remote mirror
+  // doesn't have) — that step is skipped for remote runs, noted on stderr at
+  // the verification seam below.
   if (executor === "remote" && (opts.julia!.julia || opts.julia!.project || opts.julia!.sysimage)) {
     console.error(`amico-run: --julia/--project/--sysimage are ignored with --executor remote (the runner image owns the environment)`);
   }
@@ -197,10 +195,18 @@ export async function launch(argv: string[]): Promise<number> {
   // harness (or the fallback) always writes verification.toml; the promote gate
   // keys off agree==true.
   if (opts.spec?.tier === "free") {
-    const { config: authoring } = readAuthoring();
-    await runVerification(handle.runDir, opts.spec, authoring);
-    const verified = readTomlSafe(join(handle.runDir, "verification.toml"));
-    console.log(`AMICODE_VERIFIED agree=${verified?.agree === true}`);
+    if (executor === "remote") {
+      // Re-rollout verification replays the local Julia env; the remote runner's
+      // artifacts land via the mirror without a local env to replay in. Skip
+      // honestly (no verification.toml -> the promote gate simply never sees
+      // agree==true) rather than half-verify.
+      console.error(`amico-run: free-tier re-rollout verification skipped for --executor remote (local-only)`);
+    } else {
+      const { config: authoring } = readAuthoring();
+      await runVerification(handle.runDir, opts.spec, authoring);
+      const verified = readTomlSafe(join(handle.runDir, "verification.toml"));
+      console.log(`AMICODE_VERIFIED agree=${verified?.agree === true}`);
+    }
   }
   // stdout protocol line — camelCase by design (spec §4)
   console.log(`AMICODE_FINISHED status=${f.status} exitCode=${f.exitCode} runDir=${handle.runDir}`);

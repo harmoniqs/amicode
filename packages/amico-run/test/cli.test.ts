@@ -73,7 +73,10 @@ describe("amico-run CLI", () => {
     expect(r.stderr).toMatch(/local, remote/);
   });
 
-  it("--spec with --executor remote → 64 (named seam: verification is local-only)", () => {
+  it("--spec with --executor remote: the launch gate still runs (bad spec → 64 from the gate, not a remote reject)", () => {
+    // Δ10-lite: --spec + remote is ACCEPTED (the gate is a static local check);
+    // only the free-tier re-rollout verification is skipped for remote runs.
+    // A junk spec must therefore die in the GATE with the gate's message.
     const root = tmpRoot();
     writeFileSync(join(root, "spec.json"), "{}");
     const r = run(
@@ -81,7 +84,8 @@ describe("amico-run CLI", () => {
       { AMICO_CLOUD_URL: "http://127.0.0.1:1", AMICO_CLOUD_TOKEN: "t" },
     );
     expect(r.code).toBe(64);
-    expect(r.stderr).toMatch(/--spec .*remote/);
+    expect(r.stderr).toMatch(/gate:/);
+    expect(r.stderr).not.toMatch(/not supported/);
   });
 
   it("--executor remote full lane through the bundle (fake cloud): iter relay + AMICODE_FINISHED, exit 0", async () => {
@@ -115,6 +119,58 @@ describe("amico-run CLI", () => {
       expect(r.code).toBe(0);
       expect(r.stdout).toContain("AMICODE_ITER iter=1 f=1.0e-2");
       expect(r.stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0 runDir=.+/);
+    } finally {
+      await fake.stop();
+    }
+  }, 15000);
+  it("--spec (tier=free) + --executor remote: gate runs, solve completes, verification SKIPPED (Δ10-lite)", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    fake.state = {
+      task_status: "Running",
+      liveness: "alive",
+      iters: [],
+      finished: { status: "completed" },
+    };
+    try {
+      const root = tmpRoot();
+      const script = fakeJulia(root, "s.jl", "");
+      const env = join(root, "env");
+      mkdirSync(env, { recursive: true });
+      writeFileSync(join(env, "Project.toml"), `[deps]\n`);
+      writeFileSync(join(env, "Manifest.toml"), `julia_version = "1.11.0"\n`);
+      const freeSpec = {
+        schema_version: "2",
+        script_path: script,
+        lab_id: "default",
+        tier: "free",
+        env: { kind: "sandbox", project: env },
+      };
+      writeFileSync(join(root, "free.json"), JSON.stringify(freeSpec));
+      // ASYNC lane — same reasoning as the remote full-lane test above.
+      const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolveP) => {
+        let stdout = "";
+        let stderr = "";
+        const child = execFile(
+          "node",
+          [BUNDLE, script, "--executor", "remote", "--spec", join(root, "free.json"), "--runs-root", join(root, "runs")],
+          { env: { ...process.env, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token } },
+        );
+        child.stdout!.on("data", (d: string) => {
+          stdout += d;
+        });
+        child.stderr!.on("data", (d: string) => {
+          stderr += d;
+        });
+        child.on("exit", (c) => resolveP({ code: c ?? -1, stdout, stderr }));
+      });
+      expect(r.code).toBe(0);
+      expect(r.stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0 runDir=.+/);
+      // verification is local-only: skipped for remote, honestly noted, no verdict emitted
+      expect(r.stderr).toMatch(/verification skipped .*remote/);
+      expect(r.stdout).not.toMatch(/AMICODE_VERIFIED/);
+      const runDir = /runDir=(\S+)/.exec(r.stdout)![1];
+      expect(existsSync(join(runDir, "verification.toml"))).toBe(false);
     } finally {
       await fake.stop();
     }
