@@ -58,7 +58,9 @@ def _is_network_error(exc: BaseException) -> bool:
 
 
 def _underlying_sdk(connection):
-    for attr in ("_sdk", "_sdk_connection", "sdk"):
+    # pasqal-cloud 0.23: PasqalCloudConnection.cloud_client is the
+    # PasqalCloudClient (nee SDK); older spellings kept defensively.
+    for attr in ("cloud_client", "_sdk", "_sdk_connection", "sdk"):
         candidate = getattr(connection, attr, None)
         if candidate is not None:
             return candidate
@@ -66,16 +68,18 @@ def _underlying_sdk(connection):
 
 
 def _list_devices(connection) -> list:
+    # Prefer the plain specs dict (device name -> serialized specs): it is
+    # pure SDK, whereas fetch_available_devices deserializes via pulser.
+    sdk = _underlying_sdk(connection)
+    specs = getattr(sdk, "get_device_specs_dict", None)
+    if callable(specs):
+        return sorted(specs())
     fetch = getattr(connection, "fetch_available_devices", None)
     if callable(fetch):
         available = fetch()
         if isinstance(available, dict):
             return sorted(available)
         return sorted(getattr(device, "name", str(device)) for device in available)
-    sdk = _underlying_sdk(connection)
-    specs = getattr(sdk, "get_device_specs_dict", None)
-    if callable(specs):
-        return sorted(specs())
     return []
 
 
@@ -102,10 +106,15 @@ def _find_token_provider(connection):
 
 
 def _token_expiry(provider, token: str):
-    for attr in ("expires_at", "expiry"):
-        value = getattr(provider, attr, None)
-        if isinstance(value, datetime):
-            return value.astimezone(timezone.utc).isoformat()
+    # pasqal-cloud 0.23: ExpiringTokenProvider caches (expiry, token); the
+    # cached expiry is exact even when the token is not a decodable JWT.
+    cache = getattr(provider, "_ExpiringTokenProvider__token_cache", None)
+    if (
+        isinstance(cache, tuple)
+        and len(cache) == 2
+        and isinstance(cache[0], datetime)
+    ):
+        return cache[0].astimezone(timezone.utc).isoformat()
     # Auth0 access tokens are JWTs; the exp claim is the expiry.
     try:
         payload_b64 = token.split(".")[1]
@@ -137,8 +146,16 @@ def main() -> None:
 
     # Imported lazily so the env guard above fails cleanly even where
     # pasqal-cloud is not installed, and so tests can pre-inject a stub.
-    from pasqal_cloud import PasqalCloudConnection
-    from pasqal_cloud.authentication import TokenProviderError
+    # Misconfigured python renders distinctly from unreachable-service.
+    try:
+        from pasqal_cloud import PasqalCloudConnection
+        from pasqal_cloud.authentication import TokenProviderError
+    except ImportError:
+        print(
+            f"error: the pasqal-cloud SDK is not installed for {sys.executable}",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_MISSING_ENV)
 
     # Constructing the connection performs the auth handshake. Fixed messages
     # only: exception text may echo credentials and must never be printed.
