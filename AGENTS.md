@@ -97,6 +97,38 @@ built with `OPENCODE_CHANNEL=latest` (→ `"prod"`) compiles the features in but
 `opencode:build` and the release workflow both force `dev`; `scripts/assert_ui_gate.sh` fails
 CI and release if a binary ever ships with the gate off.
 
+## Releasing & publishing (amicode → Marketplace)
+
+Two channels. **`vX.Y.Z-alpha.N`** is internal — the `alpha.N` mirrors the vendored fork's
+`amicode.N`; it cuts a GitHub *prerelease* for direct install and never reaches end users.
+**`vX.Y.Z`** (clean, no suffix) is the only tag that publishes to the VS Code Marketplace.
+
+Version knobs that must agree: the **extension manifest** (`packages/extension/package.json`
+version) must equal the **tag base** (`v0.0.3` and `v0.0.3-alpha.5` both → `0.0.3`) — enforced by
+release.yml's version guard (a gate, not a bump; edit the manifest by hand when a cycle starts).
+The **vendored fork** version is a separate knob, bumped via `opencode:pin` (above).
+
+**`.github/workflows/release.yml`** — trigger: push any `v*` tag (or `workflow_dispatch` with
+`tag`). Builds three vsixes from one build + the vendored binaries (no rebuild/re-fetch):
+`amicode.vsix` (universal, both binaries), `amicode-linux-x64.vsix`, `amicode-darwin-arm64.vsix`;
+attaches all three to a GitHub Release. The `publish-marketplace` job then runs **only for a
+clean `vX.Y.Z` tag** and `vsce publish`es the two platform-specific vsixes. The universal vsix is
+Release-only on purpose (it carries just linux+mac binaries, so as a Marketplace fallback Windows
+would get a ~100MB install with no runnable binary). Needs the **`VSCE_PAT`** repo secret (an
+Azure DevOps PAT: org = all accessible, scope Marketplace → Manage, <=1yr expiry, so rotate).
+Open VSX is deferred — issue #176 (needs `OVSX_TOKEN`).
+
+**`.github/workflows/promote.yml`** — the deliberate "this alpha is good enough" act.
+`workflow_dispatch`, input `alpha_tag` (e.g. `v0.0.3-alpha.5`). Validates it (real pre-release
+tag, its clean `vX.Y.Z` not yet taken, every check run green on that commit), cuts the clean tag
+at the alpha's exact SHA, and dispatches release.yml. It does **not** touch the manifest; if the
+base was already promoted it fails and tells you to bump + start a fresh alpha cycle.
+
+Typical cycle: bump manifest -> push `v0.0.3-alpha.1..N` (internal prereleases) -> when one
+passes, **promote** it -> clean `v0.0.3` -> Marketplace. The first promotion of a base needs no
+bump (alphas never hit the Marketplace, so the version is still free); re-promoting an
+already-published base does.
+
 ## Known sharp edges
 
 - `test:slow` without `AMICO_TEST_JULIA_PROJECT` silently skips the Julia gates.
@@ -105,3 +137,6 @@ CI and release if a binary ever ships with the gate off.
   release-mode run re-downloads whenever the stamp differs from the lock manifest.
 - Free-tier live e2e tiers are non-deterministic; a single tier-C failure is sampling noise.
 - Julia 1.12.x minor-version drift vs the pinned Manifest prints a warning and proceeds.
+- A tag pushed by CI's `GITHUB_TOKEN` does not fire `release.yml`'s `push` trigger (Actions'
+  recursion guard), so `promote.yml` dispatches release.yml explicitly — `workflow_dispatch` is
+  exempt from that guard.
