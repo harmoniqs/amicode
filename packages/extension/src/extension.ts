@@ -14,7 +14,6 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
-  profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "./server_auth";
@@ -26,7 +25,7 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
+import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
   hasJuliaup,
@@ -638,18 +637,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
-  // Auto-offer ONLY for a returning user: a profile exists here but no personal
-  // vault (changed machines / set up elsewhere). First-timers (no profile) get the
-  // onboarding wizard instead; a resolved vault needs nothing. (Command bypasses.)
-  if (
-    shouldOfferVaultSetup({
-      hasPersonalVault: !!opencodeProject.vaultDir,
-      hasProfile: profileHasIdentity(),
-      dismissed: ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true,
-    })
-  ) {
-    void runVaultSetup(false);
-  }
+  // Personal vault by default. The onboarding wizard (opencode-side) writes the
+  // profile but NOT a vault, and a genuine first-timer has none — so Amico would
+  // have nowhere to remember them (distiller disabled, session unpersonalized).
+  // Silently provision a LOCAL personal vault on first run when none resolves —
+  // no modal, like the Julia project. The `amicode.setupVault` command remains
+  // for naming / re-creating; the wizard finale offers attaching other vaults.
+  // Failure-tolerant: a creation error just leaves the session unpersonalized.
+  const ensureDefaultPersonalVault = async (): Promise<void> => {
+    if (personalMount(resolveMountStack())) return;
+    let created;
+    try {
+      created = createLocalPersonalVault(defaultVaultsRoot(), suggestVaultName());
+    } catch (e) {
+      opencodeChannel.appendLine(`[vault] default personal vault not created: ${(e as Error).message}`);
+      return;
+    }
+    opencodeChannel.appendLine(`[vault] auto-provisioned local personal vault: ${created.path} (git=${created.gitInit})`);
+    await respawnForVault();
+  };
+  void ensureDefaultPersonalVault();
 
   // Julia setup (#8): amicode manages the Julia toolchain via juliaup — install
   // juliaup if absent, add the channel pinned to the Manifest's MINOR, and
