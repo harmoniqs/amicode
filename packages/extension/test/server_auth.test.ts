@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "../src/server_auth";
+import { buildOpencodeConfigContent } from "../src/opencode_config";
 
 // ============================================================================
 // Per-boot server password (#163, ADR 0002 graft 1). The fork's route auth
@@ -79,5 +80,37 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
   });
   it("passes the config content through verbatim (the instructions/permission merge)", () => {
     expect(buildServerSpawnEnv(opts).OPENCODE_CONFIG_CONTENT).toBe(opts.configContent);
+  });
+});
+
+describe("no-persist / no-log seams (AC3) — the spawn env is the ONLY carriage", () => {
+  // The channel scans live with the transports: server_manager.test.ts sweeps
+  // everything ServerManager writes across a real spawned boot, and
+  // sse_client.test.ts sweeps the SSE channel; chat_panel.test.ts pins that
+  // the raw password never enters the webview html. These guard the two
+  // remaining seams a future edit could leak through.
+  it("mintServerPassword never writes the host process env (in-memory only)", () => {
+    const prev = process.env.OPENCODE_SERVER_PASSWORD;
+    delete process.env.OPENCODE_SERVER_PASSWORD;
+    try {
+      mintServerPassword();
+      expect(process.env.OPENCODE_SERVER_PASSWORD).toBeUndefined();
+    } finally {
+      if (prev !== undefined) process.env.OPENCODE_SERVER_PASSWORD = prev;
+    }
+  });
+  it("the password never enters OPENCODE_CONFIG_CONTENT (dumpable via `opencode debug config`)", () => {
+    // Poison the env like the D11 key guard above it in opencode_config.test.ts:
+    // if the config builder ever starts sourcing the password, this reds.
+    const SENTINEL = mintServerPassword();
+    const prev = process.env.OPENCODE_SERVER_PASSWORD;
+    process.env.OPENCODE_SERVER_PASSWORD = SENTINEL;
+    try {
+      const content = buildOpencodeConfigContent("/abs/AGENTS.md", "/ext/templates/t.jl", "/home/u/.amico/runs/default");
+      expect(content).not.toContain(SENTINEL);
+    } finally {
+      if (prev === undefined) delete process.env.OPENCODE_SERVER_PASSWORD;
+      else process.env.OPENCODE_SERVER_PASSWORD = prev;
+    }
   });
 });
