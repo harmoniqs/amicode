@@ -13,3 +13,16 @@ tsconfig.json
 !bin/**
 !julia/**
 !demo/**
+# #161: the Pasqal connector MUST ship despite scripts/** above — activation
+# stages it to <opsDir>/scripts/pasqal-connector (the Connections panel's
+# default $AMICO_PASQAL_VALIDATOR resolution). Only the two runtime files:
+# the tests/ subdir stays dev-only.
+!scripts/pasqal-connector/pasqal_validate.py
+!scripts/pasqal-connector/requirements.txt
+# #160 device path (owned here, the packaging PR, so both PRs don't edit this
+# file and collide): the submit connector + its runtime closure. Harmless
+# negations while #160 is unmerged — they match nothing until submit.py et al.
+# land. demos/ and tests/ stay dev-only.
+!scripts/pasqal-connector/submit.py
+!scripts/pasqal-connector/pulse_contract.py
+!scripts/pasqal-connector/translate_and_simulate.py
