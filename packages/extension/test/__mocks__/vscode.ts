@@ -8,6 +8,8 @@ export const window = {
   showInputBox: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
+  activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
+  onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
     return {
@@ -44,6 +46,7 @@ export const commands = {
   executeCommand: (id: string, ...a: unknown[]) => Promise.resolve(registeredCommands.get(id)?.(...a)),
 };
 export const ViewColumn = { One: 1, Two: 2 };
+export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 };
 export const workspace = {
   workspaceFolders: [] as unknown[],
   getConfiguration: () => ({ get: (_k: string, d?: unknown) => d ?? "" }),

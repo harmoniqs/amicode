@@ -17,13 +17,14 @@ import {
   profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
+import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "./server_auth";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
-import { watchSolverMode, applyEntitlementForMode, readSolverModeState, writeSolverModeSwitching } from "./solver_mode";
-import { validateCloudKey, buildCloudConfig, DEFAULT_CLOUD_URL } from "./cloud_key";
+import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
+import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
 import {
@@ -328,6 +329,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     } else throw e;
   }
 
+  // Per-boot server password (#163, ADR 0002 graft 1): arms the fork's route
+  // auth, which is a no-op without OPENCODE_SERVER_PASSWORD in the spawn env.
+  // Minted fresh each activation, held in memory only — never persisted, never
+  // logged. ONE value for the whole activation: respawns (solver switch, vault
+  // refresh, restart) reuse it, because the open chat iframe carries the boot
+  // credential and a mid-session rotation would strand it on 401s.
+  const serverPassword = mintServerPassword();
+  // The extension's own calls to the server (health probe aside — ServerManager
+  // derives its own from the spawn env) authenticate with the matching Basic
+  // credential: SSE /event, the /config* signal probes, and the chat iframe
+  // (via the app's ?auth_token= bootstrap).
+  const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
+
   if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37). The agent
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
@@ -339,8 +353,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     // opencode owns the LLM credential (0.3): amico injects NO key into the
     // spawn env — opencode resolves its provider from its own env / config /
-    // auth.json. The spawn env carries only PATH (so amico-run resolves) and the
-    // amico instructions/permission config.
+    // auth.json. The spawn env carries only PATH (so amico-run resolves), the
+    // amico instructions/permission config, and the per-boot server password
+    // that arms the fork's route auth (#163).
     const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
     if (configuredPort > 0) {
       opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
@@ -349,14 +364,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: opencodeProject.projectDir,
       port: configuredPort > 0 ? configuredPort : undefined,
-      env: {
-        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
+      env: buildServerSpawnEnv({
+        amicoRunBinDir,
+        serverPassword,
         // Inject the amico solve workflow as opencode `instructions` (loaded for
         // every session regardless of its cwd) — merges over the user's global
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+        configContent: buildOpencodeConfigContent(
           opencodeProject.agentsPath,
           opencodeProject.templatePath,
           runsRoot,
@@ -375,7 +391,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // picker still overrides per session.
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
         ),
-      },
+      }),
       channel: opencodeChannel,
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
@@ -410,9 +426,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           binary: binary!,
           cwd: project2.projectDir,
           port: configuredPort > 0 ? configuredPort : undefined,
-          env: {
-            PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
-            OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+          env: buildServerSpawnEnv({
+            amicoRunBinDir,
+            serverPassword, // per-boot value survives the switch (chat iframe keeps its credential)
+            configContent: buildOpencodeConfigContent(
               project2.agentsPath,
               project2.templatePath,
               runsRoot,
@@ -426,7 +443,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
               vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
             ),
-          },
+          }),
           channel: opencodeChannel,
         });
         serverManager.onReady((url) => {
@@ -470,8 +487,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] no personal vault resolved — distiller disabled, session unpersonalized`);
     }
 
-    // SSE event channel — opens once opencode is healthy.
-    sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
+    // SSE event channel — opens once opencode is healthy. Carries the per-boot
+    // credential (#163): the fork 401s an anonymous /event.
+    sseClient = new OpencodeEventClient({
+      channel: opencodeChannel,
+      statusBar,
+      authorization: serverAuthHeaders.Authorization,
+    });
     ctx.subscriptions.push(sseClient);
 
     serverManager.onReady((url) => {
@@ -481,12 +503,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // Open the chat as soon as the server is up (amicode.chat.autoOpen,
       // default on) — the chat IS the product's front door.
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, url);
+        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword));
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
       // chat box (Q129). Key-free; never logs a credential.
-      void fetchProviderSignal(url.toString()).then((sig) => {
+      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
         opencodeChannel.appendLine(
           sig.ok
             ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
@@ -534,9 +556,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: project2.projectDir,
       port: port > 0 ? port : undefined,
-      env: {
-        PATH: `${amicoRunBinDir ? amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
-        OPENCODE_CONFIG_CONTENT: buildOpencodeConfigContent(
+      env: buildServerSpawnEnv({
+        amicoRunBinDir,
+        serverPassword, // per-boot value survives the vault respawn too
+        configContent: buildOpencodeConfigContent(
           project2.agentsPath,
           project2.templatePath,
           runsRoot,
@@ -548,7 +571,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.mounts,
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
         ),
-      },
+      }),
       channel: opencodeChannel,
     });
     serverManager.onReady((url) => {
@@ -737,7 +760,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // LLM provider (opencode's own resolution).
         if (opencodeReadyUrl) {
           try {
-            const sig = await fetchProviderSignal(opencodeReadyUrl.toString());
+            const sig = await fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders });
             results.push({
               name: "LLM creds",
               ok: sig.ok,
@@ -764,65 +787,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.healthcheck", () => void runHealthcheck()));
 
-  // Connect Cloud (amicode.setCloudKey): prompt for the cloud API key, VALIDATE
-  // it against the live Solve Service BEFORE saving, write it where
-  // RemoteExecutor reads it (~/.amico/cloud.json, {base_url, token}), then flip
-  // to HP so Piccolissimo + Altissimo (cloud) solves become usable.
-  // SECURITY: the token never enters a log line or the opencodeChannel — only
-  // the Authorization header inside validateCloudKey and the on-disk file.
-  const runSetCloudKey = async (): Promise<void> => {
-    const key = await vscode.window.showInputBox({
-      prompt: "Paste your Amico cloud API key",
-      password: true,
-      ignoreFocusOut: true,
+  // Connect Cloud (amicode.setCloudKey): prompt for the cloud API key and POST
+  // it to the local server's connections submit route (#171) — the SERVER owns
+  // validate → write ~/.amico/cloud.json → HP flip (#165/#167), so this command
+  // and the panel share ONE write path and ONE flip path (ADR 0001). No direct
+  // file write, entitlement grant, or switch request remains here, and there is
+  // no direct-write fallback when the server is down (AC4).
+  // SECURITY: the token never enters a log line or the opencodeChannel — it
+  // rides only in the request body of the #163-authenticated local call.
+  const runSetCloudKey = (): Promise<void> =>
+    runSetCloudKeyCommand({
+      ui: {
+        showInputBox: (options) => vscode.window.showInputBox(options),
+        withProgress: (title, task) =>
+          vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, task),
+        showInformationMessage: (m) => void vscode.window.showInformationMessage(m),
+        showWarningMessage: (m) => void vscode.window.showWarningMessage(m),
+        showErrorMessage: (m) => void vscode.window.showErrorMessage(m),
+      },
+      cloudUrl: vscode.workspace.getConfiguration("amicode").get<string>("cloudUrl", ""),
+      server: opencodeReadyUrl
+        ? { url: opencodeReadyUrl.toString(), authorization: serverAuthHeaders.Authorization }
+        : undefined,
+      log: (line) => opencodeChannel.appendLine(line),
     });
-    if (!key || key.trim() === "") return; // empty / cancel → no-op
-    const token = key.trim();
-    const cloudUrl = (
-      vscode.workspace.getConfiguration("amicode").get<string>("cloudUrl", "").trim() || DEFAULT_CLOUD_URL
-    );
-
-    const outcome = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: "Amicode: validating cloud key…" },
-      () => validateCloudKey(cloudUrl, token),
-    );
-    if (outcome.kind === "invalid") {
-      void vscode.window.showErrorMessage(`Amicode: ${outcome.message}`);
-      return; // do NOT save
-    }
-    if (outcome.kind === "error") {
-      void vscode.window.showErrorMessage(`Amicode: cloud key not saved — ${outcome.message}`);
-      return; // do NOT save
-    }
-
-    // Valid → write ~/.amico/cloud.json (0600) with the exact remote_config shape.
-    const cloudFile = path.join(os.homedir(), ".amico", "cloud.json");
-    try {
-      fs.mkdirSync(path.dirname(cloudFile), { recursive: true });
-      fs.writeFileSync(cloudFile, JSON.stringify(buildCloudConfig(cloudUrl, token)) + "\n", { mode: 0o600 });
-      fs.chmodSync(cloudFile, 0o600); // enforce perms even if the file pre-existed
-    } catch (e) {
-      // (e).message can't contain the token (it's never passed to fs paths).
-      void vscode.window.showErrorMessage(`Amicode: could not write cloud config — ${(e as Error).message}`);
-      return;
-    }
-    opencodeChannel.appendLine(`[cloud] connected — wrote ${cloudFile} (0600); base_url=${cloudUrl}`);
-
-    // Flip to HP so cloud/Piccolissimo solves are actually usable: grant the
-    // issimo entitlement now, then request a switch so the running watcher does
-    // the full re-prep (project + server restart) exactly once — reusing the
-    // solver-mode machinery rather than reimplementing it.
-    try {
-      const ents = applyEntitlementForMode("hp", path.join(os.homedir(), ".amico", "amicode"));
-      opencodeChannel.appendLine(`[cloud] HP entitlement granted (codes: ${ents.codes.join(", ")})`);
-      writeSolverModeSwitching("hp");
-      opencodeChannel.appendLine(`[cloud] HP switch requested (watcher will re-prep the session)`);
-    } catch (e) {
-      opencodeChannel.appendLine(`[cloud] HP enable failed: ${(e as Error).message}`);
-    }
-
-    void vscode.window.showInformationMessage("Cloud connected — Piccolissimo + Altissimo solves enabled.");
-  };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setCloudKey", () => void runSetCloudKey()));
 
   // 5. Commands
@@ -843,12 +831,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // check and silently hang at the chat box (Q129). Ask opencode's own live
       // resolution (/config/providers, same signal the healthcheck uses) so the
       // cause is named, not hidden. Key-free.
-      const creds = await fetchProviderSignal(readyUrl.toString());
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
       if (!creds.ok) {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl);
+      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword));
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();

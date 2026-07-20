@@ -19,8 +19,10 @@ export function resolveLlmCreds(args: { providers: ProviderEntry[]; model?: stri
 /** No-leak boundary: strip the raw /config/providers JSON to key-free {id, source}. */
 export function stripProviders(providersJson: unknown): ProviderEntry[];
 
-/** Async: query a running opencode server for the provider signal (no key ever returned). */
+/** Async: query a running opencode server for the provider signal (no key ever
+ *  returned). `headers` carries the Basic credential for the per-boot server
+ *  password (#163). */
 export function fetchProviderSignal(
   baseUrl: string,
-  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number },
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
 ): Promise<LlmCredsSignal>;

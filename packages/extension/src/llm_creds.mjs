@@ -72,12 +72,14 @@ export function stripProviders(providersJson) {
  * Used by the chat-not-ready gate (the live extension server) and the boot
  * probe. A fetch failure yields a not-ok signal (server unreachable) rather
  * than throwing. `fetchImpl` is injectable so the signal is unit-testable
- * without a live server.
+ * without a live server. `headers` carries the Basic credential for the
+ * per-boot server password (#163) — without it both probes 401 once route
+ * auth is armed.
  */
-export async function fetchProviderSignal(baseUrl, { fetchImpl = fetch, timeoutMs = 4000 } = {}) {
+export async function fetchProviderSignal(baseUrl, { fetchImpl = fetch, timeoutMs = 4000, headers } = {}) {
   const base = String(baseUrl).replace(/\/$/, "");
   const getJson = async (path) => {
-    const r = await fetchImpl(`${base}${path}`, { signal: AbortSignal.timeout(timeoutMs) });
+    const r = await fetchImpl(`${base}${path}`, { signal: AbortSignal.timeout(timeoutMs), headers });
     if (!r.ok) throw new Error(`${path} → ${r.status}`);
     return await r.json();
   };
