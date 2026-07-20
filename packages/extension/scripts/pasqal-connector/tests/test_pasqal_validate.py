@@ -224,5 +224,39 @@ class TestValidCredentials(unittest.TestCase):
         self.assertEqual(payload["devices"], sorted(DEVICES))
 
 
+class TestFailureClassification(unittest.TestCase):
+    """AC2: exit 2 = auth, 3 = network, 4 = project — token- and
+    password-free stderr, nothing on stdout."""
+
+    def _assert_failure(self, scenario, expected_code):
+        recorder = Recorder()
+        code, stdout, stderr = run_validator(CRED_ENV, build_stub(recorder, scenario=scenario))
+        self.assertEqual(code, expected_code)
+        self.assertEqual(stdout, "", "failures must print nothing to stdout")
+        self.assertTrue(stderr.strip(), "failures must explain themselves on stderr")
+        self.assertNotIn(POISON_PASSWORD, stderr)
+        self.assertNotIn("tok-opaque-bearer", stderr)
+        return stderr
+
+    def test_auth_failure_exits_2(self):
+        self._assert_failure("auth", 2)
+
+    def test_network_failure_at_connect_exits_3(self):
+        self._assert_failure("network-init", 3)
+
+    def test_network_failure_at_device_fetch_exits_3(self):
+        self._assert_failure("network-devices", 3)
+
+    def test_project_authorization_failure_exits_4(self):
+        self._assert_failure("project", 4)
+
+    def test_distinct_messages_per_failure_class(self):
+        messages = {
+            scenario: self._assert_failure(scenario, code)
+            for scenario, code in (("auth", 2), ("network-init", 3), ("project", 4))
+        }
+        self.assertEqual(len(set(messages.values())), 3)
+
+
 if __name__ == "__main__":
     unittest.main()
