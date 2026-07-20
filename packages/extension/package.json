@@ -184,8 +184,8 @@
         },
         "amicode.cloudUrl": {
           "type": "string",
-          "default": "https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com",
-          "description": "Base URL of the Amico cloud Solve Service, used by \"Amico: Connect Cloud\" to validate your API key and written into ~/.amico/cloud.json (where RemoteExecutor reads it). Empty = the built-in production endpoint."
+          "default": "",
+          "description": "Base URL of the Amico cloud Solve Service. \"Amico: Connect Cloud\" submits it with your API key to the local Amico server, which validates and stores both (~/.amico/cloud.json, where RemoteExecutor reads them). Empty = the built-in production endpoint (DEFAULT_CLOUD_URL in cloud_key.ts — the single source)."
         },
         "amicode.runsRoot": {
           "type": "string",
