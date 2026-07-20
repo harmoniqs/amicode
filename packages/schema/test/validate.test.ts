@@ -27,10 +27,10 @@ describe("schema set + exports", () => {
   it("exposes all five versioned schemas + the FINISHED sub-shape", () => {
     expect(new Set(SCHEMA_KINDS)).toEqual(new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished"]));
   });
-  it("supported versions are PER-KIND: run + solvespec bumped to v2 (spec C), the rest v1", () => {
+  it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v3 (hpc tier + remote executor); the rest v1", () => {
     expect(SUPPORTED_VERSIONS_BY_KIND).toEqual({
       run: ["1", "2"],
-      solvespec: ["1", "2"],
+      solvespec: ["1", "2", "3"],
       result: ["1"],
       lab: ["1"],
       "catalog-entry": ["1"],
@@ -122,6 +122,27 @@ describe("field-precise negative matrix", () => {
     const s2 = load("solvespec");
     s2.unexpected = 1;
     expect(hasErr(validate(s2, "solvespec").errors, 'unknown key "unexpected"')).toBe(true);
+  });
+  it("solvespec v3: hpc tier + remote executor validate; unknown tier/executor rejected", () => {
+    const hpc = load("solvespec");
+    hpc.schema_version = "3";
+    hpc.tier = "hpc";
+    hpc.executor = "remote";
+    hpc.env = { kind: "provisioned" };
+    expect(validate(hpc, "solvespec").ok).toBe(true);
+    // a plain local free spec still validates unchanged (Piccolo path)
+    const free = load("solvespec");
+    free.tier = "free";
+    free.executor = "local";
+    free.env = { kind: "sandbox", project: "/tmp/x" };
+    expect(validate(free, "solvespec").ok).toBe(true);
+    // garbage tier / executor are field-precise enum errors
+    const badTier = load("solvespec");
+    badTier.tier = "premium";
+    expect(hasErr(validate(badTier, "solvespec").errors, "/tier")).toBe(true);
+    const badExec = load("solvespec");
+    badExec.executor = "gpu";
+    expect(hasErr(validate(badExec, "solvespec").errors, "/executor")).toBe(true);
   });
   it("lab hardware range bounds + name minLength are field-precise (#29)", () => {
     const hi = load("lab");

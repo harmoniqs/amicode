@@ -46,3 +46,16 @@ export function readRemoteConfig(env: NodeJS.ProcessEnv = process.env): RemoteCo
     throw new ConfigError(`cloud config at ${file} needs non-empty string keys "base_url" and "token"`);
   return { baseUrl: d.base_url.replace(/\/+$/, ""), token: d.token };
 }
+
+/** Presence check only: is a cloud connection configured (env pair or a
+ *  well-formed cloud.json)? The hpc-tier gate uses this to reject a cloud-tier
+ *  solve when no key is connected, WITHOUT throwing or reading the token value.
+ *  Never returns or logs the token. */
+export function hasCloudConfig(env: NodeJS.ProcessEnv = process.env): boolean {
+  try {
+    readRemoteConfig(env);
+    return true;
+  } catch {
+    return false;
+  }
+}
