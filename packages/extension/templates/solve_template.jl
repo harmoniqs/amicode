@@ -108,12 +108,26 @@ function cb_log(optimizer, st; kwargs...)
 end
 
 t0 = time()
+# pulse_emit restored (#177) via the version-pinned intermediate-callback API.
+# Verified against the PINNED DirectTrajOpt, not docs: julia/Manifest.toml pins
+# DTO 0.9.7 (git-tree-sha1 c722d301a8d064de5d9ab67e5bc8a1dff893683a, identical
+# to `git rev-parse v0.9.7^{tree}` in DirectTrajOpt.jl), where `IpoptOptions`
+# declares `intermediate_callback::Any` — an `AbstractIntermediateCallback` the
+# Ipopt backend wraps into `(primal, iter) -> Bool` (full NLP primal each IPM
+# iteration, restoration phase skipped) and composes with the raw `callback`
+# below: every callback fires once per iteration, the solve continues iff all
+# return true. The hasfield guard is the #157 lesson: a cloud bundle still
+# baked with DTO ≤ 0.9.6 has no such field (the kwarg MethodError that killed
+# cloud solves), so it degrades to stats-only — AMICODE_ITER flows, frames
+# dark — instead of crashing before the solve.
+ipopt_opts = if hasfield(IpoptOptions, :intermediate_callback)
+    IpoptOptions(intermediate_callback = pulse_emit)   # → iter_<N>.png + AMICODE_PULSE + STOP poll
+else
+    @warn "DirectTrajOpt < 0.9.7: no IpoptOptions.intermediate_callback — per-iter frames disabled (AMICODE_ITER still flows)"
+    IpoptOptions()
+end
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       # NOTE: the cloud solve bundle's DirectTrajOpt has no IpoptOptions
-       # `intermediate_callback` kwarg (verified on the baked AMI). The per-iter
-       # AMICODE_PULSE emitter (pulse_emit) is dropped here; AMICODE_ITER stats
-       # still flow through the supported `callback` below. Restore pulse_emit
-       # once the bundle exposes an intermediate-callback hook. (amicode cloud-solve fix)
+       options = ipopt_opts,
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 
