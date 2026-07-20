@@ -8,6 +8,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { delimiter, join } from "node:path";
 import { tmpRoot } from "./helpers.js";
 import {
+  assertPasqalFresh,
   pasqalCredentialFile,
   pasqalLaunch,
   readPasqalCredentials,
@@ -154,5 +155,106 @@ describe("amico-pasqal launcher — AC2: no secret in any argv at any layer (adv
     );
     expect(code).toBe(64);
     expect(existsSync(out)).toBe(false); // the shim never ran
+  });
+});
+
+describe("amico-pasqal launcher — AC3: distinct actionable errors, all token-free", () => {
+  /** Capture the ConfigError message a thunk throws (fails the test if it doesn't throw). */
+  function configErrorMessage(fn: () => unknown): string {
+    try {
+      fn();
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigError);
+      return (e as Error).message;
+    }
+    expect.unreachable("expected a ConfigError");
+    return "";
+  }
+
+  it("missing credential file → 'not connected', points at the Connections panel", () => {
+    const root = tmpRoot();
+    const msg = configErrorMessage(() =>
+      readPasqalCredentials({ AMICO_PASQAL_FILE: join(root, "absent.json") } as NodeJS.ProcessEnv),
+    );
+    expect(msg).toMatch(/not connected/);
+    expect(msg).toMatch(/Connections panel/);
+    expect(msg).toContain(join(root, "absent.json"));
+  });
+
+  it("unparseable credential file → 'malformed', distinct from 'not connected'", () => {
+    const root = tmpRoot();
+    const p = join(root, "pasqal.json");
+    writeFileSync(p, "{nope");
+    const msg = configErrorMessage(() => readPasqalCredentials({ AMICO_PASQAL_FILE: p } as NodeJS.ProcessEnv));
+    expect(msg).toMatch(/malformed/);
+    expect(msg).toMatch(/reconnect/i);
+    expect(msg).not.toMatch(/not connected/);
+  });
+
+  it("wrong-shape file → names the KEYS, never a value (a value could be a mistyped secret)", () => {
+    const root = tmpRoot();
+    const p = join(root, "pasqal.json");
+    writeFileSync(p, JSON.stringify({ project_id: PROJECT, token: 42 }));
+    const msg = configErrorMessage(() => readPasqalCredentials({ AMICO_PASQAL_FILE: p } as NodeJS.ProcessEnv));
+    expect(msg).toMatch(/"project_id" and "token"/);
+    expect(msg).not.toContain(PROJECT);
+    // null token at rest is a shape violation too (#162: token always a real string)
+    writeFileSync(p, JSON.stringify({ project_id: PROJECT, token: null }));
+    expect(() => readPasqalCredentials({ AMICO_PASQAL_FILE: p } as NodeJS.ProcessEnv)).toThrow(ConfigError);
+  });
+
+  it("expired token → 'expired … reconnect'; the token value NEVER appears", () => {
+    const creds = { projectId: PROJECT, token: TOKEN, expiresAt: "2020-01-01T00:00:00Z" };
+    let msg = "";
+    try {
+      assertPasqalFresh(creds, new Date("2026-07-19T00:00:00Z"));
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigError);
+      msg = (e as Error).message;
+    }
+    expect(msg).toMatch(/expired at 2020-01-01T00:00:00Z/);
+    expect(msg).toMatch(/reconnect/);
+    expect(msg).not.toContain(TOKEN);
+    // a still-fresh expiry is quiet
+    expect(() => assertPasqalFresh(creds, new Date("2019-01-01T00:00:00Z"))).not.toThrow();
+    // no expires_at at rest = never locally expired (the panel owns freshness)
+    expect(() => assertPasqalFresh({ projectId: PROJECT, token: TOKEN })).not.toThrow();
+  });
+
+  it("expired credential file → launch exits 64 and the connector never spawns", async () => {
+    const root = tmpRoot();
+    const out = join(root, "record.json");
+    const shim = fakeInterpreter(root, "fake-python", out);
+    const cred = credFile(root, { expires_at: "2020-01-01T00:00:00Z" });
+    const code = await pasqalLaunch([connectorScript(root)], launchEnv(cred, { AMICO_PYTHON: shim }));
+    expect(code).toBe(64);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it("AMICO_PYTHON pointing nowhere → error NAMES the override (misconfigured ≠ unreachable)", () => {
+    const msg = configErrorMessage(() =>
+      resolvePasqalInterpreter({ AMICO_PYTHON: "/no/such/python", PATH: process.env.PATH } as NodeJS.ProcessEnv),
+    );
+    expect(msg).toMatch(/AMICO_PYTHON/);
+    expect(msg).toContain("/no/such/python");
+  });
+
+  it("no python3 on PATH → distinct error suggesting AMICO_PYTHON (the GUI-launch escape hatch)", () => {
+    const root = tmpRoot();
+    const emptyBin = join(root, "empty");
+    mkdirSync(emptyBin);
+    const msg = configErrorMessage(() => resolvePasqalInterpreter({ PATH: emptyBin } as NodeJS.ProcessEnv));
+    expect(msg).toMatch(/python3 not found on PATH/);
+    expect(msg).toMatch(/AMICO_PYTHON/);
+  });
+
+  it("interpreter misconfiguration exits 64 — cleanly distinct from the connector's exit-3 unreachable lane", async () => {
+    const root = tmpRoot();
+    const emptyBin = join(root, "empty");
+    mkdirSync(emptyBin);
+    const env = launchEnv(credFile(root));
+    env.PATH = emptyBin; // no python3, no AMICO_PYTHON
+    const code = await pasqalLaunch([connectorScript(root)], env);
+    expect(code).toBe(64); // vs. exit 3 passthrough covered under AC1
   });
 });
