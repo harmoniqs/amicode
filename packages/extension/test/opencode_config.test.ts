@@ -9,6 +9,7 @@ import {
   buildOpencodeConfigContent,
   resolveModelPin,
   profileHasIdentity,
+  routingSection,
 } from "../src/opencode_config";
 
 function fakeExtRoot(): string {
@@ -117,7 +118,17 @@ describe("buildOpencodeConfigContent", () => {
       { name: "team", kind: "team", path: "/v/team", writable: false },
     ];
     const cfg = JSON.parse(
-      buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me", mounts),
+      buildOpencodeConfigContent(
+        "/abs/AGENTS.md",
+        TPL,
+        "/home/u/.amico/runs/default",
+        undefined,
+        undefined,
+        [],
+        "",
+        "/v/me",
+        mounts,
+      ),
     );
     const ed = cfg.permission.external_directory;
     expect(ed["/v/me/**"]).toBe("allow"); // personal mount read grant
@@ -127,7 +138,18 @@ describe("buildOpencodeConfigContent", () => {
     expect(ed["/v/me/amicode/**"]).toBe("allow"); // existing personal-vault grant retained
   });
   it("no mounts → no per-mount grants (only the personal amicode grant when a vaultDir is given)", () => {
-    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "/v/me"));
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent(
+        "/abs/AGENTS.md",
+        TPL,
+        "/home/u/.amico/runs/default",
+        undefined,
+        undefined,
+        [],
+        "",
+        "/v/me",
+      ),
+    );
     const ed = cfg.permission.external_directory;
     expect(ed["/v/me/**"]).toBeUndefined(); // no mount list → no whole-mount grant
     expect(ed["/v/me/amicode/**"]).toBe("allow");
@@ -256,6 +278,58 @@ describe("prepareOpencodeProject", () => {
     const second = prepareOpencodeProject(opts); // second activation: same dir, no throw
     expect(second.projectDir).toBe(stable);
     expect(readFileSync(second.agentsPath, "utf8")).toContain("/opt/piccolo");
+  });
+});
+
+describe("routingSection (Δ10 #63 — per-solve routing guidance splice)", () => {
+  // Isolate BOTH seams the section reads: the solver-mode file ($AMICODE_OPS_DIR)
+  // and the connections status cache ($AMICODE_CONNECTIONS_FILE). No network, no
+  // real HOME.
+  function withSession(mode: "piccolo" | "hp", conn: unknown | undefined, run: () => void) {
+    const opsDir = mkdtempSync(join(tmpdir(), "ops-"));
+    writeFileSync(join(opsDir, "solver-mode.json"), JSON.stringify({ mode, status: "ready" }));
+    const connFile = join(mkdtempSync(join(tmpdir(), "conn-")), "connections.json");
+    if (conn !== undefined) writeFileSync(connFile, JSON.stringify(conn));
+    const prevOps = process.env.AMICODE_OPS_DIR;
+    const prevConn = process.env.AMICODE_CONNECTIONS_FILE;
+    process.env.AMICODE_OPS_DIR = opsDir;
+    process.env.AMICODE_CONNECTIONS_FILE = connFile;
+    try {
+      run();
+    } finally {
+      if (prevOps === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prevOps;
+      if (prevConn === undefined) delete process.env.AMICODE_CONNECTIONS_FILE;
+      else process.env.AMICODE_CONNECTIONS_FILE = prevConn;
+    }
+  }
+
+  it("hp mode + connected → renders the routing offer with the estimate-driven confirm", () => {
+    withSession("hp", { "company-compute": { state: "connected", identity: "kate@harmoniqs.co" } }, () => {
+      const s = routingSection();
+      expect(s).toMatch(/## Routing/);
+      expect(s).toMatch(/amico-run estimate/);
+      expect(s).toMatch(/executor.*"remote"/);
+      expect(s).toMatch(/connected as kate@harmoniqs\.co/);
+    });
+  });
+
+  it("hp mode but disconnected → no routing offer (connection gate)", () => {
+    withSession("hp", { "company-compute": { state: "needs-key" } }, () => {
+      expect(routingSection()).toBe("");
+    });
+  });
+
+  it("piccolo mode (the default) → no routing offer even if connected", () => {
+    withSession("piccolo", { "company-compute": { state: "connected" } }, () => {
+      expect(routingSection()).toBe("");
+    });
+  });
+
+  it("no connections cache at all → no routing offer, no throw", () => {
+    withSession("hp", undefined, () => {
+      expect(routingSection()).toBe("");
+    });
   });
 });
 

@@ -14,6 +14,7 @@ import {
   type SkillIndexEntry,
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
+import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
   readKnowledgeLines,
@@ -288,6 +289,17 @@ function solverModeSection(): string {
   );
 }
 
+/** Δ10 (#63): the per-solve routing guidance appended to the agent's AGENTS.md.
+ *  Reads the live solver mode + Company Compute connection status (both
+ *  token-free — status only, never the token) and renders the remote-routing
+ *  offer only when both admit it (mode = hp AND connection connected); "" in
+ *  every other case, so piccolo / disconnected sessions stay byte-identical to
+ *  before. The estimate SUGGESTS the confirm's default; the researcher always
+ *  confirms, per-solve, never auto-routed. */
+export function routingSection(): string {
+  return buildRoutingSection(readRoutingContext(readSolverModeState().mode));
+}
+
 /** The model pin to inject into the generated config, or undefined.
  *
  *  We deliberately DO NOT force a fallback model here. `config.model` is the
@@ -545,7 +557,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -601,7 +613,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection(), "utf8");
+  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
