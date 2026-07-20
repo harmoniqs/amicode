@@ -14,7 +14,6 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
-  profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "./server_auth";
@@ -27,7 +26,7 @@ import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from ".
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { stagePasqalConnector } from "./pasqal_assets";
-import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
+import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
   hasJuliaup,
@@ -82,7 +81,11 @@ function readDeviceCard(cardPath: string): { driveLines: DriveLine[]; qubits: st
     const dlRaw = Array.isArray(fm.drive_lines) ? (fm.drive_lines as Record<string, unknown>[]) : [];
     const driveLines: DriveLine[] = dlRaw
       .filter((d) => d && typeof d === "object" && typeof d.id === "string")
-      .map((d) => ({ id: String(d.id), target: typeof d.target === "string" ? d.target : undefined, kind: typeof d.kind === "string" ? d.kind : undefined }));
+      .map((d) => ({
+        id: String(d.id),
+        target: typeof d.target === "string" ? d.target : undefined,
+        kind: typeof d.kind === "string" ? d.kind : undefined,
+      }));
     const qubits =
       typeof fm.qubits === "number"
         ? Array.from({ length: fm.qubits }, (_v, i) => `Q${i + 1}`)
@@ -195,7 +198,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
-  registerDeviceInspector(ctx);   // Spec A §3 — device dashboard, sibling to the Run Inspector
+  registerDeviceInspector(ctx); // Spec A §3 — device dashboard, sibling to the Run Inspector
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
@@ -652,18 +655,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
-  // Auto-offer ONLY for a returning user: a profile exists here but no personal
-  // vault (changed machines / set up elsewhere). First-timers (no profile) get the
-  // onboarding wizard instead; a resolved vault needs nothing. (Command bypasses.)
-  if (
-    shouldOfferVaultSetup({
-      hasPersonalVault: !!opencodeProject.vaultDir,
-      hasProfile: profileHasIdentity(),
-      dismissed: ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true,
-    })
-  ) {
-    void runVaultSetup(false);
-  }
+  // Personal vault by default. The onboarding wizard (opencode-side) writes the
+  // profile but NOT a vault, and a genuine first-timer has none — so Amico would
+  // have nowhere to remember them (distiller disabled, session unpersonalized).
+  // Silently provision a LOCAL personal vault on first run when none resolves —
+  // no modal, like the Julia project. The `amicode.setupVault` command remains
+  // for naming / re-creating; the wizard finale offers attaching other vaults.
+  // Failure-tolerant: a creation error just leaves the session unpersonalized.
+  const ensureDefaultPersonalVault = async (): Promise<void> => {
+    if (personalMount(resolveMountStack())) return;
+    let created;
+    try {
+      created = createLocalPersonalVault(defaultVaultsRoot(), suggestVaultName());
+    } catch (e) {
+      opencodeChannel.appendLine(`[vault] default personal vault not created: ${(e as Error).message}`);
+      return;
+    }
+    opencodeChannel.appendLine(
+      `[vault] auto-provisioned local personal vault: ${created.path} (git=${created.gitInit})`,
+    );
+    await respawnForVault();
+  };
+  void ensureDefaultPersonalVault();
 
   // Julia setup (#8): amicode manages the Julia toolchain via juliaup — install
   // juliaup if absent, add the channel pinned to the Manifest's MINOR, and
@@ -726,7 +739,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const m = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
         return m ? hasChannel(m) : false;
       })(),
-      projectInstantiated: projectInstantiated(resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""))),
+      projectInstantiated: projectInstantiated(
+        resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+      ),
       dismissed: ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true,
     })
   ) {
@@ -744,7 +759,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
         // Julia: managed toolchain + `using Piccolo` loads (async; can precompile for minutes).
         const minor = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
-        const project = resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""));
+        const project = resolveJuliaProject(
+          vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
+        );
         if (!minor) {
           results.push({ name: "Julia", ok: false, detail: "could not read pinned version (julia/Manifest.toml)" });
         } else if (!projectInstantiated(project)) {
@@ -768,7 +785,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         results.push({
           name: "opencode server",
           ok: opencodeReadyUrl !== undefined,
-          detail: opencodeReadyUrl ? `up at ${opencodeReadyUrl.toString()}` : 'down — try "Amicode: Restart opencode server"',
+          detail: opencodeReadyUrl
+            ? `up at ${opencodeReadyUrl.toString()}`
+            : 'down — try "Amicode: Restart opencode server"',
         });
 
         // LLM provider (opencode's own resolution).

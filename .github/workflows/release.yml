@@ -1,7 +1,14 @@
-# Tag-triggered VSIX release. Push a `v*` tag → full package chain (amico-run +
-# extension + exemplars + vendored opencode via fetch:opencode), channel-gate
-# check on the vendored binary, packaging-manifest gate, then a GitHub release
-# with amicode.vsix attached.
+# Tag-triggered VSIX release + VS Code Marketplace publish.
+#
+#   push tag v*             -> build 3 vsixes, GitHub Release with all attached
+#   clean tag vX.Y.Z        -> ALSO publish the platform-specific vsixes to the
+#                              Marketplace (the promotion signal)
+#   pre-release vX.Y.Z-...  -> GitHub Release (prerelease) only, never Marketplace
+#
+# The `-alpha.N` suffix mirrors the vendored opencode fork's `amicode.N` and is
+# an INTERNAL channel that must never reach end users. Promotion = bump the
+# extension manifest to the next x.y.z and cut a clean `vX.Y.Z` tag; that clean
+# tag is what unlocks the Marketplace publish job.
 name: release
 on:
   push:
@@ -21,6 +28,9 @@ permissions:
 jobs:
   vsix:
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      publishable: ${{ steps.meta.outputs.publishable }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,39 +38,105 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with: { node-version: 20, cache: pnpm }
+      # Resolve the effective tag once and decide whether it may reach the
+      # Marketplace: ONLY clean vX.Y.Z tags do. vX.Y.Z-alpha/-beta/-rc stay on
+      # the GitHub-Release-only internal channel.
+      - name: Resolve tag + publish gate
+        id: meta
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          BASE="${TAG#v}"; BASE="${BASE%%-*}"
+          PUBLISHABLE=false
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' && PUBLISHABLE=true
+          { echo "tag=$TAG"; echo "base=$BASE"; echo "publishable=$PUBLISHABLE"; } >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG  base=$BASE  publishable=$PUBLISHABLE"
       # Version guard: the tag's base (v0.0.3 or v0.0.3-alpha.1 -> 0.0.3) MUST equal the
       # extension manifest version, so the installed extension's shown version matches the
       # release tag. Prevents the confusing "tag says alpha.3 but the extension says 0.0.2".
       - name: Version guard — tag base must equal the extension manifest version
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
-          BASE="${TAG#v}"; BASE="${BASE%%-*}"
+          BASE="${{ steps.meta.outputs.base }}"
           MANIFEST="$(node -p "require('./packages/extension/package.json').version")"
-          echo "tag=$TAG  tag-base=$BASE  manifest=$MANIFEST"
+          echo "tag-base=$BASE  manifest=$MANIFEST"
           [ "$BASE" = "$MANIFEST" ] || { echo "FAIL: tag base '$BASE' != extension manifest '$MANIFEST' — bump packages/extension/package.json to match the tag (or retag)."; exit 1; }
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter amicode run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + fetch:skills + vsce
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork fetch; must ALSO read harmoniqs/amico-plugin releases (fetch:skills)
-      # Also vendor darwin-arm64 and repackage, so the RELEASED .vsix installs on mac too
+      # Also vendor darwin-arm64, so the universal .vsix installs on mac too
       # (the package chain above only fetches the ubuntu runner's linux-x64 binary).
       - run: node packages/extension/scripts/fetch_opencode.mjs --platform darwin-arm64 --release
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
-      - run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - name: Gate check — both vendored binaries ship the amicode UI ON
         run: |
           cat packages/extension/vendor/opencode/linux-x64/.source packages/extension/vendor/opencode/darwin-arm64/.source
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/linux-x64/opencode
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/darwin-arm64/opencode
+      # Three vsixes, all reusing the single build + already-vendored binaries
+      # (no rebuild, no re-fetch):
+      #   amicode.vsix              universal (both binaries) -> GitHub Release direct-install
+      #   amicode-linux-x64.vsix    lean (linux binary only)  -> Marketplace
+      #   amicode-darwin-arm64.vsix lean (mac binary only)    -> Marketplace
+      # Per-target vsixes are trimmed to one binary by moving the other platform
+      # dir aside for that single `vsce package` call, then restoring it.
+      - name: Package universal vsix (both binaries)
+        run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
-      - name: Create GitHub release
+      - name: Package platform-specific vsixes (reuses vendored binaries)
+        run: |
+          V=packages/extension/vendor/opencode
+          mv "$V/darwin-arm64" "$RUNNER_TEMP/darwin-arm64"
+          pnpm --filter amicode exec vsce package --target linux-x64 --no-dependencies --allow-missing-repository -o amicode-linux-x64.vsix
+          mv "$RUNNER_TEMP/darwin-arm64" "$V/darwin-arm64"
+          mv "$V/linux-x64" "$RUNNER_TEMP/linux-x64"
+          pnpm --filter amicode exec vsce package --target darwin-arm64 --no-dependencies --allow-missing-repository -o amicode-darwin-arm64.vsix
+          mv "$RUNNER_TEMP/linux-x64" "$V/linux-x64"
+      - name: Create GitHub release (all three vsixes)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          TAG="${{ inputs.tag || github.ref_name }}"
+          TAG="${{ steps.meta.outputs.tag }}"
           # Pre-release tags (v…-alpha / -beta / -rc) must not become the repo's "latest".
           PRERELEASE=""
           case "$TAG" in *-alpha*|*-beta*|*-rc*) PRERELEASE=--prerelease ;; esac
           gh release create "$TAG" --title "amicode $TAG" --generate-notes $PRERELEASE \
-            packages/extension/amicode.vsix
+            packages/extension/amicode.vsix \
+            packages/extension/amicode-linux-x64.vsix \
+            packages/extension/amicode-darwin-arm64.vsix
+      # Hand the platform-specific vsixes to the publish job. Re-running that job
+      # (e.g. after an expired PAT) reuses these instead of rebuilding.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix-packages
+          path: |
+            packages/extension/amicode-linux-x64.vsix
+            packages/extension/amicode-darwin-arm64.vsix
+          if-no-files-found: error
+
+  publish-marketplace:
+    needs: vsix
+    if: ${{ needs.vsix.outputs.publishable == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read # download-artifact from this run
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: vsix-packages
+          path: dist
+      # Publish the two platform-specific vsixes together (one Marketplace
+      # version with two platform entries). vsce reads the token from $VSCE_PAT.
+      #
+      # The universal fat vsix is deliberately NOT published: it bundles only
+      # linux+mac binaries, so as a Marketplace fallback it would hand Windows
+      # (and other-platform) users a ~100MB install with no runnable binary. It
+      # stays a GitHub-Release direct-install asset. To also ship it as a
+      # fallback, add amicode.vsix to the upload-artifact list above and to the
+      # --packagePath list below.
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          npx --yes @vscode/vsce publish \
+            --packagePath dist/amicode-linux-x64.vsix dist/amicode-darwin-arm64.vsix
