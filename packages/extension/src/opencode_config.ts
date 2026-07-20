@@ -273,18 +273,40 @@ export function writeAuthoringConfig(
   }
 }
 
-/** Solver-mode section for AGENTS.md (rchari/solver-wire): in HP mode the
- *  agent authors with the Piccolissimo stack by default — the entitlement
- *  gate (issimo) has already admitted the packages by the time this renders. */
+/** Solver-mode section for AGENTS.md: in HP mode the agent authors with the
+ *  Piccolissimo stack AND routes the solve to the cloud. "High-Performance +
+ *  Cloud" (tier=hpc) is the PAID tier — it runs in the cloud only, never
+ *  locally (the runner AMI has Piccolissimo/Altissimo pre-baked; a local run
+ *  can't even instantiate the private package). Routing is enforced durably by
+ *  the amico-run gate (tier=hpc ⇒ executor=remote + env=provisioned + a cloud
+ *  connection, else exit 64); this section makes the agent do the right thing
+ *  and, crucially, BLOCK-WITH-PROMPT when no cloud key is connected. */
 function solverModeSection(): string {
   if (readSolverModeState().mode !== "hp") return "";
+  const cloudConnected =
+    !!process.env.AMICO_CLOUD_URL ||
+    fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
+  const routing = cloudConnected
+    ? "The cloud is CONNECTED. Launch HP solves in the cloud with a High-Performance + Cloud spec: " +
+      "`tier=\"hpc\"`, `executor=\"remote\"`, `env.kind=\"provisioned\"` (via `amico-run --spec <spec> " +
+      "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
+      "is NO local precompile and NO sandbox — never author a sandbox env for HP. Live iteration frames " +
+      "stream to the Inspector; note that per-iteration AMICODE_ITER stats + the cooperative Stop are not " +
+      "yet available on the cloud bundle, and re-rollout verification is skipped for cloud runs (say so). " +
+      "Only claim cloud execution when the launch actually used `--executor remote`."
+    : "The cloud is NOT connected (no API key). High-Performance + Cloud is a PAID cloud tier and CANNOT " +
+      "run locally — do NOT attempt a local Piccolissimo solve (it will fail: the private package can't be " +
+      "instantiated in a sandbox, and the gate rejects a local hpc run). Instead, STOP and tell the user: " +
+      "\"High-Performance + Cloud needs a cloud connection — run **Amico: Connect Cloud** to enter your API " +
+      "key.\" Offer to switch back to the free local Piccolo solver if they'd rather not connect now.";
   return (
     "\n\n## Solver mode\n" +
-    "**HIGH-PERFORMANCE (Piccolissimo + Altissimo).** The user selected the HP solver. " +
-    "Author solves with the **Piccolissimo** stack by default (SplinePulseProblem, free-phase paths, " +
-    "`using Piccolissimo`) rather than plain Piccolo, falling back to Piccolo only when Piccolissimo " +
-    "cannot express the problem (say so when you do). The Altissimo GPU executor is provisioned but " +
-    "dispatches locally until the cloud endpoint ships — never claim cloud execution.\n"
+    "**HIGH-PERFORMANCE + CLOUD (Piccolissimo + Altissimo).** The user selected the paid " +
+    "\"High-Performance + Cloud\" solver. Author solves with the **Piccolissimo** stack " +
+    "(SplinePulseProblem, free-phase paths, `using Piccolissimo`) rather than plain Piccolo, falling back " +
+    "to Piccolo only when Piccolissimo cannot express the problem (say so when you do). " +
+    routing +
+    "\n"
   );
 }
 

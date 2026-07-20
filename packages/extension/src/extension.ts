@@ -453,8 +453,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         opencodeChannel.appendLine(`[solver] switched → ${mode} (server back up)`);
         void vscode.window.showInformationMessage(
           mode === "hp"
-            ? "Amicode: High-Performance Solver active (Piccolissimo unlocked)."
-            : "Amicode: back on the Piccolo stack.",
+            ? "Amicode: High-Performance + Cloud active (Piccolissimo + Altissimo — solves run in the cloud; connect an API key if you haven't)."
+            : "Amicode: back on the Piccolo stack (free, local).",
         );
       }),
     );

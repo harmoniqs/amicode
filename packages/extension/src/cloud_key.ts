@@ -165,7 +165,7 @@ export async function runSetCloudKeyCommand(deps: SetCloudKeyDeps): Promise<void
   switch (outcome.kind) {
     case "connected":
       deps.log?.(`[cloud] connected via ${CREDENTIAL_ROUTE} (server owns write + HP flip); base_url=${trimUrl(cloudUrl)}`);
-      ui.showInformationMessage("Cloud connected — HP mode enabled (Piccolissimo + Altissimo solves).");
+      ui.showInformationMessage("Cloud connected — High-Performance + Cloud enabled (Piccolissimo + Altissimo solves run in the cloud).");
       return;
     case "connected-warning":
       // Key saved, HP flip warned — a WARNING, never the success toast (finding 1).

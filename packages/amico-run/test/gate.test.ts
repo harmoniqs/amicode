@@ -97,10 +97,52 @@ describe("runGate", () => {
     );
     expect(runGate(spec({ env: { kind: "project", project: env } }), "using Piccolo\n", authoring()).ok).toBe(true);
   });
-  it("step 3: non-local executor rejected at schema level", () => {
-    const result = runGate(spec({ executor: "cloud" }), "using Piccolo\n", authoring());
+  it("step 3: unknown executor rejected at schema level", () => {
+    const result = runGate(spec({ executor: "gpu" }), "using Piccolo\n", authoring());
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toMatch(/executor/);
+  });
+  describe("step 3: hpc (High-Performance + Cloud) tier is cloud-only", () => {
+    const hpcSpec = (o: Record<string, unknown> = {}) =>
+      spec({ schema_version: "3", tier: "hpc", executor: "remote", env: { kind: "provisioned" }, ...o });
+    const cloudFile = () => join(dir, "cloud.json"); // dir is set per-test by the outer beforeEach
+    const savedFile = process.env.AMICO_CLOUD_FILE;
+    const savedUrl = process.env.AMICO_CLOUD_URL;
+    const savedTok = process.env.AMICO_CLOUD_TOKEN;
+    beforeEach(() => {
+      // isolate cloud-config resolution: no env pair, point cloud.json at the temp dir
+      delete process.env.AMICO_CLOUD_URL;
+      delete process.env.AMICO_CLOUD_TOKEN;
+      process.env.AMICO_CLOUD_FILE = cloudFile();
+    });
+    afterEach(() => {
+      if (savedFile === undefined) delete process.env.AMICO_CLOUD_FILE;
+      else process.env.AMICO_CLOUD_FILE = savedFile;
+      if (savedUrl !== undefined) process.env.AMICO_CLOUD_URL = savedUrl;
+      if (savedTok !== undefined) process.env.AMICO_CLOUD_TOKEN = savedTok;
+    });
+    it("hpc + remote + provisioned + a connected key → passes", () => {
+      writeFileSync(cloudFile(), JSON.stringify({ base_url: "https://x", token: "amico_test" }));
+      expect(runGate(hpcSpec(), "using Piccolo\n", authoring()).ok).toBe(true);
+    });
+    it("hpc but executor=local → rejected (cannot run locally)", () => {
+      writeFileSync(cloudFile(), JSON.stringify({ base_url: "https://x", token: "t" }));
+      const r = runGate(hpcSpec({ executor: "local" }), "using Piccolo\n", authoring());
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/cloud.*executor = remote|cannot run locally/i);
+    });
+    it("hpc but env=sandbox → rejected (uses the provisioned cloud env)", () => {
+      writeFileSync(cloudFile(), JSON.stringify({ base_url: "https://x", token: "t" }));
+      const r = runGate(hpcSpec({ env: { kind: "sandbox", project: join(dir, "env") } }), "using Piccolo\n", authoring());
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/provisioned/);
+    });
+    it("hpc but NO cloud connection → rejected with connect-a-key message", () => {
+      // no cloud.json written, no env pair → hasCloudConfig() is false
+      const r = runGate(hpcSpec(), "using Piccolo\n", authoring());
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.reason).toMatch(/cloud connection|connect an API key/i);
+    });
   });
   it("step 4: composed — inside-fill-point edits pass; outside edits reject with demote_to", () => {
     const sandboxSpec = spec({ tier: "composed", source: { exemplar_id: "ex-1" } });

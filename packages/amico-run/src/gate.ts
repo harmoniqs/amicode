@@ -15,6 +15,7 @@ import type { AuthoringConfig } from "./authoring.js";
 import { checkImports, scanImports } from "./import_scan.js";
 import { maskedHash } from "./baseline.js";
 import { loadExemplarsIndex } from "./catalog.js";
+import { hasCloudConfig } from "./remote_config.js";
 
 export interface GateStamp {
   tier?: string;
@@ -64,6 +65,7 @@ export function runGate(specRaw: unknown, scriptText: string, authoring: Authori
   if (!validation.ok) return { ok: false, reason: `solvespec schema: ${validation.errors[0]}` };
   const spec = specRaw as Record<string, unknown>;
   const tier = typeof spec.tier === "string" ? spec.tier : undefined;
+  const executor = typeof spec.executor === "string" ? spec.executor : undefined;
   const env = (typeof spec.env === "object" && spec.env !== null ? spec.env : undefined) as
     | { kind?: string; project?: string }
     | undefined;
@@ -77,6 +79,25 @@ export function runGate(specRaw: unknown, scriptText: string, authoring: Authori
   // ── step 3: tier/env consistency ──
   if (tier === "free" && env?.kind !== "sandbox")
     return { ok: false, reason: 'free tier requires a sandbox env (env.kind = "sandbox")' };
+  // hpc = the paid High-Performance + Cloud tier: cloud-only by construction.
+  // It NEVER runs locally and NEVER touches a sandbox (which would try to
+  // Pkg.instantiate the private Piccolissimo package against a registry that
+  // doesn't have it). This is the durable backstop to the extension's
+  // pre-launch key check — an agent or a direct CLI call can't run hpc locally.
+  if (tier === "hpc") {
+    if (executor !== "remote")
+      return { ok: false, reason: "High-Performance + Cloud runs in the cloud — set executor = remote (it cannot run locally)" };
+    if (env?.kind !== "provisioned")
+      return {
+        ok: false,
+        reason: 'High-Performance + Cloud uses the pre-baked cloud environment — set env.kind = "provisioned" (not a local sandbox)',
+      };
+    if (!hasCloudConfig())
+      return {
+        ok: false,
+        reason: "High-Performance + Cloud needs a cloud connection — connect an API key (Amico: Connect Cloud) before running",
+      };
+  }
   if ((env?.kind === "project" || env?.kind === "sandbox") && env.project) {
     const stale = staleEnvCheck(env.project);
     if (stale) return { ok: false, reason: stale };
