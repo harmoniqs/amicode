@@ -380,3 +380,31 @@ describe("estimate subcommand", () => {
   });
 });
 
+describe("amico verb router — estimate", () => {
+  const AMICO = join(__dirname, "..", "dist", "amico.js");
+  function runAmico(args: string[], env: Record<string, string> = {}) {
+    try {
+      const stdout = execFileSync("node", [AMICO, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+      return { code: 0, stdout, stderr: "" };
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      return { code: err.status ?? -1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    }
+  }
+
+  it("`amico estimate <script.jl>` delegates to the same subcommand", () => {
+    const dir = tmp();
+    const script = join(dir, "solve.jl");
+    writeFileSync(script, SCRIPT_MEDIUM);
+    const r = runAmico(["estimate", script], { AMICO_LOCAL_RAM_BYTES: "1024" });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).sizeClass).toBe("MEDIUM");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("`amico --help` lists the estimate verb", () => {
+    const r = runAmico(["--help"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/estimate/);
+  });
+});
