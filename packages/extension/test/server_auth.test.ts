@@ -78,6 +78,21 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
     // no launcher dir → host PATH untouched (chat can author; solves warn at boot)
     expect(buildServerSpawnEnv({ ...opts, amicoRunBinDir: undefined }).PATH).toBe(process.env.PATH ?? "");
   });
+  it("carries AMICO_PYTHON iff amicoPython is set — absent (never empty) otherwise, so the fork's python3 fallback is untouched", () => {
+    // The fork's validator spawn resolves $AMICO_PYTHON → bare `python3`; the
+    // provisioned venv interpreter rides this seam so no respawn path drops it.
+    const withPython = buildServerSpawnEnv({ ...opts, amicoPython: "/ops/venvs/pasqal-connector/bin/python" });
+    expect(withPython.AMICO_PYTHON).toBe("/ops/venvs/pasqal-connector/bin/python");
+    expect(Object.keys(withPython).sort()).toEqual([
+      "AMICO_PYTHON",
+      "OPENCODE_CONFIG_CONTENT",
+      "OPENCODE_SERVER_PASSWORD",
+      "PATH",
+    ]);
+    // unset branch byte-identical to pre-provisioning behavior (AC7)
+    expect("AMICO_PYTHON" in buildServerSpawnEnv(opts)).toBe(false);
+    expect("AMICO_PYTHON" in buildServerSpawnEnv({ ...opts, amicoPython: undefined })).toBe(false);
+  });
   it("passes the config content through verbatim (the instructions/permission merge)", () => {
     expect(buildServerSpawnEnv(opts).OPENCODE_CONFIG_CONTENT).toBe(opts.configContent);
   });
@@ -106,7 +121,11 @@ describe("no-persist / no-log seams (AC3) — the spawn env is the ONLY carriage
     const prev = process.env.OPENCODE_SERVER_PASSWORD;
     process.env.OPENCODE_SERVER_PASSWORD = SENTINEL;
     try {
-      const content = buildOpencodeConfigContent("/abs/AGENTS.md", "/ext/templates/t.jl", "/home/u/.amico/runs/default");
+      const content = buildOpencodeConfigContent(
+        "/abs/AGENTS.md",
+        "/ext/templates/t.jl",
+        "/home/u/.amico/runs/default",
+      );
       expect(content).not.toContain(SENTINEL);
     } finally {
       if (prev === undefined) delete process.env.OPENCODE_SERVER_PASSWORD;

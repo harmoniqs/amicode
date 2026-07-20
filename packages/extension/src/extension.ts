@@ -26,6 +26,7 @@ import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from ".
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { stagePasqalConnector } from "./pasqal_assets";
+import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
@@ -195,6 +196,48 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
   }
 
+  // Provision the Pasqal validator's interpreter (the fresh-install fix): a
+  // venv from the STAGED requirements.txt, handed to the server spawn as
+  // AMICO_PYTHON — the override the fork's validator spawn resolves before
+  // falling back to bare `python3` (which on a fresh machine has no
+  // pasqal-cloud → validator exit 1 → the panel's misleading "unreachable").
+  // Fast path (stamped venv or host $AMICO_PYTHON) resolves synchronously;
+  // the slow path (fresh install / requirements change) provisions in the
+  // BACKGROUND — never blocks activation — then injects into the live spawn
+  // env (ServerManager re-reads it at start()) and bounces the server via the
+  // existing restart command, so a fresh install self-heals without a reload.
+  let amicoPython: string | undefined;
+  let currentSpawnEnv: Record<string, string> | undefined;
+  try {
+    if (needsProvision()) {
+      opencodeChannel.appendLine(`[pasqal] python provisioning (background): ${pasqalVenvDir()}`);
+      void provisionPasqalPython().then((r) => {
+        if (r.ok) {
+          amicoPython = r.pythonPath;
+          if (r.provisioned) {
+            if (currentSpawnEnv) currentSpawnEnv.AMICO_PYTHON = r.pythonPath;
+            opencodeChannel.appendLine(
+              `[pasqal] python provisioned: ${r.pythonPath} — restarting server to pick it up`,
+            );
+            void vscode.commands.executeCommand("amicode.restartServer");
+          }
+        } else {
+          opencodeChannel.appendLine(`[pasqal] ${r.message}`);
+        }
+      });
+    } else {
+      const r = await provisionPasqalPython(); // no-op resolve: stamped venv or host override
+      if (r.ok) amicoPython = r.pythonPath;
+    }
+  } catch (e) {
+    opencodeChannel.appendLine(`[pasqal] python provisioning failed: ${(e as Error).message}`);
+  }
+  /** One builder for every server spawn site: threads the CURRENT amicoPython
+   *  (closure read — late provisioning is picked up by later respawns) and
+   *  keeps a handle on the live env object for the background self-heal. */
+  const spawnEnv = (o: Omit<Parameters<typeof buildServerSpawnEnv>[0], "amicoPython">): Record<string, string> =>
+    (currentSpawnEnv = buildServerSpawnEnv({ ...o, amicoPython }));
+
   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
@@ -360,7 +403,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
 
   if (binary !== undefined) {
-    // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37). The agent
+    // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
+    // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
+    // server child env for the FORK's validator spawn — server plumbing, not
+    // amico-run contract; amico-run itself still receives nothing via env. The agent
     // gets the Julia project from AGENTS.md (substituted at session-copy time)
     // and passes it as `--project`. PATH just needs to resolve the launcher.
     if (amicoRunBinDir === undefined) {
@@ -381,7 +427,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: opencodeProject.projectDir,
       port: configuredPort > 0 ? configuredPort : undefined,
-      env: buildServerSpawnEnv({
+      env: spawnEnv({
         amicoRunBinDir,
         serverPassword,
         // Inject the amico solve workflow as opencode `instructions` (loaded for
@@ -443,7 +489,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           binary: binary!,
           cwd: project2.projectDir,
           port: configuredPort > 0 ? configuredPort : undefined,
-          env: buildServerSpawnEnv({
+          env: spawnEnv({
             amicoRunBinDir,
             serverPassword, // per-boot value survives the switch (chat iframe keeps its credential)
             configContent: buildOpencodeConfigContent(
@@ -573,7 +619,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       binary,
       cwd: project2.projectDir,
       port: port > 0 ? port : undefined,
-      env: buildServerSpawnEnv({
+      env: spawnEnv({
         amicoRunBinDir,
         serverPassword, // per-boot value survives the vault respawn too
         configContent: buildOpencodeConfigContent(

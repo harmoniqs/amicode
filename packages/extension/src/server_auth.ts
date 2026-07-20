@@ -61,10 +61,18 @@ export function buildServerSpawnEnv(opts: {
   configContent: string;
   /** The per-boot password from mintServerPassword(). */
   serverPassword: string;
+  /** Interpreter for the fork's Pasqal validator spawn ($AMICO_PYTHON →
+   *  bare `python3`); the provisioned venv python, or a host override.
+   *  Undefined = not provisioned: the key stays ABSENT (never empty) so the
+   *  fork's fallback is byte-identical to pre-provisioning behavior.
+   *  Deliberate, recorded S37 exception: this is server-child plumbing for
+   *  the validator, NOT amico-run env propagation (which stays argv-only). */
+  amicoPython?: string;
 }): Record<string, string> {
   return {
     PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
     OPENCODE_CONFIG_CONTENT: opts.configContent,
     OPENCODE_SERVER_PASSWORD: opts.serverPassword,
+    ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
   };
 }
