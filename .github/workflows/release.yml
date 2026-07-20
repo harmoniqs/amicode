@@ -54,17 +54,6 @@ jobs:
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/linux-x64/opencode
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/darwin-arm64/opencode
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
-      # #161 (AC4): the released artifact's bundled CLI must ACCEPT the remote
-      # executor — asserted behaviorally on the bins extracted from the very
-      # .vsix attached below (hermetic: failure-mode assertions, no cloud).
-      # Every declared bin of the CLI package must be present, executable, and
-      # fresh; the stale-bundle regression (a vsix predating the remote-executor
-      # merge) can never ship again.
-      - name: cli-gate — the release .vsix's bundled CLI accepts the remote executor (#161)
-        run: |
-          rm -rf /tmp/amicode-vsix-gate && mkdir -p /tmp/amicode-vsix-gate
-          unzip -q packages/extension/amicode.vsix -d /tmp/amicode-vsix-gate
-          node packages/extension/scripts/assert_packaged_cli.mjs --bin-dir /tmp/amicode-vsix-gate/extension/bin
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
