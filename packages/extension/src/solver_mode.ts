@@ -40,15 +40,13 @@ export function writeSolverModeReady(mode: SolverMode, file: string = solverMode
   fs.writeFileSync(file, JSON.stringify({ mode, status: "ready", switched_at: new Date().toISOString() }));
 }
 
-/** Request a switch to `mode` — the SAME {status:"switching"} write the app's
- *  toggle POSTs, so the running watchSolverMode picks it up and does the real
- *  re-prep (entitlement + project + server restart) exactly once. Used by
- *  amicode.setCloudKey to flip to HP after connecting cloud, without
- *  reimplementing the switch. */
-export function writeSolverModeSwitching(mode: SolverMode, file: string = solverModeFile()): void {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ mode, status: "switching" }));
-}
+// NOTE: there is deliberately NO extension-side "write {status:switching}"
+// helper anymore. Switch requests come from the fork server (the app's toggle
+// POST, and the connections credential route's HP flip — #167); the extension
+// only WATCHES for them (watchSolverMode) and answers with writeSolverModeReady.
+// amicode.setCloudKey used to own such a helper — it re-pointed onto the
+// connections seam (#171), so a second client-side flip writer would be the
+// exact duplicate-flip bug ADR 0001 forbids.
 
 /** Grant (hp) or revoke (piccolo) the `issimo` entitlement, PRESERVING any
  *  other codes in entitlements.toml (a real license file may carry more). */
