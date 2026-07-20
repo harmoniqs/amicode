@@ -17,7 +17,7 @@ import {
   profileHasIdentity,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
-import { mintServerPassword, buildServerSpawnEnv } from "./server_auth";
+import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "./server_auth";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
@@ -335,6 +335,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // refresh, restart) reuse it, because the open chat iframe carries the boot
   // credential and a mid-session rotation would strand it on 401s.
   const serverPassword = mintServerPassword();
+  // The extension's own calls to the server (health probe aside — ServerManager
+  // derives its own from the spawn env) authenticate with the matching Basic
+  // credential: SSE /event, the /config* signal probes, and the chat iframe
+  // (via the app's ?auth_token= bootstrap).
+  const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
 
   if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37). The agent
@@ -481,8 +486,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] no personal vault resolved — distiller disabled, session unpersonalized`);
     }
 
-    // SSE event channel — opens once opencode is healthy.
-    sseClient = new OpencodeEventClient({ channel: opencodeChannel, statusBar });
+    // SSE event channel — opens once opencode is healthy. Carries the per-boot
+    // credential (#163): the fork 401s an anonymous /event.
+    sseClient = new OpencodeEventClient({
+      channel: opencodeChannel,
+      statusBar,
+      authorization: serverAuthHeaders.Authorization,
+    });
     ctx.subscriptions.push(sseClient);
 
     serverManager.onReady((url) => {
@@ -492,12 +502,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // Open the chat as soon as the server is up (amicode.chat.autoOpen,
       // default on) — the chat IS the product's front door.
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, url);
+        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword));
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
       // chat box (Q129). Key-free; never logs a credential.
-      void fetchProviderSignal(url.toString()).then((sig) => {
+      void fetchProviderSignal(url.toString(), { headers: serverAuthHeaders }).then((sig) => {
         opencodeChannel.appendLine(
           sig.ok
             ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
@@ -749,7 +759,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // LLM provider (opencode's own resolution).
         if (opencodeReadyUrl) {
           try {
-            const sig = await fetchProviderSignal(opencodeReadyUrl.toString());
+            const sig = await fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders });
             results.push({
               name: "LLM creds",
               ok: sig.ok,
@@ -794,12 +804,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // check and silently hang at the chat box (Q129). Ask opencode's own live
       // resolution (/config/providers, same signal the healthcheck uses) so the
       // cause is named, not hidden. Key-free.
-      const creds = await fetchProviderSignal(readyUrl.toString());
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
       if (!creds.ok) {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl);
+      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword));
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();

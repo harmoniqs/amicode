@@ -58,8 +58,9 @@ export class ChatPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     opencodeUrl: URL,
+    authToken?: string,
   ) {
-    this.panel.webview.html = this.renderHtml(opencodeUrl);
+    this.panel.webview.html = this.renderHtml(opencodeUrl, authToken);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // Live theme bridge: editor theme changes flow extension → outer relay →
     // iframe → the app's setColorScheme (boot theme rides ?colorScheme=).
@@ -198,7 +199,12 @@ export class ChatPanel {
     );
   }
 
-  static openOrReveal(ctx: vscode.ExtensionContext, opencodeUrl: URL): ChatPanel {
+  /** `authToken` is the per-boot server credential (#163) as the app's
+   *  `?auth_token=` bootstrap value — base64("opencode:<password>"), from
+   *  serverAuthToken(). The app adopts it for its authenticated-fetch path and
+   *  strips it from the URL (entry-level history.replaceState). One value per
+   *  activation, so revealing an existing panel never needs a re-render. */
+  static openOrReveal(ctx: vscode.ExtensionContext, opencodeUrl: URL, authToken?: string): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
       return ChatPanel.current;
@@ -212,11 +218,11 @@ export class ChatPanel {
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
     panel.iconPath = tabIconPath(ctx);
-    ChatPanel.current = new ChatPanel(panel, opencodeUrl);
+    ChatPanel.current = new ChatPanel(panel, opencodeUrl, authToken);
     return ChatPanel.current;
   }
 
-  private renderHtml(opencodeUrl: URL): string {
+  private renderHtml(opencodeUrl: URL, authToken?: string): string {
     // CSP: allow the iframe to load opencode's localhost origin. The frame
     // itself is isolated, but VS Code's webview CSP needs to explicitly grant
     // the localhost frame-src. The nonce authorizes the one relay script below.
@@ -234,6 +240,11 @@ export class ChatPanel {
     // inside the webview iframe reports the OS, not VS Code).
     const framed = new URL(opencodeUrl.href);
     framed.searchParams.set("colorScheme", themeKindToScheme(vscode.window.activeColorTheme.kind));
+    // Per-boot server credential (#163): ride the app's own ?auth_token=
+    // bootstrap — its entry adopts it for every authenticated fetch and strips
+    // it from the URL. The iframe src is the credential's ONLY carriage here;
+    // it never appears in a log line or any other surface.
+    if (authToken) framed.searchParams.set("auth_token", authToken);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>

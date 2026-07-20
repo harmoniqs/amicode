@@ -38,6 +38,20 @@ describe("serverAuthHeader / serverAuthToken — the fork's Basic-auth contract"
     const decoded = Buffer.from(serverAuthToken("se:cr:et"), "base64").toString();
     expect(decoded.slice(decoded.indexOf(":") + 1)).toBe("se:cr:et");
   });
+  it("honors a host-env OPENCODE_SERVER_USERNAME (the spawned server inherits it — fork parity)", () => {
+    // The fork resolves its username from OPENCODE_SERVER_USERNAME ?? "opencode";
+    // the server inherits the host env, so a dev override there must land in our
+    // credential too or every extension call 401s.
+    const prev = process.env.OPENCODE_SERVER_USERNAME;
+    process.env.OPENCODE_SERVER_USERNAME = "alice";
+    try {
+      expect(serverAuthToken("pw")).toBe(Buffer.from("alice:pw").toString("base64"));
+      expect(serverAuthHeader("pw")).toBe(`Basic ${Buffer.from("alice:pw").toString("base64")}`);
+    } finally {
+      if (prev === undefined) delete process.env.OPENCODE_SERVER_USERNAME;
+      else process.env.OPENCODE_SERVER_USERNAME = prev;
+    }
+  });
 });
 
 describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn", () => {

@@ -23,8 +23,12 @@ import { randomBytes } from "node:crypto";
 // activation mints a new value.
 // ============================================================================
 
-/** The fork's default Basic-auth username (OPENCODE_SERVER_USERNAME unset). */
-const SERVER_USERNAME = "opencode";
+/** The fork resolves its Basic-auth username from OPENCODE_SERVER_USERNAME ??
+ *  "opencode" — and the spawned server INHERITS the host env, so a dev override
+ *  there must shape our credential too or every extension call 401s. */
+function serverUsername(): string {
+  return process.env.OPENCODE_SERVER_USERNAME || "opencode";
+}
 
 /** Mint the per-boot server password: 32 random bytes, base64url so it rides
  *  env vars and the auth_token query param unescaped. */
@@ -35,7 +39,7 @@ export function mintServerPassword(): string {
 /** The `?auth_token=` value the fork's auth middleware and the app's entry
  *  bootstrap both decode: base64("opencode:<password>"). */
 export function serverAuthToken(password: string): string {
-  return Buffer.from(`${SERVER_USERNAME}:${password}`).toString("base64");
+  return Buffer.from(`${serverUsername()}:${password}`).toString("base64");
 }
 
 /** The `Authorization` header for the extension's own calls to the server —

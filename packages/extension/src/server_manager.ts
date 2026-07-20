@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as cp from "node:child_process";
 import * as net from "node:net";
 import type { Readable } from "node:stream";
+import { serverAuthHeader } from "./server_auth";
 
 // ============================================================================
 // ServerManager — spawn `opencode serve --port=N`, wait for it to come up,
@@ -73,7 +74,12 @@ export class ServerManager {
       this.child = undefined;
     });
 
-    const ready = await waitForHealth(`http://127.0.0.1:${port}/`, 30_000);
+    // The probe authenticates with the credential WE injected (#163): with
+    // OPENCODE_SERVER_PASSWORD armed, the fork 401s an anonymous `GET /`, and
+    // a healthy boot would read as a 30s timeout. Derived from the same env
+    // the child gets, so probe and server can never disagree.
+    const password = this.opts.env.OPENCODE_SERVER_PASSWORD;
+    const ready = await waitForHealth(`http://127.0.0.1:${port}/`, 30_000, password ? serverAuthHeader(password) : undefined);
     if (!ready) {
       this.opts.channel.appendLine(`[server] opencode did not become healthy within 30s`);
       this.stop();
@@ -132,13 +138,13 @@ function pickFreePort(): Promise<number> {
   });
 }
 
-async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<boolean> {
+async function waitForHealth(baseUrl: string, timeoutMs: number, authorization?: string): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
       // opencode 1.3.x serves a redirect or HTML at /; just probe for any
       // 2xx/3xx response on the base URL with a short timeout.
-      const r = await fetchWithTimeout(baseUrl, 500);
+      const r = await fetchWithTimeout(baseUrl, 500, authorization);
       if (r.ok || (r.status >= 200 && r.status < 400)) return true;
     } catch {
       // not ready yet
@@ -148,11 +154,14 @@ async function waitForHealth(baseUrl: string, timeoutMs: number): Promise<boolea
   return false;
 }
 
-async function fetchWithTimeout(url: string, ms: number): Promise<Response> {
+async function fetchWithTimeout(url: string, ms: number, authorization?: string): Promise<Response> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { signal: ctrl.signal });
+    return await fetch(url, {
+      signal: ctrl.signal,
+      headers: authorization ? { Authorization: authorization } : undefined,
+    });
   } finally {
     clearTimeout(timer);
   }
