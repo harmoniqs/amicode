@@ -26,6 +26,7 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
+import { stagePasqalConnector } from "./pasqal_assets";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName, shouldOfferVaultSetup } from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
@@ -177,6 +178,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // Runs root (resolved early — the inspector needs it for its CSP resource roots).
   const runsRoot = resolveRunsRoot(vscode.workspace.getConfiguration("amicode").get<string>("runsRoot", ""));
+
+  // #161: stage the Pasqal connector into the ops dir at every activation —
+  // the DEFAULT path the fork's Connections panel resolves when
+  // $AMICO_PASQAL_VALIDATOR is unset (<opsDir>/scripts/pasqal-connector/).
+  // Always-copy: the default path is extension-owned (overrides live behind
+  // the env var, elsewhere), so the refresh can't clobber user work and every
+  // extension update ships the current script. Never blocks activation.
+  try {
+    const pasqal = stagePasqalConnector(ctx.extensionPath);
+    opencodeChannel.appendLine(`[pasqal] connector staged: ${pasqal.dir} (${pasqal.staged.join(", ")})`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
+  }
 
   // 1. UI surfaces
   const trees = registerTrees(ctx);
