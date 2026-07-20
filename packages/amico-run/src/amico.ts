@@ -20,6 +20,7 @@ function usage(): string {
     ["run <script.jl> [--spec <s.json>] […]", "launch a solve — the amico-run launch path (delegates verbatim)"],
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
+    ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
     ),
@@ -54,12 +55,15 @@ export async function main(argv: string[]): Promise<number> {
     // `amico run <args>`      ≡ `amico-run <args>`            (launch / --spec gate)
     // `amico resolve <args>`  ≡ `amico-run resolve <args>`    (tier resolution subcommand)
     // `amico sandbox <args>`  ≡ `amico-run sandbox <args>`    (env generation subcommand)
+    // `amico estimate <args>` ≡ `amico-run estimate <args>`   (Δ10 #34 v0 estimator subcommand)
     case "run":
       return launch(rest);
     case "resolve":
       return launch(["resolve", ...rest]);
     case "sandbox":
       return launch(["sandbox", ...rest]);
+    case "estimate":
+      return launch(["estimate", ...rest]);
 
     case "mcp-serve":
       return serve(rest);
