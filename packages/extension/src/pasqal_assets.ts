@@ -40,7 +40,9 @@ export function stagePasqalConnector(
   for (const f of PASQAL_CONNECTOR_FILES) {
     const src = path.join(srcDir, f);
     if (!fs.existsSync(src))
-      throw new Error(`pasqal connector asset missing from the extension: ${src} — packaging dropped it (.vscodeignore)`);
+      throw new Error(
+        `pasqal connector asset missing from the extension: ${src} — packaging dropped it (.vscodeignore)`,
+      );
     fs.copyFileSync(src, path.join(dir, f));
     staged.push(f);
   }

@@ -124,7 +124,12 @@ function execCapture(file, args, env) {
     execFile(file, args, { env, timeout: 30_000, encoding: "utf8" }, (err, stdout, stderr) => {
       // err.code is the exit code for non-zero exits; spawn faults carry errno strings.
       const code = err ? (typeof err.code === "number" ? err.code : -1) : 0;
-      resolveP({ code, stdout: stdout ?? "", stderr: stderr ?? "", spawnError: err && typeof err.code !== "number" ? String(err.code ?? err.message) : undefined });
+      resolveP({
+        code,
+        stdout: stdout ?? "",
+        stderr: stderr ?? "",
+        spawnError: err && typeof err.code !== "number" ? String(err.code ?? err.message) : undefined,
+      });
     });
   });
 }
@@ -162,7 +167,11 @@ export async function runGate({ binDir = DEFAULT_BIN_DIR, binMapPath = DEFAULT_B
 
     const probes = PROBES[bin.name];
     if (!probes) {
-      push(bin.name, "behavioral probe", `no behavioral probe defined for declared bin "${bin.name}" — add one to scripts/assert_packaged_cli.mjs (fail-closed)`);
+      push(
+        bin.name,
+        "behavioral probe",
+        `no behavioral probe defined for declared bin "${bin.name}" — add one to scripts/assert_packaged_cli.mjs (fail-closed)`,
+      );
       continue;
     }
     for (const probe of probes) {
@@ -184,15 +193,22 @@ async function main(argv) {
     if (argv[i] === "--bin-dir") binDir = resolve(argv[++i]);
     else if (argv[i] === "--bin-map") binMapPath = resolve(argv[++i]);
     else {
-      console.error(`assert_packaged_cli: unknown arg ${argv[i]} (usage: [--bin-dir <dir>] [--bin-map <package.json>])`);
+      console.error(
+        `assert_packaged_cli: unknown arg ${argv[i]} (usage: [--bin-dir <dir>] [--bin-map <package.json>])`,
+      );
       return 2;
     }
   }
   console.log(`[cli-gate] bin dir: ${binDir}`);
   console.log(`[cli-gate] bin map: ${binMapPath}`);
   const { ok, results } = await runGate({ binDir, binMapPath });
-  for (const r of results) console.log(`[cli-gate] ${r.ok ? "PASS" : "FAIL"}  ${r.bin.padEnd(14)} ${r.check}${r.ok ? "" : ` — ${r.detail}`}`);
-  console.log(ok ? "[cli-gate] OK — every declared bin is staged and accepts the remote executor" : "[cli-gate] FAILED — the staged CLI is stale or incomplete (see FAIL lines)");
+  for (const r of results)
+    console.log(`[cli-gate] ${r.ok ? "PASS" : "FAIL"}  ${r.bin.padEnd(14)} ${r.check}${r.ok ? "" : ` — ${r.detail}`}`);
+  console.log(
+    ok
+      ? "[cli-gate] OK — every declared bin is staged and accepts the remote executor"
+      : "[cli-gate] FAILED — the staged CLI is stale or incomplete (see FAIL lines)",
+  );
   return ok ? 0 : 1;
 }
 
