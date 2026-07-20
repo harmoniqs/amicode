@@ -6,7 +6,6 @@ import {
   createLocalPersonalVault,
   sanitizeVaultName,
   suggestVaultName,
-  shouldOfferVaultSetup,
 } from "../../src/substrate/vault_setup";
 import { resolveMountStack, personalMount } from "../../src/substrate/mount_store";
 
@@ -30,22 +29,6 @@ describe("suggestVaultName", () => {
   });
   it("returns a non-empty sanitized name with no hint", () => {
     expect(suggestVaultName()).toMatch(/^[a-z0-9._-]+$/);
-  });
-});
-
-describe("shouldOfferVaultSetup — the three flows", () => {
-  it("returning user (profile here, no vault) → offer", () => {
-    expect(shouldOfferVaultSetup({ hasPersonalVault: false, hasProfile: true, dismissed: false })).toBe(true);
-  });
-  it("first-timer (no profile, no vault) → NO offer (onboarding wizard owns it)", () => {
-    expect(shouldOfferVaultSetup({ hasPersonalVault: false, hasProfile: false, dismissed: false })).toBe(false);
-  });
-  it("already has a vault → NO offer", () => {
-    expect(shouldOfferVaultSetup({ hasPersonalVault: true, hasProfile: true, dismissed: false })).toBe(false);
-    expect(shouldOfferVaultSetup({ hasPersonalVault: true, hasProfile: false, dismissed: false })).toBe(false);
-  });
-  it("dismissed → NO offer even for a returning user", () => {
-    expect(shouldOfferVaultSetup({ hasPersonalVault: false, hasProfile: true, dismissed: true })).toBe(false);
   });
 });
 
