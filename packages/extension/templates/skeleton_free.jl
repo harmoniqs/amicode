@@ -117,9 +117,20 @@ function cb_log(optimizer, st; kwargs...)
 end
 
 t0 = time()
+# pulse_emit restored (#177): the pinned DirectTrajOpt 0.9.7 (julia/Manifest.toml
+# git-tree-sha1 c722d301a8d0… == tag v0.9.7) declares
+# `IpoptOptions.intermediate_callback` — the AbstractIntermediateCallback hook,
+# `(primal, iter) -> Bool`, composed with the raw `callback` (all fire per IPM
+# iteration). hasfield-guarded (the #157 lesson: DTO ≤ 0.9.6 bundles lack the
+# field) so a stale bundle degrades to stats-only instead of crashing the solve.
+ipopt_opts = if hasfield(IpoptOptions, :intermediate_callback)
+    IpoptOptions(intermediate_callback = pulse_emit)   # → iter_<N>.png + AMICODE_PULSE + STOP poll
+else
+    @warn "DirectTrajOpt < 0.9.7: no IpoptOptions.intermediate_callback — per-iter frames disabled (AMICODE_ITER still flows)"
+    IpoptOptions()
+end
 solve!(qcp; max_iter = max_iter, print_level = 1,
-       # cloud bundle's DirectTrajOpt has no IpoptOptions intermediate_callback
-       # (verified on the baked AMI); pulse_emit dropped, AMICODE_ITER still flows.
+       options = ipopt_opts,
        callback = CB.callback_factory(cb_log))
 wall = time() - t0
 

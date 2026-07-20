@@ -5,8 +5,20 @@ import { join } from "node:path";
 
 const VSIX = join(__dirname, "..", "amicode.vsix");
 const REQUIRED = [
+  // EVERY bin the CLI package declares ships as launcher + dist bundle (#161 —
+  // amico-pasqal was declared but unstaged; cli_gate.test.ts asserts behavior,
+  // this list pins vsix presence).
   "extension/bin/dist/amico-run.js",
   "extension/bin/launcher/amico-run",
+  "extension/bin/dist/amico.js",
+  "extension/bin/launcher/amico",
+  "extension/bin/dist/amico-pasqal.js",
+  "extension/bin/launcher/amico-pasqal",
+  // Pasqal connector assets — staged to <opsDir>/scripts/pasqal-connector at
+  // activation (the Connections panel's default validator path, #161). Kept in
+  // the vsix by explicit .vscodeignore negations against scripts/**.
+  "extension/scripts/pasqal-connector/pasqal_validate.py",
+  "extension/scripts/pasqal-connector/requirements.txt",
   "extension/THIRD_PARTY_LICENSES.md", // MIT notice for the vendored opencode binary — must ship (license compliance)
   "extension/readme.md", // marketplace detail-page body (vsce lowercases README.md) — a dropped README = blank listing page
 

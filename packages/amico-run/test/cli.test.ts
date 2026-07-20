@@ -73,7 +73,10 @@ describe("amico-run CLI", () => {
     expect(r.stderr).toMatch(/local, remote/);
   });
 
-  it("--spec with --executor remote → 64 (named seam: verification is local-only)", () => {
+  it("--spec + --executor remote: the launch gate still runs (junk spec dies in the GATE, not a remote reject)", () => {
+    // High-Performance + Cloud path: --spec + remote is ACCEPTED (the gate is a
+    // static local check). A junk spec must die in the GATE with the gate's
+    // message, NOT a blanket 'not supported' reject.
     const root = tmpRoot();
     writeFileSync(join(root, "spec.json"), "{}");
     const r = run(
@@ -81,7 +84,8 @@ describe("amico-run CLI", () => {
       { AMICO_CLOUD_URL: "http://127.0.0.1:1", AMICO_CLOUD_TOKEN: "t" },
     );
     expect(r.code).toBe(64);
-    expect(r.stderr).toMatch(/--spec .*remote/);
+    expect(r.stderr).toMatch(/gate:/);
+    expect(r.stderr).not.toMatch(/not supported/);
   });
 
   it("--executor remote full lane through the bundle (fake cloud): iter relay + AMICODE_FINISHED, exit 0", async () => {
@@ -248,6 +252,34 @@ describe("amico-run CLI", () => {
     expect(rVet.stdout).not.toMatch(/AMICODE_VERIFIED/);
     const vetDir = /runDir=(\S+)/.exec(rVet.stdout)![1];
     expect(existsSync(join(vetDir, "verification.toml"))).toBe(false);
+  });
+  it("REGRESSION (hpc tier added): a free/Piccolo local solve runs unchanged with NO cloud key", () => {
+    // Guards the design promise "Piccolo works like before": the hpc tier +
+    // remote executor + gate rule must not touch the free/local path. This spec
+    // has no cloud config in scope (env pair cleared, cloud.json pointed at a
+    // nonexistent file) — a local free solve must still complete, exit 0.
+    const root = tmpRoot();
+    const script = fakeJulia(root, "s.jl", "");
+    const env = join(root, "env");
+    mkdirSync(env, { recursive: true });
+    writeFileSync(join(env, "Project.toml"), `[deps]\n`);
+    writeFileSync(join(env, "Manifest.toml"), `julia_version = "1.11.0"\n`);
+    const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
+    const freeSpec = {
+      schema_version: "2",
+      script_path: script,
+      lab_id: "default",
+      tier: "free",
+      executor: "local",
+      env: { kind: "sandbox", project: env },
+    };
+    writeFileSync(join(root, "free.json"), JSON.stringify(freeSpec));
+    const r = run(
+      [script, "--runs-root", join(root, "runs"), "--spec", join(root, "free.json"), "--julia", julia],
+      { AMICO_CLOUD_FILE: join(root, "no-such-cloud.json"), AMICO_CLOUD_URL: "", AMICO_CLOUD_TOKEN: "" },
+    );
+    expect(r.code).toBe(0);
+    expect(r.stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0/);
   });
   it("SIGTERM to the CLI → abort lane, exit 130", async () => {
     const root = tmpRoot();

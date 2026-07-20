@@ -1,29 +1,33 @@
 import { build, context } from "esbuild";
-import { cpSync, mkdirSync, existsSync, chmodSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, chmodSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 
 const watch = process.argv.includes("--watch");
 
-// Stage amico-run so `bin/launcher/amico-run` finds `bin/dist/amico-run.js`
-// (the launcher execs node "$DIR/../dist/amico-run.js"). Package-time artifact;
-// the dev Extension Host uses the sibling-launcher fallback (resolveAmicoRunBinDir).
-// Runs in both build and --watch (CWD = the package dir under `pnpm run`).
+// Stage EVERY bin the CLI package declares (its package.json `bin` map is the
+// single source of truth — #161: hand-listing bins here is how amico-pasqal
+// shipped declared-but-unstaged) so `bin/launcher/<name>` finds
+// `bin/dist/<name>.js` (each launcher execs node "$DIR/../dist/<name>.js").
+// Package-time artifact; the dev Extension Host uses the sibling-launcher
+// fallback (resolveAmicoRunBinDir). Runs in both build and --watch (CWD = the
+// package dir under `pnpm run`). Missing bundles WARN here (dev-friendly:
+// `pnpm --filter amicode build` alone must not die) — CI reds them via
+// scripts/assert_packaged_cli.mjs, which re-reads the same bin map.
 const arRoot = "../amico-run";
-if (existsSync(`${arRoot}/dist/amico-run.js`)) {
+const declaredBins = Object.values(JSON.parse(readFileSync(`${arRoot}/package.json`, "utf8")).bin ?? {}).map((p) =>
+  basename(p),
+);
+if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
   mkdirSync("bin/launcher", { recursive: true });
   mkdirSync("bin/dist", { recursive: true });
-  cpSync(`${arRoot}/launcher/amico-run`, "bin/launcher/amico-run", { dereference: true });
-  cpSync(`${arRoot}/dist/amico-run.js`, "bin/dist/amico-run.js", { dereference: true });
-  chmodSync("bin/launcher/amico-run", 0o755); // guarantee +x survives pack/unpack
-  // The `amico` spine verbs (catalog/vault/device/note) ship beside amico-run:
-  // same launcher dir, so the single PATH prepend resolves both bins. Without
-  // this block the verb surface is unreachable in the installed build
-  // (spec-20260711-132200 §1 finding 1: implemented, undiscoverable, unshipped).
-  if (existsSync(`${arRoot}/dist/amico.js`)) {
-    cpSync(`${arRoot}/launcher/amico`, "bin/launcher/amico", { dereference: true });
-    cpSync(`${arRoot}/dist/amico.js`, "bin/dist/amico.js", { dereference: true });
-    chmodSync("bin/launcher/amico", 0o755);
-  } else {
-    console.warn("[esbuild] amico-run/dist/amico.js not built — spine verbs will be absent from the package");
+  for (const name of declaredBins) {
+    if (!existsSync(`${arRoot}/dist/${name}.js`)) {
+      console.warn(`[esbuild] amico-run/dist/${name}.js not built — "${name}" will be absent from the package`);
+      continue;
+    }
+    cpSync(`${arRoot}/launcher/${name}`, `bin/launcher/${name}`, { dereference: true });
+    cpSync(`${arRoot}/dist/${name}.js`, `bin/dist/${name}.js`, { dereference: true });
+    chmodSync(`bin/launcher/${name}`, 0o755); // guarantee +x survives pack/unpack
   }
 } else {
   console.warn("[esbuild] amico-run/dist not built — run `pnpm --filter @amicode/amico-run build` before packaging");

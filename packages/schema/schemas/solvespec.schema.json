@@ -1,13 +1,13 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://amico.harmoniqs.co/schema/solvespec/v2",
+  "$id": "https://amico.harmoniqs.co/schema/solvespec/v3",
   "title": "amico SolveSpec",
-  "description": "The resolved solve specification the agent assembles and `amico-run --spec` validates + gates before dispatch (spec C). v2 adds executor/tier/env/source/hashes; v1 specs remain valid (tier-less specs skip tier gating).",
+  "description": "The resolved solve specification the agent assembles and `amico-run --spec` validates + gates before dispatch (spec C). v2 adds executor/tier/env/source/hashes; v3 adds the paid High-Performance + Cloud tier (tier=hpc) and the remote executor — hpc runs in the cloud (executor=remote, env=provisioned), never locally. v1/v2 specs remain valid (tier-less specs skip tier gating; the local executor is still valid at every version).",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "script_path", "lab_id"],
   "properties": {
-    "schema_version": { "enum": ["1", "2"] },
+    "schema_version": { "enum": ["1", "2", "3"] },
     "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run" },
     "lab_id": {
       "type": "string",
@@ -22,11 +22,11 @@
     },
     "executor": {
       "enum": ["local", "remote"],
-      "description": "whose machine runs it — per-solve and explicit (Δ10, #63): local, or remote (company compute) when the researcher confirms the routing offer. Set upstream by the routing confirm; the estimator only suggests, it never sets this."
+      "description": "whose machine runs it — per-solve and explicit (Δ10, #63). local = this machine; remote = company compute / the cloud runner (required by tier=hpc), set upstream only when the researcher confirms the routing offer. The estimator only suggests; it never sets this."
     },
     "tier": {
-      "enum": ["vetted", "composed", "free"],
-      "description": "trust tier of the authored script (spec C resolver)"
+      "enum": ["vetted", "composed", "free", "hpc"],
+      "description": "trust/product tier of the authored script (spec C resolver). free/composed/vetted run locally; hpc = the paid High-Performance + Cloud tier (Piccolissimo + Altissimo), which runs in the cloud (executor=remote, env=provisioned) and requires a cloud connection"
     },
     "env": {
       "type": "object",

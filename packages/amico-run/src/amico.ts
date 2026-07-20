@@ -14,6 +14,7 @@
 import { launch } from "./launch.js";
 import { SPINE_VERBS } from "./verbs.js";
 import { serve } from "./mcp_serve.js";
+import { pasqalVerb } from "./pasqal_verb.js";
 
 function usage(): string {
   const rows: [string, string][] = [
@@ -21,6 +22,10 @@ function usage(): string {
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
+    [
+      "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
+      "Pasqal device path — list/select + gated submit (#160)",
+    ],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
     ),
@@ -64,6 +69,15 @@ export async function main(argv: string[]): Promise<number> {
       return launch(["sandbox", ...rest]);
     case "estimate":
       return launch(["estimate", ...rest]);
+
+    // ── the Pasqal device path (#160): device selection + gated submission,
+    // reading status ONLY from the connections cache and submitting through the
+    // amico-pasqal launcher. Same {json, code} shape as the spine verbs. ──
+    case "pasqal": {
+      const { json, code } = await pasqalVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
+    }
 
     case "mcp-serve":
       return serve(rest);

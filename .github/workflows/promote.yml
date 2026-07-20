@@ -1,0 +1,73 @@
+# Promote a tested alpha to the VS Code Marketplace.
+#
+# The `-alpha.N` channel is internal (it mirrors the vendored opencode fork's
+# amicode.N) and never reaches end users. Promotion is the deliberate "this
+# build is good enough" act: it cuts the clean `vX.Y.Z` tag for the alpha's
+# base, which is the only tag release.yml will publish to the Marketplace.
+#
+# This does NOT bump the manifest — that happens during normal dev when a new
+# cycle starts (e.g. 0.0.3 -> 0.0.4). If the base was already promoted this
+# fails loudly and tells you to bump + cut a fresh alpha cycle; it will never
+# silently mutate package.json or clobber a published version.
+name: promote
+on:
+  workflow_dispatch:
+    inputs:
+      alpha_tag:
+        description: "Tested alpha tag to promote, e.g. v0.0.3-alpha.5"
+        required: true
+
+permissions:
+  contents: write # push the clean tag
+  actions: write # dispatch release.yml
+
+concurrency: promote
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ALPHA: ${{ inputs.alpha_tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history + tags, to resolve the alpha and create the clean tag
+
+      - name: Validate the alpha and derive the clean tag
+        id: r
+        run: |
+          echo "$ALPHA" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+-' \
+            || { echo "::error::'$ALPHA' is not a pre-release tag (expected vX.Y.Z-...)"; exit 1; }
+          BASE="${ALPHA#v}"; BASE="${BASE%%-*}"
+          CLEAN="v$BASE"
+
+          SHA="$(git rev-list -n1 "$ALPHA" 2>/dev/null || true)"
+          [ -n "$SHA" ] || { echo "::error::tag '$ALPHA' not found"; exit 1; }
+
+          if git rev-parse -q --verify "refs/tags/$CLEAN" >/dev/null; then
+            echo "::error::'$CLEAN' already exists — base $BASE was already promoted. Bump packages/extension/package.json to the next version, cut a fresh alpha cycle, then promote that."
+            exit 1
+          fi
+
+          # Do not promote a red build: every check run on the alpha's commit must be green.
+          BAD="$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
+            --jq '[.check_runs[] | select(.conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')"
+          [ "$BAD" = "0" ] \
+            || { echo "::error::$BAD non-green check run(s) on $SHA ($ALPHA)"; exit 1; }
+
+          { echo "sha=$SHA"; echo "clean=$CLEAN"; } >> "$GITHUB_OUTPUT"
+          echo "Promoting $ALPHA ($SHA) -> $CLEAN"
+
+      - name: Cut the clean tag and trigger the release
+        run: |
+          CLEAN="${{ steps.r.outputs.clean }}"
+          SHA="${{ steps.r.outputs.sha }}"
+          git tag "$CLEAN" "$SHA"
+          git push origin "$CLEAN"
+          # A tag pushed with GITHUB_TOKEN does NOT fire release.yml's `push` trigger
+          # (Actions' recursion guard), but workflow_dispatch is exempt — so dispatch
+          # it explicitly. release.yml checks out the clean tag, sees a plain vX.Y.Z,
+          # and its publish-marketplace job runs.
+          gh workflow run release.yml -f tag="$CLEAN"
+          echo "Dispatched release.yml for $CLEAN"

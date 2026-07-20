@@ -12,6 +12,18 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r run build
+      # #161 behavioral packaging gate, source-staged lane: the extension build
+      # above stages every bin the CLI package DECLARES (bin-map-driven) into
+      # packages/extension/bin — assert hermetically (scratch HOME, no cloud,
+      # no network) that each staged bin exists, is executable, does NOT die
+      # with the unknown-executor rejection on a remote invocation (the
+      # stale-bundle signature), and lists `remote` in its usage. A declared-
+      # but-missing bin reds. Scoped to the CLI bins only: fetch:opencode /
+      # fetch:skills pull from PRIVATE releases (need OPENCODE_FETCH_TOKEN),
+      # and the vendored opencode is not what #161 gates. The vsix-gate job
+      # runs the SAME script against the bins extracted from the real .vsix.
+      - name: cli-gate — staged CLI accepts the remote executor, every declared bin present (#161)
+        run: node packages/extension/scripts/assert_packaged_cli.mjs
       - run: pnpm -r run typecheck
       # Fetch the vendored opencode BEFORE vitest so the OC_BIN-gated integration
       # test (opencode config injection + merge) actually RUNS in CI instead of
@@ -99,6 +111,16 @@ jobs:
           bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/darwin-arm64/opencode
       - run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
+      # #161 behavioral packaging gate, artifact lane: unzip the REAL .vsix and
+      # run the same per-declared-bin behavioral checks against the extracted
+      # bin dir — a stale bundle that slipped into the package (the shipped
+      # regression this issue exists for), a dropped bin, or a lost exec bit
+      # all red here, on the artifact itself rather than the workspace staging.
+      - name: cli-gate — the .vsix's bundled CLI accepts the remote executor (#161)
+        run: |
+          rm -rf /tmp/amicode-vsix-gate && mkdir -p /tmp/amicode-vsix-gate
+          unzip -q packages/extension/amicode.vsix -d /tmp/amicode-vsix-gate
+          node packages/extension/scripts/assert_packaged_cli.mjs --bin-dir /tmp/amicode-vsix-gate/extension/bin
       # The installable artifact: a cross-platform .vsix downloadable from every CI run.
       - name: Upload amicode.vsix
         uses: actions/upload-artifact@v4
