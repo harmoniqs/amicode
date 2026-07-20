@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import {
   readSolverModeState,
   writeSolverModeReady,
-  writeSolverModeSwitching,
   applyEntitlementForMode,
   watchSolverMode,
   solverModeFile,
@@ -19,9 +18,9 @@ describe("solver mode state", () => {
     expect(readSolverModeState(f)).toEqual({ mode: "hp", status: "ready" });
   });
 
-  it("switching write is what the watcher reacts to (mode + status:switching)", () => {
+  it("the SERVER's switching write ({mode, status:switching}) is what the watcher reads — the extension has no writer for it (#171)", () => {
     const f = join(mkdtempSync(join(tmpdir(), "sm-")), "solver-mode.json");
-    writeSolverModeSwitching("hp", f);
+    writeFileSync(f, JSON.stringify({ mode: "hp", status: "switching" })); // the fork server's write
     expect(readSolverModeState(f)).toEqual({ mode: "hp", status: "switching" });
   });
 });
