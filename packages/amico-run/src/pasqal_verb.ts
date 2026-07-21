@@ -27,6 +27,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pasqalConnect } from "./pasqal_connect.js";
 import {
   pulseSha256,
   readDevicePathStatus,
@@ -34,6 +35,7 @@ import {
   type ClassifiedDevice,
   type DevicePathStatus,
 } from "./pasqal_devices.js";
+import { ConfigError } from "./types.js";
 import type { VerbResult } from "./verbs.js";
 
 /** Spawn seam (injected by tests): run the amico-pasqal launcher with `argv`
@@ -44,6 +46,8 @@ export interface PasqalVerbCtx {
   env?: NodeJS.ProcessEnv;
   now?: number;
   spawn?: LauncherSpawn;
+  /** Connect seam (injected by tests): the browser sign-in flow. */
+  connectImpl?: typeof pasqalConnect;
 }
 
 function flagValue(argv: string[], name: string): string | undefined {
@@ -250,6 +254,59 @@ async function submit(argv: string[], ctx: PasqalVerbCtx): Promise<VerbResult> {
   };
 }
 
+// ── connect ───────────────────────────────────────────────────────────────────
+
+const CONNECT_USAGE = "amico pasqal connect --project <id> [--no-open] [--timeout <seconds>] [--port <n>]";
+
+/** Browser sign-in (issue #194): PKCE + loopback callback via pasqal_connect.ts.
+ *  SECURITY (AC3): the result JSON carries identity / expiry / file path ONLY —
+ *  the token stays inside the connect module and the credential file. The
+ *  authorize URL (needed when no browser opens) goes to STDERR: stdout is the
+ *  JSON contract. */
+async function connect(argv: string[], ctx: PasqalVerbCtx): Promise<VerbResult> {
+  const env = ctx.env ?? process.env;
+  const projectId = flagValue(argv, "--project");
+  if (!projectId)
+    return {
+      json: {
+        verb: "pasqal",
+        subcommand: "connect",
+        ok: false,
+        error: "--project <id> is required until the project picker slice lands — copy it from the Pasqal portal's Projects page",
+        usage: CONNECT_USAGE,
+      },
+      code: 64,
+    };
+  const timeoutS = flagValue(argv, "--timeout");
+  const port = flagValue(argv, "--port");
+  try {
+    const r = await (ctx.connectImpl ?? pasqalConnect)({
+      projectId,
+      env,
+      noOpen: argv.includes("--no-open"),
+      timeoutMs: timeoutS !== undefined ? Number(timeoutS) * 1000 : undefined,
+      port: port !== undefined ? Number(port) : undefined,
+      onAuthorizeUrl: (url) => console.error(`open this URL in your browser to sign in:\n${url}`),
+    });
+    return {
+      json: {
+        verb: "pasqal",
+        subcommand: "connect",
+        ok: true,
+        identity: r.identity,
+        expires_at: r.expiresAt,
+        file: r.file,
+      },
+      code: 0,
+    };
+  } catch (e) {
+    if (e instanceof ConfigError) {
+      return { json: { verb: "pasqal", subcommand: "connect", ok: false, error: e.message }, code: 64 };
+    }
+    throw e;
+  }
+}
+
 // ── dispatch ───────────────────────────────────────────────────────────────────
 
 /** The `pasqal` verb body. `ctx` is injected by tests (env/clock/spawn); the
@@ -259,11 +316,12 @@ export async function pasqalVerb(argv: string[], ctx: PasqalVerbCtx = {}): Promi
   const rest = argv.slice(1);
   if (sub === "devices") return devices(ctx);
   if (sub === "submit") return submit(rest, ctx);
+  if (sub === "connect") return connect(rest, ctx);
   return {
     json: {
       verb: "pasqal",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
-      usage: "amico pasqal devices  |  amico pasqal submit --device <id> --artifact <pulse.toml> [--confirm <hash>]",
+      usage: `amico pasqal devices  |  amico pasqal submit --device <id> --artifact <pulse.toml> [--confirm <hash>]  |  ${CONNECT_USAGE}`,
     },
     code: 64,
   };

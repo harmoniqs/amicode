@@ -14,7 +14,11 @@ const FORBIDDEN = [/--gate\b/, /--system\b/, /--pulse\b/, /modelcontextprotocol/
 // is its entire job. The S31 ban (no ambient HTTP in the orchestrator) stays
 // for everything else; this exemption is scoped to the single module whose
 // ratified contract IS HTTP. Same lift mechanism as the spec-C SolveSpec ban.
-const EXEMPT = new Set(["remote_executor.ts"]);
+// #194 (browser sign-in): pasqal_connect joins the exempt set on the same
+// grounds — its ratified contract IS HTTP (RFC 8252 loopback callback + OAuth
+// token exchange, loopback-bound, token-free errors). Everything else in
+// src/ remains banned from ambient HTTP.
+const EXEMPT = new Set(["remote_executor.ts", "pasqal_connect.ts"]);
 
 describe("S31 grep rule", () => {
   it("src/ contains no forbidden tool-layer patterns", () => {

@@ -23,8 +23,8 @@ function usage(): string {
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
     [
-      "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
-      "Pasqal device path — list/select + gated submit (#160)",
+      "pasqal connect --project <id> | devices | submit --device <d> --artifact <p> [--confirm <h>]",
+      "Pasqal cloud — browser sign-in (#194) + device path: list/select + gated submit (#160)",
     ],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
