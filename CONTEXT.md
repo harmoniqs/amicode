@@ -26,6 +26,26 @@ _Avoid_: HP cloud, cloud solve service (in UI copy)
 The tenant identity a Credential maps to — the single join key tying a credential to its runs' records and artifacts. Immutable for the life of a Credential; changing identity means issuing a new Credential.
 _Avoid_: User, tenant, owner (interchangeably)
 
+### Work organization
+
+**Project**:
+The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. The dashboard's project surface owns switching between Projects and creating new ones. Every Session belongs to exactly one Project.
+_Avoid_: Workspace, folder (as a concept name), repo
+
+**Session**:
+One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
+_Avoid_: Chat (as a concept name), conversation
+
+### Knowledge
+
+**Armonia**:
+The knowledge system amicode reads for context — a precedence-ordered stack of mounted Vaults (personal → project → team). Surfaced as the "Armonia" sidebar panel; backed by ArmoniaService. Distinct from a Project: Armonia is shared knowledge that mounts in, a Project is the directory you work in.
+_Avoid_: Vault (as the system name), knowledge base
+
+**Vault**:
+One mounted knowledge tier within Armonia — a git-backed store of notes, specs, and catalog entries at a single precedence level (personal / project / team). Many Vaults mount into the Armonia stack; the panel lists them as its roots and reads them top-to-bottom.
+_Avoid_: Armonia (the whole stack), workspace, folder
+
 ### Orthogonal axes
 
 **Entitlement**:

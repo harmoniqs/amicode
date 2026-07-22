@@ -58,18 +58,13 @@
     "views": {
       "amicode": [
         {
-          "id": "amicode.vault",
-          "name": "Vault",
+          "id": "amicode.armonia",
+          "name": "Armonia",
           "type": "tree"
         },
         {
           "id": "amicode.catalog",
           "name": "Catalog",
-          "type": "tree"
-        },
-        {
-          "id": "amicode.armonia",
-          "name": "Armonia",
           "type": "tree"
         }
       ],
@@ -91,7 +86,8 @@
     "commands": [
       {
         "command": "amicode.openChat",
-        "title": "Amicode: Open Chat"
+        "title": "Amicode: Open Chat",
+        "icon": "$(comment-discussion)"
       },
       {
         "command": "amicode.setupVault",
@@ -256,6 +252,13 @@
       }
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "amicode.openChat",
+          "when": "view == amicode.armonia",
+          "group": "navigation"
+        }
+      ],
       "view/item/context": [
         {
           "command": "amicode.catalog.remove",
