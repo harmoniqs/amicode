@@ -297,8 +297,10 @@ function solverModeSection(): string {
     : "The cloud is NOT connected (no API key). High-Performance + Cloud is a PAID cloud tier and CANNOT " +
       "run locally — do NOT attempt a local Piccolissimo solve (it will fail: the private package can't be " +
       "instantiated in a sandbox, and the gate rejects a local hpc run). Instead, STOP and tell the user: " +
-      '"High-Performance + Cloud needs a cloud connection — run **Amico: Connect Cloud** to enter your API ' +
-      "key.\" Offer to switch back to the free local Piccolo solver if they'd rather not connect now.";
+      '"High-Performance + Cloud needs a cloud connection — click **Piccolissimo + Altissimo** in the ' +
+      "model · solver control on the dashboard and connect there (or run **Amico: Connect Cloud**, which " +
+      'opens the same flow)." Offer to switch back to the free local Piccolo solver if they\'d rather not ' +
+      "connect now.";
   return (
     "\n\n## Solver mode\n" +
     "**HIGH-PERFORMANCE + CLOUD (Piccolissimo + Altissimo).** The user selected the paid " +
