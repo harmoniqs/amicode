@@ -54,6 +54,22 @@ export function serverAuthHeader(password: string): string {
  *    OPENCODE_CONFIG_CONTENT  — the amico instructions/permission merge
  *    OPENCODE_SERVER_PASSWORD — arms the fork's route auth (this module)
  *  One builder for all spawn sites so no respawn path can drop the password. */
+/** Non-secret path/config overrides passed THROUGH to the server when set in
+ *  the extension host's env. The minimal-env discipline stands — this is a
+ *  fixed allowlist of amico state locations (never a process.env spread), so a
+ *  sandbox launch (`AMICO_PASQAL_FILE=… code …`) can isolate its ~/.amico +
+ *  keychain from the real install. None of these are secrets; unset vars never
+ *  appear. */
+const SANDBOX_ENV_PASSTHROUGH = [
+  "AMICO_CLOUD_FILE",
+  "AMICO_PASQAL_FILE",
+  "AMICODE_CONNECTIONS_FILE",
+  "AMICODE_OPS_DIR",
+  "AMICO_PASQAL_KEYCHAIN_SERVICE",
+  "AMICO_PASQAL_VALIDATOR",
+  "AMICO_PYTHON",
+] as const
+
 export function buildServerSpawnEnv(opts: {
   /** amico-run launcher bin dir; undefined = launcher missing (boot warns). */
   amicoRunBinDir: string | undefined;
@@ -69,10 +85,15 @@ export function buildServerSpawnEnv(opts: {
    *  the validator, NOT amico-run env propagation (which stays argv-only). */
   amicoPython?: string;
 }): Record<string, string> {
-  return {
+  const env: Record<string, string> = {
     PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
     OPENCODE_CONFIG_CONTENT: opts.configContent,
     OPENCODE_SERVER_PASSWORD: opts.serverPassword,
     ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
   };
+  for (const key of SANDBOX_ENV_PASSTHROUGH) {
+    const value = process.env[key];
+    if (value !== undefined && value !== "") env[key] = value;
+  }
+  return env;
 }
