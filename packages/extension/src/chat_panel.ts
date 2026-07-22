@@ -204,6 +204,16 @@ export class ChatPanel {
    *  serverAuthToken(). The app adopts it for its authenticated-fetch path and
    *  strips it from the URL (entry-level history.replaceState). One value per
    *  activation, so revealing an existing panel never needs a re-render. */
+  /** amicode#200 AC6: deep-link the framed app into the defaults capsule's
+   *  Company Compute connect flow. Posted twice (now + 1.5s) because a freshly
+   *  created panel's iframe may not be listening yet; the app side treats the
+   *  request as idempotent within its freshness window. */
+  postComputeConnect(): void {
+    const envelope = { source: "amicode", kind: "open-compute-connect" };
+    void this.panel.webview.postMessage(envelope);
+    setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
+  }
+
   static openOrReveal(ctx: vscode.ExtensionContext, opencodeUrl: URL, authToken?: string): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
@@ -286,7 +296,7 @@ export class ChatPanel {
         // Lane 2 — extension → iframe (theme): posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
         // our own theme envelope, pinned to the opencode origin.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }

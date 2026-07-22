@@ -890,7 +890,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         : undefined,
       log: (line) => opencodeChannel.appendLine(line),
     });
-  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setCloudKey", () => void runSetCloudKey()));
+  // amicode#200 AC6: the solver toggle owns the connect flow — the palette
+  // command deep-links the chat's defaults capsule into it, so command, panel,
+  // and agent copy converge on ONE ui flow. The legacy input-box prompt stays
+  // only as the fallback when no ready server exists to host the panel.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.setCloudKey", () => {
+      const readyUrl = opencodeReadyUrl;
+      if (readyUrl) {
+        ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword)).postComputeConnect();
+        return;
+      }
+      void runSetCloudKey();
+    }),
+  );
 
   // 5. Commands
   ctx.subscriptions.push(
