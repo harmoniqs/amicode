@@ -566,7 +566,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // Open the chat as soon as the server is up (amicode.chat.autoOpen,
       // default on) — the chat IS the product's front door.
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword));
+        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
@@ -898,7 +898,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("amicode.setCloudKey", () => {
       const readyUrl = opencodeReadyUrl;
       if (readyUrl) {
-        ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword)).postComputeConnect();
+        ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir).postComputeConnect();
         return;
       }
       void runSetCloudKey();
@@ -928,7 +928,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword));
+      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();
