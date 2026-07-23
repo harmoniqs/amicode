@@ -95,9 +95,10 @@ export function resolveTelemetryContext(
   };
 }
 
-/** First-run consent modal. Shows ONLY when consent is unset. Enable/Disable both
- *  record an answer (so we never re-prompt) and set `amicode.telemetry.enabled`
- *  to match; a dismissed modal (Esc) leaves consent UNSET so we ask again next
+/** First-run consent notification (a non-modal VS Code toast — NOT a modal or OS
+ *  dialog). Shows ONLY when consent is unset. Enable/Disable both record an answer
+ *  (so we never re-prompt) and set `amicode.telemetry.enabled`; a dismissed or
+ *  auto-hidden notification leaves consent UNSET so we ask again next
  *  activation. On Enable, `onEnable` lets the caller bounce the server so capture
  *  starts on THIS boot rather than the next. Until answered, the gate stays shut. */
 export async function maybePromptTelemetryConsent(
@@ -107,7 +108,6 @@ export async function maybePromptTelemetryConsent(
   if (ctx.globalState.get<boolean>(TELEMETRY_CONSENT_KEY) !== undefined) return; // already answered
   const choice = await vscode.window.showInformationMessage(
     "Help improve Amico. With your consent, agent runs — including your prompts and tool output, which may contain source code — are captured to Harmoniqs' internal run corpus so we can debug and improve the agent. Nothing is sent until you choose here. You can change this any time in Settings (amicode.telemetry.enabled).",
-    { modal: true },
     "Enable",
     "Disable",
   );
