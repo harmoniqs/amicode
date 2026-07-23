@@ -22,6 +22,7 @@ import {
   serverAuthToken,
   buildServerSpawnEnv,
   buildTelemetryEnv,
+  telemetryGateOpen,
   TELEMETRY_ENV_KEYS,
 } from "./server_auth";
 import {
@@ -268,18 +269,43 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       telemetry: resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey }),
     }));
 
-  /** Reconcile the OTLP vars on the LIVE spawn env in place (the amicoPython
-   *  self-heal pattern: ServerManager re-reads opts.env at start()). Delete the
-   *  full key set, then re-apply the freshly-gated env — so a consent flip or a
-   *  key change takes effect on the next `amicode.restartServer` WITHOUT a
-   *  window reload. No live env yet (chat disabled) → no-op. */
+  /** Is the telemetry gate open RIGHT NOW? Threaded into buildOpencodeConfigContent
+   *  at each spawn site so the config's experimental.openTelemetry (span generation)
+   *  tracks the SAME gate as the exporter env — armed-exporter-no-spans is exactly
+   *  the whole-pipeline bug this couples away. */
+  const telemetryOpen = (): boolean =>
+    telemetryGateOpen(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey }));
+
+  /** Reconcile telemetry on the LIVE spawn env in place (the amicoPython
+   *  self-heal pattern: ServerManager re-reads opts.env at start()). Re-gates the
+   *  OTLP env keys AND toggles experimental.openTelemetry inside the live
+   *  OPENCODE_CONFIG_CONTENT — both from ONE gate read, so a consent flip or a key
+   *  change takes effect (exporter + span generation together) on the next
+   *  `amicode.restartServer` WITHOUT a window reload. No live env yet → no-op. */
   const refreshTelemetryLiveEnv = (): void => {
     if (!currentSpawnEnv) return;
+    const open = telemetryOpen();
+    // exporter env
     for (const k of TELEMETRY_ENV_KEYS) delete currentSpawnEnv[k];
     Object.assign(
       currentSpawnEnv,
       buildTelemetryEnv(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey })),
     );
+    // span-generation flag — patch the live config JSON in place (works whatever
+    // project the current server was spawned from; toggles only our one field).
+    try {
+      const cfg = JSON.parse(currentSpawnEnv.OPENCODE_CONFIG_CONTENT ?? "{}") as {
+        experimental?: Record<string, unknown>;
+      };
+      if (open) cfg.experimental = { ...(cfg.experimental ?? {}), openTelemetry: true };
+      else if (cfg.experimental) {
+        delete cfg.experimental.openTelemetry;
+        if (Object.keys(cfg.experimental).length === 0) delete cfg.experimental;
+      }
+      currentSpawnEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(cfg);
+    } catch {
+      /* malformed config JSON (never, we built it) → leave it; env gate still applied */
+    }
   };
 
   // The ONLY populate path for the ingest key (SecretStorage). On change, update
@@ -515,6 +541,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // fallback here used to override the user's own choice. The in-chat
           // picker still overrides per session.
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          // Telemetry gate → experimental.openTelemetry (span generation), coupled
+          // to the exporter env this same spawnEnv resolves.
+          telemetryOpen(),
         ),
       }),
       channel: opencodeChannel,
@@ -567,6 +596,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               project2.mounts,
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
               vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+              telemetryOpen(), // gate → experimental.openTelemetry (span generation)
             ),
           }),
           channel: opencodeChannel,
@@ -695,6 +725,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.vaultDir,
           project2.mounts,
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          telemetryOpen(), // gate → experimental.openTelemetry (span generation)
         ),
       }),
       channel: opencodeChannel,

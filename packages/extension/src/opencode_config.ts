@@ -351,6 +351,15 @@ export function buildOpencodeConfigContent(
   vaultDir: string = "",
   mounts: Mount[] = [],
   modelPin?: string,
+  /** Run-corpus telemetry gate (server_auth telemetryGateOpen). opencode gates
+   *  AI-SDK span GENERATION on `cfg.experimental?.openTelemetry` (session/llm.ts,
+   *  agent/agent.ts) — the OTLP endpoint env only arms the EXPORTER, so without
+   *  this flag opencode emits zero spans and the pipe carries nothing. Set it
+   *  true ONLY when the gate is open (enabled+consent+endpoint+key): no point
+   *  paying span overhead when we are not capturing, and never before consent.
+   *  When false we OMIT the key entirely (rather than force it false) so a user's
+   *  own global `experimental.openTelemetry` is never clobbered by the deep-merge. */
+  telemetryOpen: boolean = false,
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -370,6 +379,9 @@ export function buildOpencodeConfigContent(
     instructions: [agentsPath],
     plugin: [pluginPath],
     ...(skills ? { skills } : {}),
+    // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
+    // into cfg.experimental alongside any user keys (see telemetryOpen above).
+    ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
     agent: {
       "pulse-designer": {
         description: "Guided quantum pulse design interview",

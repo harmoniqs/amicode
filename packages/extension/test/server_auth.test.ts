@@ -5,6 +5,7 @@ import {
   serverAuthToken,
   buildServerSpawnEnv,
   buildTelemetryEnv,
+  telemetryGateOpen,
   TELEMETRY_ENV_KEYS,
   type TelemetryContext,
 } from "../src/server_auth";
@@ -113,6 +114,29 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
 // (enabled + consent answered + endpoint). The var/header/attr names are a
 // binding interface contract with the AWS ingest Lambda (RUN_CORPUS_SPEC.md).
 // ============================================================================
+
+describe("telemetryGateOpen — the ONE predicate the exporter env + span-generation flag share", () => {
+  const full: TelemetryContext = {
+    enabled: true,
+    consentAnswered: true,
+    endpoint: "https://ingest.example.com",
+    key: "k",
+    sessionId: "s",
+    userId: "u",
+    repo: "r",
+    gitRef: "main",
+  };
+  it("true only when enabled + consent + endpoint + key ALL hold", () => {
+    expect(telemetryGateOpen(full)).toBe(true);
+  });
+  it("false if ANY axis is missing (so config flag and exporter env can never diverge)", () => {
+    expect(telemetryGateOpen(undefined)).toBe(false);
+    expect(telemetryGateOpen({ ...full, enabled: false })).toBe(false);
+    expect(telemetryGateOpen({ ...full, consentAnswered: false })).toBe(false);
+    expect(telemetryGateOpen({ ...full, endpoint: "" })).toBe(false);
+    expect(telemetryGateOpen({ ...full, key: "" })).toBe(false);
+  });
+});
 
 describe("buildTelemetryEnv — the consent gate (4-axis truth table)", () => {
   // A fully-eligible context: all FOUR gate conditions hold (enabled + consent

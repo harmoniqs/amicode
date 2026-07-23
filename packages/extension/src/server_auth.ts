@@ -128,12 +128,21 @@ export interface TelemetryContext {
   gitRef: string;
 }
 
+/** The single gate predicate: telemetry enabled AND consent answered AND an
+ *  endpoint set AND a non-empty ingest key. Both the exporter env (buildTelemetryEnv)
+ *  and the span-generation config flag (experimental.openTelemetry, set in
+ *  opencode_config.ts) key off THIS so they can never diverge — arming the
+ *  exporter without generating spans (or vice versa) is the whole-pipeline bug
+ *  this predicate prevents. */
+export function telemetryGateOpen(t: TelemetryContext | undefined): t is TelemetryContext {
+  return !!t && t.enabled && t.consentAnswered && !!t.endpoint && !!t.key;
+}
+
 /** The OTLP env vars per the INTERFACE CONTRACT — or {} when the consent gate is
- *  closed. GATE: telemetry enabled AND consent answered AND an endpoint set AND a
- *  non-empty ingest key. Missing ANY one → ALL keys omitted, so opencode's
- *  exporter stays dormant (a keyless spawn would only 401-spam, never capture). */
+ *  closed. Gate closed → ALL keys omitted, so opencode's exporter stays dormant
+ *  (a keyless spawn would only 401-spam, never capture). */
 export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<string, string> {
-  if (!t || !t.enabled || !t.consentAnswered || !t.endpoint || !t.key) return {};
+  if (!telemetryGateOpen(t)) return {};
   const enc = encodeURIComponent;
   return {
     // Base URL only — opencode appends /v1/traces and /v1/logs itself.
