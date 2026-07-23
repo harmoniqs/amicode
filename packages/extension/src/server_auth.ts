@@ -82,16 +82,25 @@ const SANDBOX_ENV_PASSTHROUGH = [
 // rename or reorder-encode them.
 // ============================================================================
 
-/** The env keys buildTelemetryEnv can emit — the full set the live-env
- *  reconcile deletes before re-applying (extension.ts). Contract's three, plus
- *  OTEL_EXPORTER_OTLP_COMPRESSION pinned "none": the OTel JS exporters silently
- *  honor an inherited compression var, and a wire-gzip'd body would be double-
- *  gzip'd in storage and unrecoverable on replay (only Content-Type is kept). */
+/** The env keys buildTelemetryEnv can emit — the full set the live-env reconcile
+ *  deletes before re-applying (extension.ts). The contract's three, plus three
+ *  operational pins, ALL verified honored by the vendored fork's tracer
+ *  (@effect/opentelemetry NodeSdk → @opentelemetry/sdk-trace-base@2.6.1):
+ *    - OTEL_EXPORTER_OTLP_COMPRESSION="none" — the exporter honors an inherited
+ *      compression var; a wire-gzip'd body would be double-gzip'd in storage and
+ *      unrecoverable on replay (ingest keeps only the raw body + Content-Type).
+ *    - OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT — reconfigureLimits() folds it into the
+ *      provider's spanLimits and Span truncates each attribute value to it, so a
+ *      giant tool output can't blow a span past the ingest's 6 MB request cap.
+ *    - OTEL_BSP_MAX_EXPORT_BATCH_SIZE — the BatchSpanProcessor (constructed with
+ *      no config) reads it, keeping each OTLP request small under that 6 MB cap. */
 export const TELEMETRY_ENV_KEYS = [
   "OTEL_EXPORTER_OTLP_ENDPOINT",
   "OTEL_EXPORTER_OTLP_HEADERS",
   "OTEL_RESOURCE_ATTRIBUTES",
   "OTEL_EXPORTER_OTLP_COMPRESSION",
+  "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT",
+  "OTEL_BSP_MAX_EXPORT_BATCH_SIZE",
 ] as const;
 
 /** Everything the OTLP env needs, already resolved from settings / SecretStorage
@@ -107,8 +116,10 @@ export interface TelemetryContext {
   consentAnswered: boolean;
   /** `amicode.telemetry.endpoint`, trailing slash already stripped; "" = unset. */
   endpoint: string;
-  /** Ingest key from SecretStorage; "" = not set (rides as an empty header value,
-   *  which the ingest Lambda 401s — the gate itself does not require the key). */
+  /** Ingest key from SecretStorage; "" = not set → the gate stays CLOSED. A
+   *  keyless spawn would still LOOK on (endpoint set) while every batch 401s at
+   *  the Lambda and the exporter spams retries, capturing nothing — so no key
+   *  means dormant, not empty-header transmit. */
   key: string;
   /** Resource + header identity (RAW values). */
   sessionId: string;
@@ -118,17 +129,18 @@ export interface TelemetryContext {
 }
 
 /** The OTLP env vars per the INTERFACE CONTRACT — or {} when the consent gate is
- *  closed. GATE: telemetry enabled AND consent answered AND an endpoint set.
- *  Missing ANY one → ALL keys omitted, so opencode's exporter stays dormant. */
+ *  closed. GATE: telemetry enabled AND consent answered AND an endpoint set AND a
+ *  non-empty ingest key. Missing ANY one → ALL keys omitted, so opencode's
+ *  exporter stays dormant (a keyless spawn would only 401-spam, never capture). */
 export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<string, string> {
-  if (!t || !t.enabled || !t.consentAnswered || !t.endpoint) return {};
+  if (!t || !t.enabled || !t.consentAnswered || !t.endpoint || !t.key) return {};
   const enc = encodeURIComponent;
   return {
     // Base URL only — opencode appends /v1/traces and /v1/logs itself.
     OTEL_EXPORTER_OTLP_ENDPOINT: t.endpoint,
     // Comma-separated key=value; opencode forwards each as an HTTP header
-    // VERBATIM (the contract does NOT URL-encode headers). A blank key still
-    // rides — the Lambda answers 401, which is the honest signal.
+    // VERBATIM (the contract does NOT URL-encode headers). The key is guaranteed
+    // non-empty here (gated above), so x-amicode-key always authenticates.
     OTEL_EXPORTER_OTLP_HEADERS: [
       `x-amicode-key=${t.key}`,
       `x-amicode-session=${t.sessionId}`,
@@ -146,6 +158,13 @@ export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<strin
     ].join(","),
     // Keep stored bodies single-gzip + byte-faithfully replayable (see above).
     OTEL_EXPORTER_OTLP_COMPRESSION: "none",
+    // Size caps for the ingest's hard 6 MB Function-URL request limit — without
+    // them a big run's batch (huge tool outputs) is rejected WHOLESALE before the
+    // Lambda runs = silent data loss. Both are honored by the fork's tracer (see
+    // TELEMETRY_ENV_KEYS). 16 KiB tames a single giant attribute value; a 64-span
+    // batch (vs the SDK's 512 default) keeps each request comfortably small.
+    OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT: "16384",
+    OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "64",
   };
 }
 

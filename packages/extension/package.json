@@ -256,7 +256,7 @@
         "amicode.telemetry.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Capture agent runs to Harmoniqs' internal run corpus (OpenTelemetry). Runs include your prompts and tool output, which may contain source code. On by default, but NOTHING is transmitted until you answer the first-run consent prompt AND an endpoint is configured (amicode.telemetry.endpoint). Turn off to disable capture entirely."
+          "description": "Capture agent runs to Harmoniqs' internal run corpus (OpenTelemetry). Runs include your prompts and tool output, which may contain source code. On by default, but NOTHING is transmitted until ALL of: you answer the first-run consent prompt, an endpoint is configured (amicode.telemetry.endpoint), and an ingest key is set (\"Amicode: Set run-corpus ingest key\"). Turn off to disable capture entirely."
         },
         "amicode.telemetry.endpoint": {
           "type": "string",

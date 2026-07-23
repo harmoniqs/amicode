@@ -114,8 +114,10 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
 // binding interface contract with the AWS ingest Lambda (RUN_CORPUS_SPEC.md).
 // ============================================================================
 
-describe("buildTelemetryEnv — the consent gate (truth table)", () => {
-  // A fully-eligible context: every gate condition holds.
+describe("buildTelemetryEnv — the consent gate (4-axis truth table)", () => {
+  // A fully-eligible context: all FOUR gate conditions hold (enabled + consent
+  // answered + endpoint + non-empty key). Flipping each off in turn must close
+  // the gate; only the all-true row injects.
   const full: TelemetryContext = {
     enabled: true,
     consentAnswered: true,
@@ -127,7 +129,7 @@ describe("buildTelemetryEnv — the consent gate (truth table)", () => {
     gitRef: "feat/x",
   };
 
-  it("enabled + consent + endpoint → injects EXACTLY the four OTLP keys", () => {
+  it("enabled + consent + endpoint + key → injects the full OTLP key set", () => {
     expect(Object.keys(buildTelemetryEnv(full)).sort()).toEqual([...TELEMETRY_ENV_KEYS].sort());
   });
   it("telemetry disabled → omits ALL (exporter stays dormant)", () => {
@@ -139,13 +141,11 @@ describe("buildTelemetryEnv — the consent gate (truth table)", () => {
   it("endpoint unconfigured → omits ALL", () => {
     expect(buildTelemetryEnv({ ...full, endpoint: "" })).toEqual({});
   });
+  it("ingest key missing → omits ALL (no keyless 401-spam that looks on but captures nothing)", () => {
+    expect(buildTelemetryEnv({ ...full, key: "" })).toEqual({});
+  });
   it("undefined context → omits ALL", () => {
     expect(buildTelemetryEnv(undefined)).toEqual({});
-  });
-  it("a missing key does NOT close the gate (gate is enabled+consent+endpoint) — key just rides empty", () => {
-    const env = buildTelemetryEnv({ ...full, key: "" });
-    expect(Object.keys(env).sort()).toEqual([...TELEMETRY_ENV_KEYS].sort());
-    expect(env.OTEL_EXPORTER_OTLP_HEADERS).toContain("x-amicode-key=,");
   });
 });
 
@@ -186,6 +186,12 @@ describe("buildTelemetryEnv — the interface contract (names, header/attr encod
   it("pins OTEL_EXPORTER_OTLP_COMPRESSION=none (block double-gzip / keep replay byte-faithful)", () => {
     expect(buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_COMPRESSION).toBe("none");
   });
+  it("caps attribute value length + batch size for the ingest's 6 MB request limit", () => {
+    const env = buildTelemetryEnv(full);
+    // honored by the fork's tracer (reconfigureLimits → spanLimits; BatchSpanProcessor env default)
+    expect(env.OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT).toBe("16384");
+    expect(env.OTEL_BSP_MAX_EXPORT_BATCH_SIZE).toBe("64");
+  });
 });
 
 describe("buildServerSpawnEnv — telemetry integration (gate applied through the one builder)", () => {
@@ -200,7 +206,7 @@ describe("buildServerSpawnEnv — telemetry integration (gate applied through th
     repo: "r",
     gitRef: "main",
   };
-  it("gate open → the base three keys PLUS the four OTLP keys", () => {
+  it("gate open → the base three keys PLUS the full OTLP key set", () => {
     const env = buildServerSpawnEnv({ ...base, telemetry: full });
     for (const k of TELEMETRY_ENV_KEYS) expect(env[k]).toBeDefined();
     expect(env.OPENCODE_SERVER_PASSWORD).toBe("pw"); // the password is never dropped
