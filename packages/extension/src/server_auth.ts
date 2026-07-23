@@ -70,6 +70,85 @@ const SANDBOX_ENV_PASSTHROUGH = [
   "AMICO_PYTHON",
 ] as const
 
+// ============================================================================
+// Run-corpus telemetry env (feat/telemetry-env-injection).
+//
+// opencode ships an OTLP/HTTP exporter that stays fully DORMANT unless
+// OTEL_EXPORTER_OTLP_ENDPOINT is set (its exporter layer resolves empty
+// otherwise). We route that exporter at OUR ingest endpoint by ADDING env vars
+// to the spawn — but ONLY behind the consent gate. The var names, header names
+// (x-amicode-*) and resource-attribute keys (amicode.*) below are a BINDING
+// interface contract with the AWS ingest Lambda (RUN_CORPUS_SPEC.md); do not
+// rename or reorder-encode them.
+// ============================================================================
+
+/** The env keys buildTelemetryEnv can emit — the full set the live-env
+ *  reconcile deletes before re-applying (extension.ts). Contract's three, plus
+ *  OTEL_EXPORTER_OTLP_COMPRESSION pinned "none": the OTel JS exporters silently
+ *  honor an inherited compression var, and a wire-gzip'd body would be double-
+ *  gzip'd in storage and unrecoverable on replay (only Content-Type is kept). */
+export const TELEMETRY_ENV_KEYS = [
+  "OTEL_EXPORTER_OTLP_ENDPOINT",
+  "OTEL_EXPORTER_OTLP_HEADERS",
+  "OTEL_RESOURCE_ATTRIBUTES",
+  "OTEL_EXPORTER_OTLP_COMPRESSION",
+] as const;
+
+/** Everything the OTLP env needs, already resolved from settings / SecretStorage
+ *  / globalState / the active workspace by the extension host (telemetry.ts).
+ *  Values are RAW (un-encoded) — buildTelemetryEnv does the contract's per-value
+ *  URL-encoding of the resource attributes. */
+export interface TelemetryContext {
+  /** `amicode.telemetry.enabled` setting (default true). */
+  enabled: boolean;
+  /** Has the first-run consent modal been answered (either way)? Default-ON must
+   *  NOT mean transmit-before-consent, so this gates INDEPENDENTLY of `enabled`
+   *  — before the user answers, nothing is emitted even though enabled is true. */
+  consentAnswered: boolean;
+  /** `amicode.telemetry.endpoint`, trailing slash already stripped; "" = unset. */
+  endpoint: string;
+  /** Ingest key from SecretStorage; "" = not set (rides as an empty header value,
+   *  which the ingest Lambda 401s — the gate itself does not require the key). */
+  key: string;
+  /** Resource + header identity (RAW values). */
+  sessionId: string;
+  userId: string;
+  repo: string;
+  gitRef: string;
+}
+
+/** The OTLP env vars per the INTERFACE CONTRACT — or {} when the consent gate is
+ *  closed. GATE: telemetry enabled AND consent answered AND an endpoint set.
+ *  Missing ANY one → ALL keys omitted, so opencode's exporter stays dormant. */
+export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<string, string> {
+  if (!t || !t.enabled || !t.consentAnswered || !t.endpoint) return {};
+  const enc = encodeURIComponent;
+  return {
+    // Base URL only — opencode appends /v1/traces and /v1/logs itself.
+    OTEL_EXPORTER_OTLP_ENDPOINT: t.endpoint,
+    // Comma-separated key=value; opencode forwards each as an HTTP header
+    // VERBATIM (the contract does NOT URL-encode headers). A blank key still
+    // rides — the Lambda answers 401, which is the honest signal.
+    OTEL_EXPORTER_OTLP_HEADERS: [
+      `x-amicode-key=${t.key}`,
+      `x-amicode-session=${t.sessionId}`,
+      `x-amicode-user=${t.userId}`,
+    ].join(","),
+    // Comma-separated; VALUES URL-encoded — opencode does decodeURIComponent
+    // per value, so a branch ref like "feat/x" (its "/") survives the list.
+    // amicode.client is the fixed literal `vscode` per the contract.
+    OTEL_RESOURCE_ATTRIBUTES: [
+      `amicode.user=${enc(t.userId)}`,
+      `amicode.session=${enc(t.sessionId)}`,
+      `amicode.repo=${enc(t.repo)}`,
+      `amicode.git_ref=${enc(t.gitRef)}`,
+      `amicode.client=vscode`,
+    ].join(","),
+    // Keep stored bodies single-gzip + byte-faithfully replayable (see above).
+    OTEL_EXPORTER_OTLP_COMPRESSION: "none",
+  };
+}
+
 export function buildServerSpawnEnv(opts: {
   /** amico-run launcher bin dir; undefined = launcher missing (boot warns). */
   amicoRunBinDir: string | undefined;
@@ -84,12 +163,18 @@ export function buildServerSpawnEnv(opts: {
    *  Deliberate, recorded S37 exception: this is server-child plumbing for
    *  the validator, NOT amico-run env propagation (which stays argv-only). */
   amicoPython?: string;
+  /** Resolved run-corpus telemetry context, or undefined to omit OTLP entirely.
+   *  buildTelemetryEnv applies the consent gate, so an un-gated context still
+   *  yields zero OTLP vars — the exporter only wakes when the gate is open. */
+  telemetry?: TelemetryContext;
 }): Record<string, string> {
   const env: Record<string, string> = {
     PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
     OPENCODE_CONFIG_CONTENT: opts.configContent,
     OPENCODE_SERVER_PASSWORD: opts.serverPassword,
     ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
+    // Gated OTLP env (contract). {} unless enabled + consent + endpoint all hold.
+    ...buildTelemetryEnv(opts.telemetry),
   };
   for (const key of SANDBOX_ENV_PASSTHROUGH) {
     const value = process.env[key];
