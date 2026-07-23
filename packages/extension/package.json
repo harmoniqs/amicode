@@ -34,7 +34,7 @@
     "onCommand:amicode.openInspector",
     "onView:amicode.runInspector",
     "onView:amicode.deviceInspector",
-    "onView:amicode.vault",
+    "onView:amicode.armonia",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
