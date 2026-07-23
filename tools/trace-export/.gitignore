@@ -1,0 +1,4 @@
+# session exports contain raw prompts + chain-of-thought (amicode.reasoning) -- never commit
+*.otlp.json
+ses_*.md
+__pycache__/

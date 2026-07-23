@@ -1,0 +1,2 @@
+# push_otlp.py only; otlp_export.py is pure stdlib
+opentelemetry-proto>=1.20
