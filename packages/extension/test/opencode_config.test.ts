@@ -171,6 +171,20 @@ describe("buildOpencodeConfigContent", () => {
       else process.env.ANTHROPIC_API_KEY = prev;
     }
   });
+  it("sets experimental.openTelemetry === true IFF the telemetry gate is open (span generation)", () => {
+    // opencode gates AI-SDK span generation on cfg.experimental?.openTelemetry;
+    // the OTLP endpoint env only arms the exporter, so this flag is what makes
+    // opencode actually EMIT spans. It must track the same gate as the exporter.
+    const args = ["/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "", []] as const;
+    // default (gate arg omitted) → no flag → a user's own experimental config is untouched
+    expect(JSON.parse(buildOpencodeConfigContent(...args)).experimental).toBeUndefined();
+    // gate SHUT → omitted (not forced false, so we never clobber the user's own value)
+    expect(JSON.parse(buildOpencodeConfigContent(...args, undefined, false)).experimental).toBeUndefined();
+    // gate OPEN → span generation on
+    expect(JSON.parse(buildOpencodeConfigContent(...args, undefined, true)).experimental).toEqual({
+      openTelemetry: true,
+    });
+  });
 });
 
 // Integration (#25): boots the REAL opencode binary (`opencode debug config`

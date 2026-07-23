@@ -16,7 +16,22 @@ import {
   resolveModelPin,
 } from "./opencode_config";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
-import { mintServerPassword, serverAuthHeader, serverAuthToken, buildServerSpawnEnv } from "./server_auth";
+import {
+  mintServerPassword,
+  serverAuthHeader,
+  serverAuthToken,
+  buildServerSpawnEnv,
+  buildTelemetryEnv,
+  telemetryGateOpen,
+  TELEMETRY_ENV_KEYS,
+} from "./server_auth";
+import {
+  mintTelemetrySession,
+  resolveTelemetryContext,
+  maybePromptTelemetryConsent,
+  registerTelemetryKeyCommand,
+  TELEMETRY_INGEST_KEY_SECRET,
+} from "./telemetry";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
@@ -232,11 +247,84 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   } catch (e) {
     opencodeChannel.appendLine(`[pasqal] python provisioning failed: ${(e as Error).message}`);
   }
+  // Run-corpus telemetry (feat/telemetry-env-injection): the ingest key lives in
+  // SecretStorage (never a setting) — read ONCE here, re-read by the set-key
+  // command below. One per-activation session id groups this activation's runs.
+  const telemetrySessionId = mintTelemetrySession();
+  let telemetryKey: string | undefined = await ctx.secrets.get(TELEMETRY_INGEST_KEY_SECRET);
+
   /** One builder for every server spawn site: threads the CURRENT amicoPython
    *  (closure read — late provisioning is picked up by later respawns) and
-   *  keeps a handle on the live env object for the background self-heal. */
-  const spawnEnv = (o: Omit<Parameters<typeof buildServerSpawnEnv>[0], "amicoPython">): Record<string, string> =>
-    (currentSpawnEnv = buildServerSpawnEnv({ ...o, amicoPython }));
+   *  keeps a handle on the live env object for the background self-heal. Also
+   *  resolves a FRESH TelemetryContext per spawn, so a late consent answer or
+   *  config change activates on the next respawn; buildServerSpawnEnv applies
+   *  the consent gate, so NO OTLP var is added until enabled + consent + endpoint
+   *  all hold (the exporter stays dormant otherwise). */
+  const spawnEnv = (
+    o: Omit<Parameters<typeof buildServerSpawnEnv>[0], "amicoPython" | "telemetry">,
+  ): Record<string, string> =>
+    (currentSpawnEnv = buildServerSpawnEnv({
+      ...o,
+      amicoPython,
+      telemetry: resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey }),
+    }));
+
+  /** Is the telemetry gate open RIGHT NOW? Threaded into buildOpencodeConfigContent
+   *  at each spawn site so the config's experimental.openTelemetry (span generation)
+   *  tracks the SAME gate as the exporter env — armed-exporter-no-spans is exactly
+   *  the whole-pipeline bug this couples away. */
+  const telemetryOpen = (): boolean =>
+    telemetryGateOpen(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey }));
+
+  /** Reconcile telemetry on the LIVE spawn env in place (the amicoPython
+   *  self-heal pattern: ServerManager re-reads opts.env at start()). Re-gates the
+   *  OTLP env keys AND toggles experimental.openTelemetry inside the live
+   *  OPENCODE_CONFIG_CONTENT — both from ONE gate read, so a consent flip or a key
+   *  change takes effect (exporter + span generation together) on the next
+   *  `amicode.restartServer` WITHOUT a window reload. No live env yet → no-op. */
+  const refreshTelemetryLiveEnv = (): void => {
+    if (!currentSpawnEnv) return;
+    const open = telemetryOpen();
+    // exporter env
+    for (const k of TELEMETRY_ENV_KEYS) delete currentSpawnEnv[k];
+    Object.assign(
+      currentSpawnEnv,
+      buildTelemetryEnv(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId, key: telemetryKey })),
+    );
+    // span-generation flag — patch the live config JSON in place (works whatever
+    // project the current server was spawned from; toggles only our one field).
+    try {
+      const cfg = JSON.parse(currentSpawnEnv.OPENCODE_CONFIG_CONTENT ?? "{}") as {
+        experimental?: Record<string, unknown>;
+      };
+      if (open) cfg.experimental = { ...(cfg.experimental ?? {}), openTelemetry: true };
+      else if (cfg.experimental) {
+        delete cfg.experimental.openTelemetry;
+        if (Object.keys(cfg.experimental).length === 0) delete cfg.experimental;
+      }
+      currentSpawnEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(cfg);
+    } catch {
+      /* malformed config JSON (never, we built it) → leave it; env gate still applied */
+    }
+  };
+
+  // The ONLY populate path for the ingest key (SecretStorage). On change, update
+  // the cached key and bounce the server so the new x-amicode-key header lands.
+  registerTelemetryKeyCommand(ctx, (key) => {
+    telemetryKey = key || undefined;
+    refreshTelemetryLiveEnv();
+    if (serverManager) void vscode.commands.executeCommand("amicode.restartServer");
+  });
+
+  // First-run consent (fire-and-forget, like the vault/julia popups). Until it is
+  // answered the gate stays shut; on Enable we reconcile + bounce the server so
+  // capture starts on THIS boot rather than waiting for the next activation.
+  void maybePromptTelemetryConsent(ctx, {
+    onEnable: () => {
+      refreshTelemetryLiveEnv();
+      if (serverManager) void vscode.commands.executeCommand("amicode.restartServer");
+    },
+  });
 
   // 1. UI surfaces
   const trees = registerTrees(ctx);
@@ -453,6 +541,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // fallback here used to override the user's own choice. The in-chat
           // picker still overrides per session.
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          // Telemetry gate → experimental.openTelemetry (span generation), coupled
+          // to the exporter env this same spawnEnv resolves.
+          telemetryOpen(),
         ),
       }),
       channel: opencodeChannel,
@@ -505,6 +596,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               project2.mounts,
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
               vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+              telemetryOpen(), // gate → experimental.openTelemetry (span generation)
             ),
           }),
           channel: opencodeChannel,
@@ -633,6 +725,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.vaultDir,
           project2.mounts,
           vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          telemetryOpen(), // gate → experimental.openTelemetry (span generation)
         ),
       }),
       channel: opencodeChannel,

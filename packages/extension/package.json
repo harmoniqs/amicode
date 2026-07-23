@@ -106,6 +106,10 @@
         "title": "Amico: Connect Cloud (Piccolissimo + Altissimo)"
       },
       {
+        "command": "amicode.setTelemetryKey",
+        "title": "Amicode: Set run-corpus ingest key"
+      },
+      {
         "command": "amicode.openInspector",
         "title": "Amicode: Open Run Inspector"
       },
@@ -248,6 +252,16 @@
           "type": "string",
           "default": "",
           "description": "Base URL of the QICK job-server (queue/health/config-versioning, Spec A §2). A pointer only, never credentials. Empty = the queue reads idle and drive lines read offline."
+        },
+        "amicode.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Capture agent runs to Harmoniqs' internal run corpus (OpenTelemetry). Runs include your prompts and tool output, which may contain source code. On by default, but NOTHING is transmitted until ALL of: you answer the first-run consent prompt, an endpoint is configured (amicode.telemetry.endpoint), and an ingest key is set (\"Amicode: Set run-corpus ingest key\"). Turn off to disable capture entirely."
+        },
+        "amicode.telemetry.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Empty = capture stays dormant even with consent given. The ingest key is stored separately in VS Code SecretStorage via \"Amicode: Set run-corpus ingest key\" (never a plaintext setting)."
         }
       }
     },
