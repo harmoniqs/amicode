@@ -59,8 +59,9 @@ export class ChatPanel {
     private readonly panel: vscode.WebviewPanel,
     opencodeUrl: URL,
     authToken?: string,
+    hideProjectDir?: string,
   ) {
-    this.panel.webview.html = this.renderHtml(opencodeUrl, authToken);
+    this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // Live theme bridge: editor theme changes flow extension → outer relay →
     // iframe → the app's setColorScheme (boot theme rides ?colorScheme=).
@@ -214,7 +215,12 @@ export class ChatPanel {
     setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
   }
 
-  static openOrReveal(ctx: vscode.ExtensionContext, opencodeUrl: URL, authToken?: string): ChatPanel {
+  static openOrReveal(
+    ctx: vscode.ExtensionContext,
+    opencodeUrl: URL,
+    authToken?: string,
+    hideProjectDir?: string,
+  ): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
       return ChatPanel.current;
@@ -228,11 +234,11 @@ export class ChatPanel {
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
     panel.iconPath = tabIconPath(ctx);
-    ChatPanel.current = new ChatPanel(panel, opencodeUrl, authToken);
+    ChatPanel.current = new ChatPanel(panel, opencodeUrl, authToken, hideProjectDir);
     return ChatPanel.current;
   }
 
-  private renderHtml(opencodeUrl: URL, authToken?: string): string {
+  private renderHtml(opencodeUrl: URL, authToken?: string, hideProjectDir?: string): string {
     // CSP: allow the iframe to load opencode's localhost origin. The frame
     // itself is isolated, but VS Code's webview CSP needs to explicitly grant
     // the localhost frame-src. The nonce authorizes the one relay script below.
@@ -255,6 +261,12 @@ export class ChatPanel {
     // it from the URL. The iframe src is the credential's ONLY carriage here;
     // it never appears in a log line or any other surface.
     if (authToken) framed.searchParams.set("auth_token", authToken);
+    // amicode#203: the server runs in an internal scaffold dir (holds the
+    // injected amico config), which opencode registers as a project. Tell the
+    // app to hide exactly that dir from the dashboard so it never appears as a
+    // phantom project. Only amicode sets this — standalone opencode is
+    // unaffected (its cwd IS the user's project).
+    if (hideProjectDir) framed.searchParams.set("amicode_hide_project", hideProjectDir);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>

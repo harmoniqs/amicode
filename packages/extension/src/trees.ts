@@ -1,10 +1,11 @@
 import * as vscode from "vscode";
 
 // ============================================================================
-// TreeViews for vault / catalog / armonia.
-// vault + armonia ship an empty-state message; real implementations connect
-// to ArmoniaService when that lands. The catalog tree is the #47 SESSION
-// catalog: entries collected by the save-to-catalog flow, persisted in
+// TreeViews for armonia / catalog.
+// amicode#204: the old redundant "Vault" + "Armonia" placeholder trees are
+// merged into ONE Armonia panel (mounted Vaults are its roots; real rendering
+// connects to ArmoniaService when it lands). The catalog tree is the #47
+// SESSION catalog: entries collected by the save-to-catalog flow, persisted in
 // workspaceState — explicitly NOT the Phase-3 CatalogStore (vault-backed,
 // git-lfs pulse artifacts); it seeds the UX3 browser.
 // ============================================================================
@@ -102,19 +103,18 @@ export class SessionCatalogTree implements vscode.TreeDataProvider<SessionCatalo
 }
 
 export function registerTrees(ctx: vscode.ExtensionContext): {
-  vault: PlaceholderTree;
   catalog: SessionCatalogTree;
   armonia: PlaceholderTree;
 } {
-  const vault = new PlaceholderTree("(vault tree will appear when Armonia mounts are configured)");
   const catalog = new SessionCatalogTree(ctx);
-  const armonia = new PlaceholderTree("(no mounts yet — run Amicode: Open Chat to start)");
+  // amicode#204: the single Armonia panel. Its roots are the mounted Vaults;
+  // until ArmoniaService lands, a product empty state names what collects here.
+  const armonia = new PlaceholderTree("Your vaults collect here — run Amicode: Set up a vault");
 
   ctx.subscriptions.push(
-    vscode.window.registerTreeDataProvider("amicode.vault", vault),
     vscode.window.registerTreeDataProvider("amicode.catalog", catalog),
     vscode.window.registerTreeDataProvider("amicode.armonia", armonia),
   );
 
-  return { vault, catalog, armonia };
+  return { catalog, armonia };
 }
