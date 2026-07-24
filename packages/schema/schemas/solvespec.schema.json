@@ -1,14 +1,31 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://amico.harmoniqs.co/schema/solvespec/v3",
+  "$id": "https://amico.harmoniqs.co/schema/solvespec/v4",
   "title": "amico SolveSpec",
-  "description": "The resolved solve specification the agent assembles and `amico-run --spec` validates + gates before dispatch (spec C). v2 adds executor/tier/env/source/hashes; v3 adds the paid High-Performance + Cloud tier (tier=hpc) and the remote executor — hpc runs in the cloud (executor=remote, env=provisioned), never locally. v1/v2 specs remain valid (tier-less specs skip tier gating; the local executor is still valid at every version).",
+  "description": "The resolved solve specification the agent assembles and `amico-run --spec` validates + gates before dispatch (spec C). v2 adds executor/tier/env/source/hashes; v3 adds the paid High-Performance + Cloud tier (tier=hpc) and the remote executor — hpc runs in the cloud (executor=remote, env=provisioned), never locally; v4 adds `problem_spec` (a typed Piccolo ProblemSpec, inline object or path) as an alternative to `script_path` — exactly one of the two — which amico-run routes to the generic `Piccolo.Specs.solve_spec` runner. v1/v2 specs remain valid (tier-less specs skip tier gating; the local executor is still valid at every version).",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "script_path", "lab_id"],
+  "required": ["schema_version", "lab_id"],
+  "oneOf": [
+    {
+      "required": ["script_path"],
+      "description": "run an authored Julia script (the historical shape)"
+    },
+    {
+      "required": ["problem_spec"],
+      "description": "run a typed ProblemSpec via Piccolo.Specs.solve_spec (v4)"
+    }
+  ],
   "properties": {
-    "schema_version": { "enum": ["1", "2", "3"] },
-    "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run" },
+    "schema_version": { "enum": ["1", "2", "3", "4"] },
+    "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run (exactly one of script_path | problem_spec)" },
+    "problem_spec": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "object" }
+      ],
+      "description": "v4: a typed Piccolo ProblemSpec — either a path to a problem.toml/problem.json (string) or the spec inline (object). amico-run routes it to Piccolo.Specs.solve_spec. Exactly one of script_path | problem_spec."
+    },
     "lab_id": {
       "type": "string",
       "minLength": 1,

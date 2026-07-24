@@ -29,10 +29,10 @@ describe("schema set + exports", () => {
       new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec"]),
     );
   });
-  it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v3 (hpc tier + remote executor); the rest v1", () => {
+  it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v4 (hpc tier + remote executor + problem_spec); the rest v1", () => {
     expect(SUPPORTED_VERSIONS_BY_KIND).toEqual({
       run: ["1", "2"],
-      solvespec: ["1", "2", "3"],
+      solvespec: ["1", "2", "3", "4"],
       result: ["1"],
       lab: ["1"],
       "catalog-entry": ["1"],
@@ -310,5 +310,45 @@ describe("v2 (spec C)", () => {
       ).errors,
     ).toEqual([]);
     expect(validate({ ...run1, schema_version: "2", tier: "nope" }, "run").errors.join()).toMatch(/tier/);
+  });
+});
+
+// ── v4 (spec C): SolveSpec grows `problem_spec` (Piccolo.Specs.solve_spec target),
+// exactly one of {script_path, problem_spec}. lab_id stays required; strict-unknown
+// stays. A problem_spec spec routes to the generic runner (amico-run Task 8). ──
+describe("v4 (spec C): problem_spec XOR script_path", () => {
+  const base = { schema_version: "4", lab_id: "default" };
+  it("accepts a problem_spec-only spec (path string)", () => {
+    expect(validate({ ...base, problem_spec: "/w/problem.toml" }, "solvespec").errors).toEqual([]);
+  });
+  it("accepts a problem_spec-only spec (inline object)", () => {
+    const inline = { kind: "control", system: { kind: "template", template: "TransmonSystem" } };
+    expect(validate({ ...base, problem_spec: inline }, "solvespec").errors).toEqual([]);
+  });
+  it("accepts a script_path-only spec unchanged (the historical shape)", () => {
+    expect(validate({ ...base, script_path: "/w/solve.jl" }, "solvespec").ok).toBe(true);
+    // and earlier versions still validate (v1 script_path spec)
+    expect(validate({ schema_version: "1", script_path: "/s.jl", lab_id: "default" }, "solvespec").ok).toBe(true);
+  });
+  it("REJECTS both script_path AND problem_spec together (exactly one)", () => {
+    const r = validate({ ...base, script_path: "/w/solve.jl", problem_spec: "/w/problem.toml" }, "solvespec");
+    expect(r.ok).toBe(false);
+  });
+  it("REJECTS neither script_path NOR problem_spec (exactly one)", () => {
+    const r = validate({ ...base }, "solvespec");
+    expect(r.ok).toBe(false);
+  });
+  it("lab_id is still required even with problem_spec", () => {
+    const r = validate({ schema_version: "4", problem_spec: "/w/problem.toml" }, "solvespec");
+    expect(r.ok).toBe(false);
+    expect(hasErr(r.errors, 'missing required key "lab_id"')).toBe(true);
+  });
+  it("strict-unknown still holds alongside problem_spec", () => {
+    const r = validate({ ...base, problem_spec: "/w/problem.toml", rogue: 1 }, "solvespec");
+    expect(r.ok).toBe(false);
+    expect(hasErr(r.errors, 'unknown key "rogue"')).toBe(true);
+  });
+  it("schema_version 4 is accepted", () => {
+    expect(SUPPORTED_VERSIONS_BY_KIND.solvespec).toContain("4");
   });
 });

@@ -53,7 +53,8 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
 /** Versions the validators accept, PER KIND (Q87: tolerate known-prior within
  *  range, reject unknown/absent). Derived from the schema files' enums — the
  *  schemas are the single source of truth; this export just surfaces them.
- *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes);
+ *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes;
+ *  solvespec v4 also adds problem_spec, the typed ProblemSpec runner target);
  *  the rest remain v1 and bump independently. `finished` (no schema_version) and
  *  `problemspec` (integer enum inside a top-level oneOf — no top-level
  *  properties.schema_version) are both excluded from this string-version map. */
