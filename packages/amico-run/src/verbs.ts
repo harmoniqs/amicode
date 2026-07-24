@@ -18,6 +18,7 @@ import { vaultVerb } from "./vault_verb.js";
 import { deviceVerb } from "./device_verb.js";
 import { noteVerb } from "./note_verb.js";
 import { ledgerVerb } from "./ledger_verb.js";
+import { profileVerb } from "./profile_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -103,10 +104,23 @@ const note: Verb = {
 // priors: medians/IQR + "n runs, m verified" + interim-capped confidence).
 const ledger: Verb = {
   name: "ledger",
-  summary: "append a run-ledger record (single writer) / query honest priors at a structure_hash (learning-loops L-A)",
-  generalizes: "the amicode learning substrate: the run ledger + amicode_recommend retrieval",
-  slice: "learning-loops (L1)",
+  summary:
+    "append a run-ledger record (single writer) / query honest priors at a structure_hash / tier-dispatch table (learning-loops L-A + fleet §6.3)",
+  generalizes: "the amicode learning substrate: the run ledger + amicode_recommend retrieval + tier dispatch",
+  slice: "learning-loops (L1) + fleet substrate",
   run: ledgerVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger];
+// profile — the capability-profile resolver (fleet §2/§3.1). The extension's spool-up
+// path shells THIS verb before injecting an agent def through OPENCODE_CONFIG_CONTENT,
+// so schema validation, entitlement filtering, and the spool-up composition rule all
+// live in one deterministic place instead of in two runtimes.
+const profile: Verb = {
+  name: "profile",
+  summary: "resolve a capability profile: validate + entitlement-filter skills + apply the spool-up composition rule",
+  generalizes: "the fleet substrate's profile tree (amico-plugin profiles/ + gates/) at session spool-up",
+  slice: "fleet substrate (§9 step 2)",
+  run: profileVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile];

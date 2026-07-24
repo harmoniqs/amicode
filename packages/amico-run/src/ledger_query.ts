@@ -31,14 +31,17 @@ export function bucketT(t: number): number {
 }
 
 // ── tuning constants ─────────────────────────────────────────────────────────
+// These four are the ONE rubric in the system (fleet §6.3 Rev 5: "One rubric in the
+// system, not two") — exported so ledger_dispatch.ts's tier-dispatch aggregator
+// reuses these exact bands instead of declaring a parallel set.
 /** Minimum runs at a key before it is trusted; below it, relax to the fallback key. */
 export const K_MIN = 2;
 /** Runs at/above which (with tight IQR + verified majority) a prior can reach `high`. */
-const N_HIGH = 5;
+export const N_HIGH = 5;
 /** Relative IQR ((q3−q1)/|median|) at/below which a numeric param is "tight". */
-const IQR_TIGHT = 0.5;
+export const IQR_TIGHT = 0.5;
 /** Relative IQR above which spread is "wide" → demote to `low`. */
-const IQR_WIDE = 1.5;
+export const IQR_WIDE = 1.5;
 
 // The recommendable knobs. Numeric ones get median+IQR; integrator is categorical
 // (mode). N is always on `summary`; the rest are carried on `summary` too (the
@@ -101,7 +104,9 @@ function quantile(sorted: number[], p: number): number {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
-function numericStat(values: number[]): ParamStat {
+/** Median + [q1, q3] over a value list. Exported for ledger_dispatch.ts (one
+ *  quantile implementation, same bands — see the tuning constants above). */
+export function numericStat(values: number[]): ParamStat {
   const sorted = [...values].sort((a, b) => a - b);
   return { value: quantile(sorted, 0.5), iqr: [quantile(sorted, 0.25), quantile(sorted, 0.75)], n: sorted.length };
 }
