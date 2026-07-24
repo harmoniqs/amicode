@@ -76,13 +76,17 @@ const SANDBOX_ENV_PASSTHROUGH = [
 // opencode ships an OTLP/HTTP exporter that stays fully DORMANT unless
 // OTEL_EXPORTER_OTLP_ENDPOINT is set (its exporter layer resolves empty
 // otherwise). We route that exporter at OUR ingest endpoint by ADDING env vars
-// to the spawn — but ONLY behind the consent gate. The var names, the auth
-// header (`Authorization: Bearer <cloud token>`), the `x-amicode-session`
-// grouping header and the resource-attribute keys (amicode.*) below are a
-// BINDING interface contract with the AWS ingest Lambda (BEARER_AUTH_SPEC.md);
-// do not rename or reorder-encode them. Identity is now the VERIFIED submitter
-// the ingest derives from the bearer token server-side — the client no longer
-// sends x-amicode-key or x-amicode-user.
+// to the spawn — but ONLY behind the consent gate. The var names, the token
+// header (`x-amicode-token: <cloud token>`), the `x-amicode-session` grouping
+// header and the resource-attribute keys (amicode.*) below are a BINDING
+// interface contract with the AWS ingest Lambda (BEARER_AUTH_SPEC.md); do not
+// rename or reorder-encode them. The token rides `x-amicode-token`, NOT
+// `Authorization: Bearer`, because the ingest now sits behind CloudFront with
+// Origin Access Control: OAC signs each origin request with SigV4 in the
+// `Authorization` header, so a token placed there is overwritten before it
+// reaches the Lambda. Identity is the VERIFIED submitter the ingest derives from
+// the token server-side — the client no longer sends x-amicode-key or
+// x-amicode-user.
 // ============================================================================
 
 /** The env keys buildTelemetryEnv can emit — the full set the live-env reconcile
@@ -123,8 +127,8 @@ export interface TelemetryContext {
    *  connected → the gate stays CLOSED. A token-less spawn would still LOOK on
    *  (endpoint set) while every batch 401s at the ingest and the exporter spams
    *  retries, capturing nothing — so no token means dormant, not a spawn that
-   *  transmits with no Authorization header. Rides ONLY the OTLP Authorization
-   *  header; never logged. */
+   *  transmits with no token header. Rides ONLY the OTLP x-amicode-token header;
+   *  never logged. */
   token: string;
   /** Resource + header identity (RAW values). */
   sessionId: string;
@@ -156,10 +160,12 @@ export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<strin
     // VERBATIM (the contract does NOT URL-encode headers). The token is guaranteed
     // non-empty here (gated above) and header-safe (amico_<hex>), so the ingest
     // always authenticates it against the shared credentials table and derives
-    // the verified submitter. x-amicode-session groups the run (S3 prefix). No
-    // x-amicode-key / x-amicode-user: the token IS the identity now.
+    // the verified submitter. It rides x-amicode-token, NOT Authorization: Bearer
+    // — CloudFront OAC owns Authorization for its SigV4 origin signature and would
+    // clobber it. x-amicode-session groups the run (S3 prefix). No x-amicode-key /
+    // x-amicode-user: the token IS the identity now.
     OTEL_EXPORTER_OTLP_HEADERS: [
-      `Authorization=Bearer ${t.token}`,
+      `x-amicode-token=${t.token}`,
       `x-amicode-session=${t.sessionId}`,
     ].join(","),
     // Comma-separated; VALUES URL-encoded — opencode does decodeURIComponent
