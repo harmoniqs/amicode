@@ -1,0 +1,24 @@
+# Valid `control` ProblemSpec golden fixture (validates against the FULL variant).
+# schema_version is the INTEGER 1 (plan review correction #6).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "CZ"
+subsystem_levels = [3, 3]
+
+[pulse]
+kind = "cubic_spline"
+T = 100.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 100
+
+[solver]
+backend = "ipopt"

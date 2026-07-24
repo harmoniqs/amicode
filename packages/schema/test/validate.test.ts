@@ -24,8 +24,10 @@ describe("valid golden fixtures validate clean", () => {
 });
 
 describe("schema set + exports", () => {
-  it("exposes all five versioned schemas + the FINISHED sub-shape", () => {
-    expect(new Set(SCHEMA_KINDS)).toEqual(new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished"]));
+  it("exposes all five versioned schemas + the FINISHED sub-shape + the problemspec kind", () => {
+    expect(new Set(SCHEMA_KINDS)).toEqual(
+      new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec"]),
+    );
   });
   it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v3 (hpc tier + remote executor); the rest v1", () => {
     expect(SUPPORTED_VERSIONS_BY_KIND).toEqual({

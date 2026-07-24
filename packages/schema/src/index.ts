@@ -15,6 +15,15 @@ import resultSchema from "../schemas/result.schema.json" with { type: "json" };
 import labSchema from "../schemas/lab.schema.json" with { type: "json" };
 import solvespecSchema from "../schemas/solvespec.schema.json" with { type: "json" };
 import catalogEntrySchema from "../schemas/catalog-entry.schema.json" with { type: "json" };
+// problemspec is VENDORED from the Piccolo/Piccolissimo registries — do not hand-edit.
+// The shipped default (registered as the `problemspec` kind) is the FULL variant
+// (harmoniqs/Piccolissimo.jl @ 9098f6f, built against Piccolo.jl @ c3884122); the OSS
+// variant (Piccolo.jl @ c3884122) is vendored alongside as problemspec.oss.schema.json
+// for package-access staging (Phase 3). Provenance shas live in the *.schema.json.sha
+// sidecars (kept OUT of the JSON so the vendored files stay byte-identical to the
+// emitted schemas for the cross-repo vendoring-drift gate). Regenerate via each repo's
+// src/specs/schema/regenerate.jl.
+import problemspecSchema from "../schemas/problemspec.schema.json" with { type: "json" };
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -31,6 +40,11 @@ const SCHEMAS = {
   lab: labSchema,
   solvespec: solvespecSchema,
   "catalog-entry": catalogEntrySchema,
+  // Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): problemspec is a
+  // top-level `oneOf` shape with an INTEGER schema_version enum `[1]` carried INSIDE
+  // each branch, so it has no top-level `properties.schema_version` for the version
+  // map to read (plan review correction #6 — same pattern as ledger-record).
+  problemspec: problemspecSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -39,14 +53,17 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
 /** Versions the validators accept, PER KIND (Q87: tolerate known-prior within
  *  range, reject unknown/absent). Derived from the schema files' enums — the
  *  schemas are the single source of truth; this export just surfaces them.
- *  run + solvespec are at v2 (spec C: executor/tier/env/source/hashes); the
- *  rest remain v1 and bump independently. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished">, string[]> = Object.fromEntries(
-  (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
-    kind,
-    (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
-  ]),
-) as Record<Exclude<SchemaKind, "finished">, string[]>;
+ *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes);
+ *  the rest remain v1 and bump independently. `finished` (no schema_version) and
+ *  `problemspec` (integer enum inside a top-level oneOf — no top-level
+ *  properties.schema_version) are both excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec">, string[]> =
+  Object.fromEntries(
+    (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
+      kind,
+      (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
+    ]),
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec">, string[]>;
 
 export interface Validation {
   ok: boolean;
@@ -63,6 +80,7 @@ export function kindForFilename(filePath: string): SchemaKind | undefined {
   if (base === "result.toml") return "result";
   if (base === "lab.toml") return "lab";
   if (base === "FINISHED") return "finished";
+  if (base === "problem.toml") return "problemspec";
   return undefined;
 }
 

@@ -1,0 +1,7 @@
+# Provenance for problemspec.oss.schema.json (OSS variant).
+# vendored-from: harmoniqs/Piccolo.jl @ c3884122
+# regenerate:    cd packages/Piccolo.jl && julia --project=. src/specs/schema/regenerate.jl
+# NOTE: kept byte-identical to the emitted file; see the .full sidecar for rationale.
+repo = "harmoniqs/Piccolo.jl"
+sha = "c3884122"
+variant = "oss"
