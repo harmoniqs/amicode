@@ -2,18 +2,19 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { readRemoteConfig } from "@amicode/amico-run";
 import type { TelemetryContext } from "./server_auth";
 
 // ============================================================================
 // Run-corpus telemetry — the extension-host glue around server_auth.ts's pure
-// gate/encoding (buildTelemetryEnv). This module owns the settings/secret/consent
-// keys, first-run consent, and sourcing the resource attributes the ingest Lambda
-// keys on (RUN_CORPUS_SPEC.md). Nothing here transmits — it only resolves a
-// TelemetryContext; server_auth decides whether the gate is open.
+// gate/encoding (buildTelemetryEnv). This module owns the settings/consent keys,
+// first-run consent, and sourcing the resource attributes + the auth token the
+// ingest keys on (BEARER_AUTH_SPEC.md). Auth is the user's EXISTING per-user
+// Solve/cloud bearer token from ~/.amico/cloud.json (identity-minted, revocable)
+// — there is no separate ingest secret to manage. Nothing here transmits — it
+// only resolves a TelemetryContext; server_auth decides whether the gate is open.
 // ============================================================================
 
-/** SecretStorage key for the ingest key — a secret, so NEVER a plaintext setting. */
-export const TELEMETRY_INGEST_KEY_SECRET = "amicode.telemetry.ingestKey";
 /** globalState key recording the first-run consent decision (true = Enable,
  *  false = Disable). UNSET = not answered → nothing transmits (default-on is
  *  NOT transmit-before-consent). */
@@ -70,14 +71,28 @@ export function resolveWorkspaceRepoRef(): { repo: string; gitRef: string } {
   return { repo, gitRef };
 }
 
+/** The user's Solve/cloud bearer token from ~/.amico/cloud.json (or the
+ *  AMICO_CLOUD_URL/TOKEN env pair — readRemoteConfig honors both, incl. the
+ *  $AMICO_CLOUD_FILE sandbox override), read FRESH at context-resolution time so
+ *  connecting/rotating the cloud key takes effect on the next respawn. This is
+ *  a synchronous file read, so the resolver stays sync and every spawn site can
+ *  call it inline. Any failure — not connected, malformed, missing keys —
+ *  yields "" (gate stays CLOSED); readRemoteConfig never surfaces the token in
+ *  its ConfigError text, and we never log it. */
+function readCloudToken(): string {
+  try {
+    return readRemoteConfig().token;
+  } catch {
+    return "";
+  }
+}
+
 /** Resolve the full TelemetryContext synchronously from settings + globalState +
- *  machineId + the active workspace. The SECRET key is passed IN — the caller
- *  reads it from SecretStorage once at activation and re-reads on the set-key
- *  command (SecretStorage.get is async; this stays sync so every spawn site can
- *  call it inline). server_auth's buildTelemetryEnv then applies the gate. */
+ *  machineId + the active workspace + the cloud bearer token. server_auth's
+ *  buildTelemetryEnv then applies the gate. */
 export function resolveTelemetryContext(
   ctx: vscode.ExtensionContext,
-  opts: { sessionId: string; key: string | undefined },
+  opts: { sessionId: string },
 ): TelemetryContext {
   const cfg = vscode.workspace.getConfiguration("amicode");
   const { repo, gitRef } = resolveWorkspaceRepoRef();
@@ -85,10 +100,11 @@ export function resolveTelemetryContext(
     enabled: cfg.get<boolean>("telemetry.enabled", true),
     consentAnswered: ctx.globalState.get<boolean>(TELEMETRY_CONSENT_KEY) !== undefined,
     endpoint: (cfg.get<string>("telemetry.endpoint", "") || "").trim().replace(/\/+$/, ""),
-    key: opts.key ?? "",
+    token: readCloudToken(),
     sessionId: opts.sessionId,
-    // machineId: VS Code's stable, anonymized per-install id — a reasonable
-    // pseudonymous user handle. A configured override could slot in here later.
+    // machineId: VS Code's stable, anonymized per-install id — an informational
+    // pseudonymous handle (amicode.user resource attr only). The AUTHORITATIVE
+    // user is the submitter the ingest derives from the token, server-side.
     userId: vscode.env.machineId,
     repo,
     gitRef,
@@ -118,35 +134,4 @@ export async function maybePromptTelemetryConsent(
     .update("telemetry.enabled", enabled, vscode.ConfigurationTarget.Global);
   await ctx.globalState.update(TELEMETRY_CONSENT_KEY, enabled);
   if (enabled) opts?.onEnable?.();
-}
-
-/** Register `amicode.setTelemetryKey`: the only populate path for the ingest key
- *  (SecretStorage, never a setting). Empty input clears it. `onChange` hands the
- *  new value back to the caller (which updates its cached key + bounces the
- *  server so headers pick it up). */
-export function registerTelemetryKeyCommand(
-  ctx: vscode.ExtensionContext,
-  onChange: (key: string) => void,
-): void {
-  ctx.subscriptions.push(
-    vscode.commands.registerCommand("amicode.setTelemetryKey", async () => {
-      const input = await vscode.window.showInputBox({
-        title: "Amicode: run-corpus ingest key",
-        prompt: "Paste the ingest key (stored in VS Code SecretStorage, never a setting). Leave blank to clear.",
-        password: true,
-        ignoreFocusOut: true,
-      });
-      if (input === undefined) return; // cancel → no-op
-      const key = input.trim();
-      if (key === "") {
-        await ctx.secrets.delete(TELEMETRY_INGEST_KEY_SECRET);
-        onChange("");
-        void vscode.window.showInformationMessage("Amicode: run-corpus ingest key cleared.");
-        return;
-      }
-      await ctx.secrets.store(TELEMETRY_INGEST_KEY_SECRET, key);
-      onChange(key);
-      void vscode.window.showInformationMessage("Amicode: run-corpus ingest key saved.");
-    }),
-  );
 }
