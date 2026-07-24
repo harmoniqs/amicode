@@ -13,6 +13,10 @@ import {
   resolveWorkspaceSpecContext,
   stampStructureHash,
   selectRecommendations,
+  attemptErrorStanza,
+  fallbackStanza,
+  verdictStanza,
+  resolveRunHashes,
   type LedgerQueryResult,
 } from "../opencode-plugin/ledger_client";
 
@@ -252,5 +256,79 @@ describe("selectRecommendations — interim confidence cap (spec L-A#3 / success
     expect(medium[0].confidence).toBe("medium");
     const low = selectRecommendations({ ...result, confidence: "low" }, ["Q"]);
     expect(low[0].confidence).toBe("low");
+  });
+});
+
+// ── Task 7: extension-side stanza builders (pure — I/O-free) ─────────────────
+describe("attemptErrorStanza", () => {
+  it("carries the field-path errors, stamps ts, and omits session when absent", () => {
+    const rec = attemptErrorStanza([{ path: "problem.Q", msg: "must be number" }]);
+    expect(rec.type).toBe("attempt_error");
+    expect(rec.errors).toEqual([{ path: "problem.Q", msg: "must be number" }]);
+    expect(rec.session).toBeUndefined();
+    expect(Number.isNaN(Date.parse(rec.ts))).toBe(false);
+  });
+  it("includes session when given", () => {
+    expect(attemptErrorStanza([], "s1").session).toBe("s1");
+  });
+});
+
+describe("fallbackStanza", () => {
+  it("carries from_tier + reason", () => {
+    const rec = fallbackStanza("composed", "script no longer matches the exemplar's physics");
+    expect(rec).toMatchObject({
+      type: "fallback",
+      from_tier: "composed",
+      reason: "script no longer matches the exemplar's physics",
+    });
+  });
+});
+
+describe("verdictStanza", () => {
+  it("maps agree/disagree + both fidelities, structure_hash optional", () => {
+    const rec = verdictStanza({
+      problemHash: "ph-1",
+      structureHash: "sh-1",
+      verdict: "agree",
+      fidelityRerolled: 0.9993,
+      fidelityReported: 0.9994,
+    });
+    expect(rec).toMatchObject({
+      type: "verdict",
+      problem_hash: "ph-1",
+      structure_hash: "sh-1",
+      verdict: "agree",
+      fidelity_rerolled: 0.9993,
+      fidelity_reported: 0.9994,
+    });
+  });
+  it("omits structure_hash/fidelities when not given", () => {
+    const rec = verdictStanza({ problemHash: "ph-2", verdict: "disagree" });
+    expect(rec.structure_hash).toBeUndefined();
+    expect(rec.fidelity_rerolled).toBeUndefined();
+    expect(rec.fidelity_reported).toBeUndefined();
+    expect(rec.verdict).toBe("disagree");
+  });
+});
+
+describe("resolveRunHashes", () => {
+  let runDir: string;
+  beforeEach(() => {
+    runDir = fs.mkdtempSync(path.join(os.tmpdir(), "ledger-client-rundir-"));
+  });
+  afterEach(() => fs.rmSync(runDir, { recursive: true, force: true }));
+
+  it("reads structure_hash/problem_hash from result.toml [params]", () => {
+    fs.writeFileSync(
+      path.join(runDir, "result.toml"),
+      'schema_version = "1"\nfidelity = 0.999\niterations = 5\n\n[params]\nstructure_hash = "sh-9"\nproblem_hash = "ph-9"\n',
+    );
+    expect(resolveRunHashes(runDir)).toEqual({ structure_hash: "sh-9", problem_hash: "ph-9" });
+  });
+
+  it("returns undefined when result.toml is absent or has neither hash", () => {
+    expect(resolveRunHashes(runDir)).toBeUndefined();
+    fs.writeFileSync(path.join(runDir, "result.toml"), 'schema_version = "1"\nfidelity = 0.999\niterations = 5\n');
+    expect(resolveRunHashes(runDir)).toBeUndefined();
   });
 });

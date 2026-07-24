@@ -222,3 +222,83 @@ export function resolveWorkspaceSpecContext(slug: string): WorkspaceSpecContext 
 export function stampStructureHash(slug: string): string | undefined {
   return resolveWorkspaceSpecContext(slug)?.structure_hash;
 }
+
+// ── Task 7: extension-side ledger stanzas (attempt_error / fallback / verdict) ──
+// Every extension-side stanza is appended by shelling `amico ledger append`
+// (via `appendStanza` above) — the extension never writes runs.jsonl directly.
+// These builders are pure (no I/O) so the stanza SHAPE is unit-testable
+// independent of the shell call; amicode_tools.ts's tool bodies (untestable via
+// vitest — see its file header) just call builder → appendStanza.
+
+export interface AttemptErrorStanza {
+  type: "attempt_error";
+  ts: string;
+  session?: string;
+  errors: Array<{ path?: string; msg?: string }>;
+}
+
+/** `attempt_error` — a spec/materialize validation failure surfaced to a tool,
+ *  carrying the field-path errors (L-B: repeated identical rejections are a
+ *  design signal, not a user failure). */
+export function attemptErrorStanza(
+  errors: Array<{ path?: string; msg?: string }>,
+  session?: string,
+): AttemptErrorStanza {
+  return { type: "attempt_error", ts: new Date().toISOString(), ...(session ? { session } : {}), errors };
+}
+
+export interface FallbackStanza {
+  type: "fallback";
+  ts: string;
+  from_tier: string;
+  reason: string;
+}
+
+/** `fallback` — a tier demotion (e.g. composed → free, spec's `demote_to`) so
+ *  L-C can rank spec-coverage gaps by measured demand. */
+export function fallbackStanza(fromTier: string, reason: string): FallbackStanza {
+  return { type: "fallback", ts: new Date().toISOString(), from_tier: fromTier, reason };
+}
+
+export interface VerdictStanza {
+  type: "verdict";
+  ts: string;
+  problem_hash: string;
+  structure_hash?: string;
+  verdict: "agree" | "disagree";
+  fidelity_rerolled?: number;
+  fidelity_reported?: number;
+}
+
+/** `verdict` — amicode_verify's agree/disagree outcome, joined to its `solve`
+ *  record on problem_hash (L-A's "verified" definition; L-D's sentinel input). */
+export function verdictStanza(input: {
+  problemHash: string;
+  structureHash?: string;
+  verdict: "agree" | "disagree";
+  fidelityRerolled?: number;
+  fidelityReported?: number;
+}): VerdictStanza {
+  return {
+    type: "verdict",
+    ts: new Date().toISOString(),
+    problem_hash: input.problemHash,
+    ...(input.structureHash ? { structure_hash: input.structureHash } : {}),
+    verdict: input.verdict,
+    ...(input.fidelityRerolled !== undefined ? { fidelity_rerolled: input.fidelityRerolled } : {}),
+    ...(input.fidelityReported !== undefined ? { fidelity_reported: input.fidelityReported } : {}),
+  };
+}
+
+/** Read a run dir's result.toml [params] for its structure_hash/problem_hash —
+ *  the same fields Task 5's settle() stamps there. Used to key a `verdict`
+ *  stanza to the run being verified (amicode_verify only has a run_dir). */
+export function resolveRunHashes(runDir: string): { structure_hash?: string; problem_hash?: string } | undefined {
+  const result = readTomlSafe(join(runDir, "result.toml"));
+  const params = isRecord(result?.params) ? (result as Record<string, unknown>).params : undefined;
+  const p = isRecord(params) ? params : {};
+  const structure_hash = typeof p.structure_hash === "string" ? p.structure_hash : undefined;
+  const problem_hash = typeof p.problem_hash === "string" ? p.problem_hash : undefined;
+  if (structure_hash === undefined && problem_hash === undefined) return undefined;
+  return { structure_hash, problem_hash };
+}

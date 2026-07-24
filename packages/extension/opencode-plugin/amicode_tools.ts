@@ -101,6 +101,10 @@ import {
   resolveWorkspaceSpecContext,
   stampStructureHash,
   selectRecommendations,
+  attemptErrorStanza,
+  fallbackStanza,
+  verdictStanza,
+  resolveRunHashes,
 } from "./ledger_client";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
@@ -854,6 +858,24 @@ export const AmicodeTools = async (_input: unknown) => ({
         const sentinel = recordEntity(meta.slug, "run", merged as any, runStubToml(merged), {
           tool: "amicode_verify",
         });
+        // Run-ledger `verdict` stanza (learning-loops L-A/L-D): joins to the run's
+        // `solve` record on problem_hash — "verified" means verdict=agree via this
+        // join. Only possible when the run_dir's result.toml carries a problem_hash
+        // (Task 5's stamp); silently skipped otherwise (bookkeeping, never a gate).
+        if (existing.run_dir) {
+          const hashes = resolveRunHashes(existing.run_dir);
+          if (hashes?.problem_hash) {
+            appendStanza(
+              verdictStanza({
+                problemHash: hashes.problem_hash,
+                structureHash: hashes.structure_hash,
+                verdict: a.agree ? "agree" : "disagree",
+                fidelityRerolled: given(a.fidelity_rerolled) ? a.fidelity_rerolled : undefined,
+                fidelityReported: given(a.fidelity_reported) ? a.fidelity_reported : undefined,
+              }),
+            );
+          }
+        }
         const verdict = a.agree
           ? "agree = true — the re-rollout confirms the reported fidelity; the run can be promoted."
           : "agree = FALSE — the independent re-rollout disagrees; the run is UNTRUSTED and cannot be promoted. Relay this honestly.";
@@ -1153,6 +1175,57 @@ export const AmicodeTools = async (_input: unknown) => ({
         } catch (err) {
           return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
         }
+      },
+    },
+    // ── Ledger observability (learning-loops L1 Task 7) — bookkeeping tools for
+    // events the extension has no other hook into: a solvespec/problem_spec
+    // validation failure and a tier fallback both happen inside `amico run
+    // --spec` (a bash invocation the agent runs directly — the extension has no
+    // in-process gate on either), so the agent reports what it observed in the
+    // CLI's output. Mirrors amicode_recommend's own doctrine: bookkeeping AFTER
+    // the fact, driven by an explicit call describing what happened elsewhere.
+    // Both shell `amico ledger append` via ledger_client.ts — never touch
+    // runs.jsonl directly.
+    amicode_report_attempt_error: {
+      description:
+        "Record a solvespec/problem_spec VALIDATION FAILURE observed from an `amico run --spec` " +
+        "(or amico-validate) invocation's error output (L-B: repeated identical rejections are a " +
+        "spec-surface bug signal, not a user failure — this feeds that weekly report). " +
+        "Call this right after seeing a schema/gate rejection in the CLI's stderr/JSON.",
+      args: {
+        errors: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { path: { type: "string" }, msg: { type: "string" } },
+            required: [],
+          },
+          description: "[{path, msg}] — the field-precise errors from the CLI's rejection.",
+        },
+      },
+      async execute(a: { errors: Array<{ path?: string; msg?: string }> }) {
+        const slug = readActiveSlug();
+        const ok = appendStanza(attemptErrorStanza(a.errors ?? [], slug));
+        return ok
+          ? `Recorded ${a.errors?.length ?? 0} validation error(s) to the run ledger.`
+          : "Could not record validation errors to the run ledger (amico CLI unreachable) — not fatal, continuing.";
+      },
+    },
+    amicode_report_fallback: {
+      description:
+        "Record a TIER FALLBACK observed from an `amico run --spec` invocation (e.g. composed → " +
+        "free, the gate's demote_to). L-C ranks spec-coverage gaps (missing trajectory kinds, " +
+        "objective terms) by how often people actually needed them — this is that demand signal. " +
+        "Call this right after seeing a demotion in the CLI's output.",
+      args: {
+        from_tier: { type: "string", description: 'The tier the run demoted FROM, e.g. "composed".' },
+        reason: { type: "string", description: "Why it fell back (the gate's stated reason)." },
+      },
+      async execute(a: { from_tier: string; reason: string }) {
+        const ok = appendStanza(fallbackStanza(a.from_tier, a.reason));
+        return ok
+          ? `Recorded fallback from "${a.from_tier}" to the run ledger.`
+          : "Could not record the fallback to the run ledger (amico CLI unreachable) — not fatal, continuing.";
       },
     },
     // ── Veloce (spec-20260705-024341 L2) — records the autonomy-mode transition.
