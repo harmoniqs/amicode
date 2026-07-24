@@ -76,10 +76,13 @@ const SANDBOX_ENV_PASSTHROUGH = [
 // opencode ships an OTLP/HTTP exporter that stays fully DORMANT unless
 // OTEL_EXPORTER_OTLP_ENDPOINT is set (its exporter layer resolves empty
 // otherwise). We route that exporter at OUR ingest endpoint by ADDING env vars
-// to the spawn — but ONLY behind the consent gate. The var names, header names
-// (x-amicode-*) and resource-attribute keys (amicode.*) below are a BINDING
-// interface contract with the AWS ingest Lambda (RUN_CORPUS_SPEC.md); do not
-// rename or reorder-encode them.
+// to the spawn — but ONLY behind the consent gate. The var names, the auth
+// header (`Authorization: Bearer <cloud token>`), the `x-amicode-session`
+// grouping header and the resource-attribute keys (amicode.*) below are a
+// BINDING interface contract with the AWS ingest Lambda (BEARER_AUTH_SPEC.md);
+// do not rename or reorder-encode them. Identity is now the VERIFIED submitter
+// the ingest derives from the bearer token server-side — the client no longer
+// sends x-amicode-key or x-amicode-user.
 // ============================================================================
 
 /** The env keys buildTelemetryEnv can emit — the full set the live-env reconcile
@@ -116,11 +119,13 @@ export interface TelemetryContext {
   consentAnswered: boolean;
   /** `amicode.telemetry.endpoint`, trailing slash already stripped; "" = unset. */
   endpoint: string;
-  /** Ingest key from SecretStorage; "" = not set → the gate stays CLOSED. A
-   *  keyless spawn would still LOOK on (endpoint set) while every batch 401s at
-   *  the Lambda and the exporter spams retries, capturing nothing — so no key
-   *  means dormant, not empty-header transmit. */
-  key: string;
+  /** The user's Solve/cloud bearer token (from ~/.amico/cloud.json); "" = not
+   *  connected → the gate stays CLOSED. A token-less spawn would still LOOK on
+   *  (endpoint set) while every batch 401s at the ingest and the exporter spams
+   *  retries, capturing nothing — so no token means dormant, not a spawn that
+   *  transmits with no Authorization header. Rides ONLY the OTLP Authorization
+   *  header; never logged. */
+  token: string;
   /** Resource + header identity (RAW values). */
   sessionId: string;
   userId: string;
@@ -129,13 +134,13 @@ export interface TelemetryContext {
 }
 
 /** The single gate predicate: telemetry enabled AND consent answered AND an
- *  endpoint set AND a non-empty ingest key. Both the exporter env (buildTelemetryEnv)
+ *  endpoint set AND a non-empty bearer token. Both the exporter env (buildTelemetryEnv)
  *  and the span-generation config flag (experimental.openTelemetry, set in
  *  opencode_config.ts) key off THIS so they can never diverge — arming the
  *  exporter without generating spans (or vice versa) is the whole-pipeline bug
  *  this predicate prevents. */
 export function telemetryGateOpen(t: TelemetryContext | undefined): t is TelemetryContext {
-  return !!t && t.enabled && t.consentAnswered && !!t.endpoint && !!t.key;
+  return !!t && t.enabled && t.consentAnswered && !!t.endpoint && !!t.token;
 }
 
 /** The OTLP env vars per the INTERFACE CONTRACT — or {} when the consent gate is
@@ -148,12 +153,14 @@ export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<strin
     // Base URL only — opencode appends /v1/traces and /v1/logs itself.
     OTEL_EXPORTER_OTLP_ENDPOINT: t.endpoint,
     // Comma-separated key=value; opencode forwards each as an HTTP header
-    // VERBATIM (the contract does NOT URL-encode headers). The key is guaranteed
-    // non-empty here (gated above), so x-amicode-key always authenticates.
+    // VERBATIM (the contract does NOT URL-encode headers). The token is guaranteed
+    // non-empty here (gated above) and header-safe (amico_<hex>), so the ingest
+    // always authenticates it against the shared credentials table and derives
+    // the verified submitter. x-amicode-session groups the run (S3 prefix). No
+    // x-amicode-key / x-amicode-user: the token IS the identity now.
     OTEL_EXPORTER_OTLP_HEADERS: [
-      `x-amicode-key=${t.key}`,
+      `Authorization=Bearer ${t.token}`,
       `x-amicode-session=${t.sessionId}`,
-      `x-amicode-user=${t.userId}`,
     ].join(","),
     // Comma-separated; VALUES URL-encoded — opencode does decodeURIComponent
     // per value, so a branch ref like "feat/x" (its "/") survives the list.

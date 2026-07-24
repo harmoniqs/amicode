@@ -108,11 +108,15 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
 });
 
 // ============================================================================
-// Run-corpus telemetry env (feat/telemetry-env-injection). opencode's OTLP
+// Run-corpus telemetry env (feat/telemetry-bearer-auth). opencode's OTLP
 // exporter is dormant unless OTEL_EXPORTER_OTLP_ENDPOINT is set; the extension
 // wakes it by ADDING env vars to the spawn — but ONLY behind the consent gate
-// (enabled + consent answered + endpoint). The var/header/attr names are a
-// binding interface contract with the AWS ingest Lambda (RUN_CORPUS_SPEC.md).
+// (enabled + consent answered + endpoint + a cloud bearer token). Auth is now
+// `Authorization: Bearer <token from ~/.amico/cloud.json>` (REPLACES the shared
+// x-amicode-key); identity = the submitter the ingest derives from the token
+// server-side, so x-amicode-user is gone too. Only x-amicode-session remains.
+// The var/header/attr names are a binding interface contract with the AWS ingest
+// Lambda (BEARER_AUTH_SPEC.md).
 // ============================================================================
 
 describe("telemetryGateOpen — the ONE predicate the exporter env + span-generation flag share", () => {
@@ -120,13 +124,13 @@ describe("telemetryGateOpen — the ONE predicate the exporter env + span-genera
     enabled: true,
     consentAnswered: true,
     endpoint: "https://ingest.example.com",
-    key: "k",
+    token: "amico_tok",
     sessionId: "s",
     userId: "u",
     repo: "r",
     gitRef: "main",
   };
-  it("true only when enabled + consent + endpoint + key ALL hold", () => {
+  it("true only when enabled + consent + endpoint + token ALL hold", () => {
     expect(telemetryGateOpen(full)).toBe(true);
   });
   it("false if ANY axis is missing (so config flag and exporter env can never diverge)", () => {
@@ -134,26 +138,26 @@ describe("telemetryGateOpen — the ONE predicate the exporter env + span-genera
     expect(telemetryGateOpen({ ...full, enabled: false })).toBe(false);
     expect(telemetryGateOpen({ ...full, consentAnswered: false })).toBe(false);
     expect(telemetryGateOpen({ ...full, endpoint: "" })).toBe(false);
-    expect(telemetryGateOpen({ ...full, key: "" })).toBe(false);
+    expect(telemetryGateOpen({ ...full, token: "" })).toBe(false);
   });
 });
 
 describe("buildTelemetryEnv — the consent gate (4-axis truth table)", () => {
   // A fully-eligible context: all FOUR gate conditions hold (enabled + consent
-  // answered + endpoint + non-empty key). Flipping each off in turn must close
-  // the gate; only the all-true row injects.
+  // answered + endpoint + non-empty cloud token). Flipping each off in turn must
+  // close the gate; only the all-true row injects.
   const full: TelemetryContext = {
     enabled: true,
     consentAnswered: true,
     endpoint: "https://ingest.example.com",
-    key: "secret-key",
+    token: "amico_secrettoken",
     sessionId: "sess-123",
     userId: "user-abc",
     repo: "amicode",
     gitRef: "feat/x",
   };
 
-  it("enabled + consent + endpoint + key → injects the full OTLP key set", () => {
+  it("enabled + consent + endpoint + token → injects the full OTLP key set", () => {
     expect(Object.keys(buildTelemetryEnv(full)).sort()).toEqual([...TELEMETRY_ENV_KEYS].sort());
   });
   it("telemetry disabled → omits ALL (exporter stays dormant)", () => {
@@ -165,8 +169,8 @@ describe("buildTelemetryEnv — the consent gate (4-axis truth table)", () => {
   it("endpoint unconfigured → omits ALL", () => {
     expect(buildTelemetryEnv({ ...full, endpoint: "" })).toEqual({});
   });
-  it("ingest key missing → omits ALL (no keyless 401-spam that looks on but captures nothing)", () => {
-    expect(buildTelemetryEnv({ ...full, key: "" })).toEqual({});
+  it("cloud token missing → omits ALL (no token-less 401-spam that looks on but captures nothing)", () => {
+    expect(buildTelemetryEnv({ ...full, token: "" })).toEqual({});
   });
   it("undefined context → omits ALL", () => {
     expect(buildTelemetryEnv(undefined)).toEqual({});
@@ -178,7 +182,7 @@ describe("buildTelemetryEnv — the interface contract (names, header/attr encod
     enabled: true,
     consentAnswered: true,
     endpoint: "https://ingest.example.com",
-    key: "secret-key",
+    token: "amico_secrettoken",
     sessionId: "sess-123",
     userId: "user-abc",
     repo: "amicode",
@@ -188,12 +192,21 @@ describe("buildTelemetryEnv — the interface contract (names, header/attr encod
   it("endpoint passes through verbatim (the resolver already stripped any trailing slash)", () => {
     expect(buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_ENDPOINT).toBe("https://ingest.example.com");
   });
-  it("headers are the contract's three x-amicode-* pairs, VERBATIM (not URL-encoded)", () => {
+  it("headers are Bearer auth + x-amicode-session ONLY, VERBATIM (not URL-encoded)", () => {
     expect(buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_HEADERS).toBe(
-      "x-amicode-key=secret-key,x-amicode-session=sess-123,x-amicode-user=user-abc",
+      "Authorization=Bearer amico_secrettoken,x-amicode-session=sess-123",
     );
-    // header values ride raw — an "@" in the user id is NOT percent-encoded
-    expect(buildTelemetryEnv({ ...full, userId: "u@x" }).OTEL_EXPORTER_OTLP_HEADERS).toContain("x-amicode-user=u@x");
+    // the token rides raw in the Authorization header value (no percent-encoding)
+    expect(buildTelemetryEnv({ ...full, token: "amico_deadBEEF" }).OTEL_EXPORTER_OTLP_HEADERS).toContain(
+      "Authorization=Bearer amico_deadBEEF",
+    );
+  });
+  it("DROPS the shared x-amicode-key and x-amicode-user headers (identity = verified submitter server-side)", () => {
+    const headers = buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_HEADERS;
+    expect(headers).not.toContain("x-amicode-key");
+    expect(headers).not.toContain("x-amicode-user");
+    // and it is exactly the two remaining pairs, nothing else
+    expect(headers.split(",")).toHaveLength(2);
   });
   it("resource attributes carry the amicode.* keys with URL-ENCODED values + fixed client=vscode", () => {
     expect(buildTelemetryEnv(full).OTEL_RESOURCE_ATTRIBUTES).toBe(
@@ -224,7 +237,7 @@ describe("buildServerSpawnEnv — telemetry integration (gate applied through th
     enabled: true,
     consentAnswered: true,
     endpoint: "https://ingest.example.com",
-    key: "k",
+    token: "amico_tok",
     sessionId: "s",
     userId: "u",
     repo: "r",
