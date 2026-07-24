@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { accessSync, constants as fsConstants, createWriteStream, existsSync, mkdirSync } from "node:fs";
+import { accessSync, constants as fsConstants, createWriteStream, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import * as readline from "node:readline";
-import { stringify as tomlStringify } from "smol-toml";
+import { parse as tomlParse, stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
+import { appendRecord, type SolveOutcome, type SolveRecord, type SolveSummary } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
 import {
   appendIndex,
@@ -55,6 +56,153 @@ function resolveExecutable(bin: string): void {
 function signalCode(signal: NodeJS.Signals | null): number {
   const n = signal ? (osConstants.signals as Record<string, number>)[signal] : undefined;
   return 128 + (n ?? 1);
+}
+
+// ── the `solve` ledger stanza (Plan 3 / L1 Task 5) ──────────────────────────
+// After a run settles, derive + append ONE `solve` record from the run dir's
+// on-disk artifacts. Design split (engineering-brief mandate, not a guess):
+//   - structure_hash / problem_hash / versions / converged  ← result.toml [params]
+//     (the "regime the run actually solved" — self-describing, additionalProperties:true)
+//   - base summary (platform/template/trajectory/N/T/goal/solver/strategy) AND
+//     the recommendable knobs (Q/R/du_bound/max_iter/integrator — CRITICAL: without
+//     these ledger_query's medians are permanently empty, silently breaking L-A)
+//     ← the solvespec, i.e. the typed ProblemSpec that run.toml's script_path
+//     resolves to (inline problem_spec → <runDir>/problem.toml; a path problem_spec
+//     → that path directly; script_path routing to an authored .jl script has no
+//     ProblemSpec, so no ledger record is derivable — see readSpecFromScriptPath).
+// Any read/parse/validation failure is caught and logged: a ledger hiccup must
+// NEVER fail the run itself.
+function readTomlSafe(path: string): Record<string, unknown> | undefined {
+  if (!existsSync(path)) return undefined;
+  try {
+    return tomlParse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** No explicit "platform" field exists on the typed ProblemSpec — derive one from
+ *  `system.template` (an enum of System type names, e.g. "MultiTransmonSystem")
+ *  by stripping the "System" suffix and snake_casing. Best-effort/informational
+ *  only: `structure_hash`, not this string, is the actual ledger join key. */
+function platformFromTemplate(template: string): string {
+  const base = template.endsWith("System") ? template.slice(0, -"System".length) : template;
+  return base.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+}
+
+/** A script_path is only a ProblemSpec (not an authored .jl script) when it parses
+ *  as TOML AND has a `system` table (the ProblemSpec's one universally-required
+ *  field) — an authored Julia script is not valid TOML and fails the parse. */
+function readSpecFromScriptPath(scriptPath: string): Record<string, unknown> | undefined {
+  const spec = readTomlSafe(scriptPath);
+  if (!spec || !isRecord(spec.system)) return undefined;
+  return spec;
+}
+
+/** Base summary + recommendable-knob fields derived from a typed ProblemSpec,
+ *  mirroring @amicode/schema hashing.ts's structureFields/fullDict field mapping
+ *  (kept in sync deliberately — same source object, same field names). */
+function summaryFromProblemSpec(spec: Record<string, unknown>): Partial<SolveSummary> {
+  const system = isRecord(spec.system) ? spec.system : {};
+  const goal = isRecord(spec.goal) ? spec.goal : {};
+  const pulse = isRecord(spec.pulse) ? spec.pulse : {};
+  const problem = isRecord(spec.problem) ? spec.problem : {};
+  const solver = isRecord(spec.solver) ? spec.solver : {};
+  const trajectory = isRecord(spec.trajectory) ? spec.trajectory : {};
+  const integrator = isRecord(spec.integrator) ? spec.integrator : {};
+
+  const out: Partial<SolveSummary> & Record<string, unknown> = {};
+  if (typeof system.template === "string") out.platform = platformFromTemplate(system.template);
+  if (typeof problem.template === "string") out.template = problem.template;
+  if (typeof trajectory.kind === "string") out.trajectory = trajectory.kind;
+  else if (typeof goal.kind === "string") out.trajectory = goal.kind;
+  if (typeof problem.N === "number") out.N = problem.N;
+  if (typeof pulse.T === "number") out.T = pulse.T;
+  if (typeof goal.gate === "string") out.goal = goal.gate;
+  else if (typeof goal.kind === "string") out.goal = goal.kind;
+  out.solver = typeof solver.backend === "string" ? solver.backend : "ipopt";
+  out.strategy = typeof solver.strategy === "string" ? solver.strategy : "direct";
+  const sysParams = isRecord(system.params) ? system.params : undefined;
+  if (sysParams && typeof sysParams.levels === "number") out.levels = sysParams.levels;
+
+  // CRITICAL (Task-4 handoff): the recommendable knobs — ledger_query's medians
+  // are permanently empty without these, which silently breaks L-A retrieval.
+  if (typeof problem.Q === "number") out.Q = problem.Q;
+  if (typeof problem.R === "number") out.R = problem.R;
+  if (typeof problem.du_bound === "number") out.du_bound = problem.du_bound;
+  if (typeof solver.max_iter === "number") out.max_iter = solver.max_iter;
+  if (typeof integrator.alg === "string") out.integrator = integrator.alg;
+  return out;
+}
+
+const SUMMARY_REQUIRED = ["platform", "template", "trajectory", "N", "T", "goal", "solver", "strategy"] as const;
+function isCompleteSummary(s: Partial<SolveSummary>): s is SolveSummary {
+  return SUMMARY_REQUIRED.every((k) => s[k] !== undefined);
+}
+
+function emitSolveStanza(runDir: string): void {
+  try {
+    const result = readTomlSafe(join(runDir, "result.toml"));
+    if (!result) return; // no result written (e.g. a bare script that doesn't emit one) — nothing to ledger
+
+    const params = isRecord(result.params) ? result.params : {};
+    const structureHash = params.structure_hash;
+    const problemHash = params.problem_hash;
+    if (typeof structureHash !== "string" || typeof problemHash !== "string") return; // no join key — skip
+
+    const manifest = readTomlSafe(join(runDir, "run.toml"));
+    const scriptPath = typeof manifest?.script_path === "string" ? manifest.script_path : undefined;
+    const spec = scriptPath ? readSpecFromScriptPath(scriptPath) : undefined;
+    if (!spec) return; // base summary (per the design split above) comes from the solvespec only
+
+    const summary = summaryFromProblemSpec(spec);
+    if (!isCompleteSummary(summary)) return;
+
+    const fidelity = typeof result.fidelity === "number" ? result.fidelity : undefined;
+    const iterations = typeof result.iterations === "number" ? result.iterations : undefined;
+    if (fidelity === undefined || iterations === undefined) return; // required by the ledger-record schema
+
+    const outcome: SolveOutcome = {
+      converged: typeof params.converged === "boolean" ? params.converged : true,
+      fidelity,
+      iterations,
+    };
+    if (typeof result.wall_seconds === "number") outcome.wall_s = result.wall_seconds;
+
+    const tier =
+      typeof manifest?.tier === "string" ? manifest.tier : typeof params.tier === "string" ? params.tier : "unspecified";
+
+    const rec: SolveRecord = {
+      type: "solve",
+      ts: new Date().toISOString(),
+      structure_hash: structureHash,
+      problem_hash: problemHash,
+      kind: typeof params.kind === "string" ? params.kind : "control",
+      tier,
+      summary,
+      // $AMICO_LEDGER_SOURCE lets L-I's nightly replay stamp "replay" so its runs
+      // never pollute L-A's per-structure priors (spec: priors are source="user" only).
+      source: (process.env.AMICO_LEDGER_SOURCE as SolveRecord["source"] | undefined) ?? "user",
+      outcome,
+    };
+    if (isRecord(params.versions)) {
+      const versions: Record<string, string> = {};
+      for (const [k, v] of Object.entries(params.versions)) if (typeof v === "string") versions[k] = v;
+      rec.versions = versions;
+    }
+    if (typeof params.session === "string") rec.session = params.session;
+    if (typeof params.problem === "string") rec.problem = params.problem;
+    if (typeof params.warm_start === "string" || params.warm_start === null)
+      rec.warm_start = params.warm_start as string | null;
+
+    appendRecord(rec); // validates against the ledger-record schema; throws on invalid/oversize
+  } catch (e) {
+    process.stderr.write(`amico-run: failed to emit solve ledger stanza: ${(e as Error).message}\n`);
+  }
 }
 
 export class LocalExecutor implements Executor {
@@ -151,6 +299,7 @@ export class LocalExecutor implements Executor {
         // any FINISHED a script faked (spec §5 step 8)
         process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
       }
+      emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
       logStream.end();
       events.push({ kind: "finished", status, exitCode });
       events.close();
