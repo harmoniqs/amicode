@@ -21,6 +21,7 @@ kind_for_filename(path) = begin
     b == "run.toml" ? "run" :
     b == "result.toml"   ? "result"   :
     b == "lab.toml"      ? "lab"       :
+    b == "problem.toml"  ? "problemspec" :
     b == "FINISHED"      ? "finished"  : nothing
 end
 

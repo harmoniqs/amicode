@@ -1,0 +1,30 @@
+# Valid `control` ProblemSpec — CZ with free-phase optimization. Exercises the
+# free_phase=true -> integrator.kind ∈ {exponential, spline} compat branch
+# (positive case: spline satisfies it).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "MultiTransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "CZ"
+subsystem_levels = [3, 3]
+
+[pulse]
+kind = "cubic_spline"
+T = 100.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 100
+free_phase = true
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"
+
+[solver]
+backend = "ipopt"

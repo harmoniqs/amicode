@@ -1,0 +1,41 @@
+# Valid `control` ProblemSpec — EnergyPolish recipe: goal as a hard constraint
+# plus smoothness/bending-energy objectives. Exercises goal_treatment=constraint,
+# final_fidelity, and the [[problem.objectives]] array (hermite_bending_energy is a
+# FULL-variant objective kind).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+goal_treatment = "constraint"
+final_fidelity = 0.9999
+R_du = 0.001
+
+[[problem.objectives]]
+kind = "hermite_bending_energy"
+weight = 1.0
+
+[[problem.objectives]]
+kind = "reg_du"
+weight = 0.5
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"
+
+[solver]
+backend = "ipopt"

@@ -1,0 +1,22 @@
+# Valid `rollout` ProblemSpec — the second oneOf branch (kind = "rollout").
+# Exercises the rollout required set (input_pulse, rollout_kind, system) plus the
+# [report] and [referee] sub-blocks (referee independence, Plan 1).
+schema_version = 1
+kind = "rollout"
+input_pulse = "catalog:abc123"
+rollout_kind = "unitary"
+alg = "tsit5"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[report]
+fidelity = true
+populations = false
+
+[referee]
+run = "r20260101-000000Z-aaaa"
+solve_knots = 40
+solve_integrator = "spline"
+fidelity_reported = 0.9987

@@ -1,0 +1,35 @@
+# Valid `control` ProblemSpec — single-transmon X gate, cubic-spline pulse.
+# Exercises: SplinePulseProblem→cubic_spline compat branch, regularizer weights,
+# an explicit [integrator] block. schema_version is the INTEGER 1 (review #6).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+params = { levels = 3 }
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+Q = 100000.0
+R_u = 0.0001
+R_du = 0.00001
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"
+
+[solver]
+backend = "ipopt"
+device = "cpu"
+max_iter = 300

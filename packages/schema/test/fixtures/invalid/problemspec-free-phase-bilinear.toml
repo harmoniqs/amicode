@@ -1,0 +1,29 @@
+# INVALID — free_phase=true with a bilinear integrator. The free-phase compat
+# branch requires integrator.kind ∈ {exponential, spline}; bilinear (the
+# Piccolo/PWC default) cannot carry free phases, so the if/then rejects.
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "MultiTransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "CZ"
+subsystem_levels = [3, 3]
+
+[pulse]
+kind = "cubic_spline"
+T = 100.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 100
+free_phase = true
+
+[integrator]
+kind = "bilinear"
+
+[solver]
+backend = "ipopt"

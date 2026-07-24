@@ -9,7 +9,10 @@ include(joinpath(@__DIR__, "validate.jl"))
 using .AmicoValidate: validate_file, SCHEMA_DIR
 
 const FIX = normpath(joinpath(@__DIR__, "..", "test", "fixtures"))
-const KINDS = ["run", "result", "lab", "solvespec", "catalog-entry", "finished"]
+const KINDS = ["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec"]
+
+problemspec_fixtures(dir) = sort(filter(
+    f -> startswith(f, "problemspec-") && endswith(f, ".toml"), readdir(dir)))
 
 @testset "0.1d Julia round-trip against the shared schemas" begin
     @testset "valid golden corpus conforms" begin
@@ -26,6 +29,23 @@ const KINDS = ["run", "result", "lab", "solvespec", "catalog-entry", "finished"]
         @test occursin("pulse_path",       validate_file(joinpath(FIX, "invalid", "catalog-entry.toml"), "catalog-entry"))
         @test occursin("/status",          validate_file(joinpath(FIX, "invalid", "finished.toml"), "finished"))
         @test validate_file(joinpath(FIX, "invalid", "solvespec.toml"), "solvespec") !== nothing
+    end
+
+    @testset "problemspec dual-validation (JSONSchema.jl == ajv accept/reject)" begin
+        # The SAME valid/invalid corpus the TS ajv sweep (test/problemspec.test.ts)
+        # runs, but through JSONSchema.jl. Both validators MUST agree on every file
+        # (plan review correction #5): this is the ajv-vs-Julia conformance guarantee
+        # for the first oneOf + if/then schema. A divergence reds CI here.
+        vdir = joinpath(FIX, "valid"); idir = joinpath(FIX, "invalid")
+        vfix = problemspec_fixtures(vdir); ifix = problemspec_fixtures(idir)
+        @test length(vfix) >= 4
+        @test length(ifix) >= 4
+        for f in vfix
+            @test validate_file(joinpath(vdir, f), "problemspec") === nothing
+        end
+        for f in ifix
+            @test validate_file(joinpath(idir, f), "problemspec") !== nothing
+        end
     end
 
     @testset "schema_version policy" begin
