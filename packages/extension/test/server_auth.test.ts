@@ -108,15 +108,17 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
 });
 
 // ============================================================================
-// Run-corpus telemetry env (feat/telemetry-bearer-auth). opencode's OTLP
+// Run-corpus telemetry env (feat/telemetry-token-header). opencode's OTLP
 // exporter is dormant unless OTEL_EXPORTER_OTLP_ENDPOINT is set; the extension
 // wakes it by ADDING env vars to the spawn — but ONLY behind the consent gate
-// (enabled + consent answered + endpoint + a cloud bearer token). Auth is now
-// `Authorization: Bearer <token from ~/.amico/cloud.json>` (REPLACES the shared
-// x-amicode-key); identity = the submitter the ingest derives from the token
-// server-side, so x-amicode-user is gone too. Only x-amicode-session remains.
-// The var/header/attr names are a binding interface contract with the AWS ingest
-// Lambda (BEARER_AUTH_SPEC.md).
+// (enabled + consent answered + endpoint + a cloud bearer token). The token
+// (from ~/.amico/cloud.json) rides the custom `x-amicode-token` header, NOT
+// `Authorization: Bearer` — the ingest sits behind CloudFront OAC, which signs
+// origin requests with SigV4 in `Authorization` and would clobber a token there.
+// Identity = the submitter the ingest derives from the token server-side, so
+// x-amicode-user is gone too. Only x-amicode-session remains. The var/header/attr
+// names are a binding interface contract with the AWS ingest Lambda
+// (BEARER_AUTH_SPEC.md).
 // ============================================================================
 
 describe("telemetryGateOpen — the ONE predicate the exporter env + span-generation flag share", () => {
@@ -192,14 +194,20 @@ describe("buildTelemetryEnv — the interface contract (names, header/attr encod
   it("endpoint passes through verbatim (the resolver already stripped any trailing slash)", () => {
     expect(buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_ENDPOINT).toBe("https://ingest.example.com");
   });
-  it("headers are Bearer auth + x-amicode-session ONLY, VERBATIM (not URL-encoded)", () => {
+  it("headers are x-amicode-token + x-amicode-session ONLY, VERBATIM (not URL-encoded)", () => {
     expect(buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_HEADERS).toBe(
-      "Authorization=Bearer amico_secrettoken,x-amicode-session=sess-123",
+      "x-amicode-token=amico_secrettoken,x-amicode-session=sess-123",
     );
-    // the token rides raw in the Authorization header value (no percent-encoding)
+    // the token rides raw in the x-amicode-token header value (no percent-encoding)
     expect(buildTelemetryEnv({ ...full, token: "amico_deadBEEF" }).OTEL_EXPORTER_OTLP_HEADERS).toContain(
-      "Authorization=Bearer amico_deadBEEF",
+      "x-amicode-token=amico_deadBEEF",
     );
+  });
+  it("carries the token on x-amicode-token, NOT Authorization/Bearer (CloudFront OAC owns Authorization)", () => {
+    const headers = buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_HEADERS;
+    expect(headers).not.toContain("Authorization");
+    expect(headers).not.toContain("Bearer");
+    expect(headers).toContain("x-amicode-token=amico_secrettoken");
   });
   it("DROPS the shared x-amicode-key and x-amicode-user headers (identity = verified submitter server-side)", () => {
     const headers = buildTelemetryEnv(full).OTEL_EXPORTER_OTLP_HEADERS;
