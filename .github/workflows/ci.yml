@@ -59,6 +59,10 @@ jobs:
           # the non-filename schemas (AC5: all five) via --schema
           $V packages/schema/test/fixtures/valid/solvespec.toml --schema solvespec
           $V packages/schema/test/fixtures/valid/catalog-entry.toml --schema catalog-entry
+          # ledger-record (Plan 3 / L1 Task 9): oneOf-on-`type`, JSON on disk (JSONL
+          # lines in the real ~/.amico/ledger/runs.jsonl) — validateFile parses by
+          # .json extension, not TOML.
+          $V packages/schema/test/fixtures/valid/ledger-record.json --schema ledger-record
   schema-roundtrip:
     # 0.1d: the Julia round-trip against the SAME packages/schema/schemas/*.json the
     # TS side uses (cross-language anti-drift). Fast tier — JSONSchema only, NO Piccolo
