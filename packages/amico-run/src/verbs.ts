@@ -17,6 +17,7 @@ import { catalogVerb } from "./catalog_verb.js";
 import { vaultVerb } from "./vault_verb.js";
 import { deviceVerb } from "./device_verb.js";
 import { noteVerb } from "./note_verb.js";
+import { ledgerVerb } from "./ledger_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -97,4 +98,15 @@ const note: Verb = {
   run: noteVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note];
+// ledger — the run-ledger single writer (learning-loops L1). `append` (extension
+// stanzas shell into this — never touch runs.jsonl directly) + `query` (L-A honest
+// priors: medians/IQR + "n runs, m verified" + interim-capped confidence).
+const ledger: Verb = {
+  name: "ledger",
+  summary: "append a run-ledger record (single writer) / query honest priors at a structure_hash (learning-loops L-A)",
+  generalizes: "the amicode learning substrate: the run ledger + amicode_recommend retrieval",
+  slice: "learning-loops (L1)",
+  run: ledgerVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger];
