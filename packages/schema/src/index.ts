@@ -29,6 +29,14 @@ import problemspecSchema from "../schemas/problemspec.schema.json" with { type: 
 // note below and the SUPPORTED_VERSIONS_BY_KIND exclusion.
 import ledgerRecordSchema from "../schemas/ledger-record.schema.json" with { type: "json" };
 
+// Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
+// root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
+// Task 6) can `import { structureHash } from "@amicode/schema"` instead of a
+// package-internal `../src/hashing.js` relative path (this package has no
+// "exports" map, so a subpath import would work, but the root export is the
+// established, documented seam every other consumer uses — see `validate` below).
+export { structureHash, problemHash, canonicalJson, fullDict, structureFields } from "./hashing.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
