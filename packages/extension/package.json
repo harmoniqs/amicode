@@ -256,8 +256,8 @@
         },
         "amicode.telemetry.endpoint": {
           "type": "string",
-          "default": "",
-          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key."
+          "default": "https://4pbhrnv2oyfz2q4isvaouwnt4i0hqchl.lambda-url.us-east-1.on.aws",
+          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the STAGING corpus for internal alpha; will switch to the production endpoint once prod run_corpus is enabled. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key; the token must be valid for the account behind this endpoint (staging default → staging-minted token)."
         }
       }
     },
