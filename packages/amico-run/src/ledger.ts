@@ -130,6 +130,12 @@ export function ledgerPath(): string {
  *  Throws when the serialized line exceeds PIPE_BUF (would break O_APPEND
  *  atomicity) — a loud failure beats silent interleaving. */
 export function appendRecord(rec: LedgerRecord): void {
+  // Validate on write — a malformed record must never land as a ledger line (an
+  // honest ledger has no garbage). Throw with the field-precise errors.
+  const v = validate(rec, "ledger-record");
+  if (!v.ok) {
+    throw new Error(`invalid ledger record: ${v.errors.join("; ")}`);
+  }
   const line = JSON.stringify(rec) + "\n";
   const bytes = Buffer.byteLength(line, "utf8");
   if (bytes > PIPE_BUF) {
@@ -154,8 +160,3 @@ export function readRecords(): LedgerRecord[] {
     .filter((l) => l.trim().length > 0)
     .map((l) => JSON.parse(l) as LedgerRecord);
 }
-
-// Task 2 (ledger-record schema) wires validate() into appendRecord above; the
-// import is kept here so that wiring is a one-line change. Reference it defensively
-// so an unused-import lint never trips before Task 2 lands.
-void validate;

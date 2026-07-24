@@ -14,7 +14,10 @@ const hasErr = (errs: string[], needle: string) => errs.some((e) => e.includes(n
 
 // ── the shared golden corpus (also consumed by 0.1c CLI + 0.1d Julia round-trip) ──
 describe("valid golden fixtures validate clean", () => {
-  for (const kind of SCHEMA_KINDS) {
+  // ledger-record is JSONL ops-data (runs.jsonl), not a TOML run-dir artifact, so it
+  // carries no golden .toml fixture and is not part of the Julia round-trip corpus —
+  // it has its own dedicated coverage in ledger-record.test.ts.
+  for (const kind of SCHEMA_KINDS.filter((k) => k !== "ledger-record")) {
     it(`${kind}: fixture conforms`, () => {
       const r = validateFile(fixtureFile(kind), kind);
       expect(r.errors).toEqual([]);
@@ -24,9 +27,9 @@ describe("valid golden fixtures validate clean", () => {
 });
 
 describe("schema set + exports", () => {
-  it("exposes all five versioned schemas + the FINISHED sub-shape + the problemspec kind", () => {
+  it("exposes all five versioned schemas + the FINISHED sub-shape + the problemspec + ledger-record kinds", () => {
     expect(new Set(SCHEMA_KINDS)).toEqual(
-      new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec"]),
+      new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec", "ledger-record"]),
     );
   });
   it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v4 (hpc tier + remote executor + problem_spec); the rest v1", () => {

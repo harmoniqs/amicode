@@ -24,6 +24,10 @@ import catalogEntrySchema from "../schemas/catalog-entry.schema.json" with { typ
 // emitted schemas for the cross-repo vendoring-drift gate). Regenerate via each repo's
 // src/specs/schema/regenerate.jl.
 import problemspecSchema from "../schemas/problemspec.schema.json" with { type: "json" };
+// ledger-record is a top-level `oneOf` discriminated on `type` (six record kinds);
+// like problemspec it has NO top-level properties.schema_version — see the SCHEMAS
+// note below and the SUPPORTED_VERSIONS_BY_KIND exclusion.
+import ledgerRecordSchema from "../schemas/ledger-record.schema.json" with { type: "json" };
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -45,6 +49,12 @@ const SCHEMAS = {
   // each branch, so it has no top-level `properties.schema_version` for the version
   // map to read (plan review correction #6 — same pattern as ledger-record).
   problemspec: problemspecSchema,
+  // Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): ledger-record is a
+  // top-level `oneOf` discriminated on `type` with NO top-level
+  // properties.schema_version — including it in the version map would read
+  // `.properties.schema_version` off an undefined and crash @amicode/schema at load
+  // (Plan 3 review correction #1, exactly the problemspec case).
+  "ledger-record": ledgerRecordSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -55,16 +65,16 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  schemas are the single source of truth; this export just surfaces them.
  *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes;
  *  solvespec v4 also adds problem_spec, the typed ProblemSpec runner target);
- *  the rest remain v1 and bump independently. `finished` (no schema_version) and
- *  `problemspec` (integer enum inside a top-level oneOf — no top-level
- *  properties.schema_version) are both excluded from this string-version map. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec">, string[]> =
+ *  the rest remain v1 and bump independently. `finished` (no schema_version),
+ *  `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
+ *  top-level properties.schema_version) are excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]> =
   Object.fromEntries(
     (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),
-  ) as Record<Exclude<SchemaKind, "finished" | "problemspec">, string[]>;
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]>;
 
 export interface Validation {
   ok: boolean;

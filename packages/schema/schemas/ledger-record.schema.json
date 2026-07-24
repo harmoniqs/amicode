@@ -1,0 +1,133 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/ledger-record/v1",
+  "title": "amico run-ledger record",
+  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the six record kinds (solve|verdict|attempt_error|fallback|override|burn). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
+  "oneOf": [
+    {
+      "title": "solve",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "structure_hash", "problem_hash", "kind", "tier", "summary", "source", "outcome"],
+      "properties": {
+        "type": { "const": "solve" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "problem": { "type": "string", "description": "problem slug" },
+        "structure_hash": { "type": "string" },
+        "problem_hash": { "type": "string" },
+        "kind": { "type": "string" },
+        "tier": { "type": "string" },
+        "summary": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["platform", "template", "trajectory", "N", "T", "goal", "solver", "strategy"],
+          "properties": {
+            "platform": { "type": "string" },
+            "template": { "type": "string" },
+            "trajectory": { "type": "string" },
+            "N": { "type": "number" },
+            "T": { "type": "number" },
+            "goal": { "type": "string" },
+            "solver": { "type": "string" },
+            "strategy": { "type": "string" },
+            "levels": { "type": "number" }
+          }
+        },
+        "warm_start": { "type": ["string", "null"] },
+        "source": { "enum": ["user", "replay", "simulated"] },
+        "outcome": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["converged", "fidelity", "iterations"],
+          "properties": {
+            "converged": { "type": "boolean" },
+            "fidelity": { "type": "number" },
+            "iterations": { "type": "number" },
+            "wall_s": { "type": "number" }
+          }
+        },
+        "versions": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    },
+    {
+      "title": "verdict",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "problem_hash", "verdict"],
+      "properties": {
+        "type": { "const": "verdict" },
+        "ts": { "type": "string" },
+        "problem_hash": { "type": "string" },
+        "structure_hash": { "type": "string" },
+        "verdict": { "enum": ["agree", "disagree"] },
+        "fidelity_rerolled": { "type": "number" },
+        "fidelity_reported": { "type": "number" }
+      }
+    },
+    {
+      "title": "attempt_error",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "errors"],
+      "properties": {
+        "type": { "const": "attempt_error" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "path": { "type": "string" },
+              "msg": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "title": "fallback",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "from_tier", "reason"],
+      "properties": {
+        "type": { "const": "fallback" },
+        "ts": { "type": "string" },
+        "from_tier": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    {
+      "title": "override",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "param", "recommended", "applied", "structure_hash", "auto_accepted"],
+      "properties": {
+        "type": { "const": "override" },
+        "ts": { "type": "string" },
+        "param": { "type": "string" },
+        "recommended": { "type": ["number", "string", "boolean", "null"] },
+        "applied": { "type": ["number", "string", "boolean", "null"] },
+        "structure_hash": { "type": "string" },
+        "auto_accepted": { "type": "boolean" }
+      }
+    },
+    {
+      "title": "burn",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "class", "mechanism"],
+      "properties": {
+        "type": { "const": "burn" },
+        "ts": { "type": "string" },
+        "class": { "type": "string" },
+        "mechanism": { "type": "string" },
+        "receipt": { "type": "string" },
+        "fixture": { "type": "string" },
+        "prevention": { "type": "string" }
+      }
+    }
+  ]
+}
