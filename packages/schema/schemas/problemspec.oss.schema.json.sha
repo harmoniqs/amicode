@@ -4,4 +4,5 @@
 # NOTE: kept byte-identical to the emitted file; see the .full sidecar for rationale.
 repo = "harmoniqs/Piccolo.jl"
 sha = "c3884122"
+path = "src/specs/schema/problemspec.oss.schema.json"
 variant = "oss"

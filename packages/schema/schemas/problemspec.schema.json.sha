@@ -7,4 +7,5 @@
 repo = "harmoniqs/Piccolissimo.jl"
 sha = "9098f6f"
 piccolo_sha = "c3884122"
+path = "src/specs/schema/problemspec.full.schema.json"
 variant = "full"
