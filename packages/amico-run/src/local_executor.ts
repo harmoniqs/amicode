@@ -3,6 +3,7 @@ import { accessSync, constants as fsConstants, createWriteStream, existsSync, mk
 import { constants as osConstants } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import * as readline from "node:readline";
+import { stringify as tomlStringify } from "smol-toml";
 import { EventQueue } from "./event_queue.js";
 import { classifyLine } from "./telemetry.js";
 import {
@@ -28,6 +29,11 @@ import {
 import pkg from "../package.json" with { type: "json" };
 const ORCHESTRATOR_VERSION = pkg.version; // single source of truth (esbuild inlines the JSON)
 
+// solvespec v4 problem_spec routing: instead of running an authored script, drive
+// the generic typed-spec runner. `julia -e '<PROBLEM_SPEC_RUNNER>' <path>` puts the
+// spec path at ARGS[1]; cwd is the run dir, so run_dir=pwd() lands artifacts there.
+const PROBLEM_SPEC_RUNNER = "using Piccolo; Piccolo.Specs.solve_spec(ARGS[1]; run_dir=pwd())";
+
 function resolveExecutable(bin: string): void {
   const candidates = bin.includes("/")
     ? [resolve(bin)]
@@ -52,10 +58,30 @@ function signalCode(signal: NodeJS.Signals | null): number {
 }
 
 export class LocalExecutor implements Executor {
-  async submit(scriptPath: string, opts: SubmitOpts = {}): Promise<RunHandle> {
+  async submit(scriptPath: string | undefined, opts: SubmitOpts = {}): Promise<RunHandle> {
     // ---- step 1 (spec §5): validate config; failures here create NO run dir ----
-    const script = resolve(scriptPath);
-    if (!existsSync(script)) throw new ConfigError(`script not found: ${script}`);
+    // Two shapes: a normal script run, or a v4 problem_spec run (route to
+    // Piccolo.Specs.solve_spec). For problem_spec, `script` (recorded as the
+    // run.toml script_path) is the spec artifact: a string path resolves + must
+    // exist now; an inline object is written to <runDir>/problem.toml AFTER the
+    // manifest (path known once runDir exists — filled in step 2 below).
+    const problemSpec = opts.spec?.problem_spec;
+    const inlineProblemSpec = problemSpec !== undefined && typeof problemSpec !== "string";
+    let script: string;
+    let problemSpecPath: string | undefined; // absolute path passed to solve_spec as ARGS[1]
+    if (problemSpec !== undefined) {
+      if (typeof problemSpec === "string") {
+        problemSpecPath = resolve(problemSpec);
+        if (!existsSync(problemSpecPath)) throw new ConfigError(`problem_spec not found: ${problemSpecPath}`);
+        script = problemSpecPath;
+      } else {
+        script = ""; // filled after runDir exists (inline → <runDir>/problem.toml)
+      }
+    } else {
+      if (scriptPath === undefined) throw new ConfigError("no script or problem_spec given");
+      script = resolve(scriptPath);
+      if (!existsSync(script)) throw new ConfigError(`script not found: ${script}`);
+    }
     const juliaBin = opts.julia?.julia ?? "julia";
     resolveExecutable(juliaBin);
     const lab = opts.lab ?? "default";
@@ -71,6 +97,12 @@ export class LocalExecutor implements Executor {
     const runId = generateRunId(runsRoot);
     const runDir = join(runsRoot, runId);
     mkdirSync(runDir);
+    // inline problem_spec: its problem.toml lives in the run dir — now that runDir
+    // exists, resolve the path so run.toml's script_path records it (written next).
+    if (inlineProblemSpec) {
+      problemSpecPath = join(runDir, "problem.toml");
+      script = problemSpecPath;
+    }
     const createdAt = new Date().toISOString();
     writeManifest(runDir, {
       // spec C: --spec launches stamp tier + hashes and bump to v2; bare runs stay v1
@@ -85,6 +117,10 @@ export class LocalExecutor implements Executor {
       tier: opts.spec?.tier,
       hashes: opts.spec?.hashes,
     });
+    // manifest is FIRST (above); an inline problem_spec's problem.toml follows it,
+    // then solvespec.json — the run-dir contract's ordering is preserved.
+    if (inlineProblemSpec)
+      atomicWriteFile(runDir, "problem.toml", tomlStringify(problemSpec as Record<string, unknown>));
     if (opts.spec) atomicWriteFile(runDir, "solvespec.json", opts.spec.canonical + "\n");
     appendIndex(runsRoot, runId, createdAt, script);
     updateLatest(runsRoot, runId);
@@ -93,7 +129,9 @@ export class LocalExecutor implements Executor {
     const args: string[] = [];
     if (opts.julia?.project) args.push(`--project=${opts.julia.project}`);
     if (opts.julia?.sysimage) args.push(`--sysimage=${opts.julia.sysimage}`);
-    args.push(script);
+    // problem_spec → the generic typed-spec runner; else the authored script.
+    if (problemSpecPath !== undefined) args.push("-e", PROBLEM_SPEC_RUNNER, problemSpecPath);
+    else args.push(script);
 
     const events = new EventQueue<RunEvent>();
     const logStream = createWriteStream(join(runDir, "run.log"), { flags: "a" });

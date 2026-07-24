@@ -21,6 +21,12 @@ export interface SpecStamp {
   hashes?: Record<string, string>; // incl. gate-computed spec_hash
   julia_binary?: string; // resolved julia bin — the free-tier verify harness runs under it
   env_project?: string; // resolved env project — --project for the harness
+  // solvespec v4: a typed Piccolo ProblemSpec (path string OR inline object). When
+  // present, the executor routes to Piccolo.Specs.solve_spec instead of running a
+  // script — an object is serialized to <runDir>/problem.toml first, a path is
+  // passed straight through. The solvespec schema enforces problem_spec XOR
+  // script_path, so exactly one of {scriptPath arg, this} drives a submit().
+  problem_spec?: string | Record<string, unknown>;
 }
 
 export type RunEvent =
@@ -43,7 +49,9 @@ export interface RunHandle {
 }
 
 export interface Executor {
-  submit(scriptPath: string, opts?: SubmitOpts): Promise<RunHandle>;
+  // scriptPath is optional: a v4 solvespec carrying opts.spec.problem_spec has no
+  // script — the executor routes it to Piccolo.Specs.solve_spec instead.
+  submit(scriptPath: string | undefined, opts?: SubmitOpts): Promise<RunHandle>;
 }
 
 /** Exit-64-class fault: bad config, nothing solver-related ran. */

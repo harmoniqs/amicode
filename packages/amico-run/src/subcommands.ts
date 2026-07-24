@@ -159,7 +159,14 @@ export function estimateCommand(argv: string[]): number {
       console.error(`amico-run estimate: solvespec schema: ${validation.errors[0]}`);
       return 64;
     }
-    const sp = (specRaw as { script_path: string }).script_path;
+    const sp = (specRaw as { script_path?: string }).script_path;
+    // A v4 solvespec may carry problem_spec instead of script_path (schema:
+    // exactly one). estimate sizes a *script*, so a scriptless spec has nothing
+    // to size — reject cleanly rather than crash on an undefined path.
+    if (typeof sp !== "string") {
+      console.error(`amico-run estimate: --spec has no script_path (a problem_spec spec has no script to size)`);
+      return 64;
+    }
     // A relative script_path resolves against the spec file's directory, so a
     // spec+script pair stays relocatable. (The launch path never reads
     // script_path — the script arrives as its own argv — so no precedent binds.)
