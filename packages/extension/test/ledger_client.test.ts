@@ -218,6 +218,42 @@ describe("resolveWorkspaceSpecContext / stampStructureHash", () => {
     );
     expect(resolveWorkspaceSpecContext(slug)).toEqual({ structure_hash: "sh-2", N: 200, T: 50 });
   });
+
+  // `goal` is NEVER stamped into result.toml's [params] — settle() derives it from the
+  // solvespec — so the goal key depends on this spec read happening even when N/T are
+  // already known. Without it the goal key is silently inert and CZ priors leak into
+  // an X-gate query (structure_hash cannot tell them apart).
+  function writeRun(slug: string, runId: string, specBody: string) {
+    const wsDir = path.join(problemsRoot, slug);
+    fs.mkdirSync(wsDir, { recursive: true });
+    fs.writeFileSync(wsDir + "/runs.json", JSON.stringify({ runs: [{ run_id: runId, lab: "default", recorded: "t" }] }));
+    const runDir = path.join(homeRoot, ".amico", "runs", "default", runId);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(runDir, "result.toml"),
+      `schema_version = "1"\nfidelity = 0.999\niterations = 10\n\n[params]\nstructure_hash = "sh-g"\nproblem_hash = "ph-g"\nN = 100\nT = 100.0\n`,
+    );
+    fs.writeFileSync(path.join(runDir, "problem.toml"), specBody);
+    fs.writeFileSync(
+      path.join(runDir, "run.toml"),
+      `schema_version = "1"\nrun_id = "${runId}"\nscript_path = ${JSON.stringify(path.join(runDir, "problem.toml"))}\nlab = "default"\nlab_id = "default"\ncreated_at = "2026-07-22T00:00:00Z"\norchestrator_version = "0.1.0"\n\n[julia]\nbinary = "julia"\n`,
+    );
+  }
+
+  it("extracts goal from the solvespec's [goal].gate even when N/T are already in result.toml", () => {
+    writeRun("goal-gate", "rg1", 'kind = "control"\n\n[system]\nkind = "template"\ntemplate = "TransmonSystem"\n\n[goal]\nkind = "unitary"\ngate = "CZ"\n');
+    expect(resolveWorkspaceSpecContext("goal-gate")?.goal).toBe("CZ");
+  });
+
+  it("falls back to [goal].kind when the spec names no gate — mirrors settle()'s derivation", () => {
+    writeRun("goal-kind", "rg2", 'kind = "control"\n\n[system]\nkind = "template"\ntemplate = "TransmonSystem"\n\n[goal]\nkind = "ket"\n');
+    expect(resolveWorkspaceSpecContext("goal-kind")?.goal).toBe("ket");
+  });
+
+  it("leaves goal undefined when the spec has no [goal] block (coarse-but-honest query)", () => {
+    writeRun("goal-absent", "rg3", 'kind = "control"\n\n[system]\nkind = "template"\ntemplate = "TransmonSystem"\n');
+    expect(resolveWorkspaceSpecContext("goal-absent")?.goal).toBeUndefined();
+  });
 });
 
 describe("selectRecommendations — interim confidence cap (spec L-A#3 / success criterion 5)", () => {

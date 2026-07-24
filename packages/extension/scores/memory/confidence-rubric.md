@@ -12,7 +12,7 @@ never to model judgment.
 
 1. **own-precedent** — a `## Your recent problems` card matching the full 3-tuple
    `(platform, problem_kind, target)`. A match is a _candidate_; score by §high.
-2. **ledger** — a run-ledger query at the active workspace's `structure_hash ×
+2. **ledger** — a run-ledger query at the active workspace's `structure_hash × goal ×
    (N-bucket, T-bucket)` (learning-loops L-A, `amicode_recommend action:"query"`).
    Score by the mechanical `(n, IQR)` mapping below. **Interim cap: never
    `high`** — see the note under §ledger below.
@@ -49,9 +49,15 @@ pulse). A bare 3-tuple match is NEVER high on its own.
 ## §ledger — run-ledger priors (learning-loops L-A, mechanical)
 
 A ledger query aggregates `source:"user"` solve records at the primary key
-`structure_hash × (N-bucket, T-bucket)` (falling back to `(platform, template,
-trajectory, levels, N-bucket, T-bucket)` when the primary key has too few
-runs). For each recommendable knob (`Q`, `R`, `du_bound`, `max_iter`,
+`structure_hash × goal × (N-bucket, T-bucket)` (falling back to `(platform, template,
+trajectory, levels, goal, N-bucket, T-bucket)` when the primary key has too few
+runs). The `goal` leg is load-bearing: `structure_hash` covers the problem's *type
+skeleton*, not its *task*, so a CZ and an X gate on the same system, template and
+solver share one `structure_hash` — correct for warm-pool routing (the gate does not
+change the Julia type) but wrong for priors, since a hard CZ's median `Q`/`max_iter`
+are not an easy X gate's. A query that omits the goal still runs, and its provenance
+says `goal not keyed` so the mixing is visible rather than silent.
+For each recommendable knob (`Q`, `R`, `du_bound`, `max_iter`,
 `integrator`) it reports a median + IQR over $n$ matched runs, plus
 **verified** = the subset whose `problem_hash` joins to an `agree` verdict.
 `ledger_query.ts`'s `rankConfidence` scores it mechanically:

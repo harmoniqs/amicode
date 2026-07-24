@@ -36,6 +36,7 @@ function solve(over: {
   template?: string;
   trajectory?: string;
   levels?: number;
+  goal?: string;
 }): SolveRecord {
   const summary: SolveRecord["summary"] = {
     platform: over.platform ?? "transmon",
@@ -43,7 +44,7 @@ function solve(over: {
     trajectory: over.trajectory ?? "unitary",
     N: over.N ?? 100,
     T: over.T ?? 100.0,
-    goal: "CZ",
+    goal: over.goal ?? "CZ",
     solver: "ipopt",
     strategy: "direct",
   };
@@ -102,6 +103,55 @@ describe("queryDefaults — honest priors at a structure_hash × bucket", () => 
     expect(q.params.integrator?.value).toBe("spline"); // categorical mode
     expect(q.provenance).toMatch(/n=2 runs, 1 verified/);
     expect(["high", "medium", "low"]).toContain(q.confidence);
+  });
+
+  // structure_hash covers the TYPE skeleton, not the task: a CZ and an X gate on the
+// same system/template/solver share a structure_hash by design (correct for warm-pool
+  // routing). Without the goal key, an easy X gate inherits a hard CZ's medians.
+  it("goal key keeps a CZ's medians out of an X gate's bucket (same structure_hash)", () => {
+    appendRecord(solve({ problem_hash: "cz-1", goal: "CZ", Q: 200_000, max_iter: 500 }));
+    appendRecord(solve({ problem_hash: "cz-2", goal: "CZ", Q: 200_000, max_iter: 500 }));
+    appendRecord(solve({ problem_hash: "x-1", goal: "X", Q: 1_000, max_iter: 50 }));
+    appendRecord(solve({ problem_hash: "x-2", goal: "X", Q: 1_000, max_iter: 50 }));
+
+    const base = { structure_hash: "abc", n_bucket: bucketN(100), t_bucket: bucketT(100) };
+
+    const x = queryDefaults({ ...base, goal: "X" });
+    expect(x.total).toBe(2); // ONLY the X solves
+    expect(x.params.Q?.value).toBe(1_000); // NOT median(1k,1k,200k,200k) = 100_500
+    expect(x.params.max_iter?.value).toBe(50);
+    expect(x.provenance).toMatch(/goal=X/);
+
+    const cz = queryDefaults({ ...base, goal: "CZ" });
+    expect(cz.total).toBe(2);
+    expect(cz.params.Q?.value).toBe(200_000);
+
+    // Omitting the goal is still allowed — but it mixes both populations, and the
+    // provenance must SAY so rather than implying a tighter key than was used.
+    const mixed = queryDefaults(base);
+    expect(mixed.total).toBe(4);
+    expect(mixed.params.Q?.value).toBe(100_500); // the misleading average, made visible
+    expect(mixed.provenance).toMatch(/goal not keyed/);
+  });
+
+  it("goal key applies to the FALLBACK key too, not just the primary", () => {
+    // distinct structure_hashes so the primary key can never match → fallback path.
+    appendRecord(solve({ problem_hash: "f-cz", structure_hash: "s1", goal: "CZ", Q: 300_000 }));
+    appendRecord(solve({ problem_hash: "f-x1", structure_hash: "s2", goal: "X", Q: 2_000 }));
+    appendRecord(solve({ problem_hash: "f-x2", structure_hash: "s3", goal: "X", Q: 2_000 }));
+
+    const q = queryDefaults({
+      structure_hash: "no-such-structure",
+      n_bucket: bucketN(100),
+      t_bucket: bucketT(100),
+      goal: "X",
+      platform: "transmon",
+      template: "SplinePulseProblem",
+      trajectory: "unitary",
+    });
+    expect(q.key).toBe("fallback");
+    expect(q.total).toBe(2); // the CZ solve is excluded by the goal key
+    expect(q.params.Q?.value).toBe(2_000);
   });
 
   it("interim cap: an unverified contributing run bars 'high' (caps at medium)", () => {

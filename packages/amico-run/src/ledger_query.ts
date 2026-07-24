@@ -51,6 +51,15 @@ export interface QueryKey {
   structure_hash: string;
   n_bucket: number;
   t_bucket: number;
+  // Task identity. `structure_hash` deliberately does NOT cover the goal (a CZ and
+  // an X gate on the same system/template/solver produce the SAME structure_hash —
+  // correct for warm-pool routing, since the gate does not change the Julia type).
+  // But recommended Q/R/du_bound/max_iter for a CZ are NOT the recommendations for
+  // a far easier X gate, so priors must discriminate here or they average two
+  // different difficulty populations together. Applied to BOTH the primary and
+  // fallback keys; when omitted, no goal discrimination happens (the pre-fix
+  // behaviour) and `provenance` says so rather than implying a tighter key.
+  goal?: string;
   // fallback key parts (used only when the primary key has < K_MIN runs)
   platform?: string;
   template?: string;
@@ -128,15 +137,20 @@ const isSolve = (r: LedgerRecord): r is SolveRecord => r.type === "solve";
 function bucketMatch(s: SolveRecord, key: QueryKey): boolean {
   return bucketN(s.summary.N) === key.n_bucket && bucketT(s.summary.T) === key.t_bucket;
 }
+/** Task-identity guard. No-op when the caller supplied no goal, so this cannot
+ *  silently empty a bucket for callers that predate the goal key. */
+function goalMatch(s: SolveRecord, key: QueryKey): boolean {
+  return key.goal === undefined || s.summary.goal === key.goal;
+}
 function primaryMatch(s: SolveRecord, key: QueryKey): boolean {
-  return s.structure_hash === key.structure_hash && bucketMatch(s, key);
+  return s.structure_hash === key.structure_hash && bucketMatch(s, key) && goalMatch(s, key);
 }
 function fallbackMatch(s: SolveRecord, key: QueryKey): boolean {
   if (!key.platform || !key.template || !key.trajectory) return false;
   const sm = s.summary;
   if (sm.platform !== key.platform || sm.template !== key.template || sm.trajectory !== key.trajectory) return false;
   if (key.levels !== undefined && sm.levels !== key.levels) return false;
-  return bucketMatch(s, key);
+  return bucketMatch(s, key) && goalMatch(s, key);
 }
 
 // ── confidence rubric (mechanical) ───────────────────────────────────────────
@@ -208,7 +222,12 @@ export function aggregate(records: LedgerRecord[], key: QueryKey): QueryResult {
     total: matched.length,
     verified,
     params,
-    provenance: `n=${matched.length} runs, ${verified} verified (${usedKey} key)`,
+    // Provenance must state whether the goal was keyed on: an unkeyed query can mix
+    // difficulty populations (CZ with X), and a reader deserves to see which it got.
+    provenance:
+      `n=${matched.length} runs, ${verified} verified (${usedKey} key` +
+      (key.goal === undefined ? ", goal not keyed" : `, goal=${key.goal}`) +
+      `)`,
     confidence,
   };
 }

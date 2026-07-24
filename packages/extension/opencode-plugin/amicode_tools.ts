@@ -1105,7 +1105,9 @@ export const AmicodeTools = async (_input: unknown) => ({
               );
             if (ctx.N === undefined || ctx.T === undefined)
               return `Ledger history found for "${slug}" but its N/T are unavailable — cannot bucket the query.`;
-            const result = queryLedger(ctx.structure_hash, ctx.N, ctx.T);
+            // ctx.goal keys the query on the task, not just the type skeleton —
+            // without it a CZ's medians would be recommended for an X gate.
+            const result = queryLedger(ctx.structure_hash, ctx.N, ctx.T, ctx.goal);
             if (!result) return `Ledger query unavailable for "${slug}" (amico CLI unreachable, or no matching history).`;
             const wanted = Array.isArray(a.params) && a.params.length > 0 ? a.params.map(String) : undefined;
             const recs = selectRecommendations(result, wanted);

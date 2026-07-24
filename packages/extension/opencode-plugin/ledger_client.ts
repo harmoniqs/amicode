@@ -126,13 +126,21 @@ export function selectRecommendations(result: LedgerQueryResult, params?: string
 /** Query honest priors at `structureHash × (n, t)` by shelling `amico ledger
  *  query`. Returns undefined (never throws) when the shell fails or the output
  *  doesn't parse — recommend degrades to "no ledger history", not an error. */
-export function queryLedger(structureHash: string, n: number, t: number): LedgerQueryResult | undefined {
+export function queryLedger(
+  structureHash: string,
+  n: number,
+  t: number,
+  goal?: string,
+): LedgerQueryResult | undefined {
   try {
-    const stdout = execFileSync(
-      resolveAmicoBin(),
-      ["ledger", "query", "--structure-hash", structureHash, "--n", String(n), "--t", String(t)],
-      { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const args = ["ledger", "query", "--structure-hash", structureHash, "--n", String(n), "--t", String(t)];
+    // Omitted when unknown: a coarse-but-honest query beats no query, and the
+    // returned provenance reports "goal not keyed" so the caller isn't misled.
+    if (goal !== undefined) args.push("--goal", goal);
+    const stdout = execFileSync(resolveAmicoBin(), args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
     if (typeof parsed.provenance !== "string" || typeof parsed.confidence !== "string") return undefined;
     return parsed as unknown as LedgerQueryResult;
@@ -149,6 +157,12 @@ export interface WorkspaceSpecContext {
   structure_hash: string;
   N?: number;
   T?: number;
+  // Task identity — `structure_hash` covers the type skeleton, NOT the goal, so a CZ
+  // and an X gate on the same system/template/solver share one hash. Without this,
+  // a query averages both difficulty populations. Derived EXACTLY as Task 5's
+  // settle() derives summary.goal (`goal.gate`, else `goal.kind`) so the query key
+  // lines up with what was recorded.
+  goal?: string;
 }
 
 function readTomlSafe(path: string): Record<string, unknown> | undefined {
@@ -204,18 +218,25 @@ export function resolveWorkspaceSpecContext(slug: string): WorkspaceSpecContext 
   if (structure_hash === undefined) return undefined;
   let N = typeof p.N === "number" ? p.N : undefined;
   let T = typeof p.T === "number" ? p.T : undefined;
-  if (N === undefined || T === undefined) {
+  let goal = typeof p.goal === "string" ? p.goal : undefined;
+  // `goal` is never stamped into result.toml's [params] (settle() derives it from the
+  // solvespec), so the spec read is required for the goal key even when N/T are present.
+  if (N === undefined || T === undefined || goal === undefined) {
     const manifest = readTomlSafe(join(runDir, "run.toml"));
     const scriptPath = typeof manifest?.script_path === "string" ? (manifest.script_path as string) : undefined;
     const spec = scriptPath ? readSpecFromScriptPath(scriptPath) : undefined;
     if (spec) {
       const problem = isRecord(spec.problem) ? spec.problem : {};
       const pulse = isRecord(spec.pulse) ? spec.pulse : {};
+      const goalBlock = isRecord(spec.goal) ? spec.goal : {};
       if (N === undefined && typeof problem.N === "number") N = problem.N;
       if (T === undefined && typeof pulse.T === "number") T = pulse.T;
+      // mirrors local_executor.ts settle(): gate first, else the trajectory kind.
+      if (goal === undefined && typeof goalBlock.gate === "string") goal = goalBlock.gate;
+      else if (goal === undefined && typeof goalBlock.kind === "string") goal = goalBlock.kind;
     }
   }
-  return { structure_hash, N, T };
+  return { structure_hash, N, T, goal };
 }
 
 /** Thin accessor used for propose/outcome stamping — just the hash. */

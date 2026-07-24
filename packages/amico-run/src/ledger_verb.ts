@@ -10,10 +10,14 @@
 //         invalid stanzas are rejected (nonzero) so the ledger stays honest.
 //
 //   amico ledger query   --structure-hash <h> --n <N> --t <T>
+//                        [--goal <g>]
 //                        [--platform <p> --template <t> --trajectory <t> --levels <n>]
-//       → honest priors at `structure_hash × (N-bucket, T-bucket)`: medians+IQR,
+//       → honest priors at `structure_hash × goal × (N-bucket, T-bucket)`: medians+IQR,
 //         "n runs, m verified" provenance, and interim-capped confidence. The
 //         optional fallback key parts relax the query when the primary is sparse.
+//         `--goal` is what keeps a CZ's medians out of an X gate's bucket —
+//         `structure_hash` covers the type skeleton, NOT the task. Omitting it is
+//         allowed and coarse, and the provenance string reports which you got.
 //         Delegates to ledger_query.ts (Task 4).
 import { readFileSync } from "node:fs";
 import { appendRecord, type LedgerRecord } from "./ledger.js";
@@ -82,6 +86,9 @@ export function ledgerQuery(argv: string[]): VerbResult {
     structure_hash,
     n_bucket: bucketN(n),
     t_bucket: bucketT(t),
+    // structure_hash does not cover the goal, so pass it to keep CZ priors out of
+    // an X-gate bucket. Omitting it is honest-but-coarse and provenance says so.
+    goal: flagValue(argv, "--goal"),
     platform: flagValue(argv, "--platform"),
     template: flagValue(argv, "--template"),
     trajectory: flagValue(argv, "--trajectory"),
@@ -105,7 +112,7 @@ export function ledgerVerb(argv: string[]): VerbResult {
       verb: "ledger",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--platform <p> --template <t> --trajectory <t> --levels <n>]",
+        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]",
     },
     code: 64,
   };

@@ -109,6 +109,16 @@ grounding of apparatus amico already has:
   typed-spec effort — turns out to *also* be the missing join key. The run
   ledger, keyed on `structure_hash`, **is** Tier-2's attribution ledger; it
   does not sit beside it as a second, competing store.
+
+  One caveat, learned the hard way: `structure_hash` is the right *identity* key
+  but not, by itself, the right *retrieval* key. It covers the problem's type
+  skeleton, deliberately **not** its goal — a CZ and an X gate on the same
+  system, template and solver hash identically, which is exactly what warm-pool
+  routing wants (the gate does not change the Julia type) and exactly what priors
+  must not do (a hard CZ's median `Q`/`max_iter` are not an easy X gate's). So
+  L-A retrieval keys on `structure_hash × goal × (N-bucket, T-bucket)`. The two
+  jobs the hash serves want different granularities; the retrieval key is where
+  that difference is paid, never by coarsening or refining the hash itself.
 - **charter/18 names "Amicode is a single-user IDE tool with no Librarian,
   dream, or catalog feedback; customer usage does not feed the loop" as the
   single most valuable severed coupling in the system.** The ledger — usage
