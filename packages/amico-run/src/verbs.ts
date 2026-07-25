@@ -19,6 +19,7 @@ import { deviceVerb } from "./device_verb.js";
 import { noteVerb } from "./note_verb.js";
 import { ledgerVerb } from "./ledger_verb.js";
 import { profileVerb } from "./profile_verb.js";
+import { fleetVerb } from "./fleet_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -123,4 +124,22 @@ const profile: Verb = {
   run: profileVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile];
+// fleet — the fleet registry's CLI surface (fleet §3.2/§3.3). Read verbs (`list`,
+// `status`) render the one-file-per-session TOML records; the write verbs (`steer`,
+// `stop`, `re-tier`) ENQUEUE SIGNAL FILES and never touch a record, because at most one
+// writer holds a record at a time (extension while `spooling`, harness after the handoff).
+// `sweep` is the one exception that writes, and only for an orphaned holder pid.
+//
+// Deliberate contrast with `ledger` above: the ledger is an append-only immutable JSONL
+// event log; this registry is mutable per-session TOML state. They share record I/O
+// conventions, single-writer discipline, and the pid probe — not a state model.
+const fleet: Verb = {
+  name: "fleet",
+  summary:
+    "fleet registry: list/status read verbs, steer/stop/re-tier as signal enqueuers (never a record write), sweep with a pid-liveness guard",
+  generalizes: "the fleet view + in-chat /fleet + Amico's conversational fleet questions, over ~/.amico/ops/fleet",
+  slice: "fleet substrate (§9 step 2)",
+  run: fleetVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet];
