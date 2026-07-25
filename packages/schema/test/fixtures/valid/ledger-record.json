@@ -1,0 +1,24 @@
+{
+  "type": "solve",
+  "ts": "2026-07-22T00:00:00Z",
+  "session": "s1",
+  "problem": "cz",
+  "structure_hash": "abc123",
+  "problem_hash": "def456",
+  "kind": "control",
+  "tier": "spec",
+  "summary": {
+    "platform": "transmon",
+    "template": "SplinePulseProblem",
+    "trajectory": "unitary",
+    "N": 100,
+    "T": 100.0,
+    "goal": "CZ",
+    "solver": "ipopt",
+    "strategy": "direct"
+  },
+  "warm_start": null,
+  "source": "user",
+  "outcome": { "converged": true, "fidelity": 0.9994, "iterations": 214, "wall_s": 38.2 },
+  "versions": { "Piccolo": "1.19.0" }
+}

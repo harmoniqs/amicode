@@ -95,6 +95,17 @@ import {
   statusSummary,
   triggerOnboardingDistill,
 } from "./onboarding";
+import {
+  appendStanza,
+  queryLedger,
+  resolveWorkspaceSpecContext,
+  stampStructureHash,
+  selectRecommendations,
+  attemptErrorStanza,
+  fallbackStanza,
+  verdictStanza,
+  resolveRunHashes,
+} from "./ledger_client";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -135,6 +146,28 @@ function readEntityJson<T>(slug: string, kind: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+/** The most recently `propose`d value for a recommendation key (stage/param),
+ *  read back from events.jsonl — an `outcome:"overridden"` call only carries
+ *  applied_value, but the ledger's `override` stanza needs BOTH recommended
+ *  and applied; this recovers the former from the append-only event log. */
+function lastProposedValue(slug: string, key: string): unknown {
+  const file = path.join(problemDir(slug), "events.jsonl");
+  if (!fs.existsSync(file)) return undefined;
+  let found: unknown;
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      const rec = JSON.parse(line) as { entity?: string; action?: string; diff?: { key?: string; value?: unknown } };
+      if (rec.entity === "recommendation" && rec.action === "proposed" && rec.diff?.key === key) {
+        found = rec.diff.value;
+      }
+    } catch {
+      /* malformed line — skip */
+    }
+  }
+  return found;
 }
 
 /** The AMICODE_DIFF sentinel line (LAST line of a tool return) — the UI parses
@@ -825,6 +858,24 @@ export const AmicodeTools = async (_input: unknown) => ({
         const sentinel = recordEntity(meta.slug, "run", merged as any, runStubToml(merged), {
           tool: "amicode_verify",
         });
+        // Run-ledger `verdict` stanza (learning-loops L-A/L-D): joins to the run's
+        // `solve` record on problem_hash — "verified" means verdict=agree via this
+        // join. Only possible when the run_dir's result.toml carries a problem_hash
+        // (Task 5's stamp); silently skipped otherwise (bookkeeping, never a gate).
+        if (existing.run_dir) {
+          const hashes = resolveRunHashes(existing.run_dir);
+          if (hashes?.problem_hash) {
+            appendStanza(
+              verdictStanza({
+                problemHash: hashes.problem_hash,
+                structureHash: hashes.structure_hash,
+                verdict: a.agree ? "agree" : "disagree",
+                fidelityRerolled: given(a.fidelity_rerolled) ? a.fidelity_rerolled : undefined,
+                fidelityReported: given(a.fidelity_reported) ? a.fidelity_reported : undefined,
+              }),
+            );
+          }
+        }
         const verdict = a.agree
           ? "agree = true — the re-rollout confirms the reported fidelity; the run can be promoted."
           : "agree = FALSE — the independent re-rollout disagrees; the run is UNTRUSTED and cannot be promoted. Relay this honestly.";
@@ -987,15 +1038,22 @@ export const AmicodeTools = async (_input: unknown) => ({
     // L2 (Veloce) has a machine-readable confidence to act on.
     amicode_recommend: {
       description:
-        "Record a parameter recommendation and its outcome (L1). Two actions: " +
+        "Record a parameter recommendation and its outcome, or retrieve ledger-backed " +
+        "priors (L1 + learning-loops L-A). Three actions: " +
         "action=`propose` logs {stage, param, value, confidence: high|medium|low, " +
-        "provenance:[{source: own-precedent|demo|physics|default, ref, note}], alternatives?} — " +
+        "provenance:[{source: own-precedent|demo|physics|ledger|default, ref, note}], alternatives?} — " +
         "confidence is MECHANICAL per scores/memory/confidence-rubric.md (never a guess); " +
         "action=`outcome` logs {stage, param, outcome: accepted|overridden, applied_value} AFTER " +
-        "the value lands via set_model/formulate (append-only pair, keyed on stage+param). " +
-        "No active problem workspace yet → a no-op receipt (recommendations begin at the problem stage).",
+        "the value lands via set_model/formulate (append-only pair, keyed on stage+param) — an " +
+        "`overridden` outcome also appends a run-ledger `override` stanza; " +
+        "action=`query` retrieves honest ledger priors (medians/IQR, \"n runs, m verified\" " +
+        "provenance) for the active workspace's most recent structure_hash — pass `params` " +
+        "(e.g. [\"Q\",\"N\"]) to select which recommendable knobs to return, or omit for all. " +
+        "Ledger-sourced confidence is CAPPED at medium (interim guard until per-structure trust " +
+        "lands) — never auto-applied. propose/outcome events are stamped with structure_hash when " +
+        "known. No active problem workspace yet → a no-op receipt (recommendations begin at the problem stage).",
       args: {
-        action: { type: "string", description: "propose | outcome" },
+        action: { type: "string", description: "propose | outcome | query" },
         stage: { type: "string", description: "interview stage, e.g. model | formulate" },
         param: { type: "string", description: "parameter name, e.g. N | T | levels | drive_max | warm_start" },
         value: { type: ["string", "number", "boolean", "null"], description: "recommended value (propose)" },
@@ -1014,6 +1072,10 @@ export const AmicodeTools = async (_input: unknown) => ({
           type: ["boolean", "null"],
           description: "true when Veloce (L2) auto-accepted this without asking (propose)",
         },
+        params: {
+          type: ["array", "null"],
+          description: 'Recommendable knob names to retrieve, e.g. ["Q","N"] (query); null/omitted = all.',
+        },
       },
       async execute(a: {
         action: string;
@@ -1026,19 +1088,65 @@ export const AmicodeTools = async (_input: unknown) => ({
         outcome?: string | null;
         applied_value?: unknown;
         auto_accepted?: boolean | null;
+        params?: string[] | null;
       }) {
         try {
           const slug = readActiveSlug();
           if (!slug)
             return "No active problem yet — recommendation not recorded (recommendations begin at the problem stage).";
+
+          // ── query: retrieve honest ledger priors (learning-loops L-A) ──
+          if (a.action === "query") {
+            const ctx = resolveWorkspaceSpecContext(slug);
+            if (!ctx)
+              return (
+                `No ledger history yet for "${slug}" — action=query needs at least one completed, ` +
+                `hash-stamped run to key on (run a solve first).`
+              );
+            if (ctx.N === undefined || ctx.T === undefined)
+              return `Ledger history found for "${slug}" but its N/T are unavailable — cannot bucket the query.`;
+            // ctx.goal keys the query on the task, not just the type skeleton —
+            // without it a CZ's medians would be recommended for an X gate.
+            const result = queryLedger(ctx.structure_hash, ctx.N, ctx.T, ctx.goal);
+            if (!result) return `Ledger query unavailable for "${slug}" (amico CLI unreachable, or no matching history).`;
+            const wanted = Array.isArray(a.params) && a.params.length > 0 ? a.params.map(String) : undefined;
+            const recs = selectRecommendations(result, wanted);
+            if (recs.length === 0) return `No ledger-backed recommendations yet for "${slug}" (${result.provenance}).`;
+            const lines = recs.map((r) => `  ${r.param} = ${JSON.stringify(r.value)} (${r.confidence}, ${r.provenance})`);
+            return `Ledger-backed recommendations for "${slug}":\n${lines.join("\n")}`;
+          }
+
           const key = `${a.stage ?? "?"}/${a.param ?? "?"}`;
+          const structureHash = stampStructureHash(slug);
           if (a.action === "outcome") {
             const seq = appendEvent(slug, {
               entity: "recommendation",
               action: "outcome",
-              diff: { key, stage: a.stage, param: a.param, outcome: a.outcome, applied_value: a.applied_value },
+              diff: {
+                key,
+                stage: a.stage,
+                param: a.param,
+                outcome: a.outcome,
+                applied_value: a.applied_value,
+                ...(structureHash ? { structure_hash: structureHash } : {}),
+              },
               source: { tool: "amicode_recommend", stage: a.stage },
             });
+            // An override gets its own run-ledger stanza (single-writer: shell `amico
+            // ledger append`, never touch runs.jsonl directly) — recommended value is
+            // recovered from the matching `proposed` event (outcome only carries applied).
+            if (a.outcome === "overridden" && structureHash) {
+              appendStanza({
+                type: "override",
+                ts: new Date().toISOString(),
+                param: a.param ?? "?",
+                recommended: lastProposedValue(slug, key) ?? null,
+                applied: a.applied_value ?? null,
+                structure_hash: structureHash,
+                // "overridden" IS a human declining the recommendation — never auto-accepted.
+                auto_accepted: false,
+              });
+            }
             return `Recorded outcome for ${key}: ${a.outcome} (applied ${JSON.stringify(a.applied_value)}) [event ${seq}].`;
           }
           // default: propose
@@ -1052,6 +1160,7 @@ export const AmicodeTools = async (_input: unknown) => ({
               value: a.value,
               confidence: a.confidence,
               provenance: a.provenance ?? [],
+              ...(structureHash ? { structure_hash: structureHash } : {}),
               ...(a.alternatives ? { alternatives: a.alternatives } : {}),
               // Veloce (L2): an auto-accept records auto_accepted AND outcome:accepted
               // in one step (spec L2 §5).
@@ -1068,6 +1177,57 @@ export const AmicodeTools = async (_input: unknown) => ({
         } catch (err) {
           return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
         }
+      },
+    },
+    // ── Ledger observability (learning-loops L1 Task 7) — bookkeeping tools for
+    // events the extension has no other hook into: a solvespec/problem_spec
+    // validation failure and a tier fallback both happen inside `amico run
+    // --spec` (a bash invocation the agent runs directly — the extension has no
+    // in-process gate on either), so the agent reports what it observed in the
+    // CLI's output. Mirrors amicode_recommend's own doctrine: bookkeeping AFTER
+    // the fact, driven by an explicit call describing what happened elsewhere.
+    // Both shell `amico ledger append` via ledger_client.ts — never touch
+    // runs.jsonl directly.
+    amicode_report_attempt_error: {
+      description:
+        "Record a solvespec/problem_spec VALIDATION FAILURE observed from an `amico run --spec` " +
+        "(or amico-validate) invocation's error output (L-B: repeated identical rejections are a " +
+        "spec-surface bug signal, not a user failure — this feeds that weekly report). " +
+        "Call this right after seeing a schema/gate rejection in the CLI's stderr/JSON.",
+      args: {
+        errors: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { path: { type: "string" }, msg: { type: "string" } },
+            required: [],
+          },
+          description: "[{path, msg}] — the field-precise errors from the CLI's rejection.",
+        },
+      },
+      async execute(a: { errors: Array<{ path?: string; msg?: string }> }) {
+        const slug = readActiveSlug();
+        const ok = appendStanza(attemptErrorStanza(a.errors ?? [], slug));
+        return ok
+          ? `Recorded ${a.errors?.length ?? 0} validation error(s) to the run ledger.`
+          : "Could not record validation errors to the run ledger (amico CLI unreachable) — not fatal, continuing.";
+      },
+    },
+    amicode_report_fallback: {
+      description:
+        "Record a TIER FALLBACK observed from an `amico run --spec` invocation (e.g. composed → " +
+        "free, the gate's demote_to). L-C ranks spec-coverage gaps (missing trajectory kinds, " +
+        "objective terms) by how often people actually needed them — this is that demand signal. " +
+        "Call this right after seeing a demotion in the CLI's output.",
+      args: {
+        from_tier: { type: "string", description: 'The tier the run demoted FROM, e.g. "composed".' },
+        reason: { type: "string", description: "Why it fell back (the gate's stated reason)." },
+      },
+      async execute(a: { from_tier: string; reason: string }) {
+        const ok = appendStanza(fallbackStanza(a.from_tier, a.reason));
+        return ok
+          ? `Recorded fallback from "${a.from_tier}" to the run ledger.`
+          : "Could not record the fallback to the run ledger (amico CLI unreachable) — not fatal, continuing.";
       },
     },
     // ── Veloce (spec-20260705-024341 L2) — records the autonomy-mode transition.

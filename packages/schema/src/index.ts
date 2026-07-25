@@ -15,6 +15,27 @@ import resultSchema from "../schemas/result.schema.json" with { type: "json" };
 import labSchema from "../schemas/lab.schema.json" with { type: "json" };
 import solvespecSchema from "../schemas/solvespec.schema.json" with { type: "json" };
 import catalogEntrySchema from "../schemas/catalog-entry.schema.json" with { type: "json" };
+// problemspec is VENDORED from the Piccolo/Piccolissimo registries — do not hand-edit.
+// The shipped default (registered as the `problemspec` kind) is the FULL variant
+// (harmoniqs/Piccolissimo.jl @ 9098f6f, built against Piccolo.jl @ c3884122); the OSS
+// variant (Piccolo.jl @ c3884122) is vendored alongside as problemspec.oss.schema.json
+// for package-access staging (Phase 3). Provenance shas live in the *.schema.json.sha
+// sidecars (kept OUT of the JSON so the vendored files stay byte-identical to the
+// emitted schemas for the cross-repo vendoring-drift gate). Regenerate via each repo's
+// src/specs/schema/regenerate.jl.
+import problemspecSchema from "../schemas/problemspec.schema.json" with { type: "json" };
+// ledger-record is a top-level `oneOf` discriminated on `type` (six record kinds);
+// like problemspec it has NO top-level properties.schema_version — see the SCHEMAS
+// note below and the SUPPORTED_VERSIONS_BY_KIND exclusion.
+import ledgerRecordSchema from "../schemas/ledger-record.schema.json" with { type: "json" };
+
+// Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
+// root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
+// Task 6) can `import { structureHash } from "@amicode/schema"` instead of a
+// package-internal `../src/hashing.js` relative path (this package has no
+// "exports" map, so a subpath import would work, but the root export is the
+// established, documented seam every other consumer uses — see `validate` below).
+export { structureHash, problemHash, canonicalJson, fullDict, structureFields } from "./hashing.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -31,6 +52,17 @@ const SCHEMAS = {
   lab: labSchema,
   solvespec: solvespecSchema,
   "catalog-entry": catalogEntrySchema,
+  // Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): problemspec is a
+  // top-level `oneOf` shape with an INTEGER schema_version enum `[1]` carried INSIDE
+  // each branch, so it has no top-level `properties.schema_version` for the version
+  // map to read (plan review correction #6 — same pattern as ledger-record).
+  problemspec: problemspecSchema,
+  // Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): ledger-record is a
+  // top-level `oneOf` discriminated on `type` with NO top-level
+  // properties.schema_version — including it in the version map would read
+  // `.properties.schema_version` off an undefined and crash @amicode/schema at load
+  // (Plan 3 review correction #1, exactly the problemspec case).
+  "ledger-record": ledgerRecordSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -39,14 +71,18 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
 /** Versions the validators accept, PER KIND (Q87: tolerate known-prior within
  *  range, reject unknown/absent). Derived from the schema files' enums — the
  *  schemas are the single source of truth; this export just surfaces them.
- *  run + solvespec are at v2 (spec C: executor/tier/env/source/hashes); the
- *  rest remain v1 and bump independently. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished">, string[]> = Object.fromEntries(
-  (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
-    kind,
-    (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
-  ]),
-) as Record<Exclude<SchemaKind, "finished">, string[]>;
+ *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes;
+ *  solvespec v4 also adds problem_spec, the typed ProblemSpec runner target);
+ *  the rest remain v1 and bump independently. `finished` (no schema_version),
+ *  `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
+ *  top-level properties.schema_version) are excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]> =
+  Object.fromEntries(
+    (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
+      kind,
+      (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
+    ]),
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]>;
 
 export interface Validation {
   ok: boolean;
@@ -63,6 +99,7 @@ export function kindForFilename(filePath: string): SchemaKind | undefined {
   if (base === "result.toml") return "result";
   if (base === "lab.toml") return "lab";
   if (base === "FINISHED") return "finished";
+  if (base === "problem.toml") return "problemspec";
   return undefined;
 }
 

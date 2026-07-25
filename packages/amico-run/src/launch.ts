@@ -96,7 +96,27 @@ export async function launch(argv: string[]): Promise<number> {
       throw e;
     }
   }
-  if (!script) {
+  // Parse --spec up front: a v4 solvespec carrying `problem_spec` has no script,
+  // so the "no script" guard AND the gate's script read + import scan must both
+  // stand down (the ProblemSpec routes to Piccolo.Specs.solve_spec, not a script).
+  let specRaw: unknown;
+  let problemSpec: unknown;
+  if (specPath) {
+    try {
+      specRaw = JSON.parse(readFileSync(specPath, "utf8"));
+    } catch (e) {
+      console.error(`amico-run: cannot read --spec ${specPath}: ${(e as Error).message}`);
+      return 64;
+    }
+    problemSpec = (specRaw as { problem_spec?: unknown }).problem_spec;
+  }
+  const hasProblemSpec = problemSpec !== undefined;
+
+  if (script && hasProblemSpec) {
+    console.error(`amico-run: --spec carries a problem_spec — do not also pass a script argument`);
+    return 64;
+  }
+  if (!script && !hasProblemSpec) {
     console.error(`amico-run: no script given\n${USAGE}`);
     return 64;
   }
@@ -115,19 +135,16 @@ export async function launch(argv: string[]): Promise<number> {
 
   // ── spec C: the launch gate. Failures leave NO run dir and exit 64. ──
   if (specPath) {
-    let specRaw: unknown;
-    try {
-      specRaw = JSON.parse(readFileSync(specPath, "utf8"));
-    } catch (e) {
-      console.error(`amico-run: cannot read --spec ${specPath}: ${(e as Error).message}`);
-      return 64;
-    }
-    let scriptText: string;
-    try {
-      scriptText = readFileSync(script, "utf8");
-    } catch (e) {
-      console.error(`amico-run: cannot read script ${script}: ${(e as Error).message}`);
-      return 64;
+    // specRaw was parsed above (problem_spec detection). Only read the script for
+    // a script-bearing spec; a problem_spec spec has none (gate.ts skips the scan).
+    let scriptText = "";
+    if (!hasProblemSpec) {
+      try {
+        scriptText = readFileSync(script!, "utf8");
+      } catch (e) {
+        console.error(`amico-run: cannot read script ${script}: ${(e as Error).message}`);
+        return 64;
+      }
     }
     const { config: authoring, warning } = readAuthoring();
     if (warning) console.error(`amico-run: ${warning}`);
@@ -149,6 +166,8 @@ export async function launch(argv: string[]): Promise<number> {
       hashes: gate.stamp.hashes,
       julia_binary: opts.julia!.julia,
       env_project: opts.julia!.project,
+      // v4: route the typed ProblemSpec to Piccolo.Specs.solve_spec (LocalExecutor)
+      problem_spec: hasProblemSpec ? (problemSpec as string | Record<string, unknown>) : undefined,
     };
   }
 

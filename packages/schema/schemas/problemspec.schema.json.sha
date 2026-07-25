@@ -1,0 +1,11 @@
+# Provenance for problemspec.schema.json (FULL variant).
+# vendored-from: harmoniqs/Piccolissimo.jl @ 9098f6f (built against Piccolo.jl @ c3884122)
+# regenerate:    cd packages/Piccolissimo.jl && julia --project=. src/specs/schema/regenerate.jl
+# NOTE: kept byte-identical to the emitted file (no in-file header comment) so the
+#       Task 9 vendoring-drift gate can git-fetch the committed schema at the pinned
+#       sha and byte-compare. Update this sha whenever you re-vendor.
+repo = "harmoniqs/Piccolissimo.jl"
+sha = "9098f6f"
+piccolo_sha = "c3884122"
+path = "src/specs/schema/problemspec.full.schema.json"
+variant = "full"

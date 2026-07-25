@@ -1,0 +1,25 @@
+# INVALID — template<->pulse mismatch: SplinePulseProblem requires a spline pulse
+# (cubic_spline | linear_spline), but this declares a zero_order (PWC) pulse. The
+# SplinePulseProblem if/then narrows pulse.kind and rejects zero_order.
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "zero_order"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+
+[solver]
+backend = "ipopt"

@@ -1,0 +1,26 @@
+# INVALID — an unknown top-level field. Both oneOf branches carry
+# additionalProperties:false, so `bogus` fails control (extra key) and rollout
+# (extra key + missing required) -> zero branches match -> reject.
+schema_version = 1
+kind = "control"
+bogus = 1
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+
+[solver]
+backend = "ipopt"

@@ -71,8 +71,13 @@ export class RemoteExecutor implements Executor {
     this.maxWallclock = opts.maxWallclock;
   }
 
-  async submit(scriptPath: string, opts: SubmitOpts = {}): Promise<RunHandle> {
+  async submit(scriptPath: string | undefined, opts: SubmitOpts = {}): Promise<RunHandle> {
     // ---- step 1 (LocalExecutor §5 parity): validate config; NO run dir on failure ----
+    // v4 problem_spec routing is local-only for now (cloud-side solve_spec is a
+    // Phase-4 follow-up); reject it here rather than silently ignore.
+    if (opts.spec?.problem_spec !== undefined)
+      throw new ConfigError("problem_spec is not yet supported with --executor remote (local-only in Phase 2)");
+    if (scriptPath === undefined) throw new ConfigError("no script given");
     const script = resolve(scriptPath);
     if (!existsSync(script)) throw new ConfigError(`script not found: ${script}`);
     const cfg = this.cfgOverride ?? readRemoteConfig();

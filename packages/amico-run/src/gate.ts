@@ -71,10 +71,17 @@ export function runGate(specRaw: unknown, scriptText: string, authoring: Authori
     | undefined;
 
   // ── step 2: import scan ──
-  const scanned = scanImports(scriptText);
-  if (!scanned.ok) return { ok: false, reason: scanned.reason };
-  const checked = checkImports(scanned.roots, authoring);
-  if (!checked.ok) return { ok: false, reason: checked.reason };
+  // A v4 problem_spec solvespec (schema: exactly one of script_path|problem_spec)
+  // has no authored script — the ProblemSpec, validated in step 1 against Piccolo's
+  // registries, IS the entitlement surface, and it routes to Piccolo.Specs.solve_spec.
+  // Skip the script import scan for the scriptless tier.
+  const hasScript = typeof spec.script_path === "string";
+  if (hasScript) {
+    const scanned = scanImports(scriptText);
+    if (!scanned.ok) return { ok: false, reason: scanned.reason };
+    const checked = checkImports(scanned.roots, authoring);
+    if (!checked.ok) return { ok: false, reason: checked.reason };
+  }
 
   // ── step 3: tier/env consistency ──
   if (tier === "free" && env?.kind !== "sandbox")

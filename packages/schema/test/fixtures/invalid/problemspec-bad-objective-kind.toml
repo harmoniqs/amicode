@@ -1,0 +1,36 @@
+# INVALID — an unknown objective kind. `wavelet` is not in the objectives.kind
+# enum, so the nested items schema rejects it (exercises a per-item enum inside
+# the conditional-free part of the control branch).
+#
+# NOTE: the plan listed "R_ddu on SplinePulseProblem" as a 5th negative, but the
+# emitted schema treats R_ddu as a plain optional number on [problem] (valid on
+# every template) — that applicability rule is a materialize-layer trait, NOT a
+# schema constraint, so it is not ajv/JSONSchema-catchable and cannot be a
+# schema-fixture negative. This bad-objective-kind case is the substitute; the
+# R_ddu gap is reported to Plan 1 (emit_schema).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+
+[[problem.objectives]]
+kind = "wavelet"
+weight = 1.0
+
+[solver]
+backend = "ipopt"

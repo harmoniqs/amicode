@@ -59,12 +59,21 @@ jobs:
           # the non-filename schemas (AC5: all five) via --schema
           $V packages/schema/test/fixtures/valid/solvespec.toml --schema solvespec
           $V packages/schema/test/fixtures/valid/catalog-entry.toml --schema catalog-entry
+          # ledger-record (Plan 3 / L1 Task 9): oneOf-on-`type`, JSON on disk (JSONL
+          # lines in the real ~/.amico/ledger/runs.jsonl) — validateFile parses by
+          # .json extension, not TOML.
+          $V packages/schema/test/fixtures/valid/ledger-record.json --schema ledger-record
   schema-roundtrip:
     # 0.1d: the Julia round-trip against the SAME packages/schema/schemas/*.json the
     # TS side uses (cross-language anti-drift). Fast tier — JSONSchema only, NO Piccolo
-    # solve. Three lanes: (1) golden + negative fixtures, (2) a REAL producer lane
-    # (amico-run emits a run-dir → validate it — exercises the producer, not just
-    # fixtures), (3) AC6 drift check (perturb the shared schema → BOTH TS and Julia flip).
+    # solve. Lanes: (1) golden + negative fixtures INCL. the problemspec dual-validation
+    # sweep (ajv == JSONSchema.jl accept/reject on every valid/invalid problemspec
+    # fixture, runtests.jl); (2) a REAL producer lane (amico-run emits a run-dir →
+    # validate it); (3) AC6 drift check — perturb the shared schema (run AND problemspec
+    # cases) → BOTH TS and Julia flip; (4) cross-repo vendoring-drift — the vendored
+    # problemspec schemas byte-match the pinned Piccolo/Piccolissimo emission (Task 9).
+    # NOTE: the TS canonical-JSON/hash vitest runs in the `fast` job (pnpm -r run test),
+    # not here — this job is the Julia fixture lane + drift gates only (plan note 11).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -80,8 +89,20 @@ jobs:
         run: julia --project=packages/schema/julia packages/schema/julia/runtests.jl
       - name: producer lane — amico-run emits a run-dir, Julia validates the emitted output
         run: bash packages/schema/scripts/producer_roundtrip.sh
-      - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia
+      - name: AC6 anti-drift — perturbing the shared schema flips BOTH TS and Julia (run + problemspec)
         run: bash packages/schema/scripts/ac6_drift_check.sh
+      # Task 9 cross-repo vendoring-drift: the vendored problemspec schemas must be
+      # byte-identical to the schema the pinned Piccolo/Piccolissimo commit emitted
+      # (git-fetch at the *.sha sidecar's sha + cmp — NEVER re-run regenerate.jl here,
+      # correction #1). The OSS variant is checked against public Piccolo tokenlessly;
+      # a reachable-but-differing source reds CI. The FULL variant (private
+      # Piccolissimo) is checked only when PICCOLISSIMO_SCHEMA_TOKEN is set — its
+      # authoritative drift gate lives in Piccolissimo's own private CI, so amicode CI
+      # carries no mandatory private dependency (correction #1).
+      - name: vendoring-drift — vendored problemspec schemas byte-match the pinned Piccolo/Piccolissimo source
+        run: bash packages/schema/scripts/vendoring_drift_check.sh
+        env:
+          PICCOLISSIMO_SCHEMA_TOKEN: ${{ secrets.PICCOLISSIMO_SCHEMA_TOKEN }}
   vsix-gate:
     # 1.4 (#45): build the REAL .vsix and run the packaging-manifest suite with
     # AMICODE_REQUIRE_VSIX=1 — under that flag the suite can never self-skip, so

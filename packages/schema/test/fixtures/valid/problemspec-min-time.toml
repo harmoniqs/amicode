@@ -1,0 +1,35 @@
+# Valid `control` ProblemSpec — minimum-time recipe: a `time` objective with a
+# free timestep window and a fidelity floor. Exercises the free_dt = [lo, hi]
+# array arm (as opposed to the bare `false`).
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 60.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 60
+final_fidelity = 0.999
+free_dt = [0.01, 2.0]
+
+[[problem.objectives]]
+kind = "time"
+weight = 100.0
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"
+
+[solver]
+backend = "ipopt"

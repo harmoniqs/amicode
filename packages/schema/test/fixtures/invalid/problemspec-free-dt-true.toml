@@ -1,0 +1,25 @@
+# INVALID — free_dt = true (bare boolean). The poka-yoke: free_dt must be `false`
+# or a [lo, hi] window; a bare `true` matches neither arm of the free_dt oneOf.
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "unitary"
+gate = "X"
+subsystem_levels = [3]
+
+[pulse]
+kind = "cubic_spline"
+T = 40.0
+
+[problem]
+template = "SplinePulseProblem"
+N = 40
+free_dt = true
+
+[solver]
+backend = "ipopt"
