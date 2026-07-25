@@ -323,7 +323,7 @@ export function aggregateDispatch(records: LedgerRecord[], key: DispatchKey, opt
   const pairs = new Map<string, { model: string; variant: string }>();
   for (const r of firstAttempt) {
     if (key.variant !== undefined && r.variant !== key.variant) continue;
-    pairs.set(`${r.model} ${r.variant}`, { model: r.model, variant: r.variant });
+    pairs.set(`${r.model}\x00${r.variant}`, { model: r.model, variant: r.variant });
   }
 
   const cells: DispatchCell[] = [];
