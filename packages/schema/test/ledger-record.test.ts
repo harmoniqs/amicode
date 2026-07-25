@@ -1,5 +1,6 @@
-// ledger-record schema (Plan 3 / L1 Task 2) — a draft-07 `oneOf` discriminated on
-// `type` over the six ledger record kinds. Registered in the SCHEMAS registry ONLY
+// ledger-record schema (Plan 3 / L1 Task 2; `dispatch` added by the fleet substrate,
+// §6.3 Rev 5) — a draft-07 `oneOf` discriminated on `type` over the SEVEN ledger
+// record kinds. Registered in the SCHEMAS registry ONLY
 // (never SUPPORTED_VERSIONS_BY_KIND — it has no top-level properties.schema_version,
 // so adding it there crashes @amicode/schema at module load; same as problemspec).
 import { describe, it, expect } from "vitest";
@@ -93,6 +94,68 @@ describe("ledger-record schema — the other five kinds", () => {
     expect(
       validate({ type: "burn", ts: "t", class: "shared-artifact", mechanism: "aliased referee state", receipt: "PR #92", fixture: "test/slow/x.jl", prevention: "inner constructor" }, "ledger-record").errors,
     ).toEqual([]);
+  });
+});
+
+// ── the 7th kind: tier dispatch (fleet §6.3 Rev 5) ─────────────────────────────
+// Tier dispatch rides THIS ledger rather than building a second store, so the row is
+// a stanza here and validate-on-append covers it for free.
+const dispatch = () => ({
+  type: "dispatch",
+  ts: "2026-07-24T12:00:00Z",
+  task_type: "author-script",
+  work_id: "structhash-abc",
+  model: "anthropic/claude-haiku-4-5",
+  variant: "high",
+  gate: "re-rollout",
+  pass: true,
+  tokens: 1840,
+  attempt_index: 1,
+  source: "user",
+});
+
+describe("ledger-record schema — dispatch", () => {
+  it("a full valid dispatch row passes", () => {
+    expect(validate(dispatch(), "ledger-record").errors).toEqual([]);
+  });
+
+  it("every field is required", () => {
+    for (const k of ["ts", "task_type", "work_id", "model", "variant", "gate", "pass", "tokens", "attempt_index", "source"]) {
+      const bad = dispatch() as Record<string, unknown>;
+      delete bad[k];
+      expect(validate(bad, "ledger-record").ok, `missing ${k} should fail`).toBe(false);
+    }
+  });
+
+  // The sim/hw axis is carried in the taxonomy, so a LANE-LESS task_type is not a
+  // cosmetic defect: it is how simulated pass-rates would reach hardware routing.
+  it("task_type is a closed enum — a lane-less `experiment` is rejected", () => {
+    expect(validate({ ...dispatch(), task_type: "experiment" }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), task_type: "experiment-sim" }, "ledger-record").errors).toEqual([]);
+    expect(validate({ ...dispatch(), task_type: "experiment-hw" }, "ledger-record").errors).toEqual([]);
+    expect(validate({ ...dispatch(), task_type: "converse" }, "ledger-record").errors).toEqual([]);
+  });
+
+  it("model must carry a provider prefix and variant must be non-empty (co-stamping)", () => {
+    expect(validate({ ...dispatch(), model: "claude-haiku-4-5" }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), variant: "" }, "ledger-record").ok).toBe(false);
+  });
+
+  it("attempt_index is an integer >= 1 and tokens an integer >= 0 (experiment rows: 1 and 0)", () => {
+    expect(validate({ ...dispatch(), attempt_index: 0 }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), attempt_index: 1.5 }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), tokens: -1 }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), tokens: 0, attempt_index: 1 }, "ledger-record").errors).toEqual([]);
+  });
+
+  it("source accepts the simulated bridge (tier dispatch counts it, opt-in, sim-lane only)", () => {
+    expect(validate({ ...dispatch(), source: "simulated", task_type: "experiment-sim", tokens: 0 }, "ledger-record").errors).toEqual([]);
+    expect(validate({ ...dispatch(), source: "guessed" }, "ledger-record").ok).toBe(false);
+  });
+
+  it("pass is a boolean, and unknown keys are rejected", () => {
+    expect(validate({ ...dispatch(), pass: "yes" }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...dispatch(), tier: "spec" }, "ledger-record").ok).toBe(false);
   });
 });
 

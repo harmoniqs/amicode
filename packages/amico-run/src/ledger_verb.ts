@@ -19,9 +19,18 @@
 //         `structure_hash` covers the type skeleton, NOT the task. Omitting it is
 //         allowed and coarse, and the provenance string reports which you got.
 //         Delegates to ledger_query.ts (Task 4).
+//
+//   amico ledger dispatch --work-id <id> --task-type <t>
+//                         [--variant <v>] [--stamp <model>] [--include-simulated]
+//       → the tier-dispatch table (fleet §6.3 Rev 5): per-(model, variant) cells with
+//         first-attempt pass rates, m*(s) = argmin c_m/p_m(s), and the escalation
+//         ladder as the standing fallback. Delegates to ledger_dispatch.ts. Simulated
+//         evidence is opt-in and lands in the SIM LANE ONLY — it never widens a
+//         hardware cell.
 import { readFileSync } from "node:fs";
 import { appendRecord, type LedgerRecord } from "./ledger.js";
 import { bucketN, bucketT, queryDefaults, type QueryKey } from "./ledger_query.js";
+import { dispatchTable, type DispatchKey } from "./ledger_dispatch.js";
 import type { VerbResult } from "./verbs.js";
 
 function flagValue(argv: string[], name: string): string | undefined {
@@ -99,20 +108,42 @@ export function ledgerQuery(argv: string[]): VerbResult {
   return { json: { verb: "ledger", subcommand: "query", ...result }, code: 0 };
 }
 
-// ── dispatch ────────────────────────────────────────────────────────────────
-/** The `ledger` verb body: dispatch on the subcommand. Backs BOTH the CLI
+// ── dispatch (tier dispatch, fleet §6.3) ─────────────────────────────────────
+export function ledgerDispatch(argv: string[]): VerbResult {
+  const fail = (error: string): VerbResult => ({ json: { verb: "ledger", subcommand: "dispatch", error }, code: 64 });
+
+  const work_id = flagValue(argv, "--work-id");
+  const task_type = flagValue(argv, "--task-type");
+  if (!work_id || !task_type) return fail("--work-id and --task-type are required");
+
+  const key: DispatchKey = {
+    work_id,
+    task_type,
+    variant: flagValue(argv, "--variant"),
+    stamp: flagValue(argv, "--stamp"),
+  };
+  const result = dispatchTable(key, {
+    include_simulated: argv.includes("--include-simulated"),
+    frontier: flagValue(argv, "--frontier"),
+  });
+  return { json: { verb: "ledger", subcommand: "dispatch", ...result }, code: 0 };
+}
+
+// ── subcommand router ────────────────────────────────────────────────────────
+/** The `ledger` verb body: route on the subcommand. Backs BOTH the CLI
  *  (amico.ts) and the MCP facade (mcp_serve.ts). */
 export function ledgerVerb(argv: string[]): VerbResult {
   const sub = argv[0];
   const rest = argv.slice(1);
   if (sub === "append") return ledgerAppend(rest);
   if (sub === "query") return ledgerQuery(rest);
+  if (sub === "dispatch") return ledgerDispatch(rest);
   return {
     json: {
       verb: "ledger",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]",
+        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]  |  amico ledger dispatch --work-id <id> --task-type <t> [--variant <v>] [--stamp <model>] [--include-simulated]",
     },
     code: 64,
   };

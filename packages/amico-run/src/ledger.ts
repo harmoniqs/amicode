@@ -27,9 +27,12 @@ import { validate } from "@amicode/schema";
 export const PIPE_BUF = 4096;
 
 // ── record contract (spec-20260719-210954 §"Record contract") ────────────────────
-// Six discriminated record kinds. `solve` is the primary; `verdict` joins to it on
+// SEVEN discriminated record kinds. `solve` is the primary; `verdict` joins to it on
 // `problem_hash`; the rest are lightweight events. The `source: "simulated"` value
 // is the Prova isolation bridge (a deliberate extension of the spec's `user|replay`).
+// The 7th kind, `dispatch`, is the tier-dispatch row (fleet §6.3 Rev 5): tier
+// dispatch RIDES THIS LEDGER rather than building a second store — there is no
+// `amico telemetry` verb (that name is the solve-log classifier, telemetry.ts).
 
 export interface SolveSummary {
   platform: string;
@@ -112,13 +115,65 @@ export interface BurnRecord {
   prevention?: string;
 }
 
+// ── the dispatch stanza (fleet §6.3 Rev 5) ───────────────────────────────────────
+/** The task-type taxonomy (fleet G-F) plus `converse` — the closed set the
+ *  capability profiles stamp and tier dispatch keys on. The sim/hw axis is carried
+ *  HERE (`experiment-sim` vs `experiment-hw`) so learned routing for hardware work
+ *  is never fit on simulator difficulty. Extensible only by schema revision: the
+ *  `ledger-record` schema's `dispatch` stanza enumerates exactly this set, so a
+ *  mislabelled row (e.g. a bare `experiment`, which would pool sim with hw) is
+ *  rejected on append rather than silently pooling two difficulty populations. */
+export const TASK_TYPES = [
+  "triage",
+  "plan",
+  "author-script",
+  "implement-slice",
+  "bookkeeping",
+  "insight",
+  "review",
+  "experiment-sim",
+  "experiment-hw",
+  "converse",
+] as const;
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** One gated dispatch attempt, one row per gate (fleet §6.3). Appended by the
+ *  session harness / task supervisor via `amico ledger append` — the path always
+ *  comes from `$AMICO_LEDGER`, there is no `--ledger` flag.
+ *
+ *  `work_id` is the FINEST work identity available: `structure_hash` for
+ *  solve-shaped rows, the experiment kind for task rows. `task_type` is
+ *  deliberately COARSER — it is the aggregator's fallback tier, never its primary
+ *  key (fleet §6.3 "inherit the lesson, don't re-learn it": one hash for routing
+ *  and learning is what made `structure_hash` goal-blind).
+ *
+ *  Experiment-row conventions (Rev 4.1): `attempt_index = 1` always (tasks never
+ *  traverse the escalation ladder, so every task row is first-attempt by
+ *  definition) and `tokens = 0`, with experiment cells excluded from token-based
+ *  cost estimation — a lab cell's cost comes from the same model's authoring
+ *  dispatches. */
+export interface DispatchRecord {
+  type: "dispatch";
+  ts: string;
+  task_type: TaskType;
+  work_id: string;
+  model: string; // provider/model-id (fork format)
+  variant: string; // effort axis — ALWAYS co-stamped with `model` (fleet §2)
+  gate: string; // the gate this row reports (one row per gate)
+  pass: boolean; // gate outcome: verdict = agree
+  tokens: number; // per-attempt token cost; 0 on experiment rows (excluded from c_m)
+  attempt_index: number; // ladder position; 1 = first attempt (the p_m(s) sample)
+  source: "user" | "replay" | "simulated";
+}
+
 export type LedgerRecord =
   | SolveRecord
   | VerdictRecord
   | AttemptErrorRecord
   | FallbackRecord
   | OverrideRecord
-  | BurnRecord;
+  | BurnRecord
+  | DispatchRecord;
 
 /** The ledger file path: `$AMICO_LEDGER` override, else `~/.amico/ledger/runs.jsonl`. */
 export function ledgerPath(): string {
