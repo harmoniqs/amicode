@@ -66,15 +66,22 @@ describe("serverAuthHeader / serverAuthToken — the fork's Basic-auth contract"
 
 describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn", () => {
   const opts = { amicoRunBinDir: "/ext/bin", configContent: '{"instructions":["/a/AGENTS.md"]}', serverPassword: "pw" };
-  it("adds EXACTLY PATH + OPENCODE_CONFIG_CONTENT + OPENCODE_SERVER_PASSWORD (AC1)", () => {
+  it("adds EXACTLY PATH + config + password + the headless plot backends (AC1)", () => {
     // Exactly the ADDED keys — the server inherits the host env by platform
     // design (ServerManager spreads process.env under these), so full-env
     // equality is a known-wrong assertion; the contract is what WE add.
     expect(Object.keys(buildServerSpawnEnv(opts)).sort()).toEqual([
+      "GKSwstype",
+      "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
     ]);
+  });
+  it("plot backends are headless — agent scripts must never pop native figure windows", () => {
+    const env = buildServerSpawnEnv(opts);
+    expect(env.MPLBACKEND).toBe("Agg");
+    expect(env.GKSwstype).toBe("nul");
   });
   it("carries a NON-EMPTY password — route auth must not stay a no-op (AC2)", () => {
     const env = buildServerSpawnEnv({ ...opts, serverPassword: mintServerPassword() });
@@ -94,6 +101,8 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
     expect(withPython.AMICO_PYTHON).toBe("/ops/venvs/pasqal-connector/bin/python");
     expect(Object.keys(withPython).sort()).toEqual([
       "AMICO_PYTHON",
+      "GKSwstype",
+      "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
@@ -260,8 +269,10 @@ describe("buildServerSpawnEnv — telemetry integration (gate applied through th
     const env = buildServerSpawnEnv({ ...base, telemetry: { ...full, consentAnswered: false } });
     for (const k of TELEMETRY_ENV_KEYS) expect(k in env).toBe(false);
   });
-  it("no telemetry opt at all → identical to the pre-telemetry builder (three keys)", () => {
+  it("no telemetry opt at all → identical to the pre-telemetry builder (base keys only)", () => {
     expect(Object.keys(buildServerSpawnEnv(base)).sort()).toEqual([
+      "GKSwstype",
+      "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",

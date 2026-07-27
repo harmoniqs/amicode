@@ -213,6 +213,13 @@ export function buildServerSpawnEnv(opts: {
     PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
     OPENCODE_CONFIG_CONTENT: opts.configContent,
     OPENCODE_SERVER_PASSWORD: opts.serverPassword,
+    // Agent-run plotting must stay INSIDE the extension: a script calling
+    // plt.show() (or Julia GR opening a GKS terminal) pops a native window
+    // over the editor. Headless backends make show() a no-op — scripts save
+    // figures to files, which the chat renders inline. Inherited by every
+    // tool the server spawns.
+    MPLBACKEND: "Agg",
+    GKSwstype: "nul",
     ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
     // Gated OTLP env (contract). {} unless enabled + consent + endpoint all hold.
     ...buildTelemetryEnv(opts.telemetry),
