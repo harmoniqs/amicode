@@ -27,8 +27,20 @@
 //         ladder as the standing fallback. Delegates to ledger_dispatch.ts. Simulated
 //         evidence is opt-in and lands in the SIM LANE ONLY — it never widens a
 //         hardware cell.
+//
+//   amico ledger approve --plan-hash <h> [--max-solves <n>] [--tier <t>]
+//                        [--max-duration <s>] [--device none|ro|rw]
+//                        [--expires-in <s>] [--issued-by <who>]
+//       → mint a capability warrant (spec-20260727-164748 §5): the record that lets a
+//         gated launch through the --spec gate. This is the transport the approval
+//         card requires (spec §9.5) — an approval must reach the ledger DIRECTLY,
+//         never as a chat message the agent interprets and then records, or the
+//         provenance reads "the agent says the user approved". Bounds are written
+//         ONLY as declared: an omitted bound is ABSENT, never defaulted, because
+//         §5.1 rule 2 refuses a launch needing a bound the warrant omits — so a
+//         helpfully-filled default would silently widen the warrant.
 import { readFileSync } from "node:fs";
-import { appendRecord, type LedgerRecord } from "./ledger.js";
+import { appendRecord, type ApprovalRecord, type LedgerRecord, type WarrantBounds } from "./ledger.js";
 import { bucketN, bucketT, queryDefaults, type QueryKey } from "./ledger_query.js";
 import { dispatchTable, type DispatchKey } from "./ledger_dispatch.js";
 import type { VerbResult } from "./verbs.js";
@@ -129,6 +141,78 @@ export function ledgerDispatch(argv: string[]): VerbResult {
   return { json: { verb: "ledger", subcommand: "dispatch", ...result }, code: 0 };
 }
 
+// ── approve (capability warrant, spec-20260727-164748 §5) ────────────────────
+/** A positive integer flag, or a typed refusal. Rejects rather than coercing: a
+ *  silently-floored `--max-solves 1.5` would write a bound nobody asked for. */
+function positiveInt(raw: string | undefined, name: string): number | string | undefined {
+  if (raw === undefined) return undefined;
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1) return `${name} must be a positive integer (got "${raw}")`;
+  return n;
+}
+
+export function ledgerApprove(argv: string[]): VerbResult {
+  const fail = (error: string): VerbResult => ({ json: { verb: "ledger", subcommand: "approve", error }, code: 64 });
+
+  const plan_hash = flagValue(argv, "--plan-hash");
+  if (!plan_hash) return fail("--plan-hash is required (what is being approved)");
+
+  // Bounds are declared-only. An omitted key stays ABSENT so the gate's §5.1
+  // rule 2 refusal applies; defaulting any of these would widen the warrant.
+  const bounds: WarrantBounds = {};
+
+  const maxSolves = positiveInt(flagValue(argv, "--max-solves"), "--max-solves");
+  if (typeof maxSolves === "string") return fail(maxSolves);
+  if (maxSolves !== undefined) bounds.max_solves = maxSolves;
+
+  const maxDuration = positiveInt(flagValue(argv, "--max-duration"), "--max-duration");
+  if (typeof maxDuration === "string") return fail(maxDuration);
+  if (maxDuration !== undefined) bounds.max_duration_s = maxDuration;
+
+  const tier = flagValue(argv, "--tier");
+  if (tier !== undefined) bounds.tier = tier;
+
+  const device = flagValue(argv, "--device");
+  if (device !== undefined) {
+    if (device !== "none" && device !== "ro" && device !== "rw")
+      return fail(`--device must be none|ro|rw (got "${device}")`);
+    bounds.device = device;
+  }
+
+  const expiresIn = positiveInt(flagValue(argv, "--expires-in"), "--expires-in");
+  if (typeof expiresIn === "string") return fail(expiresIn);
+  const ttl = expiresIn ?? 3600; // one hour — short by design; §5 leans session-scoped
+
+  const now = new Date();
+  const rec: ApprovalRecord = {
+    type: "approval",
+    ts: now.toISOString(),
+    plan_hash,
+    bounds,
+    expires_at: new Date(now.getTime() + ttl * 1000).toISOString(),
+    // Never empty: an unattributed warrant is worse than none, since the ledger's
+    // only provenance for who approved is this field.
+    issued_by: flagValue(argv, "--issued-by") ?? "user:cli",
+  };
+
+  try {
+    appendRecord(rec); // single writer (#212) — never a second append path
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+  return {
+    json: {
+      verb: "ledger",
+      subcommand: "approve",
+      ok: true,
+      plan_hash,
+      bounds,
+      expires_at: rec.expires_at,
+    },
+    code: 0,
+  };
+}
+
 // ── subcommand router ────────────────────────────────────────────────────────
 /** The `ledger` verb body: route on the subcommand. Backs BOTH the CLI
  *  (amico.ts) and the MCP facade (mcp_serve.ts). */
@@ -138,12 +222,13 @@ export function ledgerVerb(argv: string[]): VerbResult {
   if (sub === "append") return ledgerAppend(rest);
   if (sub === "query") return ledgerQuery(rest);
   if (sub === "dispatch") return ledgerDispatch(rest);
+  if (sub === "approve") return ledgerApprove(rest);
   return {
     json: {
       verb: "ledger",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]  |  amico ledger dispatch --work-id <id> --task-type <t> [--variant <v>] [--stamp <model>] [--include-simulated]",
+        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]  |  amico ledger dispatch --work-id <id> --task-type <t> [--variant <v>] [--stamp <model>] [--include-simulated]  |  amico ledger approve --plan-hash <h> [--max-solves <n>] [--tier <t>] [--max-duration <s>] [--device none|ro|rw] [--expires-in <s>] [--issued-by <who>]",
     },
     code: 64,
   };
