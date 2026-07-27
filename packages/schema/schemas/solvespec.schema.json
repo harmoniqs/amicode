@@ -17,7 +17,8 @@
     }
   ],
   "properties": {
-    "schema_version": { "enum": ["1", "2", "3", "4"] },
+    "schema_version": { "enum": ["1", "2", "3", "4", "5"] },
+    "plan_hash": { "type": "string", "minLength": 1, "description": "v5 — the approved plan this launch runs under, joining it to a capability warrant at the --spec gate (spec-20260727-164748 §5.1). OPTIONAL by design: absence restricts the launch to the ungated free set (rule 1) and can never widen what it may do, so requiring it would break every existing spec while buying nothing. minLength guards against an empty hash matching any warrant." },
     "script_path": { "type": "string", "minLength": 1, "description": "the Julia script to run (exactly one of script_path | problem_spec)" },
     "problem_spec": {
       "oneOf": [

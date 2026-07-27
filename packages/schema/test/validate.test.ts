@@ -32,10 +32,10 @@ describe("schema set + exports", () => {
       new Set(["run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec", "ledger-record"]),
     );
   });
-  it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v4 (hpc tier + remote executor + problem_spec); the rest v1", () => {
+  it("supported versions are PER-KIND: run at v2 (spec C); solvespec at v5 (v4 hpc tier + remote executor + problem_spec; v5 plan_hash); the rest v1", () => {
     expect(SUPPORTED_VERSIONS_BY_KIND).toEqual({
       run: ["1", "2"],
-      solvespec: ["1", "2", "3", "4"],
+      solvespec: ["1", "2", "3", "4", "5"],
       result: ["1"],
       lab: ["1"],
       "catalog-entry": ["1"],

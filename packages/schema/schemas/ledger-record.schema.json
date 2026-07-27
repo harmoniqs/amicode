@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://amico.harmoniqs.co/schema/ledger-record/v1",
   "title": "amico run-ledger record",
-  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the seven record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
+  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the eight record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
   "oneOf": [
     {
       "title": "solve",
@@ -172,6 +172,30 @@
         "tokens": { "type": "integer", "minimum": 0 },
         "attempt_index": { "type": "integer", "minimum": 1 },
         "source": { "enum": ["user", "replay", "simulated"] }
+      }
+    },
+    {
+      "title": "approval",
+      "description": "A capability warrant (spec-20260727-164748 §5): the record that lets a gated launch through amico-run's --spec gate. `plan_hash` is what was approved; `bounds` is what it authorises. DELIBERATELY UNSIGNED — the threat model is drift, not an adversary (spec §3), and the product agent holds unrestricted bash, so a signature would defend against an attacker this layer could not stop anyway. Absent bounds keys do NOT default to allow: §5.1 rule 2 refuses a launch needing a bound the warrant omits, which is why an empty `bounds` object is legal (it authorises nothing beyond the ungated free set) rather than a hole. `device` uses the fleet spec §2.1 permission vocabulary.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "plan_hash", "bounds", "expires_at", "issued_by"],
+      "properties": {
+        "type": { "const": "approval" },
+        "ts": { "type": "string" },
+        "plan_hash": { "type": "string", "minLength": 1 },
+        "bounds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_solves": { "type": "integer", "minimum": 1 },
+            "tier": { "type": "string", "minLength": 1 },
+            "max_duration_s": { "type": "number", "exclusiveMinimum": 0 },
+            "device": { "enum": ["none", "ro", "rw"] }
+          }
+        },
+        "expires_at": { "type": "string" },
+        "issued_by": { "type": "string", "minLength": 1 }
       }
     }
   ]

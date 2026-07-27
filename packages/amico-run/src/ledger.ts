@@ -166,6 +166,31 @@ export interface DispatchRecord {
   source: "user" | "replay" | "simulated";
 }
 
+/** What a warrant authorises. An ABSENT key does not mean "unlimited" — the gate
+ *  refuses a launch that needs a bound the warrant omits (spec §5.1 rule 2), so an
+ *  empty `bounds` authorises nothing beyond the ungated free set. `device` uses the
+ *  fleet spec §2.1 permission vocabulary. */
+export interface WarrantBounds {
+  max_solves?: number;
+  tier?: string;
+  max_duration_s?: number;
+  device?: "none" | "ro" | "rw";
+}
+
+/** A capability warrant (spec-20260727-164748 §5): what lets a gated launch through
+ *  the `--spec` gate. DELIBERATELY UNSIGNED — the threat model is drift, not an
+ *  adversary (spec §3), and the product agent holds unrestricted bash, so a signature
+ *  would defend against an attacker this layer could not stop anyway. Provenance lives
+ *  in `issued_by`, and the append-only ledger makes the record tamper-evident. */
+export interface ApprovalRecord {
+  type: "approval";
+  ts: string;
+  plan_hash: string;
+  bounds: WarrantBounds;
+  expires_at: string;
+  issued_by: string;
+}
+
 export type LedgerRecord =
   | SolveRecord
   | VerdictRecord
@@ -173,7 +198,8 @@ export type LedgerRecord =
   | FallbackRecord
   | OverrideRecord
   | BurnRecord
-  | DispatchRecord;
+  | DispatchRecord
+  | ApprovalRecord;
 
 /** The ledger file path: `$AMICO_LEDGER` override, else `~/.amico/ledger/runs.jsonl`. */
 export function ledgerPath(): string {
