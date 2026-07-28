@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://amico.harmoniqs.co/schema/ledger-record/v1",
   "title": "amico run-ledger record",
-  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the eight record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
+  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the eleven record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval|spec_review|plan_compiled|todo). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
   "$defs": {
     "bounds": {
       "type": "object",
@@ -193,6 +193,100 @@
         "attempt_index": { "type": "integer", "minimum": 1 },
         "plan_hash": { "type": "string", "minLength": 1, "description": "Set when this dispatch is a plan step; with step_id it lets step-state derivation see a step as `running` before any terminal verdict exists." },
         "step_id": { "type": "string", "minLength": 1, "description": "The compiled plan step this dispatch is for." },
+        "source": { "enum": ["user", "replay", "simulated"] }
+      }
+    },
+    {
+      "title": "spec_review",
+      "description": "One completed adversarial review of a Spec (spec-20260728 §5). Finding BODIES are NOT here: a 3-round 3-critic review's prose would exceed PIPE_BUF and appendRecord throws above it — after the model spend — so bodies go to a sidecar and this row carries a digest. Every free-text field is maxLength-capped for the same reason, because per-lens reasons originate in a subprocess's stderr.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "spec_id", "design_hash", "rounds", "review_verdict", "lens_registry_version", "lens_status", "critics", "findings_count", "blocking_count", "source"],
+      "properties": {
+        "type": { "const": "spec_review" },
+        "ts": { "type": "string" },
+        "spec_id": { "type": "string", "minLength": 1, "maxLength": 200, "description": "The spec's IMMUTABLE identity, authored once. design_hash alone is not an identity — two specs sharing an acceptance list would collide in the findings namespace and in the recompiled-plan lookup." },
+        "design_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256hex(canonicalJson({task_type, acceptance, budget?})) — the DECISION SURFACE only. Bare hex, matching structureHash/problemHash; NOT the gate's sha256:-prefixed spec_hash, which is a different population entirely (the canonical solvespec)." },
+        "rounds": { "type": "integer", "minimum": 1, "maximum": 3, "description": "Round budget is 3; the schema enforces it so an unbounded loop cannot record itself as legitimate." },
+        "review_verdict": { "enum": ["approved", "approved-mechanical", "degraded", "blocking", "exhausted"], "description": "NOT named `verdict`: the ledger already has a `verdict` KIND whose `verdict` field is agree|disagree, and both live in the same runs.jsonl. approved-mechanical = tier 1 clean with no critic binary; degraded = a selected critic timed out or emitted unparseable output. Both exit 0, but plan compile refuses them without --allow-unreviewed." },
+        "lens_registry_version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "lens_status": {
+          "type": "array",
+          "description": "Per-lens outcome. `not-applicable` and `unverified` are distinct from a clean `ran` on purpose: collapsing them is how a blocking lens that could not run reads as a pass.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lens", "status"],
+            "properties": {
+              "lens": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "status": { "enum": ["ran", "not-applicable", "skipped", "unverified"] },
+              "reason": { "type": "string", "maxLength": 200 }
+            }
+          }
+        },
+        "critics": {
+          "type": "array",
+          "description": "PRESENT-and-empty is the offline sentinel — an absent key would be indistinguishable from a row written before this field existed.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["model", "variant"],
+            "properties": {
+              "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "Read back from the CHILD's own output, not assumed from argv — otherwise the collusion mitigation stamps a request rather than a fact." },
+              "variant": { "type": "string", "minLength": 1, "maxLength": 32 }
+            }
+          }
+        },
+        "findings_count": { "type": "integer", "minimum": 0 },
+        "blocking_count": { "type": "integer", "minimum": 0 },
+        "findings_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "sha256hex(canonicalJson(findings)) — of the CANONICAL findings array, not of the sidecar file's bytes. Those are different strings." },
+        "findings_ref": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "source": { "enum": ["user", "replay", "simulated"] }
+      }
+    },
+    {
+      "title": "plan_compiled",
+      "description": "A Plan compiled from a Spec (spec-20260728 §5). Load-bearing beyond bookkeeping: this row is the design_hash -> plan_hash binding, without which the launch gate cannot distinguish `the plan was recompiled, re-approve` from `never approved` and every recompile surfaces as a bare denial.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "plan_hash", "spec_id", "design_hash", "step_count", "source"],
+      "properties": {
+        "type": { "const": "plan_compiled" },
+        "ts": { "type": "string" },
+        "plan_hash": { "type": "string", "minLength": 1 },
+        "spec_id": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "design_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "compiled_by": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["model", "variant"],
+          "properties": {
+            "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+            "variant": { "type": "string", "minLength": 1, "maxLength": 32 }
+          }
+        },
+        "step_count": { "type": "integer", "minimum": 0 },
+        "advisory_count": { "type": "integer", "minimum": 0 },
+        "suggested_ttl_s": { "type": "integer", "minimum": 1, "description": "A RECOMMENDATION derived from step_count. `amico ledger approve` reads it to default --expires-in and remains the sole writer of expires_at — compile must not own a warrant's lifetime, or --recompile would silently re-set how long a human's authorization lasts." },
+        "allow_unreviewed": { "type": "boolean", "description": "True when compiled from a spec whose review was approved-mechanical or degraded. Recorded so the surface can say so." },
+        "source": { "enum": ["user", "replay", "simulated"] }
+      }
+    },
+    {
+      "title": "todo",
+      "description": "One ADVISORY todo transition (spec-20260728 §5). There is deliberately no step-todo row: step state is DERIVED from verdict rows, which is what makes forging `passed` require forging a gate verdict. `open` is the ABSENCE of a row; multiple rows per id resolve last-ts-wins; fixed -> obsolete is legal. No `actor` field, because no trustworthy actor identity exists at this layer and recording one would be theatre.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "plan_hash", "id", "state", "source"],
+      "if": { "properties": { "state": { "const": "waived" } }, "required": ["state"] },
+      "then": { "required": ["reason"] },
+      "properties": {
+        "type": { "const": "todo" },
+        "ts": { "type": "string" },
+        "plan_hash": { "type": "string", "minLength": 1 },
+        "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "state": { "enum": ["fixed", "waived", "obsolete"] },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 200, "description": "Required iff state = waived, so waive-spam is visible in the record rather than silent." },
         "source": { "enum": ["user", "replay", "simulated"] }
       }
     },

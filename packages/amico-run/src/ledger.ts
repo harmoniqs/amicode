@@ -27,7 +27,7 @@ import { validate } from "@amicode/schema";
 export const PIPE_BUF = 4096;
 
 // ── record contract (spec-20260719-210954 §"Record contract") ────────────────────
-// SEVEN discriminated record kinds. `solve` is the primary; `verdict` joins to it on
+// ELEVEN discriminated record kinds. `solve` is the primary; `verdict` joins to it on
 // `problem_hash`; the rest are lightweight events. The `source: "simulated"` value
 // is the Prova isolation bridge (a deliberate extension of the spec's `user|replay`).
 // The 7th kind, `dispatch`, is the tier-dispatch row (fleet §6.3 Rev 5): tier
@@ -213,6 +213,69 @@ export interface ApprovalRecord {
   issued_by: string;
 }
 
+// ── the deliberation stanzas (spec-20260728 §5) ──────────────────────────────────
+// The front half of deliberation: a Spec is authored, adversarially reviewed, and
+// compiled into a Plan whose advisory todos are tracked here. Step todos are NOT here
+// — step state is derived from `verdict` rows (§4.4), so forging `passed` requires
+// forging a gate verdict.
+
+/** One completed adversarial review. Finding BODIES live in a sidecar, not here: a
+ *  3-round 3-critic review's prose exceeds PIPE_BUF and appendRecord throws above it —
+ *  after the model spend — so this row carries only a digest. */
+export interface SpecReviewRecord {
+  type: "spec_review";
+  ts: string;
+  /** The spec's IMMUTABLE identity. `design_hash` alone is not an identity: two specs
+   *  sharing an acceptance list would collide in the findings namespace. */
+  spec_id: string;
+  design_hash: string;
+  rounds: number; // 1..3, schema-enforced
+  /** NOT `verdict`: the ledger already has a `verdict` KIND whose `verdict` field is
+   *  agree|disagree, and both live in the same runs.jsonl. */
+  review_verdict: "approved" | "approved-mechanical" | "degraded" | "blocking" | "exhausted";
+  lens_registry_version: string;
+  lens_status: Array<{ lens: string; status: "ran" | "not-applicable" | "skipped" | "unverified"; reason?: string }>;
+  /** PRESENT-and-empty is the offline sentinel; absent would be indistinguishable from
+   *  a row written before the field existed. */
+  critics: Array<{ model: string; variant: string }>;
+  findings_count: number;
+  blocking_count: number;
+  findings_sha256?: string;
+  findings_ref?: string;
+  source: "user" | "replay" | "simulated";
+}
+
+/** A Plan compiled from a Spec. This row IS the design_hash -> plan_hash binding,
+ *  without which the launch gate cannot distinguish "recompiled, re-approve" from
+ *  "never approved". */
+export interface PlanCompiledRecord {
+  type: "plan_compiled";
+  ts: string;
+  plan_hash: string;
+  spec_id: string;
+  design_hash: string;
+  compiled_by?: { model: string; variant: string };
+  step_count: number;
+  advisory_count?: number;
+  /** A RECOMMENDATION from step_count. `amico ledger approve` reads it to default
+   *  --expires-in and remains the sole writer of expires_at. */
+  suggested_ttl_s?: number;
+  allow_unreviewed?: boolean;
+  source: "user" | "replay" | "simulated";
+}
+
+/** One ADVISORY todo transition. `open` is the absence of a row; multiple rows per id
+ *  resolve last-ts-wins. No `actor` field — no trustworthy actor identity exists here. */
+export interface TodoRecord {
+  type: "todo";
+  ts: string;
+  plan_hash: string;
+  id: string;
+  state: "fixed" | "waived" | "obsolete";
+  reason?: string; // required iff state === "waived"
+  source: "user" | "replay" | "simulated";
+}
+
 export type LedgerRecord =
   | SolveRecord
   | VerdictRecord
@@ -221,7 +284,10 @@ export type LedgerRecord =
   | OverrideRecord
   | BurnRecord
   | DispatchRecord
-  | ApprovalRecord;
+  | ApprovalRecord
+  | SpecReviewRecord
+  | PlanCompiledRecord
+  | TodoRecord;
 
 /** The ledger file path: `$AMICO_LEDGER` override, else `~/.amico/ledger/runs.jsonl`. */
 export function ledgerPath(): string {
