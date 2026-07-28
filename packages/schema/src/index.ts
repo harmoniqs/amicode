@@ -35,7 +35,7 @@ import ledgerRecordSchema from "../schemas/ledger-record.schema.json" with { typ
 // package-internal `../src/hashing.js` relative path (this package has no
 // "exports" map, so a subpath import would work, but the root export is the
 // established, documented seam every other consumer uses — see `validate` below).
-export { structureHash, problemHash, canonicalJson, fullDict, structureFields } from "./hashing.js";
+export { structureHash, problemHash, canonicalJson, fullDict, structureFields, sha256hex, designHash, planHash } from "./hashing.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.

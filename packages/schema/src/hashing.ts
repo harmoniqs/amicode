@@ -238,7 +238,7 @@ export function structureFields(spec: Raw): Json {
 }
 
 // ── hashes ─────────────────────────────────────────────────────────────────
-const sha256hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
+export const sha256hex = (s: string): string => createHash("sha256").update(s, "utf8").digest("hex");
 
 /** SHA-256 hex of canonicalJson(structureFields(spec)) — the problem's *shape* key. */
 export function structureHash(spec: Raw): string {
@@ -248,4 +248,39 @@ export function structureHash(spec: Raw): string {
 /** SHA-256 hex of canonicalJson(fullDict(spec)) — the *full* problem-instance key. */
 export function problemHash(spec: Raw): string {
   return sha256hex(canonicalJson(fullDict(spec)));
+}
+
+// ── deliberation hashes (spec-20260728 §2.4, §4.1) ───────────────────────────────
+
+/** Drop every undefined- OR null-valued key. `canonicalJson` renders both as "null",
+ *  and a literal `{a, b, c}` with `c: undefined` still has an enumerable `c` — so
+ *  without this an absent budget hashes as `"budget":null`: stable, permanent, and
+ *  wrong, with nothing anywhere reporting an error. */
+function compact(o: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null) out[k] = v;
+  return out;
+}
+
+/** The Spec's DECISION-SURFACE hash. Named `designHash`, NOT `specHash`: gate.ts already
+ *  stamps `hashes.spec_hash` as the sha256 of the canonical SOLVESPEC, and one name over
+ *  two populations makes any join across them silently wrong.
+ *
+ *  Covers `task_type`, `acceptance` and `budget` only. `acceptance` entries are trimmed,
+ *  inner whitespace collapsed, then SORTED (UTF-16 code units, matching canonicalJson's
+ *  own key sort) — reordering independent criteria is not a decision change. `invariants`
+ *  and `assumptions` are excluded deliberately: prose must not re-gate a live warrant,
+ *  and a violated assumption is a runtime blocked-report rather than a re-approval. */
+export function designHash(spec: Record<string, unknown>): string {
+  const acceptance = Array.isArray(spec.acceptance)
+    ? (spec.acceptance as unknown[]).map((s) => String(s).trim().replace(/\s+/g, " ")).sort()
+    : [];
+  return sha256hex(canonicalJson(compact({ task_type: spec.task_type, acceptance, budget: spec.budget }) as Json));
+}
+
+/** The compiled Plan's hash: `goal` + `steps` only. `design_hash` and `compiled_at` are
+ *  excluded so a recompile that changed nothing does not mint a new hash — which would
+ *  invalidate a live warrant for no reason. */
+export function planHash(plan: Record<string, unknown>): string {
+  return sha256hex(canonicalJson(compact({ goal: plan.goal, steps: plan.steps }) as Json));
 }
