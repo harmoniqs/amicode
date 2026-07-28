@@ -441,7 +441,12 @@ export function updateSystem(existing: SystemEntity, patch: SystemPatch): System
 // validated sets; `platform` stays OPEN (any non-empty string), as the flat entity
 // always was (spec §2.1).
 
-export const ROLES = ["qubit", "cavity", "resonator", "mode", "atom"] as const;
+/** `other` is the honest escape: a subsystem on a platform we have no structural
+ *  model for. It exists so `platformDefaultRole` never has to FABRICATE a role
+ *  from an unrecognized platform string — that fabrication is what put the
+ *  transmon Hamiltonian (and its anharmonicity row) on an exchange-only spin
+ *  qubit, because every consumer read the defaulted "qubit" as a statement. */
+export const ROLES = ["qubit", "cavity", "resonator", "mode", "atom", "other"] as const;
 export type Role = (typeof ROLES)[number];
 
 export const COUPLING_KINDS = ["exchange", "ZZ", "cross-resonance", "dispersive-chi", "vdW", "mode-mediated"] as const;
@@ -470,6 +475,31 @@ export interface Coupling {
   params: Record<string, number>;
 }
 
+export const TERM_KINDS = ["drift", "coupling", "drive"] as const;
+export type TermKind = (typeof TERM_KINDS)[number];
+
+/** One term of an EXPLICITLY RECORDED Hamiltonian. The card used to re-derive
+ *  the Hamiltonian from (role, levels, platform) with hardcoded tables, so it
+ *  could only ever be right for platforms someone had hardcoded — and was
+ *  silently wrong for the rest. The agent already understands the model well
+ *  enough to author the Julia solve; this is where that understanding gets
+ *  written down instead of evaporating into the script. */
+export interface HamiltonianTerm {
+  kind: TermKind;
+  /** KaTeX-renderable LaTeX for this term alone, with no leading `+`. */
+  latex: string;
+  /** Component ids the term acts on; omitted/[] = the whole system. */
+  acts_on?: string[];
+  /** Short human label ("Rydberg detuning", "vdW blockade"). */
+  label?: string;
+}
+
+export interface RecordedHamiltonian {
+  terms: HamiltonianTerm[];
+  /** Conventions the terms assume — frame, units, basis ordering. Free text. */
+  notes?: string;
+}
+
 export interface CompositeSystem {
   /** Open platform string (spec A), same rule as the flat entity. */
   platform: string;
@@ -478,6 +508,9 @@ export interface CompositeSystem {
   /** Provenance: which preset generated `couplings` (undefined for hand-authored). */
   topology?: Topology;
   drive: { arch: DriveArch };
+  /** Present = the researcher confirmed this model. Absent = the card falls back
+   *  to a canonical form for the platform, LABELLED as inferred. */
+  hamiltonian?: RecordedHamiltonian;
   /** Free text; excluded from the canonical hash (like the flat entity). */
   notes?: string;
 }
@@ -487,6 +520,17 @@ const MODE_ROLES = new Set<Role>(["mode", "resonator"]);
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
+}
+
+/** `{` / `}` balance, ignoring the escaped literals `\{` and `\}`. */
+function balancedBraces(s: string): boolean {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === "\\") { i++; continue; } // skip the escaped char, whatever it is
+    if (s[i] === "{") depth++;
+    else if (s[i] === "}" && --depth < 0) return false;
+  }
+  return depth === 0;
 }
 
 /** Problems with a CompositeSystem; [] means valid. Closed sets for
@@ -548,6 +592,29 @@ export function validateCompositeSystem(e: CompositeSystem): string[] {
   if (e.topology !== undefined && !(TOPOLOGIES as readonly string[]).includes(e.topology)) {
     problems.push(`topology must be one of ${TOPOLOGIES.join("|")}, got ${JSON.stringify(e.topology)}`);
   }
+  if (e.hamiltonian !== undefined) {
+    const h = e.hamiltonian;
+    if (!Array.isArray(h.terms) || h.terms.length === 0) {
+      problems.push("hamiltonian.terms must be a non-empty array");
+    } else {
+      h.terms.forEach((t, i) => {
+        if (!(TERM_KINDS as readonly string[]).includes(t?.kind)) {
+          problems.push(`hamiltonian.terms[${i}].kind must be one of ${TERM_KINDS.join("|")}, got ${JSON.stringify(t?.kind)}`);
+        }
+        if (typeof t?.latex !== "string" || t.latex.trim() === "") {
+          problems.push(`hamiltonian.terms[${i}].latex must be a non-empty string`);
+        } else if (!balancedBraces(t.latex)) {
+          // The card renders this straight into KaTeX. We can't parse LaTeX here
+          // (the plugin stays dependency-free), but unbalanced braces are the
+          // one slip common enough — and cheap enough — to reject at the door.
+          problems.push(`hamiltonian.terms[${i}].latex has unbalanced braces: ${JSON.stringify(t.latex)}`);
+        }
+        for (const id of t?.acts_on ?? []) {
+          if (!ids.has(id)) problems.push(`hamiltonian.terms[${i}] acts_on unknown component id "${id}"`);
+        }
+      });
+    }
+  }
   if (!e.drive || !(DRIVE_ARCHS as readonly string[]).includes(e.drive.arch)) {
     problems.push(`drive.arch must be one of ${DRIVE_ARCHS.join("|")}, got ${JSON.stringify(e.drive?.arch)}`);
   }
@@ -580,9 +647,18 @@ export function compositeSystemWarnings(e: CompositeSystem): string[] {
 
 // --- migration + merge (spec §6, §2.3) ---------------------------------------
 
-/** Platform → default component role (spec §2.1 table). Unknown → qubit. */
+/** Platform → default component role (spec §2.1 table). Only platforms we
+ *  actually model get a role inferred from the string; anything else is `other`
+ *  until the MODEL stage asks. Guessing "qubit" here was wrong for photonic
+ *  (a mode) and bosonic (a mode) and told every downstream consumer that an
+ *  unexamined platform was a transmon-shaped qubit. */
+const PLATFORM_ROLE: Record<string, Role> = {
+  rydberg: "atom",
+  transmon: "qubit",
+  bosonic: "mode",
+};
 export function platformDefaultRole(platform: string): Role {
-  return platform.toLowerCase() === "rydberg" ? "atom" : "qubit";
+  return PLATFORM_ROLE[platform.toLowerCase()] ?? "other";
 }
 
 /** Platform → default drive arch (spec §2.1 table). rydberg/ion → global; else per-component. */
@@ -611,6 +687,7 @@ export function normalizeSystem(raw: unknown): CompositeSystem {
       drive,
     };
     if (typeof r.topology === "string") out.topology = r.topology as Topology;
+    if (r.hamiltonian && typeof r.hamiltonian === "object") out.hamiltonian = r.hamiltonian as RecordedHamiltonian;
     if (typeof r.notes === "string") out.notes = r.notes;
     return out;
   }
@@ -633,6 +710,9 @@ export interface CompositeSystemPatch {
   couplings?: Coupling[];
   topology?: Topology;
   drive?: { arch: DriveArch };
+  /** Replaces the recorded Hamiltonian wholesale — a partial term list would be
+   *  a partial Hamiltonian, which is worse than none. */
+  hamiltonian?: RecordedHamiltonian;
   notes?: string;
 }
 
@@ -655,6 +735,8 @@ export function updateCompositeSystem(existing: unknown, patch: CompositeSystemP
   };
   const topology = patch.topology ?? base.topology;
   if (topology !== undefined) merged.topology = topology;
+  const hamiltonian = patch.hamiltonian ?? base.hamiltonian;
+  if (hamiltonian !== undefined) merged.hamiltonian = hamiltonian;
   const notes = patch.notes ?? base.notes;
   if (notes !== undefined) merged.notes = notes;
   const problems = validateCompositeSystem(merged);
@@ -690,6 +772,16 @@ export function compositeSystemToml(e: CompositeSystem, now?: Date): string {
       `kind = ${tomlEscape(cp.kind)}`,
       `params = ${inlineParams(cp.params)}`,
     );
+  }
+  if (e.hamiltonian) {
+    if (e.hamiltonian.notes !== undefined) {
+      lines.push("", "[system.hamiltonian]", `notes = ${tomlEscape(e.hamiltonian.notes)}`);
+    }
+    for (const t of e.hamiltonian.terms) {
+      lines.push("", "[[system.hamiltonian.terms]]", `kind = ${tomlEscape(t.kind)}`, `latex = ${tomlEscape(t.latex)}`);
+      if (t.acts_on !== undefined) lines.push(`acts_on = [${t.acts_on.map(tomlEscape).join(", ")}]`);
+      if (t.label !== undefined) lines.push(`label = ${tomlEscape(t.label)}`);
+    }
   }
   return lines.join("\n") + "\n";
 }

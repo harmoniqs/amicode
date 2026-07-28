@@ -469,18 +469,87 @@ describe("normalizeSystem + composite merge/toml/hash (spec-20260709)", () => {
     expect(validateCompositeSystem(c)).toEqual([]);
   });
 
-  it("rydberg→atom/global; unknown→qubit/per-component; absent flat levels stays absent", () => {
+  it("rydberg→atom/global; unknown→OTHER/per-component; absent flat levels stays absent", () => {
     const r = normalizeSystem({ platform: "rydberg", levels: 3, params: {} });
     expect(r.components[0].role).toBe("atom");
     expect(r.drive.arch).toBe("global");
+    // An unrecognized platform gets NO structural model inferred from its name.
+    // "qubit" here was a fabrication that every consumer then read as a fact —
+    // it is what put the transmon Hamiltonian on an exchange-only spin qubit.
     const u = normalizeSystem({ platform: "fluxonium", params: {} });
-    expect(u.components[0].role).toBe("qubit");
+    expect(u.components[0].role).toBe("other");
     expect(u.components[0].levels).toBeUndefined();
     expect(u.drive.arch).toBe("per-component");
+    // …while the platforms we actually model still get theirs.
+    expect(normalizeSystem({ platform: "transmon", params: {} }).components[0].role).toBe("qubit");
+    expect(normalizeSystem({ platform: "bosonic", params: {} }).components[0].role).toBe("mode");
   });
 
   it("is idempotent on an already-composite entity", () => {
     expect(normalizeSystem(COMPOSITE)).toEqual(COMPOSITE);
+  });
+
+  describe("recorded hamiltonian", () => {
+    const withH = (terms: unknown, extra: Record<string, unknown> = {}) => ({
+      ...COMPOSITE,
+      hamiltonian: { terms, ...extra },
+    });
+
+    it("validates kind, latex and acts_on against the component set", () => {
+      expect(validateCompositeSystem(withH([{ kind: "drift", latex: "\\omega\\,\\hat Z" }]) as any)).toEqual([]);
+      expect(validateCompositeSystem(withH([]) as any).join(" ")).toMatch(/non-empty array/);
+      expect(validateCompositeSystem(withH([{ kind: "spooky", latex: "x" }]) as any).join(" ")).toMatch(/kind must be one of/);
+      expect(validateCompositeSystem(withH([{ kind: "drift", latex: "  " }]) as any).join(" ")).toMatch(/non-empty string/);
+      expect(
+        validateCompositeSystem(withH([{ kind: "drift", latex: "x", acts_on: ["GHOST"] }]) as any).join(" "),
+      ).toMatch(/unknown component id "GHOST"/);
+    });
+
+    it("rejects unbalanced braces — the card renders this straight into KaTeX", () => {
+      expect(validateCompositeSystem(withH([{ kind: "drift", latex: "\\tfrac{1}{2" }]) as any).join(" ")).toMatch(
+        /unbalanced braces/,
+      );
+      // an ESCAPED brace is a literal, not a group
+      expect(validateCompositeSystem(withH([{ kind: "drift", latex: "\\{ \\hat Z \\}" }]) as any)).toEqual([]);
+      expect(validateCompositeSystem(withH([{ kind: "drift", latex: "\\hat Z}" }]) as any).join(" ")).toMatch(
+        /unbalanced braces/,
+      );
+    });
+
+    it("survives the TOML round-trip with acts_on, label and notes", () => {
+      const e = withH(
+        [
+          { kind: "coupling", latex: "J_{12}(t)\\,\\vec S_1 \\cdot \\vec S_2", acts_on: ["q1", "q2"], label: "exchange" },
+          { kind: "drift", latex: "-\\Delta\\,\\hat n" },
+        ],
+        { notes: "encoded subspace" },
+      ) as any;
+      const doc = parse(compositeSystemToml(e)) as any;
+      expect(doc.system.hamiltonian.notes).toBe("encoded subspace");
+      expect(doc.system.hamiltonian.terms).toHaveLength(2);
+      expect(doc.system.hamiltonian.terms[0]).toMatchObject({
+        kind: "coupling",
+        latex: "J_{12}(t)\\,\\vec S_1 \\cdot \\vec S_2", // backslashes survive escaping
+        acts_on: ["q1", "q2"],
+        label: "exchange",
+      });
+      expect(doc.system.hamiltonian.terms[1].acts_on).toBeUndefined();
+    });
+
+    it("a patch replaces the term set wholesale, and omitting it preserves the recorded one", () => {
+      const base = withH([{ kind: "drift", latex: "A" }]) as any;
+      expect(updateCompositeSystem(base, { hamiltonian: { terms: [{ kind: "drive", latex: "B" }] } }).hamiltonian)
+        .toEqual({ terms: [{ kind: "drive", latex: "B" }] });
+      expect(updateCompositeSystem(base, { topology: "single-pair" }).hamiltonian).toEqual({
+        terms: [{ kind: "drift", latex: "A" }],
+      });
+    });
+
+    it("normalizeSystem reads it through, and a bad patch cannot corrupt a good entity", () => {
+      const e = withH([{ kind: "drift", latex: "A" }]) as any;
+      expect(normalizeSystem(e).hamiltonian).toEqual({ terms: [{ kind: "drift", latex: "A" }] });
+      expect(() => updateCompositeSystem(e, { hamiltonian: { terms: [] } })).toThrow(/non-empty array/);
+    });
   });
 
   it("updateCompositeSystem tolerates a FLAT existing (F1) + merges a composite patch", () => {
