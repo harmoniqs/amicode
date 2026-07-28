@@ -14,7 +14,25 @@ const common = {
   // ESM, not CJS: the package is "type": "module", so node executes the bundle as ESM —
   // a CJS bundle would die on `require is not defined in ES module scope`.
   format: "esm",
-  banner: { js: "#!/usr/bin/env node" },
+  // The shebang MUST stay line 1. After it, install a real `require`.
+  //
+  // Why: esbuild's ESM output emits a `__require` shim that THROWS
+  // (`Dynamic require of "process" is not supported`) unless a `require` is already in
+  // scope. `yaml` — the frontmatter parser — ships only a CJS build for the `node`
+  // export condition, and that build calls `require("process")` at load, so the bundle
+  // died on its first import. Every unit test passed throughout, because vitest
+  // transpiles instead of bundling: the seam was tested, the shipped binary was not.
+  // Found by actually running the bin (plan Task 12), which is why that step exists.
+  //
+  // createRequire is the documented esbuild remedy and it generalises — any future CJS
+  // dependency now works rather than failing at runtime only.
+  banner: {
+    js: [
+      "#!/usr/bin/env node",
+      'import { createRequire as __amicoCreateRequire } from "node:module";',
+      "const require = __amicoCreateRequire(import.meta.url);",
+    ].join("\n"),
+  },
   sourcemap: true,
   logLevel: "info",
 };
