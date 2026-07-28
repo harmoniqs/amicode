@@ -4,8 +4,10 @@
 // scan against the entitlement allowlist; (3) tier/env consistency incl. the
 // per-binding Manifest staleness check (#74 extension — a project/sandbox
 // env is validated against its OWN Manifest, not the extension-pinned one);
-// (4) tier-2 masked-baseline check; (5) stamp assembly (canonical spec +
-// gate-computed spec_hash). Any failure → no Julia process, one clear line.
+// (4) tier-2 masked-baseline check; (5) capability warrant, ARMED ONLY when a
+// WarrantContext is passed (spec-20260727-164748 §5.1); (6) stamp assembly
+// (canonical spec + gate-computed spec_hash). Any failure → no Julia process,
+// one clear line.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -16,6 +18,8 @@ import { checkImports, scanImports } from "./import_scan.js";
 import { maskedHash } from "./baseline.js";
 import { loadExemplarsIndex } from "./catalog.js";
 import { hasCloudConfig } from "./remote_config.js";
+import { checkWarrant, type DeviceAccess, type SizeClass, type WarrantRefusal } from "./warrant.js";
+import type { ApprovalRecord, PlanCompiledRecord } from "./ledger.js";
 
 export interface GateStamp {
   tier?: string;
@@ -23,7 +27,13 @@ export interface GateStamp {
   specCanonical: string; // stable-key-order JSON, what gets persisted
 }
 
-export type GateResult = { ok: true; stamp: GateStamp } | { ok: false; reason: string; demote_to?: "free" };
+export type GateResult =
+  | { ok: true; stamp: GateStamp }
+  /** `refusal` is present only for a warrant refusal (step 5) — it carries the §5.2
+   *  structured form (offending bound + what a covering warrant must declare), which
+   *  a caller can turn into an approval request. `reason` alone stays the one-line
+   *  human form every other step returns. */
+  | { ok: false; reason: string; demote_to?: "free"; refusal?: WarrantRefusal };
 
 /** Stable key order at every level so spec_hash is insensitive to author key order. */
 function canonicalize(value: unknown): unknown {
@@ -59,7 +69,27 @@ function staleEnvCheck(projectDir: string): string | undefined {
   return undefined;
 }
 
-export function runGate(specRaw: unknown, scriptText: string, authoring: AuthoringConfig): GateResult {
+/** Warrant-check context (spec-20260727-164748 §5.1). PASSING THIS ARMS THE CHECK —
+ *  omit it and the warrant step does not run, which is the feature flag. Assembled by
+ *  the launch path (it owns the ledger read and the clock); the gate stays pure. */
+export interface WarrantContext {
+  approvals: readonly ApprovalRecord[];
+  now: number;
+  /** From estimate.ts. UNDEFINED = unresolved, treated as over-threshold (§4.4). */
+  sizeClass?: SizeClass;
+  device?: DeviceAccess;
+  solvesSoFar?: number;
+  /** `plan_compiled` rows — the design_hash -> plan_hash binding the §4.6
+   *  "the plan was recompiled" refusal joins on. */
+  planCompiled?: readonly PlanCompiledRecord[];
+}
+
+export function runGate(
+  specRaw: unknown,
+  scriptText: string,
+  authoring: AuthoringConfig,
+  warrant?: WarrantContext,
+): GateResult {
   // ── step 1: schema ──
   const validation = validate(specRaw, "solvespec");
   if (!validation.ok) return { ok: false, reason: `solvespec schema: ${validation.errors[0]}` };
@@ -126,7 +156,29 @@ export function runGate(specRaw: unknown, scriptText: string, authoring: Authori
       };
   }
 
-  // ── step 5: stamp — canonical spec + gate-computed spec_hash ──
+  // ── step 5: capability warrant (spec-20260727-164748 §5.1) ──
+  // Ordered AFTER the consistency checks so a malformed or inconsistent spec fails as
+  // that, not as "unwarranted", and BEFORE stamp assembly so no hash is minted for a
+  // launch that will not run. THE FEATURE FLAG IS THE ABSENCE OF `warrant`: with no
+  // context passed, this step does not exist and no existing caller changes behavior.
+  if (warrant) {
+    const check = checkWarrant(
+      {
+        plan_hash: typeof spec.plan_hash === "string" ? spec.plan_hash : undefined,
+        tier,
+        executor,
+        sizeClass: warrant.sizeClass,
+        device: warrant.device,
+        solvesSoFar: warrant.solvesSoFar,
+      },
+      warrant.approvals,
+      warrant.now,
+      warrant.planCompiled ?? [],
+    );
+    if (!check.ok) return { ok: false, reason: check.reason, refusal: check };
+  }
+
+  // ── step 6: stamp — canonical spec + gate-computed spec_hash ──
   const specCanonical = JSON.stringify(canonicalize(spec), null, 2);
   const specHash = "sha256:" + createHash("sha256").update(specCanonical).digest("hex");
   const hashes: Record<string, string> = {};

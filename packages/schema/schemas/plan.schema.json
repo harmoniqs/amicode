@@ -1,0 +1,77 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/plan/v1",
+  "title": "amico compiled Plan",
+  "description": "The frontmatter of a COMPILED plan (spec-20260728 §4.1). The fleet spec's STEP schema is adopted unchanged; its plan-level frontmatter is revised here, because the hash chain needs plan_hash/design_hash and fleet §5.1 has neither. Hand-editing a compiled plan is a lint failure — the compiler is the only writer.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "plan_id", "goal", "plan_hash", "design_hash", "steps"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1 },
+    "max_replans": { "type": "integer", "minimum": 0 },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "planHash({goal, steps}). Excludes design_hash and compiled_at so a recompile that changed nothing does not mint a new hash and invalidate a live warrant."
+    },
+    "design_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The Spec's decision-surface hash this plan was compiled from." },
+    "compiled_at": { "type": "string" },
+    "compiled_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "variant": { "type": "string", "minLength": 1 }
+      }
+    },
+    "suggested_ttl_s": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "A RECOMMENDATION from step_count. `amico ledger approve` reads it to default --expires-in and remains the sole writer of expires_at — compile must not own a warrant's lifetime."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Fleet §5.1 step objects. `optional` is added here: with a `bypassed` verdict row it produces the `skipped` step state the completion rule admits (the flag alone is a permission, not an event). `model`, `variant`, `task_type` and `permissions` are DECLARED rather than left to `additionalProperties`, and `model`/`task_type` are REQUIRED, because §4.2's compile-time budget refusal reads them: a planner that omitted them yielded an empty demand set and every refusal passed silently — §0.1's inert `max_solves` counter, reproduced a fourth time. An undeterminable demand must be a loud refusal, never 'unbounded'.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "model", "task_type"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "needs": { "type": "array", "items": { "type": "string" }, "description": "DAG predecessors. Distinct from the compile-time capability `demands` — one name, one meaning." },
+          "gates": { "type": "array", "items": { "type": "string" } },
+          "optional": { "type": "boolean" },
+          "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$", "description": "Fleet §5.1's name for the step's tier-dispatch target — 'no `tier` alias; the feature is called tier dispatch, the field is called `model`'. Holds a model id (anthropic/claude-haiku-4-5), which is why it CANNOT be compared to `bounds.tier`: that bound speaks the solvespec trust vocabulary (free|composed|vetted|hpc). `tier` is therefore a first-launch refusal, not a compile-time one." },
+          "variant": { "type": "string", "minLength": 1 },
+          "task_type": { "type": "string", "description": "A TASK_TYPES value. Solve-bearing types (experiment-sim, experiment-hw) are what §4.2 sums against budget.max_solves." },
+          "permissions": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "device": { "enum": ["none", "ro", "rw"], "description": "Joined under warrant.ts's exported DEVICE_ORDER against budget.device. Absent means `none`; a step needing device access must say so." }
+            }
+          }
+        }
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "description": "Surviving review findings, carried as obligations. A plan cannot reach `complete` while any is open.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "lens": { "type": "string" },
+          "claim": { "type": "string" },
+          "remedy": { "type": "string" },
+          "round": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

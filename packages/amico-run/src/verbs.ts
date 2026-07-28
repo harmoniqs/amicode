@@ -20,6 +20,8 @@ import { noteVerb } from "./note_verb.js";
 import { ledgerVerb } from "./ledger_verb.js";
 import { profileVerb } from "./profile_verb.js";
 import { fleetVerb } from "./fleet_verb.js";
+import { specVerb } from "./spec_verb.js";
+import { planVerb } from "./plan_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -142,4 +144,33 @@ const fleet: Verb = {
   run: fleetVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet];
+// spec — the deliberation front half: adversarially review a Spec before it compiles to a
+// plan. REAL as of the deliberation slice: tier-1 (mechanical) lenses, the lens registry,
+// design_hash, the findings sidecar and the spec_review record. Tier-2 frontier critics
+// ride the injected spawn seam and are G-2-gated.
+//
+// NOTE (advisory A-4): registering here also publishes `amico_spec` as an MCP tool, since
+// listMcpTools() maps this registry. That does not weaken D-2 — the point of the CLI-verb
+// design is that the critic is not a subagent the REVIEWED agent spawns, so no agent ever
+// holds `task`. An agent invoking the verb is the intended path.
+const spec: Verb = {
+  name: "spec",
+  summary: "adversarially review a Spec (mechanical lenses + judgment critics) / validate its frontmatter",
+  generalizes: "the brainstorming skill's own reviewer subagent (which it now calls instead of carrying)",
+  slice: "deliberation front half (D1)",
+  run: (args) => specVerb(args),
+};
+
+// Same A-4 note as `spec`: registering publishes `amico_plan` as an MCP tool. That is the
+// intended path — an agent compiling its own plan and reading its own status is the loop. What an
+// agent CANNOT do through this verb is move a step: there is no subcommand for it, because step
+// state is derived from gate verdicts rather than written.
+const plan: Verb = {
+  name: "plan",
+  summary: "compile an approved Spec into a gated, budgeted Plan / read its derived state / close an advisory",
+  generalizes: "the ad-hoc markdown to-do lists a plan used to be, which nothing could verify",
+  slice: "deliberation back half (D1)",
+  run: (args) => planVerb(args),
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan];

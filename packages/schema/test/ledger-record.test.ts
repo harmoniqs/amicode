@@ -159,6 +159,69 @@ describe("ledger-record schema — dispatch", () => {
   });
 });
 
+// approval — the capability warrant (spec-20260727-164748 §5). The EIGHTH kind.
+// Deliberately unsigned: the threat model is drift, not an adversary (spec §3), and
+// the agent holds unrestricted bash, so a signature would defend against an attacker
+// this layer could not stop anyway.
+const approval = () => ({
+  type: "approval",
+  ts: "2026-07-27T20:00:00Z",
+  plan_hash: "9f2c",
+  bounds: { max_solves: 8, tier: "free", max_size_class: "MEDIUM", device: "none" },
+  expires_at: "2026-07-27T21:00:00Z",
+  issued_by: "user:ui",
+});
+
+describe("ledger-record schema — approval (capability warrant)", () => {
+  it("a fully-declared warrant validates", () => {
+    expect(validate(approval(), "ledger-record").errors).toEqual([]);
+  });
+
+  it("empty bounds validate — a warrant authorising nothing beyond the free set is legal", () => {
+    // §5.1 rule 2: a bound the launch needs but the warrant omits REFUSES rather
+    // than defaulting allow, so an empty bounds object is safe, not a hole.
+    expect(validate({ ...approval(), bounds: {} }, "ledger-record").errors).toEqual([]);
+  });
+
+  it("each required field is genuinely required", () => {
+    for (const key of ["type", "ts", "plan_hash", "bounds", "expires_at", "issued_by"]) {
+      const partial: Record<string, unknown> = { ...approval() };
+      delete partial[key];
+      expect(validate(partial, "ledger-record").ok, `missing ${key} must fail`).toBe(false);
+    }
+  });
+
+  it("unknown keys are rejected, like every sibling kind", () => {
+    expect(validate({ ...approval(), signature: "deadbeef" }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...approval(), bounds: { max_solves: 8, nonesuch: 1 } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("device bounds use the §2.1 permission vocabulary", () => {
+    for (const device of ["none", "ro", "rw"]) {
+      expect(validate({ ...approval(), bounds: { device } }, "ledger-record").ok, device).toBe(true);
+    }
+    expect(validate({ ...approval(), bounds: { device: "yes" } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("max_size_class is the cost proxy that exists — G-8 removed max_duration_s", () => {
+    for (const c of ["SMALL", "MEDIUM"]) {
+      expect(validate({ ...approval(), bounds: { max_size_class: c } }, "ledger-record").ok, c).toBe(true);
+    }
+    expect(validate({ ...approval(), bounds: { max_size_class: "LARGE" } }, "ledger-record").ok).toBe(false);
+    // the removed bound must not quietly validate again
+    expect(validate({ ...approval(), bounds: { max_duration_s: 1800 } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("max_solves must be a positive integer", () => {
+    expect(validate({ ...approval(), bounds: { max_solves: 0 } }, "ledger-record").ok).toBe(false);
+    expect(validate({ ...approval(), bounds: { max_solves: 1.5 } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("plan_hash must be non-empty — an empty hash would join every launch", () => {
+    expect(validate({ ...approval(), plan_hash: "" }, "ledger-record").ok).toBe(false);
+  });
+});
+
 describe("ledger-record schema — discriminator", () => {
   it("an unknown type fails (no oneOf branch matches)", () => {
     expect(validate({ type: "nonesuch", ts: "t" }, "ledger-record").ok).toBe(false);

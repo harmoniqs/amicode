@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { tmpRoot, fakeJulia } from "./helpers.js";
 import { LocalExecutor } from "../src/local_executor.js";
 import { readRecords, type SolveRecord } from "../src/ledger.js";
+import { solvesUnderPlan } from "../src/warrant_context.js";
 import type { RunEvent, SpecStamp } from "../src/types.js";
 
 async function collect(events: AsyncIterable<RunEvent>): Promise<RunEvent[]> {
@@ -142,6 +143,53 @@ describe("LocalExecutor.settle() emits the solve ledger stanza", () => {
     const fin = await h.finished;
     expect(fin.status).toBe("completed"); // the run itself is unaffected
     expect(readRecords()).toEqual([]);
+  });
+
+  // REGRESSION (found by adversarial spec review, 2026-07-28): the `max_solves`
+  // warrant bound was structurally inert. warrant_context.solvesUnderPlan() counts
+  // `solve` rows whose plan_hash matches, but SolveRecord had no plan_hash and the
+  // schema's solve branch is additionalProperties:false — so a row carrying one
+  // failed validation on append, and a row without one never matched. The counter
+  // was permanently 0 and the bound never tripped. solvesUnderPlan's own unit test
+  // passed throughout, because it builds its rows by hand: the seam was tested,
+  // the wiring was not. This test drives the REAL emission path.
+  it("stamps plan_hash from the solvespec, so the max_solves warrant bound can count", async () => {
+    const root = tmpRoot();
+    const julia = fakeJulia(root, "julia-solve", WRITE_RESULT);
+    const planHash = "sha256:plan-under-warrant";
+    const specWithPlan = { ...PROBLEM_SPEC, plan_hash: planHash };
+    const spec: SpecStamp = { canonical: JSON.stringify(specWithPlan), problem_spec: specWithPlan };
+
+    const h = await new LocalExecutor().submit(undefined, {
+      runsRoot: join(root, "runs"),
+      julia: { julia },
+      spec,
+    });
+    await collect(h.events);
+    await h.finished;
+
+    const recs = readRecords().filter((r): r is SolveRecord => r.type === "solve");
+    expect(recs).toHaveLength(1);
+    expect(recs[0].plan_hash).toBe(planHash);
+    // The join the bound actually depends on.
+    expect(solvesUnderPlan(planHash, readRecords())).toBe(1);
+    expect(solvesUnderPlan("sha256:some-other-plan", readRecords())).toBe(0);
+  });
+
+  it("omits plan_hash when the solvespec has none (ungated free-set launch)", async () => {
+    const root = tmpRoot();
+    const julia = fakeJulia(root, "julia-solve", WRITE_RESULT);
+    const spec: SpecStamp = { canonical: JSON.stringify(PROBLEM_SPEC), problem_spec: PROBLEM_SPEC };
+    const h = await new LocalExecutor().submit(undefined, {
+      runsRoot: join(root, "runs"),
+      julia: { julia },
+      spec,
+    });
+    await collect(h.events);
+    await h.finished;
+    const recs = readRecords().filter((r): r is SolveRecord => r.type === "solve");
+    expect(recs).toHaveLength(1);
+    expect(recs[0].plan_hash).toBeUndefined();
   });
 
   it("skips (never throws) when result.toml lacks structure_hash/problem_hash", async () => {

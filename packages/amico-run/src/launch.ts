@@ -13,6 +13,7 @@ import { RemoteExecutor } from "./remote_executor.js";
 import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
+import { assembleWarrantContext } from "./warrant_context.js";
 import { runVerification } from "./verify.js";
 import { trySubcommand } from "./subcommands.js";
 
@@ -148,9 +149,25 @@ export async function launch(argv: string[]): Promise<number> {
     }
     const { config: authoring, warning } = readAuthoring();
     if (warning) console.error(`amico-run: ${warning}`);
-    const gate = runGate(specRaw, scriptText, authoring);
+    // Warrant context (spec-20260727-164748 §5.1). undefined unless AMICO_WARRANTS
+    // is set, and gate.ts treats absence as "the step does not exist" — so the
+    // feature is opt-in and this line changes nothing by default.
+    const warrantCtx = assembleWarrantContext({
+      scriptText,
+      planHash:
+        typeof (specRaw as { plan_hash?: unknown }).plan_hash === "string"
+          ? (specRaw as { plan_hash: string }).plan_hash
+          : undefined,
+    });
+    const gate = runGate(specRaw, scriptText, authoring, warrantCtx);
     if (!gate.ok) {
       console.error(`amico-run: gate: ${gate.reason}`);
+      // §5.2: a warrant refusal ALSO prints its structured form on stdout, so a
+      // caller (the agent, or the extension) can turn it into an approval request
+      // without scraping prose. Other gate failures print nothing extra.
+      if (gate.refusal) {
+        console.log(JSON.stringify({ error: "warrant_required", ...gate.refusal }));
+      }
       return 64;
     }
     // env resolution: spec env.project feeds --project unless the flag was explicit

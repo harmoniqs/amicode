@@ -6,3 +6,6 @@ dist/
 !packages/extension/demo/run/run.log
 packages/extension/vendor/
 packages/extension/bin/
+
+# superpowers scratch (visual-companion servers, generated galleries) — never committed
+.superpowers/

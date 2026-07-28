@@ -60,13 +60,24 @@ describe("resolveAmicoBinFrom", () => {
 describe("appendStanza — shells `amico ledger append` (never touches runs.jsonl directly)", () => {
   let dir: string;
   const prevBin = process.env.AMICO_BIN;
+  const prevLedger = process.env.AMICO_LEDGER;
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "ledger-client-"));
+    // CONTAIN THE SIDE EFFECT. One test below deletes AMICO_BIN on purpose, to exercise
+    // resolveAmicoBin()'s PATH branch — and on a machine where a REAL `amico` is
+    // installed, that branch resolves it and appendStanza performs a REAL append. With
+    // AMICO_LEDGER unset that lands in the developer's own ~/.amico/ledger/runs.jsonl.
+    // Observed: 10 junk `burn` rows (ts:"t", class:"x") accumulated there, one per suite
+    // run. Pointing the ledger at the temp dir keeps the PATH branch exercised while the
+    // write goes somewhere disposable.
+    process.env.AMICO_LEDGER = path.join(dir, "runs.jsonl");
   });
   afterEach(() => {
     fs.rmSync(dir, { recursive: true, force: true });
     if (prevBin === undefined) delete process.env.AMICO_BIN;
     else process.env.AMICO_BIN = prevBin;
+    if (prevLedger === undefined) delete process.env.AMICO_LEDGER;
+    else process.env.AMICO_LEDGER = prevLedger;
   });
 
   it("pipes the JSON stanza to the resolved bin's stdin and returns true on success", () => {
@@ -96,7 +107,16 @@ describe("appendStanza — shells `amico ledger append` (never touches runs.json
     // No assertion on the boolean (whether a real `amico` happens to be on PATH in
     // this env is not the point) — the point is resolveAmicoBin()'s import.meta.url
     // branch executes cleanly under vitest's ESM transform and appendStanza never throws.
+    // The side effect IS the point of the beforeEach's AMICO_LEDGER redirect: where a real
+    // `amico` is installed this branch really does append, and it must not land in the
+    // developer's own ledger.
     expect(() => appendStanza({ type: "burn", ts: "t", class: "x", mechanism: "y" })).not.toThrow();
+    // Whatever it wrote (if anything) went to the temp ledger, never to ~/.amico.
+    const real = path.join(os.homedir(), ".amico", "ledger", "runs.jsonl");
+    const before = fs.existsSync(real) ? fs.statSync(real).mtimeMs : 0;
+    appendStanza({ type: "burn", ts: "t", class: "x", mechanism: "y" });
+    const after = fs.existsSync(real) ? fs.statSync(real).mtimeMs : 0;
+    expect(after).toBe(before); // the real ledger is untouched
   });
 });
 

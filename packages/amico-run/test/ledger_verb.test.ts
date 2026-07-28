@@ -151,5 +151,17 @@ describe("amico ledger (bundle)", () => {
     // every line is intact, valid JSON, with the expected shape → no interleaving
     const sessions = lines.map((l) => JSON.parse(l).session).sort();
     expect(sessions).toEqual(Array.from({ length: N }, (_, i) => `s${i}`).sort());
-  });
+    // 20s, not the default 5s. This is the heaviest test in the suite: 24 real node processes,
+    // each loading the ~880 KB bundle, all contending for one append. Locally that is ~780ms; on
+    // a 2-core CI runner it measured 5322ms and blew the 5s default the first time the bundle
+    // grew (the deliberation slice added `yaml`, +67%).
+    //
+    // The timeout is raised rather than N reduced, because what this asserts is a CORRECTNESS
+    // property — single-writer O_APPEND atomicity under real concurrency — and 24 writers is the
+    // pressure that makes interleaving observable. Trading that pressure for speed would keep the
+    // test green while making it stop testing the thing.
+    //
+    // 20s rather than the suite's usual 15s (abort.test.ts, cli.test.ts) for the same reason: it
+    // spawns more processes than either, so it needs more headroom against the next size increase.
+  }, 20_000);
 });

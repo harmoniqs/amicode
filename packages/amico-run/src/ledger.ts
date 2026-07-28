@@ -27,7 +27,7 @@ import { validate } from "@amicode/schema";
 export const PIPE_BUF = 4096;
 
 // ── record contract (spec-20260719-210954 §"Record contract") ────────────────────
-// SEVEN discriminated record kinds. `solve` is the primary; `verdict` joins to it on
+// ELEVEN discriminated record kinds. `solve` is the primary; `verdict` joins to it on
 // `problem_hash`; the rest are lightweight events. The `source: "simulated"` value
 // is the Prova isolation bridge (a deliberate extension of the spec's `user|replay`).
 // The 7th kind, `dispatch`, is the tier-dispatch row (fleet §6.3 Rev 5): tier
@@ -69,16 +69,36 @@ export interface SolveRecord {
   source: "user" | "replay" | "simulated";
   outcome: SolveOutcome;
   versions?: Record<string, string>;
+  /** The approved plan this solve ran under, copied from `solvespec.plan_hash` at
+   *  emission. Load-bearing, not informational: `warrant_context.solvesUnderPlan()`
+   *  counts `solve` rows by this field to enforce a warrant's `max_solves` bound, so
+   *  without it the bound is inert (the counter is always 0). Absent for an ungated
+   *  free-set launch, which carries no plan_hash by design. */
+  plan_hash?: string;
 }
 
 export interface VerdictRecord {
   type: "verdict";
   ts: string;
-  problem_hash: string;
+  /** Required by the schema ONLY when `step_id` is absent — i.e. for a solve re-rollout
+   *  verdict. A plan-step gate need not be solve-shaped. */
+  problem_hash?: string;
   structure_hash?: string;
-  verdict: "agree" | "disagree";
+  /** `exhausted` = per-step gate exhaustion. The fleet registry's `blocked` is
+   *  session-scoped, so it cannot carry a per-step outcome. `bypassed` is the terminal row
+   *  for an `optional: true` step the walk did not need — the second half of the `skipped`
+   *  producer, since the flag alone is a permission rather than an event. */
+  verdict: "agree" | "disagree" | "exhausted" | "bypassed";
   fidelity_rerolled?: number;
   fidelity_reported?: number;
+  /** Plan-step identity. Present on a plan-step gate verdict; this is the join that
+   *  plan-step state is DERIVED from, which is what makes forging `passed` require
+   *  forging a gate verdict (spec-20260728 §4.4). Both optional so every pre-existing
+   *  solve verdict keeps validating. Derivation keys on (plan_hash, step_id) — never
+   *  step_id alone, or a recompiled plan aliases onto the old plan's rows. */
+  plan_hash?: string;
+  step_id?: string;
+  source?: "user" | "replay" | "simulated";
 }
 
 export interface AttemptErrorRecord {
@@ -164,6 +184,98 @@ export interface DispatchRecord {
   tokens: number; // per-attempt token cost; 0 on experiment rows (excluded from c_m)
   attempt_index: number; // ladder position; 1 = first attempt (the p_m(s) sample)
   source: "user" | "replay" | "simulated";
+  /** Plan-step identity (optional) — lets step-state derivation see a step as `running`
+   *  before any terminal verdict row exists. */
+  plan_hash?: string;
+  step_id?: string;
+}
+
+/** What a warrant authorises. An ABSENT key does not mean "unlimited" — the gate
+ *  refuses a launch that needs a bound the warrant omits (spec §5.1 rule 2), so an
+ *  empty `bounds` authorises nothing beyond the ungated free set. `device` uses the
+ *  fleet spec §2.1 permission vocabulary. */
+export interface WarrantBounds {
+  max_solves?: number;
+  tier?: string;
+  max_size_class?: "SMALL" | "MEDIUM";
+  device?: "none" | "ro" | "rw";
+}
+
+/** A capability warrant (spec-20260727-164748 §5): what lets a gated launch through
+ *  the `--spec` gate. DELIBERATELY UNSIGNED — the threat model is drift, not an
+ *  adversary (spec §3), and the product agent holds unrestricted bash, so a signature
+ *  would defend against an attacker this layer could not stop anyway. Provenance lives
+ *  in `issued_by`, and the append-only ledger makes the record tamper-evident. */
+export interface ApprovalRecord {
+  type: "approval";
+  ts: string;
+  plan_hash: string;
+  bounds: WarrantBounds;
+  expires_at: string;
+  issued_by: string;
+}
+
+// ── the deliberation stanzas (spec-20260728 §5) ──────────────────────────────────
+// The front half of deliberation: a Spec is authored, adversarially reviewed, and
+// compiled into a Plan whose advisory todos are tracked here. Step todos are NOT here
+// — step state is derived from `verdict` rows (§4.4), so forging `passed` requires
+// forging a gate verdict.
+
+/** One completed adversarial review. Finding BODIES live in a sidecar, not here: a
+ *  3-round 3-critic review's prose exceeds PIPE_BUF and appendRecord throws above it —
+ *  after the model spend — so this row carries only a digest. */
+export interface SpecReviewRecord {
+  type: "spec_review";
+  ts: string;
+  /** The spec's IMMUTABLE identity. `design_hash` alone is not an identity: two specs
+   *  sharing an acceptance list would collide in the findings namespace. */
+  spec_id: string;
+  design_hash: string;
+  rounds: number; // 1..3, schema-enforced
+  /** NOT `verdict`: the ledger already has a `verdict` KIND whose `verdict` field is
+   *  agree|disagree, and both live in the same runs.jsonl. */
+  review_verdict: "approved" | "approved-mechanical" | "degraded" | "blocking" | "exhausted";
+  lens_registry_version: string;
+  lens_status: Array<{ lens: string; status: "ran" | "not-applicable" | "skipped" | "unverified"; reason?: string }>;
+  /** PRESENT-and-empty is the offline sentinel; absent would be indistinguishable from
+   *  a row written before the field existed. */
+  critics: Array<{ model: string; variant: string }>;
+  findings_count: number;
+  blocking_count: number;
+  findings_sha256?: string;
+  findings_ref?: string;
+  source: "user" | "replay" | "simulated";
+}
+
+/** A Plan compiled from a Spec. This row IS the design_hash -> plan_hash binding,
+ *  without which the launch gate cannot distinguish "recompiled, re-approve" from
+ *  "never approved". */
+export interface PlanCompiledRecord {
+  type: "plan_compiled";
+  ts: string;
+  plan_hash: string;
+  spec_id: string;
+  design_hash: string;
+  compiled_by?: { model: string; variant: string };
+  step_count: number;
+  advisory_count?: number;
+  /** A RECOMMENDATION from step_count. `amico ledger approve` reads it to default
+   *  --expires-in and remains the sole writer of expires_at. */
+  suggested_ttl_s?: number;
+  allow_unreviewed?: boolean;
+  source: "user" | "replay" | "simulated";
+}
+
+/** One ADVISORY todo transition. `open` is the absence of a row; multiple rows per id
+ *  resolve last-ts-wins. No `actor` field — no trustworthy actor identity exists here. */
+export interface TodoRecord {
+  type: "todo";
+  ts: string;
+  plan_hash: string;
+  id: string;
+  state: "fixed" | "waived" | "obsolete";
+  reason?: string; // required iff state === "waived"
+  source: "user" | "replay" | "simulated";
 }
 
 export type LedgerRecord =
@@ -173,7 +285,11 @@ export type LedgerRecord =
   | FallbackRecord
   | OverrideRecord
   | BurnRecord
-  | DispatchRecord;
+  | DispatchRecord
+  | ApprovalRecord
+  | SpecReviewRecord
+  | PlanCompiledRecord
+  | TodoRecord;
 
 /** The ledger file path: `$AMICO_LEDGER` override, else `~/.amico/ledger/runs.jsonl`. */
 export function ledgerPath(): string {

@@ -241,3 +241,50 @@ export function aggregate(records: LedgerRecord[], key: QueryKey): QueryResult {
 export function queryDefaults(key: QueryKey): QueryResult {
   return aggregate(readRecords(), key);
 }
+
+// ── precedent (spec-20260728 §3.3) ────────────────────────────────────────────
+
+export interface Precedent {
+  total: number;
+  verified: number;
+}
+
+/** How many times this work identity has been attempted, and how many attempts a gate agreed
+ *  with. BUCKET-BLIND, and that is the whole point.
+ *
+ *  `aggregate` above matches on `n_bucket`/`t_bucket` because it is answering "what parameters
+ *  worked at this problem size". A spec note has a `structure_hash` and no N or T at all, so
+ *  routing `precedent` through `aggregate` would return `total: 0` for nearly every real hash —
+ *  collapsing "nothing was ever attempted" into "the ledger could not be read", which is exactly
+ *  the distinction §3.3 exists to draw and the one the lens's three-way status depends on.
+ *
+ *  Verdict rows are filtered by lane here, which `aggregate` does not do: it filters SOLVES by
+ *  `source === "user"` but takes any `agree` verdict, so a simulated gym verdict could mark a
+ *  real solve verified. An ABSENT source is treated as user, because the field is optional and
+ *  pre-existing rows predate it — excluding them would silently rewrite history as unverified. */
+export function precedentIn(records: LedgerRecord[], structureHash: string): Precedent {
+  const solves = records.filter(isSolve).filter((s) => s.source === "user" && s.structure_hash === structureHash);
+  const agreed = new Set(
+    records
+      .filter((r): r is Extract<LedgerRecord, { type: "verdict" }> => r.type === "verdict")
+      .filter((r) => r.verdict === "agree" && (r.source === undefined || r.source === "user"))
+      .map((r) => r.problem_hash)
+      .filter((h): h is string => typeof h === "string"),
+  );
+  return { total: solves.length, verified: solves.filter((s) => agreed.has(s.problem_hash)).length };
+}
+
+/** The ledger-reading wrapper the `precedent` lens is injected with.
+ *
+ *  Returns `undefined` on ANY read or parse failure, which is what makes the lens's `unverified`
+ *  status reachable in production. `readRecords()` returns `[]` for a missing ledger and THROWS
+ *  on a malformed line, so a wrapper that let the throw escape would crash the review, and one
+ *  that swallowed it into `[]` would report "nothing was ever attempted" over a corrupt ledger —
+ *  the worst of the three answers. */
+export function precedentFor(structureHash: string): Precedent | undefined {
+  try {
+    return precedentIn(readRecords(), structureHash);
+  } catch {
+    return undefined;
+  }
+}

@@ -228,7 +228,52 @@ const RYDBERG_SCOPE_NOTE =
 // creation with PluginInput; we need nothing from it today.
 export const AmicodeTools = async (_input: unknown) => ({
   tool: {
-    amicode_ask: {
+    // Capability warrant request (spec-20260727-164748 §9.5 / G-9). The CARD is the
+    // point: this tool exists so a refusal from amico-run's --spec gate becomes a
+    // button the researcher can press, instead of prose asking them to run a CLI verb.
+    // The tool records NOTHING and authorises NOTHING — it only renders the ask. The
+    // warrant is minted by the card's bridge through `amico ledger approve`, so the
+    // agent can never approve on the user's behalf (that separation is the whole
+    // provenance argument in §9.5).
+    amicode_request_approval: {
+      description:
+        "Ask the researcher to approve a capability warrant, rendering an in-chat Approve " +
+        "button. Call this when `amico run --spec` refused with `warrant_required`: pass the " +
+        "plan_hash it named and the bounds from its `required` list. This tool NEITHER " +
+        "records nor grants anything — pressing the button is what mints the warrant. " +
+        "End your turn after calling it; never approve on the user's behalf, and never " +
+        "shell `amico ledger approve` yourself.",
+      args: {
+        plan_hash: {
+          type: "string",
+          description: "The plan being approved — use the plan_hash the gate's refusal named.",
+        },
+        bounds: {
+          type: "object",
+          description:
+            "What to authorise. Declare ONLY what the launch needs (the gate refuses a launch " +
+            "needing a bound the warrant omits, so an over-broad warrant is worse than a precise " +
+            "one): {max_solves?: int>=1, tier?: string, max_size_class?: 'SMALL'|'MEDIUM', " +
+            "device?: 'none'|'ro'|'rw'}.",
+        },
+        rationale: {
+          type: "string",
+          description: "One line on WHY this needs approving — shown on the card. Null for none.",
+        },
+      },
+      async execute(a: { plan_hash: string; bounds?: Record<string, unknown> | null; rationale?: string | null }) {
+        if (!a.plan_hash || a.plan_hash.trim() === "") return "Cannot request approval: plan_hash is required.";
+        // Returned text is agent-directed only — the card renders from the tool INPUT
+        // (parseApprovalInput), the same way the ask card does.
+        const declared = a.bounds && typeof a.bounds === "object" ? Object.keys(a.bounds).join(", ") : "none";
+        return (
+          `Approval requested for plan ${a.plan_hash.trim()} (bounds declared: ${declared}). ` +
+          `The researcher now has an Approve button in chat. Stop here and wait — do not ` +
+          `re-run the solve until they press it, and do not mint the warrant yourself.`
+        );
+      },
+    },
+        amicode_ask: {
       description:
         "DEPRECATED — prefer the native `question` tool (turn-blocking form with options, " +
         "descriptions, and custom answers). Kept for compatibility: presents ONE multiple-choice " +
@@ -1173,7 +1218,18 @@ export const AmicodeTools = async (_input: unknown) => ({
               ? ((a.provenance[0] as { source?: string }).source ?? "?")
               : "none";
           const auto = a.auto_accepted ? " ⚡auto" : "";
-          return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].`;
+          // Sentinel so the in-chat receipt carries WHICH param was recommended.
+          // Without it every recommend call rendered an identical "Recommend
+          // updated" chip, and the interview fires one per knob — so a run of five
+          // was five indistinguishable lines. `recommend` is deliberately NOT in
+          // card.tsx's INLINE_KINDS (no entity view exists for it), so this renders
+          // as an informative one-liner and stays non-clickable.
+          return (
+            `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].\n` +
+            sentinelLine(slug, "recommend", "proposed", seq, {
+              [String(a.param)]: { from: null, to: a.value },
+            })
+          );
         } catch (err) {
           return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
         }

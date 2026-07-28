@@ -196,6 +196,14 @@ function emitSolveStanza(runDir: string): void {
     }
     if (typeof params.session === "string") rec.session = params.session;
     if (typeof params.problem === "string") rec.problem = params.problem;
+    // The warrant join. `max_solves` is counted by matching solve rows against a
+    // plan_hash (warrant_context.solvesUnderPlan), so this stamp is what makes the
+    // bound enforce rather than sit at 0 forever. Source is the SOLVESPEC, not
+    // run.toml: the spec is what the gate validated and what carries the field
+    // (solvespec v5). Absent on an ungated free-set launch — omit rather than
+    // writing an empty string, which minLength would reject and which would match
+    // no warrant anyway.
+    if (typeof spec.plan_hash === "string" && spec.plan_hash !== "") rec.plan_hash = spec.plan_hash;
     if (typeof params.warm_start === "string" || params.warm_start === null)
       rec.warm_start = params.warm_start as string | null;
 
@@ -300,10 +308,32 @@ export class LocalExecutor implements Executor {
         process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
       }
       emitSolveStanza(runDir); // Plan 3 / L1 Task 5 — never throws; a ledger hiccup must never fail a run
-      logStream.end();
-      events.push({ kind: "finished", status, exitCode });
-      events.close();
-      resolveFinished({ status, exitCode });
+
+      // WAIT FOR run.log TO ACTUALLY FLUSH before announcing completion.
+      //
+      // `logStream.end()` is ASYNCHRONOUS: it schedules the flush and returns immediately. The
+      // old code called it and then resolved `finished` / closed the event stream in the same
+      // tick, so a consumer could await completion and read a TRUNCATED run.log — the events
+      // queue is in-memory and complete while the file on disk is still short a line or two.
+      //
+      // This was an intermittent 1-in-4 failure in executor_parity.test.ts (local's iterLines
+      // had 1 entry, remote's had 2, with both event streams identical) and it is a real product
+      // bug, not just a test artifact: anything that reads run.log after a run reports finished —
+      // the extension, a replay, a user tailing the file — could see a partial log. The
+      // 'close'-not-'exit' comment above is what makes the EVENTS complete; nothing made the
+      // FILE complete.
+      let announced = false;
+      const announce = (): void => {
+        if (announced) return;
+        announced = true;
+        events.push({ kind: "finished", status, exitCode });
+        events.close();
+        resolveFinished({ status, exitCode });
+      };
+      // A stream that errors must not wedge the run: losing the tail of a log is bad, hanging
+      // forever is worse. Both paths announce exactly once.
+      logStream.once("error", announce);
+      logStream.end(announce);
     };
 
     // stdbuf (spec §5 "where available") is deliberately omitted in β.1: the β.3 script
@@ -316,8 +346,18 @@ export class LocalExecutor implements Executor {
     });
     // spawn failure AFTER manifest exists → FINISHED{failed, 127} (spec §6)
     child.on("error", () => settle("failed", 127));
+
     // 'close', NOT 'exit': close waits for stdout/stderr to drain, so every line event
     // lands before settle() — the events stream must terminate ON the finished event (§3).
+    //
+    // (I hypothesised a second bug here while fixing the run.log flush race below: that readline
+    // could still have buffered lines when 'close' fires, making the `if (settled) return` guard
+    // in onLine silently DROP them from both the log and the event stream. Gating settle() on the
+    // readers' own 'close' events was tested against a 200-line script and made no difference —
+    // readline does drain first in practice. Not shipped: it would add a wedge risk to a shipped
+    // launch path (a reader that never closes would hang the run) to fix something that did not
+    // reproduce. Recorded because the guard's own comment calls the ordering merely "rare", so
+    // this is a known-unproven edge rather than a verified invariant.)
     child.on("close", (code, signal) => {
       const rc = code ?? signalCode(signal);
       settle(aborting ? "aborted" : rc === 0 ? "completed" : "failed", rc);
