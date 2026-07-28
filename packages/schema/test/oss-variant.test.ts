@@ -91,4 +91,54 @@ describe("problemspec OSS/FULL variant split", () => {
     const onlyInOss = [...ossEnums].filter((v) => !fullEnums.has(v));
     expect(onlyInOss, `OSS has values FULL lacks (variants built from divergent revisions?)`).toEqual([]);
   });
+
+  // ── The set-difference assertions above cannot see this one ──────────────────
+  //
+  // `enumValues` flattens every enum in the document into one Set, so a value is
+  // invisible to it once that value appears ANYWHERE. `exponential` and `spline`
+  // already appear in the OSS schema inside a CONDITIONAL — allOf[3].then requires
+  // `integrator.kind ∈ {exponential, spline}` for a spline pulse — so they are
+  // members of `ossEnums` even though the OSS schema does not OFFER them in the
+  // integrator enum a caller picks from. They therefore cancel out of
+  // `onlyInFull`, and an OSS schema that started offering the paid spline and
+  // exponential backends would pass every test above.
+  //
+  // That is the exact open-core leak this file exists to prevent, so it needs a
+  // positional check on the enum a caller actually chooses from. Reaching into a
+  // fixed schema path is deliberately brittle: if the shape moves, this should
+  // fail loudly and make someone re-derive the guard rather than silently stop
+  // guarding.
+  const offeredIntegratorKinds = (file: string): string[] => {
+    const control = JSON.parse(read(file))?.oneOf?.[0];
+    const kinds = control?.properties?.integrator?.properties?.kind?.enum;
+    expect(
+      Array.isArray(kinds),
+      `${file}: could not read oneOf[0].properties.integrator.properties.kind.enum — ` +
+        `the schema shape changed, so this guard needs rewriting, not deleting`,
+    ).toBe(true);
+    return [...(kinds as string[])].sort();
+  };
+
+  // The integrator backends that require Piccolissimo. Unlike PRIVATE_ONLY these are
+  // NOT absent from the OSS document — they are referenced by its conditional and
+  // merely not offered — which is precisely why they need their own assertion.
+  const PRIVATE_INTEGRATOR_KINDS = ["exponential", "spline"];
+
+  it("the OSS variant OFFERS only the public integrator backend", () => {
+    expect(offeredIntegratorKinds("problemspec.oss.schema.json")).toEqual(["bilinear"]);
+  });
+
+  it("the FULL variant offers the public backend plus exactly the private ones", () => {
+    expect(offeredIntegratorKinds("problemspec.schema.json")).toEqual(
+      ["bilinear", ...PRIVATE_INTEGRATOR_KINDS].sort(),
+    );
+  });
+
+  it("the offered-integrator difference is exactly the private backends", () => {
+    const oss = offeredIntegratorKinds("problemspec.oss.schema.json");
+    const full = offeredIntegratorKinds("problemspec.schema.json");
+    expect(full.filter((k) => !oss.includes(k)).sort()).toEqual([...PRIVATE_INTEGRATOR_KINDS].sort());
+    // And nothing OSS offers is missing from FULL (the other mis-vendor direction).
+    expect(oss.filter((k) => !full.includes(k))).toEqual([]);
+  });
 });
