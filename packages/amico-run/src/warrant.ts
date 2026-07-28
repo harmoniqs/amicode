@@ -17,7 +17,7 @@
 //
 // Threat model is drift, not an adversary (spec §3), so no signature is verified
 // here. See spec §6 for what that does and does not buy.
-import type { ApprovalRecord, WarrantBounds } from "./ledger.js";
+import type { ApprovalRecord, PlanCompiledRecord, WarrantBounds } from "./ledger.js";
 
 export type SizeClass = "SMALL" | "MEDIUM";
 export type DeviceAccess = "none" | "ro" | "rw";
@@ -94,11 +94,34 @@ export function gatedCapabilities(facts: LaunchFacts): string[] {
   return needs;
 }
 
+/** Did a DIFFERENT plan for this same design already hold a live warrant? If so the
+ *  refusal is "you recompiled", not "you never approved anything" — a recompile mints a
+ *  new plan_hash and correctly invalidates the warrant, but surfacing that as a bare
+ *  mid-campaign denial tells the user nothing about what changed or what to do
+ *  (spec-20260728 §4.6). Returns false when no plan_compiled rows are supplied. */
+function supersededPlan(
+  planHash: string,
+  approvals: readonly ApprovalRecord[],
+  planCompiled: readonly PlanCompiledRecord[],
+  now: number,
+): boolean {
+  // Newest row wins: a plan may be recorded more than once (re-runs of compile).
+  const mine = [...planCompiled].filter((r) => r.plan_hash === planHash).sort((a, b) => (a.ts < b.ts ? 1 : -1))[0];
+  if (!mine) return false;
+  return planCompiled.some(
+    (r) => r.design_hash === mine.design_hash && r.plan_hash !== planHash && liveWarrant(r.plan_hash, approvals, now) !== undefined,
+  );
+}
+
 /** The §5.1 check. */
 export function checkWarrant(
   facts: LaunchFacts,
   approvals: readonly ApprovalRecord[],
   now: number,
+  /** `plan_compiled` rows, for the SUPERSEDED branch below. Optional so every existing
+   *  call site is unchanged; absent simply means the gate cannot tell a recompile from a
+   *  never-approved plan and falls back to the generic refusal. */
+  planCompiled: readonly PlanCompiledRecord[] = [],
 ): WarrantCheck {
   const needs = gatedCapabilities(facts);
   if (needs.length === 0) return { ok: true }; // inside the free set — nothing to authorise
@@ -125,7 +148,9 @@ export function checkWarrant(
       required: needs,
       reason: hasLapsed(facts.plan_hash, approvals, now)
         ? `the warrant for plan ${facts.plan_hash} has expired — re-approve it (needs ${needs.join(", ")})`
-        : `no approved warrant for plan ${facts.plan_hash} — approve it declaring ${needs.join(", ")}`,
+        : supersededPlan(facts.plan_hash, approvals, planCompiled, now)
+          ? `the plan was recompiled (${facts.plan_hash} supersedes an approved plan for the same design) — re-approve it declaring ${needs.join(", ")}`
+          : `no approved warrant for plan ${facts.plan_hash} — approve it declaring ${needs.join(", ")}`,
     };
   }
 

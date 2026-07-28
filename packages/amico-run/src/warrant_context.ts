@@ -6,7 +6,7 @@
 // context as "the step does not exist", so the whole feature is off by default and the
 // env var is the entire flag surface. That is deliberate for the dogfood phase (plan
 // CLI step 4) — the internal ring turns it on, nobody else changes behavior.
-import { readRecords, type ApprovalRecord } from "./ledger.js";
+import { readRecords, type ApprovalRecord, type PlanCompiledRecord } from "./ledger.js";
 import { extractKeyVars, memoryScore, tshirtSize } from "./estimate.js";
 import type { WarrantContext } from "./gate.js";
 import type { DeviceAccess, SizeClass } from "./warrant.js";
@@ -60,17 +60,23 @@ export function assembleWarrantContext(opts: AssembleOptions): WarrantContext | 
   // A ledger that is missing or unreadable yields NO approvals, which fails closed:
   // every gated launch refuses rather than sailing through unwarranted.
   let approvals: ApprovalRecord[] = [];
+  let planCompiled: PlanCompiledRecord[] = [];
   let all: { type: string; plan_hash?: string }[] = [];
   try {
     const records = readRecords();
     all = records as unknown as { type: string; plan_hash?: string }[];
     approvals = records.filter((r): r is ApprovalRecord => r.type === "approval");
+    // For the §4.6 SUPERSEDED refusal: these rows carry the design_hash -> plan_hash
+    // binding, which is the only way the gate can say "you recompiled" rather than
+    // "you never approved anything".
+    planCompiled = records.filter((r): r is PlanCompiledRecord => r.type === "plan_compiled");
   } catch {
     /* no ledger → no warrants → gated launches refuse */
   }
 
   return {
     approvals,
+    planCompiled,
     now: opts.now ?? Date.now(),
     sizeClass: sizeClassFor(opts.scriptText),
     device: opts.device ?? "none",

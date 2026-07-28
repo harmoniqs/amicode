@@ -19,7 +19,7 @@ import { maskedHash } from "./baseline.js";
 import { loadExemplarsIndex } from "./catalog.js";
 import { hasCloudConfig } from "./remote_config.js";
 import { checkWarrant, type DeviceAccess, type SizeClass, type WarrantRefusal } from "./warrant.js";
-import type { ApprovalRecord } from "./ledger.js";
+import type { ApprovalRecord, PlanCompiledRecord } from "./ledger.js";
 
 export interface GateStamp {
   tier?: string;
@@ -79,6 +79,9 @@ export interface WarrantContext {
   sizeClass?: SizeClass;
   device?: DeviceAccess;
   solvesSoFar?: number;
+  /** `plan_compiled` rows — the design_hash -> plan_hash binding the §4.6
+   *  "the plan was recompiled" refusal joins on. */
+  planCompiled?: readonly PlanCompiledRecord[];
 }
 
 export function runGate(
@@ -170,6 +173,7 @@ export function runGate(
       },
       warrant.approvals,
       warrant.now,
+      warrant.planCompiled ?? [],
     );
     if (!check.ok) return { ok: false, reason: check.reason, refusal: check };
   }

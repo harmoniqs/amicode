@@ -6,7 +6,7 @@
 // omits, may only ever RESTRICT a launch — never widen it.
 import { describe, it, expect } from "vitest";
 import { checkWarrant, type LaunchFacts } from "../src/warrant.js";
-import type { ApprovalRecord } from "../src/ledger.js";
+import type { ApprovalRecord, PlanCompiledRecord } from "../src/ledger.js";
 
 const NOW = Date.parse("2026-07-27T20:00:00Z");
 const iso = (min: number) => new Date(NOW + min * 60_000).toISOString();
@@ -138,5 +138,59 @@ describe("the refusal contract (§5.2)", () => {
     const r = checkWarrant(freeLaunch({ tier: "hpc" }), [], NOW);
     expect(r.ok === false && r.required).toContain("tier");
     expect(r.ok === false && r.plan_hash).toBeUndefined();
+  });
+
+  // §4.6 — the THIRD refusal branch. A recompile mints a new plan_hash and correctly
+  // invalidates the warrant, but a bare "no warrant" tells the user nothing about what
+  // changed. The join needs plan_compiled rows, which is why that ledger kind lands with
+  // the schema rather than with the new verbs.
+  describe("§4.6 recompiled vs never-approved", () => {
+    const planRow = (plan_hash: string, design_hash: string): PlanCompiledRecord => ({
+      type: "plan_compiled", ts: iso(-10), plan_hash, design_hash,
+      spec_id: "spec-1", step_count: 1, source: "user",
+    });
+    const gated = () => freeLaunch({ tier: "hpc", sizeClass: "MEDIUM", plan_hash: "newplan" });
+
+    it("names RECOMPILATION when a prior plan for the same design was approved", () => {
+      const r = checkWarrant(
+        gated(),
+        [warrant({ plan_hash: "oldplan", bounds: { tier: "hpc", max_size_class: "MEDIUM" } })],
+        NOW,
+        [planRow("oldplan", "d1"), planRow("newplan", "d1")],
+      );
+      expect(r.ok).toBe(false);
+      expect(r.ok === false && r.reason).toMatch(/recompiled/i);
+    });
+
+    it("says NO WARRANT when the prior approval is for a DIFFERENT design", () => {
+      const r = checkWarrant(
+        gated(),
+        [warrant({ plan_hash: "oldplan", bounds: { tier: "hpc", max_size_class: "MEDIUM" } })],
+        NOW,
+        [planRow("oldplan", "d2"), planRow("newplan", "d1")],
+      );
+      expect(r.ok === false && r.reason).not.toMatch(/recompiled/i);
+    });
+
+    it("says NO WARRANT when nothing for this design was ever approved", () => {
+      const r = checkWarrant(gated(), [], NOW, [planRow("newplan", "d1")]);
+      expect(r.ok === false && r.reason).not.toMatch(/recompiled/i);
+    });
+
+    it("EXPIRY still wins over recompilation — the lapsed message is more actionable", () => {
+      const r = checkWarrant(
+        gated(),
+        [warrant({ plan_hash: "newplan", bounds: { tier: "hpc", max_size_class: "MEDIUM" }, expires_at: iso(-1) })],
+        NOW,
+        [planRow("oldplan", "d1"), planRow("newplan", "d1")],
+      );
+      expect(r.ok === false && r.reason).toMatch(/expired/i);
+    });
+
+    it("omitting planCompiled keeps the existing two-branch behaviour (back-compat)", () => {
+      const r = checkWarrant(gated(), [], NOW);
+      expect(r.ok).toBe(false);
+      expect(r.ok === false && r.reason).not.toMatch(/recompiled/i);
+    });
   });
 });
