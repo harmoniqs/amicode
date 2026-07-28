@@ -6,8 +6,5 @@
     "typecheck": "pnpm -r run typecheck",
     "test": "pnpm -r run test"
   },
-  "packageManager": "pnpm@9.15.9",
-  "workspaces": [
-    "packages/*"
-  ]
+  "packageManager": "pnpm@9.15.9"
 }
