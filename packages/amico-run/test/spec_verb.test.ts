@@ -33,16 +33,16 @@ describe("amico spec", () => {
 
   const json = (r: { json: unknown }) => r.json as Record<string, unknown>;
 
-  it("exit 0 + approved-mechanical on a clean spec", () => {
+  it("exit 0 + approved-mechanical on a clean spec", async () => {
     writeFileSync(path, SLICE);
-    const r = specVerb(["review", path]);
+    const r = await specVerb(["review", path]);
     expect(r.code).toBe(0);
     expect(json(r).review_verdict).toBe("approved-mechanical");
   });
 
-  it("exit 65 + blocking, with the findings INLINE so the refusal is actionable", () => {
+  it("exit 65 + blocking, with the findings INLINE so the refusal is actionable", async () => {
     writeFileSync(path, PROSE);
-    const r = specVerb(["review", path]);
+    const r = await specVerb(["review", path]);
     expect(r.code).toBe(65);
     expect(json(r).review_verdict).toBe("blocking");
     const blocking = json(r).blocking as Array<Record<string, string>>;
@@ -50,46 +50,46 @@ describe("amico spec", () => {
     expect(blocking[0].remedy).toBeTruthy();
   });
 
-  it("the verdict is in the PAYLOAD too, because the MCP facade discards exit codes", () => {
+  it("the verdict is in the PAYLOAD too, because the MCP facade discards exit codes", async () => {
     writeFileSync(path, SLICE);
-    const r = specVerb(["review", path]);
+    const r = await specVerb(["review", path]);
     expect(json(r)).toHaveProperty("review_verdict");
     expect(json(r)).toHaveProperty("exit_code", 0);
   });
 
-  it("exit 64 on usage errors: no path, unknown subcommand, bad --critics", () => {
-    expect(specVerb(["review"]).code).toBe(64);
-    expect(specVerb(["frobnicate"]).code).toBe(64);
-    expect(specVerb([]).code).toBe(64);
+  it("exit 64 on usage errors: no path, unknown subcommand, bad --critics", async () => {
+    expect((await specVerb(["review"])).code).toBe(64);
+    expect((await specVerb(["frobnicate"])).code).toBe(64);
+    expect((await specVerb([])).code).toBe(64);
     writeFileSync(path, SLICE);
-    expect(specVerb(["review", path, "--critics", "-2"]).code).toBe(64);
-    expect(specVerb(["review", path, "--critics", "many"]).code).toBe(64);
+    expect((await specVerb(["review", path, "--critics", "-2"])).code).toBe(64);
+    expect((await specVerb(["review", path, "--critics", "many"])).code).toBe(64);
   });
 
-  it("exit 64 when the spec does not exist", () => {
-    expect(specVerb(["review", join(dir, "nope.md")]).code).toBe(64);
+  it("exit 64 when the spec does not exist", async () => {
+    expect((await specVerb(["review", join(dir, "nope.md")])).code).toBe(64);
   });
 
-  it("accepts flags before the positional path", () => {
+  it("accepts flags before the positional path", async () => {
     writeFileSync(path, SLICE);
-    expect(specVerb(["review", "--offline", path]).code).toBe(0);
+    expect((await specVerb(["review", "--offline", path])).code).toBe(0);
   });
 
-  it("does NOT take --spec (that flag belongs to the launch path)", () => {
+  it("does NOT take --spec (that flag belongs to the launch path)", async () => {
     writeFileSync(path, SLICE);
-    expect(specVerb(["review", "--spec", path]).code).toBe(64);
+    expect((await specVerb(["review", "--spec", path])).code).toBe(64);
   });
 
-  it("`validate` checks the frontmatter contract alone", () => {
+  it("`validate` checks the frontmatter contract alone", async () => {
     writeFileSync(path, SLICE);
-    expect(specVerb(["validate", path]).code).toBe(0);
+    expect((await specVerb(["validate", path])).code).toBe(0);
     writeFileSync(path, SLICE.replace("spec_id: spec-slice\n", ""));
-    const r = specVerb(["validate", path]);
+    const r = await specVerb(["validate", path]);
     expect(r.code).toBe(65);
     expect((json(r).errors as string[]).join(" ")).toMatch(/spec_id/);
   });
 
-  it("is registered in SPINE_VERBS with the fields Verb requires", () => {
+  it("is registered in SPINE_VERBS with the fields Verb requires", async () => {
     const v = SPINE_VERBS.find((x) => x.name === "spec");
     expect(v).toBeDefined();
     expect(v!.summary).toBeTruthy();

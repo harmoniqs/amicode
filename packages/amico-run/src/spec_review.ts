@@ -6,8 +6,9 @@
 // because the zero-spawn guarantee is testable now and would be untestable later.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { canonicalJson, designHash } from "@amicode/schema";
+import { criticModel, resolveAgentBin, runAgent, type AgentOutcome } from "./agent_spawn.js";
 import { appendRecord, type SpecReviewRecord } from "./ledger.js";
 import { parseFrontmatter } from "./frontmatter.js";
 import { LENSES, type Finding, type LensStatus } from "./lenses.js";
@@ -21,6 +22,9 @@ import {
 } from "./lens_registry.js";
 
 export const ROUND_BUDGET = 3;
+/** Whole-review ceiling (§3.7). Critics already carry a 120s each; this bounds the review as a
+ *  whole so a pathological set cannot hold the loop open indefinitely. */
+export const REVIEW_CEILING_MS = 600_000;
 
 export type ReviewVerdict = "approved" | "approved-mechanical" | "degraded" | "blocking" | "exhausted";
 
@@ -46,9 +50,9 @@ export interface ReviewResult {
   critic_spawns: number;
 }
 
-/** The tier-2 seam. Not implemented in this slice (G-2), but injected so the
- *  ZERO-SPAWN-on-tier-1-blocking guarantee is a test today rather than a promise. */
-export type SpawnCritic = (lens: string) => { model: string; variant: string; findings: Finding[] } | undefined;
+/** The tier-2 seam, now with a real default (`agent_spawn`). Still injected, because the
+ *  ZERO-SPAWN-on-tier-1-blocking guarantee has to be assertable without a binary. */
+export type SpawnCritic = (lens: string) => Promise<AgentOutcome> | AgentOutcome;
 
 export interface ReviewOptions {
   round?: number;
@@ -59,6 +63,16 @@ export interface ReviewOptions {
   now?: () => string;
   /** Skip the ledger append (tests that only care about the computation). */
   append?: boolean;
+  /** Monotonic elapsed-ms source for the whole-review ceiling.
+   *
+   *  Injected because the ceiling is otherwise UNTESTABLE: the per-critic timeout is 120s and
+   *  the largest tier-2 set is 4 lenses, so a parallel review's worst case is ~120s and a
+   *  wall-clock test could never make the 600s ceiling fire. `now` cannot serve — it returns an
+   *  ISO string used only for the record's `ts`. An untestable ceiling is a comment, not a
+   *  guarantee. */
+  elapsedMs?: () => number;
+  /** Env for binary/model resolution (test seam). */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** Blocking tier-1 lenses. A blocking lens that could not run yields `unverified`, and a
@@ -78,7 +92,7 @@ export function findingsRefFor(specPath: string, specId: string, hash: string, r
   return join(dirname(specPath), ".review", `${specId}-${hash.slice(0, 16)}-r${round}.json`);
 }
 
-export function reviewSpec(specPath: string, raw: string, opts: ReviewOptions = {}): ReviewResult {
+export async function reviewSpec(specPath: string, raw: string, opts: ReviewOptions = {}): Promise<ReviewResult> {
   const round = opts.round ?? 1;
   const nowIso = (opts.now ?? (() => new Date().toISOString()))();
   const lens_status: LensStatusEntry[] = [];
@@ -139,19 +153,46 @@ export function reviewSpec(specPath: string, raw: string, opts: ReviewOptions = 
   // ── tier 2 ──
   const wanted = criticCountFor(taskType, opts.critics ?? 3);
   const lenses = tier2LensesFor(taskType).slice(0, wanted);
-  let degraded = false;
-  if (!opts.offline && opts.spawnCritic && lenses.length > 0) {
+  const spawnCritic = resolveSpawnCritic(specPath, raw, round, opts);
+  /** Did the MECHANISM exist at all? Distinguishes "never adversarially reviewed" from "review
+   *  was attempted and fell short", which is the whole point of `approved-mechanical` vs
+   *  `degraded`. */
+  let mechanismAvailable = false;
+  let anyFailedSkip = false;
+
+  if (spawnCritic && lenses.length > 0) {
+    mechanismAvailable = true;
+    const elapsed = opts.elapsedMs;
+    // Critics run in PARALLEL (§3.7): one lens each, no shared state, and the review's wall
+    // clock is the slowest critic rather than their sum. A serial loop over four 120s critics
+    // would take 8 minutes to say what 2 minutes can.
+    const started: Array<{ lens: Tier2Name; p: Promise<AgentOutcome> }> = [];
     for (const lens of lenses) {
+      // The ceiling is checked BEFORE each spawn, so it bounds spend rather than just wall time.
+      // Checking after would let the last critic start at 599s and run to 719s.
+      if (elapsed && elapsed() >= REVIEW_CEILING_MS) {
+        lens_status.push({ lens, status: "skipped", reason: `whole-review ceiling (${REVIEW_CEILING_MS}ms) reached before this critic started` });
+        anyFailedSkip = true;
+        continue;
+      }
       critic_spawns++;
-      const out = opts.spawnCritic(lens);
-      if (!out) {
-        // Timeout, unparseable output, spawn failure: `skipped`, never counted as clean.
-        lens_status.push({ lens, status: "skipped", reason: "critic did not return usable output" });
-        degraded = true;
+      started.push({ lens, p: Promise.resolve(spawnCritic(lens)) });
+    }
+    const settled = await Promise.all(started.map((s) => s.p));
+
+    for (let i = 0; i < started.length; i++) {
+      const lens = started[i].lens;
+      const out = settled[i];
+      if (out.status === "skipped") {
+        lens_status.push({ lens, status: "skipped", reason: out.reason ?? "critic did not return usable output" });
+        // An ABSENT binary is not a degradation — nothing was ever available to degrade from.
+        if (out.skip_class !== "absent") anyFailedSkip = true;
         continue;
       }
       lens_status.push({ lens, status: "ran" });
-      critics.push({ model: out.model, variant: out.variant });
+      // `model` is guaranteed present on a `ran` outcome: agent_spawn discards a child that will
+      // not name itself rather than letting argv fill the field.
+      critics.push({ model: out.model as string, variant: out.variant as string });
       // THE TERMINATION INVARIANT: a tier-2 critic may not emit `blocking` except for
       // `contradiction`. Anything else is DOWNGRADED to advisory and logged — this is what
       // guarantees the loop converges, so it is enforced rather than requested.
@@ -166,22 +207,57 @@ export function reviewSpec(specPath: string, raw: string, opts: ReviewOptions = 
         }
       }
     }
-  } else if (lenses.length > 0) {
-    // No critic mechanism available: tier 1 only, and the record says so.
-    degraded = false;
   }
 
   const post = findings.filter((f) => f.severity === "blocking");
   if (post.length > 0) {
     return finish(specPath, spec_id, design_hash, round, lens_status, critics, findings, critic_spawns, opts, nowIso);
   }
-  const verdict: ReviewVerdict = lenses.length === 0 || critics.length === 0
-    ? "approved-mechanical"
-    : degraded
-      ? "degraded"
-      : "approved";
+  // The verdict rule, corrected. It used to key on `critics.length === 0`, which conflated two
+  // very different disclosures: three critics that all TIMED OUT against a working binary
+  // recorded "no critic binary available". `approved-mechanical` now means the mechanism was
+  // never available; anything that was attempted and fell short is `degraded`.
+  const verdict: ReviewVerdict =
+    lenses.length === 0 || !mechanismAvailable || (critics.length === 0 && !anyFailedSkip)
+      ? "approved-mechanical"
+      : anyFailedSkip
+        ? "degraded"
+        : "approved";
   return finish(specPath, spec_id, design_hash, round, lens_status, critics, findings, critic_spawns, opts, nowIso, verdict);
 }
+
+/** The default tier-2 mechanism: a real critic subprocess per lens.
+ *
+ *  Returns undefined — meaning "tier 1 only, and the record says so" — when `--offline` is set
+ *  or no agent binary resolves. An absent binary is documented degradation (§3.8), never an
+ *  error and never a silent pass. */
+function resolveSpawnCritic(
+  specPath: string,
+  raw: string,
+  round: number,
+  opts: ReviewOptions,
+): SpawnCritic | undefined {
+  if (opts.offline) return undefined;
+  if (opts.spawnCritic) return opts.spawnCritic;
+  const env = opts.env ?? process.env;
+  const bin = resolveAgentBin(env);
+  if (bin === undefined) return undefined;
+  const model = criticModel(env);
+  return (lens: string) =>
+    runAgent({
+      bin,
+      agent: "critic",
+      model,
+      lens,
+      round,
+      env,
+      prompt: `Your lens is \`${lens}\`. Review ${basename(specPath)} through that lens only.`,
+      specText: raw,
+      specFilename: basename(specPath),
+    });
+}
+
+type Tier2Name = ReturnType<typeof tier2LensesFor>[number];
 
 function finish(
   specPath: string,
@@ -252,7 +328,11 @@ function finish(
 }
 
 /** Read-and-review, for the verb. Kept separate so `reviewSpec` stays testable on a string. */
-export function reviewSpecFile(specPath: string, readFile: (p: string) => string, opts: ReviewOptions = {}): ReviewResult {
+export function reviewSpecFile(
+  specPath: string,
+  readFile: (p: string) => string,
+  opts: ReviewOptions = {},
+): Promise<ReviewResult> {
   if (!existsSync(specPath)) throw new Error(`spec not found: ${specPath}`);
   return reviewSpec(specPath, readFile(specPath), opts);
 }

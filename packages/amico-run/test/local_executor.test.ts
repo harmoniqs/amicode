@@ -87,3 +87,43 @@ describe("LocalExecutor happy path", () => {
     expect(cwdLine.line).toContain(h.runDir);
   });
 });
+
+// The bug this guards was an intermittent ~1-in-4 failure in executor_parity.test.ts that
+// resisted characterisation for two sessions. `logStream.end()` is ASYNCHRONOUS — it schedules
+// the flush and returns — so `settle()` resolved `finished` and closed the event stream in the
+// same tick, while run.log was still short a line. The events queue is in-memory and was always
+// complete, which is exactly why the symptom looked like nondeterminism rather than a race.
+//
+// It is a product bug, not a test artifact: anything reading run.log after a run reports
+// finished (the extension, a replay, a user tailing) could see a truncated log. Asserted here
+// as a direct property with MANY lines, because two lines reproduced it only sometimes.
+describe("run.log is COMPLETE when the run reports finished", () => {
+  const LINES = 200;
+  const CHATTY = Array.from({ length: LINES }, (_, i) => `console.log('AMICODE_ITER iter=${i + 1} f=1e-${i}')`).join("\n");
+
+  it("every emitted line is on disk by the time `finished` resolves", async () => {
+    const root = tmpRoot();
+    const h = await new LocalExecutor().submit(fakeJulia(root, "solve.jl", ""), {
+      lab: "testlab",
+      runsRoot: join(root, "runs"),
+      julia: { julia: fakeJulia(root, "julia-chatty", CHATTY) },
+    });
+    await h.finished; // the ONLY synchronisation a consumer has
+    const onDisk = readFileSync(join(h.runDir, "run.log"), "utf8").split("\n").filter(Boolean);
+    expect(onDisk).toHaveLength(LINES);
+    expect(onDisk.at(-1)).toContain(`iter=${LINES}`);
+  });
+
+  it("…and by the time the event stream closes, which is the other completion signal", async () => {
+    const root = tmpRoot();
+    const h = await new LocalExecutor().submit(fakeJulia(root, "solve.jl", ""), {
+      lab: "testlab",
+      runsRoot: join(root, "runs"),
+      julia: { julia: fakeJulia(root, "julia-chatty", CHATTY) },
+    });
+    const evs = await collect(h.events);
+    expect(evs.filter((e) => e.kind === "iter")).toHaveLength(LINES);
+    // The parity test's failure mode exactly: events complete, file short.
+    expect(readFileSync(join(h.runDir, "run.log"), "utf8").split("\n").filter(Boolean)).toHaveLength(LINES);
+  });
+});

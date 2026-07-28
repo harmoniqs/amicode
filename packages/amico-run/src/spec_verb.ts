@@ -19,8 +19,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { validate } from "@amicode/schema";
 import { parseFrontmatter } from "./frontmatter.js";
+import { precedentFor } from "./ledger_query.js";
 import { reviewSpec, type ReviewOptions } from "./spec_review.js";
 import type { VerbResult } from "./verbs.js";
+
+/** The `precedent` lens's ledger channel. Named here rather than inlined so the verb's default
+ *  and the test seam are visibly the same shape — the lens never reads the ledger itself. */
+const defaultQueryLedger: NonNullable<ReviewOptions["queryLedger"]> = (structureHash) => precedentFor(structureHash);
 
 const USAGE = "amico spec review <spec-path> [--critics N] [--offline] [--json]  |  amico spec validate <spec-path>";
 
@@ -57,7 +62,7 @@ function positional(argv: string[]): { path: string } | { error: string } {
   return { error: "a spec path is required (positional, not --spec)" };
 }
 
-function review(argv: string[], ctx: SpecVerbCtx): VerbResult {
+async function review(argv: string[], ctx: SpecVerbCtx): Promise<VerbResult> {
   const pos = positional(argv);
   if ("error" in pos) return usageError(pos.error);
   const abs = resolve(pos.path);
@@ -72,11 +77,11 @@ function review(argv: string[], ctx: SpecVerbCtx): VerbResult {
 
   let r;
   try {
-    r = reviewSpec(abs, (ctx.readFile ?? readFileSync)(abs, "utf8") as string, {
+    r = await reviewSpec(abs, (ctx.readFile ?? readFileSync)(abs, "utf8") as string, {
       critics,
       offline: argv.includes("--offline"),
       spawnCritic: ctx.spawnCritic,
-      queryLedger: ctx.queryLedger,
+      queryLedger: ctx.queryLedger ?? defaultQueryLedger,
       round: ctx.round,
     });
   } catch (e) {
@@ -129,7 +134,7 @@ export interface SpecVerbCtx {
   round?: number;
 }
 
-export function specVerb(argv: string[], ctx: SpecVerbCtx = {}): VerbResult {
+export async function specVerb(argv: string[], ctx: SpecVerbCtx = {}): Promise<VerbResult> {
   const sub = argv[0];
   const rest = argv.slice(1);
   if (sub === "review") return review(rest, ctx);
