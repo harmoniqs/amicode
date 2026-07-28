@@ -28,6 +28,13 @@ import problemspecSchema from "../schemas/problemspec.schema.json" with { type: 
 // like problemspec it has NO top-level properties.schema_version — see the SCHEMAS
 // note below and the SUPPORTED_VERSIONS_BY_KIND exclusion.
 import ledgerRecordSchema from "../schemas/ledger-record.schema.json" with { type: "json" };
+// The deliberation artifacts (spec-20260728). Both are MARKDOWN-frontmatter shapes, so
+// neither has a canonical filename and `kindForFilename` gains no entry — the kind is
+// always explicit. Registered AFTER ledger-record on purpose: `spec.budget` $refs
+// ledger-record's $defs.bounds, and the compile loop below resolves refs in insertion
+// order, so an earlier entry cannot reference a later one.
+import specSchema from "../schemas/spec.schema.json" with { type: "json" };
+import planSchema from "../schemas/plan.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -63,6 +70,8 @@ const SCHEMAS = {
   // `.properties.schema_version` off an undefined and crash @amicode/schema at load
   // (Plan 3 review correction #1, exactly the problemspec case).
   "ledger-record": ledgerRecordSchema,
+  spec: specSchema,
+  plan: planSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -78,7 +87,7 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  top-level properties.schema_version) are excluded from this string-version map. */
 export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]> =
   Object.fromEntries(
-    (["run", "result", "lab", "solvespec", "catalog-entry"] as const).map((kind) => [
+    (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),

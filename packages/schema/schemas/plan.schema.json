@@ -1,0 +1,67 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/plan/v1",
+  "title": "amico compiled Plan",
+  "description": "The frontmatter of a COMPILED plan (spec-20260728 §4.1). The fleet spec's STEP schema is adopted unchanged; its plan-level frontmatter is revised here, because the hash chain needs plan_hash/design_hash and fleet §5.1 has neither. Hand-editing a compiled plan is a lint failure — the compiler is the only writer.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "plan_id", "goal", "plan_hash", "design_hash", "steps"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "plan_id": { "type": "string", "minLength": 1 },
+    "goal": { "type": "string", "minLength": 1 },
+    "max_replans": { "type": "integer", "minimum": 0 },
+    "plan_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "planHash({goal, steps}). Excludes design_hash and compiled_at so a recompile that changed nothing does not mint a new hash and invalidate a live warrant."
+    },
+    "design_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "The Spec's decision-surface hash this plan was compiled from." },
+    "compiled_at": { "type": "string" },
+    "compiled_by": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "model": { "type": "string", "pattern": "^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$" },
+        "variant": { "type": "string", "minLength": 1 }
+      }
+    },
+    "suggested_ttl_s": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "A RECOMMENDATION from step_count. `amico ledger approve` reads it to default --expires-in and remains the sole writer of expires_at — compile must not own a warrant's lifetime."
+    },
+    "steps": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Fleet §5.1 step objects, adopted unchanged. Only `optional` is added here: it is the SOLE producer of the `skipped` step state, which the completion rule admits.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "needs": { "type": "array", "items": { "type": "string" }, "description": "DAG predecessors. Distinct from the compile-time capability `demands` — one name, one meaning." },
+          "gates": { "type": "array", "items": { "type": "string" } },
+          "optional": { "type": "boolean" }
+        }
+      }
+    },
+    "advisories": {
+      "type": "array",
+      "description": "Surviving review findings, carried as obligations. A plan cannot reach `complete` while any is open.",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "lens": { "type": "string" },
+          "claim": { "type": "string" },
+          "remedy": { "type": "string" },
+          "round": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

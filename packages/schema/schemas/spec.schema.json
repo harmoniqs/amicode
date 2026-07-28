@@ -1,0 +1,89 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/spec/v1",
+  "title": "amico Spec (deliberation)",
+  "description": "The YAML frontmatter of a vault `spec` note, extended for the deliberation layer (spec-20260728 §2). NOT a new note kind: the vault `spec` type already carried status + linked_plan, so this adds fields rather than inventing an artifact. additionalProperties is TRUE because the vault taxonomy's own keys (date, session_id, status, priority, platform, visibility, tags, linked_plan) share the same frontmatter block and must be tolerated.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["schema_version", "spec_id", "task_type", "acceptance"],
+  "allOf": [
+    {
+      "description": "budget IS the warrant's bounds, so it is required exactly where the work can reach a gated capability.",
+      "if": {
+        "properties": { "task_type": { "enum": ["experiment-sim", "experiment-hw", "author-script"] } },
+        "required": ["task_type"]
+      },
+      "then": { "required": ["budget"] }
+    },
+    {
+      "description": "And FORBIDDEN elsewhere: a non-launch-shaped spec has nothing to bound, and tolerating a budget here is how mislabelled launch work would silently disable the budget and baseline lenses.",
+      "if": {
+        "properties": {
+          "task_type": {
+            "enum": ["implement-slice", "plan", "review", "insight", "bookkeeping", "triage", "converse"]
+          }
+        },
+        "required": ["task_type"]
+      },
+      "then": { "not": { "required": ["budget"] } }
+    }
+  ],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "spec_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "IMMUTABLE identity, authored once and never re-derived. design_hash is not an identity — two specs sharing an acceptance list would collide in the findings namespace and in the recompiled-plan lookup."
+    },
+    "task_type": {
+      "enum": ["triage", "plan", "author-script", "implement-slice", "bookkeeping", "insight", "review", "experiment-sim", "experiment-hw", "converse"],
+      "description": "Exactly TASK_TYPES from amico-run/src/ledger.ts, re-declared here as the closed enum the `schema` lens checks. One copy of the vocabulary; extensible only by schema revision."
+    },
+    "acceptance": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "MACHINE-PARSEABLE criteria only: `metric comparator threshold`. The `falsifiable` lens is blocking over this field, so behavioural prose belongs in `invariants` — a lens lenient enough to accept prose is a blocking lens that silently passes everything."
+    },
+    "invariants": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Behavioural properties in prose, which many real specs need and no parser should pretend to check. Excluded from design_hash: rewording must not re-gate a live warrant."
+    },
+    "assumptions": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "What must hold. Excluded from design_hash deliberately — a violated assumption is a runtime blocked-report, not a re-approval trigger."
+    },
+    "budget": { "$ref": "https://amico.harmoniqs.co/schema/ledger-record/v1#/$defs/bounds" },
+    "baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "What this work is measured against. The `baseline` lens is blocking precisely so 'we never checked' cannot pass silently: either a number WITH its source, or an explicit statement that none exists.",
+      "properties": {
+        "value": { "type": "number" },
+        "source": { "type": "string", "minLength": 1 },
+        "none_because": { "type": "string", "minLength": 1 }
+      },
+      "oneOf": [{ "required": ["value", "source"] }, { "required": ["none_because"] }]
+    },
+    "structure_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The work identity the `precedent` lens queries the ledger on. Absent → the lens reports not-applicable, which is NOT the same claim as zero prior attempts."
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Written BY the review, so it is optional — requiring it would make every first review impossible.",
+      "properties": {
+        "design_hash": { "type": "string" },
+        "rounds": { "type": "integer" },
+        "critics": { "type": "array" },
+        "findings_count": { "type": "integer" },
+        "findings_ref": { "type": "string" }
+      }
+    }
+  }
+}
