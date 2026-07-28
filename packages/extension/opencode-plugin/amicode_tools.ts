@@ -1218,7 +1218,18 @@ export const AmicodeTools = async (_input: unknown) => ({
               ? ((a.provenance[0] as { source?: string }).source ?? "?")
               : "none";
           const auto = a.auto_accepted ? " ⚡auto" : "";
-          return `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].`;
+          // Sentinel so the in-chat receipt carries WHICH param was recommended.
+          // Without it every recommend call rendered an identical "Recommend
+          // updated" chip, and the interview fires one per knob — so a run of five
+          // was five indistinguishable lines. `recommend` is deliberately NOT in
+          // card.tsx's INLINE_KINDS (no entity view exists for it), so this renders
+          // as an informative one-liner and stays non-clickable.
+          return (
+            `Recommended ${a.param}=${JSON.stringify(a.value)} (${a.confidence ?? "?"}, via ${prov})${auto} [event ${seq}].\n` +
+            sentinelLine(slug, "recommend", "proposed", seq, {
+              [String(a.param)]: { from: null, to: a.value },
+            })
+          );
         } catch (err) {
           return `Cannot record recommendation: ${err instanceof Error ? err.message : String(err)}`;
         }
