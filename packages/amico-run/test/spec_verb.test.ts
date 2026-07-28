@@ -80,6 +80,15 @@ describe("amico spec", () => {
     expect((await specVerb(["review", "--spec", path])).code).toBe(64);
   });
 
+  it("rejects a TRAILING unknown flag, not just a leading one", async () => {
+    // The earlier `positional` returned at the first non-flag argument, so anything after the
+    // path went unvalidated — the same silent-ignore the known-flag set exists to prevent, just
+    // one position to the right.
+    writeFileSync(path, SLICE);
+    expect((await specVerb(["review", path, "--bogus"])).code).toBe(64);
+    expect((await specVerb(["review", path, "--critics=2", "--nope"])).code).toBe(64);
+  });
+
   it("`validate` checks the frontmatter contract alone", async () => {
     writeFileSync(path, SLICE);
     expect((await specVerb(["validate", path])).code).toBe(0);

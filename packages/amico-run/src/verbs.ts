@@ -21,6 +21,7 @@ import { ledgerVerb } from "./ledger_verb.js";
 import { profileVerb } from "./profile_verb.js";
 import { fleetVerb } from "./fleet_verb.js";
 import { specVerb } from "./spec_verb.js";
+import { planVerb } from "./plan_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -160,4 +161,16 @@ const spec: Verb = {
   run: (args) => specVerb(args),
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec];
+// Same A-4 note as `spec`: registering publishes `amico_plan` as an MCP tool. That is the
+// intended path — an agent compiling its own plan and reading its own status is the loop. What an
+// agent CANNOT do through this verb is move a step: there is no subcommand for it, because step
+// state is derived from gate verdicts rather than written.
+const plan: Verb = {
+  name: "plan",
+  summary: "compile an approved Spec into a gated, budgeted Plan / read its derived state / close an advisory",
+  generalizes: "the ad-hoc markdown to-do lists a plan used to be, which nothing could verify",
+  slice: "deliberation back half (D1)",
+  run: (args) => planVerb(args),
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan];

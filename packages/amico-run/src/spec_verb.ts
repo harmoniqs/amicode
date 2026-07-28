@@ -46,9 +46,14 @@ function flagValue(argv: string[], name: string): string | undefined {
 const KNOWN_FLAGS = new Set(["--critics", "--offline", "--json"]);
 const VALUED_FLAGS = new Set(["--critics"]);
 
-/** First non-flag argument, or an error naming the offending flag. Flags may precede or
- *  follow the path. */
+/** Validate EVERY flag, then return the first positional. Flags may precede or follow the path.
+ *
+ *  Scanning the WHOLE argv rather than returning at the first non-flag argument: the earlier
+ *  version stopped at the path, so a TRAILING unknown flag (`spec review <path> --bogus`) was
+ *  silently ignored — which is the failure the known-flag set exists to prevent, just moved one
+ *  position to the right. Found while writing the same check for `plan`. */
 function positional(argv: string[]): { path: string } | { error: string } {
+  let path: string | undefined;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("-")) {
@@ -57,9 +62,9 @@ function positional(argv: string[]): { path: string } | { error: string } {
       if (VALUED_FLAGS.has(name) && !a.includes("=")) i++; // consume its value
       continue;
     }
-    return { path: a };
+    if (path === undefined) path = a;
   }
-  return { error: "a spec path is required (positional, not --spec)" };
+  return path === undefined ? { error: "a spec path is required (positional, not --spec)" } : { path };
 }
 
 async function review(argv: string[], ctx: SpecVerbCtx): Promise<VerbResult> {
