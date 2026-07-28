@@ -196,6 +196,14 @@ function emitSolveStanza(runDir: string): void {
     }
     if (typeof params.session === "string") rec.session = params.session;
     if (typeof params.problem === "string") rec.problem = params.problem;
+    // The warrant join. `max_solves` is counted by matching solve rows against a
+    // plan_hash (warrant_context.solvesUnderPlan), so this stamp is what makes the
+    // bound enforce rather than sit at 0 forever. Source is the SOLVESPEC, not
+    // run.toml: the spec is what the gate validated and what carries the field
+    // (solvespec v5). Absent on an ungated free-set launch — omit rather than
+    // writing an empty string, which minLength would reject and which would match
+    // no warrant anyway.
+    if (typeof spec.plan_hash === "string" && spec.plan_hash !== "") rec.plan_hash = spec.plan_hash;
     if (typeof params.warm_start === "string" || params.warm_start === null)
       rec.warm_start = params.warm_start as string | null;
 

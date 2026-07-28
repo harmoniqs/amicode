@@ -47,7 +47,8 @@
             "wall_s": { "type": "number" }
           }
         },
-        "versions": { "type": "object", "additionalProperties": { "type": "string" } }
+        "versions": { "type": "object", "additionalProperties": { "type": "string" } },
+        "plan_hash": { "type": "string", "minLength": 1, "description": "The approved plan this solve ran under, copied from solvespec.plan_hash at emission. LOAD-BEARING: warrant_context.solvesUnderPlan() counts solve rows by this field to enforce a warrant's max_solves bound, so a solve branch without it makes that bound inert — the counter is always 0 and the bound never trips (the defect this property fixes). Absent for an ungated free-set launch, which carries no plan_hash by design; minLength guards an empty hash matching every warrant, mirroring solvespec.plan_hash." }
       }
     },
     {

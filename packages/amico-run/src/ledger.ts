@@ -69,6 +69,12 @@ export interface SolveRecord {
   source: "user" | "replay" | "simulated";
   outcome: SolveOutcome;
   versions?: Record<string, string>;
+  /** The approved plan this solve ran under, copied from `solvespec.plan_hash` at
+   *  emission. Load-bearing, not informational: `warrant_context.solvesUnderPlan()`
+   *  counts `solve` rows by this field to enforce a warrant's `max_solves` bound, so
+   *  without it the bound is inert (the counter is always 0). Absent for an ungated
+   *  free-set launch, which carries no plan_hash by design. */
+  plan_hash?: string;
 }
 
 export interface VerdictRecord {
