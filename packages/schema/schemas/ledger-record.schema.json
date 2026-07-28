@@ -77,7 +77,7 @@
         "ts": { "type": "string" },
         "problem_hash": { "type": "string" },
         "structure_hash": { "type": "string" },
-        "verdict": { "enum": ["agree", "disagree", "exhausted"], "description": "`exhausted` is per-step gate exhaustion (failure at the top reachable escalation rung). It lives here because the fleet registry's `blocked` is SESSION-scoped and cannot carry a per-step outcome." },
+        "verdict": { "enum": ["agree", "disagree", "exhausted", "bypassed"], "description": "`exhausted` is per-step gate exhaustion (failure at the top reachable escalation rung). It lives here because the fleet registry's `blocked` is SESSION-scoped and cannot carry a per-step outcome. `bypassed` is the terminal row for a step the compiled plan declared `optional: true` and the walk did not need: it is the SECOND HALF of the `skipped` producer, because `optional: true` alone is a PERMISSION, not an event. Without it `skipped` was unreachable while §4.5's completion rule admitted it — three revisions running. A `bypassed` row against a step the plan did NOT mark optional is a derivation error, not a skip." },
         "fidelity_rerolled": { "type": "number" },
         "fidelity_reported": { "type": "number" },
         "plan_hash": { "type": "string", "minLength": 1, "description": "Set on a plan-step verdict. With step_id this is the join plan-step state is derived from; OPTIONAL so every pre-existing solve verdict keeps validating." },

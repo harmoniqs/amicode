@@ -49,7 +49,10 @@ export interface WarrantRefusal {
 export type WarrantCheck = { ok: true } | WarrantRefusal;
 
 const SIZE_ORDER: Record<SizeClass, number> = { SMALL: 0, MEDIUM: 1 };
-const DEVICE_ORDER: Record<DeviceAccess, number> = { none: 0, ro: 1, rw: 2 };
+/** Exported because `plan_compile.ts` joins step device demands under the SAME order the
+ *  launch gate compares with. Restating `{none:0,ro:1,rw:2}` in a second module would let the
+ *  two drift, which is the defect class this spec keeps reproducing — one authority, imported. */
+export const DEVICE_ORDER: Record<DeviceAccess, number> = { none: 0, ro: 1, rw: 2 };
 
 /** Expiry in ms. An unparseable expiry is ALREADY EXPIRED — a warrant whose
  *  lifetime cannot be established must not read as live (same fail-closed direction

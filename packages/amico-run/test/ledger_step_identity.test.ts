@@ -47,6 +47,24 @@ describe("plan-step identity on verdict/dispatch rows", () => {
     expect(row().verdict).toBe("exhausted");
   });
 
+  it("verdict gains `bypassed`, the SECOND HALF of the `skipped` producer", () => {
+    // `optional: true` on the compiled step is a PERMISSION; this row is the EVENT. With only
+    // the flag, `skipped` was unreachable while §4.5's completion rule admitted it — the same
+    // defect survived three spec revisions because each fixed only one half.
+    appendRecord({
+      type: "verdict", ts: ts(), plan_hash: "abc", step_id: "s4", verdict: "bypassed", source: "user",
+    } as never);
+    expect(row().verdict).toBe("bypassed");
+  });
+
+  it("rejects a verdict value outside the enum, so a typo cannot mint a state", () => {
+    expect(() =>
+      appendRecord({
+        type: "verdict", ts: ts(), plan_hash: "abc", step_id: "s5", verdict: "skipped", source: "user",
+      } as never),
+    ).toThrow();
+  });
+
   it("a dispatch row can name a step", () => {
     appendRecord({
       type: "dispatch", ts: ts(), task_type: "author-script", work_id: "wid",

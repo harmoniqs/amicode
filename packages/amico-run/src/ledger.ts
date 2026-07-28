@@ -85,8 +85,10 @@ export interface VerdictRecord {
   problem_hash?: string;
   structure_hash?: string;
   /** `exhausted` = per-step gate exhaustion. The fleet registry's `blocked` is
-   *  session-scoped, so it cannot carry a per-step outcome. */
-  verdict: "agree" | "disagree" | "exhausted";
+   *  session-scoped, so it cannot carry a per-step outcome. `bypassed` is the terminal row
+   *  for an `optional: true` step the walk did not need — the second half of the `skipped`
+   *  producer, since the flag alone is a permission rather than an event. */
+  verdict: "agree" | "disagree" | "exhausted" | "bypassed";
   fidelity_rerolled?: number;
   fidelity_reported?: number;
   /** Plan-step identity. Present on a plan-step gate verdict; this is the join that

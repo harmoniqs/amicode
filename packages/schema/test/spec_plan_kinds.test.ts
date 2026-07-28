@@ -46,10 +46,13 @@ describe("the spec kind", () => {
 });
 
 describe("the plan kind", () => {
+  const step = (over: Record<string, unknown> = {}) => ({
+    id: "s1", model: "anthropic/claude-opus-5", task_type: "implement-slice", gates: ["re-rollout"], ...over,
+  });
   const plan = (over: Record<string, unknown> = {}) => ({
     schema_version: "1", plan_id: "plan-20260728-1045-x", goal: "g",
     plan_hash: "c".repeat(64), design_hash: "a".repeat(64),
-    steps: [{ id: "s1", gates: ["re-rollout"] }], max_replans: 3,
+    steps: [step()], max_replans: 3,
     ...over,
   });
   it("accepts a compiled plan", () => {
@@ -58,8 +61,29 @@ describe("the plan kind", () => {
   it("requires the design_hash it was compiled from", () => {
     expect(validate(drop(plan(), "design_hash"), "plan").ok).toBe(false);
   });
-  it("accepts an optional-step marker, the only producer of `skipped`", () => {
-    expect(validate(plan({ steps: [{ id: "s1", optional: true }] }), "plan").ok).toBe(true);
+  it("accepts an optional-step marker — HALF the `skipped` producer", () => {
+    // The other half is a `bypassed` verdict row. `optional: true` alone is a permission,
+    // not an event, which is why `skipped` was unreachable for three revisions.
+    expect(validate(plan({ steps: [step({ optional: true })] }), "plan").ok).toBe(true);
+  });
+
+  // §4.2's compile-time budget refusal reads these. A planner that omitted them yielded an
+  // EMPTY demand set, so every refusal passed silently — §0.1's inert counter, fourth instance.
+  it("REQUIRES model on every step — an undeterminable tier demand is not `unbounded`", () => {
+    expect(validate(plan({ steps: [drop(step(), "model")] }), "plan").ok).toBe(false);
+  });
+  it("REQUIRES task_type — it is what decides whether a step is solve-bearing", () => {
+    expect(validate(plan({ steps: [drop(step(), "task_type")] }), "plan").ok).toBe(false);
+  });
+  it("model must be a model id (provider/name), never a trust tier", () => {
+    // `bounds.tier` speaks free|composed|vetted|hpc; a step's `model` is a model id. The two
+    // are different vocabularies, which is why `tier` is a first-launch refusal.
+    expect(validate(plan({ steps: [step({ model: "hpc" })] }), "plan").ok).toBe(false);
+    expect(validate(plan({ steps: [step({ model: "anthropic/claude-haiku-4-5" })] }), "plan").ok).toBe(true);
+  });
+  it("declares permissions.device over the DEVICE_ORDER vocabulary", () => {
+    expect(validate(plan({ steps: [step({ permissions: { device: "rw" } })] }), "plan").ok).toBe(true);
+    expect(validate(plan({ steps: [step({ permissions: { device: "admin" } })] }), "plan").ok).toBe(false);
   });
 });
 
