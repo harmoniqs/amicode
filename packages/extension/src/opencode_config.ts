@@ -161,6 +161,7 @@ export const DEFAULT_LIBRARY_ROOTS = [
  *  as a superset check: each of these must appear in the discovered public set. */
 export const DEFAULT_PLATFORM_SKILLS = [
   "atoms",
+  "pasqal", // the neutral-atom DEVICE path (solve -> Pulser -> emulator/QPU)
   "bosonic",
   "fluxonium",
   "ions",
