@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { chmodSync, mkdtempSync, renameSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // Three bins from one package: the historical `amico-run` (entry cli.ts), the `amico`
@@ -54,6 +54,15 @@ const common = {
 // bundle's trailing `//# sourceMappingURL=` comment, so the shipped bundle would point
 // at a map that no longer exists — sourcemaps silently broken, tests all still green.
 // The URL is relative to the output file, so preserving the basename keeps it correct.
+//
+// `dist/` MUST be created first. `mkdtemp` does not create parent directories, so on a clean
+// checkout — where no build has ever run — this threw `ENOENT: mkdtemp 'dist/build-XXXXXX'` and
+// took down every CI job that builds (fast, schema-roundtrip, vsix-gate). It could not fail
+// locally, because any developer running this has a `dist/` left over from the previous build:
+// the bug was invisible to every machine that had already succeeded once. esbuild used to create
+// the directory itself as a side effect of writing `outfile`, and moving to a staging dir
+// silently took that over without taking on the responsibility.
+mkdirSync("dist", { recursive: true });
 const staging = mkdtempSync(join("dist", "build-"));
 try {
   for (const [entry, name] of [
