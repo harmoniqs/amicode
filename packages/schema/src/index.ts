@@ -120,6 +120,22 @@ export function validate(artifact: unknown, kind: SchemaKind): Validation {
   return { ok: false, errors: (v.errors ?? []).map(formatError) };
 }
 
+/** Validate a bare WarrantBounds object against `$defs.bounds` of the ledger-record
+ *  schema. Exists because the spec-review `budget` lens must check an AUTHORED budget
+ *  against the shipped bound vocabulary, and `validate()` only accepts whole registered
+ *  kinds — without this seam the lens could only restate the key set in prose, which is
+ *  the drift that let the long-removed `max_duration` into a spec example
+ *  (spec-20260728 §2.1). */
+const boundsValidator = ajv.compile({
+  $schema: "http://json-schema.org/draft-07/schema#",
+  ...((ledgerRecordSchema as unknown as { $defs: { bounds: object } }).$defs.bounds),
+});
+
+export function validateBounds(obj: unknown): Validation {
+  const ok = boundsValidator(obj) as boolean;
+  return ok ? { ok: true, errors: [] } : { ok: false, errors: (boundsValidator.errors ?? []).map(formatError) };
+}
+
 /** Validate a file on disk: read → parse (TOML, or JSON by extension) → validate.
  *  Parse/read failures are themselves field-precise-ish errors, never a throw. */
 export function validateFile(filePath: string, kind: SchemaKind): Validation {

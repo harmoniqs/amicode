@@ -3,6 +3,19 @@
   "$id": "https://amico.harmoniqs.co/schema/ledger-record/v1",
   "title": "amico run-ledger record",
   "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the eight record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
+  "$defs": {
+    "bounds": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "WarrantBounds — what an approval authorises. Hoisted out of the approval branch (was inline) so the spec-review `budget` lens can validate an AUTHORED budget against this schema rather than a prose restatement of it; validateBounds() in the schema package is that accessor. Behaviour is byte-identical to the inline form it replaces.",
+      "properties": {
+        "max_solves": { "type": "integer", "minimum": 1 },
+        "tier": { "type": "string", "minLength": 1 },
+        "max_size_class": { "enum": ["SMALL", "MEDIUM"], "description": "G-8: bounds the COST PROXY that actually exists. estimate.ts computes memory (sizeClass/score/estimatedBytes) and nothing in amico-run estimates wall-clock, so an earlier max_duration_s bound had no signal behind it and was removed rather than left implying a guarantee about time. A real duration estimator is the deferred C2 work." },
+        "device": { "enum": ["none", "ro", "rw"] }
+      }
+    }
+  },
   "oneOf": [
     {
       "title": "solve",
@@ -185,16 +198,7 @@
         "type": { "const": "approval" },
         "ts": { "type": "string" },
         "plan_hash": { "type": "string", "minLength": 1 },
-        "bounds": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "max_solves": { "type": "integer", "minimum": 1 },
-            "tier": { "type": "string", "minLength": 1 },
-            "max_size_class": { "enum": ["SMALL", "MEDIUM"], "description": "G-8: bounds the COST PROXY that actually exists. estimate.ts computes memory (sizeClass/score/estimatedBytes) and nothing in amico-run estimates wall-clock, so an earlier max_duration_s bound had no signal behind it and was removed rather than left implying a guarantee about time. A real duration estimator is the deferred C2 work." },
-            "device": { "enum": ["none", "ro", "rw"] }
-          }
-        },
+        "bounds": { "$ref": "#/$defs/bounds" },
         "expires_at": { "type": "string" },
         "issued_by": { "type": "string", "minLength": 1 }
       }
