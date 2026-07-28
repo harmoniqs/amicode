@@ -3,15 +3,23 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 // ============================================================================
-// Δ10 (#63) — the per-solve routing UX decision core.
+// Δ10 (#63) — the routing UX decision core.
 //
-// Routing (CONTEXT.md glossary): the PER-SOLVE, explicit choice of where one
-// solve executes — local or Company Compute. Informed by the Estimate; always
-// user-confirmed, never automatic. This module never routes: it (a) reads
-// whether Company Compute is currently connected (the gate for OFFERING remote
-// routing) and (b) shapes the routing guidance spliced into the agent's
-// AGENTS.md so the "run on company compute?" confirm is estimator-informed and
-// always explicit.
+// Routing (CONTEXT.md glossary): where one solve executes — local or Harmoniqs
+// Cloud. The choice is made by the SOLVER SELECTION, not per solve: Piccolo is
+// local, and Piccolissimo + Altissimo is a paid cloud-only tier whose solves
+// always run in the cloud. Selecting a solver is the user's explicit act, so
+// nothing here is "automatic routing" in the sense #63 forbade — the decision
+// simply moved from a per-solve prompt to the solver control, which is where
+// users actually expressed it (2026-07-28: a per-solve confirm alongside a
+// cloud-only tier read as a contradiction and the agent kept dispatching HP
+// locally).
+//
+// This module never routes: it (a) reads whether Harmoniqs Cloud is currently
+// connected and (b) shapes the routing guidance spliced into the agent's
+// AGENTS.md. The durable enforcement is elsewhere and does not trust this prose
+// — amico-run refuses a local launch while HP is selected, and its gate refuses
+// a tier=hpc spec that is not remote + provisioned + connected.
 //
 // SECURITY: the cloud token lives in ~/.amico/cloud.json and is NEVER read here
 // — UI code reads STATUS only (design constraint). The status comes from the
@@ -94,32 +102,36 @@ export interface RoutingContext {
   identity?: string;
 }
 
-/** The routing-UX guidance spliced into the agent's AGENTS.md (#63). It shapes
- *  the per-solve "run on company compute?" CONFIRM: the Estimate (amico-run
- *  estimate) SUGGESTS a default, the researcher always confirms, nothing
- *  auto-routes. The remote OFFER renders ONLY when Company Compute is connected
- *  AND the solver mode is hp (the entitlement) — otherwise this returns "",
- *  leaving the AGENTS.md default (local, explicit) untouched, so piccolo /
- *  disconnected sessions stay byte-identical to before. */
+/** The routing guidance spliced into the agent's AGENTS.md (#63). It states the
+ *  one fact the agent needs: this solver is cloud-only, so author `tier="hpc"`
+ *  + `executor="remote"` and never ask where the solve should run. It renders
+ *  ONLY when Harmoniqs Cloud is connected AND the solver mode is hp (the
+ *  entitlement) — otherwise "", leaving the AGENTS.md default (local, explicit)
+ *  untouched, so piccolo / disconnected sessions stay byte-identical to before.
+ *
+ *  Both halves are still required: the mode flip is one-way, so a disconnected
+ *  hp session must not be told the cloud is available — it gets the
+ *  block-with-prompt copy from solverModeSection() instead. */
 export function buildRoutingSection(ctx: RoutingContext): string {
   if (!ctx.connected || ctx.solverMode !== "hp") return "";
   const who = ctx.identity ? ` (connected as ${ctx.identity})` : "";
   return (
     "\n\n## Routing (where THIS solve runs)\n" +
-    `Company compute is connected${who}, so a solve may run LOCAL or on company compute. ` +
-    "Routing is PER-SOLVE and EXPLICIT — you confirm where EVERY solve runs and never " +
-    "auto-route (key entry never routes a solve; a large estimate never routes a solve).\n" +
-    "- **Estimate first, at the decision point.** Before assembling the SolveSpec run " +
-    "`amico-run estimate <solve.jl>` (or `--spec <solvespec.json>`) and read its one JSON " +
-    "line `{sizeClass, estimatedBytes, localRamBytes, offloadSuggested, reason, …}`. Show " +
-    "the researcher the `sizeClass`, the human-readable `estimatedBytes` vs local RAM, and " +
-    "the `reason`.\n" +
-    "- **The estimate only SUGGESTS.** When `offloadSuggested` is true, DEFAULT the confirm " +
-    "to company compute (the solve is estimated to exceed local RAM); otherwise default to " +
-    "local. Either way, ASK — the researcher's answer decides, every solve.\n" +
-    "- **Carry the choice on the SolveSpec.** On explicit confirmation of company compute set " +
-    '`executor: "remote"` in solvespec.json; otherwise `executor: "local"`. Setting `executor` ' +
-    "is all routing does here — the downstream run path is executor-agnostic."
+    `Harmoniqs Cloud is connected${who} and the selected solver is **Piccolissimo + Altissimo**, ` +
+    "which is a CLOUD-ONLY tier. Every solve on this solver runs in the cloud: there is no " +
+    "local-vs-cloud choice to make here, so do NOT ask the researcher where it should run.\n" +
+    "- **Author it as High-Performance + Cloud.** Set `tier=\"hpc\"`, `executor=\"remote\"`, and " +
+    '`env.kind="provisioned"` on solvespec.json, then launch with `amico-run --spec <spec> ' +
+    "<script.jl> --executor remote`.\n" +
+    "- **Never dispatch this solver locally.** The runner image has Piccolissimo/Altissimo " +
+    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run REFUSES a local " +
+    "launch while this solver is selected (exit 64), so a local attempt only wastes a turn.\n" +
+    "- **`amico-run estimate` is still worth running** to report size and cost to the " +
+    "researcher, but it no longer decides anything: an estimate that fits in local RAM does " +
+    "not make an HP solve local.\n" +
+    "- **A local solve means switching solvers.** If the researcher wants to run locally, they " +
+    "switch the solver to Piccolo (the model · solver control) — that is a user action, not " +
+    "something you can do for them by setting `executor: \"local\"`."
   );
 }
 

@@ -51,7 +51,7 @@ describe("the flag is the absence of the context", () => {
     const r = runGate(spec({ tier: "hpc", executor: "local" }), SCRIPT, AUTHORING);
     // fails for its own pre-existing reason (hpc cannot run locally), NOT for a warrant
     expect(r.ok).toBe(false);
-    expect(r.ok === false && r.reason).toContain("cloud");
+    expect(r.ok === false && r.reason).toMatch(/cannot run locally/);
     expect(r.ok === false && r.refusal).toBeUndefined();
   });
 

@@ -123,16 +123,21 @@ export function runGate(
   // pre-launch key check — an agent or a direct CLI call can't run hpc locally.
   if (tier === "hpc") {
     if (executor !== "remote")
-      return { ok: false, reason: "High-Performance + Cloud runs in the cloud — set executor = remote (it cannot run locally)" };
+      return {
+        ok: false,
+        reason: "Piccolissimo + Altissimo runs in Harmoniqs Cloud — set executor = remote (it cannot run locally)",
+      };
     if (env?.kind !== "provisioned")
       return {
         ok: false,
-        reason: 'High-Performance + Cloud uses the pre-baked cloud environment — set env.kind = "provisioned" (not a local sandbox)',
+        reason:
+          'Piccolissimo + Altissimo uses the pre-baked Harmoniqs Cloud environment — set env.kind = "provisioned" (not a local sandbox)',
       };
     if (!hasCloudConfig())
       return {
         ok: false,
-        reason: "High-Performance + Cloud needs a cloud connection — connect an API key (Amico: Connect Cloud) before running",
+        reason:
+          "Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — connect your API key (Amico: Connect Cloud) before running",
       };
   }
   if ((env?.kind === "project" || env?.kind === "sandbox") && env.project) {

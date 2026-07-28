@@ -288,20 +288,23 @@ function solverModeSection(): string {
   const cloudConnected =
     !!process.env.AMICO_CLOUD_URL || fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
   const routing = cloudConnected
-    ? "The cloud is CONNECTED. Launch HP solves in the cloud with a High-Performance + Cloud spec: " +
+    ? "Harmoniqs Cloud is CONNECTED, and EVERY solve on this solver runs there — this tier has no local " +
+      "mode, so never ask the user where a solve should run. Author it as: " +
       '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
-      "is NO local precompile and NO sandbox — never author a sandbox env for HP. Live iteration frames " +
-      "stream to the Inspector; note that per-iteration AMICODE_ITER stats + the cooperative Stop are not " +
-      "yet available on the cloud bundle, and re-rollout verification is skipped for cloud runs (say so). " +
-      "Only claim cloud execution when the launch actually used `--executor remote`."
-    : "The cloud is NOT connected (no API key). High-Performance + Cloud is a PAID cloud tier and CANNOT " +
-      "run locally — do NOT attempt a local Piccolissimo solve (it will fail: the private package can't be " +
-      "instantiated in a sandbox, and the gate rejects a local hpc run). Instead, STOP and tell the user: " +
-      '"High-Performance + Cloud needs a cloud connection — click **Piccolissimo + Altissimo** in the ' +
-      "model · solver control on the dashboard and connect there (or run **Amico: Connect Cloud**, which " +
-      'opens the same flow)." Offer to switch back to the free local Piccolo solver if they\'d rather not ' +
-      "connect now.";
+      "is NO local precompile and NO sandbox — never author a sandbox env for HP. A local launch is " +
+      "REFUSED by amico-run while this solver is selected (exit 64), so attempting one only wastes a turn. " +
+      "Live iteration frames stream to the Inspector; note that per-iteration AMICODE_ITER stats + the " +
+      "cooperative Stop are not yet available on the cloud bundle, and re-rollout verification is skipped " +
+      "for cloud runs (say so). Only claim cloud execution when the launch actually used `--executor remote`."
+    : "Harmoniqs Cloud is NOT connected (no API key). Piccolissimo + Altissimo is a PAID cloud tier and " +
+      "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: amico-run " +
+      "refuses a local launch in this mode, the private package can't be instantiated in a sandbox, and " +
+      "the gate rejects a local hpc run). Instead, STOP and tell the user: " +
+      '"Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — click **Piccolissimo + Altissimo** ' +
+      "in the model · solver control on the dashboard and connect your API key there (or run **Amico: " +
+      'Connect Cloud**, which opens the same flow)." Offer to switch back to the free local Piccolo solver ' +
+      "if they'd rather not connect now.";
   return (
     "\n\n## Solver mode\n" +
     "**HIGH-PERFORMANCE + CLOUD (Piccolissimo + Altissimo).** The user selected the paid " +

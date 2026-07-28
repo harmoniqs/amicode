@@ -70,23 +70,26 @@ workspace owns `solve.jl` — never author in `/tmp`).
    # then run the printed  JULIA_PKG_USE_CLI_GIT=true julia --project=… Pkg.instantiate()  line
    ```
 5. **Estimate, confirm routing, then assemble `~/.amico/problems/<slug>/solvespec.json`.**
-   Routing is **PER-SOLVE and EXPLICIT**: you confirm where EVERY solve runs, and
-   nothing auto-routes — a large estimate never routes a solve, and entering a cloud
-   key never routes a solve. You **default to local** unless the researcher confirms otherwise.
+   **Where a solve runs follows the SELECTED SOLVER, and the researcher selects that —
+   you never move a solve to a cloud on your own.** A large estimate never routes a solve,
+   and entering a cloud key never routes a solve. You **default to local**.
+   - **The `## Routing (where THIS solve runs)` section OVERRIDES this step when present.**
+     It appears only when the researcher has selected a cloud-only solver AND that cloud is
+     connected. It means: every solve on that solver runs in the cloud — assemble the spec
+     it specifies and do **not** ask where the solve should run. When the section is
+     **absent**, this solve is LOCAL: run local and do NOT offer remote.
    - **Estimate (informs, never decides).** Run
      `amico-run estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
      `{sizeClass, estimatedBytes, localRamBytes, offloadSuggested, reason, …}`. Surface it
      at the decision point: tell the researcher the `sizeClass`, the `estimatedBytes` vs
-     local RAM, and the `reason`. The estimate only **suggests**.
-   - **Confirm the route.** Offer company compute **only when it is connected** —
-     the `## Routing (where THIS solve runs)` section is present in your context only
-     then; if it is absent, run local and do NOT offer remote. When it IS present:
-     when `offloadSuggested` is true default the confirm to company compute, otherwise
-     to local — then ask, and let the researcher's **explicit** answer decide, every solve.
+     local RAM, and the `reason`. The estimate only **suggests**, and only where a choice
+     exists — with a cloud-only solver there is no choice for it to inform, so report it
+     and move on. A `offloadSuggested: true` on the local solver is a prompt to discuss
+     upgrading, not licence to route the solve yourself.
    - **Assemble** `{schema_version:"2", script_path:"…/solve.jl", lab_id:"default",
      executor:"<local|remote>", tier:"<tier>", env:{kind, project?}, source:<from resolve>,
-     hashes:{system_hash, formulation_hash}}` — set `executor:"remote"` ONLY on explicit
-     confirmation of company compute, else `executor:"local"`. Read the hashes from the
+     hashes:{system_hash, formulation_hash}}` — set `executor:"remote"` when the `## Routing`
+     section is present (a cloud-only solver), else `executor:"local"`. Read the hashes from the
      LAST matching events in `~/.amico/problems/<slug>/events.jsonl` (the `hash` field on
      the newest `system`/`formulation` events).
 6. **Launch through the gate, detached.** Pass `--project` matching the tier's

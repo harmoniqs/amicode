@@ -71,21 +71,34 @@ describe("readCompanyComputeStatus", () => {
 });
 
 describe("buildRoutingSection", () => {
-  it("connected + hp → teaches the per-solve explicit confirm, estimator-suggests, executor:remote", () => {
+  it("connected + hp → states the cloud-only contract and the hpc spec triple", () => {
     const s = buildRoutingSection({ solverMode: "hp", connected: true, identity: "kate@harmoniqs.co" });
-    expect(s).toMatch(/amico-run estimate/);
-    expect(s).toMatch(/PER-SOLVE/);
-    expect(s).toMatch(/never auto-route/i);
-    expect(s).toMatch(/offloadSuggested/); // the estimate drives the DEFAULT
-    expect(s).toMatch(/sizeClass/); // surface the estimate at the decision point
-    expect(s).toMatch(/executor.*"remote"/); // the choice the SolveSpec carries
+    expect(s).toMatch(/CLOUD-ONLY/);
+    expect(s).toMatch(/tier="hpc"/);
+    expect(s).toMatch(/executor.*"remote"/);
+    expect(s).toMatch(/env\.kind="provisioned"/);
+    expect(s).toMatch(/Harmoniqs Cloud/);
     expect(s).toMatch(/connected as kate@harmoniqs\.co/); // the "connected as" echo
-    expect(s).toMatch(/key entry never (routes|auto-routes)/i); // 7/19 design note
   });
 
-  it("connected without an identity echo → offers remote but omits the 'connected as' line", () => {
+  // The regression this section exists to prevent: it used to teach a per-solve
+  // "local or cloud?" confirm, which contradicted the cloud-only tier sitting
+  // beside it — and the agent resolved the contradiction by dispatching HP
+  // solves LOCALLY (2026-07-20 precompile SIGTERMs). The routing question must
+  // not come back for this solver.
+  it("connected + hp → never asks the researcher where the solve runs", () => {
     const s = buildRoutingSection({ solverMode: "hp", connected: true });
-    expect(s).toMatch(/amico-run estimate/);
+    expect(s).not.toMatch(/PER-SOLVE/);
+    expect(s).not.toMatch(/offloadSuggested/);
+    expect(s).toMatch(/do NOT ask/i);
+    // the estimate survives as reporting, explicitly stripped of its old
+    // decision-making role
+    expect(s).toMatch(/no longer decides/i);
+  });
+
+  it("connected without an identity echo → still cloud-only, omits the 'connected as' line", () => {
+    const s = buildRoutingSection({ solverMode: "hp", connected: true });
+    expect(s).toMatch(/CLOUD-ONLY/);
     expect(s).not.toMatch(/connected as/);
   });
 

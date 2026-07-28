@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { execFileSync, execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
+import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
 import { FakeCloud } from "./fake_cloud.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
@@ -12,7 +12,10 @@ beforeAll(() => {
 
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+    const stdout = execFileSync("node", [BUNDLE, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, ...hermeticOpsEnv(), ...env },
+    });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string };
@@ -109,7 +112,7 @@ describe("amico-run CLI", () => {
         const child = execFile(
           "node",
           [BUNDLE, script, "--executor", "remote", "--runs-root", join(root, "runs")],
-          { env: { ...process.env, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token } },
+          { env: { ...process.env, ...hermeticOpsEnv(), AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token } },
         );
         child.stdout!.on("data", (d: string) => {
           stdout += d;
@@ -286,7 +289,9 @@ describe("amico-run CLI", () => {
     const julia = fakeJulia(root, "j", `console.log('READY'); setInterval(() => {}, 1000)`);
     const script = fakeJulia(root, "s.jl", "");
     const code: number = await new Promise((resolveP) => {
-      const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia]);
+      const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia], {
+        env: { ...process.env, ...hermeticOpsEnv() },
+      });
       child.stdout!.on("data", (d: string) => {
         if (d.includes("READY")) child.kill("SIGTERM");
       });
