@@ -29,7 +29,7 @@
 //         hardware cell.
 //
 //   amico ledger approve --plan-hash <h> [--max-solves <n>] [--tier <t>]
-//                        [--max-duration <s>] [--device none|ro|rw]
+//                        [--max-size-class SMALL|MEDIUM] [--device none|ro|rw]
 //                        [--expires-in <s>] [--issued-by <who>]
 //       → mint a capability warrant (spec-20260727-164748 §5): the record that lets a
 //         gated launch through the --spec gate. This is the transport the approval
@@ -165,9 +165,12 @@ export function ledgerApprove(argv: string[]): VerbResult {
   if (typeof maxSolves === "string") return fail(maxSolves);
   if (maxSolves !== undefined) bounds.max_solves = maxSolves;
 
-  const maxDuration = positiveInt(flagValue(argv, "--max-duration"), "--max-duration");
-  if (typeof maxDuration === "string") return fail(maxDuration);
-  if (maxDuration !== undefined) bounds.max_duration_s = maxDuration;
+  const sizeClass = flagValue(argv, "--max-size-class");
+  if (sizeClass !== undefined) {
+    if (sizeClass !== "SMALL" && sizeClass !== "MEDIUM")
+      return fail(`--max-size-class must be SMALL|MEDIUM (got "${sizeClass}")`);
+    bounds.max_size_class = sizeClass;
+  }
 
   const tier = flagValue(argv, "--tier");
   if (tier !== undefined) bounds.tier = tier;
@@ -228,7 +231,7 @@ export function ledgerVerb(argv: string[]): VerbResult {
       verb: "ledger",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]  |  amico ledger dispatch --work-id <id> --task-type <t> [--variant <v>] [--stamp <model>] [--include-simulated]  |  amico ledger approve --plan-hash <h> [--max-solves <n>] [--tier <t>] [--max-duration <s>] [--device none|ro|rw] [--expires-in <s>] [--issued-by <who>]",
+        "amico ledger append [--json <record> | (stdin)]  |  amico ledger query --structure-hash <h> --n <N> --t <T> [--goal <g> --platform <p> --template <t> --trajectory <t> --levels <n>]  |  amico ledger dispatch --work-id <id> --task-type <t> [--variant <v>] [--stamp <model>] [--include-simulated]  |  amico ledger approve --plan-hash <h> [--max-solves <n>] [--tier <t>] [--max-size-class SMALL|MEDIUM] [--device none|ro|rw] [--expires-in <s>] [--issued-by <who>]",
     },
     code: 64,
   };

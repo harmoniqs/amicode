@@ -190,7 +190,7 @@
           "properties": {
             "max_solves": { "type": "integer", "minimum": 1 },
             "tier": { "type": "string", "minLength": 1 },
-            "max_duration_s": { "type": "number", "exclusiveMinimum": 0 },
+            "max_size_class": { "enum": ["SMALL", "MEDIUM"], "description": "G-8: bounds the COST PROXY that actually exists. estimate.ts computes memory (sizeClass/score/estimatedBytes) and nothing in amico-run estimates wall-clock, so an earlier max_duration_s bound had no signal behind it and was removed rather than left implying a guarantee about time. A real duration estimator is the deferred C2 work." },
             "device": { "enum": ["none", "ro", "rw"] }
           }
         },

@@ -167,7 +167,7 @@ const approval = () => ({
   type: "approval",
   ts: "2026-07-27T20:00:00Z",
   plan_hash: "9f2c",
-  bounds: { max_solves: 8, tier: "free", max_duration_s: 1800, device: "none" },
+  bounds: { max_solves: 8, tier: "free", max_size_class: "MEDIUM", device: "none" },
   expires_at: "2026-07-27T21:00:00Z",
   issued_by: "user:ui",
 });
@@ -203,10 +203,18 @@ describe("ledger-record schema — approval (capability warrant)", () => {
     expect(validate({ ...approval(), bounds: { device: "yes" } }, "ledger-record").ok).toBe(false);
   });
 
-  it("max_solves must be a positive integer; max_duration_s must be positive", () => {
+  it("max_size_class is the cost proxy that exists — G-8 removed max_duration_s", () => {
+    for (const c of ["SMALL", "MEDIUM"]) {
+      expect(validate({ ...approval(), bounds: { max_size_class: c } }, "ledger-record").ok, c).toBe(true);
+    }
+    expect(validate({ ...approval(), bounds: { max_size_class: "LARGE" } }, "ledger-record").ok).toBe(false);
+    // the removed bound must not quietly validate again
+    expect(validate({ ...approval(), bounds: { max_duration_s: 1800 } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("max_solves must be a positive integer", () => {
     expect(validate({ ...approval(), bounds: { max_solves: 0 } }, "ledger-record").ok).toBe(false);
     expect(validate({ ...approval(), bounds: { max_solves: 1.5 } }, "ledger-record").ok).toBe(false);
-    expect(validate({ ...approval(), bounds: { max_duration_s: 0 } }, "ledger-record").ok).toBe(false);
   });
 
   it("plan_hash must be non-empty — an empty hash would join every launch", () => {

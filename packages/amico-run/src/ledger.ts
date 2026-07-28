@@ -173,7 +173,7 @@ export interface DispatchRecord {
 export interface WarrantBounds {
   max_solves?: number;
   tier?: string;
-  max_duration_s?: number;
+  max_size_class?: "SMALL" | "MEDIUM";
   device?: "none" | "ro" | "rw";
 }
 
