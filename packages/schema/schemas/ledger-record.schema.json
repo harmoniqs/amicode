@@ -66,17 +66,23 @@
     },
     {
       "title": "verdict",
+      "description": "A gate outcome. Two shapes share this branch: a SOLVE re-rollout verdict (keyed on problem_hash, the original form) and a PLAN-STEP gate verdict (keyed on plan_hash + step_id). The step form exists because plan-step state is DERIVED from these rows rather than written by a verb — an agent cannot forge `passed` without forging a gate verdict (spec-20260728 §4.4). problem_hash is required only for the solve form; a plan step's gate need not be solve-shaped (a schema-lint gate on a bookkeeping step has no problem hash).",
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "ts", "problem_hash", "verdict"],
+      "required": ["type", "ts", "verdict"],
+      "if": { "not": { "required": ["step_id"] } },
+      "then": { "required": ["problem_hash"] },
       "properties": {
         "type": { "const": "verdict" },
         "ts": { "type": "string" },
         "problem_hash": { "type": "string" },
         "structure_hash": { "type": "string" },
-        "verdict": { "enum": ["agree", "disagree"] },
+        "verdict": { "enum": ["agree", "disagree", "exhausted"], "description": "`exhausted` is per-step gate exhaustion (failure at the top reachable escalation rung). It lives here because the fleet registry's `blocked` is SESSION-scoped and cannot carry a per-step outcome." },
         "fidelity_rerolled": { "type": "number" },
-        "fidelity_reported": { "type": "number" }
+        "fidelity_reported": { "type": "number" },
+        "plan_hash": { "type": "string", "minLength": 1, "description": "Set on a plan-step verdict. With step_id this is the join plan-step state is derived from; OPTIONAL so every pre-existing solve verdict keeps validating." },
+        "step_id": { "type": "string", "minLength": 1, "description": "The compiled plan step this verdict is about. Derivation keys on (plan_hash, step_id) — never step_id alone, or a recompiled plan's identically-named steps would alias onto the old plan's rows and read as already complete." },
+        "source": { "enum": ["user", "replay", "simulated"], "description": "Lane. Step-state derivation filters source=user so a simulated gym verdict cannot masquerade as real progress in the very derivation the lane separation protects." }
       }
     },
     {
@@ -185,6 +191,8 @@
         "pass": { "type": "boolean" },
         "tokens": { "type": "integer", "minimum": 0 },
         "attempt_index": { "type": "integer", "minimum": 1 },
+        "plan_hash": { "type": "string", "minLength": 1, "description": "Set when this dispatch is a plan step; with step_id it lets step-state derivation see a step as `running` before any terminal verdict exists." },
+        "step_id": { "type": "string", "minLength": 1, "description": "The compiled plan step this dispatch is for." },
         "source": { "enum": ["user", "replay", "simulated"] }
       }
     },

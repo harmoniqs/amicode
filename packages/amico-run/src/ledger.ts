@@ -80,11 +80,23 @@ export interface SolveRecord {
 export interface VerdictRecord {
   type: "verdict";
   ts: string;
-  problem_hash: string;
+  /** Required by the schema ONLY when `step_id` is absent — i.e. for a solve re-rollout
+   *  verdict. A plan-step gate need not be solve-shaped. */
+  problem_hash?: string;
   structure_hash?: string;
-  verdict: "agree" | "disagree";
+  /** `exhausted` = per-step gate exhaustion. The fleet registry's `blocked` is
+   *  session-scoped, so it cannot carry a per-step outcome. */
+  verdict: "agree" | "disagree" | "exhausted";
   fidelity_rerolled?: number;
   fidelity_reported?: number;
+  /** Plan-step identity. Present on a plan-step gate verdict; this is the join that
+   *  plan-step state is DERIVED from, which is what makes forging `passed` require
+   *  forging a gate verdict (spec-20260728 §4.4). Both optional so every pre-existing
+   *  solve verdict keeps validating. Derivation keys on (plan_hash, step_id) — never
+   *  step_id alone, or a recompiled plan aliases onto the old plan's rows. */
+  plan_hash?: string;
+  step_id?: string;
+  source?: "user" | "replay" | "simulated";
 }
 
 export interface AttemptErrorRecord {
@@ -170,6 +182,10 @@ export interface DispatchRecord {
   tokens: number; // per-attempt token cost; 0 on experiment rows (excluded from c_m)
   attempt_index: number; // ladder position; 1 = first attempt (the p_m(s) sample)
   source: "user" | "replay" | "simulated";
+  /** Plan-step identity (optional) — lets step-state derivation see a step as `running`
+   *  before any terminal verdict row exists. */
+  plan_hash?: string;
+  step_id?: string;
 }
 
 /** What a warrant authorises. An ABSENT key does not mean "unlimited" — the gate
