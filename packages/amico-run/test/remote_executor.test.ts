@@ -305,3 +305,43 @@ describe("FakeCloud wire shapes match the live API", () => {
     });
   });
 });
+
+// The poller only json.loads an AMICODE_ITER payload starting with "{"; the solve
+// template emits key=value text, so those records arrive as {raw}. Reading only
+// `it.iter` skipped every one as NaN. The smoke test seeded JSON, so this drift
+// survived until a live solve wrote a real run.log.
+describe("stats records arrive in either shape", () => {
+  it("a {raw} text record still becomes an AMICODE_ITER line and an iter event", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      // exactly what solves_poll's _stats yields for a template-emitted line
+      fake.state.iters = [{ raw: "iter=7 f=8.727579e-04 inf_pr=2.670e-09 inf_du=1.838e+02" } as never]
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(3); // re-served each poll — dedup must still hold
+      fake.state.finished = { status: "completed" };
+      const evs = await collect(h.events);
+      const iters = evs.filter((e) => e.kind === "iter");
+      expect(iters).toHaveLength(1);
+      const log = readFileSync(join(h.runDir, "run.log"), "utf8");
+      expect(log).toContain("AMICODE_ITER iter=7 f=8.727579e-04 inf_pr=2.670e-09 inf_du=1.838e+02");
+      expect(log.match(/AMICODE_ITER/g)).toHaveLength(1);
+    });
+  });
+
+  it("a malformed record is skipped, not emitted as NaN", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.iters = [{ raw: "no iter key here" } as never, { raw: "iter=2 f=1.0e-3" } as never];
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(2);
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+      const log = readFileSync(join(h.runDir, "run.log"), "utf8");
+      expect(log).toContain("AMICODE_ITER iter=2 f=1.0e-3");
+      expect(log).not.toContain("NaN");
+      expect(log.match(/AMICODE_ITER/g)).toHaveLength(1);
+    });
+  });
+});

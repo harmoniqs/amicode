@@ -209,11 +209,22 @@ export class RemoteExecutor implements Executor {
             iters?: Array<Record<string, unknown>>;
           };
           for (const it of body.stats ?? body.iters ?? []) {
-            const n = Number(it.iter);
+            // Two record shapes, because the poller only JSON-decodes an
+            // AMICODE_ITER payload that starts with "{". The solve template emits
+            // the human/key=value form (`iter=7 f=… inf_pr=… inf_du=…`), which the
+            // poller hands back verbatim as {raw}. Keying on `it.iter` alone
+            // skipped every one of those as NaN — and the smoke test seeded JSON,
+            // so nothing caught it. Reconstruct the line from whichever arrived.
+            const raw = typeof it.raw === "string" ? it.raw : undefined;
+            const n = Number(raw ? /(?:^|\s)iter=(\d+)/.exec(raw)?.[1] : it.iter);
             if (!Number.isFinite(n) || n <= iterHigh) continue; // Δ4 re-serves history: dedup on high-water
             iterHigh = n;
             sawLife = true;
-            emitLine(`AMICODE_ITER iter=${it.iter} f=${it.f} inf_pr=${it.inf_pr} inf_du=${it.inf_du}`);
+            emitLine(
+              raw
+                ? `AMICODE_ITER ${raw}`
+                : `AMICODE_ITER iter=${it.iter} f=${it.f} inf_pr=${it.inf_pr} inf_du=${it.inf_du}`,
+            );
           }
         }
       } catch {
