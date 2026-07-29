@@ -212,6 +212,18 @@ describe("AMICODE_PULSE_META parsing (#66 pinned grammar)", () => {
     expect(m).toBeDefined();
     expect(m?.interp).toBe("zoh");
   });
+
+  it("ignores unknown future tail fields — a newer emitter must never NO_DATA this client", () => {
+    const m = parsePulseMetaLine(
+      'AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 interp=linear phase=0.5 v=2',
+    );
+    expect(m?.interp).toBe("linear");
+    expect(m?.drives).toBe(1);
+  });
+
+  it("still rejects actual corruption (a non key=value tail is not a future field)", () => {
+    expect(parsePulseMetaLine('AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 garbage here')).toBeUndefined();
+  });
 });
 
 describe("AMICODE_PULSE record parsing (#66 pinned grammar)", () => {
@@ -231,6 +243,15 @@ describe("AMICODE_PULSE record parsing (#66 pinned grammar)", () => {
     expect(r!.values[0]).toEqual([Infinity, -Infinity]);
     expect(Number.isNaN(r!.values[1][0])).toBe(true);
     expect(r!.values[1][1]).toBe(0.5);
+  });
+
+  it("ignores unknown future tail fields (e.g. the planned d= derivatives group) without corrupting a=", () => {
+    const r = parsePulseRecordLine("AMICODE_PULSE iter=6 dt=0.2 a=0.1,0.2;0.3,0.4 d=1,2;3,4");
+    expect(r).toBeDefined();
+    expect(r!.values).toEqual([
+      [0.1, 0.2],
+      [0.3, 0.4],
+    ]);
   });
 });
 
