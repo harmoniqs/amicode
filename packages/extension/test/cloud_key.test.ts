@@ -459,7 +459,7 @@ describe("runSetCloudKeyCommand — single write path, single flip path (AC1 + A
 
 describe("cloud URL resolution (review finding 6 — single-sourced)", () => {
   it("DEFAULT_CLOUD_URL is the production Solve Service base URL", () => {
-    expect(DEFAULT_CLOUD_URL).toBe("https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com");
+    expect(DEFAULT_CLOUD_URL).toBe("https://vsaje7ynp5.execute-api.us-east-1.amazonaws.com");
   });
 
   it("an empty amicode.cloudUrl setting falls back to DEFAULT_CLOUD_URL in the POSTed base_url", async () => {
@@ -478,7 +478,7 @@ describe("cloud URL resolution (review finding 6 — single-sourced)", () => {
 
   it("package.json no longer duplicates the production URL — cloud_key.ts is the single source", () => {
     const pkg = fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8");
-    expect(pkg).not.toContain("qy2gwqy5s5"); // the URL lives ONLY in DEFAULT_CLOUD_URL
+    expect(pkg).not.toContain("vsaje7ynp5"); // the URL lives ONLY in DEFAULT_CLOUD_URL
     const props = (JSON.parse(pkg) as { contributes: { configuration: { properties: Record<string, { default?: unknown; description?: string }> } } })
       .contributes.configuration.properties;
     expect(props["amicode.cloudUrl"].default).toBe("");

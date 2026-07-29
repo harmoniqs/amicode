@@ -16,8 +16,16 @@
 
 /** Production Solve Service base URL — the single source (review finding 6).
  *  package.json's `amicode.cloudUrl` default is "" and its description points
- *  here ("the built-in production endpoint"); a test pins the non-duplication. */
-export const DEFAULT_CLOUD_URL = "https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com";
+ *  here ("the built-in production endpoint"); a test pins the non-duplication.
+ *
+ *  TEST BUILD ONLY — DO NOT MERGE THIS BRANCH. This points at the PROD solves
+ *  account (184838390077) instead of staging (822426641375). It is paired with a
+ *  prod `amicode.telemetry.endpoint` default in package.json, because the two
+ *  MUST move together: the telemetry ingest validates the Solve token against
+ *  its own account's credentials table, so a build with one flipped and not the
+ *  other 401s every producer silently. Shipping this to main would break every
+ *  existing user, all of whom hold staging-minted tokens. */
+export const DEFAULT_CLOUD_URL = "https://vsaje7ynp5.execute-api.us-east-1.amazonaws.com";
 
 /** The one credential the command manages — the same connection id the panel
  *  submits, so both entry points converge on the same server-side record. */
