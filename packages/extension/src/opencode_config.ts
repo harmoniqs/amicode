@@ -311,6 +311,14 @@ function solverModeSection(): string {
     '"High-Performance + Cloud" solver. Author solves with the **Piccolissimo** stack ' +
     "(SplinePulseProblem, free-phase paths, `using Piccolissimo`) rather than plain Piccolo, falling back " +
     "to Piccolo only when Piccolissimo cannot express the problem (say so when you do). " +
+    "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
+    "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
+    "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
+    "`AltissimoOptions`), use it — but TELL THEM the trade first: Piccolissimo's `solve!(::AltissimoOptions)` " +
+    "does not yet forward a caller `callback` to `Altissimo.optimize!`, and there is no `intermediate_callback` " +
+    "on that path, so an Altissimo run currently produces NO per-iteration frames and NO AMICODE_ITER lines — " +
+    "the Run Inspector will stay empty until the solve finishes. Never switch to Altissimo silently, and never " +
+    "claim live iterations on it. " +
     routing +
     "\n"
   );

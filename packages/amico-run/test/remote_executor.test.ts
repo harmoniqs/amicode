@@ -134,7 +134,12 @@ describe("poll streaming — stats/frames fed into the mirror (Δ4)", () => {
     });
   });
 
-  it("frames land as iter_NNN.png (S3 layout name); newest-wins high-water", async () => {
+  // Fetched from the frames endpoint's PRESIGNED URL (the live shape) rather than
+  // from inline base64. The name is 5-digit because that is what BOTH the S3
+  // layout and the local Julia solve write (iter_00007.png); the old 3-digit name
+  // matched neither, so cloud frames and local frames landed under different
+  // schemes in the same run dir.
+  it("frames are fetched from the presigned url and land as iter_NNNNN.png; newest-wins high-water", async () => {
     await withCloud(async (fake) => {
       fake.state.task_status = "Running";
       fake.state.frame = { iter: 7, png_base64: Buffer.from("png-bytes-7").toString("base64") };
@@ -143,7 +148,7 @@ describe("poll streaming — stats/frames fed into the mirror (Δ4)", () => {
       await fake.waitForPolls(2);
       fake.state.finished = { status: "completed" };
       await h.finished;
-      expect(readFileSync(join(h.runDir, "iter_007.png"), "utf8")).toBe("png-bytes-7");
+      expect(readFileSync(join(h.runDir, "iter_00007.png"), "utf8")).toBe("png-bytes-7");
       expect(readdirSync(h.runDir).filter((f) => f.endsWith(".tmp"))).toHaveLength(0); // atomic write
     });
   });
@@ -258,6 +263,45 @@ describe("abort() — resolution (b): a REQUEST; the run is live until the real 
       // timeout bounds a never-fired request as a failure).
       while (fake.aborts < 1) await new Promise((r) => setTimeout(r, 5));
       expect(fake.aborts).toBe(1);
+    });
+  });
+});
+
+// ── the fake must match the LIVE service, not the client ────────────────────
+// This whole class of bug was invisible because fake_cloud.ts served the shapes
+// the client happened to read (`{iters}`, `{iter, png_base64}`) instead of the
+// shapes the deployed API returns (`{stats}`, `{iter, key, url}`). Every test
+// passed; every real cloud solve produced an empty run inspector. Recorded from
+// task 419a57e6 on staging, 2026-07-28. If the service changes, change these
+// AND fake_cloud.ts together — a fake that agrees with the client proves nothing.
+describe("FakeCloud wire shapes match the live API", () => {
+  it("/stats serves {task_id, stats[], submitter} — NOT {iters}", async () => {
+    await withCloud(async (fake) => {
+      fake.state.iters = [{ iter: 3, f: "1.0e-3", inf_pr: "1e-9", inf_du: "1e-7" }];
+      const r = await fetch(`${fake.base}/solves/${fake.taskId}/stats`, {
+        headers: { authorization: `Bearer ${fake.token}` },
+      });
+      const body = (await r.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["stats", "submitter", "task_id"]);
+      expect(body).not.toHaveProperty("iters");
+      expect((body.stats as unknown[]).length).toBe(1);
+    });
+  });
+
+  it("/frames serves a presigned url + key — NOT inline png_base64", async () => {
+    await withCloud(async (fake) => {
+      fake.state.frame = { iter: 12, png_base64: Buffer.from("bytes").toString("base64") };
+      const r = await fetch(`${fake.base}/solves/${fake.taskId}/frames`, {
+        headers: { authorization: `Bearer ${fake.token}` },
+      });
+      const body = (await r.json()) as Record<string, unknown>;
+      expect(Object.keys(body).sort()).toEqual(["iter", "key", "submitter", "task_id", "url"]);
+      expect(body).not.toHaveProperty("png_base64");
+      expect(body.key).toMatch(/iter_00012\.png$/); // 5-digit, the real S3 layout
+      // and the url is fetchable WITHOUT auth — the signature is the credential
+      const img = await fetch(body.url as string);
+      expect(img.ok).toBe(true);
+      expect(Buffer.from(await img.arrayBuffer()).toString()).toBe("bytes");
     });
   });
 });
