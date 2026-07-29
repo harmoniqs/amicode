@@ -283,7 +283,7 @@ export function writeAuthoringConfig(
  *  the amico-run gate (tier=hpc ⇒ executor=remote + env=provisioned + a cloud
  *  connection, else exit 64); this section makes the agent do the right thing
  *  and, crucially, BLOCK-WITH-PROMPT when no cloud key is connected. */
-function solverModeSection(): string {
+export function solverModeSection(): string {
   if (readSolverModeState().mode !== "hp") return "";
   const cloudConnected =
     !!process.env.AMICO_CLOUD_URL || fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
@@ -308,6 +308,11 @@ function solverModeSection(): string {
     '"High-Performance + Cloud" solver. Author solves with the **Piccolissimo** stack ' +
     "(SplinePulseProblem, free-phase paths, `using Piccolissimo`) rather than plain Piccolo, falling back " +
     "to Piccolo only when Piccolissimo cannot express the problem (say so when you do). " +
+    "**Import BOTH: `using Piccolo` AND `using Piccolissimo`.** Piccolissimo does NOT re-export Piccolo's " +
+    "symbols, so a script with only `using Piccolissimo` dies on the first `GATES[:X]`, `TransmonSystem`, " +
+    "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
+    "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
+    "instance-boot wait before seeing it. " +
     routing +
     "\n"
   );
