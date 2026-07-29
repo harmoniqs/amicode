@@ -3,3 +3,23 @@ CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 Piccolo = "c4671d76-df94-11ed-2057-43d4fd632fad"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+
+[compat]
+# The shipped Manifest pins Piccolo 1.19.0 by exact tree-sha, and `julia_setup.ts`
+# copies it verbatim, so a fresh provision gets 1.19.0. But the Manifest is the ONLY
+# thing holding that: with no bound here, a single `Pkg.update()` — or any event that
+# makes Pkg re-resolve — silently moves the user onto the newest Piccolo minor.
+#
+# Measured against the registry today: with no compat, `Pkg.update("Piccolo")` on the
+# shipped pair takes 1.19.0 -> 1.20.0. With `~1.19` it holds at 1.19.0.
+#
+# 1.20.0 is a deliberately breaking release (`integrator_type = :spline` now errors,
+# `fidelity(qcp)` became free-phase-aware and returns different numbers for
+# `free_phase = true` problems, and `sync_trajectory!` now warns on optimizer-vs-rollout
+# divergence). Every shipped score and template was vetted against 1.19.0, so moving is
+# a decision to make deliberately after re-vetting — not something a resolver should do
+# on a user's machine mid-session.
+#
+# `~1.19` admits 1.19.x patches (non-breaking by SemVer) and refuses 1.20. Raise this in
+# the same PR that re-vets the templates against the new minor.
+Piccolo = "~1.19"
