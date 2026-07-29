@@ -142,6 +142,8 @@ export class RemoteExecutor implements Executor {
     let sawLife = false; // Running status or a first iter observed (warming budget clock)
     let iterHigh = -1; // stats high-water: Δ4 re-serves history each poll; dedup here
     let frameHigh = -1; // frames high-water
+    let pulseHigh = -1; // pulse high-water (AMICODE_PULSE iter=N); dedup like stats
+    let pulseMetaEmitted = false; // AMICODE_PULSE_META has no iter — relay it once
     let lastOkPollAt = Date.now(); // resolution (d) client half: observability clock
     const startedAt = Date.now();
 
@@ -229,6 +231,40 @@ export class RemoteExecutor implements Executor {
         }
       } catch {
         /* stats are advisory — status stays the authoritative lane */
+      }
+      // pulse → AMICODE_PULSE_META (once) + AMICODE_PULSE lines: the SAME run.log
+      // + events delivery as stats, so the inspector's pulse plot updates
+      // progressively for a cloud run exactly as it does for a local one (the
+      // render side already tails these off run.log). Mirrors _stats: the cloud
+      // greps AMICODE_PULSE* out of the S3-synced run.log; the client dedups
+      // (meta once — it carries no iter; pulse on the iter high-water, since Δ4
+      // re-serves history each poll) and relays each new line verbatim so the
+      // `a=` drive knots AND the `d=` derivative tail reach the plotter unaltered.
+      // Best-effort: a runner/API without /pulse 404s here and is swallowed,
+      // exactly like a pre-sidecar stats poll — the mirror just shows no pulse.
+      try {
+        const r = await get("pulse");
+        if (r.ok && r.status !== 204) {
+          const body = (await r.json()) as { pulse?: Array<{ raw?: unknown }> };
+          for (const p of body.pulse ?? []) {
+            const raw = typeof p.raw === "string" ? p.raw : undefined;
+            if (raw === undefined) continue;
+            if (raw.startsWith("AMICODE_PULSE_META")) {
+              if (pulseMetaEmitted) continue; // one meta per run (no iter to dedup on)
+              pulseMetaEmitted = true;
+              sawLife = true;
+              emitLine(raw);
+              continue;
+            }
+            const n = Number(/(?:^|\s)iter=(\d+)/.exec(raw)?.[1]);
+            if (!Number.isFinite(n) || n <= pulseHigh) continue; // dedup on high-water
+            pulseHigh = n;
+            sawLife = true;
+            emitLine(raw);
+          }
+        }
+      } catch {
+        /* pulse is advisory — status stays the authoritative lane */
       }
       // frames — resolution (a): best-effort; ANY failure is swallowed
       try {

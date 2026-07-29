@@ -21,6 +21,7 @@ export interface FakeState {
   iters: FakeIter[]; // Δ4 stats: full history each poll (client dedups on high-water)
   frame?: { iter: number; png_base64: string }; // Δ4 frames: newest only
   framesBroken?: boolean; // 500 the frames endpoint — resolution (a) lane
+  pulse?: Array<{ raw: string }>; // Δ4 pulse: AMICODE_PULSE_META + AMICODE_PULSE lines, full history each poll
 }
 
 export class FakeCloud {
@@ -96,6 +97,12 @@ export class FakeCloud {
     // proves nothing.
     if (url === `/solves/${this.taskId}/stats`) {
       return send(200, { task_id: this.taskId, stats: this.state.iters, submitter: "test" });
+    }
+    // pulse mirrors stats' shape: {task_id, pulse: [{raw}], submitter}, where the
+    // cloud greps AMICODE_PULSE_META + AMICODE_PULSE lines out of the S3 run.log
+    // (never JSON, so always {raw}). Full history each poll — the client dedups.
+    if (url === `/solves/${this.taskId}/pulse`) {
+      return send(200, { task_id: this.taskId, pulse: this.state.pulse ?? [], submitter: "test" });
     }
     if (url === `/solves/${this.taskId}/frames`) {
       if (this.state.framesBroken) return send(500, { error: "frames unavailable" });
