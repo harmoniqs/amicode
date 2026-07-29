@@ -182,7 +182,7 @@ describe("AMICODE_ITER parsing — Inf/NaN are kept, not dropped", () => {
 // these lines ignore them (anchored regex no-match), so the β contract freeze
 // is untouched.
 describe("AMICODE_PULSE_META parsing (#66 pinned grammar)", () => {
-  it("parses drives/knots/labels/bounds from a well-formed meta line", () => {
+  it("parses drives/knots/labels/bounds from a well-formed meta line (no interp= → zoh)", () => {
     const m = parsePulseMetaLine('AMICODE_PULSE_META drives=2 knots=50 labels="u_1","u_2" bounds=-0.2:0.2,-0.2:0.2');
     expect(m).toEqual({
       drives: 2,
@@ -192,7 +192,25 @@ describe("AMICODE_PULSE_META parsing (#66 pinned grammar)", () => {
         [-0.2, 0.2],
         [-0.2, 0.2],
       ],
+      interp: "zoh",
     });
+  });
+
+  // interp= is a trailing optional field so the fork's tail-capture mirror
+  // (problems.ts labels=([^\n]*)$) keeps matching lines that carry it.
+  it("parses a trailing interp= field", () => {
+    const linear = parsePulseMetaLine('AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 interp=linear');
+    expect(linear?.interp).toBe("linear");
+    const cubic = parsePulseMetaLine('AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 interp=cubic');
+    expect(cubic?.interp).toBe("cubic");
+    const zoh = parsePulseMetaLine('AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 interp=zoh');
+    expect(zoh?.interp).toBe("zoh");
+  });
+
+  it("coerces an unknown interp= value to zoh WITHOUT dropping the meta (degrade to stairs, never to NO_DATA)", () => {
+    const m = parsePulseMetaLine('AMICODE_PULSE_META drives=1 knots=3 labels="u_1" bounds=-0.2:0.2 interp=bspline');
+    expect(m).toBeDefined();
+    expect(m?.interp).toBe("zoh");
   });
 });
 

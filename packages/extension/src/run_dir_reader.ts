@@ -30,15 +30,23 @@ export function parseAmicoNum(s: string): number {
 // quotes and commas; bounds are lo:hi pairs, one per drive.
 // ---------------------------------------------------------------------------
 
+// `interp=` is a TRAILING OPTIONAL field: emitters append it after bounds=, so
+// the opencode fork's tail-capture mirror (problems.ts, labels=([^\n]*)$) keeps
+// matching without a change. Any value is accepted and unknowns coerce to zoh —
+// a future interp kind must degrade an old client to stairs, never to NO_DATA.
 export const AMICODE_PULSE_META_RE = new RegExp(
-  String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)\s*$`,
+  String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)(?:\s+interp=(\S+))?\s*$`,
 );
+
+/** How knot values interpolate between knots — drives the plot's render mode. */
+export type PulseInterp = "zoh" | "linear" | "cubic";
 
 export interface PulseMeta {
   drives: number;
   knots: number;
   labels: string[];
   bounds: [number, number][];
+  interp: PulseInterp;
 }
 
 /** Parse an AMICODE_PULSE_META line. Returns undefined for anything malformed. */
@@ -50,7 +58,8 @@ export function parsePulseMetaLine(line: string): PulseMeta | undefined {
     const [lo, hi] = pair.split(":");
     return [parseAmicoNum(lo), parseAmicoNum(hi)] as [number, number];
   });
-  return { drives: parseInt(m[1], 10), knots: parseInt(m[2], 10), labels, bounds };
+  const interp: PulseInterp = m[5] === "linear" || m[5] === "cubic" ? m[5] : "zoh";
+  return { drives: parseInt(m[1], 10), knots: parseInt(m[2], 10), labels, bounds, interp };
 }
 
 export const AMICODE_PULSE_RE = new RegExp(
