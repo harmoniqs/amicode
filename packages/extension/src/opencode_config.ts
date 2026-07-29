@@ -283,7 +283,7 @@ export function writeAuthoringConfig(
  *  the amico-run gate (tier=hpc ⇒ executor=remote + env=provisioned + a cloud
  *  connection, else exit 64); this section makes the agent do the right thing
  *  and, crucially, BLOCK-WITH-PROMPT when no cloud key is connected. */
-function solverModeSection(): string {
+export function solverModeSection(): string {
   if (readSolverModeState().mode !== "hp") return "";
   const cloudConnected =
     !!process.env.AMICO_CLOUD_URL || fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
@@ -314,7 +314,14 @@ function solverModeSection(): string {
     "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
     "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
     "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
-    "`AltissimoOptions`), use it — but TELL THEM that live iterations depend on the INSTALLED version. " +
+    "`AltissimoOptions`), switch it by setting **`SOLVER = :altissimo`** in the template's FILL-IN block — that " +
+    "one line is the whole change. Do NOT hand-roll the solve call: the template already re-hangs BOTH telemetry " +
+    "channels onto Altissimo's `(x, info)` hook (the frames come off `IpoptOptions.intermediate_callback`, which " +
+    "`AltissimoOptions` does not have, so a hand-written call loses the Inspector's frames as well as its " +
+    "numbers), passes the budget as `AltissimoOptions(max_outer_iter = max_iter)` (a `max_iter` given to " +
+    "`solve!` is silently DROPPED on that path — the solve would quietly run 20 outer iterations), and derives " +
+    "`inf_pr`/`inf_du` on older Altissimo builds. " +
+    "Also TELL THEM that live iterations depend on the INSTALLED version. " +
     "Current Piccolissimo main accepts a `callback` on `solve!(::AltissimoOptions)` and forwards it to " +
     "`Altissimo.optimize!`, which fires it every outer iteration; older builds swallow `kwargs...` and forward " +
     "nothing, so an Altissimo run there emits NO AMICODE_ITER lines and the Run Inspector stays dark until the " +

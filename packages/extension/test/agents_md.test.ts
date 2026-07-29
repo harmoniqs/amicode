@@ -187,3 +187,41 @@ describe("AGENTS.md pulse-designer interview (Layer 0)", () => {
     expect(substituted).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 });
+
+// The SOLVER flag is the ONLY supported way to switch backends. Without naming it,
+// an agent asked for Altissimo hand-writes a solve call and silently loses the
+// frames (they come off IpoptOptions.intermediate_callback, which AltissimoOptions
+// has no equivalent of) plus the iteration budget (max_iter is dropped on that
+// path). The template handles all of it; the agent just has to flip the flag.
+describe("HP solver-mode guidance: how to select Altissimo", () => {
+  const hpSection = async (): Promise<string> => {
+    const { solverModeSection } = await import("../src/opencode_config");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const prev = process.env.AMICODE_OPS_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "solvermode-"));
+    writeFileSync(join(dir, "solver-mode.json"), JSON.stringify({ mode: "hp", status: "ready" }));
+    process.env.AMICODE_OPS_DIR = dir;
+    try {
+      return solverModeSection();
+    } finally {
+      if (prev === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prev;
+    }
+  };
+
+  it("names SOLVER = :altissimo as the switch, and forbids hand-rolling the call", async () => {
+    const s = await hpSection();
+    expect(s).not.toBe(""); // guard: a misfiring mode gate would make these vacuous
+    expect(s).toMatch(/SOLVER = :altissimo/);
+    expect(s).toMatch(/Do NOT hand-roll/i);
+  });
+
+  it("states both traps a hand-rolled call would hit: lost frames and a dropped budget", async () => {
+    const s = await hpSection();
+    expect(s).toMatch(/intermediate_callback/);
+    expect(s).toMatch(/max_outer_iter/);
+    expect(s).toMatch(/silently DROPPED/);
+  });
+})
