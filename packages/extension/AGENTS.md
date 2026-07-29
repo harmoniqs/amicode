@@ -273,6 +273,20 @@ Stages, in order:
    edges), `drive_arch`. Single-qubit stays the old one-component flow
    (`levels`/`drive_max` fold onto the first component). Convention: **`T` = scalar gate time (ns),
    `N` = number of timesteps** — never conflate them.
+   - **Record the Hamiltonian** (`hamiltonian`, same `amicode_set_model` call), term
+     by term: `kind` ∈ `drift|coupling|drive`, KaTeX-renderable `latex` with no leading
+     `+`, optional `acts_on` ids and `label`. **This is the whole model, not decoration** —
+     the System card renders it verbatim and stops guessing. Without it the card falls
+     back to a canonical form for the platform and _labels itself inferred_; off-template
+     it shows **no Hamiltonian at all**, because `Ĥ_drift + Ĥ_c(t)` is true of every
+     control problem ever posed. **You** know what an exchange-only spin qubit, a
+     fluxonium or a cat qubit looks like; the card's built-in table only knows transmon,
+     Rydberg and bosonic. So: mandatory off-template, and worth confirming even on
+     template. Show the terms to the researcher and record what they confirm — a recorded
+     Hamiltonian means _they_ agreed to it, which is the point of the card.
+   - **Role honesty:** `role` ∈ `qubit|cavity|resonator|mode|atom|other`. An unrecognized
+     platform is recorded as `other` (never coerced to `qubit`); set the real role here
+     once you know it, and use `other` rather than a near-miss when none of them fit.
    - **Frontier-batching:** batch questions whose prerequisites are already
      answered into ONE `question` call, but keep the _semantic/branching_ picks
      singular — platform, target-gate, objective. Never batch a question whose

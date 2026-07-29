@@ -54,6 +54,7 @@ import {
   type Component,
   type Coupling,
   type CompositeSystemPatch,
+  type HamiltonianTerm,
   type CouplingKind,
   type Topology,
   type DriveArch,
@@ -213,6 +214,15 @@ function recordEntity(
 
 // LaTeX shown at the PLATFORM stage — kept verbatim in sync with AGENTS.md's
 // "Pulse-designer interview" section (the agent renders these in chat).
+//
+// THIRD COPY WARNING. The same physics is written down in three places: here,
+// the System card's fallback tables (opencode fork, ui/src/amicode/system-render.ts),
+// and the Julia templates. They HAVE drifted — the card rendered a single
+// quadrature `ε(t)(â+â†)` while this string and Piccolo's `n_drives = 2` both say
+// two. Two quadratures is correct; the card was fixed to match. The real cure is
+// `amicode_set_model`'s `hamiltonian` arg: once the model is recorded on the
+// entity, every surface renders that one artifact and these constants are only a
+// pre-MODEL fallback.
 const TRANSMON_LATEX = String.raw`$\hat H/\hbar = \omega\,\hat a^\dagger\hat a + \tfrac{\delta}{2}\,\hat a^{\dagger 2}\hat a^2 + u_1(t)\,(\hat a + \hat a^\dagger) + i\,u_2(t)\,(\hat a - \hat a^\dagger)$`;
 const RYDBERG_DESC = String.raw`3-level ladder: $|0\rangle$ dark, $|1\rangle\!\leftrightarrow\!|r\rangle$ laser-driven, blockade shift on $|rr\rangle$`;
 const RYDBERG_SCOPE_NOTE =
@@ -411,11 +421,14 @@ export const AmicodeTools = async (_input: unknown) => ({
         },
         omega: {
           type: ["number", "null"],
-          description: "Transmon frequency ω in GHz; pass null if not applicable/known.",
+          description: "Transition frequency ω in GHz (transmon ω₀₁, cavity ω_c); null if not applicable/known.",
         },
         delta: {
           type: ["number", "null"],
-          description: "Anharmonicity δ in GHz; pass null if not applicable/known.",
+          description:
+            "Anharmonicity δ in GHz — a transmon-like ladder ONLY; null if not applicable/known. A Rydberg " +
+            "atom has no anharmonicity: its detuning Δ and Rabi bound Ω are platform params for " +
+            "amicode_set_model's `params` at the MODEL stage, never this field.",
         },
         notes: {
           type: ["string", "null"],
@@ -432,10 +445,11 @@ export const AmicodeTools = async (_input: unknown) => ({
         if (given(a.omega)) params.omega = a.omega;
         if (given(a.delta)) params.delta = a.delta;
         // Seed an N=1 COMPOSITE (spec §2/§3): one component with the platform's default role.
-        // Known platforms default to 3 levels; unknown ones stay "levels TBD" (recorded honestly).
-        const known = (KNOWN_PLATFORMS as readonly string[]).includes(a.platform);
+        // LEVELS ARE NOT SEEDED. Known platforms used to get a silent levels=3 here, which the
+        // System card then rendered indistinguishably from a number the researcher had actually
+        // given — the one confident-looking row on the card was the one nobody had said. The
+        // MODEL stage asks for levels (default 3) and records the answer.
         const seed: Component = { id: "q1", role: platformDefaultRole(a.platform), params };
-        if (known) seed.levels = 3;
         const entity: CompositeSystem = {
           platform: a.platform,
           components: [seed],
@@ -450,18 +464,32 @@ export const AmicodeTools = async (_input: unknown) => ({
           stage: "platform",
         });
         completeStage(dir, "platform");
-        const levelsDesc = seed.levels !== undefined ? `${seed.levels} levels` : "levels TBD";
+        // Structure (how many components) and levels are the MODEL stage's job — say so, so the
+        // agent asks rather than letting the recorded N=1 seed pass for a confirmed answer.
+        const levelsAsk =
+          `Structure and levels are NOT recorded yet — the System card shows "1 ${seed.role}, levels not set" ` +
+          `because that is all anyone has said. Ask at the MODEL stage (3 levels is the usual default; ` +
+          `record it only once the researcher confirms).`;
+        // Off-template platforms get role `other` rather than a fabricated `qubit`, and the card
+        // shows no Hamiltonian at all for them — so the agent has to supply the physics it knows.
+        const offTemplateAsk =
+          seed.role === "other"
+            ? `\n\nThe component's role is recorded as \`other\` — no structural model was assumed from ` +
+              `the platform string. At the MODEL stage set the real role AND record the model term by term ` +
+              `via amicode_set_model's \`hamiltonian\`: you know what ${a.platform} looks like, the card's ` +
+              `built-in fallback table does not, and until you record it the card will show no Hamiltonian.`
+            : "";
         if (a.platform === "transmon") {
           return (
-            `Transmon it is — ${levelsDesc}, ${paramsSummary(params)}. Filed under "${meta.slug}".\n\n` +
+            `Transmon it is — ${paramsSummary(params)}. Filed under "${meta.slug}".\n\n` +
             `Model Hamiltonian:\n${TRANSMON_LATEX}\n\n` +
-            `Show this to the user and confirm it matches their device.\n\n${sentinel}`
+            `Show this to the user and confirm it matches their device.\n\n${levelsAsk}\n\n${sentinel}`
           );
         }
         if (a.platform === "rydberg") {
           return (
-            `Rydberg, ${levelsDesc}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
-            `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}\n\n${sentinel}`
+            `Rydberg, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
+            `Model: ${RYDBERG_DESC}\n\n${RYDBERG_SCOPE_NOTE}\n\n${levelsAsk}\n\n${sentinel}`
           );
         }
         // Author-first / open intake (spec-20260704-113005 §5). Any platform is
@@ -471,12 +499,12 @@ export const AmicodeTools = async (_input: unknown) => ({
         // we trust it. (This return string previously said "I won't improvise an
         // unvetted script" — the exact tool output that declined the spin-CX ask.)
         return (
-          `${a.platform}, ${levelsDesc}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
+          `${a.platform}, ${paramsSummary(params)} — noted and filed under "${meta.slug}".\n\n` +
           `No vetted template for ${a.platform} in this build. That's fine — I can author a ` +
           `from-scratch script for it against the public stack (unvetted), and every result is ` +
           `independently re-checked (re-rolled) before we trust it. If a platform skill for ` +
           `${a.platform} is listed in the Skill index, I'll follow it; otherwise I'll build from ` +
-          `first principles and flag it honestly. Want me to proceed?\n\n${sentinel}`
+          `first principles and flag it honestly. Want me to proceed?\n\n${levelsAsk}${offTemplateAsk}\n\n${sentinel}`
         );
       },
     },
@@ -519,7 +547,8 @@ export const AmicodeTools = async (_input: unknown) => ({
             required: ["id", "role", "params"],
           },
           description:
-            "Components to upsert by id. role ∈ qubit|cavity|resonator|mode|atom. levels optional. " +
+            "Components to upsert by id. role ∈ qubit|cavity|resonator|mode|atom|other — use `other` " +
+            "when none of the structural models fit, never a near-miss. levels optional. " +
             "For N identical components, list them all (ids q1..qN).",
         },
         couplings: {
@@ -554,6 +583,34 @@ export const AmicodeTools = async (_input: unknown) => ({
           type: ["string", "null"],
           description: "Drive architecture: global | per-component | zoned.",
         },
+        hamiltonian: {
+          // Per-object optionals are expressed by OMITTING from `required`, never a
+          // nested type:[...,"null"] — legacyJsonSchema only strips "null" at the top
+          // level, and a nested one re-trips the Gemini rejection.
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: {
+              kind: { type: "string" },
+              latex: { type: "string" },
+              acts_on: { type: "array", items: { type: "string" } },
+              label: { type: "string" },
+            },
+            required: ["kind", "latex"],
+          },
+          description:
+            "THE MODEL YOU ARE ACTUALLY SOLVING, term by term — record it once the researcher has " +
+            "confirmed it. Each term: kind ∈ drift|coupling|drive, `latex` renderable by KaTeX with no " +
+            "leading '+' (e.g. \"-\\\\Delta\\\\,\\\\hat n_i\"), optional `acts_on` component ids and `label`. " +
+            "Without this the System card falls back to a canonical form for the platform and SAYS it is " +
+            "inferred — which is all it can honestly do off-template. You know what an exchange-only spin " +
+            "qubit or a fluxonium looks like; the card's built-in table never will. Record it especially " +
+            "when the platform is not transmon/rydberg/bosonic. Replaces any previously recorded set.",
+        },
+        hamiltonian_notes: {
+          type: ["string", "null"],
+          description: "Conventions the terms assume — rotating frame, units, basis ordering; null for none.",
+        },
       },
       async execute(a: {
         levels?: number | null;
@@ -565,6 +622,8 @@ export const AmicodeTools = async (_input: unknown) => ({
         coupling_kind?: CouplingKind | null;
         coupling_params?: Record<string, number> | null;
         drive_arch?: DriveArch | null;
+        hamiltonian?: HamiltonianTerm[] | null;
+        hamiltonian_notes?: string | null;
       }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
@@ -579,6 +638,10 @@ export const AmicodeTools = async (_input: unknown) => ({
         if (given(a.couplings)) patch.couplings = a.couplings;
         if (given(a.topology)) patch.topology = a.topology;
         if (given(a.drive_arch)) patch.drive = { arch: a.drive_arch };
+        if (given(a.hamiltonian)) {
+          patch.hamiltonian = { terms: a.hamiltonian };
+          if (given(a.hamiltonian_notes)) patch.hamiltonian.notes = a.hamiltonian_notes;
+        }
         // Back-compat single-field path: fold levels/drive_max/params onto the FIRST component
         // (only when no explicit `components` array was given).
         if (!given(a.components) && (given(a.levels) || given(a.drive_max) || given(a.params))) {

@@ -10,10 +10,12 @@
 //                   so we facet (the dataviz-sanctioned fallback) — position +
 //                   per-strip label disambiguate, and color may repeat harmlessly.
 //
-// Step (stairs) rendering — faithful to the zero-order hold. Bounds are the
-// constraint envelope: a filled band (when a plot's drives share one) + dashed
-// limit lines (dashing is reserved for thresholds; the grid/zero rule stays
-// solid). Text stays in text tokens; a colored chip carries identity.
+// Type-aware rendering (meta interp=): stairs faithful to the zero-order hold,
+// a polyline through linear-spline knots, a smooth curve through cubic knots
+// (path math in pulsepath.ts). Bounds are the constraint envelope: a filled
+// band (when a plot's drives share one) + dashed limit lines (dashing is
+// reserved for thresholds; the grid/zero rule stays solid). Text stays in text
+// tokens; a colored chip carries identity.
 //
 // Hand-rolled SVG (series are tens of points; >512 knots per drive decimated by
 // stride). preserveAspectRatio=none stretches the plot to the box, so NO <text>
@@ -26,6 +28,8 @@
 
 import { defineStyle } from "../style";
 import { text } from "../atoms/text";
+import { pulsePath, knotFrac, fracToKnot, plotDuration } from "./pulsepath";
+import type { PulseInterp } from "../../../src/run_dir_reader";
 
 defineStyle(
   "pulseplot",
@@ -120,6 +124,8 @@ export interface PulsePlotMeta {
   knots: number;
   labels: string[];
   bounds: [number, number][];
+  /** Render mode; absent (an old emitter / stored meta) draws as zoh stairs. */
+  interp?: PulseInterp;
 }
 export interface PulsePlotRecord {
   iter: number;
@@ -179,6 +185,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
   let body: HTMLElement | undefined;
   let series: Series[] = [];
   let currentMeta: PulsePlotMeta | undefined;
+  let mode: PulseInterp = "zoh";
 
   // Interaction state (overlay mode). The record cache keeps the DECIMATED
   // values — the crosshair snaps to rendered knots, so readout and path agree.
@@ -204,6 +211,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
 
   function meta(m: PulsePlotMeta): void {
     currentMeta = m;
+    mode = m.interp ?? "zoh";
     reset();
     if (m.labels.length === 0) return; // nothing to plot; hint stays
 
@@ -321,7 +329,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
   function moveCursor(frac: number): void {
     const n = lastValues?.[0]?.length ?? 0;
     if (!overlay || n === 0) return;
-    showCursor(Math.min(n - 1, Math.max(0, Math.floor(frac * n))));
+    showCursor(fracToKnot(frac, n, mode));
   }
 
   function showCursor(k: number): void {
@@ -330,7 +338,7 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
     const n = values[0].length;
     if (n === 0) return;
     cursorIdx = k;
-    const fracMid = (k + 0.5) / n;
+    const fracMid = knotFrac(k, n, mode);
     overlay.cursor.setAttribute("x1", String(fracMid * W));
     overlay.cursor.setAttribute("x2", String(fracMid * W));
     overlay.cursor.style.display = "";
@@ -435,18 +443,19 @@ export function pulseplot(idleHint = "No pulse data yet."): PulsePlot {
   function update(r: PulsePlotRecord): void {
     if (!currentMeta || r.values.length !== series.length || series.length === 0) return;
     el.classList.remove("pp-empty", "pp-busy");
-    tEndLabel.set(formatT(r.dt * currentMeta.knots));
+    const tEnd = formatT(plotDuration(r.dt, currentMeta.knots, mode));
+    tEndLabel.set(tEnd);
     lastDt = r.dt;
     // stride mirrors decimate(): the readout's k-th knot must be the k-th RENDERED knot
     lastStride = r.values[0] ? Math.max(1, Math.ceil(r.values[0].length / MAX_KNOTS)) : 1;
     lastValues = r.values.map(decimate);
     r.values.forEach((_, i) => {
-      series[i].step.setAttribute("d", stairsPath(lastValues![i], series[i].y));
+      series[i].step.setAttribute("d", pulsePath(lastValues![i], series[i].y, W, mode));
     });
     if (overlay) {
       overlay.plot.setAttribute(
         "aria-label",
-        `Pulse plot — ${currentMeta.drives} drives over ${formatT(r.dt * currentMeta.knots)} time units, iteration ${r.iter}. Arrow keys read values.`,
+        `Pulse plot — ${currentMeta.drives} drives over ${tEnd} time units, iteration ${r.iter}. Arrow keys read values.`,
       );
       if (cursorIdx >= 0) showCursor(Math.min(cursorIdx, lastValues[0].length - 1)); // live-refresh an open readout
     }
@@ -496,19 +505,6 @@ function yScale(lo: number, hi: number): (v: number) => number {
   };
 }
 
-/** Zero-order-hold stairs: each value held for its knot interval, spanning the
- *  full width (drives share the time axis, so x is normalized by knot count). */
-function stairsPath(values: number[], y: (v: number) => number): string {
-  if (values.length === 0) return "";
-  const x = (k: number) => (k / values.length) * W;
-  let d = `M0,${round(y(values[0]))}`;
-  for (let k = 0; k < values.length; k++) {
-    d += `H${round(x(k + 1))}`;
-    if (k + 1 < values.length) d += `V${round(y(values[k + 1]))}`;
-  }
-  return d;
-}
-
 function decimate(values: number[]): number[] {
   if (values.length <= MAX_KNOTS) return values;
   const stride = Math.ceil(values.length / MAX_KNOTS);
@@ -516,8 +512,6 @@ function decimate(values: number[]): number[] {
   for (let k = 0; k < values.length; k += stride) out.push(values[k]);
   return out;
 }
-
-const round = (v: number): number => Math.round(v * 100) / 100;
 
 function formatT(t: number): string {
   return t >= 100 ? t.toFixed(0) : t >= 10 ? t.toFixed(1) : t.toFixed(2);

@@ -30,15 +30,25 @@ export function parseAmicoNum(s: string): number {
 // quotes and commas; bounds are lo:hi pairs, one per drive.
 // ---------------------------------------------------------------------------
 
+// Pulse lines end in an open TAIL of `key=value` fields (space-free values):
+// emitters append new fields after the pinned ones, so the opencode fork's
+// tail-capture mirror (problems.ts, labels=([^\n]*)$) keeps matching without a
+// change AND a future field degrades an old client gracefully (unknown tail
+// fields are ignored; unknown interp= values coerce to zoh) — never to NO_DATA.
+const TAIL = String.raw`((?:\s+[A-Za-z_][\w-]*=\S+)*)`;
 export const AMICODE_PULSE_META_RE = new RegExp(
-  String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)\s*$`,
+  String.raw`^AMICODE_PULSE_META\s+drives=(\d+)\s+knots=(\d+)\s+labels=((?:"[^",]*")(?:,"[^",]*")*)\s+bounds=(${NUM}:${NUM}(?:,${NUM}:${NUM})*)${TAIL}\s*$`,
 );
+
+/** How knot values interpolate between knots — drives the plot's render mode. */
+export type PulseInterp = "zoh" | "linear" | "cubic";
 
 export interface PulseMeta {
   drives: number;
   knots: number;
   labels: string[];
   bounds: [number, number][];
+  interp: PulseInterp;
 }
 
 /** Parse an AMICODE_PULSE_META line. Returns undefined for anything malformed. */
@@ -50,11 +60,15 @@ export function parsePulseMetaLine(line: string): PulseMeta | undefined {
     const [lo, hi] = pair.split(":");
     return [parseAmicoNum(lo), parseAmicoNum(hi)] as [number, number];
   });
-  return { drives: parseInt(m[1], 10), knots: parseInt(m[2], 10), labels, bounds };
+  const iv = /(?:^|\s)interp=(\S+)/.exec(m[5])?.[1];
+  const interp: PulseInterp = iv === "linear" || iv === "cubic" ? iv : "zoh";
+  return { drives: parseInt(m[1], 10), knots: parseInt(m[2], 10), labels, bounds, interp };
 }
 
+// Same open tail as _META: the planned cubic-derivatives extension (e.g. a
+// `d=` group) must not strand this client on NO_DATA when it lands.
 export const AMICODE_PULSE_RE = new RegExp(
-  String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=(${NUM})\s+a=(${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)*)\s*$`,
+  String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=(${NUM})\s+a=(${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)*)${TAIL}\s*$`,
 );
 
 export interface PulseRecord {

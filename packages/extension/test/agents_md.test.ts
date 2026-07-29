@@ -225,3 +225,33 @@ describe("HP solver-mode guidance: how to select Altissimo", () => {
     expect(s).toMatch(/silently DROPPED/);
   });
 })
+
+// A cloud solve failed with an UndefVarError at load time because the agent wrote
+// `using Piccolissimo` without `using Piccolo`. Piccolissimo does not re-export
+// Piccolo's symbols, and every problem-setup name (GATES, TransmonSystem,
+// EmbeddedOperator, UnitaryTrajectory) lives in Piccolo. On a cloud run you pay
+// the full queue + boot wait before the error surfaces, so the guidance has to be
+// explicit rather than implied by the template.
+describe("HP solver-mode guidance: both imports", () => {
+  it("tells the agent to import Piccolo alongside Piccolissimo, and why", async () => {
+    const { solverModeSection } = await import("../src/opencode_config");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const prev = process.env.AMICODE_OPS_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "solvermode-"));
+    writeFileSync(join(dir, "solver-mode.json"), JSON.stringify({ mode: "hp", status: "ready" }));
+    process.env.AMICODE_OPS_DIR = dir;
+    try {
+      const s = solverModeSection();
+      expect(s).not.toBe(""); // guard: if the mode gate misfires the asserts below are vacuous
+      expect(s).toMatch(/using Piccolo`? AND `?using Piccolissimo/);
+      expect(s).toMatch(/does NOT re-export/);
+      expect(s).toMatch(/GATES/);
+      expect(s).toMatch(/TransmonSystem/);
+    } finally {
+      if (prev === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prev;
+    }
+  });
+});

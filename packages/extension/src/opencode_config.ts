@@ -311,6 +311,11 @@ export function solverModeSection(): string {
     '"High-Performance + Cloud" solver. Author solves with the **Piccolissimo** stack ' +
     "(SplinePulseProblem, free-phase paths, `using Piccolissimo`) rather than plain Piccolo, falling back " +
     "to Piccolo only when Piccolissimo cannot express the problem (say so when you do). " +
+    "**Import BOTH: `using Piccolo` AND `using Piccolissimo`.** Piccolissimo does NOT re-export Piccolo's " +
+    "symbols, so a script with only `using Piccolissimo` dies on the first `GATES[:X]`, `TransmonSystem`, " +
+    "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
+    "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
+    "instance-boot wait before seeing it. " +
     "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
     "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
     "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +

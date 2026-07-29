@@ -16,7 +16,7 @@ import { pill } from "../atoms/pill";
 import { text } from "../atoms/text";
 import { button } from "../atoms/button";
 import { metric } from "../components/metric";
-import { pulseplot } from "../components/pulseplot";
+import { pulseplot, type PulsePlotMeta } from "../components/pulseplot";
 import { controlEnablement, type ControlStatus } from "../control-state";
 import { formatElapsed, computeEta, ratePerSec } from "../../../src/run_timing";
 
@@ -62,7 +62,9 @@ defineStyle(
 const IDLE_TITLE = "No solve in progress";
 const IDLE_ACTION = "Fire one from the Amicode chat, or run “Replay demo run”.";
 const IDLE_HINT = `${IDLE_TITLE} — fire one from the Amicode chat, or run “Replay demo run”.`;
-const WARMING_HINT = "Julia warming up — compiling the solver (~1–2 min). The pulse will stream here.";
+// No duration promise: local warm-up is ~1–2 min, a cloud run's nearer ~6 —
+// and cloud data then lands in ~15 s sync bursts, not a smooth per-iter feed.
+const WARMING_HINT = "Solver warming up — the pulse will stream here once iterations begin.";
 const NO_DATA_HINT = "This run carries no pulse data — re-run with the current solve template to see the live pulse.";
 
 export interface InspectorView {
@@ -255,6 +257,7 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
             knots: msg.knots as number,
             labels: msg.labels as string[],
             bounds: msg.bounds as [number, number][],
+            interp: msg.interp as PulsePlotMeta["interp"],
           });
           break;
         case "pulse":
