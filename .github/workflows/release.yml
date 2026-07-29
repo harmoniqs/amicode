@@ -36,7 +36,7 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.ref_name }}
       - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
       # Resolve the effective tag once and decide whether it may reach the
       # Marketplace: ONLY clean vX.Y.Z tags do. vX.Y.Z-alpha/-beta/-rc stay on
@@ -106,7 +106,7 @@ jobs:
             packages/extension/amicode-darwin-arm64.vsix
       # Hand the platform-specific vsixes to the publish job. Re-running that job
       # (e.g. after an expired PAT) reuses these instead of rebuilding.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: vsix-packages
           path: |
@@ -121,7 +121,7 @@ jobs:
     permissions:
       actions: read # download-artifact from this run
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: vsix-packages
           path: dist
