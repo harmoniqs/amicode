@@ -8,7 +8,9 @@ export interface ResolvedBinary {
   source: "config-override" | "vendored";
 }
 
-const SUPPORTED = ["darwin-arm64", "linux-x64"] as const;
+/** Must stay in lockstep with opencode.lock.json's `platforms` — a fetch_opencode
+ *  test asserts the two sets are equal, since they live in different files. */
+export const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64"] as const;
 
 /**
  * Where Amicode *does* run, for a host where it doesn't. The Marketplace carries a

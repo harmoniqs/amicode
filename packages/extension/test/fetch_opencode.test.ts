@@ -4,6 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fetchOpencode, loadManifest, resolvePlatform, sha256 } from "../scripts/fetch_opencode.mjs";
+import { SUPPORTED } from "../src/opencode_binary";
 
 function rootWith(manifest: unknown): string {
   const root = mkdtempSync(join(tmpdir(), "oc-test-"));
@@ -23,9 +24,15 @@ describe("loadManifest", () => {
   it("accepts a well-formed manifest", () => {
     expect(loadManifest(rootWith(GOOD)).version).toBe("1.17.3");
   });
-  it("the COMMITTED manifest parses and pins exactly the two supported platforms", () => {
+  it("the COMMITTED manifest parses and pins exactly the three supported platforms", () => {
     const m = loadManifest(); // defaults to the real packages/extension root
-    expect(Object.keys(m.platforms).sort()).toEqual(["darwin-arm64", "linux-x64"]);
+    expect(Object.keys(m.platforms).sort()).toEqual(["darwin-arm64", "linux-arm64", "linux-x64"]);
+  });
+  // The lock and the runtime allow-list are edited in different files; a platform
+  // vendored into the .vsix but missing from SUPPORTED is a binary the extension
+  // refuses to launch (and vice versa: an allowed platform with nothing to vendor).
+  it("the COMMITTED manifest's platforms match the runtime allow-list exactly", () => {
+    expect(Object.keys(loadManifest().platforms).sort()).toEqual([...SUPPORTED].sort());
   });
   it("rejects missing version and short hashes", () => {
     expect(() => loadManifest(rootWith({ ...GOOD, version: "" }))).toThrow(/version/);

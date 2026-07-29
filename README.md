@@ -67,7 +67,7 @@ mock, then swaps to real hardware unchanged.
 Search **Amicode** in the VS Code Extensions view, or grab a `.vsix` from
 [Releases](https://github.com/harmoniqs/amicode/releases/latest).
 
-Amicode runs on **Linux (x64)** and **macOS (Apple Silicon)**. It runs wherever your
+Amicode runs on **Linux (x64 and arm64)** and **macOS (Apple Silicon)**. It runs wherever your
 *workspace* lives, so on a remote it installs into that host's extension host, not your
 laptop — pick the artifact for the **remote**, not for the machine running the VS Code
 window.
