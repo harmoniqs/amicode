@@ -134,6 +134,30 @@ describe("poll streaming — stats/frames fed into the mirror (Δ4)", () => {
     });
   });
 
+  it("pulse become AMICODE_PULSE_META + AMICODE_PULSE lines in run.log; meta once, iters deduped", async () => {
+    await withCloud(async (fake) => {
+      fake.state.task_status = "Running";
+      fake.state.pulse = [
+        { raw: 'AMICODE_PULSE_META drives=2 knots=20 labels="a_1","a_2" bounds=-1.0:1.0,-1.0:1.0 interp=cubic' },
+        { raw: "AMICODE_PULSE iter=0 dt=0.5 a=0.1,0.2 d=0.0,0.0" },
+        { raw: "AMICODE_PULSE iter=1 dt=0.1 a=0.3,0.4 d=0.1,0.1" },
+      ];
+      const root = tmpRoot();
+      const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
+      await fake.waitForPolls(4); // several polls over the SAME pulse — dedup must hold
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+      const log = readFileSync(join(h.runDir, "run.log"), "utf8");
+      // meta relayed verbatim (the interp discriminator the plotter keys on), exactly once
+      expect(log).toContain("AMICODE_PULSE_META drives=2 knots=20");
+      expect(log.match(/AMICODE_PULSE_META /g)).toHaveLength(1);
+      // both frames relayed verbatim — a= drive knots AND the d= derivative tail — deduped
+      expect(log).toContain("AMICODE_PULSE iter=0 dt=0.5 a=0.1,0.2 d=0.0,0.0");
+      expect(log).toContain("AMICODE_PULSE iter=1 dt=0.1 a=0.3,0.4 d=0.1,0.1");
+      expect(log.match(/AMICODE_PULSE iter=1 /g)).toHaveLength(1); // not 1 × polls
+    });
+  });
+
   // Fetched from the frames endpoint's PRESIGNED URL (the live shape) rather than
   // from inline base64. The name is 5-digit because that is what BOTH the S3
   // layout and the local Julia solve write (iter_00007.png); the old 3-digit name
@@ -315,7 +339,7 @@ describe("stats records arrive in either shape", () => {
     await withCloud(async (fake) => {
       fake.state.task_status = "Running";
       // exactly what solves_poll's _stats yields for a template-emitted line
-      fake.state.iters = [{ raw: "iter=7 f=8.727579e-04 inf_pr=2.670e-09 inf_du=1.838e+02" } as never]
+      fake.state.iters = [{ raw: "iter=7 f=8.727579e-04 inf_pr=2.670e-09 inf_du=1.838e+02" } as never];
       const root = tmpRoot();
       const h = await ex(fake).submit(fakeJulia(root, "s.jl", ""), { runsRoot: join(root, "runs") });
       await fake.waitForPolls(3); // re-served each poll — dedup must still hold
