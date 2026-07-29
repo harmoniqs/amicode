@@ -168,7 +168,11 @@ end
 
 t0 = time()
 if SOLVER === :altissimo
-    solve!(qcp; max_iter = max_iter, options = Piccolissimo.AltissimoOptions(), callback = alt_cb)
+    # The budget goes on the OPTIONS, not as a solve! kwarg. solve!(::AltissimoOptions)
+    # forwards a hardcoded list to Altissimo.optimize! and swallows the rest, so a
+    # `max_iter =` here is silently dropped and the solve quietly runs Altissimo's
+    # default 20 outer iterations instead of the FILL-IN value.
+    solve!(qcp; options = Piccolissimo.AltissimoOptions(max_outer_iter = max_iter), callback = alt_cb)
 else
     solve!(qcp; max_iter = max_iter, print_level = 1,
            options = IpoptOptions(intermediate_callback = pulse_emit),
