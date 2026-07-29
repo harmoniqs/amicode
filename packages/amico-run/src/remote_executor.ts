@@ -198,13 +198,33 @@ export class RemoteExecutor implements Executor {
       try {
         const r = await get("stats");
         if (r.ok) {
-          const stats = (await r.json()) as { iters?: Array<Record<string, unknown>> };
-          for (const it of stats.iters ?? []) {
-            const n = Number(it.iter);
+          // The live API serves `{task_id, stats: [...], submitter}`; the fake
+          // served `{iters: [...]}`, and this read keyed only on `iters`. So every
+          // REAL cloud solve emitted zero iter lines — silently, since the whole
+          // block is best-effort — while the fake-backed tests passed. That drift
+          // is what kept the run inspector empty for cloud runs (2026-07-28).
+          // Both shapes are accepted so an older runner keeps working.
+          const body = (await r.json()) as {
+            stats?: Array<Record<string, unknown>>;
+            iters?: Array<Record<string, unknown>>;
+          };
+          for (const it of body.stats ?? body.iters ?? []) {
+            // Two record shapes, because the poller only JSON-decodes an
+            // AMICODE_ITER payload that starts with "{". The solve template emits
+            // the human/key=value form (`iter=7 f=… inf_pr=… inf_du=…`), which the
+            // poller hands back verbatim as {raw}. Keying on `it.iter` alone
+            // skipped every one of those as NaN — and the smoke test seeded JSON,
+            // so nothing caught it. Reconstruct the line from whichever arrived.
+            const raw = typeof it.raw === "string" ? it.raw : undefined;
+            const n = Number(raw ? /(?:^|\s)iter=(\d+)/.exec(raw)?.[1] : it.iter);
             if (!Number.isFinite(n) || n <= iterHigh) continue; // Δ4 re-serves history: dedup on high-water
             iterHigh = n;
             sawLife = true;
-            emitLine(`AMICODE_ITER iter=${it.iter} f=${it.f} inf_pr=${it.inf_pr} inf_du=${it.inf_du}`);
+            emitLine(
+              raw
+                ? `AMICODE_ITER ${raw}`
+                : `AMICODE_ITER iter=${it.iter} f=${it.f} inf_pr=${it.inf_pr} inf_du=${it.inf_du}`,
+            );
           }
         }
       } catch {
@@ -214,13 +234,31 @@ export class RemoteExecutor implements Executor {
       try {
         const r = await get("frames");
         if (r.ok && r.status !== 204) {
-          const fr = (await r.json()) as { iter?: number; png_base64?: string };
-          if (typeof fr.iter === "number" && fr.iter > frameHigh && typeof fr.png_base64 === "string") {
-            frameHigh = fr.iter;
-            const name = `iter_${String(fr.iter).padStart(3, "0")}.png`; // the S3 layout's iter_*.png
-            const tmp = join(runDir, `.${name}.tmp`);
-            writeFileSync(tmp, Buffer.from(fr.png_base64, "base64"));
-            renameSync(tmp, join(runDir, name)); // atomic: no reader sees a torn png
+          // Same drift as stats: the live API serves the newest frame as a
+          // PRESIGNED URL (`{task_id, iter, key, url, submitter}`) because a png
+          // is far too big to inline, while this read wanted `png_base64`. Fetch
+          // the url when present (no auth header — the signature IS the auth),
+          // and keep the base64 lane for older runners.
+          const fr = (await r.json()) as { iter?: number; png_base64?: string; url?: string };
+          if (typeof fr.iter === "number" && fr.iter > frameHigh) {
+            let png: Buffer | undefined;
+            if (typeof fr.png_base64 === "string") {
+              png = Buffer.from(fr.png_base64, "base64");
+            } else if (typeof fr.url === "string" && fr.url !== "") {
+              const img = await fetch(fr.url);
+              if (img.ok) png = Buffer.from(await img.arrayBuffer());
+            }
+            if (png) {
+              frameHigh = fr.iter;
+              // 5 digits — matches BOTH the S3 layout and what the local Julia
+              // solve writes (iter_00060.png), so the inspector sees one naming
+              // scheme regardless of where the solve ran. Was 3, which agreed
+              // with neither.
+              const name = `iter_${String(fr.iter).padStart(5, "0")}.png`;
+              const tmp = join(runDir, `.${name}.tmp`);
+              writeFileSync(tmp, png);
+              renameSync(tmp, join(runDir, name)); // atomic: no reader sees a torn png
+            }
           }
         }
       } catch {

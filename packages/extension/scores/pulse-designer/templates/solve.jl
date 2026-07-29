@@ -18,7 +18,45 @@ T          = 10.0       # gate time (ns)
 N          = 50         # timesteps
 drive_max  = 0.2        # per-quadrature drive bound (GHz)
 max_iter   = 60
+SOLVER     = :ipopt     # :ipopt (default) or :altissimo (High-Performance + Cloud)
 # ─────────────────────────────────────────────────────────────────────────
+
+SOLVER in (:ipopt, :altissimo) || error("SOLVER must be :ipopt or :altissimo, got $SOLVER")
+if SOLVER === :altissimo
+    @eval using Piccolissimo   # AltissimoOptions lives here, not in Piccolo
+end
+
+# ── telemetry sink ───────────────────────────────────────────────────────────
+# Every AMICODE_* line goes to stdout AND, on a cloud run, to `run.log` in the
+# run dir (== cwd).
+#
+# Why the file: the cloud poller's /solves/<id>/stats parses AMICODE_ITER lines
+# out of `run.log` in the artifact prefix, and the runner's sidecar populates that
+# prefix with `aws s3 sync .` — it uploads whatever is in the cwd. But julia's
+# stdout on the runner goes to the SSM command stream, so no `run.log` was ever
+# written there: nothing to sync, `stats: []`, and an empty Run Inspector even
+# though the solve was streaming perfectly (verified on tasks 419a57e6 and
+# 0fccbbf9 — frames landed, iterations did not).
+#
+# Why gated on a cloud run: LOCALLY amico-run's executor already writes run.log
+# from our stdout, so appending here too would DOUBLE every line and the
+# inspector would count each iteration twice. TASK_ID is exported by the runner's
+# SendCommand and never set by a local run.
+const CLOUD_RUN = haskey(ENV, "TASK_ID")
+function emit(line::AbstractString)
+    println(line)
+    flush(stdout)
+    if CLOUD_RUN
+        try
+            open("run.log", "a") do io
+                println(io, line)
+            end
+        catch e
+            @warn "run.log append failed" exception = e maxlog = 3   # telemetry never kills a solve
+        end
+    end
+    return nothing
+end
 
 sys = TransmonSystem(; δ = δ, levels = levels, drive_bounds = fill(drive_max, 2))
 op  = size(gate, 1) == sys.levels ? gate : EmbeddedOperator(gate, sys)
@@ -55,7 +93,7 @@ function (cb::PulseEmitCallback)(primal, iter)
     # the solve (User_Requested_Stop) at the next iteration; solve! returns
     # normally, so the partial pulse.jld2/result.toml still get written below.
     if isfile("STOP")
-        println("AMICODE_STOPPED"); flush(stdout)
+        emit("AMICODE_STOPPED")
         return false
     end
     ok = cb.inner(primal, iter)
@@ -78,8 +116,7 @@ function (cb::PulseEmitCallback)(primal, iter)
             A = :u in traj.names ? traj.u : (:a in traj.names ? traj.a : missing)
             A === missing && error("no drive component (:u/:a) on trajectory")
             vals = join((join((@sprintf("%.6g", v) for v in row), ",") for row in eachrow(A)), ";")
-            @printf("AMICODE_PULSE iter=%d dt=%.6g a=%s\n", iter, first(Piccolo.get_timesteps(traj)), vals)
-            flush(stdout)
+            emit(@sprintf("AMICODE_PULSE iter=%d dt=%.6g a=%s", iter, first(Piccolo.get_timesteps(traj)), vals))
         end
     catch e
         @warn "pulse emit failed" exception = e maxlog = 3   # never let telemetry kill the solve
@@ -90,27 +127,57 @@ pulse_emit = PulseEmitCallback(live_plot, prob.trajectory)
 
 let ls = join(("\"a_$i\"" for i in 1:sys.n_drives), ","),
     bs = join(("$(-drive_max):$(drive_max)" for _ in 1:sys.n_drives), ",")
-    println("AMICODE_PULSE_META drives=$(sys.n_drives) knots=$N labels=$ls bounds=$bs")
-    flush(stdout)
+    emit("AMICODE_PULSE_META drives=$(sys.n_drives) knots=$N labels=$ls bounds=$bs")
 end
 
-# AMICODE_ITER text telemetry stays on the RAW Ipopt callback — it needs the rich
-# IPM state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
+# On IPOPT, AMICODE_ITER rides the RAW Ipopt callback — it needs the rich IPM
+# state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
-# callback with `intermediate_callback`); the live inspector is ipopt-only (Q74).
+# callback with `intermediate_callback`).
 const CB = Piccolo.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k
-    @printf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e\n", k, st.obj_value, st.inf_pr, st.inf_du)
-    flush(stdout)
+    emit(@sprintf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e", k, st.obj_value, st.inf_pr, st.inf_du))
     return true
 end
 
+# Altissimo carries no `intermediate_callback` — its only per-iteration hook is
+# the `callback` kwarg on `Altissimo.optimize!`, which Piccolissimo forwards from
+# `solve!(::AltissimoOptions)`, and it arrives as `(x, info)` rather than
+# `(optimizer, IpoptOptimizerState)`. So BOTH channels have to be re-hung here:
+# without this the frames stop too (they come off IpoptOptions), and an Altissimo
+# solve leaves the Run Inspector completely dark rather than merely numberless.
+#
+# `x` IS the primal, so pulse_emit's solver-agnostic `(primal, iter)` contract
+# takes it unchanged — same frames, same AMICODE_PULSE lines, same STOP handling
+# (returning false stops an Altissimo solve exactly as it stops an Ipopt one).
+#
+# inf_pr/inf_du come from Altissimo's callback tuple. Newer builds expose them
+# directly (Altissimo#414); older ones carry only eq_viol/ineq_viol/kkt_error, so
+# derive from those rather than emitting NaN — a real number the client can plot
+# beats a placeholder it has to special-case.
+function alt_cb(x, info)
+    k = Int(info.outer_iter); iters[] = k
+    ok = pulse_emit(x, k)   # frames + AMICODE_PULSE + cooperative STOP
+    inf_pr = haskey(info, :inf_pr) ? info.inf_pr : max(info.eq_viol, info.ineq_viol)
+    inf_du = haskey(info, :inf_du) ? info.inf_du : info.kkt_error
+    emit(@sprintf("AMICODE_ITER iter=%d f=%.6e inf_pr=%.3e inf_du=%.3e", k, info.f_val, inf_pr, inf_du))
+    return ok
+end
+
 t0 = time()
-solve!(qcp; max_iter = max_iter, print_level = 1,
-       options = IpoptOptions(intermediate_callback = pulse_emit),
-       callback = CB.callback_factory(cb_log))
+if SOLVER === :altissimo
+    # The budget goes on the OPTIONS, not as a solve! kwarg. solve!(::AltissimoOptions)
+    # forwards a hardcoded list to Altissimo.optimize! and swallows the rest, so a
+    # `max_iter =` here is silently dropped and the solve quietly runs Altissimo's
+    # default 20 outer iterations instead of the FILL-IN value.
+    solve!(qcp; options = Piccolissimo.AltissimoOptions(max_outer_iter = max_iter), callback = alt_cb)
+else
+    solve!(qcp; max_iter = max_iter, print_level = 1,
+           options = IpoptOptions(intermediate_callback = pulse_emit),
+           callback = CB.callback_factory(cb_log))
+end
 wall = time() - t0
 
 # Fidelity over the COMPUTATIONAL subspace, from a fresh high-tolerance rollout.
@@ -148,4 +215,4 @@ open("result.toml.tmp", "w") do io
     ))
 end
 mv("result.toml.tmp", "result.toml"; force = true)
-println("DONE fidelity=$(fid)"); flush(stdout)
+emit("DONE fidelity=$(fid)")

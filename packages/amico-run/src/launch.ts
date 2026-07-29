@@ -13,6 +13,7 @@ import { RemoteExecutor } from "./remote_executor.js";
 import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
+import { readSolverMode } from "./solver_mode.js";
 import { assembleWarrantContext } from "./warrant_context.js";
 import { runVerification } from "./verify.js";
 import { trySubcommand } from "./subcommands.js";
@@ -123,6 +124,26 @@ export async function launch(argv: string[]): Promise<number> {
   }
   if (executor !== "local" && executor !== "remote") {
     console.error(`amico-run: unknown --executor ${executor} (supported: local, remote)`);
+    return 64;
+  }
+  // Piccolissimo + Altissimo is a CLOUD-ONLY tier, so a LOCAL launch is refused
+  // while it is the selected solver. This lives here, not in runGate, because
+  // the gate only sees --spec runs (see `if (specPath)` below) — this line is
+  // the one choke point EVERY run passes through, spec or not.
+  //
+  // Why it is needed at all: selecting HP grants the `issimo` entitlement, so
+  // the import scan would happily admit a local `using Piccolissimo` and the
+  // solve would precompile the HP stack (and IPOPT) on the laptop — the exact
+  // failure this tier exists to avoid, and what amico-run's process-group
+  // timeout used to SIGTERM mid-precompile.
+  //
+  // Fails SAFE: an absent or corrupt solver-mode.json reads as piccolo, so
+  // ordinary local runs behave exactly as before.
+  if (executor === "local" && readSolverMode() === "hp") {
+    console.error(
+      `amico-run: Piccolissimo + Altissimo runs in Harmoniqs Cloud and never solves locally — this launch is --executor local. ` +
+        `Run it with --executor remote, or switch the solver to Piccolo (the model · solver control) for local solves.`,
+    );
     return 64;
   }
   // --spec + --executor remote is SUPPORTED (High-Performance + Cloud, tier=hpc):

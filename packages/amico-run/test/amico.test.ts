@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
+import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
@@ -17,7 +17,10 @@ beforeAll(() => {
 
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
-    const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
+    const stdout = execFileSync("node", [BUNDLE, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, ...hermeticOpsEnv(), ...env },
+    });
     return { code: 0, stdout, stderr: "" };
   } catch (e) {
     const err = e as { status?: number; stdout?: string; stderr?: string };

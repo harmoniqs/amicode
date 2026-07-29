@@ -61,6 +61,16 @@ export class FakeCloud {
       res.end(body === undefined ? "" : JSON.stringify(body));
     };
     const authed = req.headers.authorization === `Bearer ${this.token}`;
+    // Artifact bytes, deliberately served BEFORE the auth guard: the real frames
+    // endpoint returns a PRESIGNED S3 url, and the client fetches it with no
+    // Authorization header because the signature itself is the credential.
+    // Guarding this would make the fake reject what the real bucket accepts.
+    if (req.method === "GET" && url.startsWith(`/artifacts/${this.taskId}/`)) {
+      if (!this.state.frame) return send(404, { error: "no frame" });
+      const png = Buffer.from(this.state.frame.png_base64, "base64");
+      res.writeHead(200, { "content-type": "image/png", "content-length": String(png.length) });
+      return void res.end(png);
+    }
     if (req.method === "POST" && url === "/solves") {
       this.submits.push({
         auth: req.headers.authorization,
@@ -76,11 +86,28 @@ export class FakeCloud {
       const { task_status, finished, liveness } = this.state;
       return send(200, finished ? { task_status, finished, liveness } : { task_status, liveness });
     }
-    if (url === `/solves/${this.taskId}/stats`) return send(200, { iters: this.state.iters });
+    // ── WIRE SHAPES MIRROR THE LIVE API ────────────────────────────────────────
+    // These two used to serve `{iters}` and `{iter, png_base64}`, which is NOT
+    // what the deployed service returns. The client read the fake's shapes, so
+    // every test passed while every real cloud solve produced zero iters and zero
+    // frames locally — the run inspector stayed empty and nothing failed loudly.
+    // Verified against task 419a57e6 on staging (2026-07-28). Keep these matching
+    // the live payloads; a fake that agrees with the client instead of the server
+    // proves nothing.
+    if (url === `/solves/${this.taskId}/stats`) {
+      return send(200, { task_id: this.taskId, stats: this.state.iters, submitter: "test" });
+    }
     if (url === `/solves/${this.taskId}/frames`) {
       if (this.state.framesBroken) return send(500, { error: "frames unavailable" });
       if (!this.state.frame) return send(204);
-      return send(200, this.state.frame);
+      const key = `test/${this.taskId}/iter_${String(this.state.frame.iter).padStart(5, "0")}.png`;
+      return send(200, {
+        task_id: this.taskId,
+        iter: this.state.frame.iter,
+        key,
+        url: `${this.base}/artifacts/${this.taskId}/iter_${this.state.frame.iter}.png`,
+        submitter: "test",
+      });
     }
     if (req.method === "POST" && url === `/solves/${this.taskId}/abort`) {
       this.aborts++;

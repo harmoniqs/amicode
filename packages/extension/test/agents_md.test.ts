@@ -71,27 +71,34 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   });
 });
 
-describe("AGENTS.md teaches the Δ10 (#63) per-solve routing UX", () => {
+describe("AGENTS.md teaches the Δ10 (#63) routing UX", () => {
   it("runs amico-run estimate at solve-assembly and surfaces the estimate at the decision point", () => {
     expect(AGENTS).toMatch(/amico-run estimate/);
     expect(AGENTS).toMatch(/sizeClass/);
     expect(AGENTS).toMatch(/offloadSuggested/);
     expect(AGENTS).toMatch(/local RAM/i);
   });
-  it("routing is PER-SOLVE and EXPLICIT — default local, never auto-route", () => {
-    expect(AGENTS).toMatch(/per-solve/i);
-    expect(AGENTS).toMatch(/default (to )?local/i);
-    expect(AGENTS).toMatch(/never auto-route|never routes a solve/i);
+  it("where a solve runs follows the SELECTED SOLVER — default local, agent never routes to a cloud", () => {
+    expect(AGENTS).toMatch(/selected solver/i);
+    expect(AGENTS).toMatch(/default to local/i);
+    expect(AGENTS).toMatch(/never routes a solve/i);
   });
-  it("offers company compute ONLY when it is connected, and confirms every time (estimate suggests, never decides)", () => {
-    expect(AGENTS).toMatch(/only when.*connected|when.*company compute is connected/i);
-    expect(AGENTS).toMatch(/confirm/i);
-    expect(AGENTS).toMatch(/suggests|only suggests/i);
+  // The injected `## Routing` section is the ONLY thing that turns a solve
+  // remote. Its presence must be authoritative: when a cloud-only solver is
+  // selected, the base file's local default has to yield, or the agent gets two
+  // conflicting instructions and dispatches HP locally (2026-07-20).
+  it("the injected Routing section OVERRIDES the local default, with no routing question", () => {
+    expect(AGENTS).toMatch(/OVERRIDES/);
+    expect(AGENTS).toMatch(/cloud-only solver/i);
+    expect(AGENTS).toMatch(/do \*\*not\*\* ask where the solve should run/i);
   });
-  it("sets executor per the confirmed choice on the SolveSpec (remote only on explicit confirmation)", () => {
+  it("absent Routing section → the solve is local and remote is never offered", () => {
+    expect(AGENTS).toMatch(/absent\*\*.*this solve is LOCAL|this solve is LOCAL/i);
+    expect(AGENTS).toMatch(/do NOT offer remote/);
+  });
+  it("sets executor from the Routing section's presence, not from a guess", () => {
     expect(AGENTS).toMatch(/executor.*"remote"/);
     expect(AGENTS).toMatch(/executor.*"local"/);
-    expect(AGENTS).toMatch(/explicit/i);
   });
   it("entering a cloud key never routes a solve (7/19 design note)", () => {
     expect(AGENTS).toMatch(/key.*never routes a solve|never routes a solve/i);
@@ -180,6 +187,44 @@ describe("AGENTS.md pulse-designer interview (Layer 0)", () => {
     expect(substituted).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 });
+
+// The SOLVER flag is the ONLY supported way to switch backends. Without naming it,
+// an agent asked for Altissimo hand-writes a solve call and silently loses the
+// frames (they come off IpoptOptions.intermediate_callback, which AltissimoOptions
+// has no equivalent of) plus the iteration budget (max_iter is dropped on that
+// path). The template handles all of it; the agent just has to flip the flag.
+describe("HP solver-mode guidance: how to select Altissimo", () => {
+  const hpSection = async (): Promise<string> => {
+    const { solverModeSection } = await import("../src/opencode_config");
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const prev = process.env.AMICODE_OPS_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "solvermode-"));
+    writeFileSync(join(dir, "solver-mode.json"), JSON.stringify({ mode: "hp", status: "ready" }));
+    process.env.AMICODE_OPS_DIR = dir;
+    try {
+      return solverModeSection();
+    } finally {
+      if (prev === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prev;
+    }
+  };
+
+  it("names SOLVER = :altissimo as the switch, and forbids hand-rolling the call", async () => {
+    const s = await hpSection();
+    expect(s).not.toBe(""); // guard: a misfiring mode gate would make these vacuous
+    expect(s).toMatch(/SOLVER = :altissimo/);
+    expect(s).toMatch(/Do NOT hand-roll/i);
+  });
+
+  it("states both traps a hand-rolled call would hit: lost frames and a dropped budget", async () => {
+    const s = await hpSection();
+    expect(s).toMatch(/intermediate_callback/);
+    expect(s).toMatch(/max_outer_iter/);
+    expect(s).toMatch(/silently DROPPED/);
+  });
+})
 
 // A cloud solve failed with an UndefVarError at load time because the agent wrote
 // `using Piccolissimo` without `using Piccolo`. Piccolissimo does not re-export

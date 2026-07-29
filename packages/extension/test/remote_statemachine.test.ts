@@ -67,7 +67,10 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
       await until(() => readFileSync(join(h.runDir, "run.log"), "utf8").includes("iter=7"));
       tick(m); // backstop re-pokes the tail — the "no new paradigm" hinge
       expect(inspector.postIterationRecord).toHaveBeenCalledWith(h.runId, expect.objectContaining({ iter: 7 }));
-      await until(() => existsSync(join(h.runDir, "iter_007.png"))); // frames mirrored best-effort
+      // 5-digit: the name BOTH the S3 layout and the local Julia solve use
+      // (iter_00007.png). Was iter_007.png, which matched neither, so cloud
+      // frames and local frames landed under two schemes in one run dir.
+      await until(() => existsSync(join(h.runDir, "iter_00007.png"))); // frames mirrored best-effort
 
       // 3. completion — FINISHED authoritative via the status poll (resolution (d))
       fake.state.finished = { status: "completed" };
