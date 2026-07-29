@@ -39,10 +39,23 @@ export function ghDownloadAsset(repo, tag, asset) {
   }
 }
 
+/** Resolve a release tag to the 40-hex COMMIT it points at, via the authenticated
+ *  gh CLI. Annotated tags (what amicode-release cuts) resolve to a tag object that
+ *  must be dereferenced; lightweight tags point straight at the commit. Injectable
+ *  for tests. */
+export function ghResolveTagCommit(repo, tag) {
+  const api = (path) =>
+    JSON.parse(execFileSync("gh", ["api", `repos/${repo}/${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const obj = api(`git/ref/tags/${tag}`).object;
+  if (obj.type === "commit") return obj.sha;
+  if (obj.type === "tag") return api(`git/tags/${obj.sha}`).object.sha;
+  throw new Error(`pin: tag ${tag} points at a ${obj.type}, expected commit or tag`);
+}
+
 /** Rewrite opencode.lock.json to a cut release: set tag + each platform's ACTUAL
  *  downloaded sha256 (+ ref when provided). Preserves key order and formatting.
  *  Returns { tag, ref, platforms: { <key>: <sha> } }. */
-export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloadAsset } = {}) {
+export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloadAsset, resolveTagCommit = ghResolveTagCommit } = {}) {
   if (!tag) throw new Error("pin: a release tag is required (e.g. pnpm opencode:pin v1.17.3-amicode.5)");
   const lockPath = join(root, "opencode.lock.json");
   const m = JSON.parse(readFileSync(lockPath, "utf8"));
@@ -54,10 +67,26 @@ export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloa
     shas[key] = p.sha256;
   }
   m.tag = tag;
-  if (ref) {
-    if (!/^[0-9a-f]{40}$/.test(ref)) throw new Error(`pin: --ref must be a 40-hex commit, got ${ref}`);
-    m.ref = ref;
+  // Resolve the ref from the tag unless one is given explicitly. Leaving it stale
+  // is worse than absent: `source: "local"` VALIDATES ref against the clone HEAD
+  // (fetch_opencode.mjs), so a ref left pointing at the PREVIOUS release tells a
+  // fork developer to check out the wrong commit. Release mode ignores ref — the
+  // tag drives the download and sha256 verifies it — so this is provenance, but
+  // provenance that is load-bearing the moment anyone switches to source mode.
+  let resolved = ref;
+  if (!resolved) {
+    try {
+      resolved = resolveTagCommit(repo, tag);
+    } catch (e) {
+      throw new Error(
+        `pin: could not resolve ${repo}@${tag} to a commit (${e.message}). ` +
+          `Pass --ref <40-hex> explicitly if the tag is not reachable via gh.`,
+      );
+    }
   }
+  if (!/^[0-9a-f]{40}$/.test(resolved))
+    throw new Error(`pin: ref must be a 40-hex commit, got ${resolved}`);
+  m.ref = resolved;
   writeFileSync(lockPath, JSON.stringify(m, null, 2) + "\n");
   return { tag, ref: m.ref, platforms: shas };
 }
