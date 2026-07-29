@@ -314,11 +314,13 @@ function solverModeSection(): string {
     "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
     "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
     "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
-    "`AltissimoOptions`), use it — but TELL THEM the trade first: Piccolissimo's `solve!(::AltissimoOptions)` " +
-    "does not yet forward a caller `callback` to `Altissimo.optimize!`, and there is no `intermediate_callback` " +
-    "on that path, so an Altissimo run currently produces NO per-iteration frames and NO AMICODE_ITER lines — " +
-    "the Run Inspector will stay empty until the solve finishes. Never switch to Altissimo silently, and never " +
-    "claim live iterations on it. " +
+    "`AltissimoOptions`), use it — but TELL THEM that live iterations depend on the INSTALLED version. " +
+    "Current Piccolissimo main accepts a `callback` on `solve!(::AltissimoOptions)` and forwards it to " +
+    "`Altissimo.optimize!`, which fires it every outer iteration; older builds swallow `kwargs...` and forward " +
+    "nothing, so an Altissimo run there emits NO AMICODE_ITER lines and the Run Inspector stays dark until the " +
+    "solve finishes. Do not promise live iterations you have not seen: run it, and if no AMICODE_ITER line " +
+    "appears in the first iterations, say so plainly rather than implying the solve is stuck. Never switch to " +
+    "Altissimo silently. " +
     routing +
     "\n"
   );
