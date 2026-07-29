@@ -87,9 +87,11 @@ and breaks fork-PR CI).
    the **compiled binary** — the only path that shows web-app surfaces (`packages/app`: home
    cards, v2 titlebar, draft flow), whose channel define is baked at build time (no `serve`-time
    hot path for those).
-3. Ship it: push the opencode branch, tag a release (its workflow builds both binaries and
+3. Ship it: push the opencode branch, tag a release (its workflow builds all three binaries and
    gate-checks them), then **`pnpm --filter amicode opencode:pin <tag>`** here — it downloads
-   and sha256-verifies both assets and rewrites the lock. Commit the lock bump + PR.
+   and sha256-verifies every asset and rewrites the lock. Commit the lock bump + PR.
+   Note `opencode:pin` only re-stamps platforms ALREADY in `opencode.lock.json` — adding a new
+   platform means hand-adding its `asset` key (with any placeholder sha) before pinning.
 
 **Why `dev` matters:** every amicode surface is gated at runtime on
 `settings.general.newLayoutDesigns`, whose default is `VITE_OPENCODE_CHANNEL !== "prod"`. A binary
@@ -109,14 +111,38 @@ release.yml's version guard (a gate, not a bump; edit the manifest by hand when 
 The **vendored fork** version is a separate knob, bumped via `opencode:pin` (above).
 
 **`.github/workflows/release.yml`** — trigger: push any `v*` tag (or `workflow_dispatch` with
-`tag`). Builds three vsixes from one build + the vendored binaries (no rebuild/re-fetch):
-`amicode.vsix` (universal, both binaries), `amicode-linux-x64.vsix`, `amicode-darwin-arm64.vsix`;
-attaches all three to a GitHub Release. The `publish-marketplace` job then runs **only for a
-clean `vX.Y.Z` tag** and `vsce publish`es the two platform-specific vsixes. The universal vsix is
-Release-only on purpose (it carries just linux+mac binaries, so as a Marketplace fallback Windows
-would get a ~100MB install with no runnable binary). Needs the **`VSCE_PAT`** repo secret (an
-Azure DevOps PAT: org = all accessible, scope Marketplace → Manage, <=1yr expiry, so rotate).
-Open VSX is deferred — issue #176 (needs `OVSX_TOKEN`).
+`tag`). Builds **seven** vsixes from one build + the vendored binaries (no rebuild/re-fetch).
+Four are installable — `amicode.vsix` (universal, all binaries), `amicode-linux-x64.vsix`,
+`amicode-linux-arm64.vsix`, `amicode-darwin-arm64.vsix` — and are the GitHub Release assets.
+Three are **cover packages** carrying NO binary — `win32-x64`, `win32-arm64`, `darwin-x64` —
+published to the Marketplace and nowhere else. The `publish-marketplace` job runs **only for a
+clean `vX.Y.Z` tag** and `vsce publish`es all six platform-targeted vsixes in ONE call (one
+Marketplace version, six platform entries).
+
+**`linux-arm64` is a real target, not a cover** — it carries a binary and serves arm64
+devcontainers (VS Code Remote-Containers on Apple Silicon, the common case). The extension runs
+inside the container, so that host needs a native binary, not advice. It is subject to the same
+publish-time rule as the covers below: leave it out of a release and arm64 Linux clients resolve
+down to the stale `0.0.2` universal.
+
+**Why cover packages exist (do not drop them).** On the Marketplace a *missing* target is not
+neutral: VS Code resolves a client whose target platform has no entry down to the newest
+**universal** version on the listing and installs it silently. Ours is `0.0.2` — the last release
+before the platform split — so from `0.0.3` through `0.1.1` every Windows and Intel-Mac install
+silently landed on a stale build that reported itself as the latest version. A version's target
+set is fixed at publish time (you cannot add a target to a published version), so the cover has to
+ride along with every release. They resolve to the current version and land in
+`unsupportedHostAdvice()` (`src/opencode_binary.ts`), which is the only user-facing thing they do.
+A packaging step fails the build if a cover package smuggled a binary in.
+
+**Windows = WSL**, and it is served by `amicode-linux-x64.vsix` installed into the WSL host —
+never by `win32-*`. The extension declares `"extensionKind": ["workspace"]`, so it installs
+where the workspace is (that is also VS Code's inferred default for a `main` extension; it is
+declared so the placement is explicit rather than inferred).
+
+Needs the **`VSCE_PAT`** repo secret (an Azure DevOps PAT: org = all accessible, scope
+Marketplace → Manage, <=1yr expiry, so rotate). Open VSX is deferred — issue #176 (needs
+`OVSX_TOKEN`).
 
 **`.github/workflows/promote.yml`** — the deliberate "this alpha is good enough" act.
 `workflow_dispatch`, input `alpha_tag` (e.g. `v0.0.3-alpha.5`). Validates it (real pre-release

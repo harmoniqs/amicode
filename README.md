@@ -62,6 +62,31 @@ mock, then swaps to real hardware unchanged.
 
 > **QICK v2 backend & docs → [github.com/harmoniqs/IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**
 
+## Install
+
+Search **Amicode** in the VS Code Extensions view, or grab a `.vsix` from
+[Releases](https://github.com/harmoniqs/amicode/releases/latest).
+
+Amicode runs on **Linux (x64 and arm64)** and **macOS (Apple Silicon)**. It runs wherever your
+*workspace* lives, so on a remote it installs into that host's extension host, not your
+laptop — pick the artifact for the **remote**, not for the machine running the VS Code
+window.
+
+**On Windows, use WSL.** There is no native Windows build; the chat harness Amicode
+drives is built for Linux and macOS only. Open your project in WSL (**Remote — WSL**),
+then install Amicode from the Extensions view *in that window* — VS Code installs it into
+the WSL host, which is Linux. Installing into the Windows side instead gets you an
+extension that activates and then tells you to do this.
+
+To install a `.vsix` into WSL by hand, download and install it **from inside WSL** so it
+lands in the WSL host rather than on Windows:
+
+```bash
+curl -fL -o /tmp/amicode.vsix \
+  https://github.com/harmoniqs/amicode/releases/latest/download/amicode-linux-x64.vsix
+code --install-extension /tmp/amicode.vsix
+```
+
 ## Try it
 
 Open the Amicode panel and paste:

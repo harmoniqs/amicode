@@ -127,18 +127,22 @@ jobs:
       - run: pnpm --filter amicode run package
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
-      # package only vendors the host binary (linux-x64); add darwin-arm64 so the
-      # gated .vsix is cross-platform, then repackage. --release: a cross-platform
-      # fetch can't build the non-host arch locally.
-      - run: node packages/extension/scripts/fetch_opencode.mjs --platform darwin-arm64 --release
+      # package only vendors the host binary (linux-x64); add the two cross targets
+      # so the gated .vsix is cross-platform, then repackage. --release: a
+      # cross-platform fetch can't build the non-host arch locally.
+      - run: |
+          for P in darwin-arm64 linux-arm64; do
+            node packages/extension/scripts/fetch_opencode.mjs --platform "$P" --release
+          done
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
-      # Fail closed if EITHER binary is absent (a silently no-op'd cross-platform fetch would
+      # Fail closed if ANY binary is absent (a silently no-op'd cross-platform fetch would
       # otherwise ship a single-platform .vsix that still passes the any-platform manifest gate)
       # or hides the amicode UI (built OPENCODE_CHANNEL=latest/prod). Same gate release.yml enforces.
       - run: |
-          bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/linux-x64/opencode
-          bash packages/extension/scripts/assert_ui_gate.sh packages/extension/vendor/opencode/darwin-arm64/opencode
+          for P in linux-x64 linux-arm64 darwin-arm64; do
+            bash packages/extension/scripts/assert_ui_gate.sh "packages/extension/vendor/opencode/$P/opencode"
+          done
       - run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
       - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
       # #161 behavioral packaging gate, artifact lane: unzip the REAL .vsix and
@@ -169,7 +173,11 @@ jobs:
   boot-smoke:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-14]   # linux-x64 + darwin-arm64 — both pins machine-gated (spec §5)
+        # linux-x64 + linux-arm64 + darwin-arm64 — every pin machine-gated (spec §5).
+        # ubuntu-24.04-arm is the free GitHub-hosted arm runner (public repo), and it
+        # is the ONLY place a linux-arm64 binary is executed: the fork cross-compiles
+        # it, so this job is its native smoke test.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
