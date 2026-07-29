@@ -22,9 +22,27 @@ const root = document.getElementById("plot-host")!;
 const plot = pulseplot("Harness idle — press play.");
 root.append(plot.el);
 
+// --- interp/knots switches: the same synthetic knots drawn as stairs vs
+// polyline vs curve (the #66 type-aware render); 12 knots makes the modes
+// unmistakable, 50 is fixture scale.
+const interpSel = document.getElementById("interp") as HTMLSelectElement;
+const knotsSel = document.getElementById("knots") as HTMLSelectElement;
+const harnessMeta = () => ({
+  ...HARNESS_META,
+  knots: Number(knotsSel.value),
+  interp: interpSel.value as "zoh" | "linear" | "cubic",
+});
+for (const sel of [interpSel, knotsSel])
+  sel.addEventListener("change", () => {
+    if (!timer) return; // idle — the next play picks the new mode up
+    plot.meta(harnessMeta());
+    plot.update(syntheticRecord(iter)); // redraw NOW, not at the next tick
+  });
+
 // --- synthetic data: smooth random-walk pulses converging toward a waveform
 function syntheticRecord(iter: number): { iter: number; dt: number; values: number[][] } {
-  const { knots, drives, bounds } = HARNESS_META;
+  const { drives, bounds } = HARNESS_META;
+  const knots = Number(knotsSel.value);
   const dt = 10.0 / knots;
   const values = Array.from({ length: drives }, (_, d) => {
     const [lo, hi] = bounds[d];
@@ -53,7 +71,7 @@ playBtn.addEventListener("click", () => {
     playBtn.textContent = "▶ play";
     return;
   }
-  plot.meta(HARNESS_META);
+  plot.meta(harnessMeta());
   playBtn.textContent = "⏸ pause";
   timer = setInterval(() => {
     plot.update(syntheticRecord(iter++));
