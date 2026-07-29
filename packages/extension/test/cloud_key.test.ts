@@ -459,7 +459,7 @@ describe("runSetCloudKeyCommand — single write path, single flip path (AC1 + A
 
 describe("cloud URL resolution (review finding 6 — single-sourced)", () => {
   it("DEFAULT_CLOUD_URL is the production Solve Service base URL", () => {
-    expect(DEFAULT_CLOUD_URL).toBe("https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com");
+    expect(DEFAULT_CLOUD_URL).toBe("https://vsaje7ynp5.execute-api.us-east-1.amazonaws.com");
   });
 
   it("an empty amicode.cloudUrl setting falls back to DEFAULT_CLOUD_URL in the POSTed base_url", async () => {
@@ -478,10 +478,40 @@ describe("cloud URL resolution (review finding 6 — single-sourced)", () => {
 
   it("package.json no longer duplicates the production URL — cloud_key.ts is the single source", () => {
     const pkg = fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8");
-    expect(pkg).not.toContain("qy2gwqy5s5"); // the URL lives ONLY in DEFAULT_CLOUD_URL
+    expect(pkg).not.toContain("vsaje7ynp5"); // the URL lives ONLY in DEFAULT_CLOUD_URL
     const props = (JSON.parse(pkg) as { contributes: { configuration: { properties: Record<string, { default?: unknown; description?: string }> } } })
       .contributes.configuration.properties;
     expect(props["amicode.cloudUrl"].default).toBe("");
     expect(props["amicode.cloudUrl"].description).toMatch(/built-in production endpoint/i);
+  });
+
+  // ACCOUNT COUPLING. The ONE token in ~/.amico/cloud.json authenticates BOTH the
+  // solve API (DEFAULT_CLOUD_URL) and the run-corpus ingest
+  // (amicode.telemetry.endpoint). Each AWS account has its OWN credentials table
+  // and the ingest hashes the token and looks it up in ITS account's table, so a
+  // token minted in the other account is rejected on every batch — 401, silently,
+  // while the UI still reports capture as enabled. Flipping one default without
+  // the other therefore breaks capture for every default-path user. This is not
+  // hypothetical: it produced ~1265 rejected batches for one user in a morning.
+  //
+  // Both values are pinned to PRODUCTION here so a one-sided edit fails CI loudly
+  // rather than shipping. When these move, they move TOGETHER, in one release,
+  // and every user's token must be re-minted in the new account.
+  it("the solve and telemetry defaults point at the SAME account (production)", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, "..", "package.json"), "utf8")) as {
+      contributes: { configuration: { properties: Record<string, { default?: unknown }> } };
+    };
+    const telemetry = pkg.contributes.configuration.properties["amicode.telemetry.endpoint"].default;
+
+    // Production solve API + production run-corpus ingest Function URL.
+    expect(DEFAULT_CLOUD_URL).toBe("https://vsaje7ynp5.execute-api.us-east-1.amazonaws.com");
+    expect(telemetry).toBe("https://bld42qbgsn7gu6y44v4kd6a32e0hprmy.lambda-url.us-east-1.on.aws");
+
+    // Neither may be left pointing at staging (solve API qy2gwqy5s5 / ingest 4pbhrnv2…).
+    expect(DEFAULT_CLOUD_URL).not.toContain("qy2gwqy5s5");
+    expect(String(telemetry)).not.toContain("4pbhrnv2oyfz2q4isvaouwnt4i0hqchl");
+
+    // No trailing slash: opencode appends /v1/traces and /v1/logs itself.
+    expect(String(telemetry)).not.toMatch(/\/$/);
   });
 });
