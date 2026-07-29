@@ -902,13 +902,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           const args = channel
             ? [`+${minor}`, `--project=${project}`, "-e", "using Piccolo"]
             : [`--project=${project}`, "-e", "using Piccolo"];
+          const t0 = Date.now();
           const r = await probeCommand("julia", args, 180_000);
           results.push({
             name: "Julia",
             ok: r.ok,
+            ms: Date.now() - t0,
             detail: r.ok
               ? `Piccolo loads (${channel ? `juliaup ${minor}` : "system julia"})`
               : `Piccolo did not load (${r.err ?? `exit ${r.code}`})`,
+            log: r.ok ? undefined : r.output || r.err, // #19: the actual Julia error, not just the exit code
           });
         }
 
@@ -923,22 +926,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
         // LLM provider (opencode's own resolution).
         if (opencodeReadyUrl) {
+          const t1 = Date.now();
           try {
             const sig = await fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders });
             results.push({
               name: "LLM creds",
               ok: sig.ok,
+              ms: Date.now() - t1,
               detail: sig.ok ? `configured (${sig.provider})` : `${sig.reason} → ${sig.fix}`,
             });
           } catch (e) {
-            results.push({ name: "LLM creds", ok: false, detail: `check failed: ${(e as Error).message}` });
+            results.push({ name: "LLM creds", ok: false, ms: Date.now() - t1, detail: `check failed: ${(e as Error).message}` });
           }
         } else {
           results.push({ name: "LLM creds", ok: false, detail: "skipped (server down)" });
         }
 
         const report = formatHealthReport(results);
-        opencodeChannel.appendLine("[healthcheck]");
+        opencodeChannel.appendLine(`[healthcheck] ${new Date().toISOString()}`);
         report.lines.forEach((l) => opencodeChannel.appendLine(`  ${l}`));
         if (report.allOk) {
           void vscode.window.showInformationMessage(report.summary);

@@ -25,6 +25,24 @@ describe("formatHealthReport", () => {
     expect(r.summary).toContain("LLM creds");
     expect(r.lines.filter((l) => l.startsWith("FAIL")).length).toBe(2);
   });
+
+  it("appends timing + captured log (indented) for a failed check (#19)", () => {
+    const r = formatHealthReport([
+      { name: "Julia", ok: false, detail: "Piccolo did not load (exit 1)", ms: 4210, log: "ERROR: LoadError\nstack line 2" },
+      { name: "opencode server", ok: true, detail: "up", ms: 1 },
+    ]);
+    // timing shown on the check line
+    expect(r.lines[0]).toContain("(4210ms)");
+    expect(r.lines.some((l) => l.includes("up  (1ms)"))).toBe(true);
+    // the captured log is appended, indented, only for the failed check
+    expect(r.lines).toContain("  | ERROR: LoadError");
+    expect(r.lines).toContain("  | stack line 2");
+  });
+
+  it("does not append a log for a passing check even if one is present", () => {
+    const r = formatHealthReport([{ name: "Julia", ok: true, detail: "loads", log: "noisy stdout" }]);
+    expect(r.lines.some((l) => l.startsWith("  |"))).toBe(false);
+  });
 });
 
 describe("probeCommand", () => {
@@ -50,5 +68,13 @@ describe("probeCommand", () => {
     const r = await probeCommand("sleep", ["10"], 150);
     expect(r.ok).toBe(false);
     expect(r.err).toContain("timed out");
+  });
+
+  it("captures stdout+stderr output (#19) so failures are diagnosable", async () => {
+    const r = await probeCommand("sh", ["-c", "echo out; echo boom >&2; exit 3"], 5000);
+    expect(r.ok).toBe(false);
+    expect(r.code).toBe(3);
+    expect(r.output).toContain("out");
+    expect(r.output).toContain("boom");
   });
 });
