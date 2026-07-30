@@ -1020,6 +1020,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
+    // Side-by-side sessions: ALWAYS a fresh editor tab (ViewColumn.Beside, so
+    // it splits next to whatever is focused) pinned to the app's /new-session
+    // draft route — each tab owns its conversation over the one server. Same
+    // ready/creds gates as openChat: a second tab that can't chat is worse
+    // than a named warning.
+    vscode.commands.registerCommand("amicode.newChat", async () => {
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
+        return;
+      }
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
+      const draftUrl = new URL(readyUrl.href);
+      draftUrl.pathname = "/new-session";
+      draftUrl.search = "";
+      draftUrl.hash = "";
+      ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();
     }),

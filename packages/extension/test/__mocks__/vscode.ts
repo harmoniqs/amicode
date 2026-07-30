@@ -45,7 +45,7 @@ export const commands = {
   },
   executeCommand: (id: string, ...a: unknown[]) => Promise.resolve(registeredCommands.get(id)?.(...a)),
 };
-export const ViewColumn = { One: 1, Two: 2 };
+export const ViewColumn = { One: 1, Two: 2, Beside: -2 };
 export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 };
 export const workspace = {
   workspaceFolders: [] as unknown[],
