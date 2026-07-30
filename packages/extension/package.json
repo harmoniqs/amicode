@@ -2,7 +2,7 @@
   "name": "amicode",
   "displayName": "Amicode",
   "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -39,6 +39,9 @@
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
+  "extensionKind": [
+    "workspace"
+  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -262,8 +265,8 @@
         },
         "amicode.telemetry.endpoint": {
           "type": "string",
-          "default": "https://4pbhrnv2oyfz2q4isvaouwnt4i0hqchl.lambda-url.us-east-1.on.aws",
-          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the STAGING corpus for internal alpha; will switch to the production endpoint once prod run_corpus is enabled. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key; the token must be valid for the account behind this endpoint (staging default → staging-minted token)."
+          "default": "https://bld42qbgsn7gu6y44v4kd6a32e0hprmy.lambda-url.us-east-1.on.aws",
+          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the PRODUCTION corpus. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key. The token MUST be minted in the same AWS account as this endpoint: each account's credentials table is independent, so a token from the other account is rejected on every batch (401) while capture still looks enabled. This default is therefore account-coupled with DEFAULT_CLOUD_URL in cloud_key.ts — change both together or neither."
         }
       }
     },

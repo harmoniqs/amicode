@@ -16,8 +16,17 @@
 
 /** Production Solve Service base URL — the single source (review finding 6).
  *  package.json's `amicode.cloudUrl` default is "" and its description points
- *  here ("the built-in production endpoint"); a test pins the non-duplication. */
-export const DEFAULT_CLOUD_URL = "https://qy2gwqy5s5.execute-api.us-east-1.amazonaws.com";
+ *  here ("the built-in production endpoint"); a test pins the non-duplication.
+ *
+ *  ACCOUNT-COUPLED with `amicode.telemetry.endpoint` (package.json): the ONE
+ *  token in ~/.amico/cloud.json authenticates BOTH the solve API and the
+ *  run-corpus ingest, and each account's credentials table is independent —
+ *  the ingest hashes the token and looks it up in ITS OWN account's table, so a
+ *  token minted in the other account 401s on every batch. Changing one of these
+ *  two defaults without the other silently breaks every default-path user
+ *  (this happened: a prod-minted token against the staging ingest produced
+ *  ~1265 rejected batches with capture appearing "on"). A test pins the pair. */
+export const DEFAULT_CLOUD_URL = "https://vsaje7ynp5.execute-api.us-east-1.amazonaws.com";
 
 /** The one credential the command manages — the same connection id the panel
  *  submits, so both entry points converge on the same server-side record. */

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpencodeBinary, OpencodeMissingError } from "../src/opencode_binary";
+import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "../src/opencode_binary";
 
 const platformKey = `${process.platform}-${process.arch}`;
 
@@ -32,5 +32,24 @@ describe("resolveOpencodeBinary", () => {
     const empty = mkdtempSync(join(tmpdir(), "ocbin-empty-"));
     expect(() => resolveOpencodeBinary(empty, "")).toThrow(OpencodeMissingError);
     expect(() => resolveOpencodeBinary(empty, "")).toThrow(/fetch:opencode|reinstall/);
+  });
+});
+
+// The Marketplace's binary-less cover packages (win32-*, darwin-x64) exist only to
+// stop VS Code resolving those clients down to the last universal version, so the
+// advice they surface IS the whole feature — an unactionable string wastes the cover.
+describe("unsupportedHostAdvice", () => {
+  it("points Windows at WSL, on either arch", () => {
+    expect(unsupportedHostAdvice("win32", "x64")).toMatch(/WSL/);
+    expect(unsupportedHostAdvice("win32", "arm64")).toMatch(/WSL/);
+  });
+  it("tells an Intel Mac the build is Apple Silicon only, and names its own arch", () => {
+    expect(unsupportedHostAdvice("darwin", "x64")).toMatch(/Apple Silicon/);
+    expect(unsupportedHostAdvice("darwin", "x64")).toContain("x64");
+  });
+  it("names the host and the built set for anything else", () => {
+    const advice = unsupportedHostAdvice("freebsd", "x64");
+    expect(advice).toContain("freebsd-x64");
+    expect(advice).toContain("linux-x64");
   });
 });

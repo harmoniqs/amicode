@@ -3,7 +3,7 @@ import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { fetchProviderSignal } from "./llm_creds.mjs";
-import { resolveOpencodeBinary, OpencodeMissingError } from "./opencode_binary";
+import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
@@ -464,8 +464,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   } catch (e) {
     if (e instanceof OpencodeMissingError) {
-      opencodeChannel.appendLine(`[boot] ${e.message} — chat disabled`);
-      void vscode.window.showErrorMessage(`Amicode: ${e.message}`);
+      // An unsupported host is the expected landing spot for the Marketplace's
+      // binary-less cover packages (win32-*, darwin-x64 — see release.yml), so the
+      // toast must say where Amicode DOES run, not just that this host failed.
+      // On Windows that's WSL, and the reopen action is offered only when the WSL
+      // extension is actually installed to provide the command.
+      const advice = unsupportedHostAdvice();
+      opencodeChannel.appendLine(`[boot] ${e.message} — chat disabled — ${advice}`);
+      void (async () => {
+        const REOPEN = "Reopen in WSL";
+        const canReopen =
+          process.platform === "win32" && (await vscode.commands.getCommands(true)).includes("remote-wsl.reopenInWSL");
+        const pick = await vscode.window.showErrorMessage(`Amicode: ${advice}`, ...(canReopen ? [REOPEN] : []));
+        if (pick === REOPEN) void vscode.commands.executeCommand("remote-wsl.reopenInWSL");
+      })();
     } else throw e;
   }
 
