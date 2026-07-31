@@ -6,6 +6,7 @@ export const window = {
   showErrorMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
+  showSaveDialog: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
@@ -35,6 +36,7 @@ export const window = {
 };
 const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
 export const commands = {
+  executed: [] as string[],
   registerCommand: (id: string, fn: (...a: unknown[]) => unknown) => {
     registeredCommands.set(id, fn);
     return {
@@ -43,16 +45,46 @@ export const commands = {
       },
     };
   },
-  executeCommand: (id: string, ...a: unknown[]) => Promise.resolve(registeredCommands.get(id)?.(...a)),
+  executeCommand: (id: string, ...a: unknown[]) => {
+    commands.executed.push(id);
+    return Promise.resolve(registeredCommands.get(id)?.(...a));
+  },
 };
 export const ViewColumn = { One: 1, Two: 2, Beside: -2 };
 export const ColorThemeKind = { Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 };
+export const ConfigurationTarget = { Global: 1, Workspace: 2, WorkspaceFolder: 3 };
+export const env = {
+  opened: [] as unknown[],
+  openExternal: (u: unknown) => {
+    env.opened.push(u);
+    return Promise.resolve(true);
+  },
+  clipboard: {
+    text: "",
+    readText(): Promise<string> {
+      return Promise.resolve(env.clipboard.text);
+    },
+    writeText(t: string): Promise<void> {
+      env.clipboard.text = t;
+      return Promise.resolve();
+    },
+  },
+};
 export const workspace = {
   workspaceFolders: [] as unknown[],
-  getConfiguration: () => ({ get: (_k: string, d?: unknown) => d ?? "" }),
+  configUpdates: [] as Array<[string, unknown]>,
+  getConfiguration: () => ({
+    get: (_k: string, d?: unknown) => d ?? "",
+    update: (k: string, v: unknown) => {
+      workspace.configUpdates.push([k, v]);
+      return Promise.resolve();
+    },
+  }),
+  fs: { writeFile: (_u: unknown, _b: unknown) => Promise.resolve() },
 };
 export const Uri = {
   file: (p: string) => ({ fsPath: p, toString: () => p }),
+  parse: (s: string) => ({ fsPath: s, toString: () => s }),
   joinPath: (base: { fsPath?: string } | string, ...parts: string[]) => {
     const root = typeof base === "string" ? base : (base.fsPath ?? "");
     const full = [root, ...parts].join("/");

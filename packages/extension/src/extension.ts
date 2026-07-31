@@ -5,6 +5,7 @@ import { ServerManager } from "./server_manager";
 import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
+import { DeckPanel } from "./deck_panel";
 import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
@@ -1055,6 +1056,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       draftUrl.search = "";
       draftUrl.hash = "";
       ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    }),
+    // Chat Deck: MANY panes inside ONE editor tab — tab strips, drag-to-split,
+    // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
+    // other chat entries. The deck shares the one server with every ChatPanel.
+    vscode.commands.registerCommand("amicode.chatDeck", async () => {
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
+        return;
+      }
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
+      DeckPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();

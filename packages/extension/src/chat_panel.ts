@@ -1,7 +1,6 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
-import * as path from "node:path";
-import * as os from "node:os";
+import { handleAmicodeBridgeMessage } from "./chat_bridge";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -12,24 +11,8 @@ import * as os from "node:os";
 // pinned to its own in-app route (e.g. /new-session), one server underneath.
 // ============================================================================
 
-// Commands the in-app palette (opencode "Amico" command group) may trigger via
-// the iframe→parent→extension postMessage bridge. STRICT allowlist: the framed
-// app renders LLM output, so we never executeCommand anything outside this set.
-const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
-  "amicode.restartServer",
-  "amicode.distillNow",
-  "amicode.stopRun",
-  "amicode.savePulse",
-  "amicode.openRunDir",
-  "amicode.openInspector",
-  // ⌘⇧P inside the chat iframe lands in the APP's palette, not VS Code's —
-  // the fork forwards it here so the editor's Command Palette (where every
-  // Amicode: command lives) opens as users expect.
-  "workbench.action.showCommands",
-]);
-
 /** VS Code theme kind → the fork app's ColorScheme. */
-function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
+export function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
   return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? "light" : "dark";
 }
 
@@ -46,7 +29,7 @@ function themeKindToScheme(kind: vscode.ColorThemeKind): "light" | "dark" {
 // theme-appropriate foreground gray. A unit test keeps them in sync with the
 // source geometry. `light` is shown on light themes (dark mark), `dark` on
 // dark themes (light mark).
-function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; dark: vscode.Uri } {
+export function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; dark: vscode.Uri } {
   return {
     light: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-light.svg"),
     dark: vscode.Uri.joinPath(ctx.extensionUri, "media", "amico-tab-dark.svg"),
@@ -83,123 +66,14 @@ export class ChatPanel {
     );
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
-        // iframe → extension command bridge: the opencode "Amico" palette group
-        // posts {source:"amicode", kind:"command", command} to window.parent;
-        // the outer webview relay (renderHtml) forwards it here. We honor ONLY
-        // allowlisted amicode.* commands so the framed app can't run arbitrary
-        // vscode commands.
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "open-external" &&
-          typeof (msg as { url?: unknown }).url === "string" &&
-          /^https:\/\//i.test((msg as { url: string }).url) // scheme is case-insensitive (RFC 3986)
-        ) {
-          // target=_blank/window.open are dead inside the framed app — open
-          // https links via the editor (system browser). https-only.
-          void vscode.env.openExternal(vscode.Uri.parse((msg as { url: string }).url));
-          return;
-        }
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "clipboard-request"
-        ) {
-          // Paste bridge: navigator.clipboard is unavailable to the framed app
-          // (the webview parent has no clipboard-read to delegate), so the app
-          // asks US — the extension host reads the OS clipboard and replies.
-          // Visibility gate: the app renders LLM-driven content, so a hidden
-          // panel must not be able to sample the clipboard in the background —
-          // reads only answer while the user can see the chat.
-          if (!this.panel.visible) return;
-          void vscode.env.clipboard.readText().then((text) =>
-            this.panel.webview.postMessage({
-              source: "amicode",
-              kind: "clipboard",
-              nonce: (msg as { nonce?: string }).nonce,
-              text,
-            }),
-          );
-          return;
-        }
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "clipboard-write" &&
-          typeof (msg as { text?: unknown }).text === "string"
-        ) {
-          // Copy bridge (mirror of clipboard-request): the framed app's native
-          // copy can't reach the OS clipboard, so an in-chat ⌘C posts the text
-          // here and we write it via vscode.env.clipboard — otherwise the paste
-          // bridge above reads back stale content. Same visibility gate as the
-          // read side, and the payload is untrusted (LLM-rendered), so bound it.
-          if (!this.panel.visible) return;
-          const text = (msg as { text: string }).text;
-          if (text.length > 5_000_000) return;
-          void vscode.env.clipboard.writeText(text);
-          return;
-        }
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "save-file" &&
-          typeof (msg as { filename?: unknown }).filename === "string" &&
-          typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
-        ) {
-          // Save bridge (run-card PNG export): downloads are dead inside the
-          // framed app — the extension shows a save dialog and writes the file.
-          // PNG-only, basename-only, bounded size: the payload is untrusted.
-          const raw = msg as { filename: string; dataUrl: string };
-          const prefix = "data:image/png;base64,";
-          const base64 = raw.dataUrl.startsWith(prefix) ? raw.dataUrl.slice(prefix.length) : undefined;
-          const name = path.basename(raw.filename).replace(/[^\w.-]+/g, "-");
-          if (!base64 || base64.length > 24_000_000 || !name.endsWith(".png")) return;
-          void (async () => {
-            const target = await vscode.window.showSaveDialog({
-              defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", name)),
-              filters: { Images: ["png"] },
-            });
-            if (!target) return;
-            await vscode.workspace.fs.writeFile(target, Buffer.from(base64, "base64"));
-            const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
-            if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
-          })();
-          return;
-        }
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "command" &&
-          typeof (msg as { command?: unknown }).command === "string" &&
-          BRIDGE_ALLOWED_COMMANDS.has((msg as { command: string }).command)
-        ) {
-          void vscode.commands.executeCommand((msg as { command: string }).command);
-          return;
-        }
-        if (
-          msg &&
-          typeof msg === "object" &&
-          (msg as { source?: unknown }).source === "amicode" &&
-          (msg as { kind?: unknown }).kind === "set-default-model" &&
-          typeof (msg as { model?: unknown }).model === "string"
-        ) {
-          // Dashboard "Default model" control mirrors its choice into the
-          // amicode.defaultModel setting, so the config pin (headless / first
-          // turn) tracks the UI. "provider/model-id" only, bounded — untrusted.
-          const model = (msg as { model: string }).model.trim();
-          if (model.length > 0 && model.length <= 200 && /^[\w.-]+\/[\w.:-]+$/.test(model)) {
-            void vscode.workspace
-              .getConfiguration("amicode")
-              .update("defaultModel", model, vscode.ConfigurationTarget.Global);
-          }
-          return;
-        }
-        console.log("[amicode/chat] webview msg:", msg);
+        // iframe → extension bridge: the outer webview relay (renderHtml)
+        // forwards the framed app's envelopes here; the shared handler owns the
+        // strict allowlists (chat_bridge.ts, also used by the deck's panes).
+        const handled = handleAmicodeBridgeMessage(msg, {
+          visible: () => this.panel.visible,
+          postToWebview: (m) => void this.panel.webview.postMessage(m),
+        });
+        if (!handled) console.log("[amicode/chat] webview msg:", msg);
       },
       null,
       this.disposables,
