@@ -31,6 +31,8 @@
   ],
   "activationEvents": [
     "onCommand:amicode.openChat",
+    "onCommand:amicode.newChat",
+    "onCommand:amicode.chatDeck",
     "onCommand:amicode.openInspector",
     "onView:amicode.runInspector",
     "onView:amicode.deviceInspector",
@@ -91,6 +93,16 @@
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "amicode.newChat",
+        "title": "Amicode: New Chat (Side by Side)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amicode.chatDeck",
+        "title": "Amicode: Open Chat Deck (Panes in One Tab)",
+        "icon": "$(layout)"
       },
       {
         "command": "amicode.setupVault",
