@@ -348,4 +348,17 @@ describe("buildChildEnv", () => {
   it("lets explicit extras through", () => {
     expect(buildChildEnv({ HOME: "/h" }, { OPENCODE_CONFIG_CONTENT: "{}" }).OPENCODE_CONFIG_CONTENT).toBe("{}");
   });
+  it("strips live-session pointers even though they carry the OPENCODE_ prefix", () => {
+    // Regression: spawned from inside a live Amicode session, these vars made
+    // the child's headless `run` resolve the PARENT's session → "Session not
+    // found", killing every critic before it started. Config vars must stay.
+    const env = buildChildEnv({
+      HOME: "/h",
+      OPENCODE: "1",
+      OPENCODE_PID: "3434",
+      OPENCODE_SERVER_PASSWORD: "live-pw",
+      OPENCODE_CONFIG_CONTENT: "{}",
+    });
+    expect(env).toEqual({ HOME: "/h", OPENCODE_CONFIG_CONTENT: "{}" });
+  });
 });

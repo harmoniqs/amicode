@@ -31,8 +31,12 @@ import type { Finding } from "./lenses.js";
 
 export const DEFAULT_CRITIC_MODEL = "anthropic/claude-opus-5";
 export const DEFAULT_CRITIC_VARIANT = "high";
-/** Per-child ceiling (§3.7). A critic that has not answered in two minutes has failed. */
-export const CRITIC_TIMEOUT_MS = 120_000;
+/** Per-child ceiling (§3.7). A critic that has not answered in four minutes has failed.
+ *  240s, not 120s: a frontier-class review of a full spec on a free-tier model takes
+ *  ~3 minutes measured (178s for a 13k-token decomposition pass, 2026-07-31) — the
+ *  two-minute ceiling read legitimate slow answers as failures and silently degraded
+ *  every review to approved-mechanical/degraded. */
+export const CRITIC_TIMEOUT_MS = 240_000;
 
 /** Why a lens has no findings, which is NOT the same question as whether it ran.
  *
@@ -99,6 +103,13 @@ export function resolveAgentBin(env: NodeJS.ProcessEnv = process.env): string | 
  *  already authenticated against. */
 const ENV_ALLOWLIST = ["HOME", "PATH", "TMPDIR", "SHELL", "LANG", "LC_ALL", "TERM"];
 const ENV_ALLOW_PREFIXES = ["XDG_", "OPENCODE_"];
+/** Live-session pointers: when amico runs INSIDE a live Amicode session, these
+ *  ride the OPENCODE_ prefix allowance into the child, and the child's headless
+ *  `run` tries to resolve the PARENT's session — failing with "Session not
+ *  found" before the critic ever starts. The child spawns its own runtime; the
+ *  parent's session pointers are never valid for it. Config vars
+ *  (OPENCODE_CONFIG_CONTENT/DIR) stay — those are the legitimate prefix users. */
+const ENV_DENYLIST = new Set(["OPENCODE", "OPENCODE_PID", "OPENCODE_SERVER_PASSWORD"]);
 
 export function buildChildEnv(
   parent: NodeJS.ProcessEnv = process.env,
@@ -107,6 +118,7 @@ export function buildChildEnv(
   const out: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(parent)) {
     if (v === undefined) continue;
+    if (ENV_DENYLIST.has(k)) continue;
     if (ENV_ALLOWLIST.includes(k) || ENV_ALLOW_PREFIXES.some((p) => k.startsWith(p))) out[k] = v;
   }
   return { ...out, ...extra };
