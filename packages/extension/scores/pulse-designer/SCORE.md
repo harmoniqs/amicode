@@ -95,10 +95,11 @@ default option FIRST with "(Recommended)" appended to its label; a short
 description per option where it helps (e.g. "fully supported end-to-end" /
 "recorded for follow-up"). The form blocks the turn until the user answers — so
 **call the tool and stop: never also ask in prose, never pre-empt the answer.**
-Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) may use `question`
-(custom answers are enabled by default) or plain text. The older `amicode_ask`
-tool is **deprecated** — prefer `question`; fall back to a plain-text list only
-if the `question` tool is genuinely unavailable.
+Free-form values ($\omega$, $\delta$, `T`, `N`, `max_iter`) go through
+`question` with `kind: "text"` — a bare text input with no option list. The
+older `amicode_ask` tool is **deprecated** — prefer `question`; fall back to a
+plain-text list of the options only if the `question` tool is genuinely
+unavailable.
 
 **Anchor on recorded state:** before asking any stage-2+ parameter question,
 re-read the recorded System entity (what the rail shows) and anchor on it —

@@ -39,6 +39,13 @@ describe("compileScore (score #0)", () => {
     // the retired contract phrasing — free-form questions are NEVER plain text
     expect(md).not.toMatch(/free-form questions stay\s+plain text/i);
   });
+  it("drops the plain-text permission for free-form answers from the score body (amicode#245 AC5)", () => {
+    expect(md).not.toContain("plain text");
+  });
+  it("keeps the choice-question mandate intact (amicode#245 AC6 regression)", () => {
+    expect(md).toContain("MUST call the native `question` tool");
+    expect(md).toContain('"(Recommended)"');
+  });
   it("substitutes the score-relative template to an absolute path", () => {
     expect(md).toContain(path.join(SCORES_ROOT, "pulse-designer", "templates", "solve.jl"));
   });
