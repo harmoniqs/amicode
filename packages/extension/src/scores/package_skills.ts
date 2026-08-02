@@ -39,6 +39,34 @@ function normalizeLibraryRoot(r: LibraryRootSpec): LibraryRoot {
   return typeof r === "string" ? { path: r, surfaces: ["public"] } : r;
 }
 
+/** Parse the raw `amicode.skillLibraryRoots` setting value into root specs
+ *  (ADR-0003 back-compat). Bare strings pass through (public-only, the pre-ADR
+ *  behavior); typed objects need a non-empty `path` and a non-empty `surfaces`
+ *  string array. Malformed entries are dropped with a warning — the settings
+ *  surface mirrors the resolver's skip+warn philosophy, never throws. */
+export function parseLibraryRootSpecs(raw: unknown): LibraryRootSpec[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LibraryRootSpec[] = [];
+  for (const entry of raw) {
+    if (typeof entry === "string") {
+      out.push(entry);
+      continue;
+    }
+    const e = entry as Partial<LibraryRoot> | null;
+    const ok =
+      e !== null &&
+      typeof e === "object" &&
+      typeof e.path === "string" &&
+      e.path.trim() !== "" &&
+      Array.isArray(e.surfaces) &&
+      e.surfaces.length > 0 &&
+      e.surfaces.every((s) => typeof s === "string");
+    if (ok) out.push({ path: (e as LibraryRoot).path, surfaces: (e as LibraryRoot).surfaces });
+    else console.warn(`amicode: dropping malformed skillLibraryRoots entry: ${JSON.stringify(entry)}`);
+  }
+  return out;
+}
+
 function expandHome(p: string): string {
   if (p === "~") return process.env.HOME ?? p;
   if (p.startsWith("~/")) return path.join(process.env.HOME ?? "", p.slice(2));

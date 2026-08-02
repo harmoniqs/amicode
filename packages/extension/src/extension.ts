@@ -16,6 +16,7 @@ import {
   buildOpencodeConfigContent,
   resolveModelPin,
 } from "./opencode_config";
+import { parseLibraryRootSpecs } from "./scores/package_skills";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import {
   mintServerPassword,
@@ -415,6 +416,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const v = vscode.workspace.getConfiguration("amicode").get<string[]>(key, []);
     return Array.isArray(v) && v.length ? v : undefined;
   };
+  // Typed library roots (ADR-0003): the setting mixes bare strings (public-only,
+  // pre-ADR behavior) and {path, surfaces} objects; malformed entries drop + warn.
+  const cfgLibraryRoots = () => {
+    const raw = vscode.workspace.getConfiguration("amicode").get<unknown>("skillLibraryRoots", []);
+    const parsed = parseLibraryRootSpecs(raw);
+    return parsed.length ? parsed : undefined;
+  };
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
@@ -427,7 +435,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
-    skillLibraryRoots: cfgArr("skillLibraryRoots"),
+    skillLibraryRoots: cfgLibraryRoots(),
     // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
     // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
     vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
@@ -577,7 +585,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
           ),
           skillRoots: cfgArr("skillRoots"),
-          skillLibraryRoots: cfgArr("skillLibraryRoots"),
+          skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
         });
         await serverManager?.stop();
@@ -707,7 +715,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       ),
       juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
       skillRoots: cfgArr("skillRoots"),
-      skillLibraryRoots: cfgArr("skillLibraryRoots"),
+      skillLibraryRoots: cfgLibraryRoots(),
       vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
       projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
     });

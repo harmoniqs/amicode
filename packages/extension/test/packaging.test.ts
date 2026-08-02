@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const VSIX = join(__dirname, "..", "amicode.vsix");
@@ -79,5 +79,35 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
       /extension\/vendor\/skills-public\/skills\/.+\/SKILL\.md/.test(listing),
       "no bundled public skill SKILL.md — fetch:skills did not run or shipped empty",
     ).toBe(true);
+  });
+});
+
+// Two-tier leak guard on the vendored artifact itself (ADR-0003, amicode#242).
+// The bundle root admits {public} only at resolve time (the resolver half is in
+// package_skills.test.ts); these tests guard the ARTIFACT — a corrupt extract or
+// a mis-pinned lock that smuggled an internal skill must red here, not ship.
+const SKILLS_BUNDLE = join(__dirname, "..", "vendor", "skills-public");
+const HAVE_BUNDLE = existsSync(join(SKILLS_BUNDLE, "skills"));
+describe.skipIf(!HAVE_BUNDLE && !REQUIRE_VSIX)("vendored public skill subset — two-tier leak guard (ADR-0003)", () => {
+  it("the vendored bundle exists (hard requirement under AMICODE_REQUIRE_VSIX=1)", () => {
+    expect(HAVE_BUNDLE, "no vendor/skills-public — run: pnpm --filter amicode fetch:skills").toBe(true);
+  });
+  it("every vendored SKILL.md carries surface: public — the bundle never ships internal (AC4)", () => {
+    const offenders: string[] = [];
+    for (const name of readdirSync(join(SKILLS_BUNDLE, "skills"))) {
+      const p = join(SKILLS_BUNDLE, "skills", name, "SKILL.md");
+      if (!existsSync(p)) continue;
+      const m = readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
+      const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
+      if (surface !== "public") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
+    }
+    expect(offenders, `non-public skills in the vendored bundle: ${offenders.join(", ")}`).toEqual([]);
+  });
+  it("the re-tagged dev-workflow skills are absent from the vendored set (AC5)", () => {
+    const names = readdirSync(join(SKILLS_BUNDLE, "skills"));
+    // Re-tagged surface:internal by amico-plugin#52 — present in the public bundle
+    // up to skills-public-v1.6.0, absent from the first post-retag release.
+    expect(names).not.toContain("implement-issue");
+    expect(names).not.toContain("break-into-subissues");
   });
 });

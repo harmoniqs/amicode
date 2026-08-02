@@ -7,6 +7,7 @@ import {
   resolveLibrarySkills,
   buildSkillIndexSection,
   stageOpencodeSkills,
+  parseLibraryRootSpecs,
 } from "../../src/scores/package_skills";
 import { DEFAULT_LIBRARY_ROOTS, DEFAULT_PLATFORM_SKILLS } from "../../src/opencode_config";
 
@@ -250,6 +251,39 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
       if (surface !== "public" && surface !== "internal") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
     }
     expect(offenders, `untagged/mis-tagged library skills: ${offenders.join(", ")}`).toEqual([]);
+  });
+});
+
+describe("parseLibraryRootSpecs (settings back-compat, ADR-0003)", () => {
+  it("passes bare strings through as public-only roots (pre-ADR overrides keep working)", () => {
+    expect(parseLibraryRootSpecs(["/a", "~/b"])).toEqual(["/a", "~/b"]);
+  });
+  it("accepts typed {path, surfaces} objects verbatim", () => {
+    const typed = [{ path: "/x", surfaces: ["public", "internal"] }];
+    expect(parseLibraryRootSpecs(typed)).toEqual(typed);
+  });
+  it("drops malformed entries with a logged warning; keeps the valid ones", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const out = parseLibraryRootSpecs([
+        "/ok",
+        { path: "/no-surfaces" },
+        { path: "", surfaces: ["public"] },
+        { path: "/bad-surfaces", surfaces: "public" },
+        { path: "/empty-surfaces", surfaces: [] },
+        42,
+        null,
+      ]);
+      expect(out).toEqual(["/ok"]);
+      expect(warn).toHaveBeenCalledTimes(6);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+  it("non-array / empty → []", () => {
+    expect(parseLibraryRootSpecs(undefined)).toEqual([]);
+    expect(parseLibraryRootSpecs("nope")).toEqual([]);
+    expect(parseLibraryRootSpecs([])).toEqual([]);
   });
 });
 
