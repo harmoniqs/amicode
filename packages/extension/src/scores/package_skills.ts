@@ -21,6 +21,24 @@ export interface SkillIndexEntry {
   path: string; // absolute SKILL.md path
 }
 
+/** A typed library root (ADR-0003, amicode#242): the directory PLUS the `surface:`
+ *  tags it admits. Two tiers — the dev's private plugin checkout admits
+ *  {public, internal} (checkout presence IS the eligibility proof: internal
+ *  SKILL.md content exists only in the private repo, so nobody stages skills
+ *  they do not already possess); the vendored public bundle admits {public}
+ *  only, as defense in depth on top of the extract pipeline's guarantee. */
+export interface LibraryRoot {
+  path: string;
+  surfaces: string[]; // admitted `surface:` tags
+}
+/** A bare string root keeps the pre-typing behavior: public-only. Settings
+ *  overrides written before ADR-0003 are string arrays — they keep working. */
+export type LibraryRootSpec = string | LibraryRoot;
+
+function normalizeLibraryRoot(r: LibraryRootSpec): LibraryRoot {
+  return typeof r === "string" ? { path: r, surfaces: ["public"] } : r;
+}
+
 function expandHome(p: string): string {
   if (p === "~") return process.env.HOME ?? p;
   if (p.startsWith("~/")) return path.join(process.env.HOME ?? "", p.slice(2));
@@ -81,31 +99,34 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
 }
 
 /** Library skills from the central amico-plugin library, discovered by SURFACE
- *  TAG (spec-20260713-003804). The library root is SCANNED, but ONLY skills whose
- *  frontmatter carries `surface: public` are returned — `internal`, untagged, and
- *  any other value are the leak hazard and are DROPPED. `public` = the OSS-shippable
- *  surface (the Armonia vault-management layer + physics/opt + generic craft); the
- *  tag IS the least-privilege guard. Staging (stageOpencodeSkills) copies only THIS
- *  selected set to the per-session stage dir — `skills.paths` never points at the
- *  library root itself. First root holding a given `<name>/SKILL.md` wins.
+ *  TAG (spec-20260713-003804) under PER-ROOT eligibility (ADR-0003, amicode#242).
+ *  Each root is scanned, but ONLY skills whose frontmatter `surface:` tag is in
+ *  that root's admitted `surfaces` are returned — the private checkout root
+ *  admits {public, internal}, the vendored bundle root admits {public} only, so
+ *  internal content can stage ONLY from a checkout the user already possesses.
+ *  Untagged and malformed skills are DROPPED from every root. Staging
+ *  (stageOpencodeSkills) copies only THIS selected set to the per-session stage
+ *  dir — `skills.paths` never points at a library root itself. First root
+ *  holding a given `<name>/SKILL.md` wins.
  *
- *  The private tier is NOT a library concern: private-package skills live co-located
- *  in their package repos and are gated by resolvePackageSkills (entitlement-derived
- *  allowlist ∩ repo presence). There is deliberately no library-level entitlement seam. */
-export function resolveLibrarySkills(roots: string[]): SkillIndexEntry[] {
+ *  The private tier is NOT otherwise a library concern: private-package skills
+ *  live co-located in their package repos and are gated by resolvePackageSkills
+ *  (entitlement-derived allowlist ∩ repo presence). */
+export function resolveLibrarySkills(roots: LibraryRootSpec[]): SkillIndexEntry[] {
   const out: SkillIndexEntry[] = [];
   const seen = new Set<string>(); // first-root-wins, keyed by dir name
   for (const r of roots) {
-    const root = expandHome(r);
+    const root = normalizeLibraryRoot(r);
+    const rootPath = expandHome(root.path);
     let names: string[] = [];
     try {
-      names = fs.readdirSync(root);
+      names = fs.readdirSync(rootPath);
     } catch {
       continue; // missing library root — silently skipped (session proceeds)
     }
     for (const name of names.sort()) {
       if (seen.has(name)) continue;
-      const skillPath = path.join(root, name, "SKILL.md");
+      const skillPath = path.join(rootPath, name, "SKILL.md");
       if (!fs.existsSync(skillPath)) continue;
       let fm: { name: string; description: string; surface?: string };
       try {
@@ -114,8 +135,12 @@ export function resolveLibrarySkills(roots: string[]): SkillIndexEntry[] {
         console.warn(`amicode: skipping malformed library skill ${skillPath}: ${e}`);
         continue;
       }
-      if (fm.surface !== "public") continue; // THE GUARD: internal/untagged/product never stage
-      seen.add(name); // this dir is the authoritative public skill (earlier root wins)
+      if (fm.surface === undefined) {
+        console.warn(`amicode: dropping untagged library skill ${skillPath} (no surface: tag — default-deny)`);
+        continue;
+      }
+      if (!root.surfaces.includes(fm.surface)) continue; // THE GUARD, per-root
+      seen.add(name); // this dir is the authoritative skill of that name (earlier root wins)
       out.push({ source: "library", name: fm.name, description: fm.description, path: skillPath });
     }
   }
