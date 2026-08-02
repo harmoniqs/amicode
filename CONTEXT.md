@@ -46,6 +46,12 @@ _Avoid_: Vault (as the system name), knowledge base
 One mounted knowledge tier within Armonia — a git-backed store of notes, specs, and catalog entries at a single precedence level (personal / project / team). Many Vaults mount into the Armonia stack; the panel lists them as its roots and reads them top-to-bottom.
 _Avoid_: Armonia (the whole stack), workspace, folder
 
+### Agentic work
+
+**Notturno**:
+The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
+_Avoid_: cron, scheduler (as concept names), night shift
+
 ### Orthogonal axes
 
 **Entitlement**:
