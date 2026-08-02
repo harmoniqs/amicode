@@ -25,9 +25,19 @@ describe("compileScore (score #0)", () => {
     idx.forEach((i, k) => expect(i, `stage ${ids[k]}`).toBeGreaterThan(-1));
     for (let k = 1; k < idx.length; k++) expect(idx[k]).toBeGreaterThan(idx[k - 1]);
   });
-  it("marks defaults (recommended) and routes choice questions via amicode_ask", () => {
+  it("marks defaults (recommended) and no longer routes choice questions via amicode_ask", () => {
     expect(md).toContain("transmon (recommended)");
-    expect(md).toContain("amicode_ask");
+    // amicode_ask is deprecated (one ask mechanism: the question card) — the
+    // contract must not route choice questions through it anymore.
+    expect(md).not.toMatch(/options list go through `amicode_ask`/);
+  });
+  it("teaches one ask mechanism: every question is a card via the question tool", () => {
+    expect(md).toMatch(/every question is a card/i);
+  });
+  it("instructs free-form questions to use the question tool with the text kind (amicode#245 AC5)", () => {
+    expect(md).toContain('kind: "text"');
+    // the retired contract phrasing — free-form questions are NEVER plain text
+    expect(md).not.toMatch(/free-form questions stay\s+plain text/i);
   });
   it("substitutes the score-relative template to an absolute path", () => {
     expect(md).toContain(path.join(SCORES_ROOT, "pulse-designer", "templates", "solve.jl"));
