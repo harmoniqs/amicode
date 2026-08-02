@@ -219,10 +219,34 @@
         "amicode.skillLibraryRoots": {
           "type": "array",
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "path",
+                  "surfaces"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "surfaces": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
           },
           "default": [],
-          "description": "Roots for the central skill library, scanned for skills tagged `surface: product`. Empty = ~/harmoniqs/amico-plugin/skills. Only product-tagged skills stage into Amicode; internal/untagged process skills never leak."
+          "markdownDescription": "Roots for the central skill library, scanned first-root-wins by directory name. Empty = the defaults: the dev's private plugin checkout (admits `surface: public` **and** `internal`), then the vendored public bundle (admits `public` only). Entries are typed roots `{\"path\": \"...\", \"surfaces\": [\"public\", ...]}` or plain strings. **Back-compat (ADR-0003):** a plain string keeps the pre-typing behavior — it admits `surface: public` only; existing string overrides keep working unchanged. Untagged/malformed skills are dropped from every root with a logged warning."
         },
         "amicode.vaultDir": {
           "type": "string",
