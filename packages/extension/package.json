@@ -2,7 +2,7 @@
   "name": "amicode",
   "displayName": "Amicode",
   "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
-  "version": "0.2.1-alpha.1",
+  "version": "0.2.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
