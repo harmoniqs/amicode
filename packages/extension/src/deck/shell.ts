@@ -470,7 +470,7 @@ window.addEventListener("message", (e) => {
 
   // Everything else rides up to the extension, tagged with the asking pane so
   // replies (clipboard text) route back correctly.
-  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "save-file" || d.kind === "set-default-model") {
+  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model") {
     vscode.postMessage({ ...d, tab: tabId });
   }
 });

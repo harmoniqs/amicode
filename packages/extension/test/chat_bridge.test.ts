@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import * as vscode from "vscode";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { handleAmicodeBridgeMessage, type BridgeIo } from "../src/chat_bridge";
 
 // ============================================================================
@@ -39,6 +42,36 @@ describe("amicode bridge — open-external", () => {
       expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-external", url }, host)).toBe(false);
     }
     expect(env.opened).toHaveLength(1);
+  });
+});
+
+describe("amicode bridge — open-file", () => {
+  it("opens existing local files in the editor and drops everything else", async () => {
+    const host = io();
+    const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.md`);
+    fs.writeFileSync(target, "# note\n");
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
+    await flush();
+    expect(executed).toContain("vscode.open");
+    fs.rmSync(target, { force: true });
+  });
+
+  it("never opens non-file schemes, missing files, or non-absolute paths", async () => {
+    const host = io();
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
+    // Non-file schemes are not ours at all (consumed = false, like open-external).
+    for (const url of ["https://example.com/x", "javascript:alert(1)"]) {
+      expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(false);
+    }
+    // file:// shape but unreachable: consumed silently, nothing opened.
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: "file:///definitely/not/here-xyz.md" }, host),
+    ).toBe(true);
+    await flush();
+    expect(executed).toHaveLength(before);
   });
 });
 
