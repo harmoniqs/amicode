@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { compileScore, spliceIntoAgentsMd } from "../../src/scores/compiler";
+import { compileScore, compileChainedScore, spliceIntoAgentsMd } from "../../src/scores/compiler";
 import { loadRepertoire } from "../../src/scores/loader";
 
 const SCORES_ROOT = path.resolve(__dirname, "..", "..", "scores");
@@ -10,6 +10,13 @@ function score0() {
   const load = loadRepertoire(SCORES_ROOT);
   const s = load.scores.find((x) => x.manifest.id === "pulse-designer");
   if (!s) throw new Error("score #0 missing");
+  return s;
+}
+
+function overture() {
+  const load = loadRepertoire(SCORES_ROOT);
+  const s = load.scores.find((x) => x.manifest.id === "overture");
+  if (!s) throw new Error("overture missing");
   return s;
 }
 
@@ -61,6 +68,22 @@ describe("compileScore (score #0)", () => {
   });
   it("leaves no unknown {{...}} placeholders", () => {
     expect(md).not.toMatch(/\{\{[A-Z_]+\}\}/);
+  });
+});
+
+describe("compileChainedScore (real overture → pulse-designer)", () => {
+  const md = compileChainedScore(overture(), score0());
+
+  it("instructs free-form questions to use the question tool with the text kind (amicode#245 AC5)", () => {
+    expect(md).toContain('kind: "text"');
+  });
+  it("drops the plain-text permission from the overture body (amicode#245 AC5)", () => {
+    expect(md).not.toContain("free-form answers can be plain text");
+    expect(md).not.toContain("plain text");
+  });
+  it("keeps the overture's choice questions as option cards, default first (amicode#245 AC6 regression)", () => {
+    expect(md).toContain("simulation only for now (recommended)");
+    expect(md).toContain("extant QICK control code (on-prem, à la Stanford/UChicago)");
   });
 });
 
