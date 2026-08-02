@@ -30,6 +30,25 @@ if grep -aq 'newLayoutDesigns:[A-Za-z$_]\{1,8\}(()=>!1)' "$BIN"; then
   exit 1
 fi
 
+# Shape C (1.18.10 merge): the memo survived but the property went SHORTHAND —
+# `newLayoutDesigns:<VAR>` with `<VAR>=[wrapper](()=>!0)` at the assignment site
+# (the wrapper call is optional — it minifies differently per target). Mirrors
+# the fork's amicode-release.yml gate; `\$` in the double-quoted classes because
+# `$_A` is a valid shell name and `set -u` would abort on expansion.
+VAR=$( { grep -aoh 'newLayoutDesigns:[$_A-Za-z0-9]\{1,20\}[,}]' "$BIN" || true; } | head -1 | sed 's/newLayoutDesigns://; s/[,}]//')
+if test -n "$VAR"; then
+  if grep -aq "[^A-Za-z0-9_\$]${VAR}=[\$_A-Za-z]\{0,8\}(()=>!1)" "$BIN"; then
+    echo "FAIL: amicode UI gate shorthand memo is OFF (=>!1) — $BIN was built with OPENCODE_CHANNEL=latest/prod and hides every amicode surface"
+    exit 1
+  fi
+  if grep -aq "[^A-Za-z0-9_\$]${VAR}=[\$_A-Za-z]\{0,8\}(()=>!0)" "$BIN"; then
+    echo "OK: amicode UI gate hardcoded ON (shorthand memo ${VAR}=…(()=>!0)) — $BIN"
+    exit 0
+  fi
+  echo "FAIL: shorthand memo var ${VAR} found but its assignment matches neither (()=>!0) nor (()=>!1) in $BIN (minifier drift?)"
+  exit 1
+fi
+
 # Shape B (legacy, channel-gated): `...general?.newLayoutDesigns,<VAR>)` where the
 # default lands in <VAR> as `<VAR>=!0` (on) / `<VAR>=!1` (off). Kept so this check
 # still works if the setting is ever rewired back to the channel default.
