@@ -110,6 +110,12 @@ export class ChatPanel {
     ChatPanel.bugReportAvailable = available;
   }
 
+  /** The primary panel if one is live (never creates) — the down lane's
+   *  fallback when the server is mid-restart and no ready URL exists. */
+  static peek(): ChatPanel | undefined {
+    return ChatPanel.current;
+  }
+
   /** DOWN lane for the bug-report dock (amicode#250): open-bug-report /
    *  close-bug-report. Same idiom as postComputeConnect — posted twice (now +
    *  1.5s) because a freshly created panel's iframe may not be listening yet;
