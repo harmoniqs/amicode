@@ -13,7 +13,7 @@ stages:
   - id: identity
     questions:
       - id: identity
-        prompt: "First — who am I working with? Your name, and your role or lab if you'd like."
+        prompt: "First — who am I working with? Ideally, your name, role, and affiliation."
         default: "just a name is fine"
   - id: platforms
     questions:
