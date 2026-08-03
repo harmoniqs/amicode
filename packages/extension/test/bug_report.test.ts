@@ -113,3 +113,55 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     expect(new Set(authed)).toEqual(new Set([BOOT_AUTH]));
   });
 });
+
+/** Drive a manager to the open state with bug session `ses_bug`; returns the
+ *  recorded traffic for the lifecycle assertions. */
+async function openBugSession(overrides: Partial<BugReportDeps> = {}) {
+  const { fetchImpl, calls } = mockFetch({
+    "GET /session": { status: 200, body: [] },
+    "POST /session": { status: 200, body: { id: "ses_bug" } },
+    "POST /session/ses_bug/command": { status: 200, body: {} },
+    "PATCH /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
+    "POST /session/ses_bug/abort": { status: 200, body: true },
+    "DELETE /session/ses_bug": { status: 200, body: true },
+  });
+  const { d, posted, errors } = deps(overrides, fetchImpl);
+  const manager = new BugReportManager(d);
+  await manager.reportBug();
+  calls.length = 0;
+  posted.length = 0;
+  return { manager, calls, posted, errors };
+}
+
+describe("bug-session lifecycle (AC2)", () => {
+  it("bug-filed for the known id archives the session (soft hide) and tells the app to close the dock", async () => {
+    const { manager, calls, posted } = await openBugSession();
+
+    manager.sink.filed("ses_bug", "https://github.com/harmoniqs/amicode/issues/251");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const archive = calls.filter((c) => c.method === "PATCH" && c.url.endsWith("/session/ses_bug"));
+    expect(archive).toHaveLength(1);
+    const archived = (archive[0].body as { time: { archived: unknown } }).time.archived;
+    expect(typeof archived).toBe("number"); // ms epoch — the soft-hide timestamp
+    // No abort, no delete on the filed path — the transcript stays restorable.
+    expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
+    expect(calls.filter((c) => c.url.endsWith("/abort"))).toEqual([]);
+    expect(posted).toEqual([
+      { source: "amicode", kind: "close-bug-report", sessionID: "ses_bug" },
+    ]);
+  });
+
+  it("bug-report-closed before any filing aborts, then deletes, the session", async () => {
+    const { manager, calls, posted } = await openBugSession();
+
+    manager.sink.closed("ses_bug");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const methods = calls.map((c) => `${c.method} ${new URL(c.url).pathname}`);
+    expect(methods).toEqual(["POST /session/ses_bug/abort", "DELETE /session/ses_bug"]);
+    // Never archived on the abandon path; the dock already dismissed itself.
+    expect(calls.filter((c) => c.method === "PATCH")).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+});
