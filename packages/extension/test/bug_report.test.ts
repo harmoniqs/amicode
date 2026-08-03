@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { BugReportManager, type BugReportDeps } from "../src/bug_report";
+import { BugReportManager, bugReportSkillStaged, type BugReportDeps } from "../src/bug_report";
 
 // ============================================================================
 // amicode#250 — the extension owns the bug session end-to-end: create (title
@@ -163,6 +163,20 @@ describe("bug-session lifecycle (AC2)", () => {
     // Never archived on the abandon path; the dock already dismissed itself.
     expect(calls.filter((c) => c.method === "PATCH")).toEqual([]);
     expect(posted).toEqual([]);
+  });
+});
+
+describe("bugReportSkillStaged — the boot-param gate (AC5)", () => {
+  it("true iff a staged skill path belongs to report-a-bug (library or package layout)", () => {
+    expect(
+      bugReportSkillStaged([
+        "/ext/vendor/skills-public/skills/transmon/SKILL.md",
+        "/ext/vendor/skills-public/skills/report-a-bug/SKILL.md",
+      ]),
+    ).toBe(true);
+    expect(bugReportSkillStaged(["/home/dev/harmoniqs/packages/Piccolissimo.jl/skills/report-a-bug/SKILL.md"])).toBe(true);
+    expect(bugReportSkillStaged(["/ext/vendor/skills-public/skills/transmon/SKILL.md"])).toBe(false);
+    expect(bugReportSkillStaged([])).toBe(false);
   });
 });
 

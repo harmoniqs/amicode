@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
+import { getBugReport } from "./bug_report";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -40,6 +41,10 @@ export class ChatPanel {
   private static current?: ChatPanel;
   /** Every live chat tab (primary included) — drives tab-title numbering. */
   private static readonly live = new Set<ChatPanel>();
+  /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
+   *  staged skill set after every session prep; the composer button renders
+   *  only when the report-a-bug skill is there to answer it. */
+  private static bugReportAvailable = false;
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(
@@ -72,6 +77,10 @@ export class ChatPanel {
         const handled = handleAmicodeBridgeMessage(msg, {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
+          // Bug-session lifecycle (#250): the dock's bug-filed /
+          // bug-report-closed route to the window's manager (undefined until
+          // activation registers it; the bridge consumes the kinds regardless).
+          bugReport: getBugReport()?.sink,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
       },
@@ -91,6 +100,22 @@ export class ChatPanel {
    *  request as idempotent within its freshness window. */
   postComputeConnect(): void {
     const envelope = { source: "amicode", kind: "open-compute-connect" };
+    void this.panel.webview.postMessage(envelope);
+    setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
+  }
+
+  /** AC5's gate setter — called after each session prep with
+   *  bugReportSkillStaged(project.skillPaths). */
+  static setBugReportAvailable(available: boolean): void {
+    ChatPanel.bugReportAvailable = available;
+  }
+
+  /** DOWN lane for the bug-report dock (amicode#250): open-bug-report /
+   *  close-bug-report. Same idiom as postComputeConnect — posted twice (now +
+   *  1.5s) because a freshly created panel's iframe may not be listening yet;
+   *  both kinds are idempotent app-side (same-id open = reveal, close of a
+   *  closed dock = no-op), so the re-post is pure reliability. */
+  postToApp(envelope: { source: "amicode"; kind: string; sessionID: string }): void {
     void this.panel.webview.postMessage(envelope);
     setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
   }
@@ -183,6 +208,10 @@ export class ChatPanel {
     // phantom project. Only amicode sets this — standalone opencode is
     // unaffected (its cwd IS the user's project).
     if (hideProjectDir) framed.searchParams.set("amicode_hide_project", hideProjectDir);
+    // amicode#250 AC5: arm the composer's report-a-bug button ONLY when the
+    // staged skill set includes report-a-bug. The dock iframe (pane bug-dock)
+    // never carries this — it is the main app surface's gate alone.
+    if (ChatPanel.bugReportAvailable) framed.searchParams.set("amicode_bug_report", "1");
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -216,15 +245,15 @@ export class ChatPanel {
             replyClipboardImage(d.nonce);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "save-file" || d.kind === "set-default-model")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed")) {
             vscode.postMessage(d);
           }
           return;
         }
-        // Lane 2 — extension → iframe (theme): posted by the extension host
+        // Lane 2 — extension → iframe: posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
-        // our own theme envelope, pinned to the opencode origin.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect")) {
+        // our own envelopes, pinned to the opencode origin.
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
