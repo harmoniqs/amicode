@@ -165,3 +165,54 @@ describe("bug-session lifecycle (AC2)", () => {
     expect(posted).toEqual([]);
   });
 });
+
+describe("single-open invariant (AC3)", () => {
+  it("a second invocation while a bug session is open reveals with the SAME id — never a second create", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+    });
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+
+    await manager.reportBug();
+    await manager.reportBug();
+    await manager.reportBug();
+
+    expect(calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toHaveLength(1);
+    expect(posted).toEqual([
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+    ]);
+  });
+
+  it("concurrent invocations join the in-flight open — exactly one session created", async () => {
+    let releaseCreate: (() => void) | undefined;
+    const gate = new Promise<void>((r) => (releaseCreate = r));
+    const calls: Call[] = [];
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const path = new URL(url).pathname;
+      calls.push({ method: init?.method ?? "GET", url });
+      if (init?.method === "POST" && path === "/session") await gate; // hold the create
+      const body = path === "/session" && init?.method === "POST" ? { id: "ses_bug" } : [];
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+
+    const first = manager.reportBug();
+    const second = manager.reportBug();
+    releaseCreate!();
+    await Promise.all([first, second]);
+
+    expect(calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toHaveLength(1);
+    // Both callers end at the open dock: one create-post, one reveal-post.
+    expect(posted).toEqual([
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+    ]);
+  });
+});
