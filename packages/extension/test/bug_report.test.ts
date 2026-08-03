@@ -216,3 +216,94 @@ describe("single-open invariant (AC3)", () => {
     ]);
   });
 });
+
+describe("failure cleanup + unknown-id drops (AC4)", () => {
+  it("an arming failure deletes the partial session and surfaces an error — no orphan, no open message", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 500, body: { error: "boom" } },
+      "DELETE /session/ses_bug": { status: 200, body: true },
+    });
+    const { d, posted, errors } = deps({}, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    expect(calls.filter((c) => c.method === "DELETE" && c.url.endsWith("/session/ses_bug"))).toHaveLength(1);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("couldn't start the bug report");
+    expect(posted).toEqual([]);
+  });
+
+  it("a create failure surfaces an error and never opens; a network throw on create also notifies", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 503, body: {} },
+    });
+    const { d, posted, errors } = deps({}, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    expect(errors).toHaveLength(1);
+    expect(posted).toEqual([]);
+    // Nothing was created — there is no id to delete, and none is attempted.
+    expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
+
+    const throwing = (async () => {
+      throw new Error("ECONNREFUSED");
+    }) as unknown as typeof fetch;
+    const second = deps({}, throwing);
+    await new BugReportManager(second.d).reportBug();
+    expect(second.errors).toHaveLength(1);
+    expect(second.posted).toEqual([]);
+  });
+
+  it("with the server down the command fails actionably and touches nothing", async () => {
+    const { fetchImpl, calls } = mockFetch({});
+    const { d, posted, errors } = deps({ server: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("isn't ready");
+    expect(calls).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it("bridge messages for unknown session ids are dropped — no archive, no abort, no delete, no down-post", async () => {
+    const { manager, calls, posted } = await openBugSession();
+
+    manager.sink.filed("ses_someone_else", "https://github.com/x/issues/9");
+    manager.sink.closed("ses_someone_else");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls).toEqual([]);
+    expect(posted).toEqual([]);
+  });
+
+  it("a bug-report-closed arriving AFTER filing (the filed end-state's close) is already-terminal — dropped", async () => {
+    const { manager, calls, posted } = await openBugSession();
+
+    manager.sink.filed("ses_bug", "filed-via-browser");
+    await new Promise((r) => setTimeout(r, 0));
+    calls.length = 0;
+    posted.length = 0;
+
+    manager.sink.closed("ses_bug"); // late close for the archived session
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls).toEqual([]); // no abort, no delete — the filed session is never hard-deleted
+    expect(posted).toEqual([]);
+  });
+
+  it("a duplicate bug-filed for the same id archives exactly once", async () => {
+    const { manager, calls, posted } = await openBugSession();
+
+    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
+    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
+    expect(posted).toHaveLength(1);
+  });
+});
