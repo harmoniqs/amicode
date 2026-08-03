@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import * as vscode from "vscode";
 import { BugReportManager, bugReportSkillStaged, type BugReportDeps } from "../src/bug_report";
 
 // ============================================================================
@@ -163,6 +164,61 @@ describe("bug-session lifecycle (AC2)", () => {
     // Never archived on the abandon path; the dock already dismissed itself.
     expect(calls.filter((c) => c.method === "PATCH")).toEqual([]);
     expect(posted).toEqual([]);
+  });
+});
+
+describe("the originating session is never modified, navigated, or closed (AC6)", () => {
+  it("no path mutates the origin session — it is only ever READ (the list call) and embedded as a pointer", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [
+          { id: "ses_origin", time: { created: 1, updated: 9 } },
+          { id: "ses_older", time: { created: 1, updated: 2 } },
+        ],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+      "PATCH /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/abort": { status: 200, body: true },
+      "DELETE /session/ses_bug": { status: 200, body: true },
+    });
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+
+    // Full lifecycle coverage: open → filed; open again → abandoned.
+    await manager.reportBug();
+    manager.sink.filed("ses_bug", "https://github.com/harmoniqs/amicode/issues/251");
+    await new Promise((r) => setTimeout(r, 0));
+    await manager.reportBug();
+    manager.sink.closed("ses_bug");
+    await new Promise((r) => setTimeout(r, 0));
+
+    // The envelope DID carry the origin pointer (provenance works)…
+    const creates = calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session");
+    for (const create of creates) {
+      expect((create.body as { metadata: { bug_report: { origin_session_id?: string } } }).metadata.bug_report.origin_session_id).toBe(
+        "ses_origin",
+      );
+    }
+    // …but the only call that so much as NAMES a non-bug session is the
+    // read-only list. Every mutation targets the bug session alone.
+    const foreign = calls.filter((c) => c.url.includes("ses_origin") || c.url.includes("ses_older"));
+    expect(foreign).toEqual([]);
+    for (const c of calls.filter((c) => c.method !== "GET")) {
+      // POST /session is the bug-session CREATE (the one session we may make);
+      // every other mutation carries the bug id and nothing else.
+      expect(new URL(c.url).pathname).toMatch(/^\/session(\/ses_bug(\/command|\/abort)?)?$/);
+    }
+    // And nothing reaches for a navigation/session-switch command — the main
+    // chat continues uninterrupted while the dock lives (and dies).
+    expect((vscode.commands as unknown as { executed: string[] }).executed ?? []).toEqual([]);
+    // The down lane carries ONLY dock open/close for the bug session — never
+    // an instruction about the origin.
+    for (const m of posted) {
+      expect((m as { sessionID: string }).sessionID).toBe("ses_bug");
+      expect(["open-bug-report", "close-bug-report"]).toContain((m as { kind: string }).kind);
+    }
   });
 });
 
