@@ -36,6 +36,10 @@ _Avoid_: Workspace, folder (as a concept name), repo
 One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
 _Avoid_: Chat (as a concept name), conversation
 
+**Bug session**:
+A single-purpose Session spawned by the Report-a-Bug entry point. Bound to the active Project like any Session, but machine-managed: archived once its report is filed, deleted if abandoned before filing, and kept out of the Project's session history in every state.
+_Avoid_: chat, side chat, ticket
+
 ### Knowledge
 
 **Armonia**:
