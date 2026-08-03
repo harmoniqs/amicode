@@ -74,3 +74,47 @@ describe("ChatPanel — auth_token carriage to the fork app (#163)", () => {
     expect(iframeSrc(cap.created[0].webview.html).searchParams.has("auth_token")).toBe(false);
   });
 });
+
+describe("ChatPanel — the amicode_bug_report boot param (amicode#250 AC5)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.setBugReportAvailable(false); // static feature flag — reset between tests
+  });
+
+  it("sets amicode_bug_report=1 on the iframe src when the staged skills include report-a-bug", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.setBugReportAvailable(true);
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(iframeSrc(cap.created[0].webview.html).searchParams.get("amicode_bug_report")).toBe("1");
+  });
+
+  it("omits the param when report-a-bug was not staged — no dead button on Marketplace installs", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.setBugReportAvailable(false);
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(iframeSrc(cap.created[0].webview.html).searchParams.has("amicode_bug_report")).toBe(false);
+  });
+
+  it("the relay admits the bug-report kinds on both lanes", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    // Lane 1 (app → extension): the dock's lifecycle reports.
+    expect(html).toContain('"bug-filed"');
+    expect(html).toContain('"bug-report-closed"');
+    // Lane 2 (extension → app): dock open/close.
+    expect(html).toContain('"open-bug-report"');
+    expect(html).toContain('"close-bug-report"');
+  });
+});

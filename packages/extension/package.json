@@ -105,6 +105,11 @@
         "icon": "$(layout)"
       },
       {
+        "command": "amicode.reportBug",
+        "title": "Amicode: Report a Bug",
+        "icon": "$(bug)"
+      },
+      {
         "command": "amicode.setupVault",
         "title": "Amicode: Set up a personal vault"
       },

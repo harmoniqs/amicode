@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
 import { tabIconPath, themeKindToScheme } from "./chat_panel";
+import { getBugReport } from "./bug_report";
 
 // ============================================================================
 // DeckPanel — the Chat Deck: MANY chat panes inside ONE editor tab. The heavy
@@ -46,6 +47,10 @@ export class DeckPanel {
         const handled = handleAmicodeBridgeMessage(msg, {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
+          // Bug-session lifecycle (#250) — deck panes never carry the
+          // amicode_bug_report boot param, so no dock lives here; wired for
+          // uniformity (the manager drops unknown ids anyway).
+          bugReport: getBugReport()?.sink,
         });
         if (!handled) console.log("[amicode/deck] webview msg:", msg);
       },

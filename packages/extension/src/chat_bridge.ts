@@ -22,11 +22,21 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.savePulse",
   "amicode.openRunDir",
   "amicode.openInspector",
+  // The composer's report-a-bug button (fork #116) posts this over the command
+  // lane; the registered command owns the bug session end-to-end (#250).
+  "amicode.reportBug",
   // ⌘⇧P inside the chat iframe lands in the APP's palette, not VS Code's —
   // the fork forwards it here so the editor's Command Palette (where every
   // Amicode: command lives) opens as users expect.
   "workbench.action.showCommands",
 ]);
+
+/** The bug-session lifecycle sink (amicode#250) — the panels wire the
+ *  BugReportManager's. Structural, so the bridge never imports the manager. */
+export interface BugReportSink {
+  filed(sessionID: string, url: string): void;
+  closed(sessionID: string): void;
+}
 
 /** Side channels the handler needs from its host panel. */
 export interface BridgeIo {
@@ -34,6 +44,9 @@ export interface BridgeIo {
   visible(): boolean;
   /** Replies (clipboard text) go back to the host webview; `tab` echoes along. */
   postToWebview(msg: unknown): void;
+  /** Bug-session lifecycle (bug-filed / bug-report-closed). Undefined until the
+   *  manager registers at activation; the kinds are consumed regardless. */
+  bugReport?: BugReportSink;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -121,6 +134,24 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
     return false;
+  }
+
+  // Bug-session lifecycle up-kinds (#250): the dock's sentinel watcher reports
+  // a filing, the close control reports a pre-file abandon. The manager owns
+  // the known-id check (unknown ids drop there); we only shape-validate.
+  // Consumed either way — these are our envelopes, never foreign noise.
+  if (msg.kind === "bug-filed") {
+    const sessionID = (msg as unknown as { sessionID?: unknown }).sessionID;
+    const url = (msg as unknown as { url?: unknown }).url;
+    if (typeof sessionID === "string" && sessionID !== "") {
+      io.bugReport?.filed(sessionID, typeof url === "string" ? url : "");
+    }
+    return true;
+  }
+  if (msg.kind === "bug-report-closed") {
+    const sessionID = (msg as unknown as { sessionID?: unknown }).sessionID;
+    if (typeof sessionID === "string" && sessionID !== "") io.bugReport?.closed(sessionID);
+    return true;
   }
 
   // Dashboard "Default model" control mirrors its choice into the

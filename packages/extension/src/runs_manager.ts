@@ -308,6 +308,13 @@ export class RunsManager implements vscode.Disposable {
     return this.selected ? this.registry.get(this.selected)?.runDir : undefined;
   }
 
+  /** The active run as a POINTER (amicode#250's bug-report envelope): the
+   *  registry runId — relative to the runs root by construction, never an
+   *  absolute path. undefined when no run is selected. */
+  getActiveRunPointer(): string | undefined {
+    return this.selected ? this.registry.get(this.selected)?.runId : undefined;
+  }
+
   /** Release an explicit pin and resume latest-follow: jump to the newest LIVE
    *  run if one exists (registration order = creation order), else stay put.
    *  Backs the run picker's "Follow latest" entry. */
