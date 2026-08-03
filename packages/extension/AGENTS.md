@@ -38,14 +38,14 @@ Sound like it — not a generic assistant.
 ## Workflow (this is the whole job)
 
 The script is authored at an explicit TRUST TIER and launched through the gate
-`amico-run --spec`. All paths below use the active Problem workspace
+`{{AMICO_RUN}} --spec`. All paths below use the active Problem workspace
 `~/.amico/problems/<slug>/` (open/create/rename with `amicode_problem`; the
 workspace owns `solve.jl` — never author in `/tmp`).
 
 1. **Resolve the tier** once the System + Formulation are recorded. From the
    Formulation, run:
    ```bash
-   amico-run resolve --platform <transmon|rydberg|…> --kind <gate_synthesis|state_prep|…> --size <n>
+   {{AMICO_RUN}} resolve --platform <transmon|rydberg|…> --kind <gate_synthesis|state_prep|…> --size <n>
    ```
    It prints JSON: `{tier, source?, template_path?|exemplar_path?, packages, blocked_higher?}`.
 2. **Author `solve.jl` per the tier** into `~/.amico/problems/<slug>/solve.jl`:
@@ -66,7 +66,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
 4. **free tier only — generate the env** (vetted/composed use the provisioned
    env unless `resolve` said otherwise):
    ```bash
-   amico-run sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
+   {{AMICO_RUN}} sandbox ~/.amico/problems/<slug> --packages <comma-list from resolve>
    # then run the printed  JULIA_PKG_USE_CLI_GIT=true julia --project=… Pkg.instantiate()  line
    ```
 5. **Estimate, confirm routing, then assemble `~/.amico/problems/<slug>/solvespec.json`.**
@@ -79,7 +79,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
      it specifies and do **not** ask where the solve should run. When the section is
      **absent**, this solve is LOCAL: run local and do NOT offer remote.
    - **Estimate (informs, never decides).** Run
-     `amico-run estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
+     `{{AMICO_RUN}} estimate ~/.amico/problems/<slug>/solve.jl` — it prints ONE JSON line
      `{sizeClass, estimatedBytes, localRamBytes, offloadSuggested, reason, …}`. Surface it
      at the decision point: tell the researcher the `sizeClass`, the `estimatedBytes` vs
      local RAM, and the `reason`. The estimate only **suggests**, and only where a choice
@@ -96,7 +96,7 @@ workspace owns `solve.jl` — never author in `/tmp`).
    env: `{{JULIA_PROJECT}}` (the provisioned env) for vetted/composed, or the
    sandbox env from step 4 for free (it must equal the spec's `env.project`).
    ```bash
-   ( nohup amico-run --spec ~/.amico/problems/<slug>/solvespec.json \
+   ( nohup {{AMICO_RUN}} --spec ~/.amico/problems/<slug>/solvespec.json \
        --project {{JULIA_PROJECT}} --lab default \
        ~/.amico/problems/<slug>/solve.jl \
        > ~/.amico/problems/<slug>/solve.log 2>&1 < /dev/null & )
@@ -116,9 +116,9 @@ workspace owns `solve.jl` — never author in `/tmp`).
    agree/disagree honestly — a `free` run is UNTRUSTED and cannot be promoted
    until verification agrees.
 
-There is **no MCP server**. The solve runs through `amico-run` via bash; the
+There is **no MCP server**. The solve runs through `{{AMICO_RUN}}` via bash; the
 `amicode_*` tools below (when present) record design state under the Problem
-workspace — they never replace the bash launch. `amico-run --help` prints usage.
+workspace — they never replace the bash launch. `{{AMICO_RUN}} --help` prints usage.
 
 ### Bookkeeping verbs (`amico` — same bash surface)
 
@@ -322,7 +322,7 @@ Stages, in order:
    below); pass them to `amicode_solve` (it records them on the Formulation and
    writes the Run entity, stamped with the resolved `tier`), then author
    `solve.jl` and launch it through the tiered gate — **follow the Workflow
-   steps 1–7 above** (`amico-run resolve` → author per tier → `amico-run --spec`
+   steps 1–7 above** (`{{AMICO_RUN}} resolve` → author per tier → `{{AMICO_RUN}} --spec`
    via bash). For a stock single-qubit transmon gate this resolves to the
    **vetted** tier and is exactly the fill-in-the-block flow.
 7. **INSPECT** — the Run Inspector opens itself and streams the live pulse;
@@ -411,7 +411,7 @@ lists it — honestly caveated (see the PLATFORM stage).
 
 ## The run-dir contract your script MUST emit
 
-`amico-run` writes `run.toml` (first) and `FINISHED` (last) itself. Your
+`{{AMICO_RUN}}` writes `run.toml` (first) and `FINISHED` (last) itself. Your
 script, running with cwd = the run dir, must emit:
 
 - `AMICODE_ITER iter=<n> f=<obj> inf_pr=<…> inf_du=<…>` to stdout, flushed,
@@ -492,6 +492,18 @@ correct loader in this Piccolo.
 <!-- AMICO_JULIA_PROJECT --> The Julia project to pass as `--project` is:
 
 **{{JULIA_PROJECT}}**. Always pass it.
+
+## Tool use
+
+- **The tools you need are at absolute paths already. Never hunt for them.** Use
+  `{{AMICO_RUN}}` and `{{JULIA_PROJECT}}` verbatim. Do **not** run
+  `which amico-run`, and never fall back to `find ~ -name …`, `find /usr -name …`,
+  or `pip list` to locate it — searching the filesystem for a path you were handed
+  is always wrong here. If a command genuinely fails, report the error and stop;
+  do not go looking for the binary.
+
+- Batch independent tool calls into one turn where it's natural; each turn is a
+  full round-trip. Serialize only when a later call needs an earlier result.
 
 ## Style & formatting
 

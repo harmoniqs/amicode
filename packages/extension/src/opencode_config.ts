@@ -464,6 +464,14 @@ export interface OpencodeConfigOptions {
   /** Julia project (--project) the agent should use; already resolved (see
    *  resolveJuliaProject). Substituted into AGENTS.md as {{JULIA_PROJECT}}. */
   juliaProject: string | undefined;
+  /** Absolute path to the `amico-run` launcher, substituted into AGENTS.md as
+   *  {{AMICO_RUN}}. PATH augmentation already happens at spawn time, but when it
+   *  fails the agent fell back to `which amico-run || find ~ -name amico-run`,
+   *  and an unbounded scan of $HOME costs ~2 minutes EACH: 128 such calls totalling
+   *  417s were measured in one session's history (2026-08-03). Handing over the
+   *  absolute path removes the reason to search at all. Undefined leaves the
+   *  placeholder resolving to the bare command (previous behaviour). */
+  amicoRunPath?: string;
   /** Scores repertoire root (SCORE.md manifests). Default: the bundled scores/. */
   scoresRoot?: string;
   /** Dir holding the user's entitlements.toml (access-code stub). Default: ~/.amico/amicode. */
@@ -524,7 +532,11 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico-run <script>`.\n";
   const filled = raw
     .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
-    .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc);
+    .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc)
+    // Absolute when we know it, bare command otherwise — a bare `amico-run` is
+    // exactly the pre-existing behaviour, so an unresolved bin dir degrades
+    // rather than breaking.
+    .replaceAll("{{AMICO_RUN}}", opts.amicoRunPath ?? "amico-run");
 
   // Score runtime ("data-defined, prompt-executed", scores spec §6): compile the
   // selected score (v1: boot-time selection of score #0, pulse-designer) over the
