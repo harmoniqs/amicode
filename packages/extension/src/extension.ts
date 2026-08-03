@@ -533,7 +533,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         opencodeChannel.appendLine("[bug] no chat surface for the dock message — dropped");
         return;
       }
-      panel.postToApp(msg as { source: "amicode"; kind: string; sessionID: string });
+      panel.postToApp(msg);
     },
     showError: (m) => void vscode.window.showErrorMessage(m),
     log: (line) => opencodeChannel.appendLine(line),

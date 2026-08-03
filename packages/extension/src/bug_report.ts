@@ -38,6 +38,13 @@ export const CLOSE_BUG_REPORT_KIND = "close-bug-report";
 export const BUG_FILED_KIND = "bug-filed";
 export const BUG_REPORT_CLOSED_KIND = "bug-report-closed";
 
+/** The DOWN envelopes this module ever posts. */
+export interface BugReportDownMessage {
+  source: "amicode";
+  kind: typeof OPEN_BUG_REPORT_KIND | typeof CLOSE_BUG_REPORT_KIND;
+  sessionID: string;
+}
+
 /** The `amicode_bug_report=1` boot param is set iff the staged skill set
  *  includes report-a-bug (AC5) — the composer button never renders without the
  *  skill that answers it. Staged paths are `<stageDir>/<name>/SKILL.md` and the
@@ -63,7 +70,7 @@ export interface BugReportDeps {
    *  relative to the runs root, never an absolute path; undefined when none. */
   activeRunPointer(): string | undefined;
   /** DOWN lane to the main app surface (the dock's host). */
-  postDown(msg: unknown): void;
+  postDown(msg: BugReportDownMessage): void;
   showError(message: string): void;
   log?(line: string): void;
   fetchImpl?: typeof fetch;
@@ -154,16 +161,24 @@ export class BugReportManager {
     return envelope;
   }
 
+  /** Session-collection URL scoped to the app's project (the VS Code workspace
+   *  folder) — without it the server defaults to its OWN cwd scope, where the
+   *  user's sessions don't live. Member routes (/session/:id/…) need no scope:
+   *  the server routes those by the session's own directory. */
+  private collectionUrl(server: BugReportServer): URL {
+    const url = new URL("/session", server.url);
+    const dir = this.deps.workspaceDir();
+    if (dir) url.searchParams.set("directory", dir);
+    return url;
+  }
+
   /** The originating session, best-effort: the most recently updated root
    *  session in the app's project scope that isn't itself a bug session (the
    *  list is updated-DESC and excludes archived). READ-ONLY provenance — this
    *  id is never a mutation target (AC6). undefined when unknowable. */
   private async findOriginSession(server: BugReportServer): Promise<string | undefined> {
     try {
-      const url = new URL("/session", server.url);
-      const dir = this.deps.workspaceDir();
-      if (dir) url.searchParams.set("directory", dir);
-      const res = await this.fetch(url, server, { method: "GET" });
+      const res = await this.fetch(this.collectionUrl(server), server, { method: "GET" });
       if (!res.ok) return undefined;
       const sessions = (await res.json()) as Array<{
         id?: unknown;
@@ -184,10 +199,7 @@ export class BugReportManager {
   }
 
   private async createSession(server: BugReportServer, envelope: Record<string, string>): Promise<string> {
-    const url = new URL("/session", server.url);
-    const dir = this.deps.workspaceDir();
-    if (dir) url.searchParams.set("directory", dir);
-    const res = await this.fetch(url, server, {
+    const res = await this.fetch(this.collectionUrl(server), server, {
       method: "POST",
       body: { title: BUG_REPORT_TITLE, metadata: { bug_report: envelope } },
     });
@@ -212,7 +224,8 @@ export class BugReportManager {
   private async onBugFiled(sessionID: string, url: string): Promise<void> {
     if (sessionID !== this.current) return;
     this.current = undefined; // terminal latch: later messages for this id are unknown
-    this.deps.log?.(`[bug] filed (${url}) — archiving ${sessionID}`);
+    // The url rides the log only; it is app-supplied (LLM-adjacent) — bound it.
+    this.deps.log?.(`[bug] filed (${url.slice(0, 300)}) — archiving ${sessionID}`);
     const server = this.deps.server();
     if (server) {
       try {
