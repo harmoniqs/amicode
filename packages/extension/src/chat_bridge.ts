@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
+import * as fs from "node:fs";
 
 // ============================================================================
 // The amicode iframe⇄extension command bridge, shared by ChatPanel (one
@@ -53,6 +54,26 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     /^https:\/\//i.test((msg as unknown as { url: string }).url)
   ) {
     void vscode.env.openExternal(vscode.Uri.parse((msg as unknown as { url: string }).url));
+    return true;
+  }
+
+  // File bridge (chat links to vault notes, run artifacts): the framed app
+  // renders LLM output and can't open local files — the extension opens them
+  // in the editor. file:// URLs only; the resolved path must be absolute,
+  // bounded, and exist on disk. Posix path semantics (the fleet is mac/linux).
+  if (
+    msg.kind === "open-file" &&
+    typeof (msg as { url?: unknown }).url === "string" &&
+    /^file:\/\//i.test((msg as unknown as { url: string }).url)
+  ) {
+    let fsPath: string;
+    try {
+      fsPath = decodeURIComponent(new URL((msg as unknown as { url: string }).url).pathname);
+    } catch {
+      return true;
+    }
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
+    void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
     return true;
   }
 
