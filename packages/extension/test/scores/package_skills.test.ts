@@ -32,27 +32,25 @@ function writeLibSkill(root: string, name: string, surface: "public" | "internal
   return p;
 }
 
-/** The real amico-plugin library root, but ONLY when it is present AND already retagged for
- *  spec-20260713-003804 (no `surface: product` remains). Returns null otherwise so the real-root
- *  assertions skip rather than false-fail: on CI there is no checkout, and on a machine whose
- *  amico-plugin predates the retag (e.g. on `main`) `product` tags still exist. The amico-plugin
- *  retag PR and this PR are a coupled merge — post-merge (or on the tiering branch) this returns
- *  the root and the assertions run for real. */
-function retaggedLibraryRoot(): string | null {
-  const root = DEFAULT_LIBRARY_ROOTS[0].path; // the dev checkout (typed root, ADR-0003)
-  if (!fs.existsSync(root)) return null;
-  for (const name of fs.readdirSync(root)) {
-    const p = path.join(root, name, "SKILL.md");
-    if (!fs.existsSync(p)) continue;
-    if (/^surface:\s*product\b/m.test(fs.readFileSync(p, "utf8"))) return null;
-  }
-  return root;
+/** The real in-repo public library root (packages/extension/skills/). Post-amico-plugin
+ *  this ALWAYS exists in a checkout — it is the shipped source of truth — so the real-root
+ *  assertions run unconditionally, on CI included. Returns null only if the tree is broken
+ *  (a missing skills/ dir), in which case the assertions skip rather than false-fail. */
+function inRepoLibraryRoot(): string | null {
+  const root = DEFAULT_LIBRARY_ROOTS[0].path; // the in-repo library (typed root, ADR-0003)
+  return fs.existsSync(root) ? root : null;
+}
+/** The team-vault internal library root (armonissima mount). Present only on machines
+ *  that sync the team vault — CI does not — so internal-tier assertions skip cleanly. */
+function vaultInternalRoot(): string | null {
+  const root = DEFAULT_LIBRARY_ROOTS[1].path; // the armonissima mount (typed root, ADR-0003)
+  return fs.existsSync(root) ? root : null;
 }
 /** Count on-disk library skills carrying an explicit admitted tag, mirroring the
  *  resolver's tolerance (well-formed frontmatter carrying name+description;
- *  malformed dirs skipped). With the checkout root admitting {public, internal}
- *  (ADR-0003), the expected real-root set is every explicitly-tagged skill. */
-function countTaggedSkills(root: string): number {
+ *  malformed dirs skipped). The in-repo root admits {public} only, so the expected
+ *  real-root set is every public-tagged skill. */
+function countTaggedSkills(root: string, surfaces: RegExp = /(public|internal)/): number {
   let n = 0;
   for (const name of fs.readdirSync(root)) {
     const p = path.join(root, name, "SKILL.md");
@@ -61,7 +59,7 @@ function countTaggedSkills(root: string): number {
     if (!m) continue;
     const fm = m[1];
     const ok = /^name:\s*\S/m.test(fm) && /^description:\s*\S/m.test(fm);
-    if (ok && /^surface:\s*(public|internal)\b/m.test(fm)) n++;
+    if (ok && new RegExp(`^surface:\\s*${surfaces.source}\\b`, "m").test(fm)) n++;
   }
   return n;
 }
@@ -178,27 +176,27 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
   });
 
   // Two-tier surfaces (ADR-0003, amicode#242): a typed root carries the surface
-  // tags it admits. The private plugin checkout root admits {public, internal} —
-  // checkout presence IS the eligibility proof (the content exists only there).
-  it("a typed root admitting {public, internal} stages BOTH tiers (the private checkout root)", () => {
+  // tags it admits. The team-vault root admits {internal} — mount presence IS
+  // the eligibility proof (the content exists only in the private vault).
+  it("a typed root admitting {public, internal} stages BOTH tiers (the legacy combined root)", () => {
     const root = mkRoot();
     writeLibSkill(root, "atoms", "public");
     writeLibSkill(root, "implement-issue", "internal"); // dev-workflow skill — the AC1 payload
     const idx = resolveLibrarySkills([{ path: root, surfaces: ["public", "internal"] }]);
     expect(idx.map((e) => e.name).sort()).toEqual(["atoms", "implement-issue"]);
   });
-  it("with ONLY the vendored-bundle form (public-only typed root), internal skills resolve to nothing (AC2)", () => {
+  it("with ONLY a public-only typed root (the in-repo library form), internal skills resolve to nothing (AC2)", () => {
     const root = mkRoot();
     writeLibSkill(root, "atoms", "public");
     writeLibSkill(root, "implement-issue", "internal");
     const idx = resolveLibrarySkills([{ path: root, surfaces: ["public"] }]);
     expect(idx.map((e) => e.name)).toEqual(["atoms"]);
   });
-  it("the checkout wins over the bundle for the same skill name, across tiers", () => {
+  it("the first root wins over a later root for the same skill name, across tiers", () => {
     const checkout = mkRoot(),
       bundle = mkRoot();
     writeLibSkill(checkout, "atoms", "public");
-    writeLibSkill(bundle, "atoms", "public"); // the bundle copy must lose (first-root-wins)
+    writeLibSkill(bundle, "atoms", "public"); // the later copy must lose (first-root-wins)
     writeLibSkill(checkout, "implement-issue", "internal");
     const idx = resolveLibrarySkills([
       { path: checkout, surfaces: ["public", "internal"] },
@@ -207,40 +205,54 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
     expect(idx.map((e) => e.name).sort()).toEqual(["atoms", "implement-issue"]);
     expect(idx.find((e) => e.name === "atoms")!.path.startsWith(checkout)).toBe(true);
   });
-  it("DEFAULT_LIBRARY_ROOTS is typed: the checkout admits internal; the vendored bundle admits public only", () => {
+  it("DEFAULT_LIBRARY_ROOTS is typed: the in-repo library admits public only; the armonissima vault root admits internal only", () => {
     expect(DEFAULT_LIBRARY_ROOTS).toHaveLength(2);
-    const [checkout, bundle] = DEFAULT_LIBRARY_ROOTS;
-    expect(checkout.path).toMatch(/amico-plugin/);
-    expect(checkout.surfaces).toEqual(expect.arrayContaining(["public", "internal"]));
-    expect(bundle.path).toMatch(/skills-public/);
-    expect(bundle.surfaces).toEqual(["public"]); // defense in depth, never internal
+    const [inRepo, vault] = DEFAULT_LIBRARY_ROOTS;
+    expect(inRepo.path).toMatch(/packages\/extension\/skills$/);
+    expect(inRepo.surfaces).toEqual(["public"]); // repo boundary, never internal
+    expect(vault.path).toMatch(/armonissima/);
+    expect(vault.surfaces).toEqual(["internal"]); // team-vault content, never public
   });
 
-  // Real-library-root assertions. Skip on CI (no checkout) and on any pre-retag working tree
-  // (see retaggedLibraryRoot). DEFAULT_PLATFORM_SKILLS is retained as a documentation anchor
-  // of the physics/opt subset but is NO LONGER the selection input — discovery is by tag,
-  // and the checkout root admits BOTH tiers (ADR-0003): internal dev-workflow skills resolve
-  // from the checkout because checkout presence is the eligibility proof.
-  it("discovers every explicitly-tagged skill from the real, retagged amico-plugin checkout (both tiers)", () => {
-    const root = retaggedLibraryRoot();
+  // Real-library-root assertions. The in-repo root always exists (it ships), so these run
+  // everywhere. DEFAULT_PLATFORM_SKILLS is retained as a documentation anchor of the
+  // physics/opt subset but is NOT the selection input — discovery is by tag, and the
+  // in-repo root admits {public} only (ADR-0003): internal skills resolve only from the
+  // armonissima vault root, where mount presence is the eligibility proof.
+  it("discovers every public-tagged skill from the real in-repo library", () => {
+    const root = inRepoLibraryRoot();
     if (!root) return;
-    const expected = countTaggedSkills(root); // tag-derived, same tolerance as the resolver
+    const expected = countTaggedSkills(root, /public/); // tag-derived, same tolerance as the resolver
     const names = resolveLibrarySkills(DEFAULT_LIBRARY_ROOTS).map((e) => e.name).sort();
-    expect(names).toHaveLength(expected);
-    expect(expected).toBeGreaterThan(0);
     // every physics/opt anchor is public → present in the discovered set (superset check)
     for (const p of DEFAULT_PLATFORM_SKILLS) expect(names).toContain(p);
-    // AC1 on real data: a genuinely internal skill NOW resolves from the checkout
-    // (the pre-ADR leak guard asserted its absence; the bundle root keeps that guard).
-    expect(names).toContain("develop");
+    // the public set is exactly the in-repo public tags, PLUS anything the vault root
+    // contributes on team machines — so assert containment, not equality, when the
+    // vault is mounted; exact equality otherwise.
+    if (vaultInternalRoot()) {
+      expect(names.length).toBeGreaterThanOrEqual(expected);
+    } else {
+      expect(names).toHaveLength(expected);
+    }
+    expect(expected).toBeGreaterThan(0);
+  });
+  it("internal skills resolve from the armonissima mount when it is present (team machines only)", () => {
+    const vault = vaultInternalRoot();
+    if (!vault) return; // CI / fresh installs have no team vault — skip
+    const names = resolveLibrarySkills(DEFAULT_LIBRARY_ROOTS).map((e) => e.name);
+    // AC1 on real data: a genuinely internal skill resolves from the vault root
+    // (the in-repo root can never provide it — repo-boundary least privilege).
+    expect(names).toContain("write-an-issue");
+    // and the internal count tracks the vault's tagged set
+    expect(names.length).toBeGreaterThanOrEqual(countTaggedSkills(vault, /internal/));
   });
 
   // spec-20260713-003804 §6 tag-required check. The tag-derived count above is near-tautological
   // (an untagged skill is invisible to BOTH sides), so it cannot catch a public-intended skill
   // left untagged — which under default-deny silently fails to ship. This is that regression guard:
-  // every real library skill MUST carry an explicit surface ∈ {public, internal}.
-  it("every real library skill carries an explicit surface: public|internal", () => {
-    const root = retaggedLibraryRoot();
+  // every real in-repo library skill MUST carry an explicit surface: public.
+  it("every real in-repo library skill carries an explicit surface: public", () => {
+    const root = inRepoLibraryRoot();
     if (!root) return;
     const offenders: string[] = [];
     for (const name of fs.readdirSync(root).sort()) {
@@ -248,9 +260,9 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
       if (!fs.existsSync(p)) continue;
       const m = fs.readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
       const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
-      if (surface !== "public" && surface !== "internal") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
+      if (surface !== "public") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
     }
-    expect(offenders, `untagged/mis-tagged library skills: ${offenders.join(", ")}`).toEqual([]);
+    expect(offenders, `untagged/mis-tagged in-repo library skills: ${offenders.join(", ")}`).toEqual([]);
   });
 });
 

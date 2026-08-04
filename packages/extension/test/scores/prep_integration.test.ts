@@ -34,7 +34,8 @@ function prep(overrides: Partial<Parameters<typeof prepareOpencodeProject>[0]> =
     // isolate from any real ~/.amico/amicode/entitlements.toml on this machine
     entitlementsDir: fs.mkdtempSync(path.join(os.tmpdir(), "no-ents-")),
     // hermetic by default: no skill index unless a test opts in (otherwise these
-    // default to the machine's ~/harmoniqs/{packages,amico-plugin/skills}).
+    // default to the machine's ~/harmoniqs/packages + the in-repo/vault library
+    // roots in DEFAULT_LIBRARY_ROOTS).
     skillRoots: [],
     skillLibraryRoots: [],
     // hermetic: personalization off (else auto-resolve hits the machine's real
