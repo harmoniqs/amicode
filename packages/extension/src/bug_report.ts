@@ -266,7 +266,17 @@ export class BugReportManager {
 
   /** Closed before filing → abort the in-flight turn, then hard delete. */
   private async onBugReportClosed(sessionID: string): Promise<void> {
-    if (sessionID !== this.current) return;
+    if (sessionID !== this.current) {
+      // Zombie guard (QA: amicode#249 preview): the dock's sync watch can
+      // surface a bug session ORPHANED by a dead extension host (killed
+      // mid-session — its manager state died with it). If the user closes
+      // that dock, dropping the message as "unknown id" would leave an
+      // immortal session the watch keeps resurrecting. The envelope is the
+      // ground truth: a session carrying bug_report metadata IS a bug
+      // session, so the abandon path applies — abort + hard delete.
+      await this.reapOrphan(sessionID);
+      return;
+    }
     this.current = undefined;
     const server = this.deps.server();
     if (!server) return;
@@ -276,6 +286,37 @@ export class BugReportManager {
       await this.fetch(new URL(`/session/${sessionID}/abort`, server.url), server, { method: "POST" });
     } catch (e) {
       this.deps.log?.(`[bug] abort failed (${(e as Error).message}) — deleting anyway`);
+    }
+    await this.deleteSession(server, sessionID);
+  }
+
+  /** Close-of-unknown-id: reaps the session iff it proves to be a bug
+   *  session (bug_report metadata) that is NOT archived — an archived one is
+   *  filed and restorable, never a delete target. Genuinely foreign ids drop
+   *  silently. */
+  private async reapOrphan(sessionID: string): Promise<void> {
+    const server = this.deps.server();
+    if (!server) return;
+    let isBug = false;
+    try {
+      const res = await this.fetch(new URL(`/session/${sessionID}`, server.url), server, { method: "GET" });
+      if (res.ok) {
+        const info = (await res.json()) as { metadata?: unknown; time?: { archived?: unknown } };
+        isBug =
+          !!info.metadata &&
+          typeof info.metadata === "object" &&
+          "bug_report" in info.metadata &&
+          !info.time?.archived;
+      }
+    } catch {
+      return; // a read failure never guesses at deletion
+    }
+    if (!isBug) return;
+    this.deps.log?.(`[bug] reaping orphaned bug session ${sessionID}`);
+    try {
+      await this.fetch(new URL(`/session/${sessionID}/abort`, server.url), server, { method: "POST" });
+    } catch {
+      /* an idle orphan may have nothing to abort */
     }
     await this.deleteSession(server, sessionID);
   }

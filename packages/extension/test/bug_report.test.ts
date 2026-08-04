@@ -117,7 +117,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
 
 /** Drive a manager to the open state with bug session `ses_bug`; returns the
  *  recorded traffic for the lifecycle assertions. */
-async function openBugSession(overrides: Partial<BugReportDeps> = {}) {
+async function openBugSession(overrides: Partial<BugReportDeps> = {}, extraRoutes: Record<string, { status?: number; body?: unknown }> = {}) {
   const { fetchImpl, calls } = mockFetch({
     "GET /session": { status: 200, body: [] },
     "POST /session": { status: 200, body: { id: "ses_bug" } },
@@ -125,6 +125,7 @@ async function openBugSession(overrides: Partial<BugReportDeps> = {}) {
     "PATCH /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
     "POST /session/ses_bug/abort": { status: 200, body: true },
     "DELETE /session/ses_bug": { status: 200, body: true },
+    ...extraRoutes,
   });
   const { d, posted, errors } = deps(overrides, fetchImpl);
   const manager = new BugReportManager(d);
@@ -347,12 +348,18 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
     manager.sink.closed("ses_someone_else");
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(calls).toEqual([]);
+    // The zombie guard may READ an unknown closed session (metadata probe) —
+    // but a 404/foreign session is never mutated, and nothing posts down.
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
     expect(posted).toEqual([]);
   });
 
   it("a bug-report-closed arriving AFTER filing (the filed end-state's close) is already-terminal — dropped", async () => {
-    const { manager, calls, posted } = await openBugSession();
+    const { manager, calls, posted } = await openBugSession({}, {
+      // The session now reads archived (filed): the zombie guard must NOT
+      // reap it — archived bug sessions are restorable, never delete targets.
+      "GET /session/ses_bug": { status: 200, body: { id: "ses_bug", metadata: { bug_report: {} }, time: { archived: 1700000000000 } } },
+    });
 
     manager.sink.filed("ses_bug", "filed-via-browser");
     await new Promise((r) => setTimeout(r, 0));
@@ -362,7 +369,7 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
     manager.sink.closed("ses_bug"); // late close for the archived session
     await new Promise((r) => setTimeout(r, 0));
 
-    expect(calls).toEqual([]); // no abort, no delete — the filed session is never hard-deleted
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]); // no abort, no delete — the filed session is never hard-deleted
     expect(posted).toEqual([]);
   });
 
@@ -378,8 +385,7 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
   });
 });
 
-describe("bug-report-poke — the app's boot catch-up (QA: lost-open race)", () => {
-  it("a poke with a live bug session re-posts open-bug-report for it", async () => {
+describe("bug-report-poke — the app's boot catch-up (QA: lost-open race)", () => {  it("a poke with a live bug session re-posts open-bug-report for it", async () => {
     const { manager, posted } = await openBugSession();
 
     manager.sink.poke();
@@ -431,5 +437,35 @@ describe("bug-report-poke — the app's boot catch-up (QA: lost-open race)", () 
     // app-side (same-id open is a reveal).
     expect(opens).toHaveLength(2);
     expect(opens.every((m) => (m as { sessionID?: unknown }).sessionID === "ses_bug")).toBe(true);
+  });
+});
+
+describe("zombie guard — closing an orphaned bug session (QA: amicode#249 preview)", () => {
+  it("an unknown-id close reaps the session when it carries the bug_report envelope", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session/ses_orphan": { status: 200, body: { id: "ses_orphan", metadata: { bug_report: { project: "x" } } } },
+      "POST /session/ses_orphan/abort": { status: 200, body: true },
+      "DELETE /session/ses_orphan": { status: 200, body: true },
+    });
+    const { d } = deps({}, fetchImpl);
+
+    new BugReportManager(d).sink.closed("ses_orphan");
+    await new Promise((r) => setTimeout(r, 0));
+
+    const methods = calls.map((c) => `${c.method} ${new URL(c.url).pathname}`);
+    expect(methods).toEqual(["GET /session/ses_orphan", "POST /session/ses_orphan/abort", "DELETE /session/ses_orphan"]);
+  });
+
+  it("an unknown-id close for a genuinely foreign session is dropped — never a delete", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session/ses_chat": { status: 200, body: { id: "ses_chat", metadata: {} } },
+    });
+    const { d } = deps({}, fetchImpl);
+
+    new BugReportManager(d).sink.closed("ses_chat");
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(calls.filter((c) => c.method === "DELETE")).toEqual([]);
+    expect(calls.filter((c) => c.url.endsWith("/abort"))).toEqual([]);
   });
 });
