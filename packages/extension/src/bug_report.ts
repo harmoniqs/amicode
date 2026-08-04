@@ -37,6 +37,11 @@ export const OPEN_BUG_REPORT_KIND = "open-bug-report";
 export const CLOSE_BUG_REPORT_KIND = "close-bug-report";
 export const BUG_FILED_KIND = "bug-filed";
 export const BUG_REPORT_CLOSED_KIND = "bug-report-closed";
+/** UP: the app posts this on boot when the bug-report flag is on — the
+ *  catch-up half of the open contract. A one-shot open-bug-report can land
+ *  before the app's listener mounts (cold window, webview reload), so a live
+ *  bug session re-opens its dock on every app boot until it terminates. */
+export const BUG_REPORT_POKE_KIND = "bug-report-poke";
 
 /** The DOWN envelopes this module ever posts. */
 export interface BugReportDownMessage {
@@ -81,6 +86,7 @@ export interface BugReportDeps {
 export interface BugReportBridgeSink {
   filed(sessionID: string, url: string): void;
   closed(sessionID: string): void;
+  poke(): void;
 }
 
 export class BugReportManager {
@@ -97,7 +103,23 @@ export class BugReportManager {
   readonly sink: BugReportBridgeSink = {
     filed: (sessionID, url) => void this.onBugFiled(sessionID, url),
     closed: (sessionID) => void this.onBugReportClosed(sessionID),
+    poke: () => void this.onPoke(),
   };
+
+  /** The app's boot catch-up: it pokes on every boot with the flag on, so a
+   *  lost open-bug-report (cold-boot race, webview reload) self-heals — a live
+   *  bug session re-posts its open; no live session is silence (cheap, once
+   *  per app frame boot). A poke during an in-flight create joins it, exactly
+   *  like a second command invocation. */
+  private async onPoke(): Promise<void> {
+    if (this.opening) await this.opening;
+    if (!this.current) {
+      this.deps.log?.(`[bug] poke — no live bug session`);
+      return;
+    }
+    this.deps.log?.(`[bug] poke — re-opening the dock for ${this.current}`);
+    this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
+  }
 
   /** The `amicode.reportBug` command: reveal the open bug session, else
    *  create + arm + open a new one. Never two bug sessions. */
@@ -147,6 +169,7 @@ export class BugReportManager {
       return;
     }
     this.current = sessionID;
+    this.deps.log?.(`[bug] opened ${sessionID} — posting open-bug-report`);
     this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID });
   }
 

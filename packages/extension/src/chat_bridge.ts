@@ -36,6 +36,7 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
 export interface BugReportSink {
   filed(sessionID: string, url: string): void;
   closed(sessionID: string): void;
+  poke(): void;
 }
 
 /** Side channels the handler needs from its host panel. */
@@ -151,6 +152,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "bug-report-closed") {
     const sessionID = (msg as unknown as { sessionID?: unknown }).sessionID;
     if (typeof sessionID === "string" && sessionID !== "") io.bugReport?.closed(sessionID);
+    return true;
+  }
+  // The app's boot catch-up: re-post open-bug-report when a bug session is
+  // live (heals a lost one-shot open — cold-boot race, webview reload).
+  if (msg.kind === "bug-report-poke") {
+    io.bugReport?.poke();
     return true;
   }
 

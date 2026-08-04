@@ -113,11 +113,15 @@ describe("amicode bridge — bug-report lifecycle kinds (amicode#250)", () => {
     const host = io(visible);
     const filed: Array<{ sessionID: string; url: string }> = [];
     const closed: string[] = [];
+    let pokes = 0;
     host.bugReport = {
       filed: (sessionID, url) => filed.push({ sessionID, url }),
       closed: (sessionID) => closed.push(sessionID),
+      poke: () => {
+        pokes += 1;
+      },
     };
-    return { host, filed, closed };
+    return { host, filed, closed, pokes: () => pokes };
   }
 
   it("bug-filed routes sessionID + url to the sink (the browser-fallback token included)", () => {
@@ -138,6 +142,14 @@ describe("amicode bridge — bug-report lifecycle kinds (amicode#250)", () => {
     const { host, closed } = ioWithSink();
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-closed", sessionID: "ses_9" }, host)).toBe(true);
     expect(closed).toEqual(["ses_9"]);
+  });
+
+  it("bug-report-poke routes to the sink's catch-up (consumed, payload-free)", () => {
+    const { host, pokes } = ioWithSink();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-poke" }, host)).toBe(true);
+    expect(pokes()).toBe(1);
+    // Without a sink: still consumed, never foreign-noise.
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-poke" }, io())).toBe(true);
   });
 
   it("malformed lifecycle envelopes are consumed and dropped — the sink never fires", () => {

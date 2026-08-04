@@ -377,3 +377,59 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
     expect(posted).toHaveLength(1);
   });
 });
+
+describe("bug-report-poke — the app's boot catch-up (QA: lost-open race)", () => {
+  it("a poke with a live bug session re-posts open-bug-report for it", async () => {
+    const { manager, posted } = await openBugSession();
+
+    manager.sink.poke();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" }]);
+  });
+
+  it("a poke with no live bug session is silence (no posts, no server calls)", async () => {
+    const { fetchImpl, calls } = mockFetch({});
+    const { d, posted } = deps({}, fetchImpl);
+
+    new BugReportManager(d).sink.poke();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(posted).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it("a poke after the session terminated is silence (the dock stays gone)", async () => {
+    const { manager, posted } = await openBugSession();
+    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
+    await new Promise((r) => setTimeout(r, 0));
+    posted.length = 0;
+
+    manager.sink.poke();
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(posted).toEqual([]);
+  });
+
+  it("a poke during an in-flight create joins it — one create, every open for the new id", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+    });
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+    const opening = manager.reportBug(); // in flight — the poke must not double-create
+    manager.sink.poke();
+    await opening;
+    await new Promise((r) => setTimeout(r, 0));
+
+    const creates = calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session");
+    expect(creates).toHaveLength(1);
+    const opens = posted.filter((m) => (m as { kind?: unknown }).kind === "open-bug-report");
+    // The open from create+arm plus the poke's re-post — same id, idempotent
+    // app-side (same-id open is a reveal).
+    expect(opens).toHaveLength(2);
+    expect(opens.every((m) => (m as { sessionID?: unknown }).sessionID === "ses_bug")).toBe(true);
+  });
+});
