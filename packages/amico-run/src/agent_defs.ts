@@ -5,10 +5,11 @@
 //
 //   1. `amico-plugin/agents/` does not exist, and nothing reads that path — opencode resolves
 //      agents from its CONFIG, not from a directory convention.
-//   2. The publish chain cannot carry it: `extract-public-skills.sh` stages only
-//      `"$SKILLS_DIR"/*/`, the release workflow tars only `dist/public-skills`, and
-//      `fetch_skills.mjs` requires only `skills/`. A definition shipped there would never
-//      reach a user.
+//   2. The old publish chain could never carry it: `extract-public-skills.sh` staged only
+//      `"$SKILLS_DIR"/*/`, the release workflow tarred only `dist/public-skills`, and
+//      `fetch_skills.mjs` required only `skills/`. (That pipeline is now RETIRED — public
+//      skills live in-repo at packages/extension/skills/ — and the conclusion still holds:
+//      nothing resolves agent definitions from a directory convention.)
 //   3. It would make the mechanism depend on a cross-repo artifact landing first, which is a
 //      sequencing hazard for something on the critical path of every review.
 //

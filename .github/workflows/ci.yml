@@ -18,8 +18,8 @@ jobs:
       # no network) that each staged bin exists, is executable, does NOT die
       # with the unknown-executor rejection on a remote invocation (the
       # stale-bundle signature), and lists `remote` in its usage. A declared-
-      # but-missing bin reds. Scoped to the CLI bins only: fetch:opencode /
-      # fetch:skills pull from PRIVATE releases (need OPENCODE_FETCH_TOKEN),
+      # but-missing bin reds. Scoped to the CLI bins only: fetch:opencode
+      # pulls from a PRIVATE release (needs OPENCODE_FETCH_TOKEN),
       # and the vendored opencode is not what #161 gates. The vsix-gate job
       # runs the SAME script against the bins extracted from the real .vsix.
       - name: cli-gate — staged CLI accepts the remote executor, every declared bin present (#161)
@@ -118,12 +118,9 @@ jobs:
         with: { node-version: 20, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       # Build the .vsix via the SAME recipe release.yml ships — `pnpm run package`
-      # (build + exemplars + fetch:opencode linux-x64 + fetch:skills + vsce). One
+      # (build + exemplars + fetch:opencode linux-x64 + vsce). One
       # build definition, so the gate tests the real release artifact and there's
       # nothing to keep in sync by hand (the drift trap this job used to be).
-      # NOTE: this token must ALSO have read access to harmoniqs/amico-plugin
-      # releases (fetch:skills) — if OPENCODE_FETCH_TOKEN is scoped only to the
-      # opencode fork, broaden it or add a dedicated SKILLS_FETCH_TOKEN secret.
       - run: pnpm --filter amicode run package
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}

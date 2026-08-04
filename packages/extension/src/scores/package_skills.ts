@@ -5,12 +5,14 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Dual-source skill index (spec-20260704-113005 §1/§3). Two skill TYPES:
 //   - PACKAGE skills: co-located at packages/<P>.jl/skills/<name>/SKILL.md,
 //     discovered ONLY for entitlement-allowlisted packages (gated).
-//   - LIBRARY (public) skills: cross-package refs in the central amico-plugin
-//     library, discovered by SURFACE TAG (spec-20260713-003804): the library dir
+//   - LIBRARY (public) skills: cross-package refs in the in-repo library
+//     (packages/extension/skills/, moved out of the retired amico-plugin repo),
+//     discovered by SURFACE TAG (spec-20260713-003804): the library dir
 //     is scanned, but ONLY skills whose frontmatter carries `surface: public` are
-//     staged. `internal`, untagged, and any other value — the internal-only process
-//     skills in the same library — MUST NOT leak into Amicode; the tag IS the
-//     least-privilege guard. `public` = the OSS-shippable surface.
+//     staged. `internal`, untagged, and any other value MUST NOT leak into
+//     Amicode; the tag IS the least-privilege guard, and the repo boundary backs
+//     it (internal content lives only in the armonissima vault).
+//     `public` = the OSS-shippable surface.
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
@@ -126,12 +128,12 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
   return out;
 }
 
-/** Library skills from the central amico-plugin library, discovered by SURFACE
+/** Library skills from the in-repo public library, discovered by SURFACE
  *  TAG (spec-20260713-003804) under PER-ROOT eligibility (ADR-0003, amicode#242).
  *  Each root is scanned, but ONLY skills whose frontmatter `surface:` tag is in
- *  that root's admitted `surfaces` are returned — the private checkout root
- *  admits {public, internal}, the vendored bundle root admits {public} only, so
- *  internal content can stage ONLY from a checkout the user already possesses.
+ *  that root's admitted `surfaces` are returned — the in-repo root admits
+ *  {public} only, the armonissima vault root admits {internal} only, so
+ *  internal content can stage ONLY from a vault mount the user already syncs.
  *  Untagged and malformed skills are DROPPED from every root. Staging
  *  (stageOpencodeSkills) copies only THIS selected set to the per-session stage
  *  dir — `skills.paths` never points at a library root itself. First root
