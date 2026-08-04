@@ -13,7 +13,7 @@ stages:
   - id: identity
     questions:
       - id: identity
-        prompt: "First — who am I working with? Your name, and your role or lab if you'd like."
+        prompt: "First — who am I working with? Ideally, your name, role, and affiliation."
         default: "just a name is fine"
   - id: platforms
     questions:
@@ -67,10 +67,11 @@ earlier overture, entities will already be there: acknowledge them warmly
 what's still missing. Never re-ask a question the status already answers.
 
 **Protocol: ONE question at a time.** Ask, wait, record, advance — never batch.
-For every choice question use the native `question` tool (options in order,
-default first with "(recommended)"); free-form answers can be plain text. After
-each answer, record it immediately with `amicode_profile` (see the mapping
-below). Recording is bookkeeping, not a gate — it never blocks the conversation.
+Every question is a card via the native `question` tool: choice questions list
+options in order, default first with "(recommended)"; free-form questions use
+`kind: "text"` — a bare text input with no option list. After each answer,
+record it immediately with `amicode_profile` (see the mapping below). Recording
+is bookkeeping, not a gate — it never blocks the conversation.
 
 **Author-first / open intake.** Take every answer as given. If someone names a
 platform, environment, or device you don't recognize, record it verbatim — never
