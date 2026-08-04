@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# armonia-sync-once — the ONE cross-platform sync implementation.
+#
+# For each mounted vault under $AMICO_VAULTS_ROOT (default ~/.amico/vaults):
+#   git pull --rebase --autostash   (always — keeps team/project mounts current)
+#   if the vault's marker says kind == personal:  git add -A; commit; push
+# Team/project/engagement vaults are pull-only here (their writes are PR-gated).
+#
+# Invoked by whichever scheduler the platform provides:
+#   - Linux : the 15-min systemd timer (armonia-sync.timer) + a systemd-run
+#             debounce armed by the plugin's post-write hook.
+#   - macOS : the launchd agent co.harmoniqs.armonia-sync (StartInterval 900 +
+#             WatchPaths on ~/.amico/.sync-pending), installed by
+#             scripts/install-macos-sync.
+# The two schedulers differ; this script does not — it is the shared payload.
+#
+# The pending flag is cleared at the START so a write landing mid-sync is not
+# lost (the post-write hook re-touches the flag, re-triggering the watcher).
+set -uo pipefail
+
+# Schedulers hand this script a minimal PATH; make sure git (and friends)
+# resolve on both Homebrew (macOS) and standard Linux layouts.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+AMICO_HOME="${AMICO_HOME:-$HOME/.amico}"
+VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$AMICO_HOME/vaults}"
+
+# Clear the pending-sync flag first (see header note on the mid-sync race).
+rm -f "$AMICO_HOME/.sync-pending" 2>/dev/null || true
+
+[ -d "$VAULTS_ROOT" ] || exit 0
+
+stamp="$(date +%Y-%m-%dT%H:%M:%S%z)"
+echo "[$stamp] armonia-sync-once: start"
+
+shopt -s nullglob
+for d in "$VAULTS_ROOT"/*/; do
+  [ -d "$d/.git" ] || continue
+  name="$(basename "${d%/}")"
+
+  git -C "$d" pull --rebase --autostash 2>&1 | sed "s/^/  [$name] /" || true
+
+  kind=""
+  if [ -f "$d/.amico-vault.toml" ]; then
+    kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([a-z]+)"?.*/\1/')
+  fi
+
+  if [ "$kind" = "personal" ]; then
+    git -C "$d" add -A
+    if ! git -C "$d" diff --cached --quiet; then
+      git -C "$d" commit -m "auto: sync $(date +%Y-%m-%dT%H:%M:%S%z)" \
+        2>&1 | sed "s/^/  [$name] /" || true
+      git -C "$d" push 2>&1 | sed "s/^/  [$name] /" || true
+    fi
+  fi
+done
+
+echo "[$(date +%Y-%m-%dT%H:%M:%S%z)] armonia-sync-once: done"

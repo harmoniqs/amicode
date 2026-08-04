@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# install-macos-sync — macOS equivalent of the Linux armonia-init sync setup.
+#
+# Linux installs a systemd .timer (15-min) + a systemd-run debounce to drive
+# armonia-sync-once. macOS has neither, so this installs the launchd analog:
+#
+#   ~/Library/LaunchAgents/co.harmoniqs.armonia-sync.plist
+#     StartInterval 900            -> the 15-min cadence
+#     WatchPaths ~/.amico/.sync-pending -> the post-write debounce (the plugin's
+#       post-tool-use hook touches that marker; launchd coalesces + fires)
+#     RunAtLoad                    -> one sync when the agent loads
+#
+# and deploys the shared cross-platform payload (scripts/armonia-sync-once) to a
+# stable path so the long-lived agent never points into the volatile plugin
+# cache. Wholly idempotent: it (re)loads the agent ONLY when the plist or the
+# deployed script content actually changes, so it is cheap to call every
+# session. A pure no-op off macOS. Never fails its caller — always exits 0.
+set -uo pipefail
+trap 'exit 0' EXIT
+
+# macOS only. (uname is the cheapest reliable Darwin probe.)
+[ "$(uname -s 2>/dev/null)" = "Darwin" ] || exit 0
+
+# jq is required by the plugin hooks (post-tool-use parses the PostToolUse
+# payload with it). macOS does not ship jq, so warn loudly rather than let the
+# on-write debounce + trace degrade silently. Non-fatal: the 15-min scheduled
+# sync below works without jq.
+command -v jq >/dev/null 2>&1 || \
+  echo "[install-macos-sync] WARNING: jq not found on PATH — the on-write sync debounce and exploration trace will not work. Install it: brew install jq" >&2
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SRC_SCRIPT="$SCRIPT_DIR/armonia-sync-once"
+[ -f "$SRC_SCRIPT" ] || exit 0
+
+AMICO_HOME="${AMICO_HOME:-$HOME/.amico}"
+LABEL="co.harmoniqs.armonia-sync"
+AGENTS_DIR="$HOME/Library/LaunchAgents"
+PLIST="$AGENTS_DIR/$LABEL.plist"
+BIN_DIR="$HOME/.local/bin"
+DEST_SCRIPT="$BIN_DIR/armonia-sync-once"
+PENDING="$AMICO_HOME/.sync-pending"
+LOG="$AMICO_HOME/sync.log"
+
+mkdir -p "$AGENTS_DIR" "$BIN_DIR" "$AMICO_HOME" 2>/dev/null || exit 0
+
+changed=0
+
+# 1. Deploy the shared sync payload to a stable location (copy only on drift).
+if ! cmp -s "$SRC_SCRIPT" "$DEST_SCRIPT" 2>/dev/null; then
+  cp "$SRC_SCRIPT" "$DEST_SCRIPT" && chmod +x "$DEST_SCRIPT" && changed=1
+fi
+
+# 2. Render the desired plist to a temp file (absolute paths — launchd does not
+#    expand $HOME), then install only if it differs from what's on disk.
+tmp_plist="$(mktemp 2>/dev/null)" || exit 0
+cat > "$tmp_plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>$DEST_SCRIPT</string>
+    </array>
+
+    <!-- Run every 15 minutes, matching the Linux systemd timer. -->
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <!-- Fire on every personal-vault write: the plugin's post-tool-use hook
+         touches this file, giving debounced on-write sync. -->
+    <key>WatchPaths</key>
+    <array>
+        <string>$PENDING</string>
+    </array>
+
+    <!-- Sync once when the agent is loaded. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>$LOG</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG</string>
+</dict>
+</plist>
+EOF
+
+if ! cmp -s "$tmp_plist" "$PLIST" 2>/dev/null; then
+  cp "$tmp_plist" "$PLIST" && changed=1
+fi
+rm -f "$tmp_plist"
+
+# 3. (Re)load the agent only when something changed, or when it isn't loaded.
+loaded=0
+launchctl list 2>/dev/null | grep -q "$LABEL" && loaded=1
+
+if [ "$changed" = 1 ] || [ "$loaded" = 0 ]; then
+  # unload is best-effort (no-op if not loaded); load -w registers + enables.
+  launchctl unload "$PLIST" >/dev/null 2>&1 || true
+  launchctl load -w "$PLIST" >/dev/null 2>&1 || true
+  echo "[install-macos-sync] (re)loaded $LABEL (changed=$changed, was-loaded=$loaded)"
+fi
+
+exit 0
