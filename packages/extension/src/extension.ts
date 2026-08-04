@@ -50,6 +50,8 @@ import {
   projectInstantiated,
   shouldOfferJuliaSetup,
   buildSetupSteps,
+  resolveJuliaupCommands,
+  juliaProjectFingerprint,
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
@@ -835,22 +837,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // instantiate the Piccolo project. Runs in a visible terminal (the consent
   // surface for the network installer). We pin the MINOR channel (latest patch,
   // e.g. 1.12.6 vs the Manifest's 1.12.3) — a patch drift install.sh already
-  // treats as fine. On a fresh machine juliaup makes this the default, so bare
-  // `julia` resolves to it; routing the runtime explicitly through the channel
-  // for pre-existing-juliaup setups is a follow-up (--julia / {{JULIA_BINARY}}).
+  // treats as fine. Resolve juliaup and its sibling launcher together so a
+  // standalone Julia earlier on PATH cannot intercept the `+<minor>` argument.
   const runJuliaSetup = async (fromCommand: boolean): Promise<void> => {
     const manifestSrc = path.resolve(ctx.extensionPath, "julia", "Manifest.toml");
     const projectSrc = path.resolve(ctx.extensionPath, "julia", "Project.toml");
     const minor = pinnedJuliaMinor(manifestSrc);
-    if (!minor) {
+    const projectFingerprint = juliaProjectFingerprint(projectSrc, manifestSrc);
+    if (!minor || !projectFingerprint) {
       if (fromCommand)
-        void vscode.window.showErrorMessage("Amicode: could not read the pinned Julia version (julia/Manifest.toml).");
+        void vscode.window.showErrorMessage("Amicode: could not fingerprint the bundled Julia project.");
       return;
     }
     const project = resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""));
-    const juliaupPresent = hasJuliaup();
-    const channelPresent = juliaupPresent && hasChannel(minor);
-    const ready = juliaupPresent && channelPresent && projectInstantiated(project);
+    const juliaupCommands = resolveJuliaupCommands();
+    const juliaupPresent = hasJuliaup(undefined, juliaupCommands);
+    const channelPresent = juliaupPresent && hasChannel(minor, undefined, juliaupCommands);
+    const ready = juliaupPresent && channelPresent && projectInstantiated(project, projectFingerprint);
     if (ready) {
       if (fromCommand) void vscode.window.showInformationMessage(`Amicode: Julia ${minor} is already set up.`);
       return;
@@ -869,7 +872,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       if (choice !== "Set up Julia") return;
     }
-    const steps = buildSetupSteps({ minor, juliaupPresent, channelPresent, project, projectSrc, manifestSrc });
+    const steps = buildSetupSteps({
+      minor,
+      juliaupPresent,
+      channelPresent,
+      project,
+      projectSrc,
+      manifestSrc,
+      projectFingerprint,
+      juliaupCommands: juliaupCommands ?? undefined,
+    });
     // Run in a visible terminal: the user watches the network installer + the
     // precompile, and cancels by closing it. We deliberately DON'T pipe to a
     // hidden task — transparency is the consent.
@@ -893,6 +905,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       })(),
       projectInstantiated: projectInstantiated(
         resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+        juliaProjectFingerprint(
+          path.resolve(ctx.extensionPath, "julia", "Project.toml"),
+          path.resolve(ctx.extensionPath, "julia", "Manifest.toml"),
+        ) ?? "",
       ),
       dismissed: ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true,
     })
@@ -910,21 +926,26 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const results: HealthResult[] = [];
 
         // Julia: managed toolchain + `using Piccolo` loads (async; can precompile for minutes).
-        const minor = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
+        const manifestSrc = path.resolve(ctx.extensionPath, "julia", "Manifest.toml");
+        const projectSrc = path.resolve(ctx.extensionPath, "julia", "Project.toml");
+        const minor = pinnedJuliaMinor(manifestSrc);
+        const projectFingerprint = juliaProjectFingerprint(projectSrc, manifestSrc);
         const project = resolveJuliaProject(
           vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
         );
-        if (!minor) {
-          results.push({ name: "Julia", ok: false, detail: "could not read pinned version (julia/Manifest.toml)" });
-        } else if (!projectInstantiated(project)) {
+        if (!minor || !projectFingerprint) {
+          results.push({ name: "Julia", ok: false, detail: "could not fingerprint bundled Julia project" });
+        } else if (!projectInstantiated(project, projectFingerprint)) {
           results.push({ name: "Julia", ok: false, detail: `project not instantiated — run "Amicode: Set up Julia"` });
         } else {
-          const channel = hasJuliaup() && hasChannel(minor);
+          const juliaupCommands = resolveJuliaupCommands();
+          const channel =
+            hasJuliaup(undefined, juliaupCommands) && hasChannel(minor, undefined, juliaupCommands);
           const args = channel
             ? [`+${minor}`, `--project=${project}`, "-e", "using Piccolo"]
             : [`--project=${project}`, "-e", "using Piccolo"];
           const t0 = Date.now();
-          const r = await probeCommand("julia", args, 180_000);
+          const r = await probeCommand(channel && juliaupCommands ? juliaupCommands.julia : "julia", args, 180_000);
           results.push({
             name: "Julia",
             ok: r.ok,
