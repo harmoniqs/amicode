@@ -164,7 +164,7 @@ Per-stage notes:
 
    **Naming (user-facing):** `issimo` is an internal entitlement code — NEVER
    write it in chat. When describing capabilities or paths to the user, name the
-   actual package (**Piccolissimo**, **Strettissimo**, **Intonatissimo**) or say
+   actual package (**Piccolissimo**, **Legatissimo**, **Intonatissimo**) or say
    "private-package access"; bare `issimo` reads as a truncated "Piccolissimo".
    - transmon:
      $\hat H/\hbar = \omega\,\hat a^\dagger\hat a + \tfrac{\delta}{2}\,\hat a^{\dagger 2}\hat a^2 + u_1(t)\,(\hat a + \hat a^\dagger) + i\,u_2(t)\,(\hat a - \hat a^\dagger)$

@@ -127,7 +127,7 @@ describe("matchShape", () => {
     const withIssimo = matchShape({ platform: "transmon", kind: "state_prep", size: 1 }, registry, exemplars, [
       ...PUBLIC_ALLOW,
       "Piccolissimo",
-      "Strettissimo",
+      "Legatissimo",
       "Intonatissimo",
     ]);
     expect(withIssimo.tier).toBe("vetted");
