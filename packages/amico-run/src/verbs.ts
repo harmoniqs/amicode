@@ -121,7 +121,7 @@ const ledger: Verb = {
 const profile: Verb = {
   name: "profile",
   summary: "resolve a capability profile: validate + entitlement-filter skills + apply the spool-up composition rule",
-  generalizes: "the fleet substrate's profile tree (amico-plugin profiles/ + gates/) at session spool-up",
+  generalizes: "the fleet substrate's profile tree (armonissima vault profiles/ + gates/) at session spool-up",
   slice: "fleet substrate (§9 step 2)",
   run: profileVerb,
 };

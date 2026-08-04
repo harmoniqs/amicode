@@ -3,7 +3,7 @@
 //
 //   amico profile resolve (--name <preset> | --profile <file.toml>)
 //                         [--mode spool-up|dispatch]
-//                         [--profiles-dir D] [--skills-dir D] [--gates-dir D]
+//                         [--profiles-dir D] [--skills-dir D (repeatable)] [--gates-dir D]
 //                         [--entitlements a,b | --entitlements-dir D]
 //       → validate the profile, entitlement-filter its `skills`, apply the spool-up
 //         composition rule, and print the resolved loadout as JSON (plus the lossy
@@ -13,10 +13,11 @@
 //         chat, so the error payload names that fallback explicitly.
 //
 // THE SCHEMA THIS VALIDATES lives (with the presets and the gate registry) in the
-// amico-plugin repo: `profiles/*.toml` + `profiles/SCHEMA.md`, with
-// `tests/lint_profiles.sh` as its executable spec. The rules below are a deliberate
-// port of that lint — same vocabularies, same error/warning split — so a profile that
-// passes CI resolves here and vice versa. When the lint changes, change this too.
+// armonissima team vault: `profiles/*.toml` + `profiles/SCHEMA.md` + `gates/*.toml`
+// (re-homed from the retired amico-plugin repo). The rules below are a deliberate
+// port of that tree's lint — same vocabularies, same error/warning split — so a
+// profile that passes the vault's CI resolves here and vice versa. When the lint
+// changes, change this too.
 //
 // SPOOL-UP COMPOSITION RULE (§2.2/§3.1, the one rule easiest to get wrong): spool-up
 // ALWAYS instantiates the `resident` shell. A referenced preset contributes only
@@ -26,7 +27,7 @@
 // enforces that and reports the ignored value rather than silently dropping it.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { TASK_TYPES } from "./ledger.js";
 import { FRONTIER_MODELS, LADDER } from "./ledger_dispatch.js";
@@ -91,21 +92,50 @@ function flagValue(argv: string[], name: string): string | undefined {
   return i >= 0 && i + 1 < argv.length ? argv[i + 1] : undefined;
 }
 
+/** Repeatable-flag collector (unlike flagValue): every occurrence, in order. */
+function flagValues(argv: string[], name: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) if (argv[i] === name && i + 1 < argv.length) out.push(argv[i + 1]);
+  return out;
+}
+
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const strList = (v: unknown): string[] | undefined =>
   Array.isArray(v) && v.every((x) => typeof x === "string") ? (v as string[]) : undefined;
 
 // ── roots ────────────────────────────────────────────────────────────────────────
-/** The profiles/gates/skills tree: the amico-plugin checkout, which is also where the
- *  extension looks for library skills (DEFAULT_LIBRARY_ROOTS). Overridable per-flag
- *  and per-env so CI and tests point at a fixture tree. */
+/** The profiles/gates/skills tree: the armonissima vault mount, which is also where
+ *  the extension looks for internal library skills (DEFAULT_LIBRARY_ROOTS). Overridable
+ *  per-flag and per-env so CI and tests point at a fixture tree. */
 function profilesDir(argv: string[]): string {
-  return flagValue(argv, "--profiles-dir") ?? process.env.AMICO_PROFILES_DIR ?? join(homedir(), "harmoniqs", "amico-plugin", "profiles");
+  return flagValue(argv, "--profiles-dir") ?? process.env.AMICO_PROFILES_DIR ?? join(homedir(), ".amico", "vaults", "armonissima", "profiles");
 }
 function siblingDir(argv: string[], flag: string, env: string, name: string): string {
   const explicit = flagValue(argv, flag) ?? process.env[env];
   if (explicit) return explicit;
   return join(profilesDir(argv), "..", name);
+}
+
+/** The skills roots a profile's skills are validated against. Post-amico-plugin the
+ *  library is SPLIT ACROSS TWO ROOTS: the armonissima vault's skills/ (internal tier)
+ *  and the public library shipped INSIDE the amicode extension (packages/extension/
+ *  skills/), resolvable from the installed CLI bundle (bin/dist/amico.js → ../../skills).
+ *  A profile legitimately composes both tiers, so existence must be a union check.
+ *  `--skills-dir` is REPEATABLE and any explicit flag(s) replace the defaults outright
+ *  (tests always pass them); the in-repo default self-disables wherever the bundle
+ *  layout is absent (dev checkouts of amico-run alone, CI). */
+function skillsDirs(argv: string[]): string[] {
+  const explicit = flagValues(argv, "--skills-dir");
+  if (explicit.length > 0) return explicit;
+  const env = process.env.AMICO_SKILLS_DIR;
+  if (env && env.trim() !== "") return [env];
+  const dirs = [join(profilesDir(argv), "..", "skills")];
+  const script = process.argv[1];
+  if (script) {
+    const inRepo = resolve(dirname(script), "..", "..", "skills");
+    if (existsSync(inRepo)) dirs.push(inRepo);
+  }
+  return dirs;
 }
 
 // ── entitlements ─────────────────────────────────────────────────────────────────
@@ -132,11 +162,18 @@ function readEntitlements(argv: string[], warnings: string[]): { codes: string[]
 }
 
 // ── skills ───────────────────────────────────────────────────────────────────────
-/** A skill's `surface:` tag, read from its SKILL.md frontmatter. undefined = the file
- *  exists but carries no tag; null = no such skill. */
-function skillSurface(skillsDir: string, name: string): string | undefined | null {
-  const file = join(skillsDir, name, "SKILL.md");
-  if (!existsSync(file)) return null;
+/** A skill's `surface:` tag, read from its SKILL.md frontmatter — searched across the
+ *  skills roots in order, first hit wins. undefined = the file exists but carries no
+ *  tag; null = no such skill in ANY root. */
+function skillSurface(skillsDirs: string[], name: string): string | undefined | null {
+  for (const dir of skillsDirs) {
+    const file = join(dir, name, "SKILL.md");
+    if (!existsSync(file)) continue;
+    return skillSurfaceIn(file);
+  }
+  return null;
+}
+function skillSurfaceIn(file: string): string | undefined {
   const lines = readFileSync(file, "utf8").split("\n");
   let fences = 0;
   for (const line of lines) {
@@ -205,7 +242,7 @@ export function profileResolve(argv: string[]): VerbResult {
   }
 
   const stem = path.replace(/^.*[\\/]/, "").replace(/\.toml$/, "");
-  const skillsDir = siblingDir(argv, "--skills-dir", "AMICO_SKILLS_DIR", "skills");
+  const skillsRoots = skillsDirs(argv);
   const gatesDir = siblingDir(argv, "--gates-dir", "AMICO_GATES_DIR", "gates");
 
   // ── required fields + identity ───────────────────────────────────────────────
@@ -326,10 +363,10 @@ export function profileResolve(argv: string[]): VerbResult {
   const skills: string[] = [];
   const skillsFiltered: Array<{ name: string; reason: string }> = [];
   for (const sk of declaredSkills ?? []) {
-    const sksurface = skillSurface(skillsDir, sk);
+    const sksurface = skillSurface(skillsRoots, sk);
     if (sksurface === null) {
       // §3.1's "missing skill" failure path: loud, pre-injection.
-      errors.push(`skill "${sk}" does not exist (no ${join(skillsDir, sk, "SKILL.md")})`);
+      errors.push(`skill "${sk}" does not exist (no SKILL.md under any skills root: ${skillsRoots.join(", ")})`);
       continue;
     }
     if (sksurface === undefined) {
@@ -449,7 +486,7 @@ export function profileVerb(argv: string[]): VerbResult {
       verb: "profile",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
       usage:
-        "amico profile resolve (--name <preset> | --profile <file.toml>) [--mode spool-up|dispatch] [--profiles-dir D] [--skills-dir D] [--gates-dir D] [--entitlements a,b]",
+        "amico profile resolve (--name <preset> | --profile <file.toml>) [--mode spool-up|dispatch] [--profiles-dir D] [--skills-dir D (repeatable)] [--gates-dir D] [--entitlements a,b]",
     },
     code: 64,
   };

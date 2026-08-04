@@ -12,12 +12,13 @@
 // the extension can depend on amico-run. Keep the two byte-for-byte behaviorally
 // identical until then — the ONLY intended delta is this file's env seam (below).
 //
-// PARITY ORACLE: the amico-plugin session-start hook
-// (~/harmoniqs/amico-plugin-vault-cli/hooks/session-start, branch
-// feat/amico-vault-mounts-toml, PR #27). Same ranks, same skip/rescue rules, same
-// unlisted-append behavior. The canonical kind order follows the APPROVED
-// vault-CLI spec (spec-20260703-053956), NOT the Ombra draft table — the Ombra
-// draft swapped team/restricted; here restricted=3 < team=4 (spec correction).
+// CANONICAL: this module was ported from the amico-plugin session-start hook
+// (branch feat/amico-vault-mounts-toml, PR #27) — that hook is now RETIRED with
+// the plugin repo, and THIS port is the source of truth. Same ranks, same
+// skip/rescue rules, same unlisted-append behavior. The canonical kind order
+// follows the APPROVED vault-CLI spec (spec-20260703-053956), NOT the Ombra
+// draft table — the Ombra draft swapped team/restricted; here restricted=3 <
+// team=4 (spec correction).
 //
 //   kind        rank  writable(default)
 //   personal    0     rw

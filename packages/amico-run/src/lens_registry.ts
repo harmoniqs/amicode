@@ -8,7 +8,8 @@
 // DEVIATION FROM THE SPEC, recorded deliberately (advisory A-13): spec §3.5 places this
 // registry in amico-plugin and defines `lens_registry_version` as that repo's git sha.
 // Nothing in amico-run can read another repo's sha at runtime, so the registry lives here
-// and the version is a local constant until the plugin-side home exists.
+// and the version is a local constant. (amico-plugin is now retired — the content home
+// is the armonissima vault — and this deviation is simply the design.)
 import { TASK_TYPES, type TaskType } from "./ledger.js";
 
 /** Bumped BY HAND whenever the lens set or its applicability changes. Stamped into every
