@@ -72,7 +72,7 @@ export function laneOf(task_type: TaskType | string): Lane {
 export const LADDER = ["anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-5", "anthropic/claude-opus-4-8"] as const;
 /** The frontier tier. G-E asked which model backs the frontier rung: fable-class has
  *  landed, so the frontier set is the 5-series top tier and `opus-4-8` is now a
- *  BELOW-frontier rung (kept in step with amico-plugin's profiles/SCHEMA.md §5). */
+ *  BELOW-frontier rung (kept in step with the armonissima vault's profiles/SCHEMA.md §5). */
 export const FRONTIER_MODELS = [
   "anthropic/claude-opus-5",
   "anthropic/claude-fable-5",

@@ -1,9 +1,9 @@
 /** Armonia mount-stack discovery + precedence (spec-20260707-002846 Component 1
  *  — "bootstrap parity", read side).
  *
- *  A TypeScript port of the amico-plugin session-start hook's mount discovery
- *  (the PARITY ORACLE: ~/harmoniqs/amico-plugin-vault-cli/hooks/session-start,
- *  branch feat/amico-vault-mounts-toml / PR #27, lines 53–232). Same ranks, same
+ *  A TypeScript port of the (now-retired) amico-plugin session-start hook's mount
+ *  discovery (branch feat/amico-vault-mounts-toml / PR #27, lines 53–232). The hook
+ *  died with the Claude Code channel; THIS port is canonical. Same ranks, same
  *  skip/rescue semantics, same unlisted-append behavior.
  *
  *  Canonical kind ranks follow the APPROVED vault-CLI spec
