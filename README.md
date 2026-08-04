@@ -24,6 +24,14 @@ editor panels. The physics, the solver idioms, and your lab's accumulated
 knowledge all ride along as context — so the script it writes is correct by
 construction, not by luck.
 
+**This repo is the whole product**: the VS Code extension (`packages/extension`),
+the `amico` / `amico-run` CLI (`packages/amico-run`), and the public skill
+library (`packages/extension/skills/`) — skills are product content, versioned
+with the extension and bundled into every vsix. Additional skills load from your
+own Armonia vault mounts (they are never shipped), and package skills ride their
+Julia repos behind entitlements. (The old `amico-plugin` repo is retired; the
+skill library lives here now.)
+
 ## What it does
 
 **Conversational solves.** Ask for a gate or a state preparation; Amicode writes a
