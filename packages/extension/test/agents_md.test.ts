@@ -6,8 +6,8 @@ const AGENTS = readFileSync(join(__dirname, "..", "AGENTS.md"), "utf8");
 
 describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   it("teaches the tiered resolve → author → --spec launch (spec C), not a single bundled template", () => {
-    expect(AGENTS).toMatch(/amico-run resolve/); // tier resolution step
-    expect(AGENTS).toMatch(/amico-run --spec/); // the gated invocation it teaches
+    expect(AGENTS).toMatch(/\{\{AMICO_RUN\}\} resolve/); // tier resolution step (placeholder, substituted at prep)
+    expect(AGENTS).toMatch(/\{\{AMICO_RUN\}\} --spec/); // the gated invocation it teaches
     expect(AGENTS).toMatch(/solve\.jl/);
     expect(AGENTS).toMatch(/vetted/); // the three tiers named
     expect(AGENTS).toMatch(/composed/);
@@ -73,7 +73,7 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
 
 describe("AGENTS.md teaches the Δ10 (#63) routing UX", () => {
   it("runs amico-run estimate at solve-assembly and surfaces the estimate at the decision point", () => {
-    expect(AGENTS).toMatch(/amico-run estimate/);
+    expect(AGENTS).toMatch(/\{\{AMICO_RUN\}\} estimate/);
     expect(AGENTS).toMatch(/sizeClass/);
     expect(AGENTS).toMatch(/offloadSuggested/);
     expect(AGENTS).toMatch(/local RAM/i);
@@ -180,10 +180,9 @@ describe("AGENTS.md pulse-designer interview (Layer 0)", () => {
     expect(AGENTS).toMatch(/Never silently\s+co-optimize/i);
   });
   it("leaves no unknown {{...}} placeholder after session-prep substitution", () => {
-    const substituted = AGENTS.replace(/\{\{TEMPLATE_PATH\}\}/g, "/abs/solve_template.jl").replace(
-      /\{\{JULIA_PROJECT\}\}/g,
-      "/abs/julia",
-    );
+    const substituted = AGENTS.replace(/\{\{TEMPLATE_PATH\}\}/g, "/abs/solve_template.jl")
+      .replace(/\{\{JULIA_PROJECT\}\}/g, "/abs/julia")
+      .replace(/\{\{AMICO_RUN\}\}/g, "/abs/bin/amico-run");
     expect(substituted).not.toMatch(/\{\{[A-Z_]+\}\}/);
   });
 });
@@ -253,5 +252,47 @@ describe("HP solver-mode guidance: both imports", () => {
       if (prev === undefined) delete process.env.AMICODE_OPS_DIR;
       else process.env.AMICODE_OPS_DIR = prev;
     }
+  });
+});
+
+// Perf regression guard (2026-08-03). Profiling found 128 unbounded `find` calls
+// over $HOME — 417 seconds — because AGENTS.md said bare `amico-run` and the agent
+// fell back to `which amico-run || find ~ -name amico-run` when PATH missed. The
+// binary's absolute path is known at activation, so hand it over and remove the
+// reason to search.
+describe("AGENTS.md hands over the absolute amico-run path", () => {
+  const prepared = async (amicoRunPath?: string): Promise<string> => {
+    const { prepareOpencodeProject } = await import("../src/opencode_config");
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const p = prepareOpencodeProject({
+      agentsSrc: join(__dirname, "..", "AGENTS.md"),
+      templateSrc: "/tmp/tmpl.jl",
+      juliaProject: "/tmp/proj",
+      vaultDir: "",
+      projectDir: mkdtempSync(join(tmpdir(), "agents-perf-")),
+      ...(amicoRunPath ? { amicoRunPath } : {}),
+    });
+    return readFileSync(p.agentsPath, "utf8");
+  };
+
+  it("substitutes the absolute path and leaves no placeholder behind", async () => {
+    const out = await prepared("/abs/bin/amico-run");
+    expect(out).toContain("/abs/bin/amico-run --spec");
+    expect(out).not.toContain("{{AMICO_RUN}}");
+  });
+
+  it("degrades to the bare command when the bin dir is unknown", async () => {
+    const out = await prepared(undefined);
+    expect(out).toContain("amico-run --spec"); // previous behaviour, not a broken placeholder
+    expect(out).not.toContain("{{AMICO_RUN}}");
+  });
+
+  it("forbids the $HOME scan and tells the agent to batch", async () => {
+    const out = await prepared("/abs/bin/amico-run");
+    expect(out).toMatch(/never fall back to `?find ~/);
+    expect(out).toMatch(/Batch independent tool calls into one turn/);
+    expect(out).toMatch(/Do \*\*not\*\* run\s+`?which amico-run/);
   });
 });

@@ -425,7 +425,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const parsed = parseLibraryRootSpecs(raw);
     return parsed.length ? parsed : undefined;
   };
+  // Absolute launcher path for AGENTS.md's {{AMICO_RUN}} — so the agent never
+  // needs `which`, and never falls back to scanning $HOME (417s measured waste).
+  const amicoRunPath = amicoRunBinDir ? path.join(amicoRunBinDir, "amico-run") : undefined;
   const opencodeProject = prepareOpencodeProject({
+      amicoRunPath,
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
     // (same run-dir contract, spline solver layer). An AGENTS.md instruction
@@ -575,6 +579,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         opencodeChannel.appendLine(`[solver] switching → ${mode}`);
         applyEntitlementForMode(mode, path.join(os.homedir(), ".amico", "amicode"));
         const project2 = prepareOpencodeProject({
+          amicoRunPath,
           agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
           // Same mode-selection as boot; `mode` is the requested target of THIS
           // switch (the state file still reads status:"switching" here).
@@ -709,6 +714,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     const port = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
     const project2 = prepareOpencodeProject({
+      amicoRunPath,
       agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
       templateSrc: path.resolve(
         ctx.extensionPath,
