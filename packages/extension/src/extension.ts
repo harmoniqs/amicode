@@ -1125,7 +1125,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // Report a Bug (amicode#250): the palette entry + the composer bug button's
     // bridge command share this one handler — the manager owns create/arm/open,
     // the lifecycle, and the single-open invariant.
-    vscode.commands.registerCommand(REPORT_BUG_COMMAND, () => void bugReport.reportBug()),
+    vscode.commands.registerCommand(REPORT_BUG_COMMAND, (model?: { providerID: string; modelID: string; variant?: string }) =>
+      void bugReport.reportBug(model),
+    ),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();
     }),

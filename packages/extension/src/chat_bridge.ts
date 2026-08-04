@@ -53,6 +53,27 @@ export interface BridgeIo {
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
   !!msg && typeof msg === "object" && (msg as { source?: unknown }).source === "amicode";
 
+/** The optional model selection on the report-a-bug command (amicode#249):
+ *  providerID + modelID + optional variant, all bounded strings. Returns
+ *  undefined for absent/malformed — a bad model field never blocks the
+ *  command; the manager just falls back to the server default. */
+export function extractReportBugModel(
+  msg: unknown,
+): { providerID: string; modelID: string; variant?: string } | undefined {
+  const model = (msg as { model?: unknown }).model;
+  if (!model || typeof model !== "object") return undefined;
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+  const variant = (model as { variant?: unknown }).variant;
+  if (typeof providerID !== "string" || providerID === "" || providerID.length > 200) return undefined;
+  if (typeof modelID !== "string" || modelID === "" || modelID.length > 200) return undefined;
+  return {
+    providerID,
+    modelID,
+    ...(typeof variant === "string" && variant !== "" && variant.length <= 200 ? { variant } : {}),
+  };
+}
+
 /** Handle one envelope from a framed app. Returns true when the message was
  *  consumed (hosts log the rest). */
 export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean {
@@ -131,7 +152,11 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "command") {
     const command = (msg as unknown as { command?: unknown }).command;
     if (typeof command === "string" && BRIDGE_ALLOWED_COMMANDS.has(command)) {
-      void vscode.commands.executeCommand(command);
+      // amicode#249 QA: the report-a-bug command may carry the composer's live
+      // model selection (providerID + modelID + variant — the bug session
+      // runs what the user was running). Shape-validated, bounded; anything
+      // malformed is stripped, never fatal to the command.
+      void vscode.commands.executeCommand(command, extractReportBugModel(msg));
       return true;
     }
     return false;

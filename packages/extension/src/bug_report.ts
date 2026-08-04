@@ -122,8 +122,11 @@ export class BugReportManager {
   }
 
   /** The `amicode.reportBug` command: reveal the open bug session, else
-   *  create + arm + open a new one. Never two bug sessions. */
-  async reportBug(): Promise<void> {
+   *  create + arm + open a new one. Never two bug sessions. `model` (the
+   *  composer's live selection at click time — providerID + modelID +
+   *  variant) pins the bug session's model so it runs what the user was
+   *  running (amicode#249 QA); absent → the server default. */
+  async reportBug(model?: { providerID: string; modelID: string; variant?: string }): Promise<void> {
     if (this.current) {
       this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
       return;
@@ -136,7 +139,7 @@ export class BugReportManager {
       }
       return;
     }
-    this.opening = this.open();
+    this.opening = this.open(model);
     try {
       await this.opening;
     } finally {
@@ -146,7 +149,7 @@ export class BugReportManager {
 
   // -------- internal --------
 
-  private async open(): Promise<void> {
+  private async open(model?: { providerID: string; modelID: string; variant?: string }): Promise<void> {
     const server = this.deps.server();
     if (!server) {
       this.deps.showError(
@@ -161,7 +164,7 @@ export class BugReportManager {
     let sessionID: string | undefined;
     try {
       sessionID = await this.createSession(server, envelope);
-      await this.armSession(server, sessionID);
+      await this.armSession(server, sessionID, model);
     } catch (e) {
       // No orphans: a created-but-unarmed (or ambiguous) session is deleted.
       if (sessionID) await this.deleteSession(server, sessionID);
@@ -233,11 +236,22 @@ export class BugReportManager {
     return body.id;
   }
 
-  /** Arm: the report-a-bug slash command as the session's first turn. */
-  private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
+  /** Arm: the report-a-bug slash command as the session's first turn. The
+   *  caller's model selection (providerID/modelID[/variant]) pins the turn's
+   *  model — the bug session runs what the user was running, subscription
+   *  provider included (amicode#249 QA). */
+  private async armSession(
+    server: BugReportServer,
+    sessionID: string,
+    model?: { providerID: string; modelID: string; variant?: string },
+  ): Promise<void> {
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
+      body: {
+        command: REPORT_A_BUG_SKILL,
+        arguments: "",
+        ...(model ? { model: `${model.providerID}/${model.modelID}`, ...(model.variant ? { variant: model.variant } : {}) } : {}),
+      },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }

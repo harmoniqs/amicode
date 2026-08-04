@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import * as vscode from "vscode";
-import { handleAmicodeBridgeMessage, type BridgeIo } from "../src/chat_bridge";
+import { extractReportBugModel, handleAmicodeBridgeMessage, type BridgeIo } from "../src/chat_bridge";
 
 // ============================================================================
 // The shared iframe⇄extension bridge: strict allowlists, https-only externals,
@@ -165,5 +165,23 @@ describe("amicode bridge — bug-report lifecycle kinds (amicode#250)", () => {
     const host = io();
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", sessionID: "ses_1", url: "u" }, host)).toBe(true);
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-closed", sessionID: "ses_1" }, host)).toBe(true);
+  });
+});
+
+describe("extractReportBugModel — the command's optional model payload (amicode#249)", () => {
+  it("passes a well-formed selection; strips malformed ones; tolerates absence", () => {
+    expect(extractReportBugModel({ model: { providerID: "opencode-go", modelID: "kimi-k3", variant: "default" } })).toEqual({
+      providerID: "opencode-go",
+      modelID: "kimi-k3",
+      variant: "default",
+    });
+    expect(extractReportBugModel({ model: { providerID: "opencode-go", modelID: "kimi-k3" } })).toEqual({
+      providerID: "opencode-go",
+      modelID: "kimi-k3",
+    });
+    expect(extractReportBugModel({})).toBeUndefined();
+    expect(extractReportBugModel({ model: "kimi-k3" })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: 7, modelID: "x" } })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: "p" } })).toBeUndefined();
   });
 });

@@ -469,3 +469,38 @@ describe("zombie guard — closing an orphaned bug session (QA: amicode#249 prev
     expect(calls.filter((c) => c.url.endsWith("/abort"))).toEqual([]);
   });
 });
+
+describe("the composer's model selection pins the bug session's model (amicode#249 QA)", () => {
+  it("arms with providerID/modelID + variant when the command carries a selection", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+    });
+    const { d } = deps({}, fetchImpl);
+
+    await new BugReportManager(d).reportBug({ providerID: "opencode-go", modelID: "kimi-k3", variant: "default" });
+
+    const arm = calls.find((c) => c.url.endsWith("/session/ses_bug/command"));
+    expect(arm?.body).toEqual({
+      command: "report-a-bug",
+      arguments: "",
+      model: "opencode-go/kimi-k3",
+      variant: "default",
+    });
+  });
+
+  it("omits the model fields entirely when no selection rides the command", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+    });
+    const { d } = deps({}, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.find((c) => c.url.endsWith("/session/ses_bug/command"));
+    expect(arm?.body).toEqual({ command: "report-a-bug", arguments: "" });
+  });
+});
