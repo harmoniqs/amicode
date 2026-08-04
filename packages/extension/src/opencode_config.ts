@@ -12,6 +12,8 @@ import {
   buildSkillIndexSection,
   stageOpencodeSkills,
   type SkillIndexEntry,
+  type LibraryRoot,
+  type LibraryRootSpec,
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
 import { buildRoutingSection, readRoutingContext } from "./routing";
@@ -144,16 +146,23 @@ export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
  *  `surface: public` tag from the central amico-plugin library. Overridable
  *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
-/** Library roots scanned (first-root-wins) for `surface: public` skills:
- *   1. the dev's live amico-plugin checkout — full public set incl. the held
- *      physics skills (present locally, just excluded from the OSS artifact);
+/** Library roots scanned (first-root-wins), TYPED by admitted surface set
+ *  (ADR-0003, amicode#242):
+ *   1. the dev's live amico-plugin checkout — admits {public, internal}.
+ *      Checkout presence IS the eligibility proof: internal SKILL.md content
+ *      exists only in the private repo, so nobody stages skills they do not
+ *      already possess. This is what gives brainstorming's publish/decompose
+ *      steps (write-an-issue, break-into-subissues — surface:internal) their
+ *      path to Amicode.
  *   2. the vsix-bundled OSS subset (fetch_skills.mjs -> vendor/skills-public),
- *      the ONLY root a Marketplace user has. A dev has both; the checkout wins
- *      per dir name, so the bundle is a pure fallback. Missing roots are
- *      silently skipped (resolveLibrarySkills). */
-export const DEFAULT_LIBRARY_ROOTS = [
-  path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills"),
-  path.resolve(__dirname, "..", "vendor", "skills-public", "skills"),
+ *      the ONLY root a Marketplace user has — admits {public} ONLY, defense in
+ *      depth on top of the extract pipeline's guarantee; the vendored bundle
+ *      must never ship internal skills. A dev has both; the checkout wins per
+ *      dir name, so the bundle is a pure fallback. Missing roots are silently
+ *      skipped (resolveLibrarySkills). */
+export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
+  { path: path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills"), surfaces: ["public", "internal"] },
+  { path: path.resolve(__dirname, "..", "vendor", "skills-public", "skills"), surfaces: ["public"] },
 ];
 /** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
  *  a documentation/reference anchor, NOT a selection input (selection is purely by
@@ -461,9 +470,11 @@ export interface OpencodeConfigOptions {
   entitlementsDir?: string;
   /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
   skillRoots?: string[];
-  /** Roots for the central library, scanned for `surface: public` skills
-   *  (spec-20260713-003804). Default: DEFAULT_LIBRARY_ROOTS. */
-  skillLibraryRoots?: string[];
+  /** Roots for the central library, scanned under per-root surface eligibility
+   *  (ADR-0003, amicode#242). Typed `{path, surfaces}` roots; a bare string
+   *  admits public only (pre-ADR settings overrides keep working).
+   *  Default: DEFAULT_LIBRARY_ROOTS. */
+  skillLibraryRoots?: LibraryRootSpec[];
   /** Personal vault dir for the user-memory substrate (spec-20260705-002847),
    *  three-state (spec-20260707-002846 C1):
    *    undefined → auto-resolve the full Armonia mount stack under

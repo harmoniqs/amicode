@@ -2,7 +2,7 @@
   "name": "amicode",
   "displayName": "Amicode",
   "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
-  "version": "0.1.2",
+  "version": "0.2.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -31,6 +31,8 @@
   ],
   "activationEvents": [
     "onCommand:amicode.openChat",
+    "onCommand:amicode.newChat",
+    "onCommand:amicode.chatDeck",
     "onCommand:amicode.openInspector",
     "onView:amicode.runInspector",
     "onView:amicode.deviceInspector",
@@ -91,6 +93,16 @@
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
         "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "amicode.newChat",
+        "title": "Amicode: New Chat (Side by Side)",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amicode.chatDeck",
+        "title": "Amicode: Open Chat Deck (Panes in One Tab)",
+        "icon": "$(layout)"
       },
       {
         "command": "amicode.setupVault",
@@ -207,10 +219,34 @@
         "amicode.skillLibraryRoots": {
           "type": "array",
           "items": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "path",
+                  "surfaces"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string"
+                  },
+                  "surfaces": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 1
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
           },
           "default": [],
-          "description": "Roots for the central skill library, scanned for skills tagged `surface: product`. Empty = ~/harmoniqs/amico-plugin/skills. Only product-tagged skills stage into Amicode; internal/untagged process skills never leak."
+          "markdownDescription": "Roots for the central skill library, scanned first-root-wins by directory name. Empty = the defaults: the dev's private plugin checkout (admits `surface: public` **and** `internal`), then the vendored public bundle (admits `public` only). Entries are typed roots `{\"path\": \"...\", \"surfaces\": [\"public\", ...]}` or plain strings. **Back-compat (ADR-0003):** a plain string keeps the pre-typing behavior — it admits `surface: public` only; existing string overrides keep working unchanged. Untagged/malformed skills are dropped from every root with a logged warning."
         },
         "amicode.vaultDir": {
           "type": "string",

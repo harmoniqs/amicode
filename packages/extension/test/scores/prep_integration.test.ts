@@ -265,6 +265,23 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     expect(skills[0].source).toBe("library"); // platform entries first (spec §3)
   });
 
+  // Two-tier surfaces (ADR-0003, amicode#242 AC1): with the private plugin
+  // checkout present (a typed root admitting internal), a session's skill index
+  // includes surface:internal skills AND stages them into the session skill dir.
+  it("typed checkout root: internal library skills index AND stage into the session skill dir", () => {
+    const proj = prep({
+      entitlementsDir: entitledDir(),
+      skillRoots: [mkPkgSkillRoot()],
+      skillLibraryRoots: [{ path: mkLibRoot(), surfaces: ["public", "internal"] }],
+    });
+    const skills = readSkills();
+    expect(libNames(skills)).toContain("atoms");
+    expect(libNames(skills)).toContain("pr"); // internal, admitted from the checkout root
+    // ...and staged into the per-session dir opencode actually loads (skills.paths)
+    expect(fs.existsSync(path.join(proj.skillsStageDir, "pr", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(proj.skillsStageDir, "atoms", "SKILL.md"))).toBe(true);
+  });
+
   it("skill index survives a score-compile failure (independent splice, spec §3)", () => {
     const badRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bad-scores-"));
     fs.mkdirSync(path.join(badRoot, "pulse-designer"));

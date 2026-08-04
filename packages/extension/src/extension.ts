@@ -5,6 +5,7 @@ import { ServerManager } from "./server_manager";
 import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
+import { DeckPanel } from "./deck_panel";
 import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
@@ -15,6 +16,7 @@ import {
   buildOpencodeConfigContent,
   resolveModelPin,
 } from "./opencode_config";
+import { parseLibraryRootSpecs } from "./scores/package_skills";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
 import {
   mintServerPassword,
@@ -416,6 +418,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const v = vscode.workspace.getConfiguration("amicode").get<string[]>(key, []);
     return Array.isArray(v) && v.length ? v : undefined;
   };
+  // Typed library roots (ADR-0003): the setting mixes bare strings (public-only,
+  // pre-ADR behavior) and {path, surfaces} objects; malformed entries drop + warn.
+  const cfgLibraryRoots = () => {
+    const raw = vscode.workspace.getConfiguration("amicode").get<unknown>("skillLibraryRoots", []);
+    const parsed = parseLibraryRootSpecs(raw);
+    return parsed.length ? parsed : undefined;
+  };
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
@@ -428,7 +437,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     ),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
-    skillLibraryRoots: cfgArr("skillLibraryRoots"),
+    skillLibraryRoots: cfgLibraryRoots(),
     // User-memory substrate (spec-20260705-002847): "" in the setting keeps the
     // auto-resolve (kind=personal marker scan); a path pins the vault explicitly.
     vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
@@ -578,7 +587,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
           ),
           skillRoots: cfgArr("skillRoots"),
-          skillLibraryRoots: cfgArr("skillLibraryRoots"),
+          skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
         });
         await serverManager?.stop();
@@ -708,7 +717,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       ),
       juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
       skillRoots: cfgArr("skillRoots"),
-      skillLibraryRoots: cfgArr("skillLibraryRoots"),
+      skillLibraryRoots: cfgLibraryRoots(),
       vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
       projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
     });
@@ -1052,6 +1061,48 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         return;
       }
       ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    }),
+    // Side-by-side sessions: ALWAYS a fresh editor tab (ViewColumn.Beside, so
+    // it splits next to whatever is focused) pinned to the app's /new-session
+    // draft route — each tab owns its conversation over the one server. Same
+    // ready/creds gates as openChat: a second tab that can't chat is worse
+    // than a named warning.
+    vscode.commands.registerCommand("amicode.newChat", async () => {
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
+        return;
+      }
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
+      const draftUrl = new URL(readyUrl.href);
+      draftUrl.pathname = "/new-session";
+      draftUrl.search = "";
+      draftUrl.hash = "";
+      ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    }),
+    // Chat Deck: MANY panes inside ONE editor tab — tab strips, drag-to-split,
+    // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
+    // other chat entries. The deck shares the one server with every ChatPanel.
+    vscode.commands.registerCommand("amicode.chatDeck", async () => {
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
+        return;
+      }
+      const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
+      if (!creds.ok) {
+        vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
+        return;
+      }
+      DeckPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();

@@ -469,8 +469,16 @@ function defaultPlanner(specPath: string, env?: NodeJS.ProcessEnv): ((specText: 
       agent: "planner",
       model: criticModel(e),
       env: e,
+      // Plan generation is a bigger output than a critic pass (a full gated
+      // plan JSON, not findings) — measured beyond the 240s critic ceiling on
+      // a free-tier model, so the planner gets its own ceiling (2026-07-31).
+      timeoutMs: PLANNER_TIMEOUT_MS,
       prompt: "Compile the spec in your working directory into a plan. Reply with the JSON object only.",
       specText,
       specFilename: specPath.split("/").pop() ?? "spec.md",
     });
 }
+
+/** Planner-only spawn ceiling: ~2.7× the measured 178s critic pass at the same
+ *  tier (2026-07-31). Anything longer is a hung child, not a slow answer. */
+export const PLANNER_TIMEOUT_MS = 480_000;

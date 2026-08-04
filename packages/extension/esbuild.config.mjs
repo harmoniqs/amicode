@@ -86,6 +86,18 @@ const targets = [
     logLevel: "info",
     loader: { ".svg": "text" },
   },
+  // Chat Deck webview bundle — pane-manager shell (src/deck/shell.ts + model)
+  {
+    entryPoints: ["src/deck/shell.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/deck_shell.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {

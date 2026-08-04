@@ -1,7 +1,7 @@
 {
-  "version": "1.6.0",
+  "version": "1.7.0",
   "repo": "harmoniqs/amico-plugin",
-  "tag": "skills-public-v1.6.0",
-  "asset": "amico-skills-public-1.6.0.tar.gz",
-  "sha256": "a8400b101eef68df8d5e3acec13bc922f98f45ce0d8da4747d1f46d791ec9eeb"
+  "tag": "skills-public-v1.7.0",
+  "asset": "amico-skills-public-1.7.0.tar.gz",
+  "sha256": "24146ddba3213234f0dc2d84259f94d053f2d8a50ca37afd05d95ad08de6a3a1"
 }
