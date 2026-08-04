@@ -59,7 +59,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
   // File bridge (chat links to vault notes, run artifacts): the framed app
   // renders LLM output and can't open local files — the extension opens them
-  // in the editor. file:// URLs only; the resolved path must be absolute,
+  // for it. file:// URLs only; the resolved path must be absolute,
   // bounded, and exist on disk. Posix path semantics (the fleet is mac/linux).
   if (
     msg.kind === "open-file" &&
@@ -73,7 +73,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
     if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
-    void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
+    // Markdown (spec cards, vault notes) opens as a rendered preview tab;
+    // anything else (run artifacts, .jld2, …) in the default editor.
+    const command = /\.(md|markdown)$/i.test(fsPath) ? "markdown.showPreview" : "vscode.open";
+    void vscode.commands.executeCommand(command, vscode.Uri.file(fsPath));
     return true;
   }
 

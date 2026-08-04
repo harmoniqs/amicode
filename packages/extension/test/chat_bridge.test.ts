@@ -46,15 +46,29 @@ describe("amicode bridge — open-external", () => {
 });
 
 describe("amicode bridge — open-file", () => {
-  it("opens existing local files in the editor and drops everything else", async () => {
+  it("opens markdown files as a rendered preview tab", async () => {
     const host = io();
     const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.md`);
     fs.writeFileSync(target, "# note\n");
     const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
     const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
     await flush();
-    expect(executed).toContain("vscode.open");
+    expect(executed.slice(before)).toEqual(["markdown.showPreview"]);
+    fs.rmSync(target, { force: true });
+  });
+
+  it("opens non-markdown files in the default editor", async () => {
+    const host = io();
+    const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.toml`);
+    fs.writeFileSync(target, "fidelity = 0.9982\n");
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
+    const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
+    await flush();
+    expect(executed.slice(before)).toEqual(["vscode.open"]);
     fs.rmSync(target, { force: true });
   });
 
