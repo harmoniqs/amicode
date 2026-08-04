@@ -31,7 +31,7 @@ head_() { printf '\n== %s ==\n' "$*"; }
 CODE=(amicode amico amico-plugin opencode)
 # DEFAULT_SKILL_ROOTS — package skills resolve as <pkg>.jl/skills/<name>/SKILL.md
 PKGS=(Piccolo.jl Piccolissimo.jl DirectTrajOpt.jl NamedTrajectories.jl Intonato.jl
-      Intonatissimo.jl IntonatoQICK.jl Altissimo.jl Legato.jl Strettissimo.jl
+      Intonatissimo.jl IntonatoQICK.jl Altissimo.jl Legato.jl Legatissimo.jl
       HarmoniqsBenchmarks.jl PiccoloMultidocs.jl CuQuantum.jl JuliaStaticData.jl
       jl2py pypiccolo)
 # Distiller demo-ingest root.
