@@ -22,6 +22,7 @@ import { profileVerb } from "./profile_verb.js";
 import { fleetVerb } from "./fleet_verb.js";
 import { specVerb } from "./spec_verb.js";
 import { planVerb } from "./plan_verb.js";
+import { handoffVerb } from "./handoff_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -173,4 +174,16 @@ const plan: Verb = {
   run: (args) => planVerb(args),
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan];
+// handoff — atomic repo-handoff receipts (spec-20260804-211500; memory
+// feedback_repo_handoff_access). Grant → verify → receipt: the 201-vs-204
+// distinction (invitation pending vs access now) is encoded in the exit code, so a
+// "grant then announce" workflow mechanically cannot announce into a 404.
+const handoff: Verb = {
+  name: "handoff",
+  summary: "atomic repo handoff: grant access + verify readability (pending-invitation honest) / check / lookup",
+  generalizes: "the manual gh api collaborator dance that 404'd Ann on the ions handoff (2026-08-04)",
+  slice: "ops hardening (spec-20260804-211500)",
+  run: (args) => handoffVerb(args),
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff];
