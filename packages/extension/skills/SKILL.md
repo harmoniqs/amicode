@@ -90,9 +90,15 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 ## 6. Confirm gate — nothing posts before it
 
-Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Ask **one** question, via the `question` tool (free-form answer): **"The draft above is ready. Reply `file it` to submit as a new issue, `edit: <changes>` to modify before filing, `comment: <repo>#<issue> <text>` to add a clarifying comment to an existing issue, or `veto` to cancel."** Never ask follow-ups — the confirm gate is a single question.
+Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Then ask via the `question` tool with **three explicit options** plus a free-text field for modifications:
 
-On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "comment:" → parse `<repo>#<issue> <text>` (e.g. `comment: harmoniqs/amicode#123 Thanks — confirmed on my end`), post the comment via `gh issue comment <issue> --repo <repo> --body <text>`, print the sentinel with the issue's URL, and end. Starts with "veto" → file nothing, no sentinel. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
+| Option | Behavior |
+|---|---|
+| **File it** | File exactly as drafted — proceed to step 7 |
+| **Edit with notes** | Apply any modifications the user typed in the free-text answer field, then file — proceed to step 7 |
+| **Veto — don't file** | File nothing, print no sentinel, the session closes cleanly |
+
+**The free-text answer field is always available** — the user can type modifications regardless of which option they pick. When "Edit with notes" is chosen, incorporate their text into the draft before filing. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
 
 ## 7. File — the runtime org-tail fork
 
