@@ -253,11 +253,12 @@ export class BugReportManager {
     return body.id;
   }
 
-  /** Arm: the report-a-bug slash command as the session's first turn. */
+  /** Arm: the report-a-bug slash command as the session's first turn.
+   *  Pinned to deepseek-v4-pro — cheap, fast, no OpenAI/Claude (amicode#249). */
   private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
+      body: { command: REPORT_A_BUG_SKILL, arguments: "", model: "opencode/deepseek-v4-pro" },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }
@@ -286,6 +287,13 @@ export class BugReportManager {
 
   /** Closed before filing → abort the in-flight turn, then hard delete. */
   private async onBugReportClosed(sessionID: string): Promise<void> {
+    // Join a concurrent open (amicode#249 QA): the dock's sync watch can
+    // open the dock before arm completes, and a close arriving in that
+    // window races open() — this.current is still undefined, the zombie
+    // guard would reap the in-flight session as an orphan, and open()
+    // finishes on a deleted session ("opening" + "reaping" in the logs).
+    // Joining the open first means close always sees the post-open state.
+    if (this.opening) await this.opening;
     if (sessionID !== this.current) {
       // Zombie guard (QA: amicode#249 preview): the dock's sync watch can
       // surface a bug session ORPHANED by a dead extension host (killed
