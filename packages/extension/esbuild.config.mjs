@@ -1,5 +1,5 @@
 import { build, context } from "esbuild";
-import { cpSync, mkdirSync, existsSync, chmodSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, existsSync, chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { basename } from "node:path";
 
 const watch = process.argv.includes("--watch");
@@ -29,6 +29,12 @@ if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
     cpSync(`${arRoot}/dist/${name}.js`, `bin/dist/${name}.js`, { dereference: true });
     chmodSync(`bin/launcher/${name}`, 0o755); // guarantee +x survives pack/unpack
   }
+  // The CLI bundles are ESM (amico-run has "type": "module"); without a scoped
+  // marker node warns-and-reparses on EVERY invocation (MODULE_TYPELESS_PACKAGE_JSON
+  // on stderr — noise on a channel the run gate reserves for failures). A
+  // bin/-scoped package.json fixes parse mode without touching the extension host
+  // entry (dist/extension.js stays CJS under the root package.json).
+  writeFileSync("bin/package.json", JSON.stringify({ type: "module" }) + "\n");
 } else {
   console.warn("[esbuild] amico-run/dist not built — run `pnpm --filter @amicode/amico-run build` before packaging");
 }
