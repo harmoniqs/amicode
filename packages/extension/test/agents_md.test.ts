@@ -222,6 +222,20 @@ describe("HP solver-mode guidance: how to select Altissimo", () => {
     expect(s).toMatch(/do NOT hand-write/i);
   });
 
+  it("forbids authoring from memory and names the API it actually hallucinated", async () => {
+    // Three cloud solves, three hand-authored scripts, zero uses of the vetted
+    // template. The last one invented CubicSplinePulse's signature, CallbackLogger
+    // and get_fidelity, and died with a MethodError at load — after the user paid
+    // the queue and boot wait. Naming the real symbols is what made the earlier
+    // `using Piccolo` guidance stick (#225), so do the same here.
+    const s = await hpSection();
+    expect(s).toMatch(/COPY THE TEMPLATE/);
+    expect(s).toMatch(/do not write a solve script from memory/i);
+    expect(s).toMatch(/CallbackLogger/);
+    expect(s).toMatch(/get_fidelity/);
+    expect(s).toMatch(/POSITIONAL/);
+  });
+
   it("states both traps a hand-rolled call would hit: lost frames and a dropped budget", async () => {
     const s = await hpSection();
     expect(s).toMatch(/intermediate_callback/);

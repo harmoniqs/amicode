@@ -329,6 +329,17 @@ export function solverModeSection(): string {
     "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
     "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
     "instance-boot wait before seeing it. " +
+    "**COPY THE TEMPLATE. Do not write a solve script from memory.** Read the template file and edit its " +
+    "FILL-IN parameters — that is the whole authoring step. Every cloud solve that has failed so far failed " +
+    "this way: the script was authored from scratch and invented API that does not exist. Real examples, all " +
+    "from ONE script (2026-08-05, task 975a7c07): " +
+    "`CubicSplinePulse(; T=…, n_knots=…, n_drives=…, bounds=…)` — every real method takes POSITIONAL " +
+    "arguments, so an all-keyword call matches nothing; `CallbackLogger(qcp)` — not defined in Piccolo or " +
+    "Piccolissimo; `get_fidelity(qcp)` — not defined either. That script died with a MethodError at LOAD " +
+    "time, before any optimization, after the user had already paid the full queue and instance-boot wait. " +
+    "If you need a name the template does not already use, verify it against the package instead of " +
+    "guessing: a plausible-looking name you have not checked is the most expensive mistake available on " +
+    "this tier. " +
     "**Solver backend — already decided, do not touch it.** The template you copy arrives with its " +
     "`SOLVER` line ALREADY SET to Altissimo, because Piccolissimo + Altissimo is the selected solver. " +
     "Do NOT edit that line, and do NOT hand-write the `solve!` call. The template wires Altissimo's " +
