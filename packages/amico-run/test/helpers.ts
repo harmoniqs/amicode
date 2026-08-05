@@ -14,8 +14,19 @@ export function tmpRoot(): string {
  *  (found exactly that way, 2026-07-28). Points at an empty temp dir: absent
  *  files are the fresh-install state every reader already fails safe to.
  *  Spread it BEFORE per-test overrides so a test can still opt into an ops dir. */
-export function hermeticOpsEnv(): { AMICODE_OPS_DIR: string } {
-  return { AMICODE_OPS_DIR: mkdtempSync(join(tmpdir(), "amico-run-ops-")) };
+export function hermeticOpsEnv(): { AMICODE_OPS_DIR: string; AMICO_AUTHORING_FILE: string } {
+  const dir = mkdtempSync(join(tmpdir(), "amico-run-ops-"));
+  return {
+    AMICODE_OPS_DIR: dir,
+    // Pin authoring.json too, not just the ops dir. hpTierSelected() reads the
+    // entitlement-resolved allowlist as its SECOND signal, and a developer's real
+    // ~/.amico/authoring/authoring.json grants Piccolissimo — so without this a
+    // local-run test on this machine sees the cloud tier, promotes, and SUBMITS A
+    // REAL JOB to live staging. That has already happened once. The path
+    // deliberately does not exist: readAuthoring() then falls back to
+    // DEFAULT_ALLOWLIST, which carries no issimo package.
+    AMICO_AUTHORING_FILE: join(dir, "authoring-absent.json"),
+  };
 }
 
 export function readToml(path: string): Record<string, unknown> {

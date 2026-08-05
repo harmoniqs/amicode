@@ -18,6 +18,22 @@ beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
 });
 
+/** An authoring.json path that does NOT exist, so readAuthoring() falls back to
+ *  DEFAULT_ALLOWLIST (no issimo package). Without this the suite reads the
+ *  DEVELOPER's real allowlist, which grants Piccolissimo — every local-run case
+ *  below would then promote and submit a real job to live staging. */
+function noAuthoring(root: string): string {
+  return join(root, "authoring-absent.json");
+}
+
+/** An authoring.json whose entitlement-resolved allowlist grants Piccolissimo —
+ *  i.e. what session prep writes once the issimo entitlement is granted. */
+function authoringGrantingIssimo(root: string): string {
+  const p = join(root, "authoring.json");
+  writeFileSync(p, JSON.stringify({ allowlist: ["Piccolo", "Piccolissimo"], support_set: [], verify_tolerance: 0.001 }));
+  return p;
+}
+
 function run(args: string[], env: Record<string, string> = {}): { code: number; stdout: string; stderr: string } {
   try {
     const stdout = execFileSync("node", [BUNDLE, ...args], { encoding: "utf8", env: { ...process.env, ...env } });
@@ -95,7 +111,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
         let stderr = "";
         // NO --executor flag: that is the whole point of this case
         const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia], {
-          env: { ...process.env, AMICODE_OPS_DIR: ops, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token },
+          env: { ...process.env, AMICODE_OPS_DIR: ops, AMICO_AUTHORING_FILE: noAuthoring(root), AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token },
         });
         child.stdout!.on("data", (d: string) => {
           stdout += d;
@@ -171,7 +187,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
         let stdout = "";
         let stderr = "";
         const child = execFile("node", [BUNDLE, script, "--executor", "remote", "--runs-root", join(root, "runs")], {
-          env: { ...process.env, AMICODE_OPS_DIR: ops, AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token },
+          env: { ...process.env, AMICODE_OPS_DIR: ops, AMICO_AUTHORING_FILE: noAuthoring(root), AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token },
         });
         child.stdout!.on("data", (d: string) => {
           stdout += d;
@@ -194,7 +210,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('AMICODE_ITER iter=1 f=0.5'); console.log('DONE f=0.99')`);
     const script = fakeJulia(root, "s.jl", "");
-    const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], { AMICODE_OPS_DIR: ops });
+    const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], { AMICODE_OPS_DIR: ops, AMICO_AUTHORING_FILE: noAuthoring(root) });
     expect(r.code).toBe(0);
     expect(r.stderr).not.toMatch(/never solves locally/);
   });
@@ -205,7 +221,77 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     const script = fakeJulia(root, "s.jl", "");
     const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: join(root, "absent-ops"),
+      AMICO_AUTHORING_FILE: noAuthoring(root),
     });
     expect(r.code).toBe(0);
+  });
+});
+
+// The 2026-08-05 field report: "it ran a solve but it used a vetted template so it
+// ran locally", with Piccolissimo + Altissimo selected. Reproduced from the real
+// machine state — solver-mode.json read `piccolo` and was dated a week earlier,
+// while the issimo entitlement WAS granted, cloud.json was live, and Harmoniqs
+// Cloud showed connected. Routing keyed off that one stale file, so the paid tier
+// silently reverted to a local IPOPT solve and no surface said so.
+describe("a stale solver-mode.json cannot silently downgrade the paid tier", () => {
+  it("promotes to the cloud on the ENTITLEMENT alone when the mode file is stale", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    fake.state = { task_status: "Running", liveness: "alive", iters: [], finished: { status: "completed" } };
+    try {
+      const root = tmpRoot();
+      // exactly the observed state: the file says piccolo, the entitlement says HP
+      const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready", switched_at: "2026-07-28T22:15:00.000Z" }));
+      const julia = fakeJulia(root, "j", `require('fs').writeFileSync(${JSON.stringify(join(tmpRoot(), "should-not-exist"))}, 'x')`);
+      const script = fakeJulia(root, "s.jl", "");
+      const r = await new Promise<{ code: number; stderr: string; stdout: string }>((resolveP) => {
+        let stdout = "";
+        let stderr = "";
+        const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia], {
+          env: {
+            ...process.env,
+            AMICODE_OPS_DIR: ops,
+            AMICO_AUTHORING_FILE: authoringGrantingIssimo(root), // the second signal
+            AMICO_CLOUD_URL: fake.base,
+            AMICO_CLOUD_TOKEN: fake.token,
+          },
+        });
+        child.stdout!.on("data", (d: string) => { stdout += d; });
+        child.stderr!.on("data", (d: string) => { stderr += d; });
+        child.on("exit", (c) => resolveP({ code: c ?? -1, stdout, stderr }));
+      });
+      expect(r.code).toBe(0);
+      expect(r.stderr).toMatch(/running in Harmoniqs Cloud/);
+      expect(r.stdout).toMatch(/AMICODE_FINISHED status=completed exitCode=0/);
+    } finally {
+      await fake.stop();
+    }
+  }, 15000);
+
+  it("an explicit --executor local is refused on the entitlement alone too", () => {
+    const root = tmpRoot();
+    const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
+    const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
+    const script = fakeJulia(root, "s.jl", "");
+    const r = run([script, "--executor", "local", "--runs-root", join(root, "runs"), "--julia", julia], {
+      AMICODE_OPS_DIR: ops,
+      AMICO_AUTHORING_FILE: authoringGrantingIssimo(root),
+    });
+    expect(r.code).toBe(64);
+    expect(r.stderr).toMatch(/never solves locally/);
+  });
+
+  it("NEITHER signal → local, so the free tier is untouched", () => {
+    // The fail-safe direction. This is the common case and must not regress.
+    const root = tmpRoot();
+    const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
+    const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
+    const script = fakeJulia(root, "s.jl", "");
+    const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], {
+      AMICODE_OPS_DIR: ops,
+      AMICO_AUTHORING_FILE: noAuthoring(root),
+    });
+    expect(r.code).toBe(0);
+    expect(r.stderr).not.toMatch(/Harmoniqs Cloud/);
   });
 });

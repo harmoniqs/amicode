@@ -13,7 +13,7 @@ import { RemoteExecutor } from "./remote_executor.js";
 import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
-import { readSolverMode } from "./solver_mode.js";
+import { hpTierSelected } from "./solver_mode.js";
 import { hasCloudConfig } from "./remote_config.js";
 import { assembleWarrantContext } from "./warrant_context.js";
 import { runVerification } from "./verify.js";
@@ -149,9 +149,9 @@ export async function launch(argv: string[]): Promise<number> {
   //     contradiction of the selected tier, and silently inverting an explicit
   //     flag is worse than an error.
   //
-  // Fails SAFE either way: an absent or corrupt solver-mode.json reads as
-  // piccolo, so ordinary local runs behave exactly as before.
-  if (executor === "local" && readSolverMode() === "hp") {
+  // Fails SAFE either way: with neither signal present this reads as piccolo, so
+  // ordinary local runs behave exactly as before.
+  if (executor === "local" && hpTierSelected()) {
     if (executorExplicit) {
       console.error(
         `amico-run: Piccolissimo + Altissimo runs in Harmoniqs Cloud and never solves locally — this launch is --executor local. ` +

@@ -15,7 +15,7 @@ import {
   type LibraryRoot,
   type LibraryRootSpec,
 } from "./scores/package_skills";
-import { readSolverModeState } from "./solver_mode";
+import { effectiveSolverMode } from "./solver_mode";
 import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
@@ -294,7 +294,7 @@ export function writeAuthoringConfig(
  *  connection, else exit 64); this section makes the agent do the right thing
  *  and, crucially, BLOCK-WITH-PROMPT when no cloud key is connected. */
 export function solverModeSection(): string {
-  if (readSolverModeState().mode !== "hp") return "";
+  if (effectiveSolverMode() !== "hp") return "";
   const cloudConnected =
     !!process.env.AMICO_CLOUD_URL || fs.existsSync(path.join(os.homedir(), ".amico", "cloud.json"));
   const routing = cloudConnected
@@ -355,7 +355,7 @@ export function solverModeSection(): string {
  *  before. The estimate SUGGESTS the confirm's default; the researcher always
  *  confirms, per-solve, never auto-routed. */
 export function routingSection(): string {
-  return buildRoutingSection(readRoutingContext(readSolverModeState().mode));
+  return buildRoutingSection(readRoutingContext(effectiveSolverMode()));
 }
 
 /** The model pin to inject into the generated config, or undefined.
@@ -529,7 +529,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // IPOPT is not the product the user selected. Permission grants follow this
   // path (buildOpencodeConfigContent derives them from templatePath), so pointing
   // at the staged copy needs no extra rule.
-  const solverSymbol = readSolverModeState().mode === "hp" ? "altissimo" : "ipopt";
+  const solverSymbol = effectiveSolverMode() === "hp" ? "altissimo" : "ipopt";
   const stagedTemplate = path.join(projectDir, path.basename(opts.templateSrc));
   try {
     fs.writeFileSync(

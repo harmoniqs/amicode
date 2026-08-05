@@ -21,3 +21,26 @@ process.env.AMICO_CRITIC_BIN = "/nonexistent/amico-test-guard/no-real-model-call
 if (!process.env.AMICO_LEDGER) {
   process.env.AMICO_LEDGER = "/nonexistent/amico-test-guard/ledger.jsonl";
 }
+
+// Same reasoning again, for the cloud: NO TEST MAY EVER SUBMIT A REAL SOLVE.
+//
+// hpTierSelected() treats the entitlement-resolved allowlist in authoring.json as a signal that
+// the Piccolissimo + Altissimo tier is active, and a developer's REAL
+// ~/.amico/authoring/authoring.json grants Piccolissimo. So any test that launches without
+// --executor promotes to remote, reads the developer's live cloud.json, and submits a billed
+// staging job. That is not hypothetical: estimate.test.ts did exactly this and sat 13.5 minutes
+// polling the real cloud before failing.
+//
+// Fails CLOSED the same way as the guards above — a path that cannot exist makes readAuthoring()
+// fall back to DEFAULT_ALLOWLIST, which carries no issimo package, so the tier reads as the free
+// local one. A test that WANTS the cloud tier writes its own authoring.json and points
+// AMICO_AUTHORING_FILE at it (hermeticOpsEnv / authoringGrantingIssimo), which is explicit.
+if (!process.env.AMICO_AUTHORING_FILE) {
+  process.env.AMICO_AUTHORING_FILE = "/nonexistent/amico-test-guard/authoring.json";
+}
+// Belt to that brace: even with the tier misread, an absent cloud config makes the promotion
+// refuse (exit 64) instead of reaching a real endpoint. Only set when the test has not chosen its
+// own — FakeCloud-based tests pass AMICO_CLOUD_URL explicitly.
+if (!process.env.AMICO_CLOUD_URL && !process.env.AMICO_CLOUD_TOKEN) {
+  process.env.AMICO_CLOUD_FILE = "/nonexistent/amico-test-guard/cloud.json";
+}

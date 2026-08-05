@@ -40,6 +40,62 @@ export function writeSolverModeReady(mode: SolverMode, file: string = solverMode
   fs.writeFileSync(file, JSON.stringify({ mode, status: "ready", switched_at: new Date().toISOString() }));
 }
 
+/** Is the `issimo` entitlement granted — i.e. is the Piccolissimo + Altissimo
+ *  tier actually active?
+ *
+ *  This is the DURABLE record of the tier, and a self-cleaning one: the only
+ *  writer is applyEntitlementForMode, which grants on hp and REVOKES on piccolo.
+ *  solver-mode.json, by contrast, only changes when someone posts a
+ *  `status:"switching"` request, so it can sit stale while the entitlement is
+ *  right — observed on 2026-08-05, where the file read `piccolo` (dated Jul 28)
+ *  with issimo granted, a live cloud.json, and a connected Harmoniqs Cloud. Every
+ *  cloud decision keys off that file, so the whole tier silently reverted to
+ *  local: no HP guidance, a template staged for IPOPT, and no cloud promotion. */
+export function issimoGranted(entitlementsDir: string = amicodeOpsDir()): boolean {
+  try {
+    const parsed = parseToml(fs.readFileSync(path.join(entitlementsDir, "entitlements.toml"), "utf8")) as {
+      codes?: unknown;
+    };
+    return Array.isArray(parsed.codes) && parsed.codes.includes("issimo");
+  } catch {
+    return false; // absent/corrupt → not entitled, so we fail toward the free local tier
+  }
+}
+
+/** The mode the rest of the extension must act on: hp if EITHER signal says so.
+ *
+ *  OR, not AND, and deliberately: the two signals disagree only when the switch
+ *  handshake half-landed, and of the two failure directions, "the user paid for
+ *  the cloud tier and silently got a local IPOPT solve" is far worse than "a
+ *  revoked user is told to connect". A user who genuinely wants local switches to
+ *  Piccolo, which revokes the entitlement, so both signals agree again. */
+export function effectiveSolverMode(
+  file: string = solverModeFile(),
+  entitlementsDir: string = amicodeOpsDir(),
+): SolverMode {
+  return readSolverModeState(file).mode === "hp" || issimoGranted(entitlementsDir) ? "hp" : "piccolo";
+}
+
+/** Bring solver-mode.json back in line with the entitlement at activation.
+ *
+ *  effectiveSolverMode() keeps the EXTENSION correct on its own, but the file is
+ *  a shared contract: the app's solver toggle renders from it (so a stale file
+ *  shows "Piccolo" selected while the user is on the paid tier), and amico-run
+ *  reads it directly. Healing it once at boot fixes every reader at the source
+ *  instead of teaching each one the same OR. Returns what it did, for the log —
+ *  a heal means the switch handshake dropped a write, which is worth knowing. */
+export function reconcileSolverMode(
+  file: string = solverModeFile(),
+  entitlementsDir: string = amicodeOpsDir(),
+): { healed: boolean; mode: SolverMode } {
+  const onDisk = readSolverModeState(file);
+  const mode = effectiveSolverMode(file, entitlementsDir);
+  // Never touch a switch in flight — the watcher owns that write.
+  if (onDisk.status === "switching" || onDisk.mode === mode) return { healed: false, mode };
+  writeSolverModeReady(mode, file);
+  return { healed: true, mode };
+}
+
 // NOTE: there is deliberately NO extension-side "write {status:switching}"
 // helper anymore. Switch requests come from the fork server (the app's toggle
 // POST, and the connections credential route's HP flip — #167); the extension
