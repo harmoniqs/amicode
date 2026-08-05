@@ -36,6 +36,8 @@ let INSPECTOR: InspectorView | undefined;
 interface PaneBuffer {
   runId: string;
   runLabel?: string;
+  /** True for a Harmoniqs Cloud run — drives the topbar location badge. */
+  cloud?: boolean;
   warming: boolean;
   completion?: { status: string; fidelity?: number };
   pulseMeta?: PulseMeta;
@@ -105,6 +107,7 @@ class InspectorView implements vscode.WebviewViewProvider {
   private replayPane(view: vscode.WebviewView, p: PaneBuffer): void {
     const rid = p.runId;
     if (p.runLabel !== undefined) view.webview.postMessage({ type: "runlabel", runId: rid, text: p.runLabel });
+    if (p.cloud) view.webview.postMessage({ type: "location", runId: rid, cloud: true });
     if (p.timing) view.webview.postMessage({ type: "timing", runId: rid, ...p.timing });
     if (p.warming) view.webview.postMessage({ type: "warming", runId: rid });
     if (p.pulseMeta) view.webview.postMessage({ type: "pulsemeta", runId: rid, ...p.pulseMeta });
@@ -203,6 +206,13 @@ class InspectorView implements vscode.WebviewViewProvider {
   setRunLabel(runId: string, label: string): void {
     this.paneFor(runId).runLabel = label;
     if (this.view) this.view.webview.postMessage({ type: "runlabel", runId, text: label });
+  }
+
+  /** Mark a run as executing in Harmoniqs Cloud (topbar badge). Buffered per run
+   *  like every other pane message, so reopening the panel keeps the badge. */
+  setCloudRun(runId: string): void {
+    this.paneFor(runId).cloud = true;
+    if (this.view) this.view.webview.postMessage({ type: "location", runId, cloud: true });
   }
 
   /** Timing for the elapsed/rate/ETA strip (ported from the single-run host —

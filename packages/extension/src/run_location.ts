@@ -13,15 +13,3 @@ export function isCloudRun(runDir: string): boolean {
     return false;
   }
 }
-
-/** The Run Inspector's topbar label.
- *
- *  Cloud runs say so, in the one place a user is already looking while a solve
- *  is in flight. Before this, a Piccolissimo + Altissimo run and a local Piccolo
- *  run produced an identical pane — same frames, same curve, same badge — so
- *  "did that actually use the cloud I'm paying for?" was unanswerable from the
- *  UI. Local runs keep the bare runId: the label earns its space only when it
- *  distinguishes something. */
-export function runLocationLabel(runId: string, runDir: string | undefined): string {
-  return runDir && isCloudRun(runDir) ? `${runId} · Harmoniqs Cloud` : runId;
-}

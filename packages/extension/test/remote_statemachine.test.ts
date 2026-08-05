@@ -16,6 +16,7 @@ const { inspector } = vi.hoisted(() => ({
     postIterationRecord: vi.fn(),
     postPulse: vi.fn(),
     setRunLabel: vi.fn(),
+    setCloudRun: vi.fn(),
     activate: vi.fn(),
     reveal: vi.fn(),
   },
@@ -56,10 +57,11 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
 
       // 1. warming — identical to the local fresh-run lane (runs_manager.test.ts:98-101)
       expect(inspector.setWarmingUp).toHaveBeenCalledWith(h.runId);
-      // …except the label, which SAYS it is a cloud run. This is the end-to-end
-      // proof of that: a real RemoteExecutor.submit wrote the remote.json this
-      // reads, so the pane a user actually sees names Harmoniqs Cloud.
-      expect(inspector.setRunLabel).toHaveBeenCalledWith(h.runId, `${h.runId} · Harmoniqs Cloud`);
+      expect(inspector.setRunLabel).toHaveBeenCalledWith(h.runId, h.runId);
+      // …plus the cloud badge. End-to-end proof: a real RemoteExecutor.submit
+      // wrote the remote.json this reads, so the pane a user actually sees
+      // carries the Harmoniqs Cloud badge — not a dim string in the run label.
+      expect(inspector.setCloudRun).toHaveBeenCalledWith(h.runId);
       expect(inspector.activate).toHaveBeenCalledWith(h.runId);
       expect(m.selectedRun).toBe(h.runId);
 

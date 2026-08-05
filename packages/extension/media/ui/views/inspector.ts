@@ -105,10 +105,18 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
   brand.className = "row gap-sm brand";
   brand.append(logo({ variant: "reduced" }), text("", "Run Inspector").el);
 
+  // WHERE this run executes. Hidden by default and revealed only for a cloud
+  // run, so the badge carries information when it appears — a local run gets no
+  // "LOCAL" chrome for users to learn to ignore. It sits beside the run id (the
+  // answer to "what am I looking at") rather than out by the status pill, which
+  // is about how the solve is going.
+  const location = pill("cloud", "Harmoniqs Cloud");
+  location.el.hidden = true;
+
   const topbar = document.createElement("div");
   topbar.className = "row wrap";
   status.el.classList.add("push-end");
-  topbar.append(brand, runLabel.el, status.el);
+  topbar.append(brand, runLabel.el, location.el, status.el);
 
   const grid = document.createElement("div");
   grid.className = "insp-metrics";
@@ -195,6 +203,10 @@ function createPanel(post: (msg: unknown) => void, runId?: string): Panel {
       switch (msg.type) {
         case "runlabel":
           runLabel.set(String(msg.text ?? ""));
+          break;
+        case "location":
+          // Cloud runs announce themselves; anything else leaves the topbar bare.
+          location.el.hidden = msg.cloud !== true;
           break;
         case "timing": {
           if (msg.terminal) {
