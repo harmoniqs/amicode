@@ -120,10 +120,19 @@ export class ChatPanel {
    *  close-bug-report. Same idiom as postComputeConnect — posted twice (now +
    *  1.5s) because a freshly created panel's iframe may not be listening yet;
    *  both kinds are idempotent app-side (same-id open = reveal, close of a
-   *  closed dock = no-op), so the re-post is pure reliability. */
+   *  closed dock = no-op), so the re-post is pure reliability. Never throws:
+   *  the panel can be disposed between the two posts (window closing,
+   *  mid-flight reload) — a lost down-post heals via the app's boot poke. */
   postToApp(envelope: { source: "amicode"; kind: string; sessionID: string }): void {
-    void this.panel.webview.postMessage(envelope);
-    setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
+    const post = () => {
+      try {
+        void this.panel.webview.postMessage(envelope);
+      } catch {
+        /* disposed webview — the app's poke/sync-watch covers the loss */
+      }
+    };
+    post();
+    setTimeout(post, 1500);
   }
 
   /** Lowest free tab label: the lone tab reads "Amicode Chat"; extras take the

@@ -120,6 +120,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
 async function openBugSession(overrides: Partial<BugReportDeps> = {}, extraRoutes: Record<string, { status?: number; body?: unknown }> = {}) {
   const { fetchImpl, calls } = mockFetch({
     "GET /session": { status: 200, body: [] },
+    "GET /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
     "POST /session": { status: 200, body: { id: "ses_bug" } },
     "POST /session/ses_bug/command": { status: 200, body: {} },
     "PATCH /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
@@ -241,6 +242,7 @@ describe("single-open invariant (AC3)", () => {
   it("a second invocation while a bug session is open reveals with the SAME id — never a second create", async () => {
     const { fetchImpl, calls } = mockFetch({
       "GET /session": { status: 200, body: [] },
+      "GET /session/ses_bug": { status: 200, body: { id: "ses_bug" } },
       "POST /session": { status: 200, body: { id: "ses_bug" } },
       "POST /session/ses_bug/command": { status: 200, body: {} },
     });
@@ -470,37 +472,42 @@ describe("zombie guard — closing an orphaned bug session (QA: amicode#249 prev
   });
 });
 
-describe("the composer's model selection pins the bug session's model (amicode#249 QA)", () => {
-  it("arms with providerID/modelID + variant when the command carries a selection", async () => {
+describe("the ghost-session guard (amicode#249 QA: closed while the bridge was down)", () => {
+  it("a remembered session that 404s clears itself and creates fresh", async () => {
     const { fetchImpl, calls } = mockFetch({
       "GET /session": { status: 200, body: [] },
-      "POST /session": { status: 200, body: { id: "ses_bug" } },
-      "POST /session/ses_bug/command": { status: 200, body: {} },
+      "POST /session": { status: 200, body: { id: "ses_old" } },
+      "POST /session/ses_old/command": { status: 200, body: {} },
+      // ses_old is NOT registered as GET-able → 404 on the reveal probe
     });
-    const { d } = deps({}, fetchImpl);
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+    await manager.reportBug(); // opens ses_old
 
-    await new BugReportManager(d).reportBug({ providerID: "opencode-go", modelID: "kimi-k3", variant: "default" });
-
-    const arm = calls.find((c) => c.url.endsWith("/session/ses_bug/command"));
-    expect(arm?.body).toEqual({
-      command: "report-a-bug",
-      arguments: "",
-      model: "opencode-go/kimi-k3",
-      variant: "default",
+    posted.length = 0;
+    calls.length = 0;
+    // Second click: the remembered session is gone (the GET 404s) → a fresh
+    // session must be created, never a reveal of the ghost.
+    const { fetchImpl: f2, calls: calls2 } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_new" } },
+      "POST /session/ses_new/command": { status: 200, body: {} },
     });
+    (d as { fetchImpl?: typeof fetch }).fetchImpl = f2;
+    await manager.reportBug();
+
+    expect(calls2.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toHaveLength(1);
+    expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_new" }]);
   });
 
-  it("omits the model fields entirely when no selection rides the command", async () => {
-    const { fetchImpl, calls } = mockFetch({
-      "GET /session": { status: 200, body: [] },
-      "POST /session": { status: 200, body: { id: "ses_bug" } },
-      "POST /session/ses_bug/command": { status: 200, body: {} },
-    });
-    const { d } = deps({}, fetchImpl);
+  it("a live remembered session reveals as before (probe 200 → no create)", async () => {
+    const { manager, calls, posted } = await openBugSession();
 
-    await new BugReportManager(d).reportBug();
+    await manager.reportBug();
 
-    const arm = calls.find((c) => c.url.endsWith("/session/ses_bug/command"));
-    expect(arm?.body).toEqual({ command: "report-a-bug", arguments: "" });
+    expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" }]);
+    expect(calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toEqual([]);
+    // The liveness probe is the only new call — read-only.
+    expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
   });
 });

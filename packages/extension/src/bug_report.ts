@@ -122,14 +122,21 @@ export class BugReportManager {
   }
 
   /** The `amicode.reportBug` command: reveal the open bug session, else
-   *  create + arm + open a new one. Never two bug sessions. `model` (the
-   *  composer's live selection at click time — providerID + modelID +
-   *  variant) pins the bug session's model so it runs what the user was
-   *  running (amicode#249 QA); absent → the server default. */
-  async reportBug(model?: { providerID: string; modelID: string; variant?: string }): Promise<void> {
+   *  create + arm + open a new one. Never two bug sessions. */
+  async reportBug(): Promise<void> {
     if (this.current) {
-      this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
-      return;
+      // Verify before revealing (amicode#249 QA): a session closed while the
+      // bridge was down (disposed webview, dead window) leaves `current`
+      // pinned to a ghost — every later click would reveal nothing and never
+      // create. A dead memory clears itself here.
+      const server = this.deps.server();
+      const alive = server ? await this.sessionExists(server, this.current) : true;
+      if (alive) {
+        this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
+        return;
+      }
+      this.deps.log?.(`[bug] remembered session ${this.current} is gone — clearing`);
+      this.current = undefined;
     }
     if (this.opening) {
       // A concurrent invocation joins the in-flight open, then reveals.
@@ -139,7 +146,7 @@ export class BugReportManager {
       }
       return;
     }
-    this.opening = this.open(model);
+    this.opening = this.open();
     try {
       await this.opening;
     } finally {
@@ -147,9 +154,19 @@ export class BugReportManager {
     }
   }
 
+  /** Cheap liveness probe for the reveal path (read-only, 404-tolerant). */
+  private async sessionExists(server: BugReportServer, sessionID: string): Promise<boolean> {
+    try {
+      const res = await this.fetch(new URL(`/session/${sessionID}`, server.url), server, { method: "GET" });
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   // -------- internal --------
 
-  private async open(model?: { providerID: string; modelID: string; variant?: string }): Promise<void> {
+  private async open(): Promise<void> {
     const server = this.deps.server();
     if (!server) {
       this.deps.showError(
@@ -164,7 +181,7 @@ export class BugReportManager {
     let sessionID: string | undefined;
     try {
       sessionID = await this.createSession(server, envelope);
-      await this.armSession(server, sessionID, model);
+      await this.armSession(server, sessionID);
     } catch (e) {
       // No orphans: a created-but-unarmed (or ambiguous) session is deleted.
       if (sessionID) await this.deleteSession(server, sessionID);
@@ -236,22 +253,11 @@ export class BugReportManager {
     return body.id;
   }
 
-  /** Arm: the report-a-bug slash command as the session's first turn. The
-   *  caller's model selection (providerID/modelID[/variant]) pins the turn's
-   *  model — the bug session runs what the user was running, subscription
-   *  provider included (amicode#249 QA). */
-  private async armSession(
-    server: BugReportServer,
-    sessionID: string,
-    model?: { providerID: string; modelID: string; variant?: string },
-  ): Promise<void> {
+  /** Arm: the report-a-bug slash command as the session's first turn. */
+  private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: {
-        command: REPORT_A_BUG_SKILL,
-        arguments: "",
-        ...(model ? { model: `${model.providerID}/${model.modelID}`, ...(model.variant ? { variant: model.variant } : {}) } : {}),
-      },
+      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }

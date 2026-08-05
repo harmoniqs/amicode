@@ -156,7 +156,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // model selection (providerID + modelID + variant — the bug session
       // runs what the user was running). Shape-validated, bounded; anything
       // malformed is stripped, never fatal to the command.
-      void vscode.commands.executeCommand(command, extractReportBugModel(msg));
+      void vscode.commands.executeCommand(command);
       return true;
     }
     return false;
