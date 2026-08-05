@@ -90,15 +90,11 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 ## 6. Confirm gate — nothing posts before it
 
-Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Then ask via the `question` tool with **three explicit options** plus the always-available free-text answer field for modifications (the tool's `options` parameter; the "Type your own answer" radio opens the text input):
+Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Then ask via the `question` tool as a **free-form text question** — no pre-defined options, so the answer field is always visible:
 
-| Option | Behavior |
-|---|---|
-| **File it** | File exactly as drafted — proceed to step 7 |
-| **Edit with notes** | The user selects this option AND types modifications into the free-text "Type your own answer" field — incorporate their text into the draft before filing. Proceed to step 7. |
-| **Veto — don't file** | File nothing, print no sentinel, the session closes cleanly |
+> The draft above is ready. Reply with **file it** to submit as-is, **edit: <your changes>** to modify before filing, or **veto** to cancel without filing.
 
-A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
+Parse the user's answer: startswith "file it" → file exactly as drafted and proceed to step 7. startswith "edit:" → incorporate the text after "edit:" into the draft and file, proceed to step 7. startswith "veto" → file nothing, print no sentinel, the session closes cleanly. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
 
 ## 7. File — the runtime org-tail fork
 
