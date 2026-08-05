@@ -90,11 +90,9 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 ## 6. Confirm gate — nothing posts before it
 
-Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Then ask via the `question` tool as a **free-form text question** — no pre-defined options, so the answer field is always visible:
+Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Ask **one** question, via the `question` tool (free-form answer): **"The draft above is ready. Reply `file it` to submit, `edit: <changes>` to modify, or `veto` to cancel."** Never ask follow-ups — the confirm gate is a single question.
 
-> The draft above is ready. Reply with **file it** to submit as-is, **edit: <your changes>** to modify before filing, or **veto** to cancel without filing.
-
-Parse the user's answer: startswith "file it" → file exactly as drafted and proceed to step 7. startswith "edit:" → incorporate the text after "edit:" into the draft and file, proceed to step 7. startswith "veto" → file nothing, print no sentinel, the session closes cleanly. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
+On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "veto" → file nothing, no sentinel. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
 
 ## 7. File — the runtime org-tail fork
 
