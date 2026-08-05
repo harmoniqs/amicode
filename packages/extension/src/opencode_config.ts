@@ -302,15 +302,18 @@ export function solverModeSection(): string {
       "mode, so never ask the user where a solve should run. Author it as: " +
       '`tier="hpc"`, `executor="remote"`, `env.kind="provisioned"` (via `amico-run --spec <spec> ' +
       "<script.jl> --executor remote`). The runner image has Piccolissimo/Altissimo pre-baked, so there " +
-      "is NO local precompile and NO sandbox — never author a sandbox env for HP. A local launch is " +
-      "REFUSED by amico-run while this solver is selected (exit 64), so attempting one only wastes a turn. " +
-      "Live iteration frames stream to the Inspector; note that per-iteration AMICODE_ITER stats + the " +
-      "cooperative Stop are not yet available on the cloud bundle, and re-rollout verification is skipped " +
-      "for cloud runs (say so). Only claim cloud execution when the launch actually used `--executor remote`."
+      "is NO local precompile and NO sandbox — never author a sandbox env for HP. amico-run routes this " +
+      "tier to the cloud on its own (a launch with no `--executor` is promoted to remote) and REFUSES an " +
+      "explicit `--executor local` (exit 64), so attempting a local run only wastes a turn. " +
+      "Per-iteration `AMICODE_ITER` stats and live frames both stream to the Inspector. Two real limits to " +
+      "state plainly if they come up: the cooperative Stop needs the solver callback, which the cloud " +
+      "bundle's Piccolissimo does not forward to Altissimo (so Stop may not interrupt a cloud solve), and " +
+      "re-rollout verification is skipped for cloud runs. " +
+      "Only claim cloud execution when the launch actually ran remotely."
     : "Harmoniqs Cloud is NOT connected (no API key). Piccolissimo + Altissimo is a PAID cloud tier and " +
       "CANNOT run locally — do NOT attempt a local Piccolissimo solve (it will fail three ways: amico-run " +
-      "refuses a local launch in this mode, the private package can't be instantiated in a sandbox, and " +
-      "the gate rejects a local hpc run). Instead, STOP and tell the user: " +
+      "refuses the launch in this mode and tells the user to connect, the private package can't be " +
+      "instantiated in a sandbox, and the gate rejects a local hpc run). Instead, STOP and tell the user: " +
       '"Piccolissimo + Altissimo needs a Harmoniqs Cloud connection — click **Piccolissimo + Altissimo** ' +
       "in the model · solver control on the dashboard and connect your API key there (or run **Amico: " +
       'Connect Cloud**, which opens the same flow)." Offer to switch back to the free local Piccolo solver ' +
@@ -326,23 +329,19 @@ export function solverModeSection(): string {
     "`EmbeddedOperator`, `UnitaryTrajectory` — every problem-setup name comes from Piccolo. The failure is " +
     "an UndefVarError at load time, before any solve starts, and on a cloud run you pay the full queue and " +
     "instance-boot wait before seeing it. " +
-    "**Solver backend:** the default remains IPOPT (`IpoptOptions`), which is what streams per-iteration " +
-    "telemetry — its `intermediate_callback` produces the Inspector's frames and the `AMICODE_ITER` lines. " +
-    "If the researcher asks for the **Altissimo** backend (the augmented-Lagrangian GPU solver, " +
-    "`AltissimoOptions`), switch it by setting **`SOLVER = :altissimo`** in the template's FILL-IN block — that " +
-    "one line is the whole change. Do NOT hand-roll the solve call: the template already re-hangs BOTH telemetry " +
-    "channels onto Altissimo's `(x, info)` hook (the frames come off `IpoptOptions.intermediate_callback`, which " +
-    "`AltissimoOptions` does not have, so a hand-written call loses the Inspector's frames as well as its " +
-    "numbers), passes the budget as `AltissimoOptions(max_outer_iter = max_iter)` (a `max_iter` given to " +
-    "`solve!` is silently DROPPED on that path — the solve would quietly run 20 outer iterations), and derives " +
-    "`inf_pr`/`inf_du` on older Altissimo builds. " +
-    "Also TELL THEM that live iterations depend on the INSTALLED version. " +
-    "Current Piccolissimo main accepts a `callback` on `solve!(::AltissimoOptions)` and forwards it to " +
-    "`Altissimo.optimize!`, which fires it every outer iteration; older builds swallow `kwargs...` and forward " +
-    "nothing, so an Altissimo run there emits NO AMICODE_ITER lines and the Run Inspector stays dark until the " +
-    "solve finishes. Do not promise live iterations you have not seen: run it, and if no AMICODE_ITER line " +
-    "appears in the first iterations, say so plainly rather than implying the solve is stuck. Never switch to " +
-    "Altissimo silently. " +
+    "**Solver backend — already decided, do not touch it.** The template you copy arrives with its " +
+    "`SOLVER` line ALREADY SET to Altissimo, because Piccolissimo + Altissimo is the selected solver. " +
+    "Do NOT edit that line, and do NOT hand-write the `solve!` call. The template wires Altissimo's " +
+    "`(x, info)` callback for both telemetry channels (frames AND `AMICODE_ITER` — the frames come off " +
+    "`IpoptOptions.intermediate_callback`, which `AltissimoOptions` has no equivalent of, so a hand-rolled " +
+    "call loses the Inspector's plots as well as its numbers), passes the budget as " +
+    "`AltissimoOptions(max_outer_iter = max_iter)` (a `max_iter` given to `solve!` is silently DROPPED on " +
+    "that path and the solve quietly runs 20 outer iterations), and bridges the DirectTrajOpt 0.9.7 " +
+    "extension-point rename so the backend actually dispatches. " +
+    "**Report what the artifacts say, never what the exit code says.** A `completed` / exit-0 run can still " +
+    "have optimized NOTHING: read `result.toml` and if `iterations` is 0 — or the template emitted " +
+    "`AMICODE_WARN` — the fidelity is the random initial guess, so say the run did not converge. Do not call " +
+    "a 0-iteration run successful. " +
     routing +
     "\n"
   );
@@ -523,9 +522,32 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   const raw = fs.existsSync(opts.agentsSrc)
     ? fs.readFileSync(opts.agentsSrc, "utf8")
     : "# Amicode\nRead the template at {{TEMPLATE_PATH}}, fill params, run `amico-run <script>`.\n";
+  // The solve template is STAGED (substituted into the project dir) rather than
+  // read in place, so `SOLVER` follows the selected solver mode automatically
+  // instead of being an authoring decision the agent could get wrong.
+  // Piccolissimo + Altissimo is a paid cloud tier; a run of it that quietly used
+  // IPOPT is not the product the user selected. Permission grants follow this
+  // path (buildOpencodeConfigContent derives them from templatePath), so pointing
+  // at the staged copy needs no extra rule.
+  const solverSymbol = readSolverModeState().mode === "hp" ? "altissimo" : "ipopt";
+  const stagedTemplate = path.join(projectDir, path.basename(opts.templateSrc));
+  try {
+    fs.writeFileSync(
+      stagedTemplate,
+      fs.readFileSync(opts.templateSrc, "utf8").replaceAll("{{SOLVER}}", solverSymbol),
+      "utf8",
+    );
+  } catch (e) {
+    // Fall back to the bundled original. The template's SOLVER line is written so
+    // that an unsubstituted placeholder still parses and reads as :ipopt, so the
+    // worst case here is a local Piccolo solve, not a syntax error.
+    console.warn(`amicode: could not stage the solve template (${e}); using the bundled path`);
+  }
+  const templateForAgent = fs.existsSync(stagedTemplate) ? stagedTemplate : opts.templateSrc;
+
   const filled = raw
     .replaceAll("{{JULIA_PROJECT}}", opts.juliaProject ?? resolveJuliaProject(""))
-    .replaceAll("{{TEMPLATE_PATH}}", opts.templateSrc);
+    .replaceAll("{{TEMPLATE_PATH}}", templateForAgent);
 
   // Score runtime ("data-defined, prompt-executed", scores spec §6): compile the
   // selected score (v1: boot-time selection of score #0, pulse-designer) over the
@@ -693,7 +715,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   return {
     projectDir,
     agentsPath,
-    templatePath: opts.templateSrc,
+    templatePath: templateForAgent,   // the STAGED copy (SOLVER substituted), so grants + agent reads agree
     skillPaths: skillEntries.map((e) => e.path),
     skillsStageDir,
     vaultDir,

@@ -124,8 +124,9 @@ export function buildRoutingSection(ctx: RoutingContext): string {
     '`env.kind="provisioned"` on solvespec.json, then launch with `amico-run --spec <spec> ' +
     "<script.jl> --executor remote`.\n" +
     "- **Never dispatch this solver locally.** The runner image has Piccolissimo/Altissimo " +
-    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run REFUSES a local " +
-    "launch while this solver is selected (exit 64), so a local attempt only wastes a turn.\n" +
+    "pre-baked; a laptop would precompile the HP stack from scratch. amico-run routes this tier " +
+    "to the cloud on its own — a launch with no `--executor` is promoted to remote — and it " +
+    "REFUSES an explicit `--executor local` (exit 64), so a local attempt only wastes a turn.\n" +
     "- **`amico-run estimate` is still worth running** to report size and cost to the " +
     "researcher, but it no longer decides anything: an estimate that fits in local RAM does " +
     "not make an HP solve local.\n" +

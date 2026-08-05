@@ -56,7 +56,10 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
 
       // 1. warming — identical to the local fresh-run lane (runs_manager.test.ts:98-101)
       expect(inspector.setWarmingUp).toHaveBeenCalledWith(h.runId);
-      expect(inspector.setRunLabel).toHaveBeenCalledWith(h.runId, h.runId);
+      // …except the label, which SAYS it is a cloud run. This is the end-to-end
+      // proof of that: a real RemoteExecutor.submit wrote the remote.json this
+      // reads, so the pane a user actually sees names Harmoniqs Cloud.
+      expect(inspector.setRunLabel).toHaveBeenCalledWith(h.runId, `${h.runId} · Harmoniqs Cloud`);
       expect(inspector.activate).toHaveBeenCalledWith(h.runId);
       expect(m.selectedRun).toBe(h.runId);
 

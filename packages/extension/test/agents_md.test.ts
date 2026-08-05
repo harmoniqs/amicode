@@ -211,11 +211,15 @@ describe("HP solver-mode guidance: how to select Altissimo", () => {
     }
   };
 
-  it("names SOLVER = :altissimo as the switch, and forbids hand-rolling the call", async () => {
+  it("says the SOLVER line arrives already set, and forbids hand-writing the call", async () => {
     const s = await hpSection();
     expect(s).not.toBe(""); // guard: a misfiring mode gate would make these vacuous
-    expect(s).toMatch(/SOLVER = :altissimo/);
-    expect(s).toMatch(/Do NOT hand-roll/i);
+    // The backend is substituted at session prep from the solver mode, so the
+    // guidance must present it as decided — not quote a literal line the agent
+    // might then "fix". (Staging tests in opencode_config.test.ts pin the value.)
+    expect(s).toMatch(/`SOLVER` line ALREADY SET to Altissimo/);
+    expect(s).toMatch(/do NOT edit that line/i);
+    expect(s).toMatch(/do NOT hand-write/i);
   });
 
   it("states both traps a hand-rolled call would hit: lost frames and a dropped budget", async () => {

@@ -5,6 +5,7 @@ import { getInspector } from "./run_inspector";
 import { LogTailer } from "./log_tailer";
 import { parseIndexLine, RunRegistry, type RunRecord } from "./run_registry";
 import { parseMaxIter } from "./run_timing";
+import { runLocationLabel } from "./run_location";
 import type { StatusBarManager } from "./status_bar";
 import type { RunStatus } from "./types";
 import {
@@ -250,7 +251,7 @@ export class RunsManager implements vscode.Disposable {
     this.selected = runId;
     const ins = getInspector();
     ins?.reveal();
-    ins?.setRunLabel(runId, runId);
+    ins?.setRunLabel(runId, runLocationLabel(runId, rec.runDir));
     ins?.activate(runId); // 1.3: switch the visible pane
     const p = this.pipelines.get(runId);
     if (p) {
@@ -395,7 +396,7 @@ export class RunsManager implements vscode.Disposable {
       this.selected = runId;
       const ins = getInspector();
       if (!this.booting) ins?.reveal(); // boot replay must not steal focus
-      ins?.setRunLabel(runId, runId);
+      ins?.setRunLabel(runId, runLocationLabel(runId, this.registry.get(runId)?.runDir));
       ins?.activate(runId);
     }
 

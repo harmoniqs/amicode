@@ -18,12 +18,59 @@ T          = 10.0       # gate time (ns)
 N          = 50         # timesteps
 drive_max  = 0.2        # per-quadrature drive bound (GHz)
 max_iter   = 60
-SOLVER     = :ipopt     # :ipopt (default) or :altissimo (High-Performance + Cloud)
 # ─────────────────────────────────────────────────────────────────────────
+
+# The solver follows the SELECTED SOLVER MODE, substituted at session prep — it is
+# NOT an authoring decision. Piccolo mode → :ipopt; Piccolissimo + Altissimo (the
+# paid cloud tier) → :altissimo, every run, automatically. Do not hand-edit this:
+# the two backends need different callback wiring (below), and a mismatch between
+# the selected tier and the solver is how a "High-Performance" run quietly ends up
+# on IPOPT.
+#
+# Written as a substituted STRING rather than a bare `{{SOLVER}}` symbol so that an
+# unsubstituted template is still valid Julia: if session prep could not stage a
+# copy, this reads as :ipopt (a working local solve) instead of raising a syntax
+# error on the placeholder itself.
+SOLVER = let s = "{{SOLVER}}"
+    Symbol(startswith(s, "{{") ? "ipopt" : s)
+end
 
 SOLVER in (:ipopt, :altissimo) || error("SOLVER must be :ipopt or :altissimo, got $SOLVER")
 if SOLVER === :altissimo
     @eval using Piccolissimo   # AltissimoOptions lives here, not in Piccolo
+    @eval using DirectTrajOpt
+
+    # ── dispatch bridge: DirectTrajOpt 0.9.7 moved the backend extension point ──
+    # DTO 0.9.7 renamed it from `Solvers.solve!` to `_solve`, and its fallback only
+    # @error-LOGS and returns nothing. Piccolissimo (through 0.2.0) still defines
+    # the OLD name, so under 0.9.7 nothing matches and every Altissimo solve is a
+    # silent NO-OP that still reports success: `iterations = 0`, fidelity left at
+    # the random initial guess, FINISHED completed/exit 0. Verified on this machine
+    # (run r20260729-103718Z-12e3: 0 iters, fidelity 0.048, reported "converged").
+    #
+    # Altissimo is not the bug — its host interface moved out from under it. Until
+    # Piccolissimo migrates upstream, bridge it here: the solve script ships per
+    # submission, so this reaches the cloud runner with no image rebake.
+    #
+    # Guard on WHICH method would be called, not on `methods(...)` being empty:
+    # DTO has two fallbacks (one typed `Any`, one `AbstractSolverOptions`) and
+    # AltissimoOptions matches both, so an emptiness test never installs the bridge.
+    _alt_dispatch = try
+        m = which(DirectTrajOpt._solve, (DirectTrajOpt.DirectTrajOptProblem, Piccolissimo.AltissimoOptions))
+        string(m.sig.parameters[3])
+    catch
+        "none"
+    end
+    if _alt_dispatch in ("Any", "AbstractSolverOptions", "DirectTrajOpt.AbstractSolverOptions", "none")
+        @eval DirectTrajOpt._solve(
+            prob::DirectTrajOpt.DirectTrajOptProblem,
+            options::Piccolissimo.AltissimoOptions;
+            kwargs...,
+        ) = DirectTrajOpt.Solvers.solve!(prob, options; kwargs...)
+        println("AMICODE_NOTE bridged AltissimoOptions onto DirectTrajOpt._solve " *
+                "(DTO $(pkgversion(DirectTrajOpt)) moved the extension point; was resolving to $_alt_dispatch)")
+        flush(stdout)
+    end
 end
 
 # ── telemetry sink ───────────────────────────────────────────────────────────
@@ -158,6 +205,7 @@ end
 # derive from those rather than emitting NaN — a real number the client can plot
 # beats a placeholder it has to special-case.
 function alt_cb(x, info)
+    alt_cb_fired[] = true   # tells the stdout bridge below to stand down (one numbering scheme per run)
     k = Int(info.outer_iter); iters[] = k
     ok = pulse_emit(x, k)   # frames + AMICODE_PULSE + cooperative STOP
     inf_pr = haskey(info, :inf_pr) ? info.inf_pr : max(info.eq_viol, info.ineq_viol)
@@ -166,13 +214,105 @@ function alt_cb(x, info)
     return ok
 end
 
+# Altissimo telemetry needs TWO independent sources, because neither one is
+# reliable across the Piccolissimo versions in the wild:
+#   1. alt_cb above — the good path: it carries frames as well as numbers. But it
+#      only fires where Piccolissimo forwards a caller `callback` into
+#      Altissimo.optimize!. Piccolissimo 0.2.0 declares
+#      `solve!(prob, ::AltissimoOptions; kwargs...)` and forwards a HARDCODED
+#      whitelist (tol, polish*, …) — `callback` is not on it, so on 0.2.0 and the
+#      current cloud image alt_cb never runs at all.
+#   2. the stdout bridge below — the floor: Altissimo's own iteration table always
+#      prints under `verbose`, on old builds too, so translating those rows into
+#      AMICODE_ITER gives the Run Inspector a live curve no matter what the
+#      installed Piccolissimo forwards.
+# Belt and braces on purpose. With only (1), an Altissimo run on the shipped image
+# reports `iterations = 0` and the Inspector stays dark — that is exactly the
+# 2026-07-29 failure (fidelity 0.048 reported as a converged result).
+#
+# Row shapes, both from Altissimo/src/Optimizer.jl:
+#   inner step   " %5s  %13.6e  %10.3e  %10.3e  …"   iter column is "·"
+#   final outer  " %5d  %13.6e  %10.3e  %10.3e  …"   iter column is the outer index
+# Columns 2-4 are objective, inf_pr, and the dual measure (‖∇L‖ inner /
+# stationarity outer) — the same three the IPOPT path plots.
+#
+# Numbering is SEQUENTIAL over rows, not read out of the iter column: that column
+# is "·" for every inner step and only becomes an integer on the last outer
+# iteration, so trusting it yields a single point at the end (verified: a 5-outer
+# run printed 1 integer row and ~200 "·" rows). Each inner row is one optimizer
+# step, so counting rows gives the dense curve IPOPT streams locally.
+const ALT_ROW = r"^\s*(?:·|\d+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s"
+alt_cb_fired = Ref(false)
+
+"""Run the Altissimo solve, mirroring its verbose table into AMICODE_ITER lines.
+
+Writes through to the ORIGINAL stdout and appends run.log directly instead of
+calling `emit()`: stdout is redirected for the duration of the solve, so emit()
+would feed the very pipe this reader is draining."""
+function solve_altissimo_streaming(qcp, opts, cb)
+    real_out = stdout
+    pipe = Pipe()
+    Base.link_pipe!(pipe; reader_supports_async = true, writer_supports_async = true)
+    seq = Ref(0)
+    reader = @async begin
+        for line in eachline(pipe)
+            println(real_out, line)              # the raw table still reaches the log
+            flush(real_out)
+            # Where the callback IS forwarded it supersedes this bridge: it numbers
+            # by outer iteration and carries frames, and two numbering schemes
+            # interleaved in one run.log would plot as a sawtooth.
+            alt_cb_fired[] && continue
+            m = match(ALT_ROW, line)
+            m === nothing && continue
+            seq[] += 1
+            iters[] = seq[]
+            out = @sprintf("AMICODE_ITER iter=%d f=%s inf_pr=%s inf_du=%s",
+                           seq[], m.captures[1], m.captures[2], m.captures[3])
+            println(real_out, out)
+            flush(real_out)
+            if CLOUD_RUN
+                try
+                    open("run.log", "a") do io
+                        println(io, out)
+                    end
+                catch   # telemetry must never take down a solve
+                end
+            end
+        end
+    end
+    try
+        redirect_stdout(pipe) do
+            solve!(qcp; options = opts, callback = cb)
+        end
+    finally
+        close(pipe.in)
+        try
+            wait(reader)
+        catch
+        end
+        close(pipe)
+    end
+    if !alt_cb_fired[]
+        emit("AMICODE_NOTE Piccolissimo $(pkgversion(Piccolissimo)) does not forward `callback` to " *
+             "Altissimo, so iterations were read from the solver's own table ($(seq[]) rows) and " *
+             "per-iteration pulse frames are unavailable; the final pulse is still written")
+    end
+end
+
 t0 = time()
 if SOLVER === :altissimo
     # The budget goes on the OPTIONS, not as a solve! kwarg. solve!(::AltissimoOptions)
     # forwards a hardcoded list to Altissimo.optimize! and swallows the rest, so a
     # `max_iter =` here is silently dropped and the solve quietly runs Altissimo's
     # default 20 outer iterations instead of the FILL-IN value.
-    solve!(qcp; options = Piccolissimo.AltissimoOptions(max_outer_iter = max_iter), callback = alt_cb)
+    #
+    # verbose = true is load-bearing, not chatter: it is what makes the iteration
+    # table — and therefore the stdout telemetry bridge above — exist at all.
+    solve_altissimo_streaming(
+        qcp,
+        Piccolissimo.AltissimoOptions(max_outer_iter = max_iter, verbose = true),
+        alt_cb,
+    )
 else
     solve!(qcp; max_iter = max_iter, print_level = 1,
            options = IpoptOptions(intermediate_callback = pulse_emit),
@@ -215,4 +355,16 @@ open("result.toml.tmp", "w") do io
     ))
 end
 mv("result.toml.tmp", "result.toml"; force = true)
+
+# A solve that recorded ZERO iterations did not optimize anything — the fidelity
+# above is the random initial guess. Say so instead of letting FINISHED's
+# completed/exit-0 read as a converged result downstream. This is the failure that
+# hid a silently no-op'd Altissimo backend behind a "converged" badge
+# (iterations = 0, fidelity = 0.048, 2026-07-29): the run LOOKED successful, so
+# nobody checked. Partial artifacts are still written — the run is recorded, it
+# just stops claiming a result it does not have.
+if iters[] == 0
+    emit("AMICODE_WARN no iterations were recorded — the optimizer never reported progress, so " *
+         "fidelity=$(fid) is the INITIAL guess, NOT a converged result (solver=$(SOLVER))")
+end
 emit("DONE fidelity=$(fid)")

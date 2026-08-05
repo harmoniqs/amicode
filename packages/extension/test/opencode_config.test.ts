@@ -262,11 +262,13 @@ describe("prepareOpencodeProject", () => {
     });
     const agents = readFileSync(p.agentsPath, "utf8");
     expect(agents).toContain("/opt/piccolo");
-    expect(agents).toContain(templateSrc); // {{TEMPLATE_PATH}} → the absolute bundled template
     expect(agents).not.toMatch(/\{\{.*?\}\}/); // no residual placeholders
-    expect(p.templatePath).toBe(templateSrc); // points at the bundled source, not a copy
+    // {{TEMPLATE_PATH}} resolves to the STAGED template (see the staging tests
+    // below): the agent must read the copy whose SOLVER matches the selected tier.
+    expect(agents).toContain(p.templatePath);
+    expect(p.templatePath).toBe(join(p.projectDir, "solve_template.jl"));
   });
-  it("does NOT copy the template or write a vestigial .opencode/opencode.json into the session dir", () => {
+  it("does NOT write a vestigial .opencode/opencode.json into the session dir", () => {
     const ext = fakeExtRoot();
     const p = prepareOpencodeProject({
       agentsSrc: join(ext, "AGENTS.md"),
@@ -274,7 +276,6 @@ describe("prepareOpencodeProject", () => {
       juliaProject: "/opt/piccolo",
       vaultDir: "",
     });
-    expect(existsSync(join(p.projectDir, "solve_template.jl"))).toBe(false);
     expect(existsSync(join(p.projectDir, ".opencode", "opencode.json"))).toBe(false);
   });
   it("reuses an explicit projectDir across activations (creates it, re-prepare is idempotent)", () => {
@@ -292,6 +293,85 @@ describe("prepareOpencodeProject", () => {
     const second = prepareOpencodeProject(opts); // second activation: same dir, no throw
     expect(second.projectDir).toBe(stable);
     expect(readFileSync(second.agentsPath, "utf8")).toContain("/opt/piccolo");
+  });
+});
+
+describe("solve-template staging (SOLVER follows the selected tier, not the agent)", () => {
+  // A paid Piccolissimo + Altissimo run that quietly solved on IPOPT is not the
+  // product the user selected, and it is invisible in the result — same artifacts,
+  // same "converged" badge. So the backend is substituted from the solver mode at
+  // session prep instead of being an authoring decision the agent could get wrong.
+  function withMode(mode: "piccolo" | "hp", run: () => void) {
+    const opsDir = mkdtempSync(join(tmpdir(), "ops-"));
+    writeFileSync(join(opsDir, "solver-mode.json"), JSON.stringify({ mode, status: "ready" }));
+    const prev = process.env.AMICODE_OPS_DIR;
+    process.env.AMICODE_OPS_DIR = opsDir;
+    try {
+      run();
+    } finally {
+      if (prev === undefined) delete process.env.AMICODE_OPS_DIR;
+      else process.env.AMICODE_OPS_DIR = prev;
+    }
+  }
+
+  function stage(mode: "piccolo" | "hp"): { staged: string; templatePath: string; agents: string } {
+    const ext = mkdtempSync(join(tmpdir(), "extroot-"));
+    writeFileSync(join(ext, "AGENTS.md"), "# A\nproject: {{JULIA_PROJECT}}\ntemplate: {{TEMPLATE_PATH}}\n");
+    mkdirSync(join(ext, "templates"));
+    // the real template's shape: a substituted STRING, valid Julia either way
+    writeFileSync(
+      join(ext, "templates", "solve_template.jl"),
+      'SOLVER = let s = "{{SOLVER}}"\n    Symbol(startswith(s, "{{") ? "ipopt" : s)\nend\n',
+    );
+    let out!: { staged: string; templatePath: string; agents: string };
+    withMode(mode, () => {
+      const p = prepareOpencodeProject({
+        agentsSrc: join(ext, "AGENTS.md"),
+        templateSrc: join(ext, "templates", "solve_template.jl"),
+        juliaProject: "/opt/piccolo",
+        vaultDir: "",
+      });
+      out = {
+        staged: readFileSync(p.templatePath, "utf8"),
+        templatePath: p.templatePath,
+        agents: readFileSync(p.agentsPath, "utf8"),
+      };
+    });
+    return out;
+  }
+
+  it("hp mode → the staged template selects altissimo", () => {
+    const r = stage("hp");
+    expect(r.staged).toContain('"altissimo"');
+    expect(r.staged).not.toContain("{{SOLVER}}");
+  });
+
+  it("piccolo mode → the staged template selects ipopt", () => {
+    const r = stage("piccolo");
+    expect(r.staged).toContain('"ipopt"');
+    expect(r.staged).not.toContain("{{SOLVER}}");
+  });
+
+  it("the agent is pointed at the STAGED copy, not the bundled original", () => {
+    const r = stage("hp");
+    // AGENTS.md's {{TEMPLATE_PATH}} and the grant-bearing templatePath must agree,
+    // or the agent reads one file while permissions describe another.
+    expect(r.agents).toContain(r.templatePath);
+    expect(r.templatePath).toMatch(/solve_template\.jl$/);
+  });
+
+  it("the SHIPPED template keeps the placeholder inside a string, so staging failure degrades", () => {
+    // If staging ever fails (unwritable project dir), the agent reads the bundled
+    // original — so the placeholder must be valid Julia UNSUBSTITUTED. A bare
+    // `SOLVER = {{SOLVER}}` is a syntax error, which turns a degraded local solve
+    // into a script that cannot even parse. Guards the shipped file, not a mock.
+    const shipped = readFileSync(
+      join(__dirname, "..", "scores", "pulse-designer", "templates", "solve.jl"),
+      "utf8",
+    );
+    expect(shipped).toContain('"{{SOLVER}}"'); // quoted, i.e. a string literal
+    expect(shipped).not.toMatch(/SOLVER\s*=\s*\{\{SOLVER\}\}/); // never the bare form
+    expect(shipped).toMatch(/startswith\(s, "\{\{"\) \? "ipopt"/); // and it falls back to local
   });
 });
 
