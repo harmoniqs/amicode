@@ -330,8 +330,45 @@ function solve_altissimo_streaming(qcp, opts, cb)
     end
 end
 
+# Fingerprint the stack this run actually used. A cloud run executes against the
+# runner's BAKED bundle, not the caller's environment, so "which Piccolissimo was
+# that?" is otherwise unanswerable after the fact — and it is the first question
+# every cloud failure raises. Emitted before the solve so it survives a solve that
+# dies. Also records whether the callback channel is live, since the two channels
+# count different things (outer iterations vs inner steps).
+emit("AMICODE_ENV piccolo=$(pkgversion(Piccolo)) " *
+     (SOLVER === :altissimo ?
+        "piccolissimo=$(pkgversion(Piccolissimo)) dto=$(pkgversion(DirectTrajOpt)) " *
+        "callback_forwarded=$(CB_FORWARDED) " : "") *
+     "julia=$(VERSION) solver=$(SOLVER)")
+
+# Any exception from here on is reported INTO run.log before it propagates.
+#
+# On a cloud run the exception is otherwise invisible: julia's stderr goes to the
+# SSM command stream, which no API exposes, so the user gets `failed, exit 1` and
+# nothing else — that is exactly what happened to task 582a, which reached
+# AMICODE_PULSE_META and then died with no recoverable reason. emit() writes
+# run.log, which the sidecar syncs and the poller greps, so this makes the next
+# failure self-diagnosing without waiting on an infra change.
+#
+# Rethrown, not swallowed: the run must still FAIL. A solve that reports success
+# after an exception is the silent-no-op class of bug this template already guards
+# against elsewhere.
+function report_and_rethrow(e, bt)
+    try
+        emit("AMICODE_ERROR $(sprint(showerror, e))")
+        for frame in first(stacktrace(bt), 12)
+            emit("AMICODE_ERROR   at $(frame)")
+        end
+    catch
+        # never let the reporter mask the original failure
+    end
+    rethrow(e)
+end
+
 t0 = time()
-if SOLVER === :altissimo
+try
+    if SOLVER === :altissimo
     # The budget goes on the OPTIONS, not as a solve! kwarg. solve!(::AltissimoOptions)
     # forwards a hardcoded list to Altissimo.optimize! and swallows the rest, so a
     # `max_iter =` here is silently dropped and the solve quietly runs Altissimo's
@@ -348,6 +385,9 @@ else
     solve!(qcp; max_iter = max_iter, print_level = 1,
            options = IpoptOptions(intermediate_callback = pulse_emit),
            callback = CB.callback_factory(cb_log))
+end
+catch e
+    report_and_rethrow(e, catch_backtrace())
 end
 wall = time() - t0
 
