@@ -20,6 +20,12 @@ export interface AuthoringConfig {
   exemplars?: string; // abs path to exemplars/index.json
   verify_harness?: string; // abs path to julia/verify_rollout.jl
   verify_tolerance: number; // tier-3 re-rollout agreement (absolute)
+  /** Absolute path to the session's STAGED solve template — the copy whose SOLVER
+   *  is already substituted from the selected tier. `resolve` returns this as
+   *  template_path when present, so the vetted workflow AGENTS.md documents
+   *  ("copy template_path") lands on the same file the preamble points at.
+   *  Absent for a bare dev invocation, which falls back to the registry path. */
+  staged_template?: string;
 }
 
 export const DEFAULT_ALLOWLIST = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"];
@@ -62,6 +68,7 @@ export function readAuthoring(): { config: AuthoringConfig; warning?: string } {
       exemplars: typeof data.exemplars === "string" ? data.exemplars : undefined,
       verify_harness: typeof data.verify_harness === "string" ? data.verify_harness : undefined,
       verify_tolerance: typeof data.verify_tolerance === "number" ? data.verify_tolerance : DEFAULT_TOLERANCE,
+      staged_template: typeof data.staged_template === "string" ? data.staged_template : undefined,
     },
   };
 }

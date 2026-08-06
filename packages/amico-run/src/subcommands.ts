@@ -49,7 +49,20 @@ export function resolveCommand(argv: string[]): number {
   const out: Record<string, unknown> = { tier: match.tier };
   if (match.template) {
     out.source = { template_id: match.template.id };
-    out.template_path = resolve(registryDir, match.template.path);
+    // Prefer the session's STAGED template. The registry path is the BUNDLED file,
+    // whose {{SOLVER}} placeholder is unsubstituted and degrades to ipopt — so an
+    // HP user following the documented vetted workflow ("copy template_path") got
+    // a Piccolo/IPOPT script no matter what the solver toggle said. The staged copy
+    // is the same template with SOLVER already resolved from the selected tier, and
+    // it is the file AGENTS.md's preamble points at, so the two instructions now
+    // agree instead of contradicting each other.
+    //
+    // Falls back to the registry path when no session staged one (a bare dev
+    // invocation), which is the historical behaviour.
+    out.template_path =
+      config.staged_template && existsSync(config.staged_template)
+        ? config.staged_template
+        : resolve(registryDir, match.template.path);
     out.packages = match.template.packages;
   } else if (match.exemplar) {
     out.source = { exemplar_id: match.exemplar.id };

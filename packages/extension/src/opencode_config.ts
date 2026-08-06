@@ -232,6 +232,13 @@ export function writeAuthoringConfig(
   entitlementsDir: string,
   scoresRoot: string = DEFAULT_SCORES_ROOT,
   skills: SkillIndexEntry[] = [],
+  /** The session's STAGED solve template — the copy with SOLVER already
+   *  substituted from the selected tier. amico-run's `resolve` returns this as
+   *  template_path so the documented vetted workflow ("copy template_path") lands
+   *  on the same file AGENTS.md points at. Without it, resolve hands back the
+   *  BUNDLED registry path, whose {{SOLVER}} is unsubstituted and degrades to
+   *  ipopt — so an HP user following the workflow silently got IPOPT. */
+  stagedTemplate?: string,
 ): void {
   try {
     const ents = readLocalEntitlements(entitlementsDir);
@@ -272,6 +279,7 @@ export function writeAuthoringConfig(
           exemplars: AUTHORING_ASSETS.exemplars,
           verify_harness: AUTHORING_ASSETS.verifyHarness,
           verify_tolerance: tolerance,
+          ...(stagedTemplate ? { staged_template: stagedTemplate } : {}),
           // Additive session record (spec §3): the dual-source skill index the
           // agent was given. amico-run ignores unknown fields; schema_version stays 1.
           skills,
@@ -672,6 +680,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"),
     opts.scoresRoot ?? DEFAULT_SCORES_ROOT,
     skillEntries,
+    templateForAgent,
   );
 
   // Register the resolved skills as opencode-native skills: stage ONLY this set
