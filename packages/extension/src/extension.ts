@@ -37,7 +37,7 @@ import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
-import { watchSolverMode, applyEntitlementForMode, effectiveSolverMode, reconcileSolverMode } from "./solver_mode";
+import { watchSolverMode, applyEntitlementForMode, reconcileSolverMode } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { stagePasqalConnector } from "./pasqal_assets";
@@ -430,11 +430,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
     // (same run-dir contract, spline solver layer). An AGENTS.md instruction
     // can't beat the procedural template path — the file itself must swap.
-    templateSrc: path.resolve(
-      ctx.extensionPath,
-      "templates",
-      effectiveSolverMode() === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-    ),
+    templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     skillLibraryRoots: cfgLibraryRoots(),
@@ -593,11 +589,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
           // Same mode-selection as boot; `mode` is the requested target of THIS
           // switch (the state file still reads status:"switching" here).
-          templateSrc: path.resolve(
-            ctx.extensionPath,
-            "templates",
-            mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-          ),
+          templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
           juliaProject: resolveJuliaProject(
             vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
           ),
@@ -725,11 +717,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const port = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
     const project2 = prepareOpencodeProject({
       agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-      templateSrc: path.resolve(
-        ctx.extensionPath,
-        "templates",
-        effectiveSolverMode() === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-      ),
+      templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
       juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
       skillRoots: cfgArr("skillRoots"),
       skillLibraryRoots: cfgLibraryRoots(),

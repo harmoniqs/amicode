@@ -23,7 +23,6 @@ const REQUIRED = [
   "extension/readme.md", // marketplace detail-page body (vsce lowercases README.md) — a dropped README = blank listing page
 
   "extension/templates/solve_template.jl",
-  "extension/templates/solve_template_hp.jl", // HP-mode vetted template (Piccolissimo) — mode-selected at prep time
   // spec C authoring assets — the tiered resolver + verification chain break
   // silently if any of these is dropped from the vsix.
   "extension/templates/registry.toml", // tier-1 template registry + support set + sandbox uuid map

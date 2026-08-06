@@ -19,9 +19,46 @@ export interface FakeState {
   finished?: { status: "completed" | "failed" | "aborted" };
   liveness: "alive" | "gone";
   iters: FakeIter[]; // Δ4 stats: full history each poll (client dedups on high-water)
+  /** A run.log body, served through the SAME transform the deployed /stats lambda
+   *  applies (statsFromRunLog below). Prefer this to `iters` for anything that has
+   *  to survive contact with the real service: `iters` lets a test hand the client
+   *  pre-parsed records the live endpoint would never produce for our own
+   *  telemetry lines, which is exactly how the drift keeps recurring. */
+  runLog?: string;
   frame?: { iter: number; png_base64: string }; // Δ4 frames: newest only
   framesBroken?: boolean; // 500 the frames endpoint — resolution (a) lane
   pulse?: Array<{ raw: string }>; // Δ4 pulse: AMICODE_PULSE_META + AMICODE_PULSE lines, full history each poll
+}
+
+/** Port of the deployed lambda's stats extraction, line for line
+ *  (terraform/lambda_code/solves_poll/lambda_function.py:155-160):
+ *
+ *      if "AMICODE_ITER" in line:
+ *          payload = line.split("AMICODE_ITER", 1)[1].strip()
+ *          stats.append(json.loads(payload) if payload.startswith("{") else {"raw": payload})
+ *
+ *  The consequence worth internalising: our telemetry lines are `iter=7 f=… ` —
+ *  key=value, NOT JSON — so the live endpoint returns `{raw: "iter=7 f=…"}`, never
+ *  `{iter: 7, f: …}`. A test that seeds the parsed form is testing a payload the
+ *  server cannot send. That mistake shipped twice: it is why real cloud solves
+ *  came back with zero iterations while every test passed. */
+export function statsFromRunLog(runLog: string): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const line of runLog.split("\n")) {
+    if (!line.includes("AMICODE_ITER")) continue;
+    const payload = line.split("AMICODE_ITER").slice(1).join("AMICODE_ITER").trim();
+    if (payload.startsWith("{")) {
+      try {
+        out.push(JSON.parse(payload) as Record<string, unknown>);
+        continue;
+      } catch {
+        out.push({ raw: line.trim() });
+        continue;
+      }
+    }
+    out.push({ raw: payload });
+  }
+  return out;
 }
 
 export class FakeCloud {
@@ -96,7 +133,10 @@ export class FakeCloud {
     // the live payloads; a fake that agrees with the client instead of the server
     // proves nothing.
     if (url === `/solves/${this.taskId}/stats`) {
-      return send(200, { task_id: this.taskId, stats: this.state.iters, submitter: "test" });
+      // runLog wins when set: it goes through the deployed lambda's own transform,
+      // so the test sees the records the live service would actually return.
+      const stats = this.state.runLog !== undefined ? statsFromRunLog(this.state.runLog) : this.state.iters;
+      return send(200, { task_id: this.taskId, stats, submitter: "test" });
     }
     // pulse mirrors stats' shape: {task_id, pulse: [{raw}], submitter}, where the
     // cloud greps AMICODE_PULSE_META + AMICODE_PULSE lines out of the S3 run.log

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -94,5 +94,48 @@ describe("reconcileSolverMode — heal the shared file at the source", () => {
     expect(effectiveSolverMode(modeFile(d), d)).toBe("hp");
     expect(reconcileSolverMode(modeFile(d), d)).toEqual({ healed: false, mode: "hp" });
     expect(readFileSync(modeFile(d), "utf8")).toContain('"hp"'); // untouched
+  });
+});
+
+// "if I say run a piccolissimo altissimo solve it might use piccolo because the
+// vetted template uses piccolo" (2026-08-06). Three templates existed and the
+// selection was not a function of the toggle:
+//   templates/solve_template.jl      Piccolo    + IPOPT   ← the only vetted entry
+//   templates/solve_template_hp.jl   Piccolissimo + IPOPT ← never registered, and
+//                                                           it did not use Altissimo
+//   scores/.../templates/solve.jl    either, real Altissimo
+// Consolidated to the last one, SOLVER substituted from the mode, so the toggle IS
+// the decision. These pin that it stays that way.
+describe("the solver toggle deterministically decides the backend", () => {
+  const SCORE_TEMPLATE = join(__dirname, "..", "scores", "pulse-designer", "templates", "solve.jl");
+
+  it("the consolidated template is the only one the extension stages", () => {
+    const ext = readFileSync(join(__dirname, "..", "src", "extension.ts"), "utf8");
+    // no mode-branching over two template FILES — the branch belongs in SOLVER,
+    // not in which file gets picked, or the two files drift (and they did)
+    expect(ext).not.toMatch(/solve_template_hp\.jl/);
+    expect(ext).toMatch(/"scores", "pulse-designer", "templates", "solve\.jl"/);
+    expect(existsSync(join(__dirname, "..", "templates", "solve_template_hp.jl"))).toBe(false);
+  });
+
+  it("that template really runs Altissimo when SOLVER says so — not IPOPT wearing its name", () => {
+    // solve_template_hp.jl claimed to be the HP template while calling
+    // `solve!(qcp; max_iter, print_level=1, …)` — an IPOPT call with zero
+    // AltissimoOptions. That is how a paid Altissimo run silently became IPOPT.
+    const t = readFileSync(SCORE_TEMPLATE, "utf8");
+    expect(t).toMatch(/AltissimoOptions\(/);
+    expect(t).toMatch(/verbose = true/); // else no iteration table, no telemetry
+    expect(t).toMatch(/DirectTrajOpt\._solve/); // the 0.9.7 dispatch bridge
+    expect(t).toMatch(/solve_altissimo_streaming/); // the stdout → AMICODE_ITER bridge
+    expect(t).toMatch(/open\("run\.log", "a"\)/); // what /stats greps
+  });
+
+  it("and it still serves the free tier: SOLVER=ipopt keeps the local IPOPT path", () => {
+    const t = readFileSync(SCORE_TEMPLATE, "utf8");
+    expect(t).toMatch(/IpoptOptions\(/);
+    expect(t).toMatch(/SOLVER === :altissimo/); // one file, branch inside
+    // Piccolissimo is imported only on the altissimo branch, so a free-tier
+    // script never needs the entitled package
+    expect(t).toMatch(/@eval using Piccolissimo/);
   });
 });

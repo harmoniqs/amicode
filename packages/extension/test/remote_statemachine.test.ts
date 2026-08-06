@@ -116,3 +116,105 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
     }
   });
 });
+
+// Δ-next: the WHOLE cloud iteration chain, driven by a real run.log body.
+//
+// This is the test that was missing every time cloud iterations "didn't work".
+// The three failures all lived in the seam between what the service returns and
+// what the client expected, and every existing test seeded the CLIENT's shape, so
+// they passed while real solves came back empty. Here the fake is handed a run.log
+// and applies the deployed lambda's own extraction (statsFromRunLog), so the
+// records under test are the ones the live endpoint produces: {raw: "iter=…"},
+// key=value, never pre-parsed JSON.
+//
+// The run.log body is exactly what lands on the runner once aws-infra#230
+// redirects julia's output there — including the Altissimo stdout-bridge lines,
+// which are the version-independent telemetry path.
+describe("cloud iterations reach the Inspector from a real run.log", () => {
+  // Own reset: the inspector mock is module-level and the other block's beforeEach
+  // does not reach here, so without this the "no iterations" case inherits the
+  // previous test's calls and passes or fails for the wrong reason.
+  beforeEach(() => {
+    for (const f of Object.values(inspector)) f.mockClear();
+  });
+
+  const RUN_LOG = [
+    "AMICODE_NOTE bridged AltissimoOptions onto DirectTrajOpt._solve (DTO 0.9.7 moved the extension point)",
+    "  iter      objective      inf_pr      inf_du    lg(ρ)",
+    "     ·   4.810437e+01   0.000e+00   1.074e+02      0.0",
+    "AMICODE_ITER iter=1 f=8.831003e+01 inf_pr=0.000e+00 inf_du=4.104e+01",
+    "AMICODE_ITER iter=2 f=1.203608e+01 inf_pr=0.000e+00 inf_du=8.812e+01",
+    "AMICODE_ITER iter=3 f=7.804919e-03 inf_pr=1.078e-01 inf_du=6.604e+01",
+    "DONE fidelity=0.9993",
+  ].join("\n");
+
+  it("key=value {raw} records become iteration records in the pane", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    const ex = new RemoteExecutor({ config: { baseUrl: fake.base, token: fake.token }, pollMs: 10 });
+    try {
+      const script = join(root, "s.jl");
+      writeFileSync(script, "//\n");
+      const h = await ex.submit(script, { runsRoot: root });
+      tick(m);
+
+      fake.state.task_status = "Running";
+      fake.state.runLog = RUN_LOG; // served through the REAL lambda transform
+
+      // the highest iteration must arrive — proof the raw form parsed
+      await until(() => readFileSync(join(h.runDir, "run.log"), "utf8").includes("iter=3"));
+      tick(m);
+      expect(inspector.postIterationRecord).toHaveBeenCalledWith(h.runId, expect.objectContaining({ iter: 3 }));
+
+      // and the numeric fields survived the round trip — an iteration count with
+      // no objective would plot as a flat line and read as "not converging"
+      const call = inspector.postIterationRecord.mock.calls.find(
+        (c: unknown[]) => (c[1] as { iter: number }).iter === 3,
+      );
+      expect((call![1] as { f_val: number }).f_val).toBeCloseTo(7.804919e-3, 12);
+
+      // non-AMICODE_ITER lines (the NOTE, the raw Altissimo table) must not become
+      // iterations — the lambda greps, so a loose parser would ingest the table too
+      const iters = inspector.postIterationRecord.mock.calls.map((c: unknown[]) => (c[1] as { iter: number }).iter);
+      expect(iters.every((n: number) => [1, 2, 3].includes(n))).toBe(true);
+
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+      tick(m);
+      expect(inspector.postCompletion).toHaveBeenCalledWith(h.runId, "completed", undefined);
+    } finally {
+      m.dispose();
+      await fake.stop();
+    }
+  }, 15000);
+
+  it("an empty run.log yields no iterations and no crash (the observed live case)", async () => {
+    // What every cloud solve returned before aws-infra#230: stats: []. The client
+    // must treat that as "nothing yet", not as an error or a zero-th iteration.
+    const fake = new FakeCloud();
+    await fake.start();
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    const ex = new RemoteExecutor({ config: { baseUrl: fake.base, token: fake.token }, pollMs: 10 });
+    try {
+      const script = join(root, "s.jl");
+      writeFileSync(script, "//\n");
+      const h = await ex.submit(script, { runsRoot: root });
+      tick(m); // discovery — without it the manager never registers the run
+      fake.state.task_status = "Running";
+      fake.state.runLog = "";
+      fake.state.finished = { status: "completed" };
+      await h.finished;
+      tick(m);
+      expect(inspector.postIterationRecord).not.toHaveBeenCalled();
+      expect(inspector.postCompletion).toHaveBeenCalledWith(h.runId, "completed", undefined);
+    } finally {
+      m.dispose();
+      await fake.stop();
+    }
+  }, 15000);
+});
