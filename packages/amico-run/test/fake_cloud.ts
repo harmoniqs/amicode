@@ -61,6 +61,16 @@ export function statsFromRunLog(runLog: string): Array<Record<string, unknown>> 
   return out;
 }
 
+/** The pulse half of the same grep. AMICODE_PULSE_META and AMICODE_PULSE lines are
+ *  relayed VERBATIM as {raw} — they are never JSON — and the client dedups (meta
+ *  once, pulse on the iteration high-water). */
+export function pulseFromRunLog(runLog: string): Array<{ raw: string }> {
+  return runLog
+    .split("\n")
+    .filter((l) => l.includes("AMICODE_PULSE"))
+    .map((l) => ({ raw: l.trim() }));
+}
+
 export class FakeCloud {
   readonly token = "test-token-abc";
   readonly taskId = "task-0001";
@@ -142,7 +152,13 @@ export class FakeCloud {
     // cloud greps AMICODE_PULSE_META + AMICODE_PULSE lines out of the S3 run.log
     // (never JSON, so always {raw}). Full history each poll — the client dedups.
     if (url === `/solves/${this.taskId}/pulse`) {
-      return send(200, { task_id: this.taskId, pulse: this.state.pulse ?? [], submitter: "test" });
+      // Same run.log, same reason as /stats: the deployed endpoint greps
+      // AMICODE_PULSE_META + AMICODE_PULSE out of it (never JSON, so always
+      // {raw}). Verified live — /pulse returns 200 {pulse: []} for a run whose
+      // run.log was never written, exactly like /stats.
+      const pulse =
+        this.state.runLog !== undefined ? pulseFromRunLog(this.state.runLog) : (this.state.pulse ?? []);
+      return send(200, { task_id: this.taskId, pulse, submitter: "test" });
     }
     if (url === `/solves/${this.taskId}/frames`) {
       if (this.state.framesBroken) return send(500, { error: "frames unavailable" });

@@ -138,6 +138,12 @@ describe("cloud iterations reach the Inspector from a real run.log", () => {
     for (const f of Object.values(inspector)) f.mockClear();
   });
 
+  // A REAL run.log, captured from an actual Altissimo solve on Piccolissimo 0.3.1
+  // (test/fixtures/altissimo_cloud_run.log). Using captured output rather than a
+  // hand-written fixture is the point: every previous version of this test seeded
+  // what the CLIENT expected, which is how three drift bugs shipped green.
+  const CAPTURED = readFileSync(join(__dirname, "fixtures", "altissimo_cloud_run.log"), "utf8");
+
   const RUN_LOG = [
     "AMICODE_NOTE bridged AltissimoOptions onto DirectTrajOpt._solve (DTO 0.9.7 moved the extension point)",
     "  iter      objective      inf_pr      inf_du    lg(ρ)",
@@ -185,6 +191,40 @@ describe("cloud iterations reach the Inspector from a real run.log", () => {
       await h.finished;
       tick(m);
       expect(inspector.postCompletion).toHaveBeenCalledWith(h.runId, "completed", undefined);
+    } finally {
+      m.dispose();
+      await fake.stop();
+    }
+  }, 15000);
+
+  it("a REAL captured solve log drives the chain end to end", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    const ex = new RemoteExecutor({ config: { baseUrl: fake.base, token: fake.token }, pollMs: 10 });
+    try {
+      const script = join(root, "s.jl");
+      writeFileSync(script, "//\n");
+      const h = await ex.submit(script, { runsRoot: root });
+      tick(m);
+      fake.state.task_status = "Running";
+      fake.state.runLog = CAPTURED; // real solver output, real lambda transform
+
+      await until(() => readFileSync(join(h.runDir, "run.log"), "utf8").includes("iter=4"));
+      tick(m);
+      // the captured solve ran 4 outer iterations; all four must land
+      for (const n of [1, 2, 3, 4]) {
+        expect(inspector.postIterationRecord).toHaveBeenCalledWith(h.runId, expect.objectContaining({ iter: n }));
+      }
+      // and the objective from the real log, not a placeholder
+      const last = inspector.postIterationRecord.mock.calls.find(
+        (c: unknown[]) => (c[1] as { iter: number }).iter === 4,
+      );
+      expect((last![1] as { f_val: number }).f_val).toBeCloseTo(4.790788e-2, 10);
+      // the pulse meta from the same log arms the plot
+      expect(inspector.postPulse).toHaveBeenCalled();
     } finally {
       m.dispose();
       await fake.stop();

@@ -185,6 +185,44 @@ export async function launch(argv: string[]): Promise<number> {
     console.error(`amico-run: --julia/--project/--sysimage are ignored with --executor remote (the runner image owns the environment)`);
   }
 
+  // ── cloud telemetry preflight ──
+  // A cloud script that never writes run.log CANNOT stream anything to the Run
+  // Inspector, and the user pays the full queue + instance-boot wait to find out.
+  //
+  // Why run.log specifically: /solves/{id}/stats greps AMICODE_ITER out of the
+  // run.log the sidecar syncs from the working directory. Printing to stdout is
+  // NOT enough — the runner's stdout goes to the SSM command stream, which no API
+  // exposes. The bundled template handles this (its emit() appends to run.log
+  // whenever TASK_ID is set, and the runner sets TASK_ID), so a script copied from
+  // the template passes this check for free.
+  //
+  // This is a refusal rather than a warning because it is a certainty, not a risk:
+  // three cloud runs in two days produced an empty Inspector this way, every one of
+  // them a hand-authored script (two with invented API that also died at load).
+  // Warnings on stderr have not changed that. Failing here costs a second and names
+  // the fix; failing in the cloud costs ten minutes and names nothing.
+  // Gated on hasCloudConfig() so error PRECEDENCE is preserved: a remote launch
+  // with no connection at all should still report the missing connection, which is
+  // the more fundamental problem, rather than being pre-empted by a telemetry
+  // complaint about a script that was never going to run.
+  if (executor === "remote" && script && hasCloudConfig()) {
+    let text = "";
+    try {
+      text = readFileSync(script, "utf8");
+    } catch {
+      /* unreadable script — the executor reports that with its own message */
+    }
+    if (text !== "" && !text.includes("run.log")) {
+      console.error(
+        `amico-run: this script cannot stream telemetry from Harmoniqs Cloud — it never writes run.log, so the Run Inspector would stay empty for the whole solve.\n` +
+          `  The cloud reads iterations by grepping AMICODE_ITER out of run.log in the run directory; stdout does not reach it.\n` +
+          `  Fix: author from the bundled solve template (the path AGENTS.md gives you) instead of writing the script from scratch — its emit() writes run.log already.\n` +
+          `  If you are deliberately hand-rolling, append each AMICODE_ITER line to "run.log" in the working directory as well as printing it.`,
+      );
+      return 64;
+    }
+  }
+
   // ── spec C: the launch gate. Failures leave NO run dir and exit 64. ──
   if (specPath) {
     // specRaw was parsed above (problem_spec detection). Only read the script for

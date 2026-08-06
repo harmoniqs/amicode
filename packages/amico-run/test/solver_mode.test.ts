@@ -13,6 +13,11 @@ import { readSolverMode, solverModeFile } from "../src/solver_mode.js";
 // REFUSED. Both halves matter: promotion is what makes the tier automatic, and
 // the refusal is what keeps it from being silently overridden.
 
+/** Stand-in for a template-derived cloud script: it appends telemetry to
+ *  run.log, which is what the cloud actually greps and what the telemetry
+ *  preflight requires. A bare stub would be refused, correctly. */
+const REMOTE_STUB = 'open("run.log", "a") do io\n    println(io, "AMICODE_ITER iter=1 f=1e-2")\nend\n';
+
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
@@ -105,7 +110,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
       const ops = opsDirWith(root, JSON.stringify({ mode: "hp", status: "ready" }));
       // a --julia that would SHOUT if it ever ran: promotion means it never does
       const julia = fakeJulia(root, "j", `require('fs').writeFileSync(${JSON.stringify(join(root, "ran-locally"))}, 'x')`);
-      const script = fakeJulia(root, "s.jl", "");
+      const script = fakeJulia(root, "s.jl", REMOTE_STUB);
       const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolveP) => {
         let stdout = "";
         let stderr = "";
@@ -137,7 +142,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     const root = tmpRoot();
     const ops = opsDirWith(root, JSON.stringify({ mode: "hp", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--executor", "local", "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: ops,
     });
@@ -155,7 +160,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     const root = tmpRoot();
     const ops = opsDirWith(root, JSON.stringify({ mode: "hp", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--executor", "local", "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: ops,
     });
@@ -182,7 +187,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     try {
       const root = tmpRoot();
       const ops = opsDirWith(root, JSON.stringify({ mode: "hp", status: "ready" }));
-      const script = fakeJulia(root, "s.jl", "");
+      const script = fakeJulia(root, "s.jl", REMOTE_STUB);
       const r = await new Promise<{ code: number; stdout: string; stderr: string }>((resolveP) => {
         let stdout = "";
         let stderr = "";
@@ -209,7 +214,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
     const root = tmpRoot();
     const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('AMICODE_ITER iter=1 f=0.5'); console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], { AMICODE_OPS_DIR: ops, AMICO_AUTHORING_FILE: noAuthoring(root) });
     expect(r.code).toBe(0);
     expect(r.stderr).not.toMatch(/never solves locally/);
@@ -218,7 +223,7 @@ describe("Piccolissimo + Altissimo never solves locally", () => {
   it("no solver-mode.json at all → local runs work (fresh install)", () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: join(root, "absent-ops"),
       AMICO_AUTHORING_FILE: noAuthoring(root),
@@ -243,7 +248,7 @@ describe("a stale solver-mode.json cannot silently downgrade the paid tier", () 
       // exactly the observed state: the file says piccolo, the entitlement says HP
       const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready", switched_at: "2026-07-28T22:15:00.000Z" }));
       const julia = fakeJulia(root, "j", `require('fs').writeFileSync(${JSON.stringify(join(tmpRoot(), "should-not-exist"))}, 'x')`);
-      const script = fakeJulia(root, "s.jl", "");
+      const script = fakeJulia(root, "s.jl", REMOTE_STUB);
       const r = await new Promise<{ code: number; stderr: string; stdout: string }>((resolveP) => {
         let stdout = "";
         let stderr = "";
@@ -272,7 +277,7 @@ describe("a stale solver-mode.json cannot silently downgrade the paid tier", () 
     const root = tmpRoot();
     const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--executor", "local", "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: ops,
       AMICO_AUTHORING_FILE: authoringGrantingIssimo(root),
@@ -286,7 +291,7 @@ describe("a stale solver-mode.json cannot silently downgrade the paid tier", () 
     const root = tmpRoot();
     const ops = opsDirWith(root, JSON.stringify({ mode: "piccolo", status: "ready" }));
     const julia = fakeJulia(root, "j", `console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia], {
       AMICODE_OPS_DIR: ops,
       AMICO_AUTHORING_FILE: noAuthoring(root),
