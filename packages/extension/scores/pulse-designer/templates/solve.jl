@@ -244,6 +244,30 @@ end
 const ALT_ROW = r"^\s*(?:·|\d+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s"
 alt_cb_fired = Ref(false)
 
+# WHICH channel carries this run, decided BEFORE the solve starts.
+#
+# Deciding reactively — stand the bridge down once alt_cb first fires — is a race,
+# and it loses. alt_cb fires at the END of an outer iteration, so by then the
+# bridge has already translated every inner row of outer #1 under its own
+# numbering. Observed on Piccolissimo 0.3.1: the curve climbed to 51 (bridge,
+# counting inner rows) then reset to 1 (callback, counting outer iterations) —
+# 51 → 1 → 1 → 2 → 2 …, which the Inspector plots as a sawtooth and which reads
+# as a diverging solve.
+#
+# The two scales are irreconcilable (dense inner steps vs sparse outer
+# iterations), so exactly ONE channel may emit. Prefer the callback wherever it is
+# forwarded: it carries pulse frames as well as numbers, which the table cannot.
+#
+# A version gate, because forwarding is not introspectable: Piccolissimo 0.3.x
+# passes `callback` into Altissimo.optimize!; 0.2.x drops it via a hardcoded kwarg
+# whitelist. alt_cb_fired stays as a belt — if a backport forwards it on an older
+# version, the bridge still stands down once the callback proves itself.
+const CB_FORWARDED = try
+    pkgversion(Piccolissimo) >= v"0.3.0"
+catch
+    false
+end
+
 """Run the Altissimo solve, mirroring its verbose table into AMICODE_ITER lines.
 
 Writes through to the ORIGINAL stdout and appends run.log directly instead of
@@ -261,7 +285,7 @@ function solve_altissimo_streaming(qcp, opts, cb)
             # Where the callback IS forwarded it supersedes this bridge: it numbers
             # by outer iteration and carries frames, and two numbering schemes
             # interleaved in one run.log would plot as a sawtooth.
-            alt_cb_fired[] && continue
+            (CB_FORWARDED || alt_cb_fired[]) && continue
             m = match(ALT_ROW, line)
             m === nothing && continue
             seq[] += 1
@@ -292,10 +316,17 @@ function solve_altissimo_streaming(qcp, opts, cb)
         end
         close(pipe)
     end
-    if !alt_cb_fired[]
+    # Say which channel carried the run — the two produce different iteration
+    # SCALES (outer iterations vs inner steps), so a reader comparing two runs
+    # needs to know which they are looking at.
+    if alt_cb_fired[]
+        emit("AMICODE_NOTE Altissimo telemetry came from the solver callback " *
+             "(Piccolissimo $(pkgversion(Piccolissimo)) forwards it): iterations count OUTER " *
+             "iterations, and per-iteration pulse frames are available")
+    else
         emit("AMICODE_NOTE Piccolissimo $(pkgversion(Piccolissimo)) does not forward `callback` to " *
-             "Altissimo, so iterations were read from the solver's own table ($(seq[]) rows) and " *
-             "per-iteration pulse frames are unavailable; the final pulse is still written")
+             "Altissimo, so iterations were read from the solver's own table ($(seq[]) rows, one per " *
+             "INNER step) and per-iteration pulse frames are unavailable; the final pulse is still written")
     end
 end
 
