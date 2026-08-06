@@ -11,7 +11,7 @@ surface: public
 
 File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus at least one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
 
-**The flow:** read the context envelope (when the session carries one) → classify the surface → capture (at least one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints only after an actual filing.**
+**The flow:** read the context envelope (when the session carries one) → classify the surface → capture (at least one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints after any successful GitHub action (issue created OR comment posted).**
 
 ## 0. Read the context envelope (when the session carries one)
 
@@ -96,7 +96,7 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Tell the user, as plain text output: **"The draft above is ready. Reply `file it` to submit as a new issue, `edit: <changes>` to modify before filing, `comment: <repo>#<issue> <text>` to add a clarifying comment to an existing issue, or `veto` to cancel."** Do not use the `question` tool. Wait for the user's reply. Never ask follow-ups — the confirm gate is a single prompt.
 
-On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "comment:" → parse `<repo>#<issue> <text>` (e.g. `comment: harmoniqs/amicode#123 Thanks — confirmed on my end`), post the comment via `gh issue comment <issue> --repo <repo> --body <text>`, print the sentinel with the issue's URL, and end. Starts with "veto" → file nothing, no sentinel. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
+On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "comment:" → parse `<repo>#<issue> <text>` (e.g. `comment: harmoniqs/amicode#123 Thanks — confirmed on my end`), post the comment via `gh issue comment <issue> --repo <repo> --body <text>`, then **print the sentinel on its own line exactly as**: `AMICODE_BUG_FILED https://github.com/<repo>/issues/<number>` (the full URL of the issue you commented on — construct it from the repo and issue number), and end. Starts with "veto" → file nothing, no sentinel. **The sentinel prints after EVERY successful action — new issue OR comment. The only path that skips the sentinel is "veto."** No issue, comment, or unscrubbed query leaves the machine before this gate.
 
 ## 7. File — the runtime org-tail fork
 
@@ -127,13 +127,14 @@ gh api graphql -f query='mutation($project:ID!, $item:ID!, $field:ID!, $opt:Stri
 
 `<ISSUE_NODE_ID>` = `gh issue view <n> --repo <target> --json id --jq .id`. No status or assignee prompts — the intake defaults are fixed (intake column, unassigned).
 
-**The filed sentinel — the terminal contract.** After an **actual filing** — and only then — close the flow by printing the sentinel line, the run-telemetry idiom's one terminal line:
+**The filed sentinel — the terminal contract.** This is a **lifecycle signal**, not a semantic judgment. Print it after ANY successful GitHub action in this session — new issue created, comment posted, chore filed — regardless of whether the content is a "bug." The sentinel tells the dock "you're done; show the end-state." Without it the dock stays open forever.
 
-- **Filed via `gh`** (public or internal path — the issue created, and board-placed on the internal path): print `AMICODE_BUG_FILED <url>` with the new issue's URL, e.g.
+- **After creating an issue via `gh`**: print `AMICODE_BUG_FILED <url>` with the new issue's URL, e.g.
   `AMICODE_BUG_FILED https://github.com/harmoniqs/amicode/issues/123`.
-- **Filed via the browser fallback**: print the sentinel carrying `filed-via-browser` — or the pre-filled new-issue URL as the token when one was opened.
+- **After posting a comment via `gh issue comment`**: print `AMICODE_BUG_FILED https://github.com/<repo>/issues/<number>` with the issue's URL.
+- **After the browser fallback**: print the sentinel carrying `filed-via-browser` — or the pre-filled new-issue URL as the token when one was opened.
 
-This line is a machine contract, not prose — the dock watcher matches `/^AMICODE_BUG_FILED[ \t]+(\S+)/m` against the streamed message text. So: the sentinel is **its own line**, the marker and its single token separated by spaces or tabs, and nothing else on the line (no markdown, no punctuation glued to the token). **Never print it at or before the confirm gate** — a veto means nothing was filed and no sentinel ever appears in the session. The sentinel is the lifecycle trigger that archives the bug session (ADR `docs/adr/0004-bug-session-lifecycle.md` in `harmoniqs/amicode`); printing it without a filing would archive a session whose bug never reached the tracker.
+This line is a machine contract, not prose. The sentinel is **its own line** in your text output, the marker and its single token separated by a space, and nothing else on the line (no markdown, no backticks, no punctuation glued to the token). **Never print it before a successful GitHub action** — a veto means nothing was posted and no sentinel ever appears. The sentinel is the lifecycle trigger that archives the bug session; printing it without an action would archive a session whose report never reached GitHub.
 
 ## The maturity contract (the reviewer-facing interface)
 
@@ -159,7 +160,7 @@ Until a reviewer-agent skill exists to execute maturation, humans mature intake 
 
 - **At least one content question** at capture — the agent asks exactly one opening question and accepts unsolicited user follow-ups as additional context; never asks a second question itself. Everything else is auto-collected, a gate, or a conditional offer.
 - **Nothing posts before the confirm gate** — and the gate's draft is already scrubbed.
-- The **filed sentinel prints only after an actual filing** — never at the confirm gate; a veto means no sentinel, ever. One line, one token, matching `/^AMICODE_BUG_FILED[ \t]+(\S+)/m`.
+- The **filed sentinel prints after any successful GitHub action** (issue created, comment posted, chore filed) — never before the confirm gate; a veto means no sentinel, ever. The sentinel is a lifecycle signal, not a semantic judgment about whether the content is a "bug."
 - **Envelope context is pointer-only** — `run_pointer` is never expanded into absolute paths in any artifact, including the confirm-gate draft; envelope absent → live-session collection, unchanged.
 - Intake issues are **visibly marked not-ready** (footer; label + column on the internal path).
 - **No proprietary implementation details or package names** in any artifact that leaves the machine — including the draft shown to the user.
