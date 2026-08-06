@@ -1,6 +1,6 @@
 ---
 name: report-a-bug
-description: File a sanitized, intake-grade bug issue from a live Amicode session — auto-collected diagnostics, exactly one question, confirm gate, silent dedup, pin-aware upstream check for the vendored engine. Use when the user hits a bug in Amicode (the extension, the run gate, the Run Inspector, vetted templates, the engine, or a toolchain package) and wants to report it.
+description: File a sanitized, intake-grade bug issue from a live Amicode session — auto-collected diagnostics, at least one question (accepts user follow-ups), confirm gate, silent dedup, pin-aware upstream check for the vendored engine. Use when the user hits a bug in Amicode (the extension, the run gate, the Run Inspector, vetted templates, the engine, or a toolchain package) and wants to report it.
 agents: []
 surface: public
 ---
@@ -9,9 +9,9 @@ surface: public
 
 **Announce at start:** "I'm using the report-a-bug skill to file this."
 
-File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus exactly one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
+File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus at least one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
 
-**The flow:** read the context envelope (when the session carries one) → classify the surface → capture (one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints only after an actual filing.**
+**The flow:** read the context envelope (when the session carries one) → classify the surface → capture (at least one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints only after an actual filing.**
 
 ## 0. Read the context envelope (when the session carries one)
 
@@ -29,9 +29,13 @@ Decide where the bug lives, from the session context:
 - **The vendored engine** (a fork-vendored component) → the fork repo (`harmoniqs/opencode`), and step 4's upstream check applies.
 - **A toolchain package** → its owning repo. Repo inference for toolchain packages runs on the **internal path only** (step 7); on the public path the filing lands in the product repo and triage re-routes.
 
-## 2. Capture — exactly one content question
+## 2. Capture — at least one content question, plus user-initiated follow-ups
 
-Ask **one** question, via the `question` tool (free-form answer): **"What happened, and what did you expect?"** Everything else is auto-collected or deferred to maturation review. Never ask follow-ups at capture — gaps are the reviewer's job. (The dedup-hit and upstream-hit offers and the confirm gate are gates, not content questions.)
+Ask the user directly, as plain text output: **"What happened, and what did you expect?"** Do not use the `question` tool — the bug dock handles the dialogue natively. Output the question as your message text and wait for the user's reply. Everything else is auto-collected or deferred to maturation review. Never ask follow-up questions yourself — gaps are the reviewer's job.
+
+**After this question, the user may send unsolicited follow-up messages** through the always-available textbox — additional context, clarifications, or corrections. Accept them silently (never ask another question) and fold them into the draft as extra detail. The user drives any follow-up; the agent never escalates.
+
+(The dedup-hit and upstream-hit offers and the confirm gate are gates, not content questions.)
 
 **Auto-collect, locally, held unposted until scrubbed:**
 
@@ -90,7 +94,7 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 ## 6. Confirm gate — nothing posts before it
 
-Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Ask **one** question, via the `question` tool (free-form answer): **"The draft above is ready. Reply `file it` to submit as a new issue, `edit: <changes>` to modify before filing, `comment: <repo>#<issue> <text>` to add a clarifying comment to an existing issue, or `veto` to cancel."** Never ask follow-ups — the confirm gate is a single question.
+Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Tell the user, as plain text output: **"The draft above is ready. Reply `file it` to submit as a new issue, `edit: <changes>` to modify before filing, `comment: <repo>#<issue> <text>` to add a clarifying comment to an existing issue, or `veto` to cancel."** Do not use the `question` tool. Wait for the user's reply. Never ask follow-ups — the confirm gate is a single prompt.
 
 On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "comment:" → parse `<repo>#<issue> <text>` (e.g. `comment: harmoniqs/amicode#123 Thanks — confirmed on my end`), post the comment via `gh issue comment <issue> --repo <repo> --body <text>`, print the sentinel with the issue's URL, and end. Starts with "veto" → file nothing, no sentinel. A veto files nothing — and with no filing, **no sentinel is ever printed** (step 7's terminal line exists only after an actual filing). No issue, comment, or unscrubbed query leaves the machine before this gate.
 
@@ -153,7 +157,7 @@ Until a reviewer-agent skill exists to execute maturation, humans mature intake 
 
 ## Invariants
 
-- **Exactly one content question** at capture; everything else is auto-collected, a gate, or a conditional offer.
+- **At least one content question** at capture — the agent asks exactly one opening question and accepts unsolicited user follow-ups as additional context; never asks a second question itself. Everything else is auto-collected, a gate, or a conditional offer.
 - **Nothing posts before the confirm gate** — and the gate's draft is already scrubbed.
 - The **filed sentinel prints only after an actual filing** — never at the confirm gate; a veto means no sentinel, ever. One line, one token, matching `/^AMICODE_BUG_FILED[ \t]+(\S+)/m`.
 - **Envelope context is pointer-only** — `run_pointer` is never expanded into absolute paths in any artifact, including the confirm-gate draft; envelope absent → live-session collection, unchanged.

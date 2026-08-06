@@ -244,7 +244,15 @@ export class BugReportManager {
   private async createSession(server: BugReportServer, envelope: Record<string, string>): Promise<string> {
     const res = await this.fetch(this.collectionUrl(server), server, {
       method: "POST",
-      body: { title: BUG_REPORT_TITLE, metadata: { bug_report: envelope } },
+      body: {
+        title: BUG_REPORT_TITLE,
+        metadata: { bug_report: envelope },
+        // Hard guardrail: the question tool is hidden from the model for
+        // bug sessions (amicode#249). The bug dock handles dialogue via the
+        // permanent textarea + session.prompt, not the question tool's
+        // structured Q&A. Same pattern as the CLI's non-interactive mode.
+        permission: [{ permission: "question", pattern: "*", action: "deny" }],
+      },
     });
     const body = res.ok ? ((await res.json()) as { id?: unknown }) : undefined;
     if (!body || typeof body.id !== "string" || body.id === "") {
