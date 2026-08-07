@@ -539,6 +539,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
     showError: (m) => void vscode.window.showErrorMessage(m),
     log: (line) => opencodeChannel.appendLine(line),
+    // Same pin rule as the boot/restart config pins above: ONLY an explicit
+    // amicode.defaultModel pins a model; empty means "let the server decide".
+    defaultModel: () => vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || undefined,
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
