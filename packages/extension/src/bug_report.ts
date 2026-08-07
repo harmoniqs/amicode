@@ -262,11 +262,11 @@ export class BugReportManager {
   }
 
   /** Arm: the report-a-bug slash command as the session's first turn.
-   *  Pinned to deepseek-v4-pro — cheap, fast, no OpenAI/Claude (amicode#249). */
+   *  Uses the server's default model (whatever the user has configured). */
   private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "", model: "opencode/deepseek-v4-pro" },
+      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }
