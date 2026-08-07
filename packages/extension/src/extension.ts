@@ -56,6 +56,12 @@ import {
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
+import {
+  registerBugReport,
+  unregisterBugReport,
+  bugReportSkillStaged,
+  REPORT_BUG_COMMAND,
+} from "./bug_report";
 import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
@@ -453,6 +459,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
   opencodeChannel.appendLine(`[boot] template: ${opencodeProject.templatePath}`);
+  // amicode#250 AC5: the composer bug button gates on the staged skill set —
+  // re-pinned after EVERY session prep (boot, solver switch, vault respawn).
+  ChatPanel.setBugReportAvailable(bugReportSkillStaged(opencodeProject.skillPaths));
   opencodeChannel.appendLine(
     `[boot] armonia mounts: ${opencodeProject.mounts.length} (${opencodeProject.mounts.map((m) => m.name).join(", ")})`,
   );
@@ -504,6 +513,34 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // credential: SSE /event, the /config* signal probes, and the chat iframe
   // (via the app's ?auth_token= bootstrap).
   const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
+
+  // Bug-report orchestration (amicode#250, ADR 0004): the window's ONE
+  // BugReportManager — owns the bug session's id end-to-end (create / arm /
+  // open), the machine-managed lifecycle (archive-on-filed, abort+delete on
+  // abandon), and the single-open invariant. Deps are closures over live
+  // activation state (ready URL, runs manager), so respawns need no rewire.
+  const bugReport = registerBugReport({
+    server: () =>
+      opencodeReadyUrl ? { url: opencodeReadyUrl.toString(), authorization: serverAuthHeaders.Authorization } : undefined,
+    workspaceDir: () => vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+    activeRunPointer: () => runsManager?.getActiveRunPointer(),
+    postDown: (msg) => {
+      // The dock lives in the main app surface — ensure a chat panel when we
+      // can (palette invocation with none open), else post to the live one.
+      const url = opencodeReadyUrl;
+      const panel = url
+        ? ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir)
+        : ChatPanel.peek();
+      if (!panel) {
+        opencodeChannel.appendLine("[bug] no chat surface for the dock message — dropped");
+        return;
+      }
+      panel.postToApp(msg);
+    },
+    showError: (m) => void vscode.window.showErrorMessage(m),
+    log: (line) => opencodeChannel.appendLine(line),
+  });
+  ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
   if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
@@ -590,6 +627,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
         });
+        ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
         await serverManager?.stop();
         serverManager = new ServerManager({
           binary: binary!,
@@ -721,6 +759,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
       projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
     });
+    ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
     await serverManager.stop();
     serverManager = new ServerManager({
       binary,
@@ -1104,6 +1143,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
       DeckPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
+    // Report a Bug (amicode#250): the palette entry + the composer bug button's
+    // bridge command share this one handler — the manager owns create/arm/open,
+    // the lifecycle, and the single-open invariant.
+    vscode.commands.registerCommand(REPORT_BUG_COMMAND, () => void bugReport.reportBug()),
     vscode.commands.registerCommand("amicode.openInspector", async () => {
       await revealInspector();
     }),

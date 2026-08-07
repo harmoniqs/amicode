@@ -130,6 +130,14 @@ describe("amicode bridge — commands & settings", () => {
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "workbench.action.terminal.kill" }, host)).toBe(false);
   });
 
+  it("allowlists amicode.reportBug — the composer bug button's command lane (amicode#250)", async () => {
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.reportBug" }, host)).toBe(true);
+    await flush();
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.reportBug");
+  });
+
   it("set-default-model accepts provider/model-id shapes and mirrors them to config", () => {
     const host = io();
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "set-default-model", model: "anthropic/claude-sonnet-5" }, host)).toBe(true);
@@ -143,5 +151,84 @@ describe("amicode bridge — commands & settings", () => {
     const host = io();
     expect(handleAmicodeBridgeMessage({ source: "elsewhere", kind: "command", command: "amicode.stopRun" }, host)).toBe(false);
     expect(handleAmicodeBridgeMessage("a string", host)).toBe(false);
+  });
+});
+
+describe("amicode bridge — bug-report lifecycle kinds (amicode#250)", () => {
+  /** BridgeIo with the bug-report sink wired (the panels pass the manager's). */
+  function ioWithSink(visible = true) {
+    const host = io(visible);
+    const filed: Array<{ sessionID: string; url: string }> = [];
+    const closed: string[] = [];
+    let pokes = 0;
+    host.bugReport = {
+      filed: (sessionID, url) => filed.push({ sessionID, url }),
+      closed: (sessionID) => closed.push(sessionID),
+      poke: () => {
+        pokes += 1;
+      },
+    };
+    return { host, filed, closed, pokes: () => pokes };
+  }
+
+  it("bug-filed routes sessionID + url to the sink (the browser-fallback token included)", () => {
+    const { host, filed } = ioWithSink();
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", sessionID: "ses_1", url: "https://github.com/x/issues/1" }, host),
+    ).toBe(true);
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", sessionID: "ses_2", url: "filed-via-browser" }, host),
+    ).toBe(true);
+    expect(filed).toEqual([
+      { sessionID: "ses_1", url: "https://github.com/x/issues/1" },
+      { sessionID: "ses_2", url: "filed-via-browser" },
+    ]);
+  });
+
+  it("bug-report-closed routes the sessionID to the sink", () => {
+    const { host, closed } = ioWithSink();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-closed", sessionID: "ses_9" }, host)).toBe(true);
+    expect(closed).toEqual(["ses_9"]);
+  });
+
+  it("bug-report-poke routes to the sink's catch-up (consumed, payload-free)", () => {
+    const { host, pokes } = ioWithSink();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-poke" }, host)).toBe(true);
+    expect(pokes()).toBe(1);
+    // Without a sink: still consumed, never foreign-noise.
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-poke" }, io())).toBe(true);
+  });
+
+  it("malformed lifecycle envelopes are consumed and dropped — the sink never fires", () => {
+    const { host, filed, closed } = ioWithSink();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", url: "https://x.test/1" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", sessionID: 7, url: "u" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-closed" }, host)).toBe(true);
+    expect(filed).toEqual([]);
+    expect(closed).toEqual([]);
+  });
+
+  it("without a sink the kinds are still consumed (never fall through to foreign-envelope logging)", () => {
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-filed", sessionID: "ses_1", url: "u" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "bug-report-closed", sessionID: "ses_1" }, host)).toBe(true);
+  });
+});
+
+describe("extractReportBugModel — the command's optional model payload (amicode#249)", () => {
+  it("passes a well-formed selection; strips malformed ones; tolerates absence", () => {
+    expect(extractReportBugModel({ model: { providerID: "opencode-go", modelID: "kimi-k3", variant: "default" } })).toEqual({
+      providerID: "opencode-go",
+      modelID: "kimi-k3",
+      variant: "default",
+    });
+    expect(extractReportBugModel({ model: { providerID: "opencode-go", modelID: "kimi-k3" } })).toEqual({
+      providerID: "opencode-go",
+      modelID: "kimi-k3",
+    });
+    expect(extractReportBugModel({})).toBeUndefined();
+    expect(extractReportBugModel({ model: "kimi-k3" })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: 7, modelID: "x" } })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: "p" } })).toBeUndefined();
   });
 });
