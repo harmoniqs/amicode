@@ -268,6 +268,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
   const lens = opts.lens ?? opts.agent;
   const timeoutMs = opts.timeoutMs ?? CRITIC_TIMEOUT_MS;
 
+  // The model/variant announcement rides IN-BAND in the prompt. A model cannot introspect
+  // its own provider/model-id — a Kimi-class model does not know it is "opencode/kimi-k3" —
+  // so a bare self-report demand fails closed on exactly the models this path must serve
+  // (found 2026-08-06: every critic skipped with "did not report the model it ran as").
+  // Telling the child what it runs as and requiring an exact echo trades "introspected fact"
+  // for "corroborated request": an agreeing echo proves THIS prompt produced the answer, and
+  // a well-formed CONTRADICTING claim is still stamped below (introspection worth more than
+  // the echo). No report / a malformed one still fails closed.
+  const prompt =
+    `${opts.prompt}\n\n` +
+    `You are running as \`${model}\` (variant \`${variant}\`). Your reply's "model" and "variant" ` +
+    `fields MUST echo these two strings exactly — they corroborate that this prompt, not another, produced your answer.`;
+
   let cwd: string | undefined;
   try {
     cwd = mkdtempSync(join(tmpdir(), "amico-agent-"));
@@ -286,6 +299,13 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
     const extra: Record<string, string> = configDir
       ? { OPENCODE_CONFIG_DIR: configDir }
       : { OPENCODE_CONFIG_CONTENT: agentConfigContent() };
+    // The $AMICO_AGENT_CONFIG_DIR override is only real if the parent's OPENCODE_CONFIG_CONTENT
+    // does NOT ride the OPENCODE_ prefix allowlist into the child alongside it — otherwise the
+    // child sees BOTH and the override is at the mercy of the CLI's content-vs-dir precedence.
+    // Inside a live Amicode session the parent ALWAYS has OPENCODE_CONFIG_CONTENT set, so without
+    // this scrub the escape hatch silently fails exactly where it is most likely to be used.
+    // (buildChildEnv spreads extra last; deleting after the build is the honest sequence.)
+    const scrubContentKey = configDir !== undefined;
 
     const args = [
       "run",
@@ -300,12 +320,15 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
       // The prompt is POSITIONAL after `--`. Rev 2's `--file <spec-copy>` was wrong: `--file`
       // ATTACHES a file, so the child would have received a path string as its prompt.
       "--",
-      opts.prompt,
+      prompt,
     ];
+
+    const childEnv = buildChildEnv(opts.env ?? process.env, extra);
+    if (scrubContentKey) delete childEnv.OPENCODE_CONFIG_CONTENT;
 
     const spawnOpts: SpawnOptions = {
       cwd,
-      env: buildChildEnv(opts.env ?? process.env, extra),
+      env: childEnv,
       // stderr is captured for the reason field, stdin ignored — an agent that waits on input
       // would otherwise hang until the timeout with nothing to report.
       stdio: ["ignore", "pipe", "pipe"],
@@ -329,6 +352,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<AgentOutcome> {
       // how independent the review was. Losing a critic is the cheaper error.
       return skipped("failed", "the child did not report the model it ran as");
     }
+    // What the stamp MEANS (read this before trusting it): the child was told its model in-band
+    // (see the prompt above). An echo of the requested model is a corroborated request — it
+    // proves the prompt channel, not the deployment; a CONTRADICTING well-formed claim is
+    // stamped as-is, because a model that reports a different identity than requested is an
+    // introspected misroute signal and worth more than the echo.
     const { findings, dropped } = readFindings(payload, lens, round);
     return {
       status: "ran",

@@ -154,6 +154,20 @@ export async function reviewSpec(specPath: string, raw: string, opts: ReviewOpti
   const wanted = criticCountFor(taskType, opts.critics ?? 3);
   const lenses = tier2LensesFor(taskType).slice(0, wanted);
   const spawnCritic = resolveSpawnCritic(specPath, raw, round, opts);
+  // An absent mechanism must say WHY, in the record. Without this entry the only
+  // evidence is the `approved-mechanical` verdict string and an empty critics list —
+  // and "no critic ever ran" then reads exactly like "critics ran and found
+  // nothing" to anyone who doesn't already know the vocabulary. (Found the hard
+  // way: 2026-08-06, a review reported clean with zero spawns because no agent
+  // binary resolved, and the silence cost a full re-diagnosis.)
+  if (!spawnCritic && lenses.length > 0) {
+    const reason = opts.offline
+      ? "--offline: tier 1 only, by request"
+      : "no agent binary resolved (set $AMICO_CRITIC_BIN to an absolute path, or put `opencode` on PATH) — tier 1 only";
+    for (const lens of lenses) {
+      lens_status.push({ lens, status: "skipped", reason });
+    }
+  }
   /** Did the MECHANISM exist at all? Distinguishes "never adversarially reviewed" from "review
    *  was attempted and fell short", which is the whole point of `approved-mechanical` vs
    *  `degraded`. */
