@@ -9,10 +9,12 @@ import { ScoreManifest, Stage } from "./schema";
 
 const INTERVIEW_CONTRACT = [
   "**Interview contract:** ONE question at a time — never batch. Ask, wait, record,",
-  "advance. Questions with an options list go through `amicode_ask` (options in the",
-  'given order, default first and marked "(recommended)"); free-form questions stay',
-  "plain text. A stage marked *(optional)* may be skipped. A stage with a gate must",
-  "not be entered until the gate's checks pass.",
+  "advance. Every question is a card, asked through the native `question` tool —",
+  "never prose. Choice questions list their options in the given order, default",
+  'first and marked "(recommended)"; free-form questions take text: call `question`',
+  'with `kind: "text"` for a bare text input with no option list. A stage marked',
+  "*(optional)* may be skipped. A stage with a gate must not be entered until the",
+  "gate's checks pass.",
 ];
 
 /** Render one score's stages as numbered markdown, resolving template paths

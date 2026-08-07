@@ -142,27 +142,28 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
 
 /** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
- *  in the workspace package repos; library (public) skills are discovered by
- *  `surface: public` tag from the central amico-plugin library. Overridable
+ *  in the workspace package repos; library (public) skills ship IN this repo
+ *  at packages/extension/skills/ (moved out of the retired amico-plugin repo —
+ *  they are product content, versioned with the extension). Overridable
  *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
 /** Library roots scanned (first-root-wins), TYPED by admitted surface set
- *  (ADR-0003, amicode#242):
- *   1. the dev's live amico-plugin checkout — admits {public, internal}.
- *      Checkout presence IS the eligibility proof: internal SKILL.md content
- *      exists only in the private repo, so nobody stages skills they do not
- *      already possess. This is what gives brainstorming's publish/decompose
- *      steps (write-an-issue, break-into-subissues — surface:internal) their
- *      path to Amicode.
- *   2. the vsix-bundled OSS subset (fetch_skills.mjs -> vendor/skills-public),
- *      the ONLY root a Marketplace user has — admits {public} ONLY, defense in
- *      depth on top of the extract pipeline's guarantee; the vendored bundle
- *      must never ship internal skills. A dev has both; the checkout wins per
- *      dir name, so the bundle is a pure fallback. Missing roots are silently
+ *  (ADR-0003, amicode#242; roots re-homed after the amico-plugin dissolution):
+ *   1. the in-repo public library (packages/extension/skills/, sibling of
+ *      src/ and dist/ — same __dirname trick as DEFAULT_SCORES_ROOT) — admits
+ *      {public} ONLY. This is the single source of truth for public skills and
+ *      the ONLY root a Marketplace user has; the public/private boundary is
+ *      now the repo boundary, not an extract pipeline.
+ *   2. the team's armonissima vault mount — admits {internal}. Mount presence
+ *      IS the eligibility proof: internal SKILL.md content exists only in the
+ *      private team vault (synced by the armonia sync), so nobody stages
+ *      skills they do not already possess. This is what gives brainstorming's
+ *      publish/decompose steps (write-an-issue, break-into-subissues —
+ *      surface:internal) their path to Amicode. Missing roots are silently
  *      skipped (resolveLibrarySkills). */
 export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
-  { path: path.join(os.homedir(), "harmoniqs", "amico-plugin", "skills"), surfaces: ["public", "internal"] },
-  { path: path.resolve(__dirname, "..", "vendor", "skills-public", "skills"), surfaces: ["public"] },
+  { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public"] },
+  { path: path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills"), surfaces: ["internal"] },
 ];
 /** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
  *  a documentation/reference anchor, NOT a selection input (selection is purely by

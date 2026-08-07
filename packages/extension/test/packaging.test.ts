@@ -44,6 +44,7 @@ const REQUIRED = [
   "extension/scores/pulse-designer/templates/solve.jl", // score-local vetted template (lint requires it resolves)
   "extension/scores/memory/free-phase-objective-only.md",
   "extension/scores/entitlements.toml", // entitlement registry — gating breaks silently without it
+  "extension/skills/atoms/SKILL.md", // the in-repo public skill library (post-amico-plugin) — a dropped skills/ = zero library skills for a Marketplace user
   // amicode_* plugin (Bun-transpiled .ts, loaded by absolute path) — every sibling
   // is load-bearing: a dropped file silently reverts the session to vanilla opencode.
   "extension/opencode-plugin/amicode_tools.ts",
@@ -69,44 +70,44 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
     for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p);
     expect(/extension\/vendor\/opencode\/.+\/opencode/.test(listing), "missing vendored opencode").toBe(true);
   });
-  // The bundled OSS skill subset (fetch:skills -> vendor/skills-public) is the
-  // ONLY library root a Marketplace user has — if it's dropped, a published
-  // extension silently ships with zero library skills.
-  it("bundles the leak-guarded public skill subset (vendor/skills-public)", () => {
+  // The in-repo public skill library (packages/extension/skills/) is the ONLY
+  // library root a Marketplace user has — if it's dropped, a published
+  // extension silently ships with zero library skills. (Post-amico-plugin:
+  // skills ship in-repo, not via fetch:skills -> vendor/skills-public.)
+  it("ships the in-repo public skill library (extension/skills/)", () => {
     const listing = execFileSync("unzip", ["-Z1", VSIX], { encoding: "utf8" });
-    expect(listing, "missing bundled skills manifest").toContain("extension/vendor/skills-public/MANIFEST.json");
     expect(
-      /extension\/vendor\/skills-public\/skills\/.+\/SKILL\.md/.test(listing),
-      "no bundled public skill SKILL.md — fetch:skills did not run or shipped empty",
+      /extension\/skills\/.+\/SKILL\.md/.test(listing),
+      "no shipped skill SKILL.md — skills/ was excluded from the vsix",
     ).toBe(true);
+    // Internal-only names must NEVER appear in the artifact (repo-boundary
+    // defense in depth — these live in the armonissima vault now).
+    expect(listing).not.toMatch(/extension\/skills\/implement-issue\//);
+    expect(listing).not.toMatch(/extension\/skills\/break-into-subissues\//);
   });
 });
 
-// Two-tier leak guard on the vendored artifact itself (ADR-0003, amicode#242).
-// The bundle root admits {public} only at resolve time (the resolver half is in
-// package_skills.test.ts); these tests guard the ARTIFACT — a corrupt extract or
-// a mis-pinned lock that smuggled an internal skill must red here, not ship.
-const SKILLS_BUNDLE = join(__dirname, "..", "vendor", "skills-public");
-const HAVE_BUNDLE = existsSync(join(SKILLS_BUNDLE, "skills"));
-describe.skipIf(!HAVE_BUNDLE && !REQUIRE_VSIX)("vendored public skill subset — two-tier leak guard (ADR-0003)", () => {
-  it("the vendored bundle exists (hard requirement under AMICODE_REQUIRE_VSIX=1)", () => {
-    expect(HAVE_BUNDLE, "no vendor/skills-public — run: pnpm --filter amicode fetch:skills").toBe(true);
-  });
-  it("every vendored SKILL.md carries surface: public — the bundle never ships internal (AC4)", () => {
+// Leak guard on the shipped skill library itself (ADR-0003, amicode#242 —
+// re-homed from the vendored bundle to the in-repo dir). The public/private
+// boundary is now the REPO boundary; these tests red if an internal-surfaced
+// skill ever lands in the public library, at source rather than at extract.
+const SKILLS_DIR = join(__dirname, "..", "skills");
+describe("in-repo public skill library — repo-boundary leak guard (ADR-0003)", () => {
+  it("every shipped SKILL.md carries surface: public — the library never ships internal (AC4)", () => {
     const offenders: string[] = [];
-    for (const name of readdirSync(join(SKILLS_BUNDLE, "skills"))) {
-      const p = join(SKILLS_BUNDLE, "skills", name, "SKILL.md");
+    for (const name of readdirSync(SKILLS_DIR)) {
+      const p = join(SKILLS_DIR, name, "SKILL.md");
       if (!existsSync(p)) continue;
       const m = readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
       const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
       if (surface !== "public") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
     }
-    expect(offenders, `non-public skills in the vendored bundle: ${offenders.join(", ")}`).toEqual([]);
+    expect(offenders, `non-public skills in the shipped library: ${offenders.join(", ")}`).toEqual([]);
   });
-  it("the re-tagged dev-workflow skills are absent from the vendored set (AC5)", () => {
-    const names = readdirSync(join(SKILLS_BUNDLE, "skills"));
-    // Re-tagged surface:internal by amico-plugin#52 — present in the public bundle
-    // up to skills-public-v1.6.0, absent from the first post-retag release.
+  it("the internal dev-workflow skills are absent from the shipped set (AC5)", () => {
+    const names = readdirSync(SKILLS_DIR);
+    // surface:internal (amico-plugin#52) — they leaked into the public bundle
+    // once under the extract pipeline; the repo boundary must not regress.
     expect(names).not.toContain("implement-issue");
     expect(names).not.toContain("break-into-subissues");
   });

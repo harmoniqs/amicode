@@ -32,6 +32,7 @@ export function probeCommand(
   return new Promise((resolve) => {
     let settled = false;
     let output = "";
+    let stderr = "";
     const append = (buf: Buffer | string) => {
       if (output.length >= OUTPUT_CAP) return;
       output += buf.toString();
@@ -51,7 +52,6 @@ export function probeCommand(
       return;
     }
     child.stdout?.on("data", append);
-    child.stderr?.on("data", append);
     const timer = setTimeout(() => {
       try {
         child.kill("SIGKILL");
@@ -60,10 +60,21 @@ export function probeCommand(
       }
       finish({ ok: false, code: null, err: `timed out after ${timeoutMs}ms` });
     }, timeoutMs);
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (chunk: string) => {
+      append(chunk);
+      if (stderr.length < 8192) stderr += chunk.slice(0, 8192 - stderr.length);
+    });
     child.on("error", (e: Error) => finish({ ok: false, code: null, err: e.message }));
     // `close` (not `exit`): fires after the piped stdout/stderr have drained, so
     // `output` is fully captured before we resolve.
-    child.on("close", (code: number | null) => finish({ ok: code === 0, code }));
+    child.on("close", (code: number | null) => {
+      const firstErrorLine = stderr
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+      finish({ ok: code === 0, code, err: code === 0 ? undefined : firstErrorLine });
+    });
   });
 }
 

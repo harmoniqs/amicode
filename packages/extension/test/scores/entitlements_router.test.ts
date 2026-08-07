@@ -118,7 +118,7 @@ describe("packageAllowlist (spec C entitlement → package tiers)", () => {
   const registry = path.join(dir, "registry.toml");
   fs.writeFileSync(
     registry,
-    `[packages]\ndefault = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]\nissimo = ["Piccolissimo", "Strettissimo", "Intonatissimo"]\n`,
+    `[packages]\ndefault = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]\nissimo = ["Piccolissimo", "Legatissimo", "Intonatissimo"]\n`,
   );
 
   it("no entitlements → the five public packages", () => {
@@ -132,7 +132,7 @@ describe("packageAllowlist (spec C entitlement → package tiers)", () => {
   });
   it("issimo entitlement → adds the three gated packages", () => {
     const allow = packageAllowlist(registry, ["issimo"]);
-    expect(allow).toEqual(expect.arrayContaining(["Piccolo", "Piccolissimo", "Strettissimo", "Intonatissimo"]));
+    expect(allow).toEqual(expect.arrayContaining(["Piccolo", "Piccolissimo", "Legatissimo", "Intonatissimo"]));
     expect(allow).toHaveLength(8);
   });
   it("missing file / malformed [packages] → public defaults, never throws", () => {

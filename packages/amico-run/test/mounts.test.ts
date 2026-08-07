@@ -1,8 +1,9 @@
 // `mounts.ts` — the Armonia mount-stack resolver (Slice B, plan Task 6;
 // spec-20260703-053956 vault-CLI canonical order). Pure logic, so it is unit-tested
 // directly against src (no bundle): fixture tmp-dir vault trees exercise discovery,
-// precedence, the manifest override/rescue, and the env seam. The parity oracle is
-// the amico-plugin session-start hook (branch feat/amico-vault-mounts-toml, PR #27).
+// precedence, the manifest override/rescue, and the env seam. (The resolver was
+// originally ported from the retired amico-plugin session-start hook; the port is
+// canonical now — these fixtures ARE the spec.)
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

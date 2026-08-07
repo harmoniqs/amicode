@@ -58,6 +58,20 @@ describe("probeCommand", () => {
     expect(r.code).toBe(1);
   });
 
+  it("returns the first stderr line for a non-zero exit", async () => {
+    const r = await probeCommand(
+      process.execPath,
+      ["-e", 'process.stderr.write("specific failure\\nstack detail\\n"); process.exit(7)'],
+      5000,
+    );
+    expect(r).toEqual({
+      ok: false,
+      code: 7,
+      err: "specific failure",
+      output: "specific failure\nstack detail",
+    });
+  });
+
   it("not ok (with err) when the command can't spawn", async () => {
     const r = await probeCommand("amicode-no-such-binary-xyz", [], 5000);
     expect(r.ok).toBe(false);

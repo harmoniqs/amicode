@@ -1,10 +1,11 @@
 // `amico profile resolve` (fleet spec §2/§3.1) — the capability-profile resolver the
 // extension shells at spool-up, before it injects an agent def.
 //
-// The rules here are a port of amico-plugin's tests/lint_profiles.sh (the executable
-// spec, documented in profiles/SCHEMA.md): a profile that passes CI must resolve here,
-// and vice versa. The last block resolves the REAL shipped presets when the
-// amico-plugin checkout is present, so the two halves cannot drift silently.
+// The rules here are a port of the profile tree's lint (the executable spec,
+// documented in profiles/SCHEMA.md — now homed in the armonissima vault): a profile
+// that passes CI must resolve here, and vice versa. The last block resolves the
+// REAL shipped presets when the vault mount is present, so the two halves cannot
+// drift silently.
 // Run: pnpm --filter @amicode/amico-run test profile_verb
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -90,7 +91,7 @@ function profile(name: string, f: Fields = {}): string {
 }
 
 /** Always pass the dirs AND the entitlement set explicitly: the defaults read the real
- *  amico-plugin checkout and ~/.amico/amicode/entitlements.toml, which would make these
+ *  armonissima vault mount and ~/.amico/amicode/entitlements.toml, which would make these
  *  tests depend on the developer's machine. */
 function resolve(args: string[], entitlements = "issimo"): { code: number; json: Record<string, unknown> } {
   const r = profileResolve([
@@ -502,22 +503,27 @@ describe("the verifiability rule — ungated failure is silent failure", () => {
   });
 });
 
-// ── cross-repo: the REAL shipped presets ──────────────────────────────────────────
-// Skipped when the amico-plugin checkout is absent (CI has no sibling repos), exactly
-// like the lint's own runner-existence check.
-const PLUGIN = join(homedir(), "harmoniqs", "amico-plugin");
-const HAVE_PLUGIN = existsSync(join(PLUGIN, "profiles")) && existsSync(join(PLUGIN, "gates"));
+// ── cross-store: the REAL shipped presets ─────────────────────────────────────────
+// Skipped when the armonissima vault mount is absent (CI has no team vault), exactly
+// like the lint's own runner-existence check. The skills are validated against BOTH
+// roots a profile legitimately composes: the vault's internal tier + the in-repo
+// public library (packages/extension/skills — always present in this monorepo).
+const VAULT = join(homedir(), ".amico", "vaults", "armonissima");
+const IN_REPO_SKILLS = join(__dirname, "..", "..", "extension", "skills");
+const HAVE_VAULT = existsSync(join(VAULT, "profiles")) && existsSync(join(VAULT, "gates")) && existsSync(IN_REPO_SKILLS);
 
-describe.skipIf(!HAVE_PLUGIN)("the shipped amico-plugin presets resolve", () => {
+describe.skipIf(!HAVE_VAULT)("the shipped armonissima presets resolve", () => {
   const real = (args: string[]) =>
     profileResolve([
       ...args,
       "--profiles-dir",
-      join(PLUGIN, "profiles"),
+      join(VAULT, "profiles"),
       "--skills-dir",
-      join(PLUGIN, "skills"),
+      join(VAULT, "skills"),
+      "--skills-dir",
+      IN_REPO_SKILLS,
       "--gates-dir",
-      join(PLUGIN, "gates"),
+      join(VAULT, "gates"),
       "--entitlements",
       "issimo",
     ]);

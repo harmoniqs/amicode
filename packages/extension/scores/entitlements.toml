@@ -8,4 +8,4 @@ known = ["pasqal-hackathon-2026", "issimo"]
 # filterRepertoire (score visibility) is unrelated and stays score-only.
 [packages]
 default = ["Piccolo", "Legato", "Intonato", "NamedTrajectories", "DirectTrajOpt"]
-issimo = ["Piccolissimo", "Strettissimo", "Intonatissimo"]
+issimo = ["Piccolissimo", "Legatissimo", "Intonatissimo"]
