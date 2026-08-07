@@ -288,6 +288,13 @@ function solve_altissimo_streaming(qcp, opts, cb)
             (CB_FORWARDED || alt_cb_fired[]) && continue
             m = match(ALT_ROW, line)
             m === nothing && continue
+            # The captures must be REAL numbers. `[-+0-9.eE]+` also matches the
+            # bare "-" Altissimo prints as a placeholder in columns that do not
+            # apply to a row, which shipped as `AMICODE_ITER iter=1 f=-` on a live
+            # cloud run (task c584) — the Inspector then plots a non-numeric
+            # objective for the first points of the curve.
+            vals = map(c -> tryparse(Float64, c), (m.captures[1], m.captures[2], m.captures[3]))
+            any(isnothing, vals) && continue
             seq[] += 1
             iters[] = seq[]
             out = @sprintf("AMICODE_ITER iter=%d f=%s inf_pr=%s inf_du=%s",
