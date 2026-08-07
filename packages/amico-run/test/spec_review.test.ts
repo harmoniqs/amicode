@@ -127,6 +127,42 @@ describe("reviewSpec", () => {
     });
   });
 
+  // 2026-08-06: a real review reported `approved-mechanical` with `critics: []` and NOTHING
+  // else — no binary resolved, and the only evidence was a verdict string the reader had to
+  // already know how to decode. An absent mechanism must name its own absence and its remedy.
+  describe("an absent tier-2 mechanism says WHY — in the record, not just the verdict", () => {
+    it("no binary resolved → every wanted tier-2 lens is skipped with a reason naming the fix", async () => {
+      const r = await reviewSpec(specPath, fm(SLICE), { env: {} });
+      expect(r.review_verdict).toBe("approved-mechanical");
+      const skipped = r.lens_status.filter((s) => s.status === "skipped");
+      expect(skipped.length).toBe(3); // wanted = min(--critics 3, 4 implement-slice lenses)
+      for (const s of skipped) expect(s.reason).toMatch(/AMICO_CRITIC_BIN/);
+      // …and the reason survives into the PERSISTED record, not just the return value.
+      const persisted = record().lens_status.filter((s) => s.status === "skipped");
+      expect(persisted.length).toBe(3);
+      for (const s of persisted) expect(s.reason).toMatch(/AMICO_CRITIC_BIN/);
+    });
+
+    it("--offline says so rather than blaming the binary", async () => {
+      const r = await reviewSpec(specPath, fm(SLICE), { offline: true, env: {} });
+      const skipped = r.lens_status.filter((s) => s.status === "skipped");
+      expect(skipped.length).toBe(3);
+      for (const s of skipped) expect(s.reason).toMatch(/--offline/);
+    });
+
+    it("a RESOLVED mechanism leaves no spurious skip entries", async () => {
+      const r = await reviewSpec(specPath, fm(SLICE), { spawnCritic: () => ran(), env: {} });
+      expect(r.review_verdict).toBe("approved");
+      expect(r.lens_status.filter((s) => s.status === "skipped")).toEqual([]);
+    });
+
+    it("a tier-1-only task type gets no tier-2 skip noise", async () => {
+      const r = await reviewSpec(specPath, fm({ ...SLICE, task_type: "converse" }), { env: {} });
+      expect(r.review_verdict).toBe("approved-mechanical");
+      expect(r.lens_status.filter((s) => s.status === "skipped")).toEqual([]);
+    });
+  });
+
   describe("the free-tier guarantee", () => {
     it("spawns ZERO critics when a tier-1 lens blocks", async () => {
       let spawns = 0;

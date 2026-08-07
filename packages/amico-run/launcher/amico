@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Thin launcher for the `amico` verb router: resolve node, exec the bundled router.
-# No logic lives here (mirror of launcher/amico-run). See src/amico.ts.
+# (Mirror of launcher/amico-run, plus one deployment concern: the critic binary.)
 set -euo pipefail
 SOURCE="${BASH_SOURCE[0]}"
 while [ -h "$SOURCE" ]; do                       # resolve symlink chains (node_modules/.bin)
@@ -13,4 +13,37 @@ if ! command -v node >/dev/null 2>&1; then
   echo "amico: node >= 20 not found on PATH (install node or fix PATH; see provisioning runbook)" >&2
   exit 64
 fi
+
+# The tier-2 spec-review critics spawn `opencode run` (amico-run carries no provider
+# SDK by design — see src/agent_spawn.ts). opencode is a vendored deployment binary,
+# never on PATH, so without help every review silently degrades to
+# `approved-mechanical` (found the hard way, 2026-08-06). The launcher is the
+# deployment-aware layer, so IT resolves the binary: an operator's absolute
+# $AMICO_CRITIC_BIN always wins; else the dev-repo vendor binary; else the newest
+# installed VSIX's vendor binary (same order as amicode-server.sh). amico-run probes
+# the result with X_OK at spawn time; if nothing resolves, the review record says so.
+if [ -z "${AMICO_CRITIC_BIN:-}" ]; then
+  REPO_ROOT="$(cd "$DIR/../.." && pwd)"
+  DEV_BIN="$REPO_ROOT/packages/extension/vendor/opencode/darwin-arm64/opencode"
+  VSIX_BIN="$(ls -dt "$HOME"/.vscode/extensions/harmoniqs.amicode-*/vendor/opencode/darwin-arm64/opencode 2>/dev/null | head -1 || true)"
+  if [ -x "$DEV_BIN" ]; then
+    export AMICO_CRITIC_BIN="$DEV_BIN"
+  elif [ -n "$VSIX_BIN" ] && [ -x "$VSIX_BIN" ]; then
+    export AMICO_CRITIC_BIN="$VSIX_BIN"
+  fi
+fi
+
+# The critic MODEL inherits the session model (the G-2 intent: "frontier, inheriting the
+# session model") — read the amicode server config's `model` key. The code-level default
+# is a frontier anthropic id, which errors on deployments without anthropic auth (this one:
+# observed 2026-08-06). An operator's $AMICO_CRITIC_MODEL always wins; outside an amicode
+# deployment (no server config) the code default stands.
+if [ -z "${AMICO_CRITIC_MODEL:-}" ]; then
+  SERVER_CFG="$HOME/.amico/server/opencode-config-content.json"
+  if [ -r "$SERVER_CFG" ]; then
+    M="$(node -e 'try{const m=JSON.parse(require("node:fs").readFileSync(process.argv[1],"utf8")).model; if(typeof m==="string"&&m) console.log(m)}catch{}' "$SERVER_CFG" 2>/dev/null || true)"
+    [ -n "$M" ] && export AMICO_CRITIC_MODEL="$M"
+  fi
+fi
+
 exec node "$DIR/../dist/amico.js" "$@"

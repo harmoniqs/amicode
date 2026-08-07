@@ -41,7 +41,7 @@ const REMEDY_RULE = `
 Every finding MUST carry a \`remedy\` — what would fix it. A finding that cannot say what would
 fix it is DROPPED before it reaches the record, so an unactionable observation is wasted work.`.trim();
 
-/** Both agents must report the model they actually ran as.
+/** Both agents must report the model they ran as — and are TOLD it in-band.
  *
  *  This is a compromise, and the honest reason is worth recording: opencode's `--format json`
  *  emits an NDJSON event stream whose `message.updated` events (the ones carrying `modelID`)
@@ -49,10 +49,14 @@ fix it is DROPPED before it reaches the record, so an unactionable observation i
  *  field. So the model is NOT recoverable from the transport, and self-report is the only
  *  channel available.
  *
- *  Self-report is weaker than transport-observed and this system claims no more than that. What
- *  it does preserve is the rule the ledger schema states: never stamp argv. A child that does
- *  not name itself is recorded as `skipped`, not as a critic that ran — we would rather lose a
- *  critic than record a request as a fact. */
+ *  But a bare self-report demand assumes the model can introspect its own provider/model-id —
+ *  false for exactly the frontier models this path must serve (a Kimi-class model does not know
+ *  it is `opencode/kimi-k3`; observed 2026-08-06: every critic skipped). So `runAgent` announces
+ *  the model/variant IN-BAND and this rule requires an exact echo: an agreeing echo is a
+ *  corroborated request (it proves this prompt produced the answer); a well-formed
+ *  CONTRADICTING claim is stamped as-is (an introspected misroute signal); a child that reports
+ *  nothing well-formed is recorded as `skipped` — we would rather lose a critic than record a
+ *  request as a fact. */
 const REPORT_RULE = `
 Your reply must be a SINGLE JSON object and nothing else — no prose before or after, no code
 fence. Shape:
@@ -65,9 +69,10 @@ fence. Shape:
                "remedy": "<what would fix it>"}]}
 
 If you find nothing, return an empty \`findings\` array. That is a real outcome and is recorded as
-such. Reporting \`model\` is required: a critic that does not name itself is discarded rather than
-recorded, because stamping the model we ASKED for would turn the record's independence
-disclosure into a claim we did not verify.`.trim();
+such. Reporting \`model\` is required, and the value to report is given to you in-band at the end
+of this prompt — echo it exactly. A critic that does not name itself is discarded rather than
+recorded, because an unnamed child would turn the record's independence disclosure into a claim
+we did not verify.`.trim();
 
 export const CRITIC_PROMPT = `
 You are an adversarial spec critic. You have been given ONE lens and a spec file. Review the spec

@@ -294,9 +294,29 @@ describe("the child-outcome table — all seven rows", () => {
 });
 
 describe("the model is read back from the CHILD, never from argv", () => {
+  // Since 2026-08-06 the child is TOLD its model in-band (models cannot introspect their
+  // provider/model-id), so "read back from the child" means: an exact echo corroborates the
+  // request; a contradicting well-formed claim is stamped as an introspected misroute signal;
+  // no/malformed report fails closed. All three rows are asserted here.
   it("stamps what the child reported, not what we asked for", async () => {
     const out = await run({ FAKE_AGENT_MODEL: "anthropic/claude-haiku-4-5" }, { model: "anthropic/claude-opus-5" });
     expect(out.model).toBe("anthropic/claude-haiku-4-5");
+  });
+
+  it("the prompt carries the model/variant announcement the echo answers", async () => {
+    await run({}, { model: "opencode/kimi-k3" });
+    const argv = recorded().argv;
+    const prompt = argv[argv.indexOf("--") + 1];
+    expect(prompt).toContain("`opencode/kimi-k3`");
+    expect(prompt).toContain("MUST echo");
+  });
+
+  it("an exact echo of a non-default requested model corroborates and stamps", async () => {
+    // The case the in-band announcement exists for: a model that cannot introspect its own
+    // provider string can still echo one it was given.
+    const out = await run({ FAKE_AGENT_MODEL: "opencode/kimi-k3" }, { model: "opencode/kimi-k3" });
+    expect(out.status).toBe("ran");
+    expect(out.model).toBe("opencode/kimi-k3");
   });
 
   it("DISCARDS a critic that will not name itself, rather than stamping the request", async () => {
