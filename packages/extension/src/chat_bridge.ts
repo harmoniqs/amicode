@@ -23,11 +23,22 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.savePulse",
   "amicode.openRunDir",
   "amicode.openInspector",
+  // The composer's report-a-bug button (fork #116) posts this over the command
+  // lane; the registered command owns the bug session end-to-end (#250).
+  "amicode.reportBug",
   // ⌘⇧P inside the chat iframe lands in the APP's palette, not VS Code's —
   // the fork forwards it here so the editor's Command Palette (where every
   // Amicode: command lives) opens as users expect.
   "workbench.action.showCommands",
 ]);
+
+/** The bug-session lifecycle sink (amicode#250) — the panels wire the
+ *  BugReportManager's. Structural, so the bridge never imports the manager. */
+export interface BugReportSink {
+  filed(sessionID: string, url: string): void;
+  closed(sessionID: string): void;
+  poke(): void;
+}
 
 /** Side channels the handler needs from its host panel. */
 export interface BridgeIo {
@@ -35,10 +46,34 @@ export interface BridgeIo {
   visible(): boolean;
   /** Replies (clipboard text) go back to the host webview; `tab` echoes along. */
   postToWebview(msg: unknown): void;
+  /** Bug-session lifecycle (bug-filed / bug-report-closed). Undefined until the
+   *  manager registers at activation; the kinds are consumed regardless. */
+  bugReport?: BugReportSink;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
   !!msg && typeof msg === "object" && (msg as { source?: unknown }).source === "amicode";
+
+/** The optional model selection on the report-a-bug command (amicode#249):
+ *  providerID + modelID + optional variant, all bounded strings. Returns
+ *  undefined for absent/malformed — a bad model field never blocks the
+ *  command; the manager just falls back to the server default. */
+export function extractReportBugModel(
+  msg: unknown,
+): { providerID: string; modelID: string; variant?: string } | undefined {
+  const model = (msg as { model?: unknown }).model;
+  if (!model || typeof model !== "object") return undefined;
+  const providerID = (model as { providerID?: unknown }).providerID;
+  const modelID = (model as { modelID?: unknown }).modelID;
+  const variant = (model as { variant?: unknown }).variant;
+  if (typeof providerID !== "string" || providerID === "" || providerID.length > 200) return undefined;
+  if (typeof modelID !== "string" || modelID === "" || modelID.length > 200) return undefined;
+  return {
+    providerID,
+    modelID,
+    ...(typeof variant === "string" && variant !== "" && variant.length <= 200 ? { variant } : {}),
+  };
+}
 
 /** Handle one envelope from a framed app. Returns true when the message was
  *  consumed (hosts log the rest). */
@@ -141,10 +176,38 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "command") {
     const command = (msg as unknown as { command?: unknown }).command;
     if (typeof command === "string" && BRIDGE_ALLOWED_COMMANDS.has(command)) {
+      // amicode#249 QA: the report-a-bug command may carry the composer's live
+      // model selection (providerID + modelID + variant — the bug session
+      // runs what the user was running). Shape-validated, bounded; anything
+      // malformed is stripped, never fatal to the command.
       void vscode.commands.executeCommand(command);
       return true;
     }
     return false;
+  }
+
+  // Bug-session lifecycle up-kinds (#250): the dock's sentinel watcher reports
+  // a filing, the close control reports a pre-file abandon. The manager owns
+  // the known-id check (unknown ids drop there); we only shape-validate.
+  // Consumed either way — these are our envelopes, never foreign noise.
+  if (msg.kind === "bug-filed") {
+    const sessionID = (msg as unknown as { sessionID?: unknown }).sessionID;
+    const url = (msg as unknown as { url?: unknown }).url;
+    if (typeof sessionID === "string" && sessionID !== "") {
+      io.bugReport?.filed(sessionID, typeof url === "string" ? url : "");
+    }
+    return true;
+  }
+  if (msg.kind === "bug-report-closed") {
+    const sessionID = (msg as unknown as { sessionID?: unknown }).sessionID;
+    if (typeof sessionID === "string" && sessionID !== "") io.bugReport?.closed(sessionID);
+    return true;
+  }
+  // The app's boot catch-up: re-post open-bug-report when a bug session is
+  // live (heals a lost one-shot open — cold-boot race, webview reload).
+  if (msg.kind === "bug-report-poke") {
+    io.bugReport?.poke();
+    return true;
   }
 
   // Dashboard "Default model" control mirrors its choice into the

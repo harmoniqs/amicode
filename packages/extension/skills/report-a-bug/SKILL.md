@@ -1,6 +1,6 @@
 ---
 name: report-a-bug
-description: File a sanitized, intake-grade bug issue from a live Amicode session — auto-collected diagnostics, exactly one question, confirm gate, silent dedup, pin-aware upstream check for the vendored engine. Use when the user hits a bug in Amicode (the extension, the run gate, the Run Inspector, vetted templates, the engine, or a toolchain package) and wants to report it.
+description: File a sanitized, intake-grade bug issue from a live Amicode session — auto-collected diagnostics, at least one question (accepts user follow-ups), confirm gate, silent dedup, pin-aware upstream check for the vendored engine. Use when the user hits a bug in Amicode (the extension, the run gate, the Run Inspector, vetted templates, the engine, or a toolchain package) and wants to report it.
 agents: []
 surface: public
 ---
@@ -9,9 +9,17 @@ surface: public
 
 **Announce at start:** "I'm using the report-a-bug skill to file this."
 
-File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus exactly one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
+File an **intake-grade** bug issue from a live session. Capture stays cheap — auto-collected, sanitized diagnostics plus at least one user question — and readiness is earned later at review, per the **maturity contract** below. This skill is capture-only: it files intake issues and publishes the contract a reviewer matures them by. Feature ideas, designs, and specs are out of scope — a bug filer has a symptom, not a resolved design.
 
-**The flow:** classify the surface → capture (one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file. **Nothing posts before the confirm gate.**
+**The flow:** read the context envelope (when the session carries one) → classify the surface → capture (at least one question) → sanitize → dedup → upstream check (fork surfaces) → compose → confirm gate → file → print the filed sentinel. **Nothing posts before the confirm gate; the sentinel prints after any successful GitHub action (issue created OR comment posted).**
+
+## 0. Read the context envelope (when the session carries one)
+
+A bug session may carry a **context envelope** in its session metadata: a `bug_report` key with fields `project` (string, optional), `run_pointer` (string, optional), and `origin_session_id` (string, optional), written by the extension that spawned the session. **Read it first, silently — it precedes every context question and is never a user prompt.**
+
+- **Envelope present** → collect from the envelope *in place of* the live session: `project` seeds the step-1 surface classification; `run_pointer` (when present) is the run-id pointer for the step-2 diagnostics — platform/tier and the bounded log tail resolve locally through it. Never ask the user for run context the envelope already carries; the one content question (step 2) is still asked, unchanged. `origin_session_id` is local provenance for the session the bug came from — it is never posted.
+- **Envelope absent** → collect from the live session exactly as the steps below describe; behavior is unchanged.
+- **Pointer-only, always** — envelope run context travels as a pointer only: never expand `run_pointer` (or anything resolved through it) into absolute paths in any artifact, including the confirm-gate draft. Envelope content is already scrub-safe by construction; the step-3 sanitize pass applies to it unchanged.
 
 ## 1. Classify the owning surface (silent — never a user prompt)
 
@@ -21,15 +29,19 @@ Decide where the bug lives, from the session context:
 - **The vendored engine** (a fork-vendored component) → the fork repo (`harmoniqs/opencode`), and step 4's upstream check applies.
 - **A toolchain package** → its owning repo. Repo inference for toolchain packages runs on the **internal path only** (step 7); on the public path the filing lands in the product repo and triage re-routes.
 
-## 2. Capture — exactly one content question
+## 2. Capture — at least one content question, plus user-initiated follow-ups
 
-Ask **one** question, via the `question` tool (free-form answer): **"What happened, and what did you expect?"** Everything else is auto-collected or deferred to maturation review. Never ask follow-ups at capture — gaps are the reviewer's job. (The dedup-hit and upstream-hit offers and the confirm gate are gates, not content questions.)
+Ask the user directly, as plain text output: **"What happened, and what did you expect?"** Do not use the `question` tool — the bug dock handles the dialogue natively. Output the question as your message text and wait for the user's reply. Everything else is auto-collected or deferred to maturation review. Never ask follow-up questions yourself — gaps are the reviewer's job.
+
+**After this question, the user may send unsolicited follow-up messages** through the always-available textbox — additional context, clarifications, or corrections. Accept them silently (never ask another question) and fold them into the draft as extra detail. The user drives any follow-up; the agent never escalates.
+
+(The dedup-hit and upstream-hit offers and the confirm gate are gates, not content questions.)
 
 **Auto-collect, locally, held unposted until scrubbed:**
 
 - Extension version (`code --list-extensions --show-versions`, or the installed `harmoniqs.amicode-*` extension directory name) and OS (`uname -srm`).
 - The engine pin: `opencode.lock.json` under the installed extension directory — its `version`, `tag` (e.g. `v1.18.10-amicode.1`), and `repo`.
-- **When a run is active** (a solve this session, or the bug is about a run): platform and tier from the problem workspace (`~/.amico/problems/<slug>/` — `solvespec.json` / `events.jsonl`), the **run-id pointer** (`runs/<lab>/<runId>`, relative to `~/.amico/` — a pointer, never an absolute path), and a **bounded log tail** (last ~40 lines of that run's `run.log`).
+- **When a run is active** (a solve this session, or the bug is about a run): platform and tier from the problem workspace (`~/.amico/problems/<slug>/` — `solvespec.json` / `events.jsonl`), the **run-id pointer** (`runs/<lab>/<runId>`, relative to `~/.amico/` — a pointer, never an absolute path), and a **bounded log tail** (last ~40 lines of that run's `run.log`). When the session carries the `bug_report` envelope (step 0), this run context comes from the envelope's `run_pointer` instead of live-session discovery — same pointer form, same bounded tail.
 - **Never collected:** absolute paths, binaries or screenshots, vault contents, and lab secrets (device frequencies, calibration values) — lab context travels as run-id pointers only.
 
 ## 3. Sanitize — classify → scrub → compose
@@ -82,7 +94,9 @@ The `intake: not-ready` footer (plus the intake label/column on the internal pat
 
 ## 6. Confirm gate — nothing posts before it
 
-Show the user **the exact final body, the target repo, and the `suggested_path`**. The user may **edit or veto** there; a veto files nothing. No issue, comment, or unscrubbed query leaves the machine before this gate — and the draft shown at the gate is already scrubbed, so nothing proprietary is displayed either.
+Show the user **the exact final body, the target repo, and the `suggested_path`** — the draft is already scrubbed, so nothing proprietary is displayed either. Tell the user, as plain text output: **"The draft above is ready. Reply `file it` to submit as a new issue, `edit: <changes>` to modify before filing, `comment: <repo>#<issue> <text>` to add a clarifying comment to an existing issue, or `veto` to cancel."** Do not use the `question` tool. Wait for the user's reply. Never ask follow-ups — the confirm gate is a single prompt.
+
+On answer: starts with "file it" → file exactly as drafted (step 7). Starts with "edit:" → incorporate the text after "edit:" and file (step 7). Starts with "comment:" → parse `<repo>#<issue> <text>` (e.g. `comment: harmoniqs/amicode#123 Thanks — confirmed on my end`), post the comment via `gh issue comment <issue> --repo <repo> --body <text>`, then **print the sentinel on its own line exactly as**: `AMICODE_BUG_FILED https://github.com/<repo>/issues/<number>` (the full URL of the issue you commented on — construct it from the repo and issue number), and end. Starts with "veto" → file nothing, no sentinel. **The sentinel prints after EVERY successful action — new issue OR comment. The only path that skips the sentinel is "veto."** No issue, comment, or unscrubbed query leaves the machine before this gate.
 
 ## 7. File — the runtime org-tail fork
 
@@ -113,6 +127,15 @@ gh api graphql -f query='mutation($project:ID!, $item:ID!, $field:ID!, $opt:Stri
 
 `<ISSUE_NODE_ID>` = `gh issue view <n> --repo <target> --json id --jq .id`. No status or assignee prompts — the intake defaults are fixed (intake column, unassigned).
 
+**The filed sentinel — the terminal contract.** This is a **lifecycle signal**, not a semantic judgment. Print it after ANY successful GitHub action in this session — new issue created, comment posted, chore filed — regardless of whether the content is a "bug." The sentinel tells the dock "you're done; show the end-state." Without it the dock stays open forever.
+
+- **After creating an issue via `gh`**: print `AMICODE_BUG_FILED <url>` with the new issue's URL, e.g.
+  `AMICODE_BUG_FILED https://github.com/harmoniqs/amicode/issues/123`.
+- **After posting a comment via `gh issue comment`**: print `AMICODE_BUG_FILED https://github.com/<repo>/issues/<number>` with the issue's URL.
+- **After the browser fallback**: print the sentinel carrying `filed-via-browser` — or the pre-filled new-issue URL as the token when one was opened.
+
+This line is a machine contract, not prose. The sentinel is **its own line** in your text output, the marker and its single token separated by a space, and nothing else on the line (no markdown, no backticks, no punctuation glued to the token). **Never print it before a successful GitHub action** — a veto means nothing was posted and no sentinel ever appears. The sentinel is the lifecycle trigger that archives the bug session; printing it without an action would archive a session whose report never reached GitHub.
+
 ## The maturity contract (the reviewer-facing interface)
 
 Intake issues **mature in place** to ready-for-agent, through one of two paths delineated by bug shape:
@@ -135,8 +158,10 @@ Until a reviewer-agent skill exists to execute maturation, humans mature intake 
 
 ## Invariants
 
-- **Exactly one content question** at capture; everything else is auto-collected, a gate, or a conditional offer.
+- **At least one content question** at capture — the agent asks exactly one opening question and accepts unsolicited user follow-ups as additional context; never asks a second question itself. Everything else is auto-collected, a gate, or a conditional offer.
 - **Nothing posts before the confirm gate** — and the gate's draft is already scrubbed.
+- The **filed sentinel prints after any successful GitHub action** (issue created, comment posted, chore filed) — never before the confirm gate; a veto means no sentinel, ever. The sentinel is a lifecycle signal, not a semantic judgment about whether the content is a "bug."
+- **Envelope context is pointer-only** — `run_pointer` is never expanded into absolute paths in any artifact, including the confirm-gate draft; envelope absent → live-session collection, unchanged.
 - Intake issues are **visibly marked not-ready** (footer; label + column on the internal path).
 - **No proprietary implementation details or package names** in any artifact that leaves the machine — including the draft shown to the user.
 - **No lab secrets in payloads** — run-id pointers only.

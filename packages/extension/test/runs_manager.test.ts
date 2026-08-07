@@ -122,6 +122,21 @@ describe("RunsManager state machine (ported from RunsRootWatcher)", () => {
     m.dispose();
   });
 
+  it("getActiveRunPointer is the selected run's runId (relative pointer, never an absolute path) or undefined (amicode#250)", () => {
+    const root = mkdtempSync(join(tmpdir(), "runs-"));
+    const m = new RunsManager({ runsRoot: root, channel });
+    m.start();
+    expect(m.getActiveRunPointer()).toBeUndefined(); // nothing tracked yet
+    stageRun(root, "default/20260803-104655-x-gate");
+    tick(m);
+    expect(m.selectedRun).toBe("default/20260803-104655-x-gate");
+    const pointer = m.getActiveRunPointer();
+    expect(pointer).toBe("default/20260803-104655-x-gate");
+    expect(pointer).not.toContain(root); // pointer form only — the bug-report envelope
+    expect(pointer!.startsWith("/")).toBe(false);
+    m.dispose();
+  });
+
   it("live tail forwards meta and each record in order as they land (#66), runId-tagged", () => {
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const run = stageRun(root, "p1");
