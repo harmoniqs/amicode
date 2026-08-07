@@ -56,6 +56,10 @@ _Avoid_: Armonia (the whole stack), workspace, folder
 The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
+**Specialist**:
+The expert-model consult seat — a domain expert in quantum device operation and pulse physics that the session's engine consults through a stable, typed contract. Model-agnostic on both sides: an engine swap changes only when-to-consult guidance, a model swap changes only what serves the seat. Capability is earned in stages — context first, weights only on attribution-ledger evidence. Not the Understudy (a persona of the user); the Specialist models the domain, not the user.
+_Avoid_: engine, brain, replacement, understudy
+
 ### Orthogonal axes
 
 **Entitlement**:
