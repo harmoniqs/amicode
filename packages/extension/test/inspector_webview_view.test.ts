@@ -23,7 +23,11 @@ const iter = (runId: string, n: number) => ({
 });
 const panes = (v: { el: HTMLElement }) => [...v.el.querySelectorAll(".pane")];
 const activePane = (v: { el: HTMLElement }) => v.el.querySelector(".pane.active");
-const pillText = (pane: Element | null | undefined) => pane?.querySelector(".pill")?.textContent;
+// The RUN-STATE pill specifically. The topbar now carries a second pill (the
+// Harmoniqs Cloud location badge), so a bare ".pill" query returns whichever
+// comes first in the DOM. role=status is the status pill's own semantic hook —
+// the same one a screen reader keys off — so it is the honest selector here.
+const pillText = (pane: Element | null | undefined) => pane?.querySelector(".pill[role=status]")?.textContent;
 
 describe("Inspector webview router (1.3 per-run panes)", () => {
   it("activate shows exactly one pane and hides the empty-state hint", () => {
@@ -90,5 +94,46 @@ describe("Inspector webview router (1.3 per-run panes)", () => {
     expect(pillText(activePane(v))).toBe("running"); // now r2 is visible
     const r1 = panes(v).find((p) => !p.classList.contains("active"))!;
     expect(pillText(r1)).toBe("converged"); // r1 untouched by the switch
+  });
+});
+
+// The location badge: the answer to "is this run on the tier I'm paying for?".
+// Asserted through the real DOM the user sees, not the stylesheet source.
+const cloudBadge = (pane: Element | null | undefined) =>
+  [...(pane?.querySelectorAll(".pill") ?? [])].find((p) => p.textContent === "Harmoniqs Cloud");
+
+describe("Harmoniqs Cloud location badge", () => {
+  it("is absent from a pane until a location message says cloud", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    const badge = cloudBadge(activePane(v));
+    // present in the DOM but hidden — a local run shows no cloud chrome at all
+    expect((badge as HTMLElement | undefined)?.hidden).toBe(true);
+  });
+
+  it("appears on the run it was sent for, and NOT on a sibling local run", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "rCloud" });
+    v.onMessage({ type: "location", runId: "rCloud", cloud: true });
+    v.onMessage(iter("rLocal", 1)); // a second, local run in its own pane
+    const cloudPane = [...panes(v)].find((p) => !(cloudBadge(p) as HTMLElement).hidden);
+    expect(cloudPane).toBeTruthy();
+    // exactly one pane claims the cloud — panes must not leak each other's state
+    expect(panes(v).filter((p) => !(cloudBadge(p) as HTMLElement).hidden)).toHaveLength(1);
+  });
+
+  it("a location message without cloud:true never lights the badge", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "location", runId: "r1" }); // malformed / local
+    expect((cloudBadge(activePane(v)) as HTMLElement).hidden).toBe(true);
+  });
+
+  it("the badge does not disturb the run-state pill beside it", () => {
+    const v = createInspectorView(() => {});
+    v.onMessage({ type: "activate", runId: "r1" });
+    v.onMessage({ type: "location", runId: "r1", cloud: true });
+    v.onMessage(iter("r1", 3));
+    expect(pillText(activePane(v))).toBe("running");
   });
 });

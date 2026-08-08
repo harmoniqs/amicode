@@ -24,11 +24,26 @@ defineStyle(
   }
   .pill.done    { color: var(--color-ok); }
   .pill.failed  { color: var(--color-fail); }
+  /* cloud — WHERE the run executes, not how it is going. The one badge here that
+   * is a filled brand swatch: "this is the paid tier, running in Harmoniqs
+   * Cloud" is the strongest claim the topbar makes, and the lemon fill is how
+   * this product says "special". Obeys the brand rule in brand.css — yellow is a
+   * FILL, never an ink — so the label is --color-on-accent (black, 18.7:1) and
+   * the edge is the theme-solved hairline rather than the lemon trying to bound
+   * itself against a light background. */
+  .pill.cloud { color: var(--color-on-accent); background: var(--color-accent-fill);
+                border-color: var(--color-accent-edge); }
+  /* The status dot becomes a cloud glyph. Declared AFTER .no-dot so a caller
+   * passing dot:false cannot silently erase it (equal specificity, later wins). */
+  .pill.cloud::before { content: "☁"; width: auto; height: auto; background: none;
+                        border-radius: 0; font-size: 1.15em; line-height: 1; }
   @keyframes pill-pulse { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.35; transform: scale(0.7); } }
 `,
 );
 
-export type PillState = "idle" | "running" | "done" | "failed";
+/** Process states, plus `cloud` — a BADGE state describing a property of the run
+ *  (where it executes) rather than how it is progressing. */
+export type PillState = "idle" | "running" | "done" | "failed" | "cloud";
 
 export interface PillOptions {
   /** Status dot before the label (default true). Badges pass false. */

@@ -37,7 +37,7 @@ import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
-import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
+import { watchSolverMode, applyEntitlementForMode, reconcileSolverMode } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { stagePasqalConnector } from "./pasqal_assets";
@@ -436,11 +436,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
     // (same run-dir contract, spline solver layer). An AGENTS.md instruction
     // can't beat the procedural template path — the file itself must swap.
-    templateSrc: path.resolve(
-      ctx.extensionPath,
-      "templates",
-      readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-    ),
+    templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
     juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
     skillRoots: cfgArr("skillRoots"),
     skillLibraryRoots: cfgLibraryRoots(),
@@ -605,6 +601,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
 
+    // Before watching for NEW switches, repair a half-landed old one. The mode
+    // file only changes on a `status:"switching"` request, so a dropped write
+    // leaves it stale while the issimo entitlement says otherwise — and every
+    // cloud decision (routing, template SOLVER, the app's own toggle) reads the
+    // file. Observed 2026-08-05: file said piccolo (Jul 28) with issimo granted
+    // and Harmoniqs Cloud connected, so a paid-tier solve ran locally on IPOPT
+    // and nothing anywhere said so.
+    {
+      const { healed, mode } = reconcileSolverMode();
+      if (healed)
+        opencodeChannel.appendLine(
+          `[solver] solver-mode.json disagreed with the issimo entitlement — healed to ${mode}. ` +
+            `A switch request lost its write; the tier is ${mode}.`,
+        );
+    }
     // Solver-mode switcher (rchari/solver-wire): the app's toggle POSTs
     // {status:"switching"}; we do the REAL switch — grant/revoke the issimo
     // entitlement, re-prep the session project (skills/scores/allowlist follow
@@ -618,11 +629,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
           // Same mode-selection as boot; `mode` is the requested target of THIS
           // switch (the state file still reads status:"switching" here).
-          templateSrc: path.resolve(
-            ctx.extensionPath,
-            "templates",
-            mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-          ),
+          templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
           juliaProject: resolveJuliaProject(
             vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""),
           ),
@@ -751,11 +758,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const port = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
     const project2 = prepareOpencodeProject({
       agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-      templateSrc: path.resolve(
-        ctx.extensionPath,
-        "templates",
-        readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-      ),
+      templateSrc: path.resolve(ctx.extensionPath, "scores", "pulse-designer", "templates", "solve.jl"),
       juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
       skillRoots: cfgArr("skillRoots"),
       skillLibraryRoots: cfgLibraryRoots(),

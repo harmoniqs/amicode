@@ -28,6 +28,8 @@ export interface RunState {
   status: RunStatus;
   latestIter?: number;
   fidelity?: number;
+  /** Executing in Harmoniqs Cloud (the paid Piccolissimo + Altissimo tier). */
+  cloud?: boolean;
 }
 
 /** Parsed AMICODE_ITER line from spike_solve.jl stdout. */

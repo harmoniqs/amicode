@@ -13,7 +13,8 @@ import { RemoteExecutor } from "./remote_executor.js";
 import { ConfigError, type Executor, type Finished, type SubmitOpts } from "./types.js";
 import { readAuthoring } from "./authoring.js";
 import { runGate } from "./gate.js";
-import { readSolverMode } from "./solver_mode.js";
+import { hpTierSelected } from "./solver_mode.js";
+import { hasCloudConfig } from "./remote_config.js";
 import { assembleWarrantContext } from "./warrant_context.js";
 import { runVerification } from "./verify.js";
 import { trySubcommand } from "./subcommands.js";
@@ -43,6 +44,7 @@ export async function launch(argv: string[]): Promise<number> {
   let specPath: string | undefined;
   const opts: SubmitOpts = { julia: {} };
   let projectExplicit = false;
+  let executorExplicit = false;
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -59,6 +61,7 @@ export async function launch(argv: string[]): Promise<number> {
           return 0;
         case "--executor":
           executor = next();
+          executorExplicit = true;
           break;
         case "--lab":
           opts.lab = next();
@@ -126,25 +129,52 @@ export async function launch(argv: string[]): Promise<number> {
     console.error(`amico-run: unknown --executor ${executor} (supported: local, remote)`);
     return 64;
   }
-  // Piccolissimo + Altissimo is a CLOUD-ONLY tier, so a LOCAL launch is refused
-  // while it is the selected solver. This lives here, not in runGate, because
-  // the gate only sees --spec runs (see `if (specPath)` below) — this line is
-  // the one choke point EVERY run passes through, spec or not.
+  // Piccolissimo + Altissimo is a CLOUD-ONLY tier. This lives here, not in
+  // runGate, because the gate only sees --spec runs (see `if (specPath)` below) —
+  // this is the one choke point EVERY run passes through, spec or not.
   //
-  // Why it is needed at all: selecting HP grants the `issimo` entitlement, so
-  // the import scan would happily admit a local `using Piccolissimo` and the
-  // solve would precompile the HP stack (and IPOPT) on the laptop — the exact
-  // failure this tier exists to avoid, and what amico-run's process-group
-  // timeout used to SIGTERM mid-precompile.
+  // Why it exists at all: selecting HP grants the `issimo` entitlement, so the
+  // import scan would happily admit a local `using Piccolissimo` and the solve
+  // would precompile the HP stack (and IPOPT) on the laptop — the exact failure
+  // this tier exists to avoid, and what amico-run's process-group timeout used to
+  // SIGTERM mid-precompile.
   //
-  // Fails SAFE: an absent or corrupt solver-mode.json reads as piccolo, so
+  // Two different situations, deliberately handled differently:
+  //   - executor defaulted (no --executor at all): PROMOTE to remote. Selecting
+  //     the cloud tier IS the routing decision; making the caller restate it as a
+  //     flag only creates a way to get it wrong. Previously this returned 64 and
+  //     relied on the agent reading the message and retrying — a round-trip that
+  //     surfaced to users as a failed run.
+  //   - --executor local passed EXPLICITLY: refuse. That is a direct
+  //     contradiction of the selected tier, and silently inverting an explicit
+  //     flag is worse than an error.
+  //
+  // Fails SAFE either way: with neither signal present this reads as piccolo, so
   // ordinary local runs behave exactly as before.
-  if (executor === "local" && readSolverMode() === "hp") {
+  if (executor === "local" && hpTierSelected()) {
+    if (executorExplicit) {
+      console.error(
+        `amico-run: Piccolissimo + Altissimo runs in Harmoniqs Cloud and never solves locally — this launch is --executor local. ` +
+          `Drop the flag (cloud is automatic for this tier), or switch the solver to Piccolo (the model · solver control) for local solves.`,
+      );
+      return 64;
+    }
+    // Do not promote into a broken remote. Without a connection the submit would
+    // fail deep in RemoteExecutor with `cloud config not found: ~/.amico/cloud.json`
+    // — accurate, but it names a file the user has never heard of instead of the
+    // control they need. Promotion made this path reachable by DEFAULT, so it has
+    // to say the human thing.
+    if (!hasCloudConfig()) {
+      console.error(
+        `amico-run: Piccolissimo + Altissimo runs in Harmoniqs Cloud, but no cloud connection is configured. ` +
+          `Connect Harmoniqs Cloud in the Connections panel (paste your API key), or switch the solver to Piccolo for local solves.`,
+      );
+      return 64;
+    }
+    executor = "remote";
     console.error(
-      `amico-run: Piccolissimo + Altissimo runs in Harmoniqs Cloud and never solves locally — this launch is --executor local. ` +
-        `Run it with --executor remote, or switch the solver to Piccolo (the model · solver control) for local solves.`,
+      `amico-run: solver is Piccolissimo + Altissimo → running in Harmoniqs Cloud (--executor remote, automatic for this tier)`,
     );
-    return 64;
   }
   // --spec + --executor remote is SUPPORTED (High-Performance + Cloud, tier=hpc):
   // the launch gate is a static local check and runs identically for both
@@ -153,6 +183,44 @@ export async function launch(argv: string[]): Promise<number> {
   // cloud-side re-rollout is a Phase-2 follow-up).
   if (executor === "remote" && (opts.julia!.julia || opts.julia!.project || opts.julia!.sysimage)) {
     console.error(`amico-run: --julia/--project/--sysimage are ignored with --executor remote (the runner image owns the environment)`);
+  }
+
+  // ── cloud telemetry preflight ──
+  // A cloud script that never writes run.log CANNOT stream anything to the Run
+  // Inspector, and the user pays the full queue + instance-boot wait to find out.
+  //
+  // Why run.log specifically: /solves/{id}/stats greps AMICODE_ITER out of the
+  // run.log the sidecar syncs from the working directory. Printing to stdout is
+  // NOT enough — the runner's stdout goes to the SSM command stream, which no API
+  // exposes. The bundled template handles this (its emit() appends to run.log
+  // whenever TASK_ID is set, and the runner sets TASK_ID), so a script copied from
+  // the template passes this check for free.
+  //
+  // This is a refusal rather than a warning because it is a certainty, not a risk:
+  // three cloud runs in two days produced an empty Inspector this way, every one of
+  // them a hand-authored script (two with invented API that also died at load).
+  // Warnings on stderr have not changed that. Failing here costs a second and names
+  // the fix; failing in the cloud costs ten minutes and names nothing.
+  // Gated on hasCloudConfig() so error PRECEDENCE is preserved: a remote launch
+  // with no connection at all should still report the missing connection, which is
+  // the more fundamental problem, rather than being pre-empted by a telemetry
+  // complaint about a script that was never going to run.
+  if (executor === "remote" && script && hasCloudConfig()) {
+    let text = "";
+    try {
+      text = readFileSync(script, "utf8");
+    } catch {
+      /* unreadable script — the executor reports that with its own message */
+    }
+    if (text !== "" && !text.includes("run.log")) {
+      console.error(
+        `amico-run: this script cannot stream telemetry from Harmoniqs Cloud — it never writes run.log, so the Run Inspector would stay empty for the whole solve.\n` +
+          `  The cloud reads iterations by grepping AMICODE_ITER out of run.log in the run directory; stdout does not reach it.\n` +
+          `  Fix: author from the bundled solve template (the path AGENTS.md gives you) instead of writing the script from scratch — its emit() writes run.log already.\n` +
+          `  If you are deliberately hand-rolling, append each AMICODE_ITER line to "run.log" in the working directory as well as printing it.`,
+      );
+      return 64;
+    }
   }
 
   // ── spec C: the launch gate. Failures leave NO run dir and exit 64. ──

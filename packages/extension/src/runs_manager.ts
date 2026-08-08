@@ -5,8 +5,9 @@ import { getInspector } from "./run_inspector";
 import { LogTailer } from "./log_tailer";
 import { parseIndexLine, RunRegistry, type RunRecord } from "./run_registry";
 import { parseMaxIter } from "./run_timing";
+import { isCloudRun } from "./run_location";
 import type { StatusBarManager } from "./status_bar";
-import type { RunStatus } from "./types";
+import type { RunState, RunStatus } from "./types";
 import {
   AMICODE_ITER_RE,
   ingestRunDir,
@@ -185,7 +186,7 @@ export class RunsManager implements vscode.Disposable {
         sel.latestIter !== undefined &&
         this.liveStatus(sel.runDir) === "stalled"
       ) {
-        this.opts.statusBar?.setRun({
+        this.setRunState({
           runId: sel.runId,
           outputDir: sel.runDir,
           startedAt: 0,
@@ -251,6 +252,7 @@ export class RunsManager implements vscode.Disposable {
     const ins = getInspector();
     ins?.reveal();
     ins?.setRunLabel(runId, runId);
+    if (isCloudRun(rec.runDir)) ins?.setCloudRun(runId);
     ins?.activate(runId); // 1.3: switch the visible pane
     const p = this.pipelines.get(runId);
     if (p) {
@@ -260,7 +262,7 @@ export class RunsManager implements vscode.Disposable {
       // Point the single status bar at the selected run from registry state
       // (routeIter/completeRun keep it current from here).
       const r = this.registry.get(runId)!;
-      this.opts.statusBar?.setRun({
+      this.setRunState({
         runId,
         outputDir: r.runDir,
         startedAt: 0,
@@ -403,6 +405,8 @@ export class RunsManager implements vscode.Disposable {
       const ins = getInspector();
       if (!this.booting) ins?.reveal(); // boot replay must not steal focus
       ins?.setRunLabel(runId, runId);
+      const rdir = this.registry.get(runId)?.runDir;
+      if (rdir && isCloudRun(rdir)) ins?.setCloudRun(runId);
       ins?.activate(runId);
     }
 
@@ -487,7 +491,7 @@ export class RunsManager implements vscode.Disposable {
         // A finished run's replay must not stamp running/stalled per line — its
         // completion event (below) sets the bar exactly once at the end.
         if (this.registry.get(rid)?.phase !== "finished") {
-          this.opts.statusBar?.setRun({
+          this.setRunState({
             runId: rid,
             outputDir: rec.runDir,
             startedAt: 0,
@@ -498,7 +502,7 @@ export class RunsManager implements vscode.Disposable {
       },
       run: (c: RunCompletion) => {
         getInspector()?.postCompletion(rid, c.status, c.fidelity);
-        this.opts.statusBar?.setRun({
+        this.setRunState({
           runId: rid,
           outputDir: rec.runDir,
           startedAt: 0,
@@ -513,6 +517,29 @@ export class RunsManager implements vscode.Disposable {
       },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
+  }
+
+  /** The one seam that reaches the status bar, so "this run is in the cloud" is
+   *  stamped in ONE place instead of at six call sites — the six that exist today
+   *  are how a per-site flag would end up set on five of them and quietly missing
+   *  on the sixth. Callers pass what they know; location is derived from the run
+   *  dir, which is the authority for it. */
+  private setRunState(state: RunState): void {
+    this.opts.statusBar?.setRun({ ...state, cloud: this.isCloud(state.outputDir) });
+  }
+
+  /** Cached like liveStatus below, and for the same reason (this rides the
+   *  per-iteration path). Cached FOREVER rather than on a TTL: remote.json is
+   *  written once at submit and never removed, so the answer cannot change for a
+   *  given run dir. */
+  private readonly cloudCache = new Map<string, boolean>();
+  private isCloud(runDir: string): boolean {
+    let hit = this.cloudCache.get(runDir);
+    if (hit === undefined) {
+      hit = isCloudRun(runDir);
+      this.cloudCache.set(runDir, hit);
+    }
+    return hit;
   }
 
   /** "running" only if run.log is actually moving. A FINISHED-less run whose
@@ -545,7 +572,7 @@ export class RunsManager implements vscode.Disposable {
     getInspector()?.postIterationRecord(p.runId, rec);
     if (this.selected === p.runId) {
       // Live status-bar update — "running · iter N" as it solves (#5 AC3).
-      this.opts.statusBar?.setRun({
+      this.setRunState({
         runId: p.runId,
         outputDir: p.runDir,
         startedAt: 0,
@@ -600,7 +627,7 @@ export class RunsManager implements vscode.Disposable {
     getInspector()?.postTiming(c.runId, { wallSeconds, terminal: true });
     this.opts.onRunFinished?.({ runId: c.runId, runDir: rec.runDir, status: c.status });
     if (this.selected === c.runId) {
-      this.opts.statusBar?.setRun({
+      this.setRunState({
         runId: c.runId,
         outputDir: rec.runDir,
         startedAt: 0,

@@ -10,11 +10,23 @@ import type { RunState } from "./types";
 export function statusBarLabel(serverReady: boolean, run?: RunState): { text: string; tooltip: string } {
   if (!serverReady) return { text: "$(loading~spin) Amicode (booting)", tooltip: "Spawning opencode server…" };
   const dir = run?.outputDir ?? "";
+  // A cloud run says so on the ONE surface that is always visible, even with the
+  // Inspector closed — the status bar is where a user checks "what is happening
+  // right now", and "am I burning cloud credits?" belongs to that question.
+  // Only while the run is in flight: once it is done, its outcome is the story.
+  const where = run?.cloud ? " · $(cloud) cloud" : "";
+  const inWhere = run?.cloud ? "Harmoniqs Cloud" : dir;
   switch (run?.status) {
     case "starting":
-      return { text: "$(sync~spin) Amicode · warming…", tooltip: `Julia warming up in ${dir}` };
+      return {
+        text: `$(sync~spin) Amicode · ${run.cloud ? "$(cloud) cloud · queued…" : "warming…"}`,
+        tooltip: run.cloud ? `Queued in Harmoniqs Cloud — mirroring to ${dir}` : `Julia warming up in ${dir}`,
+      };
     case "running":
-      return { text: `$(gear~spin) Amicode · iter ${run.latestIter ?? "—"}`, tooltip: `Solve running in ${dir}` };
+      return {
+        text: `$(gear~spin) Amicode${where} · iter ${run.latestIter ?? "—"}`,
+        tooltip: `Solve running in ${inWhere}`,
+      };
     case "stalled":
       return {
         text: "$(warning) Amicode · stalled",

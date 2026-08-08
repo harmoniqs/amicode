@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readToml } from "./helpers.js";
+import { readToml, hermeticOpsEnv } from "./helpers.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
 beforeAll(() => {
@@ -158,5 +158,64 @@ describe("sandbox — bundled-asset production path", () => {
     expect(Object.keys(deps).sort()).toEqual(["CairoMakie", "JLD2", "Piccolo"]);
     rmSync(dir, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
+  });
+});
+
+// "if I say run a piccolissimo altissimo solve it might use piccolo because the
+// vetted template uses piccolo" (2026-08-06). AGENTS.md documents the vetted
+// workflow as "copy template_path", and template_path was always the BUNDLED
+// registry file — whose {{SOLVER}} placeholder is unsubstituted and degrades to
+// ipopt. So an agent following the workflow got Piccolo/IPOPT no matter what the
+// solver toggle said, while the AGENTS.md preamble pointed at a different file
+// (the staged copy). Two instructions, two files, one of them wrong.
+describe("resolve returns the session's STAGED template, not the bundled one", () => {
+  function authoringWith(extra: Record<string, unknown>): string {
+    const dir = mkdtempSync(join(tmpdir(), "auth-"));
+    // REGISTRY is the registry.toml BODY; materialize it so `resolve` can read it
+    // and so template_path resolves relative to a real directory.
+    const registry = join(dir, "registry.toml");
+    writeFileSync(registry, REGISTRY);
+    const p = join(dir, "authoring.json");
+    writeFileSync(
+      p,
+      JSON.stringify({
+        allowlist: ["Piccolo", "Piccolissimo"],
+        support_set: ["JLD2", "TOML", "Printf", "CairoMakie"],
+        registry,
+        verify_tolerance: 0.001,
+        ...extra,
+      }),
+    );
+    return p;
+  }
+
+  function resolveWith(authoring: string): Record<string, unknown> {
+    const out = execFileSync(
+      "node",
+      [BUNDLE, "resolve", "--platform", "transmon", "--kind", "gate_synthesis", "--size", "1"],
+      { encoding: "utf8", env: { ...process.env, ...hermeticOpsEnv(), AMICO_AUTHORING_FILE: authoring } },
+    );
+    return JSON.parse(out) as Record<string, unknown>;
+  }
+
+  it("prefers staged_template when the session staged one", () => {
+    const staged = join(mkdtempSync(join(tmpdir(), "proj-")), "solve.jl");
+    writeFileSync(staged, 'SOLVER = let s = "altissimo"\n    Symbol(s)\nend\n');
+    const out = resolveWith(authoringWith({ staged_template: staged }));
+    expect(out.tier).toBe("vetted");
+    expect(out.template_path).toBe(staged);
+  });
+
+  it("falls back to the registry path when nothing was staged (bare dev invocation)", () => {
+    const out = resolveWith(authoringWith({}));
+    expect(out.tier).toBe("vetted");
+    expect(String(out.template_path)).toMatch(/solve_template\.jl$/);
+  });
+
+  it("falls back when staged_template points at a file that is gone", () => {
+    // A stale authoring.json from a previous session must not send the agent to a
+    // path that no longer exists — that would be a worse failure than the old one.
+    const out = resolveWith(authoringWith({ staged_template: "/nonexistent/staged/solve.jl" }));
+    expect(String(out.template_path)).toMatch(/solve_template\.jl$/);
   });
 });

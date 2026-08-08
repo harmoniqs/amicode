@@ -211,11 +211,29 @@ describe("HP solver-mode guidance: how to select Altissimo", () => {
     }
   };
 
-  it("names SOLVER = :altissimo as the switch, and forbids hand-rolling the call", async () => {
+  it("says the SOLVER line arrives already set, and forbids hand-writing the call", async () => {
     const s = await hpSection();
     expect(s).not.toBe(""); // guard: a misfiring mode gate would make these vacuous
-    expect(s).toMatch(/SOLVER = :altissimo/);
-    expect(s).toMatch(/Do NOT hand-roll/i);
+    // The backend is substituted at session prep from the solver mode, so the
+    // guidance must present it as decided — not quote a literal line the agent
+    // might then "fix". (Staging tests in opencode_config.test.ts pin the value.)
+    expect(s).toMatch(/`SOLVER` line ALREADY SET to Altissimo/);
+    expect(s).toMatch(/do NOT edit that line/i);
+    expect(s).toMatch(/do NOT hand-write/i);
+  });
+
+  it("forbids authoring from memory and names the API it actually hallucinated", async () => {
+    // Three cloud solves, three hand-authored scripts, zero uses of the vetted
+    // template. The last one invented CubicSplinePulse's signature, CallbackLogger
+    // and get_fidelity, and died with a MethodError at load — after the user paid
+    // the queue and boot wait. Naming the real symbols is what made the earlier
+    // `using Piccolo` guidance stick (#225), so do the same here.
+    const s = await hpSection();
+    expect(s).toMatch(/COPY THE TEMPLATE/);
+    expect(s).toMatch(/do not write a solve script from memory/i);
+    expect(s).toMatch(/CallbackLogger/);
+    expect(s).toMatch(/get_fidelity/);
+    expect(s).toMatch(/POSITIONAL/);
   });
 
   it("states both traps a hand-rolled call would hit: lost frames and a dropped budget", async () => {

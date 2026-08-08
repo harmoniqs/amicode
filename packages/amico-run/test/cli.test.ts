@@ -5,6 +5,11 @@ import { join } from "node:path";
 import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
 import { FakeCloud } from "./fake_cloud.js";
 
+/** Stand-in for a template-derived cloud script: it appends telemetry to
+ *  run.log, which is what the cloud actually greps and what the telemetry
+ *  preflight requires. A bare stub would be refused, correctly. */
+const REMOTE_STUB = 'open("run.log", "a") do io\n    println(io, "AMICODE_ITER iter=1 f=1e-2")\nend\n';
+
 const BUNDLE = join(__dirname, "..", "dist", "amico-run.js");
 beforeAll(() => {
   execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
@@ -27,7 +32,7 @@ describe("amico-run CLI", () => {
   it("clean solve: relays iter lines, prints AMICODE_FINISHED, exits 0", () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('AMICODE_ITER iter=1 f=0.5'); console.log('DONE f=0.99')`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const r = run([script, "--runs-root", join(root, "runs"), "--julia", julia]);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain("AMICODE_ITER iter=1 f=0.5");
@@ -36,7 +41,7 @@ describe("amico-run CLI", () => {
   it("julia rc 7 passes through as exit 7", () => {
     const root = tmpRoot();
     const r = run([
-      fakeJulia(root, "s.jl", ""),
+      fakeJulia(root, "s.jl", REMOTE_STUB),
       "--runs-root",
       join(root, "runs"),
       "--julia",
@@ -53,13 +58,13 @@ describe("amico-run CLI", () => {
   });
   it("unknown flag → 64 (never silently swallowed, spec Q68)", () => {
     const root = tmpRoot();
-    const r = run([fakeJulia(root, "s.jl", ""), "--gates", "X"]);
+    const r = run([fakeJulia(root, "s.jl", REMOTE_STUB), "--gates", "X"]);
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/unknown flag/);
   });
   it("--executor remote without cloud config → 64 (config-class), no run dir", () => {
     const root = tmpRoot();
-    const r = run([fakeJulia(root, "s.jl", ""), "--executor", "remote", "--runs-root", join(root, "runs")], {
+    const r = run([fakeJulia(root, "s.jl", REMOTE_STUB), "--executor", "remote", "--runs-root", join(root, "runs")], {
       AMICO_CLOUD_FILE: join(root, "no-such-cloud.json"), // hermetic: ignore any real ~/.amico/cloud.json
       AMICO_CLOUD_URL: "",
       AMICO_CLOUD_TOKEN: "",
@@ -71,7 +76,7 @@ describe("amico-run CLI", () => {
 
   it("--executor bogus → 64 naming the supported set", () => {
     const root = tmpRoot();
-    const r = run([fakeJulia(root, "s.jl", ""), "--executor", "bogus"]);
+    const r = run([fakeJulia(root, "s.jl", REMOTE_STUB), "--executor", "bogus"]);
     expect(r.code).toBe(64);
     expect(r.stderr).toMatch(/local, remote/);
   });
@@ -83,7 +88,7 @@ describe("amico-run CLI", () => {
     const root = tmpRoot();
     writeFileSync(join(root, "spec.json"), "{}");
     const r = run(
-      [fakeJulia(root, "s.jl", ""), "--executor", "remote", "--spec", join(root, "spec.json")],
+      [fakeJulia(root, "s.jl", REMOTE_STUB), "--executor", "remote", "--spec", join(root, "spec.json")],
       { AMICO_CLOUD_URL: "http://127.0.0.1:1", AMICO_CLOUD_TOKEN: "t" },
     );
     expect(r.code).toBe(64);
@@ -102,7 +107,7 @@ describe("amico-run CLI", () => {
     };
     try {
       const root = tmpRoot();
-      const script = fakeJulia(root, "s.jl", "");
+      const script = fakeJulia(root, "s.jl", REMOTE_STUB);
       // ASYNC lane (the SIGTERM-test pattern, cli.test.ts:191-196) — NEVER the
       // sync run() helper here: FakeCloud runs IN this test process, and
       // execFileSync would block the event loop, so the fake could never answer
@@ -128,7 +133,7 @@ describe("amico-run CLI", () => {
   }, 15000);
   it("--spec: gate failure → 64, one-line stderr reason, NO run dir (spec C)", () => {
     const root = tmpRoot();
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     writeFileSync(join(root, "bad.json"), JSON.stringify({ nope: true }));
     const r = run([
       script,
@@ -145,7 +150,7 @@ describe("amico-run CLI", () => {
   });
   it("--spec pass: solvespec.json persisted canonical + run.toml v2 stamped (spec C)", () => {
     const root = tmpRoot();
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const spec = {
       schema_version: "2",
       script_path: script,
@@ -178,7 +183,7 @@ describe("amico-run CLI", () => {
   });
   it("--spec env.kind=project sets the julia --project arg from env.project (spec C)", () => {
     const root = tmpRoot();
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const env = join(root, "env");
     mkdirSync(env, { recursive: true });
     writeFileSync(join(env, "Project.toml"), `[deps]\n`);
@@ -198,7 +203,7 @@ describe("amico-run CLI", () => {
   });
   it("--spec tier=free: verification runs after FINISHED (AMICODE_VERIFIED + verification.toml); vetted: neither (spec C)", () => {
     const root = tmpRoot();
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const env = join(root, "env");
     mkdirSync(env, { recursive: true });
     writeFileSync(join(env, "Project.toml"), `[deps]\n`);
@@ -262,7 +267,7 @@ describe("amico-run CLI", () => {
     // has no cloud config in scope (env pair cleared, cloud.json pointed at a
     // nonexistent file) — a local free solve must still complete, exit 0.
     const root = tmpRoot();
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const env = join(root, "env");
     mkdirSync(env, { recursive: true });
     writeFileSync(join(env, "Project.toml"), `[deps]\n`);
@@ -287,7 +292,7 @@ describe("amico-run CLI", () => {
   it("SIGTERM to the CLI → abort lane, exit 130", async () => {
     const root = tmpRoot();
     const julia = fakeJulia(root, "j", `console.log('READY'); setInterval(() => {}, 1000)`);
-    const script = fakeJulia(root, "s.jl", "");
+    const script = fakeJulia(root, "s.jl", REMOTE_STUB);
     const code: number = await new Promise((resolveP) => {
       const child = execFile("node", [BUNDLE, script, "--runs-root", join(root, "runs"), "--julia", julia], {
         env: { ...process.env, ...hermeticOpsEnv() },
