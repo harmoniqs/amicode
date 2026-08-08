@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — concept D: Pulse-Smile">
+  <!-- Rounded H, eyes punched in the bar, Gaussian-bump pulse smile in the bottom notch. -->
+  <path fill-rule="evenodd" d="M 450 800
+    A 450 450 0 0 1 1350 800 L 1350 1030 A 320 320 0 0 0 1670 1350
+    L 1930 1350 A 320 320 0 0 0 2250 1030 L 2250 800
+    A 450 450 0 0 1 3150 800 L 3150 2800
+    A 450 450 0 0 1 2250 2800 L 2250 2570 A 320 320 0 0 0 1930 2250
+    L 1670 2250 A 320 320 0 0 0 1350 2570 L 1350 2800
+    A 450 450 0 0 1 450 2800 L 450 800 Z
+    M 1370 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z
+    M 1900 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z"/>
+  <path d="M 1420 2850 L 1620 2850 Q 1700 2850 1740 2680 Q 1800 2440 1860 2680 Q 1900 2850 1980 2850 L 2180 2850"
+        fill="none" stroke="currentColor" stroke-width="75"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

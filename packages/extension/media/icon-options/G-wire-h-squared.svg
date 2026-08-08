@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — squared wire H with cute eyes">
+  <!-- Wireframe of the H mark, rectangular aspect, slightly rounded corners; two oval eyes in the middle. -->
+  <path d="M 350 770
+    A 120 120 0 0 1 470 650 L 1230 650 A 120 120 0 0 1 1350 770
+    L 1350 1330 A 120 120 0 0 0 1470 1450 L 2130 1450
+    A 120 120 0 0 0 2250 1330 L 2250 770 A 120 120 0 0 1 2370 650
+    L 3130 650 A 120 120 0 0 1 3250 770 L 3250 2830
+    A 120 120 0 0 1 3130 2950 L 2370 2950 A 120 120 0 0 1 2250 2830
+    L 2250 2270 A 120 120 0 0 0 2130 2150 L 1470 2150
+    A 120 120 0 0 0 1350 2270 L 1350 2830 A 120 120 0 0 1 1230 2950
+    L 470 2950 A 120 120 0 0 1 350 2830 L 350 770 Z"
+    fill="none" stroke="currentColor" stroke-width="160" stroke-linejoin="round"/>
+  <rect x="1525" y="1640" width="170" height="320" rx="85"/>
+  <rect x="1905" y="1640" width="170" height="320" rx="85"/>
+</svg>

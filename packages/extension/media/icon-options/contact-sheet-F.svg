@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 1400" font-family="Menlo, monospace">
+  <defs>
+    <path id="wire" d="M 450 800
+      A 450 450 0 0 1 1350 800 L 1350 1030 A 320 320 0 0 0 1670 1350
+      L 1930 1350 A 320 320 0 0 0 2250 1030 L 2250 800
+      A 450 450 0 0 1 3150 800 L 3150 2800
+      A 450 450 0 0 1 2250 2800 L 2250 2570 A 320 320 0 0 0 1930 2250
+      L 1670 2250 A 320 320 0 0 0 1350 2570 L 1350 2800
+      A 450 450 0 0 1 450 2800 L 450 800 Z"
+      fill="none" stroke-width="160" stroke-linejoin="round"/>
+    <g id="cute-eyes">
+      <rect x="1525" y="1640" width="170" height="320" rx="85"/>
+      <rect x="1905" y="1640" width="170" height="320" rx="85"/>
+    </g>
+  </defs>
+
+  <rect width="680" height="1400" fill="#ffffff"/>
+
+  <text x="340" y="46" text-anchor="middle" font-size="30" fill="#555555">F — Wire H</text>
+
+  <rect x="40" y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <g transform="translate(105,125) scale(0.1194444)">
+    <use href="#wire" stroke="#24292f"/><use href="#cute-eyes" fill="#24292f"/>
+  </g>
+
+  <rect x="80" y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <g transform="translate(145,733) scale(0.0972222)">
+    <use href="#wire" stroke="#FFF676"/><use href="#cute-eyes" fill="#FFF676"/>
+  </g>
+
+  <g transform="translate(80,1226) scale(0.0355556)"><use href="#wire" stroke="#24292f"/><use href="#cute-eyes" fill="#24292f"/></g>
+  <g transform="translate(256,1258) scale(0.0177778)"><use href="#wire" stroke="#24292f"/><use href="#cute-eyes" fill="#24292f"/></g>
+  <g transform="translate(376,1274) scale(0.0088889)"><use href="#wire" stroke="#24292f"/><use href="#cute-eyes" fill="#24292f"/></g>
+  <g transform="translate(456,1282) scale(0.0044444)"><use href="#wire" stroke="#24292f"/><use href="#cute-eyes" fill="#24292f"/></g>
+
+  <text x="144" y="1345" text-anchor="middle" font-size="18" fill="#999999">128</text>
+  <text x="288" y="1345" text-anchor="middle" font-size="18" fill="#999999">64</text>
+  <text x="392" y="1345" text-anchor="middle" font-size="18" fill="#999999">32</text>
+  <text x="464" y="1345" text-anchor="middle" font-size="18" fill="#999999">16</text>
+</svg>

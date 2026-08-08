@@ -80,12 +80,31 @@ describe("amicode bridge — open-file", () => {
     for (const url of ["https://example.com/x", "javascript:alert(1)"]) {
       expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(false);
     }
-    // file:// shape but unreachable: consumed silently, nothing opened.
+    // file:// shape but unreachable: consumed, nothing opened, but the user
+    // hears about it (the app only linkifies verified paths, so a miss here
+    // means the file moved after render).
+    const warnings = (vscode.window as unknown as { warnings: string[] }).warnings;
+    const warningsBefore = warnings.length;
     expect(
       handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: "file:///definitely/not/here-xyz.md" }, host),
     ).toBe(true);
     await flush();
     expect(executed).toHaveLength(before);
+    expect(warnings).toHaveLength(warningsBefore + 1);
+    expect(warnings[warnings.length - 1]).toContain("/definitely/not/here-xyz.md");
+  });
+
+  it("reveals directories in the OS file manager instead of opening an editor", async () => {
+    const host = io();
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), "amicode open dir "));
+    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = executed.length;
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: "file://" + target }, host),
+    ).toBe(true);
+    await flush();
+    expect(executed.slice(before)).toEqual(["revealFileInOS"]);
+    fs.rmSync(target, { recursive: true, force: true });
   });
 });
 

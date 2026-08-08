@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1400" font-family="Menlo, monospace">
+  <defs>
+    <path id="wireH" d="M 350 770
+      A 120 120 0 0 1 470 650 L 1230 650 A 120 120 0 0 1 1350 770
+      L 1350 1180 A 120 120 0 0 0 1470 1300 L 2130 1300
+      A 120 120 0 0 0 2250 1180 L 2250 770 A 120 120 0 0 1 2370 650
+      L 3130 650 A 120 120 0 0 1 3250 770 L 3250 2830
+      A 120 120 0 0 1 3130 2950 L 2370 2950 A 120 120 0 0 1 2250 2830
+      L 2250 2420 A 120 120 0 0 0 2130 2300 L 1470 2300
+      A 120 120 0 0 0 1350 2420 L 1350 2830 A 120 120 0 0 1 1230 2950
+      L 470 2950 A 120 120 0 0 1 350 2830 L 350 770 Z"
+      fill="none" stroke-width="160" stroke-linejoin="round"/>
+    <path id="screen-solid" fill-rule="evenodd" d="M 1560 1520 L 2040 1520 A 130 130 0 0 1 2170 1650
+      L 2170 1950 A 130 130 0 0 1 2040 2080 L 1560 2080 A 130 130 0 0 1 1430 1950
+      L 1430 1650 A 130 130 0 0 1 1560 1520 Z
+      M 1590 1750 A 70 70 0 0 1 1730 1750 L 1730 1850 A 70 70 0 0 1 1590 1850 Z
+      M 1870 1750 A 70 70 0 0 1 2010 1750 L 2010 1850 A 70 70 0 0 1 1870 1850 Z"/>
+    <path id="screen-wire" d="M 1560 1520 L 2040 1520 A 130 130 0 0 1 2170 1650
+      L 2170 1950 A 130 130 0 0 1 2040 2080 L 1560 2080 A 130 130 0 0 1 1430 1950
+      L 1430 1650 A 130 130 0 0 1 1560 1520 Z" fill="none" stroke-width="160"/>
+    <g id="eyes-solid">
+      <rect x="1590" y="1680" width="140" height="240" rx="70"/>
+      <rect x="1870" y="1680" width="140" height="240" rx="70"/>
+    </g>
+  </defs>
+
+  <rect width="1280" height="1400" fill="#ffffff"/>
+
+  <text x="320" y="46" text-anchor="middle" font-size="30" fill="#555555">H1 — solid screen</text>
+  <text x="960" y="46" text-anchor="middle" font-size="30" fill="#555555">H2 — wire screen</text>
+
+  <rect x="40"  y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <rect x="640" y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+
+  <g transform="translate(105,125) scale(0.1194444)">
+    <use href="#wireH" stroke="#24292f"/><use href="#screen-solid" fill="#24292f"/>
+  </g>
+  <g transform="translate(705,125) scale(0.1194444)">
+    <use href="#wireH" stroke="#24292f"/><use href="#screen-wire" stroke="#24292f"/><use href="#eyes-solid" fill="#24292f"/>
+  </g>
+
+  <rect x="80"  y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <rect x="680" y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+
+  <g transform="translate(145,733) scale(0.0972222)">
+    <use href="#wireH" stroke="#FFF676"/><use href="#screen-solid" fill="#FFF676"/>
+  </g>
+  <g transform="translate(745,733) scale(0.0972222)">
+    <use href="#wireH" stroke="#FFF676"/><use href="#screen-wire" stroke="#FFF676"/><use href="#eyes-solid" fill="#FFF676"/>
+  </g>
+
+  <g transform="translate(80,1226) scale(0.0355556)"><use href="#wireH" stroke="#24292f"/><use href="#screen-solid" fill="#24292f"/></g>
+  <g transform="translate(256,1258) scale(0.0177778)"><use href="#wireH" stroke="#24292f"/><use href="#screen-solid" fill="#24292f"/></g>
+  <g transform="translate(376,1274) scale(0.0088889)"><use href="#wireH" stroke="#24292f"/><use href="#screen-solid" fill="#24292f"/></g>
+  <g transform="translate(456,1282) scale(0.0044444)"><use href="#wireH" stroke="#24292f"/><use href="#screen-solid" fill="#24292f"/></g>
+
+  <g transform="translate(680,1226) scale(0.0355556)"><use href="#wireH" stroke="#24292f"/><use href="#screen-wire" stroke="#24292f"/><use href="#eyes-solid" fill="#24292f"/></g>
+  <g transform="translate(856,1258) scale(0.0177778)"><use href="#wireH" stroke="#24292f"/><use href="#screen-wire" stroke="#24292f"/><use href="#eyes-solid" fill="#24292f"/></g>
+  <g transform="translate(976,1274) scale(0.0088889)"><use href="#wireH" stroke="#24292f"/><use href="#screen-wire" stroke="#24292f"/><use href="#eyes-solid" fill="#24292f"/></g>
+  <g transform="translate(1056,1282) scale(0.0044444)"><use href="#wireH" stroke="#24292f"/><use href="#screen-wire" stroke="#24292f"/><use href="#eyes-solid" fill="#24292f"/></g>
+
+  <text x="144" y="1345" text-anchor="middle" font-size="18" fill="#999999">128</text>
+  <text x="288" y="1345" text-anchor="middle" font-size="18" fill="#999999">64</text>
+  <text x="392" y="1345" text-anchor="middle" font-size="18" fill="#999999">32</text>
+  <text x="464" y="1345" text-anchor="middle" font-size="18" fill="#999999">16</text>
+</svg>

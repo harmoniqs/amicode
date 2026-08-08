@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1400" font-family="Menlo, monospace">
+  <defs>
+    <path id="frame" fill-rule="evenodd" d="M 450 800
+      A 450 450 0 0 1 1350 800 L 1350 850 A 350 350 0 0 0 1700 1200
+      L 1900 1200 A 350 350 0 0 0 2250 850 L 2250 800
+      A 450 450 0 0 1 3150 800 L 3150 2800
+      A 450 450 0 0 1 2250 2800 L 2250 2750 A 350 350 0 0 0 1900 2400
+      L 1700 2400 A 350 350 0 0 0 1350 2750 L 1350 2800
+      A 450 450 0 0 1 450 2800 L 450 800 Z
+      M 730 800
+      A 170 170 0 0 1 1070 800 L 1070 1410 A 70 70 0 0 0 1140 1480
+      L 2460 1480 A 70 70 0 0 0 2530 1410 L 2530 800
+      A 170 170 0 0 1 2870 800 L 2870 2800
+      A 170 170 0 0 1 2530 2800 L 2530 2190 A 70 70 0 0 0 2460 2120
+      L 1140 2120 A 70 70 0 0 0 1070 2190 L 1070 2800
+      A 170 170 0 0 1 730 2800 L 730 800 Z"/>
+    <g id="face-pills">
+      <rect x="1535" y="1590" width="150" height="420" rx="75"/>
+      <rect x="1915" y="1590" width="150" height="420" rx="75"/>
+    </g>
+    <g id="face-dots">
+      <circle cx="1610" cy="1800" r="95"/>
+      <circle cx="1990" cy="1800" r="95"/>
+    </g>
+    <g id="chevrons">
+      <path d="M 1330 1560 L 1170 1800 L 1330 2040" fill="none" stroke-width="110" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M 2270 1560 L 2430 1800 L 2270 2040" fill="none" stroke-width="110" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </defs>
+
+  <rect width="1280" height="1400" fill="#ffffff"/>
+
+  <text x="320" y="46" text-anchor="middle" font-size="30" fill="#555555">E1 — pill eyes</text>
+  <text x="960" y="46" text-anchor="middle" font-size="30" fill="#555555">E2 — dot eyes</text>
+
+  <!-- mono row -->
+  <rect x="40"  y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <rect x="640" y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+
+  <g transform="translate(105,125) scale(0.1194444)">
+    <use href="#frame" fill="#24292f"/><use href="#face-pills" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/>
+  </g>
+  <g transform="translate(705,125) scale(0.1194444)">
+    <use href="#frame" fill="#24292f"/><use href="#face-dots" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/>
+  </g>
+
+  <!-- tile row -->
+  <rect x="80"  y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <rect x="680" y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+
+  <g transform="translate(145,733) scale(0.0972222)">
+    <use href="#frame" fill="#FFF676"/><use href="#face-pills" fill="#FFF676"/><use href="#chevrons" stroke="#FFF676"/>
+  </g>
+  <g transform="translate(745,733) scale(0.0972222)">
+    <use href="#frame" fill="#FFF676"/><use href="#face-dots" fill="#FFF676"/><use href="#chevrons" stroke="#FFF676"/>
+  </g>
+
+  <!-- size row -->
+  <g transform="translate(80,1226) scale(0.0355556)"><use href="#frame" fill="#24292f"/><use href="#face-pills" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(256,1258) scale(0.0177778)"><use href="#frame" fill="#24292f"/><use href="#face-pills" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(376,1274) scale(0.0088889)"><use href="#frame" fill="#24292f"/><use href="#face-pills" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(456,1282) scale(0.0044444)"><use href="#frame" fill="#24292f"/><use href="#face-pills" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+
+  <g transform="translate(680,1226) scale(0.0355556)"><use href="#frame" fill="#24292f"/><use href="#face-dots" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(856,1258) scale(0.0177778)"><use href="#frame" fill="#24292f"/><use href="#face-dots" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(976,1274) scale(0.0088889)"><use href="#frame" fill="#24292f"/><use href="#face-dots" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+  <g transform="translate(1056,1282) scale(0.0044444)"><use href="#frame" fill="#24292f"/><use href="#face-dots" fill="#24292f"/><use href="#chevrons" stroke="#24292f"/></g>
+
+  <text x="144" y="1345" text-anchor="middle" font-size="18" fill="#999999">128</text>
+  <text x="288" y="1345" text-anchor="middle" font-size="18" fill="#999999">64</text>
+  <text x="392" y="1345" text-anchor="middle" font-size="18" fill="#999999">32</text>
+  <text x="464" y="1345" text-anchor="middle" font-size="18" fill="#999999">16</text>
+</svg>

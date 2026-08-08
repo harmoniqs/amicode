@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — wire H, thick bar, wire screen face">
+  <!-- Squared wire H, thicker mid band; little wire-outline screen with solid eyes in the middle. -->
+  <path d="M 350 770
+    A 120 120 0 0 1 470 650 L 1230 650 A 120 120 0 0 1 1350 770
+    L 1350 1180 A 120 120 0 0 0 1470 1300 L 2130 1300
+    A 120 120 0 0 0 2250 1180 L 2250 770 A 120 120 0 0 1 2370 650
+    L 3130 650 A 120 120 0 0 1 3250 770 L 3250 2830
+    A 120 120 0 0 1 3130 2950 L 2370 2950 A 120 120 0 0 1 2250 2830
+    L 2250 2420 A 120 120 0 0 0 2130 2300 L 1470 2300
+    A 120 120 0 0 0 1350 2420 L 1350 2830 A 120 120 0 0 1 1230 2950
+    L 470 2950 A 120 120 0 0 1 350 2830 L 350 770 Z"
+    fill="none" stroke="currentColor" stroke-width="160" stroke-linejoin="round"/>
+  <path d="M 1560 1520 L 2040 1520 A 130 130 0 0 1 2170 1650
+    L 2170 1950 A 130 130 0 0 1 2040 2080 L 1560 2080 A 130 130 0 0 1 1430 1950
+    L 1430 1650 A 130 130 0 0 1 1560 1520 Z"
+    fill="none" stroke="currentColor" stroke-width="160"/>
+  <rect x="1590" y="1680" width="140" height="240" rx="70"/>
+  <rect x="1870" y="1680" width="140" height="240" rx="70"/>
+</svg>

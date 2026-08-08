@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2440 1400" font-family="Menlo, monospace">
+  <defs>
+    <path id="h" d="M 450 800
+      A 450 450 0 0 1 1350 800 L 1350 1030 A 320 320 0 0 0 1670 1350
+      L 1930 1350 A 320 320 0 0 0 2250 1030 L 2250 800
+      A 450 450 0 0 1 3150 800 L 3150 2800
+      A 450 450 0 0 1 2250 2800 L 2250 2570 A 320 320 0 0 0 1930 2250
+      L 1670 2250 A 320 320 0 0 0 1350 2570 L 1350 2800
+      A 450 450 0 0 1 450 2800 L 450 800 Z"/>
+    <path id="eyes" d="M 1370 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z
+      M 1900 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z"/>
+    <g id="b-ink">
+      <circle cx="1620" cy="850" r="140"/>
+      <circle cx="1980" cy="850" r="140"/>
+      <path d="M 1640 1060 Q 1800 1260 1960 1060" fill="none" stroke-width="70" stroke-linecap="round"/>
+    </g>
+    <g id="c-ink">
+      <rect x="1765" y="515" width="70" height="885"/>
+      <circle cx="1800" cy="400" r="115"/>
+      <path d="M 1600 2560 Q 1800 2810 2000 2560" fill="none" stroke-width="75" stroke-linecap="round"/>
+    </g>
+    <g id="d-ink">
+      <path d="M 1420 2850 L 1620 2850 Q 1700 2850 1740 2680 Q 1800 2440 1860 2680 Q 1900 2850 1980 2850 L 2180 2850"
+            fill="none" stroke-width="75" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </defs>
+
+  <rect width="2440" height="1400" fill="#ffffff"/>
+
+  <!-- column headers -->
+  <text x="320"  y="46" text-anchor="middle" font-size="30" fill="#555555">A — The Visor</text>
+  <text x="960"  y="46" text-anchor="middle" font-size="30" fill="#555555">B — Window Face</text>
+  <text x="1600" y="46" text-anchor="middle" font-size="30" fill="#555555">C — Buddy H</text>
+  <text x="2240" y="46" text-anchor="middle" font-size="30" fill="#555555">D — Pulse-Smile</text>
+
+  <!-- mono row: dark ink on light -->
+  <rect x="40"   y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <rect x="640"  y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <rect x="1240" y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+  <rect x="1840" y="64" width="560" height="560" rx="24" fill="#fafafa" stroke="#e2e2e2"/>
+
+  <g transform="translate(105,125) scale(0.1194444)">
+    <use href="#h" fill="#24292f"/><use href="#eyes" fill="#fafafa"/>
+  </g>
+  <g transform="translate(705,125) scale(0.1194444)">
+    <use href="#h" fill="#24292f"/><use href="#b-ink" fill="#24292f" stroke="#24292f"/>
+  </g>
+  <g transform="translate(1305,125) scale(0.1194444)">
+    <use href="#h" fill="#24292f"/><use href="#eyes" fill="#fafafa"/><use href="#c-ink" fill="#24292f" stroke="#24292f"/>
+  </g>
+  <g transform="translate(1905,125) scale(0.1194444)">
+    <use href="#h" fill="#24292f"/><use href="#eyes" fill="#fafafa"/><use href="#d-ink" fill="#24292f" stroke="#24292f"/>
+  </g>
+
+  <!-- tile row: lemon on dark squircle -->
+  <rect x="80"   y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <rect x="680"  y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <rect x="1280" y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+  <rect x="1880" y="668" width="480" height="480" rx="108" fill="#1e1e1e"/>
+
+  <g transform="translate(145,733) scale(0.0972222)">
+    <use href="#h" fill="#FFF676"/><use href="#eyes" fill="#1e1e1e"/>
+  </g>
+  <g transform="translate(745,733) scale(0.0972222)">
+    <use href="#h" fill="#FFF676"/><use href="#b-ink" fill="#FFF676" stroke="#FFF676"/>
+  </g>
+  <g transform="translate(1345,733) scale(0.0972222)">
+    <use href="#h" fill="#FFF676"/><use href="#eyes" fill="#1e1e1e"/><use href="#c-ink" fill="#FFF676" stroke="#FFF676"/>
+  </g>
+  <g transform="translate(1945,733) scale(0.0972222)">
+    <use href="#h" fill="#FFF676"/><use href="#eyes" fill="#1e1e1e"/><use href="#d-ink" fill="#FFF676" stroke="#FFF676"/>
+  </g>
+
+  <!-- size row: mono at 128 / 64 / 32 / 16 px -->
+  <g transform="translate(80,1226) scale(0.0355556)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/></g>
+  <g transform="translate(256,1258) scale(0.0177778)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/></g>
+  <g transform="translate(376,1274) scale(0.0088889)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/></g>
+  <g transform="translate(456,1282) scale(0.0044444)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/></g>
+
+  <g transform="translate(680,1226) scale(0.0355556)"><use href="#h" fill="#24292f"/><use href="#b-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(856,1258) scale(0.0177778)"><use href="#h" fill="#24292f"/><use href="#b-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(976,1274) scale(0.0088889)"><use href="#h" fill="#24292f"/><use href="#b-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(1056,1282) scale(0.0044444)"><use href="#h" fill="#24292f"/><use href="#b-ink" fill="#24292f" stroke="#24292f"/></g>
+
+  <g transform="translate(1280,1226) scale(0.0355556)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#c-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(1456,1258) scale(0.0177778)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#c-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(1576,1274) scale(0.0088889)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#c-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(1656,1282) scale(0.0044444)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#c-ink" fill="#24292f" stroke="#24292f"/></g>
+
+  <g transform="translate(1880,1226) scale(0.0355556)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#d-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(2056,1258) scale(0.0177778)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#d-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(2176,1274) scale(0.0088889)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#d-ink" fill="#24292f" stroke="#24292f"/></g>
+  <g transform="translate(2256,1282) scale(0.0044444)"><use href="#h" fill="#24292f"/><use href="#eyes" fill="#ffffff"/><use href="#d-ink" fill="#24292f" stroke="#24292f"/></g>
+
+  <text x="144" y="1345" text-anchor="middle" font-size="18" fill="#999999">128</text>
+  <text x="288" y="1345" text-anchor="middle" font-size="18" fill="#999999">64</text>
+  <text x="392" y="1345" text-anchor="middle" font-size="18" fill="#999999">32</text>
+  <text x="464" y="1345" text-anchor="middle" font-size="18" fill="#999999">16</text>
+</svg>

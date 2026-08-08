@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — concept B: Window Face">
+  <!-- Rounded H, face floating in the top notch; crossbar reads as the chin. -->
+  <path d="M 450 800
+    A 450 450 0 0 1 1350 800 L 1350 1030 A 320 320 0 0 0 1670 1350
+    L 1930 1350 A 320 320 0 0 0 2250 1030 L 2250 800
+    A 450 450 0 0 1 3150 800 L 3150 2800
+    A 450 450 0 0 1 2250 2800 L 2250 2570 A 320 320 0 0 0 1930 2250
+    L 1670 2250 A 320 320 0 0 0 1350 2570 L 1350 2800
+    A 450 450 0 0 1 450 2800 L 450 800 Z"/>
+  <circle cx="1620" cy="850" r="140"/>
+  <circle cx="1980" cy="850" r="140"/>
+  <path d="M 1640 1060 Q 1800 1260 1960 1060" fill="none"
+        stroke="currentColor" stroke-width="70" stroke-linecap="round"/>
+</svg>

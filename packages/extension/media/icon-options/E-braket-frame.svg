@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — bra-ket frame">
+  <!-- Hollow rounded H frame; face = bra ⟨ , two pill eyes, ket ⟩ in the central void. -->
+  <path fill-rule="evenodd" d="M 450 800
+    A 450 450 0 0 1 1350 800 L 1350 850 A 350 350 0 0 0 1700 1200
+    L 1900 1200 A 350 350 0 0 0 2250 850 L 2250 800
+    A 450 450 0 0 1 3150 800 L 3150 2800
+    A 450 450 0 0 1 2250 2800 L 2250 2750 A 350 350 0 0 0 1900 2400
+    L 1700 2400 A 350 350 0 0 0 1350 2750 L 1350 2800
+    A 450 450 0 0 1 450 2800 L 450 800 Z
+    M 730 800
+    A 170 170 0 0 1 1070 800 L 1070 1410 A 70 70 0 0 0 1140 1480
+    L 2460 1480 A 70 70 0 0 0 2530 1410 L 2530 800
+    A 170 170 0 0 1 2870 800 L 2870 2800
+    A 170 170 0 0 1 2530 2800 L 2530 2190 A 70 70 0 0 0 2460 2120
+    L 1140 2120 A 70 70 0 0 0 1070 2190 L 1070 2800
+    A 170 170 0 0 1 730 2800 L 730 800 Z"/>
+  <rect x="1535" y="1590" width="150" height="420" rx="75"/>
+  <rect x="1915" y="1590" width="150" height="420" rx="75"/>
+  <path d="M 1330 1560 L 1170 1800 L 1330 2040" fill="none"
+        stroke="currentColor" stroke-width="110" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 2270 1560 L 2430 1800 L 2270 2040" fill="none"
+        stroke="currentColor" stroke-width="110" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

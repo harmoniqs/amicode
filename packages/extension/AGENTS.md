@@ -515,3 +515,25 @@ answers like a well-written engineering doc, not a terminal log:
   reader's next move, not by compressing the prose.
 - **LaTeX for all math.** $\hat H$, $\Omega_{\max}$, $F = 0.9982$ — inline or
   display — never ASCII approximations.
+
+**File references become links automatically.** When you reference a file or
+directory as an `inline code` path, the chat UI resolves it and renders a
+clickable link that opens the file in the editor (markdown opens as a rendered
+preview). Write the reference the way you already do — inline code, no
+`file://` URLs, no markdown link syntax (authored `file://` links are stripped
+by the sanitizer). What resolves:
+
+- **Absolute and `~/` paths** — always.
+- **Vault paths** — `insights/foo.md` or `armonia-aaron-trowbridge/insights/foo.md`,
+  first hit across the mount stack in read precedence (personal first);
+  `problems/<slug>.md` and `demos/<name>.md` also try the mount's `amicode/` dir.
+- **Project-relative paths** — resolved against the server's project directory.
+- **Bare note filenames** — only via the vault typed prefixes (`insight-*`,
+  `paper-*`, `spec-*`, `plan-*`, `experiment-*`, …), searched in their typed
+  folder across mounts. A bare name with no typed prefix (e.g. `result.toml`)
+  deliberately stays a plain pill.
+
+A reference that resolves to nothing stays unlinked — so never claim a path is
+clickable unless you know it exists (the run-dir paths you emit always exist).
+Skill chips and read/edit/write tool cards open their source files the same
+way, with no markup from you.

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600" fill="currentColor" aria-label="Amicode — concept C: Buddy H">
+  <!-- Rounded H, eyes punched in the bar, smile in the bottom notch, antenna on top. -->
+  <path fill-rule="evenodd" d="M 450 800
+    A 450 450 0 0 1 1350 800 L 1350 1030 A 320 320 0 0 0 1670 1350
+    L 1930 1350 A 320 320 0 0 0 2250 1030 L 2250 800
+    A 450 450 0 0 1 3150 800 L 3150 2800
+    A 450 450 0 0 1 2250 2800 L 2250 2570 A 320 320 0 0 0 1930 2250
+    L 1670 2250 A 320 320 0 0 0 1350 2570 L 1350 2800
+    A 450 450 0 0 1 450 2800 L 450 800 Z
+    M 1370 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z
+    M 1900 1800 a 165 165 0 1 0 330 0 a 165 165 0 1 0 -330 0 Z"/>
+  <rect x="1765" y="515" width="70" height="885"/>
+  <circle cx="1800" cy="400" r="115"/>
+  <path d="M 1600 2560 Q 1800 2810 2000 2560" fill="none"
+        stroke="currentColor" stroke-width="75" stroke-linecap="round"/>
+</svg>

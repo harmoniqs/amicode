@@ -107,7 +107,19 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     } catch {
       return true;
     }
-    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096) return true;
+    if (!fs.existsSync(fsPath)) {
+      // The app linkifies only resolver-verified paths, so a miss here is a
+      // stale link (deleted/renamed since render) — say so, don't fail silent.
+      void vscode.window.showWarningMessage(`Amicode: file no longer exists — ${fsPath}`);
+      return true;
+    }
+    // Directory references (e.g. a vault folder pill) can't open as editors —
+    // reveal them in the OS file manager instead.
+    if (fs.statSync(fsPath).isDirectory()) {
+      void vscode.commands.executeCommand("revealFileInOS", vscode.Uri.file(fsPath));
+      return true;
+    }
     // Markdown (spec cards, vault notes) opens as a rendered preview tab;
     // anything else (run artifacts, .jld2, …) in the default editor.
     const command = /\.(md|markdown)$/i.test(fsPath) ? "markdown.showPreview" : "vscode.open";

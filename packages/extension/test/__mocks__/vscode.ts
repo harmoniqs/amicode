@@ -2,9 +2,13 @@
 // only the runtime members our node-side modules touch; types are erased at
 // compile time so they need no runtime shape.
 export const window = {
+  warnings: [] as string[],
   showInformationMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
-  showWarningMessage: () => Promise.resolve(undefined),
+  showWarningMessage: (msg: string) => {
+    window.warnings.push(msg);
+    return Promise.resolve(undefined);
+  },
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
   createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
