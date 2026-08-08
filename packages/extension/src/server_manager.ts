@@ -1,6 +1,10 @@
 import * as vscode from "vscode";
 import * as cp from "node:child_process";
+import * as crypto from "node:crypto";
+import * as fs from "node:fs";
 import * as net from "node:net";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Readable } from "node:stream";
 import { serverAuthHeader } from "./server_auth";
 
@@ -58,6 +62,10 @@ export class ServerManager {
     const port = this.opts.port ?? (await pickFreePort());
     this._port = port;
     this.opts.channel.appendLine(`[server] spawning opencode serve --port=${port} (cwd=${this.opts.cwd})`);
+    void hashFile(this.opts.binary).then(
+      (sum) => this.opts.channel.appendLine(`[server] binary sha256=${sum} (${this.opts.binary})`),
+      () => {},
+    );
 
     // Browser wiring for Google connector (and any MCP OAuth): VS Code remote sets
     // BROWSER to the helper that does `code --openExternal` via VSCODE_IPC_HOOK_CLI.
@@ -99,8 +107,46 @@ export class ServerManager {
     this._ready = true;
     const url = new URL(`http://127.0.0.1:${port}`);
     this.opts.channel.appendLine(`[server] ready at ${url}`);
+    void this.warnIfServingFreshDb(port, password).catch(() => {});
     this._onReady.fire(url);
     return url;
+  }
+
+  /** Channel-flip guard (fleet incident 2026-08-08): opencode picks its chat
+   *  DB by build channel (dev → opencode-dev.db, unbranded/local →
+   *  opencode-local.db, …), so a binary swap can boot a HEALTHY server on a
+   *  FRESH database — panels then show an empty history while the real one
+   *  sits untouched on disk. Detect that exact shape: a nearly-empty served
+   *  session list while a large sibling DB exists. Fire-and-forget by design;
+   *  never blocks readiness, and silent on any probe failure. */
+  private async warnIfServingFreshDb(port: number, password?: string): Promise<void> {
+    const r = await fetchWithTimeout(
+      `http://127.0.0.1:${port}/session?limit=1000`,
+      5_000,
+      password ? serverAuthHeader(password) : undefined,
+    );
+    if (!r.ok) return;
+    const served = await r.json();
+    if (!Array.isArray(served) || served.length >= 10) return;
+
+    const dir = path.join(os.homedir(), ".local", "share", "opencode");
+    let biggest: { file: string; bytes: number } | undefined;
+    for (const f of fs.readdirSync(dir)) {
+      if (!/^opencode(-[a-z]+)?\.db$/.test(f)) continue;
+      const bytes = fs.statSync(path.join(dir, f)).size;
+      if (!biggest || bytes > biggest.bytes) biggest = { file: f, bytes };
+    }
+    if (!biggest || biggest.bytes < 32 * 1024 * 1024) return;
+
+    const mb = Math.round(biggest.bytes / 1024 / 1024);
+    this.opts.channel.appendLine(
+      `[server] WARNING: serving only ${served.length} session(s) but ${biggest.file} on disk is ${mb} MB — wrong channel/DB?`,
+    );
+    const pick = await vscode.window.showWarningMessage(
+      `Amicode's opencode server is serving only ${served.length} session(s), yet ${biggest.file} on disk holds a real history (${mb} MB). The server likely resolved the wrong database after a binary update (build-channel flip).`,
+      "Open Output",
+    );
+    if (pick === "Open Output") this.opts.channel.show();
   }
 
   /** Resolves once the child has actually exited (bounded by the SIGKILL fallback) —
@@ -176,6 +222,11 @@ async function fetchWithTimeout(url: string, ms: number, authorization?: string)
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function hashFile(file: string): Promise<string> {
+  const buf = await fs.promises.readFile(file);
+  return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
 function sleep(ms: number): Promise<void> {
