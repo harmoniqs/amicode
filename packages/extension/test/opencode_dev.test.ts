@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { pinFromRelease } from "../scripts/opencode_dev.mjs";
+import { checkBuildInfo, pinFromRelease, stampBuildInfo } from "../scripts/opencode_dev.mjs";
 import { loadManifest, sha256 } from "../scripts/fetch_opencode.mjs";
 
 const RELEASE_LOCK = {
@@ -63,6 +63,47 @@ describe("pinFromRelease", () => {
     const root = rootWith(RELEASE_LOCK);
     expect(() => pinFromRelease({ root, download: () => Buffer.from("x") })).toThrow(/tag is required/);
     expect(() => pinFromRelease({ root, tag: "v1", ref: "nope", download: () => Buffer.from("x") })).toThrow(/40-hex/);
+  });
+});
+
+describe("build provenance (.buildinfo)", () => {
+  const amicodeRoot = join(fileURLToPath(import.meta.url), "..", "..", "..");
+
+  it("stamps fork branch+commit next to the vendored binary", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocdev-"));
+    const dir = join(root, "vendor", "opencode", "linux-x64");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "opencode"), "fake-binary");
+
+    stampBuildInfo({ source: "local", repo: "harmoniqs/opencode", version: "1.18.10", cloneDir: amicodeRoot, root });
+
+    const info = JSON.parse(readFileSync(join(dir, ".buildinfo"), "utf8"));
+    expect(info.source).toBe("local");
+    expect(info.repo).toBe("harmoniqs/opencode");
+    expect(info.version).toBe("1.18.10");
+    // A real branch name, or the honest detached/unknown fallbacks — CI checks
+    // out the merge ref, so the stamp there comes from GITHUB_HEAD_REF/GITHUB_REF_NAME.
+    expect(info.branch).toMatch(/^(?:[a-zA-Z0-9_./-]+|\(unknown\)|\(detached\))$/);
+    expect(info.commit).toMatch(/^[0-9a-f]{40}$/);
+    expect(typeof info.dirty).toBe("boolean");
+    expect(info.builtAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("skips dirs without a binary and survives a missing vendor dir", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocdev-"));
+    expect(() => stampBuildInfo({ source: "release", version: "1.18.10", root })).not.toThrow();
+    mkdirSync(join(root, "vendor", "opencode", "darwin-arm64"), { recursive: true }); // no binary inside
+    stampBuildInfo({ source: "release", version: "1.18.10", root });
+    expect(checkBuildInfo(root)).toMatch(/no vendored binary|darwin-arm64/);
+  });
+
+  it("checkBuildInfo reports release stamps too", () => {
+    const root = mkdtempSync(join(tmpdir(), "ocdev-"));
+    const dir = join(root, "vendor", "opencode", "linux-x64");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "opencode"), "fake-binary");
+    stampBuildInfo({ source: "release", repo: "harmoniqs/opencode", version: "1.18.10", tag: "v1.18.10-amicode.4", root });
+    expect(checkBuildInfo(root)).toContain("v1.18.10-amicode.4");
   });
 });
 
