@@ -81,7 +81,9 @@ describe("build provenance (.buildinfo)", () => {
     expect(info.source).toBe("local");
     expect(info.repo).toBe("harmoniqs/opencode");
     expect(info.version).toBe("1.18.10");
-    expect(info.branch).toMatch(/^[a-zA-Z0-9_./-]+$/);
+    // A real branch name, or the honest detached/unknown fallbacks — CI checks
+    // out the merge ref, so the stamp there comes from GITHUB_HEAD_REF/GITHUB_REF_NAME.
+    expect(info.branch).toMatch(/^(?:[a-zA-Z0-9_./-]+|\(unknown\)|\(detached\))$/);
     expect(info.commit).toMatch(/^[0-9a-f]{40}$/);
     expect(typeof info.dirty).toBe("boolean");
     expect(info.builtAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);

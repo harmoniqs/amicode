@@ -46,7 +46,11 @@ export function stampBuildInfo({ source, repo, version, cloneDir, tag, root = PK
     try {
       info.branch = git(cloneDir, "symbolic-ref", "--short", "-q", "HEAD") || "(detached)";
     } catch {
-      info.branch = "(unknown)";
+      // Detached checkout (CI checks out the merge ref, not the branch): the
+      // checked-out ref is still attributable — GitHub Actions names it in
+      // GITHUB_HEAD_REF (PRs) / GITHUB_REF_NAME (pushes). Absent both, the
+      // stamp is honestly "(unknown)" rather than a guessed name.
+      info.branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || "(unknown)";
     }
     info.commit = git(cloneDir, "rev-parse", "HEAD");
     info.dirty = git(cloneDir, "status", "--porcelain") !== "";
