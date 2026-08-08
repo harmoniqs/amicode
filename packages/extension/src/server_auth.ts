@@ -67,6 +67,7 @@ const SANDBOX_ENV_PASSTHROUGH = [
   "AMICODE_OPS_DIR",
   "AMICO_PASQAL_KEYCHAIN_SERVICE",
   "AMICO_PASQAL_VALIDATOR",
+  "AMICO_PYTHON",
 ] as const
 
 // ============================================================================
