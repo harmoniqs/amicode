@@ -56,6 +56,36 @@ _Avoid_: Armonia (the whole stack), workspace, folder
 The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
+### Fleet & serving
+
+**Server mode**:
+The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Machine-scoped, never synced: a synced "client" landing on the server would silence the fleet.
+_Avoid_: profile, spawn vs attach (as concept names)
+
+**Canonical Server**:
+The one chat server that owns the fleet's Session store — the single writer every panel attaches to. Runs as a system service on the machine in `server` Server mode, available headless (no editor required). Only one may exist per Fleet.
+_Avoid_: master, primary, host
+
+**Fleet**:
+The user's machines acting as one logical studio: exactly one Canonical Server plus zero-or-more clients, all attaching to the same Session store.
+_Avoid_: mesh, cluster
+
+**Local fallback**:
+The deliberate, user-invoked escape hatch: a `client` machine temporarily serving itself locally (a `standalone` spawn) while the Canonical Server is unreachable. Explicit about its trade-off — fleet history returns on reconnect, and Sessions made during fallback merge back into the Canonical Server on rejoin. Never silent: an active Local fallback is a first-class, visible state.
+_Avoid_: offline mode, degraded mode
+
+**Rejoin**:
+The closing half of Local fallback: on reconnect, the client ships its local Session shard to the Canonical Server, which merges it as the single writer (id-guarded inserts, strictly-newer-wins per row, event-position guard, schema-drift column mapping). After Rejoin, fleet history is whole again — nothing strands on the client.
+_Avoid_: sync (bidirectional connotation), upload
+
+**Fleet token**:
+The shared secret authenticating a client to the Canonical Server's data routes — minted when the fleet server is enabled, stored at 0600, handed to clients during the ssh-based setup flow. The sibling of the per-boot server password (ADR 0002): that guards a spawned server its extension owns; this guards the service no extension spawns.
+_Avoid_: API key, password
+
+**Managed Tunnel**:
+The self-healing SSH local-forward a `client` uses to reach the Canonical Server — one component with two launchers. The extension spawns and supervises it for interactive panels (reconnect with backoff, address candidates probed LAN-before-overlay, health surfaced in the status bar); a headless launcher (`amico fleet tunnel`) serves panel-less consumers such as scheduled jobs. Failures are always visible to its consumer — never an invisible external service.
+_Avoid_: port forward (as a concept name), launchd tunnel
+
 ### Orthogonal axes
 
 **Entitlement**:
