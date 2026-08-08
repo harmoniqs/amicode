@@ -75,10 +75,15 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
           origin_session_id: "ses_origin",
         },
       },
+      // Hard guardrail from createSession: the question tool is denied in
+      // bug sessions — the dock handles dialogue, not structured Q&A.
+      permission: [{ permission: "question", pattern: "*", action: "deny" }],
     });
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug1/command"));
     expect(arm).toHaveLength(1);
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "opencode/deepseek-v4-pro" });
+    // No model field: the arm rides the server's configured default model —
+    // a hardcoded model was deliberately removed (amicode#249 follow-up).
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
     expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug1" }]);
   });
 
