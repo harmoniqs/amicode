@@ -48,6 +48,7 @@ function deps(overrides: Partial<BugReportDeps>, fetchImpl: typeof fetch) {
     postDown: (m) => posted.push(m),
     showError: (m) => errors.push(m),
     fetchImpl,
+    defaultModel: () => "opencode/deepseek-v4-pro",
     ...overrides,
   };
   return { d, posted, errors };
@@ -75,11 +76,47 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
           origin_session_id: "ses_origin",
         },
       },
+      // The question tool is denied for bug sessions (ADR-0004): the dock owns
+      // dialogue via its textarea + session.prompt, not the question tool's
+      // structured Q&A. Production has sent this since #251; the assertion
+      // simply had not caught up.
+      permission: [{ permission: "question", pattern: "*", action: "deny" }],
     });
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug1/command"));
     expect(arm).toHaveLength(1);
     expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "opencode/deepseek-v4-pro" });
     expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug1" }]);
+  });
+
+  it("omits model entirely when amicode.defaultModel is unset — the server resolves its own", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_nm" } },
+      "POST /session/ses_bug_nm/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_nm/command"));
+    expect(arm).toHaveLength(1);
+    // Omitted, not sent as empty/null: `model` is optional on the route, and an
+    // empty string would pin the session to a nonexistent model.
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+  });
+
+  it("treats a whitespace-only defaultModel as unset", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_ws" } },
+      "POST /session/ses_bug_ws/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => "   " }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_ws/command"));
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
   });
 
   it("omits run_pointer when no run is active, and never sends an absolute path", async () => {

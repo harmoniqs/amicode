@@ -79,6 +79,16 @@ export interface BugReportDeps {
   showError(message: string): void;
   log?(line: string): void;
   fetchImpl?: typeof fetch;
+  /** The session-level model pin as `provider/model`, or undefined to let the
+   *  server resolve its own default. Same rule as everywhere else in the
+   *  extension: ONLY an explicit `amicode.defaultModel` pins (see
+   *  extension.ts's boot/restart pins) — we never guess a model.
+   *
+   *  This is the SESSION-level half of the model handoff. The COMPOSER-level
+   *  half — carrying the user's live in-chat selection onto the command, via
+   *  `extractReportBugModel` in chat_bridge.ts — is deliberately not wired
+   *  here; it crosses the iframe boundary and is tracked separately. */
+  defaultModel?(): string | undefined;
 }
 
 /** The bridge sink the chat/deck panels wire into their BridgeIo — the two
@@ -262,11 +272,17 @@ export class BugReportManager {
   }
 
   /** Arm: the report-a-bug slash command as the session's first turn.
-   *  Uses the server's default model (whatever the user has configured). */
+   *
+   *  `model` is optional on POST /session/:id/command (a `provider/model`
+   *  string; the route also takes `variant`). We send it only when
+   *  `amicode.defaultModel` is explicitly set — otherwise the field is omitted
+   *  entirely and the server resolves its own default, which is the documented
+   *  behaviour for an unpinned install. */
   private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
+    const model = this.deps.defaultModel?.()?.trim();
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
+      body: { command: REPORT_A_BUG_SKILL, arguments: "", ...(model ? { model } : {}) },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }

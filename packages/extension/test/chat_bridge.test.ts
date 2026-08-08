@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { handleAmicodeBridgeMessage, type BridgeIo } from "../src/chat_bridge";
+import { handleAmicodeBridgeMessage, extractReportBugModel, type BridgeIo } from "../src/chat_bridge";
 
 // ============================================================================
 // The shared iframe⇄extension bridge: strict allowlists, https-only externals,
