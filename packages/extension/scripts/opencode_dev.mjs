@@ -16,12 +16,67 @@
 // Web-UI iteration (packages/app surfaces) requires a rebuild — the channel
 // define is baked at build time, so there is no hot path through `serve`.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadManifest, resolveCloneDir, sha256 } from "./fetch_opencode.mjs";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+const git = (dir, ...args) =>
+  execFileSync("git", ["-C", dir, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+/** Stamp vendor/opencode/<platform>/.buildinfo so anyone holding the built
+ *  extension (dev host, remote machine, a vsix) can tell EXACTLY which fork
+ *  state produced the vendored binary — the .source/.sha256 stamps record
+ *  source+hash but not branch or dirty state, and --any-ref builds deliberately
+ *  accept any checkout. JSON, one object per platform dir. */
+export function stampBuildInfo({ source, repo, version, cloneDir, tag, root = PKG_ROOT }) {
+  const vendorRoot = join(root, "vendor", "opencode");
+  if (!existsSync(vendorRoot)) return;
+  const info = {
+    source,
+    version,
+    builtAt: new Date().toISOString(),
+    ...(repo ? { repo } : {}),
+    ...(tag ? { tag } : {}),
+  };
+  if (cloneDir) {
+    info.clonePath = cloneDir;
+    try {
+      info.branch = git(cloneDir, "symbolic-ref", "--short", "-q", "HEAD") || "(detached)";
+    } catch {
+      // Detached checkout (CI checks out the merge ref, not the branch): the
+      // checked-out ref is still attributable — GitHub Actions names it in
+      // GITHUB_HEAD_REF (PRs) / GITHUB_REF_NAME (pushes). Absent both, the
+      // stamp is honestly "(unknown)" rather than a guessed name.
+      info.branch = process.env.GITHUB_HEAD_REF || process.env.GITHUB_REF_NAME || "(unknown)";
+    }
+    info.commit = git(cloneDir, "rev-parse", "HEAD");
+    info.dirty = git(cloneDir, "status", "--porcelain") !== "";
+  }
+  for (const key of readdirSync(vendorRoot)) {
+    const dir = join(vendorRoot, key);
+    if (!existsSync(join(dir, "opencode"))) continue;
+    writeFileSync(join(dir, ".buildinfo"), JSON.stringify(info, null, 2) + "\n");
+  }
+}
+
+/** Check a vendored binary's provenance. Prints one line per platform dir. */
+export function checkBuildInfo(root = PKG_ROOT) {
+  const vendorRoot = join(root, "vendor", "opencode");
+  if (!existsSync(vendorRoot)) return "[opencode] no vendored binary yet";
+  const lines = [];
+  for (const key of readdirSync(vendorRoot).sort()) {
+    const dir = join(vendorRoot, key);
+    if (!existsSync(join(dir, "opencode"))) continue;
+    const stamp = readdirSync(dir).includes(".buildinfo")
+      ? readFileSync(join(dir, ".buildinfo"), "utf8").trim().replace(/\n/g, " ")
+      : "(no .buildinfo — built before stamping was added; check .source/.sha256)";
+    lines.push(`[opencode] ${key}: ${stamp}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : "[opencode] no vendored binary yet";
+}
 
 /** Download a private-release asset via the authenticated gh CLI (same path the
  *  fetcher uses). Injectable for tests. */
@@ -98,7 +153,13 @@ function build() {
   execFileSync("node", [join(PKG_ROOT, "scripts", "fetch_opencode.mjs"), "--local", "--any-ref"], {
     stdio: ["ignore", "inherit", "inherit"],
   });
-  console.log("[opencode:build] done — reload the Extension Dev Host (Cmd/Ctrl+R) to pick up the new binary.");
+  const manifest = loadManifest();
+  stampBuildInfo({ source: "local", repo: manifest.repo, version: manifest.version, cloneDir });
+  console.log(
+    `[opencode:build] done — vendored from ${cloneDir} @ ${git(cloneDir, "symbolic-ref", "--short", "-q", "HEAD")} ${git(cloneDir, "rev-parse", "HEAD").slice(0, 10)} ` +
+      `(dirty: ${git(cloneDir, "status", "--porcelain") !== ""}) — reload the Extension Dev Host (Cmd/Ctrl+R) to pick up the new binary.`,
+  );
+  console.log(checkBuildInfo());
 }
 
 function help() {
@@ -125,8 +186,11 @@ function main(argv) {
     const i = rest.indexOf("--ref");
     const ref = i >= 0 ? rest[i + 1] : undefined;
     const r = pinFromRelease({ tag, ref });
+    const manifest = loadManifest();
+    stampBuildInfo({ source: "release", repo: manifest.repo, version: manifest.version, tag: r.tag });
     console.log(`[opencode:pin] opencode.lock.json → ${r.tag}${r.ref ? ` @ ${r.ref.slice(0, 10)}` : ""}`);
     for (const [k, v] of Object.entries(r.platforms)) console.log(`  ${k}  ${v}`);
+    console.log(checkBuildInfo());
     console.log("[opencode:pin] commit the lock bump and open a PR.");
     return;
   }
