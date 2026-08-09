@@ -1,11 +1,14 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amico-hero-dark.svg">
-  <img alt="Amicode" src="packages/extension/media/amico-hero-light.svg" width="110">
+  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amico-face-dark.svg">
+  <img alt="Amicode" src="packages/extension/media/amico-face-light.svg" width="112">
 </picture>
 
-# Amicode
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amicode-wordmark-dark.svg">
+  <img alt="AMICODE" src="packages/extension/media/amicode-wordmark-light.svg" width="224">
+</picture>
 
 ### Open autonomous research, starting with quantum control.
 
