@@ -2,12 +2,19 @@
 // only the runtime members our node-side modules touch; types are erased at
 // compile time so they need no runtime shape.
 export const window = {
+  outputLines: [] as string[],
   showInformationMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
-  createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
+  createOutputChannel: () => ({
+    appendLine(line: string) {
+      window.outputLines.push(line);
+    },
+    append() {},
+    dispose() {},
+  }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),

@@ -32,6 +32,12 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "workbench.action.showCommands",
 ]);
 
+// TEMP-DIAG (amicode#266 remote test): the app relays its [zoom]-prefixed
+// console lines here so a remote session can hand back a log file ("Open Log
+// File" on the "Amicode — webview diag" channel) instead of webview devtools.
+// Remove together with the lane below.
+let diagChannel: vscode.OutputChannel | undefined;
+
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
  *  BugReportManager's. Structural, so the bridge never imports the manager. */
 export interface BugReportSink {
@@ -189,6 +195,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // Remove after the diagnosis.
       console.log("[amicode/zoom] execute:", command);
       void vscode.commands.executeCommand(command);
+    }
+    return true;
+  }
+
+  // TEMP-DIAG (amicode#266 remote test): the app's relayed console lines land
+  // here — write them to the "Amicode — webview diag" output channel, whose
+  // backing file a remote session can hand back ("Open Log File"). Bounded
+  // payload; consumed either way. Remove after the diagnosis.
+  if (msg.kind === "diag-log") {
+    const level = (msg as { level?: unknown }).level;
+    const message = (msg as { message?: unknown }).message;
+    if (typeof message === "string" && message.length <= 4096) {
+      diagChannel ??= vscode.window.createOutputChannel("Amicode — webview diag");
+      diagChannel.appendLine(`[${typeof level === "string" ? level : "log"}] ${message}`);
     }
     return true;
   }

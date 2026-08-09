@@ -13,6 +13,7 @@ import { handleAmicodeBridgeMessage, extractReportBugModel, type BridgeIo } from
 
 const env = vscode.env as unknown as { opened: unknown[]; clipboard: { text: string } };
 const ws = vscode.workspace as unknown as { configUpdates: Array<[string, unknown]> };
+const win = vscode.window as unknown as { outputLines: string[] };
 
 function io(visible = true): BridgeIo & { posted: unknown[] } {
   const posted: unknown[] = [];
@@ -31,6 +32,7 @@ beforeEach(() => {
   env.opened.length = 0;
   env.clipboard.text = "";
   ws.configUpdates.length = 0;
+  win.outputLines.length = 0;
 });
 
 describe("amicode bridge — open-external", () => {
@@ -144,6 +146,26 @@ describe("amicode bridge — zoom (amicode#266)", () => {
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom" }, host)).toBe(true);
     await flush();
     expect(ran).toHaveLength(before);
+  });
+});
+
+describe("amicode bridge — diag-log relay (amicode#266 TEMP-DIAG)", () => {
+  it("writes relayed app console lines to the webview-diag output channel", () => {
+    const host = io();
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "diag-log", level: "log", message: "[zoom] post: in" }, host),
+    ).toBe(true);
+    expect(
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "diag-log", level: "warn", message: "[zoom] relayed from pane: out" }, host),
+    ).toBe(true);
+    expect(win.outputLines).toEqual(["[log] [zoom] post: in", "[warn] [zoom] relayed from pane: out"]);
+  });
+
+  it("drops non-string or oversized payloads but still consumes", () => {
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "diag-log", message: 42 }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "diag-log", message: "x".repeat(5000) }, host)).toBe(true);
+    expect(win.outputLines).toEqual([]);
   });
 });
 
