@@ -98,6 +98,10 @@ describe("buildOpencodeConfigContent", () => {
     expect(pd.prompt).toContain("amicode_"); // record stages via the tool pack
     expect(pd.prompt).toContain("solve workflow"); // launches stay on the bash workflow
   });
+  it("pins default_agent to plan (plan-first posture for new sessions)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
+    expect(cfg.default_agent).toBe("plan"); // read-only open; the user switches to pulse-designer/build to execute
+  });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
