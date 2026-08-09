@@ -184,7 +184,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       action === "in" ? "workbench.action.zoomIn" :
       action === "out" ? "workbench.action.zoomOut" :
       action === "reset" ? "workbench.action.zoomReset" : undefined;
-    if (command) void vscode.commands.executeCommand(command);
+    if (command) {
+      // TEMP-DIAG (amicode#266 remote test): the envelope survived the relay.
+      // Remove after the diagnosis.
+      console.log("[amicode/zoom] execute:", command);
+      void vscode.commands.executeCommand(command);
+    }
     return true;
   }
 
