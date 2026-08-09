@@ -17,13 +17,13 @@ Your vaults, your fleet, your devices, your pulses — composed by conversation.
 
 ---
 
-Amicode is an **open autonomous research studio** that lives in your editor.
+Amicode is an **open autonomous research studio** that lives in your editor — **down to the hardware**.
 
 Describe what you want in plain language — a gate, a state preparation, a calibration sweep — and Amicode designs the pulse, runs the solve, and shows you the result. Every run is captured, every pulse versioned for warm-start, and every session distilled into durable knowledge. The loop gets smarter as you use it.
 
 Leveraging new models — **Kimi K3**, **Muse Spark**, and other open models — on the open [opencode](https://github.com/sst/opencode) ecosystem (harness vendored from `sst/opencode`). Model-agnostic by design: the loop, not the model, is the product.
 
-We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, hardware in the loop — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science.
+We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, **hardware in the loop via Strumento.jl / QICK** — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science. Plenty will sell you a closed “superintelligence” that never touches the hardware. We ship open, down to the RFSoC.
 
 **This repo is the whole product:** the VS Code extension (`packages/extension`), the `amico` / `amico-run` CLI (`packages/amico-run`), and the public skill library (`packages/extension/skills/`) — skills are product content, versioned with the extension and bundled into every vsix. Additional skills load from your own vault mounts (never shipped), and package skills ride their Julia repos behind entitlements.
 
@@ -65,9 +65,9 @@ Your machines form one logical studio. Vault mounts sync via `armonia-sync-once`
 
 The extension manages the system around the solve, not just the solve itself. Lab profiles (`lab.toml`), device calibration graphs, and run capture are all rendered natively instead of buried in config files. You see system state where you act on it.
 
-### Straight to hardware
+### Down to the hardware — Strumento.jl + QICK
 
-Drive real RFSoC devices through the QICK backend, or run the *entire* closed loop against a pure-Julia mock with zero hardware for development and CI.
+Amicode goes down to the hardware. [**Strumento.jl**](https://github.com/harmoniqs/Strumento.jl) (Julia) + [**strumento**](https://github.com/harmoniqs/strumento) (Python) bridge Amicode to RFSoC with a **coarse three-verb boundary** (`upload_pulse!` / `trigger!` / `readout`). All tProc-v2 specifics live board-side, so the firewall between you and the lab is just a transport. The same loop runs — and is tested — with **no Python and no board** via the built-in mock, then swaps to real hardware unchanged. Open sourcing soon. Our Fermilab collaboration ([news.fnal.gov](https://news.fnal.gov/2026/06/fermilab-and-harmoniqs-integrate-open-source-tools-to-advance-qubit-control-optimization/)) integrates open-source qubit-control optimization the same way — loop first, hardware second. Plenty will sell you a closed “superintelligence” that never touches the hardware. We build the open alternative.
 
 ## How it scales
 
@@ -106,16 +106,12 @@ The extension stages the union of the public bundle and your vault mounts at sta
 
 Quantum control is the first domain, not the ceiling. The studio's loop — *describe → author a self-contained optimization → run → capture → distill → warm-start the next run* — does not care what the Hamiltonian is, only that you can write it down. If you can model the system, the same vault, the same catalog, the same fleet carries the work. That's why we lead with the hardest physical system: if the loop is trustworthy here, it composes outward.
 
-## Hardware — QICK / RFSoC
+## Hardware — Strumento.jl / QICK / RFSoC
 
-Amicode's hardware path is [**IntonatoQICK.jl**](https://github.com/harmoniqs/IntonatoQICK.jl),
-a QICK backend that bridges an optimized pulse to an RFSoC board over a deliberately
-**coarse three-verb boundary** (`upload_pulse!` / `trigger!` / `readout`). All tProc-v2
-specifics live board-side, so the firewall between you and the lab is just a transport.
-The whole loop runs — and is tested — with **no Python and no board** via the built-in
-mock, then swaps to real hardware unchanged.
+Amicode's hardware path is [**Strumento.jl**](https://github.com/harmoniqs/Strumento.jl) + [**strumento**](https://github.com/harmoniqs/strumento),
+the QICK tProc-v2 framework (Julia face over Python device model / pulse IR / compiler). It bridges an optimized pulse to an RFSoC board over the same **coarse three-verb boundary** (`upload_pulse!` / `trigger!` / `readout`). All specifics live board-side, so the firewall between you and the lab is just a transport. The whole loop runs — and is tested — with **no Python and no board** via the built-in mock, then swaps to real hardware unchanged. Open sourcing soon.
 
-> **QICK v2 backend & docs → [github.com/harmoniqs/IntonatoQICK.jl](https://github.com/harmoniqs/IntonatoQICK.jl)**
+> **Hardware backend & docs → [github.com/harmoniqs/Strumento.jl](https://github.com/harmoniqs/Strumento.jl) · [github.com/harmoniqs/strumento](https://github.com/harmoniqs/strumento) · Fermilab collab: [news.fnal.gov](https://news.fnal.gov/2026/06/fermilab-and-harmoniqs-integrate-open-source-tools-to-advance-qubit-control-optimization/)**
 
 ## Install
 
