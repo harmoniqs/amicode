@@ -172,6 +172,22 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Zoom bridge (amicode#266): the workbench owns zoom inside the webview —
+  // the host intercepts the Cmd/Ctrl+Plus/Minus/0 chords before the webview
+  // document sees them, so the app cannot zoom itself. It posts the intent
+  // here and we run the matching workbench action. Three actions only,
+  // exact-match; anything else is a consumed no-op (our envelope, never
+  // foreign noise — same posture as the bug-lifecycle kinds).
+  if (msg.kind === "zoom") {
+    const action = (msg as { action?: unknown }).action;
+    const command =
+      action === "in" ? "workbench.action.zoomIn" :
+      action === "out" ? "workbench.action.zoomOut" :
+      action === "reset" ? "workbench.action.zoomReset" : undefined;
+    if (command) void vscode.commands.executeCommand(command);
+    return true;
+  }
+
   // The "Amico" palette group — allowlisted commands only.
   if (msg.kind === "command") {
     const command = (msg as unknown as { command?: unknown }).command;

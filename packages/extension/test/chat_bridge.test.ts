@@ -120,6 +120,33 @@ describe("amicode bridge — clipboard", () => {
   });
 });
 
+describe("amicode bridge — zoom (amicode#266)", () => {
+  it("routes the three zoom intents to their workbench actions", async () => {
+    const host = io();
+    const ran = () => (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = ran().length;
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom", action: "in" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom", action: "out" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom", action: "reset" }, host)).toBe(true);
+    await flush();
+    expect(ran().slice(before)).toEqual([
+      "workbench.action.zoomIn",
+      "workbench.action.zoomOut",
+      "workbench.action.zoomReset",
+    ]);
+  });
+
+  it("unknown zoom actions are consumed without executing anything", async () => {
+    const host = io();
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed;
+    const before = ran.length;
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom", action: "to-the-moon" }, host)).toBe(true);
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "zoom" }, host)).toBe(true);
+    await flush();
+    expect(ran).toHaveLength(before);
+  });
+});
+
 describe("amicode bridge — commands & settings", () => {
   it("runs allowlisted commands only", async () => {
     const host = io();
