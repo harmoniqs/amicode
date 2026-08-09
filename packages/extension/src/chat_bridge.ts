@@ -32,11 +32,13 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "workbench.action.showCommands",
 ]);
 
-// TEMP-DIAG (amicode#266 remote test): the app relays its [zoom]-prefixed
-// console lines here so a remote session can hand back a log file ("Open Log
-// File" on the "Amicode — webview diag" channel) instead of webview devtools.
-// Remove together with the lane below.
-let diagChannel: vscode.OutputChannel | undefined;
+// TEMP-DIAG (amicode#266): eager probe — created at activation (this module
+// is imported by chat_panel, which extension.ts imports at the top), so the
+// channel exists with an "armed" line whether or not any chord ever fires. A
+// visible channel proves the build contains the lane; the lane below appends
+// the relayed [zoom] lines as they arrive. Remove after the diagnosis.
+const diagChannel = vscode.window.createOutputChannel("Amicode — webview diag");
+diagChannel.appendLine("[amicode/zoom] diag relay armed — TEMP-DIAG (amicode#266)");
 
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
  *  BugReportManager's. Structural, so the bridge never imports the manager. */
@@ -207,7 +209,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const level = (msg as { level?: unknown }).level;
     const message = (msg as { message?: unknown }).message;
     if (typeof message === "string" && message.length <= 4096) {
-      diagChannel ??= vscode.window.createOutputChannel("Amicode — webview diag");
       diagChannel.appendLine(`[${typeof level === "string" ? level : "log"}] ${message}`);
     }
     return true;
