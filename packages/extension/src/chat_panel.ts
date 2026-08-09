@@ -274,6 +274,31 @@ export class ChatPanel {
         }
       });
 
+      // TEMP-DIAG + fix (amicode#266): capture the zoom chords at the webview
+      // HOST page — above the app iframe. Evidence so far: default forwarding
+      // works from the webview (Ctrl/Cmd+Shift+P reaches the workbench), yet
+      // workbench zoom never fires and the app document logs nothing, so the
+      // chord is dying somewhere between. If it reaches THIS document, we
+      // claim it (preventDefault — keydown targets one document, so the app
+      // iframe can never see the same key, no double-fire) and post the
+      // envelope straight to the extension (the "zoom" kind is in the relay
+      // allowlist), bypassing the app's registry entirely. Remove after the
+      // diagnosis.
+      window.addEventListener("keydown", function (e) {
+        var mod = e.metaKey || e.ctrlKey;
+        if (!mod) return;
+        var key = e.key;
+        var action = null;
+        if (key === "=" || key === "+") action = "in";
+        else if (key === "-" || key === "_") action = "out";
+        else if (key === "0") action = "reset";
+        if (!action) return;
+        console.log("[zoom] host keydown:", action, "key=" + key, "shift=" + e.shiftKey);
+        vscode.postMessage({ source: "amicode", kind: "diag-log", level: "log", message: "[zoom] host keydown: " + action + " key=" + key + " shift=" + e.shiftKey });
+        e.preventDefault();
+        vscode.postMessage({ source: "amicode", kind: "zoom", action: action });
+      });
+
       // Answer a clipboard-image-request from the framed app: read the first
       // image/* item off the OS clipboard (client-side; clipboard-read is
       // granted to this webview) and post it into the frame as a data URL. On
