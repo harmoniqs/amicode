@@ -64,6 +64,14 @@ import { registerAmicodeTerminal } from "./terminal";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
+  findWorkspaceRepos,
+  syncOneRepo,
+  isSyncDue,
+  SYNC_INTERVAL_MS,
+  LAST_SYNC_KEY,
+  SYNC_DISMISSED_KEY,
+} from "./substrate/sync";
+import {
   registerBugReport,
   unregisterBugReport,
   bugReportSkillStaged,
@@ -1075,6 +1083,95 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     })
   ) {
     void runJuliaSetup(false);
+  }
+
+  // ── Workspace sync (opt-in, extension-host) ──────────────────────────
+  // Single toggle amicode.sync.enabled (off by default). First-run nudge,
+  // missed-nightly check on activation (if >20h since last sync, run within
+  // 2 min), and manual Amicode: Sync now. Keeps any git repo in the open
+  // workspace current: clean WIP auto-rebases onto freshly fast-forwarded main,
+  // dirty skips rebase, conflicts abort cleanly. Output: channel log + notifications
+  // only on attention-needed (failed/conflicted). Julia env: check+nudge only (stub).
+  const syncChannel = vscode.window.createOutputChannel("Amicode — sync");
+  ctx.subscriptions.push(syncChannel);
+
+  const isSyncEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("amicode").get<boolean>("sync.enabled", false);
+
+  const runWorkspaceSync = async (source: "startup" | "manual"): Promise<void> => {
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const repos = findWorkspaceRepos(folders);
+    if (repos.length === 0) {
+      syncChannel.appendLine(`[sync:${source}] no git repos in workspace — nothing to do`);
+      return;
+    }
+    syncChannel.appendLine(`[sync:${source}] ${repos.length} repo(s): ${repos.map((r) => path.basename(r)).join(", ")}`);
+    let ok = 0,
+      skipped = 0,
+      failed = 0;
+    const failures: string[] = [];
+    for (const repoPath of repos) {
+      const res = syncOneRepo(repoPath);
+      syncChannel.appendLine(`[sync] ${res.repo} (${res.branch}) — ${res.status}: ${res.detail}`);
+      if (res.status === "ok") ok++;
+      else if (res.status === "skipped") skipped++;
+      else {
+        failed++;
+        failures.push(`${res.repo} (${res.branch}): ${res.detail}`);
+      }
+    }
+    syncChannel.appendLine(`[sync:${source}] done — ${ok} ok, ${skipped} skipped, ${failed} failed`);
+    await ctx.globalState.update(LAST_SYNC_KEY, new Date().toISOString());
+    // Subtle UX: silent success, noisy failure (grilled).
+    if (failed > 0) {
+      const detail = failures.slice(0, 3).join("; ") + (failures.length > 3 ? ` (+${failures.length - 3} more)` : "");
+      const pick = await vscode.window.showWarningMessage(
+        `Amicode sync: ${failed} repo(s) need attention — ${detail}`,
+        "Show log",
+      );
+      if (pick === "Show log") syncChannel.show();
+    }
+  };
+
+  const maybePromptSyncOptIn = async (): Promise<void> => {
+    if (isSyncEnabled()) return;
+    if (ctx.globalState.get<boolean>(SYNC_DISMISSED_KEY) === true) return;
+    // Only prompt if there's actually a workspace with git repos to sync.
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    if (findWorkspaceRepos(folders).length === 0) return;
+    const choice = await vscode.window.showInformationMessage(
+      "Keep your workspace in sync? Amicode can keep your git repos current overnight — fast-forwarding clean branches and keeping WIP up to date with main. Off by default, change anytime in Settings.",
+      "Enable sync",
+      "Not now",
+      "Don't ask again",
+    );
+    if (choice === "Enable sync") {
+      await vscode.workspace.getConfiguration("amicode").update("sync.enabled", true, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage("Amicode sync enabled — will run overnight and keep WIP current with main.");
+      // Run once now so the user sees it work.
+      void runWorkspaceSync("manual");
+    } else if (choice === "Don't ask again") {
+      await ctx.globalState.update(SYNC_DISMISSED_KEY, true);
+    }
+  };
+
+  // Register manual command.
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.sync.now", () => void runWorkspaceSync("manual")));
+
+  // First-run nudge (fire-and-forget, like vault/julia prompts).
+  void maybePromptSyncOptIn();
+
+  // Missed-nightly check: if enabled and >20h since last sync, run within 2 min.
+  if (isSyncEnabled()) {
+    const last = ctx.globalState.get<string>(LAST_SYNC_KEY);
+    if (isSyncDue(last)) {
+      const delayMs = 30_000 + Math.floor(Math.random() * 90_000); // 30-120s jitter
+      syncChannel.appendLine(`[sync:startup] last sync ${last ?? "never"} — scheduling run in ${Math.round(delayMs / 1000)}s`);
+      const timer = setTimeout(() => void runWorkspaceSync("startup"), delayMs);
+      ctx.subscriptions.push({ dispose: () => clearTimeout(timer) });
+    } else {
+      syncChannel.appendLine(`[sync:startup] last sync ${last} — not due (interval ${Math.round(SYNC_INTERVAL_MS / 3600000)}h)`);
+    }
   }
 
   // Healthcheck (the real `amicode.healthcheck`): verify the managed Julia
