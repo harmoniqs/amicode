@@ -174,6 +174,20 @@ export class BugReportManager {
     }
   }
 
+  /** Pre-flight: does the server's command set include `name`?
+   *  Fail-open: a network error returns true (let the arm path handle it). */
+  private async serverHasCommand(server: BugReportServer, name: string): Promise<boolean> {
+    try {
+      const res = await this.fetch(new URL("/command", server.url), server, { method: "GET" });
+      if (!res.ok) return true; // optimistic on probe failure — fall through to arm
+      const commands = (await res.json()) as { name?: string }[];
+      if (!Array.isArray(commands)) return true;
+      return commands.some((c) => c.name === name);
+    } catch {
+      return true; // network failure: let the arm path handle it
+    }
+  }
+
   // -------- internal --------
 
   private async open(): Promise<void> {
@@ -181,6 +195,18 @@ export class BugReportManager {
     if (!server) {
       this.deps.showError(
         "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+      );
+      return;
+    }
+    // Pre-flight: verify the server's staged skills include report-a-bug.
+    // The arm step POSTs against the SERVER's command set, not the
+    // extension's skill paths — a stale server (launchd canonical instance
+    // that predates the skill) fails silently. Fail-open: a probe failure
+    // (network, server busy) falls through to the existing arm-failure path.
+    if (!(await this.serverHasCommand(server, REPORT_A_BUG_SKILL))) {
+      this.deps.showError(
+        "Amicode: the opencode server's staged skills are stale (missing report-a-bug). " +
+        "Restart or re-stage the server.",
       );
       return;
     }

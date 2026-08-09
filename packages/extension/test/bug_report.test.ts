@@ -20,6 +20,11 @@ function mockFetch(routes: Record<string, { status?: number; body?: unknown }>):
   fetchImpl: typeof fetch;
   calls: Call[];
 } {
+  // The pre-flight GET /command must always succeed for open() to proceed.
+  const defaultRoutes: Record<string, { status?: number; body?: unknown }> = {
+    "GET /command": { status: 200, body: [{ name: "report-a-bug" }] },
+    ...routes,
+  };
   const calls: Call[] = [];
   const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
     const url = String(input);
@@ -27,7 +32,7 @@ function mockFetch(routes: Record<string, { status?: number; body?: unknown }>):
     const body = typeof init?.body === "string" ? (JSON.parse(init.body) as unknown) : undefined;
     calls.push({ method, url, body });
     const path = new URL(url).pathname;
-    const route = routes[`${method} ${path}`];
+    const route = defaultRoutes[`${method} ${path}`];
     const status = route?.status ?? 404;
     return {
       ok: status >= 200 && status < 300,
@@ -140,7 +145,10 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
       authed.push((init?.headers as Record<string, string> | undefined)?.Authorization);
       const path = new URL(String(input)).pathname;
-      const body = path === "/session" && init?.method === "POST" ? { id: "ses_bug3" } : path === "/session" ? [] : {};
+      let body: unknown = {};
+      if (path === "/command" && (init?.method ?? "GET") === "GET") body = [{ name: "report-a-bug" }];
+      else if (path === "/session" && init?.method === "POST") body = { id: "ses_bug3" };
+      else if (path === "/session") body = [];
       return { ok: true, status: 200, json: async () => body } as Response;
     }) as unknown as typeof fetch;
     const { d } = deps({}, fetchImpl);
@@ -149,6 +157,50 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
 
     expect(authed.length).toBeGreaterThan(0);
     expect(new Set(authed)).toEqual(new Set([BOOT_AUTH]));
+  });
+
+  it("pre-flights the arm: shows an actionable error when GET /command lacks report-a-bug (#296)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /command": { status: 200, body: [{ name: "other-skill" }] },
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug" } },
+      "POST /session/ses_bug/command": { status: 200, body: {} },
+    });
+    const { d, posted, errors } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+
+    await manager.reportBug();
+
+    // No session was created — the pre-flight blocked it.
+    expect(calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toHaveLength(0);
+    expect(posted).toHaveLength(0);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain("staged skills are stale");
+  });
+
+  it("pre-flight is fail-open: a network error on GET /command does NOT block the button (#296)", async () => {
+    let commandProbed = false;
+    const fetchImpl = (async (input: string | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/command" && (init?.method ?? "GET") === "GET") {
+        commandProbed = true;
+        throw new Error("network down");
+      }
+      let body: unknown = {};
+      if (path === "/session" && init?.method === "POST") body = { id: "ses_bug" };
+      else if (path === "/session") body = [];
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    const { d, posted } = deps({}, fetchImpl);
+    const manager = new BugReportManager(d);
+
+    await manager.reportBug();
+
+    expect(commandProbed).toBe(true);
+    // Despite the probe failure, the open succeeded (fail-open).
+    expect(posted).toEqual([
+      { source: "amicode", kind: "open-bug-report", sessionID: "ses_bug" },
+    ]);
   });
 });
 
@@ -307,7 +359,9 @@ describe("single-open invariant (AC3)", () => {
       const path = new URL(url).pathname;
       calls.push({ method: init?.method ?? "GET", url });
       if (init?.method === "POST" && path === "/session") await gate; // hold the create
-      const body = path === "/session" && init?.method === "POST" ? { id: "ses_bug" } : [];
+      let body: unknown = [];
+      if (path === "/command" && (init?.method ?? "GET") === "GET") body = [{ name: "report-a-bug" }];
+      else if (path === "/session" && init?.method === "POST") body = { id: "ses_bug" };
       return { ok: true, status: 200, json: async () => body } as Response;
     }) as unknown as typeof fetch;
     const { d, posted } = deps({}, fetchImpl);
