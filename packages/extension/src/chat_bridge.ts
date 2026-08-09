@@ -32,14 +32,6 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "workbench.action.showCommands",
 ]);
 
-// TEMP-DIAG (amicode#266): eager probe — created at activation (this module
-// is imported by chat_panel, which extension.ts imports at the top), so the
-// channel exists with an "armed" line whether or not any chord ever fires. A
-// visible channel proves the build contains the lane; the lane below appends
-// the relayed [zoom] lines as they arrive. Remove after the diagnosis.
-const diagChannel = vscode.window.createOutputChannel("Amicode — webview diag");
-diagChannel.appendLine("[amicode/zoom] diag relay armed — TEMP-DIAG (amicode#266)");
-
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
  *  BugReportManager's. Structural, so the bridge never imports the manager. */
 export interface BugReportSink {
@@ -177,40 +169,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
       if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
     })();
-    return true;
-  }
-
-  // Zoom bridge (amicode#266): the workbench owns zoom inside the webview —
-  // the host intercepts the Cmd/Ctrl+Plus/Minus/0 chords before the webview
-  // document sees them, so the app cannot zoom itself. It posts the intent
-  // here and we run the matching workbench action. Three actions only,
-  // exact-match; anything else is a consumed no-op (our envelope, never
-  // foreign noise — same posture as the bug-lifecycle kinds).
-  if (msg.kind === "zoom") {
-    const action = (msg as { action?: unknown }).action;
-    const command =
-      action === "in" ? "workbench.action.zoomIn" :
-      action === "out" ? "workbench.action.zoomOut" :
-      action === "reset" ? "workbench.action.zoomReset" : undefined;
-    if (command) {
-      // TEMP-DIAG (amicode#266 remote test): the envelope survived the relay.
-      // Remove after the diagnosis.
-      console.log("[amicode/zoom] execute:", command);
-      void vscode.commands.executeCommand(command);
-    }
-    return true;
-  }
-
-  // TEMP-DIAG (amicode#266 remote test): the app's relayed console lines land
-  // here — write them to the "Amicode — webview diag" output channel, whose
-  // backing file a remote session can hand back ("Open Log File"). Bounded
-  // payload; consumed either way. Remove after the diagnosis.
-  if (msg.kind === "diag-log") {
-    const level = (msg as { level?: unknown }).level;
-    const message = (msg as { message?: unknown }).message;
-    if (typeof message === "string" && message.length <= 4096) {
-      diagChannel.appendLine(`[${typeof level === "string" ? level : "log"}] ${message}`);
-    }
     return true;
   }
 

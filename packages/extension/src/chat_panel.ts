@@ -260,7 +260,7 @@ export class ChatPanel {
             replyClipboardImage(d.nonce);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "zoom" || d.kind === "diag-log")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke")) {
             vscode.postMessage(d);
           }
           return;
@@ -272,31 +272,6 @@ export class ChatPanel {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
-      });
-
-      // TEMP-DIAG + fix (amicode#266): capture the zoom chords at the webview
-      // HOST page — above the app iframe. Evidence so far: default forwarding
-      // works from the webview (Ctrl/Cmd+Shift+P reaches the workbench), yet
-      // workbench zoom never fires and the app document logs nothing, so the
-      // chord is dying somewhere between. If it reaches THIS document, we
-      // claim it (preventDefault — keydown targets one document, so the app
-      // iframe can never see the same key, no double-fire) and post the
-      // envelope straight to the extension (the "zoom" kind is in the relay
-      // allowlist), bypassing the app's registry entirely. Remove after the
-      // diagnosis.
-      window.addEventListener("keydown", function (e) {
-        var mod = e.metaKey || e.ctrlKey;
-        if (!mod) return;
-        var key = e.key;
-        var action = null;
-        if (key === "=" || key === "+") action = "in";
-        else if (key === "-" || key === "_") action = "out";
-        else if (key === "0") action = "reset";
-        if (!action) return;
-        console.log("[zoom] host keydown:", action, "key=" + key, "shift=" + e.shiftKey);
-        vscode.postMessage({ source: "amicode", kind: "diag-log", level: "log", message: "[zoom] host keydown: " + action + " key=" + key + " shift=" + e.shiftKey });
-        e.preventDefault();
-        vscode.postMessage({ source: "amicode", kind: "zoom", action: action });
       });
 
       // Answer a clipboard-image-request from the framed app: read the first
