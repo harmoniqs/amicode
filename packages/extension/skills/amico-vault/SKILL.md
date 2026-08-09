@@ -65,13 +65,23 @@ The vault is no longer a single directory. A user's **Armonia** is the set of va
 
 | Kind | Marker | Repo naming | Holds | Writable |
 |------|--------|-------------|-------|----------|
-| **personal** | `kind = "personal"` | `armonia-<name>` | Own research notes, hopper, solo specs/plans, session distillates, experiments-in-progress | single-writer (you) |
-| **engagement** | `kind = "engagement"` | `armonia-<engagement>` | Engagement-scoped notes; lab state (`lab.toml`, device/model-of-lab notes, calibration, per-lab catalog) once hardware deploys | engagement staff |
-| **project** | `kind = "project"` | `armonia-<project>` | Proprietary-package knowledge (your private package internals, hopper, insights) | per-person grant |
-| **team** | `kind = "team"` | `armonia-<team>` | Your team knowledge tier: hardware/control context, methods + patterns, strategy/specs/plans, experiments + insights, papers, people/orgs, central pulse catalog (git-lfs) | PR-gated promotion |
-| **public** | `kind = "public"` | `<org>/armonia` | Best-practice usage patterns for public packages, hazard notes, platform cards, recipes | world read-only |
+| **personal** | `kind = "personal"` | `vault-<name>` (e.g. `vault-aaron`) | Own research notes, hopper, solo specs/plans, session distillates, experiments-in-progress | single-writer (you) |
+| **engagement** | `kind = "engagement"` | `vault-<engagement>` | Engagement-scoped notes; lab state (`lab.toml`, device/model-of-lab notes, calibration, per-lab catalog) once hardware deploys | engagement staff |
+| **project** | `kind = "project"` | `vault-<project>` | Proprietary-package knowledge (your private package internals, hopper, insights) | per-person grant |
+| **team** | `kind = "team"` | `vault-<team>` (e.g. `vault-team` / `armonissima`) | Your team knowledge tier: hardware/control context, methods + patterns, strategy/specs/plans, experiments + insights, papers, people/orgs, central pulse catalog (git-lfs) | PR-gated promotion |
+| **public** | `kind = "public"` | `harmoniqs/vault-public` | Best-practice usage patterns for public packages, hazard notes, platform cards, recipes | world read-only |
 
 **Read precedence: personal → engagement → project(s) → team → public.** Queries search the **union** of all mounts; on a path collision the higher-precedence mount wins (first hit). `mounts.toml` (in `~/.amico/`) overrides order and writability; absent, kind-order applies. A dir with no marker, a duplicate id, or a manifest `path` that doesn't exist is dropped from the mount set with a warning in the hook summary — never guessed at, never fatal.
+
+### First-run lifecycle (auto-provision)
+
+A fresh Marketplace install gets a working vault ecosystem with zero commands:
+
+1. **Personal vault** — `ensureVaultEcosystem()` creates `~/armonia/data/vaults/<os-username>/` (`kind="personal"`, local `git init`, no remote) if no personal mount resolves. Offline-tolerant, never throws; activation continues unpersonalized on failure.
+2. **Public vault** — shallow-clones `harmoniqs/vault-public` to `~/armonia/data/vaults/vault-public/` (`kind="public"`, `writable=false`, 10s timeout, anonymous https). On offline / no-git / timeout it creates a placeholder dir with a `kind="public"` marker so the mount stack still resolves.
+3. **`mounts.toml`** — written *only if absent* (personal rw first, public ro second). Presence means user-managed — never overwritten. The same three steps are mirrored in `tools/bootstrap-armonia.sh` so CLI-first or extension-first order is safe (second run is a no-op).
+
+The canonical on-disk root is `~/armonia/` (`repos/` = versioned source, `data/` = managed state); `~/.amico/vaults` is a symlink into `~/armonia/data/vaults` for backward compat.
 
 ### Write routing (Claude is the resolver pre-Amicode)
 
@@ -81,7 +91,7 @@ Route every note-write by intent:
 |---|---|---|
 | spec / plan for **shared** work | **team** (your team vault) | PR flow |
 | lab state, calibration, device params, engagement notes | **engagement** vault | direct commit |
-| proprietary-package knowledge, solver hopper items | **project** vault (e.g. `armonia-<project>`) | direct commit |
+| proprietary-package knowledge, solver hopper items | **project** vault (e.g. `vault-<project>`) | direct commit |
 | personal research, sessions, scratch, solo specs | **personal** vault | direct commit (auto-synced) |
 | **ambiguous** | ask the user once → default personal | — |
 
@@ -102,7 +112,7 @@ Never put the mechanism in a `team`/`public` note expecting a later scrub — au
 
 Crystallization to the company vault is double-gated: **gate 1** = author tags `visibility: team`; **gate 2** = a human merges the dream-promote PR. On promotion:
 
-- The **copy** lands in the **team** vault carrying `promoted_from: armonia-<name>` + `promoted_date: YYYY-MM-DD`.
+- The **copy** lands in the **team** vault carrying `promoted_from: vault-<name>` + `promoted_date: YYYY-MM-DD`.
 - The **original stays put** in its source vault and gains `promoted_to: "[[<central-note>]]"` (a frontmatter-only stamp written back *only after* the PR merges). It is never re-proposed.
 - Move is wrong — copy preserves the source vault's local graph and the provenance backlink. `promoted_from`/`promoted_date`/`promoted_to` are the charter/12 provenance fields, carried over unchanged.
 
