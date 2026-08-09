@@ -1,7 +1,7 @@
 {
   "name": "amicode",
   "displayName": "Amicode",
-  "description": "Amico research IDE — opencode-backed chat + native VS Code surfaces for vault, catalog, and live solve inspection.",
+  "description": "Open autonomous research in VS Code — vaults, fleet, and live solves for quantum control and physical intelligence.",
   "version": "0.2.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
@@ -23,9 +23,14 @@
   "keywords": [
     "quantum",
     "quantum computing",
-    "pulse design",
     "optimal control",
     "Piccolo",
+    "autonomous research",
+    "open science",
+    "fleet management",
+    "knowledge graph",
+    "physical intelligence",
+    "pulse design",
     "opencode",
     "AI agent"
   ],
