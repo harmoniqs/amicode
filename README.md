@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amico-face-dark.svg">
-  <img alt="Amicode" src="packages/extension/media/amico-face-light.svg" width="96">
+  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amico-hero-dark.svg">
+  <img alt="Amicode" src="packages/extension/media/amico-hero-light.svg" width="110">
 </picture>
 
 # Amicode
