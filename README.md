@@ -5,10 +5,7 @@
   <img alt="Amicode" src="packages/extension/media/amico-face-light.svg" width="112">
 </picture>
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="packages/extension/media/amicode-wordmark-dark.svg">
-  <img alt="AMICODE" src="packages/extension/media/amicode-wordmark-light.svg" width="224">
-</picture>
+# Amicode
 
 ### Open autonomous research, starting with quantum control.
 
