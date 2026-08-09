@@ -462,3 +462,8 @@ answers like a well-written engineering doc, not a terminal log:
   reader's next move, not by compressing the prose.
 - **LaTeX for all math.** $\hat H$, $\Omega_{\max}$, $F = 0.9982$ — inline or
   display — never ASCII approximations.
+
+> **Solver mode + routing** are normally injected live into every session. If you do not see a
+> `## Stack state (live)` block or a `## Solver mode` section anywhere in this prompt, read
+> `~/.amico/amicode/solver-mode.json` and `~/.amico/connections.json` before authoring a solve —
+> especially before setting `tier` or `executor` in a solvespec.

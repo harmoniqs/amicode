@@ -373,6 +373,19 @@ export function routingSection(): string {
   return buildRoutingSection(readRoutingContext(readSolverModeState().mode));
 }
 
+/** Recovery pointer for when the amicode_context plugin's
+ *  experimental.chat.system.transform hook fails silently (no live block in
+ *  the system prompt). Tells the agent where to read solver mode + routing
+ *  state directly from disk. */
+function solverModeFallbackPointer(): string {
+  return (
+    "> **Solver mode + routing** are normally injected live into and every session. " +
+    "If you do not see a `## Stack state (live)` block above or a `## Solver mode` section, " +
+    "read `~/.amico/amicode/solver-mode.json` and `~/.amico/connections.json` before " +
+    "authoring a solve — especially before setting `tier` or `executor` in a solvespec.\n"
+  );
+}
+
 /** The model pin to inject into the generated config, or undefined.
  *
  *  We deliberately DO NOT force a fallback model here. `config.model` is the
@@ -410,6 +423,11 @@ export function buildOpencodeConfigContent(
    *  When false we OMIT the key entirely (rather than force it false) so a user's
    *  own global `experimental.openTelemetry` is never clobbered by the deep-merge. */
   telemetryOpen: boolean = false,
+  /** Additional plugin paths to register alongside pluginPath. Each entry is an
+   *  absolute path to a .ts plugin file. Used to register the amicode_context
+   *  plugin (experimental.chat.system.transform hook) without touching the
+   *  single-export amicode_tools pack. */
+  extraPluginPaths: string[] = [],
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -434,7 +452,7 @@ export function buildOpencodeConfigContent(
     default_agent: "plan",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
-    plugin: [pluginPath],
+    plugin: [pluginPath, ...extraPluginPaths],
     ...(skills ? { skills } : {}),
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
     // into cfg.experimental alongside any user keys (see telemetryOpen above).
@@ -669,7 +687,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
+  // Solver mode and routing are injected per-prompt by the amicode_context
+  // plugin (experimental.chat.system.transform hook). The file carries only a
+  // recovery pointer so the agent can self-heal if the hook ever fails silently.
+  fs.writeFileSync(agentsPath, finalContent + "\n\n" + solverModeFallbackPointer(), "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -725,7 +746,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
+  // Solver mode and routing are injected per-prompt by the amicode_context
+  // plugin (experimental.chat.system.transform hook). The file carries only a
+  // recovery pointer so the agent can self-heal if the hook ever fails silently.
+  fs.writeFileSync(agentsPath, finalContent + "\n\n" + solverModeFallbackPointer(), "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
