@@ -24,6 +24,8 @@ jobs:
       # runs the SAME script against the bins extracted from the real .vsix.
       - name: cli-gate — staged CLI accepts the remote executor, every declared bin present (#161)
         run: node packages/extension/scripts/assert_packaged_cli.mjs
+      - name: fleet-gate — guard + tunnel template sane (#324)
+        run: bash packages/extension/scripts/assert_fleet_guard.sh
       # Pasqal python provisioning gate, source lane: the SHIPPED connector
       # assets must provision a working interpreter (real venv + pip + SDK
       # import at the pinned version + validator env-guard smoke). Guards the

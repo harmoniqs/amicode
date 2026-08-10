@@ -54,6 +54,7 @@ import {
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
+import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -1026,6 +1027,31 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           results.push({ name: "LLM creds", ok: false, detail: "skipped (server down)" });
         }
 
+        // Fleet (ADR 0005, #279, #324): guard + settings + tunnel. Only enforced on
+        // darwin (the fleet is Mac fleet); elsewhere these checks self-skip as OK.
+        // Synchronous file reads; never throws — a bad read is a failed check, not a crash.
+        try {
+          const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
+          const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+          let plistContent: string | null = null;
+          try {
+            plistContent = fs.readFileSync(plistPath, "utf8");
+          } catch {
+            plistContent = null;
+          }
+          const fleetChecks = fleetHealthReport({
+            repoGuardPath,
+            configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
+            configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+            plistContent,
+          });
+          for (const c of fleetChecks) {
+            results.push({ name: c.name, ok: c.ok, detail: c.ok ? c.detail : `${c.detail} → ${c.fix ?? ""}`.trim() });
+          }
+        } catch (e) {
+          results.push({ name: "Fleet", ok: false, detail: `check failed: ${(e as Error).message}` });
+        }
+
         const report = formatHealthReport(results);
         opencodeChannel.appendLine(`[healthcheck] ${new Date().toISOString()}`);
         report.lines.forEach((l) => opencodeChannel.appendLine(`  ${l}`));
@@ -1039,6 +1065,56 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.healthcheck", () => void runHealthcheck()));
+
+  // Fleet repair: reinstall guard + tunnel + machine settings (idempotent).
+  // Exposed for the fleet health warning's "Fix fleet" action and palette.
+  const runFleetRepair = async (): Promise<void> => {
+    const script = path.resolve(ctx.extensionPath, "tools", "fleet", "install.sh");
+    if (!fs.existsSync(script)) {
+      void vscode.window.showErrorMessage(`Amicode: fleet installer not found at ${script} — git pull?`);
+      return;
+    }
+    const term = vscode.window.createTerminal({ name: "Amicode: Fleet repair" });
+    term.show();
+    term.sendText(`bash "${script}"`);
+    opencodeChannel.appendLine(`[fleet] repair started: bash ${script} — watch the terminal`);
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.repair", () => void runFleetRepair()));
+
+  // Activation-time fleet drift warning (darwin only). If the MacBook is a fleet
+  // client but the guard is missing/stale or the tunnel is mis-tuned, surface
+  // ONE warning with a Fix action — don't silently fork.
+  void (() => {
+    if (process.platform !== "darwin") return;
+    try {
+      const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
+      const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      let plistContent: string | null = null;
+      try {
+        plistContent = fs.readFileSync(plistPath, "utf8");
+      } catch {
+        plistContent = null;
+      }
+      const checks = fleetHealthReport({
+        repoGuardPath,
+        configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
+        configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+        plistContent,
+      });
+      const failed = checks.filter((c) => !c.ok);
+      if (failed.length === 0) return;
+      const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
+      opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
+      void vscode.window
+        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
+        .then((pick) => {
+          if (pick === "Fix fleet") void runFleetRepair();
+          else if (pick === "Show details") opencodeChannel.show();
+        });
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
+    }
+  })();
 
   // Connect Cloud (amicode.setCloudKey): prompt for the cloud API key and POST
   // it to the local server's connections submit route (#171) — the SERVER owns

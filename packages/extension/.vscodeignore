@@ -2,6 +2,7 @@
 # The explicit negation keeps the vendored opencode shipping even if a future
 # exclusion pattern would otherwise swallow it — that's the trap β.2 exists to kill.
 !vendor/**
+!tools/**
 src/**
 test/**
 scripts/**

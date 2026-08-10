@@ -173,6 +173,10 @@
       {
         "command": "amicode.catalog.remove",
         "title": "Remove from Catalog"
+      },
+      {
+        "command": "amicode.fleet.repair",
+        "title": "Amicode: Fleet — Repair (guard + tunnel)"
       }
     ],
     "configuration": {
