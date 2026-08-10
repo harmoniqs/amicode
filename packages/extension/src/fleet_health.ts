@@ -13,6 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
+import { FALLBACK_PATH, isFallbackActive } from "./fleet_fallback";
 
 export const FLEET_CANONICAL_HOST = "Aarons-Mac-mini";
 export const FLEET_PORT = 4096;
@@ -157,20 +158,49 @@ export function checkFleetTunnel(
   return { name: "Fleet tunnel", ok: true, detail: "ServerAlive 15/2 + TCPKeepAlive, 4096 forward" };
 }
 
-/** Aggregate helper — returns all fleet checks (guard + settings + tunnel). */
+/** Fallback state check — when fallback is active the guard/settings/tunnel drift is intentional. */
+export function checkFleetFallback(
+  fallbackPath: string = FALLBACK_PATH,
+  opts: { read?: (p: string) => string; platform?: string } = {},
+): FleetCheck {
+  if ((opts.platform ?? process.platform) !== "darwin") {
+    return { name: "Fleet fallback", ok: true, detail: "skipped (not darwin)" };
+  }
+  const active = isFallbackActive(fallbackPath, opts.read);
+  if (active) {
+    return { name: "Fleet fallback", ok: true, detail: "ACTIVE — local sessions, rejoin on reconnect → Amicode: Fleet — Rejoin" };
+  }
+  return { name: "Fleet fallback", ok: true, detail: "inactive (canonical via tunnel)" };
+}
+
+/** Aggregate helper — returns all fleet checks (guard + settings + tunnel + fallback). */
 export function fleetHealthReport(args: {
   repoGuardPath: string;
   installedGuardPath?: string;
   configuredBinary: string;
   configuredPort: number;
   plistContent: string | null;
+  fallbackPath?: string;
   read?: (p: string) => string;
   isExecutable?: (p: string) => boolean;
   platform?: string;
 }): FleetCheck[] {
+  // When fallback is active, guard/settings/tunnel checks are intentionally bypassed —
+  // the user deliberately spawned locally. Still surface them as OK with a fallback note
+  // so healthcheck doesn't red on intentional drift, but keep the fallback row visible.
+  const fallbackActive = isFallbackActive(args.fallbackPath ?? FALLBACK_PATH, args.read);
+  if (fallbackActive && (args.platform ?? process.platform) === "darwin") {
+    return [
+      { name: "Fleet guard", ok: true, detail: "skipped — fallback active (local spawn allowed)" },
+      { name: "Fleet settings", ok: true, detail: "skipped — fallback active" },
+      { name: "Fleet tunnel", ok: true, detail: "skipped — fallback active (canonical unreachable)" },
+      checkFleetFallback(args.fallbackPath, { read: args.read, platform: args.platform }),
+    ];
+  }
   return [
     checkFleetGuard(args.repoGuardPath, args.installedGuardPath, { read: args.read, isExecutable: args.isExecutable, platform: args.platform }),
     checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform }),
     checkFleetTunnel(args.plistContent, { platform: args.platform }),
+    checkFleetFallback(args.fallbackPath, { read: args.read, platform: args.platform }),
   ];
 }

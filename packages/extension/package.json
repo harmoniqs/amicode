@@ -177,6 +177,18 @@
       {
         "command": "amicode.fleet.repair",
         "title": "Amicode: Fleet — Repair (guard + tunnel)"
+      },
+      {
+        "command": "amicode.fleet.fallback.enter",
+        "title": "Amicode: Fleet — Enter Local Fallback (work offline)"
+      },
+      {
+        "command": "amicode.fleet.fallback.exit",
+        "title": "Amicode: Fleet — Exit Local Fallback (restore tunnel)"
+      },
+      {
+        "command": "amicode.fleet.rejoin",
+        "title": "Amicode: Fleet — Rejoin (merge fallback sessions)"
       }
     ],
     "configuration": {

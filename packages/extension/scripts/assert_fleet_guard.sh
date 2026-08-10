@@ -15,6 +15,8 @@ ok() { echo "[fleet-gate] ok $*"; }
 grep -q 'Aarons-Mac-mini' "$GUARD" || fail "guard does not mention canonical host Aarons-Mac-mini"
 grep -q 'exit 1' "$GUARD" || fail "guard missing client exit 1 (would not prevent fork)"
 grep -q 'FROZEN.*\.amico/server/bin/opencode' "$GUARD" || fail "guard missing frozen binary path"
+grep -q 'FALLBACK.*\.amico/ops/fleet/fallback.json' "$GUARD" || fail "guard missing fallback marker check (CONTEXT.md Local fallback)"
+grep -q 'Local fallback' "$GUARD" || fail "guard missing Local fallback comment/hint"
 ok "guard $GUARD"
 
 [[ -f "$INSTALL" ]] || fail "installer missing at $INSTALL"

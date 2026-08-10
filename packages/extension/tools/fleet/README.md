@@ -42,3 +42,27 @@ chmod +x ~/.local/bin/amico-opencode-fleet-guard
 * **Installer** — `tools/fleet/install.sh` is the single source: guard compare, `chmod +x`, `settings.json` merge (machine scope), tunnel plist `15/2 + TCPKeepAlive` + `launchctl (un)load`. Re-run anytime; `install.sh --check` is the CI twin.
 * **CI gate** — `ci.yml` `fleet-gate` runs `install.sh --check` + `assert_fleet_guard.sh`.
 * **Vendored tunnel template** — `tools/fleet/co.harmoniqs.amico-tunnel.plist` is the hardened plist (source of truth for the installer + CI).
+
+## Local fallback (added 2026-08-11, CONTEXT.md)
+
+When the mini is offline (`tailscale status` `Online:false`, `ssh amico-mini` timeout):
+
+```bash
+# In VS Code:
+#   Command Palette → Amicode: Fleet — Enter Local Fallback (work offline)
+#   — creates ~/.amico/ops/fleet/fallback.json, clears the guard override
+#     (amicode.opencodeBinary="" + opencodePort=0 → ephemeral), restarts
+#     locally. Status bar shows `Fleet: LOCAL FALLBACK`.
+
+# Check:
+cat ~/.amico/ops/fleet/fallback.json   # {active, since}
+bash tools/fleet/install.sh --check    # fallback-aware (guard/settings/tunnel skipped)
+./tools/fleet/amico-opencode-fleet-guard --help  # now execs opencode even on client
+
+# When the mini is back (tailscale Online:true, curl http://127.0.0.1:4096/ 200):
+#   Command Palette → Amicode: Fleet — Rejoin (merge fallback sessions)
+#   — archives ~/.local/share/opencode/opencode.db → ~/.amico/fleet-recovery/<date>/,
+#     exits fallback (restores guard + 4096), restarts to ride tunnel.
+#   Or: Amicode: Fleet — Exit Local Fallback (without archive)
+# Manual (no VS Code): touch ~/.amico/ops/fleet/fallback.json  to allow guard; rm it to restore.
+```

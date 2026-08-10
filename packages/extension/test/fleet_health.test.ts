@@ -88,7 +88,7 @@ describe("fleet_health", () => {
     expect(c.ok).toBe(true);
   });
 
-  it("aggregate report has 3 checks", () => {
+  it("aggregate report has 4 checks (including fallback)", () => {
     const r = fleetHealthReport({
       repoGuardPath: REPO,
       configuredBinary: INSTALLED,
@@ -98,7 +98,26 @@ describe("fleet_health", () => {
       isExecutable: () => true,
       platform: "darwin",
     });
-    expect(r).toHaveLength(3);
+    expect(r).toHaveLength(4);
     expect(r.every(c => c.ok)).toBe(true);
+  });
+
+  it("aggregate report in fallback skips guard/settings/tunnel and reports fallback active", () => {
+    const fallbackRead = (p: string) => {
+      if (p.includes("fallback.json")) return JSON.stringify({ active: true, since: new Date().toISOString() });
+      return guardContent;
+    };
+    const r = fleetHealthReport({
+      repoGuardPath: REPO,
+      configuredBinary: "", // would normally fail, but fallback skips it
+      configuredPort: 0,
+      plistContent: null,
+      read: fallbackRead,
+      isExecutable: () => true,
+      platform: "darwin",
+    });
+    expect(r).toHaveLength(4);
+    expect(r.find(c => c.name === "Fleet fallback")?.detail).toMatch(/ACTIVE/);
+    expect(r.filter(c => c.name !== "Fleet fallback").every(c => c.ok)).toBe(true);
   });
 });

@@ -8,8 +8,16 @@
 # Install to ~/.local/bin on every host and point amicode.opencodeBinary at it:
 #   cp tools/fleet/amico-opencode-fleet-guard ~/.local/bin/amico-opencode-fleet-guard
 #   # then in settings.json (scope: machine): "amicode.opencodeBinary": "/Users/aaron/.local/bin/amico-opencode-fleet-guard"
-if [ "$(scutil --get LocalHostName 2>/dev/null)" != "Aarons-Mac-mini" ]; then
+# Local fallback (CONTEXT.md): when the canonical is unreachable the client
+# can enter fallback — `~/.amico/ops/fleet/fallback.json` exists — and the
+# guard must allow a local spawn (standalone) instead of `exit 1`. Rejoin
+# later merges the shard.
+FALLBACK="$HOME/.amico/ops/fleet/fallback.json"
+if [ -f "$FALLBACK" ]; then
+  : # fallback active — allow local spawn, fall through to SERVER exec
+elif [ "$(scutil --get LocalHostName 2>/dev/null)" != "Aarons-Mac-mini" ]; then
   echo "[amico-fleet-guard] refusing to spawn a local opencode server on a fleet client — panel will ride the tunnel" >&2
+  echo "[amico-fleet-guard] hint: canonical offline? Run 'Amicode: Fleet — Enter Local Fallback' (or: touch ~/.amico/ops/fleet/fallback.json) to work locally, then 'Rejoin' on reconnect." >&2
   exit 1
 fi
 # SERVER: resolve opencode binary — frozen first (same order as amicode-server.sh)
