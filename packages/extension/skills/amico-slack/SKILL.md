@@ -37,13 +37,16 @@ Use this skill when reading channel discussions, sending updates to Harmoniqs Sl
    - Strikethrough uses tildes `~strikethrough~`.
    - Code blocks use triple backticks ` ```code``` `.
 
-4. **Subtext Attribution & File Passing (`--as-user`)**:
-   - When posting on Aaron's behalf, pass `--as-user` to `amico-slack send`.
-   - It appends a subtle `_Authored by Amico_` context block at the bottom of the message.
+4. **Subtext Attribution & File Passing (sender identity)**:
+   - `amico-slack send` **defaults to Aaron** — it posts with Aaron's profile (`--as-user` behavior) and appends a subtle `_Authored by Amico_` context block. Pass `--as-bot` only when you intentionally want the bot identity without the footer. `--as-user` is still accepted for backwards-compat but is no longer required.
+   - The footer is **idempotent** — if the message text already ends with `_Authored by Amico_` the CLI strips the duplicate before appending, so do NOT manually add the footer in the message file; let the CLI do it. Manually adding it was the source of the double-footer bug.
+   - Requires `chat:write.customize` on the Slack app (reinstall after adding the scope) or the `username` override is silently ignored and the message appears as `amicobot`.
    - For long/multiline text or text containing backticks/quotes, **always pass the message via a temporary file** (`--file /tmp/msg.txt`) to avoid shell backtick/quote expansion bugs.
    - Example:
      ```bash
-     amico-slack send "#calibration" --file /tmp/cal_update.txt --as-user
+     amico-slack send "#calibration" --file /tmp/cal_update.txt
+     # --as-bot only when you want the bot:
+     # amico-slack send "#calibration" --file /tmp/cal_update.txt --as-bot
      ```
 
 5. **Threaded Discussions**:
@@ -60,10 +63,10 @@ Use this skill when reading channel discussions, sending updates to Harmoniqs Sl
 
 | Task | Command |
 |---|---|
-| Send update as Aaron (from file) | `amico-slack send "<channel>" --file <file> --as-user` |
-| Send update as Aaron (text) | `amico-slack send "<channel>" "<message>" --as-user` |
-| Send update in thread | `amico-slack send "<channel>" --file <file> --thread <ts> --as-user` |
-| Send update as Bot | `amico-slack send "<channel>" "<message>"` |
+| Send update as Aaron (from file) | `amico-slack send "<channel>" --file <file>` |
+| Send update as Aaron (text) | `amico-slack send "<channel>" "<message>"` |
+| Send update in thread | `amico-slack send "<channel>" --file <file> --thread <ts>` |
+| Send update as Bot | `amico-slack send "<channel>" "<message>" --as-bot` |
 | Read channel history | `amico-slack read "<channel>" [limit]` |
 | Read thread replies | `amico-slack read "<channel>" --thread <ts>` |
 | Search / verify team users | `amico-slack whois [name]` |
