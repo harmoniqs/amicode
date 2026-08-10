@@ -29,7 +29,7 @@ _Avoid_: User, tenant, owner (interchangeably)
 ### Work organization
 
 **Project**:
-The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. The dashboard's project surface owns switching between Projects and creating new ones. Every Session belongs to exactly one Project.
+The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. The canonical default Project is `~/armonia/` (the armonia workspace created by bootstrap-armonia.sh); the agent session cwd resolves there unless overridden. Every Session belongs to exactly one Project.
 _Avoid_: Workspace, folder (as a concept name), repo
 
 **Session**:
@@ -43,7 +43,7 @@ _Avoid_: chat, side chat, ticket
 ### Knowledge
 
 **Armonia**:
-The knowledge system amicode reads for context — a precedence-ordered stack of mounted Vaults (personal → project → team). Surfaced as the "Armonia" sidebar panel; backed by ArmoniaService. Distinct from a Project: Armonia is shared knowledge that mounts in, a Project is the directory you work in.
+The canonical workspace and knowledge system. As a workspace: the `~/armonia/` directory tree (`repos/{packages,demos}`, `data/{env,problems,runs,vaults}`) surfaced as the structured "Armonia" sidebar panel via ArmoniaService. As a knowledge system: the precedence-ordered stack of mounted Vaults under `data/vaults/` (personal → project → team) that the agent reads for context. The sidebar panel shows both — semantic buckets for the full workspace, with Vaults as one bucket.
 _Avoid_: Vault (as the system name), knowledge base
 
 **Vault**:
