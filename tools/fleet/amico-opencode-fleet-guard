@@ -1,0 +1,28 @@
+#!/bin/bash
+# amico-opencode-fleet-guard — fleet client guard for the Amicode extension.
+# Only Aarons-Mac-mini may run the canonical opencode server. On any other
+# machine, exit 1 immediately: the extension's health probe then rides the
+# SSH tunnel on 127.0.0.1:4096 (canonical server), or fails closed if the
+# tunnel is down — a client must NEVER spawn a local fork. (harmoniqs/amicode#279, #324)
+#
+# Install to ~/.local/bin on every host and point amicode.opencodeBinary at it:
+#   cp tools/fleet/amico-opencode-fleet-guard ~/.local/bin/amico-opencode-fleet-guard
+#   # then in settings.json (scope: machine): "amicode.opencodeBinary": "/Users/aaron/.local/bin/amico-opencode-fleet-guard"
+if [ "$(scutil --get LocalHostName 2>/dev/null)" != "Aarons-Mac-mini" ]; then
+  echo "[amico-fleet-guard] refusing to spawn a local opencode server on a fleet client — panel will ride the tunnel" >&2
+  exit 1
+fi
+# SERVER: resolve opencode binary — frozen first (same order as amicode-server.sh)
+FROZEN="$HOME/.amico/server/bin/opencode"
+VSIX_BIN="$(ls -dt "$HOME"/.vscode/extensions/harmoniqs.amicode-*/vendor/opencode/darwin-arm64/opencode 2>/dev/null | head -1)"
+DEV_BIN="$HOME/armonia/repos/amicode/packages/extension/vendor/opencode/darwin-arm64/opencode"
+if [ -x "$FROZEN" ]; then
+  exec "$FROZEN" "$@"
+elif [ -n "$VSIX_BIN" ] && [ -x "$VSIX_BIN" ]; then
+  exec "$VSIX_BIN" "$@"
+elif [ -x "$DEV_BIN" ]; then
+  exec "$DEV_BIN" "$@"
+else
+  echo "[amico-fleet-guard] no opencode binary found (frozen, VSIX, or armonia repos)" >&2
+  exit 1
+fi
