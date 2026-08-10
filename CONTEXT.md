@@ -7,7 +7,7 @@ The VSCode extension + CLI that lets researchers author, run, and inspect quantu
 ### Backends & access
 
 **Connection**:
-A credentialed, validated link to an external backend (e.g. Company Compute, Pasqal Cloud). Owns one Credential and zero-or-more Devices; carries a status (e.g. connected / needs key / invalid / expired / unreachable). Establishing the Company Compute Connection also unlocks the HP stack (grants the entitlement, flips Solver mode).
+A credentialed, validated link to an external service — compute (Company Compute), hardware (Pasqal Cloud), communication (Slack), or tooling (GitHub, Linear). Comes in two kinds: built-in (ships with a specific validator and brand icon) and custom (user-defined, optimistically stored with no probe). Owns one Credential and zero-or-more Devices; carries a status (e.g. connected / needs key / invalid / expired / unreachable). Only configured Connections appear in the panel; unconfigured built-ins are available through the "Add" picker. Establishing the Company Compute Connection also unlocks the HP stack (grants the entitlement, flips Solver mode).
 _Avoid_: Configuration, integration, account
 
 **Credential**:
