@@ -1,68 +1,87 @@
-# Fleet hardening — lid-close / internet-loss (#324)
+# Fleet — configurable multi-machine studio
 
-Operational fix applied 2026-08-09, captured here as versioned template.
+Operational tooling for Amicode's fleet: one canonical server, clients attach via tunnel.
 
-## Problem
+## Architecture
 
-Closing the MacBook lid killed the `ssh -L 127.0.0.1:4096` tunnel, so chat appeared to stop even though `Aarons-Mac-mini` (canonical server, `co.harmoniqs.amicode-server`, `opencode-dev.db` 707 sessions) kept running. Tunnel used `ServerAliveInterval 30 / CountMax 3` (90s detection) and the fleet guard was missing on the mini with a stale `~/harmoniqs` path, so a port-race could fork a laptop-local `opencode.db` during reconnect gaps.
+Fleet topology is declared in `~/.amico/ops/fleet/fleet.json`:
 
-## Fix (applied on hosts)
+```json
+{
+  "role": "client",
+  "canonical": {
+    "host": "my-server-hostname",
+    "port": 4096,
+    "sshAlias": "my-server"
+  }
+}
+```
 
-* **Guard** — `amico-opencode-fleet-guard` installed to `~/.local/bin` on both hosts. Client exits 1 (panel rides tunnel), server execs frozen `~/.amico/server/bin/opencode` falling back to VSIX. Prevents silent fork (ADR 0005, #279, #324).
-* **Tunnel** — `co.harmoniqs.amico-tunnel.plist` tuned to `ServerAliveInterval 15 / CountMax 2 / TCPKeepAlive yes` (30s detection, matches `amico-mini` Host `ServerAliveInterval 15`). LAN-first `Match host amico-mini exec "ping -c1 -W1000 Aarons-Mac-mini.local"` keeps tunnel up on same Wi-Fi with no internet.
-* **Hygiene** — forked `opencode.db` archived on macbook to `~/.local/share/opencode/archive/`, `~/.config/opencode/opencode.json` symlink repointed to `vault-aaron`, duplicate `Host the-feynmachine` removed.
+- **No file = standalone** (safe default — local server, pre-fleet behavior)
+- `role`: `"standalone"` | `"server"` | `"client"`
+- The guard script, extension, installer, and CI all read from this file
+
+## Components
+
+* **Guard** — `amico-opencode-fleet-guard` installed to `~/.local/bin`. Client reads fleet.json and exits 1 (panel rides tunnel); server/standalone execs the frozen opencode binary. Prevents silent fork (ADR 0005, #279, #324, #338).
+* **Tunnel** — `co.harmoniqs.amico-tunnel.plist` (launchd) with `ServerAliveInterval 15 / CountMax 2 / TCPKeepAlive yes`. The SSH alias and port come from fleet.json.
+* **Extension** — detects fleet role at activation; client mode polls the tunnel; "Go Standalone" switches permanently to local mode.
+
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `Amicode: Fleet — Go Standalone` | Leave the fleet permanently. Writes `role: "standalone"`, clears guard/port settings, unloads tunnel, spawns local server. |
+| `Amicode: Fleet — Repair` | Re-installs guard + tunnel from repo (same as `bash tools/fleet/install.sh`). |
+
+## Install (for fleet clients/servers)
+
+```bash
+# Create fleet.json first:
+mkdir -p ~/.amico/ops/fleet
+cat > ~/.amico/ops/fleet/fleet.json << 'EOF'
+{
+  "role": "client",
+  "canonical": {
+    "host": "your-server-hostname",
+    "port": 4096,
+    "sshAlias": "your-ssh-alias"
+  }
+}
+EOF
+
+# Then install guard + tunnel + settings:
+bash tools/fleet/install.sh          # idempotent: guard + tunnel + machine settings
+bash tools/fleet/install.sh --check  # check only (CI + healthcheck)
+```
 
 ## Verification
 
-```
-lsof -nP -iTCP:4096 -sTCP:LISTEN  # ssh LISTEN, no opencode
-curl http://127.0.0.1:4096/session  # 200 via tunnel
-sqlite3 ~/.local/share/opencode/opencode-dev.db "SELECT COUNT(*) FROM session;" # 707 on mini
-cat ~/.amico/ops/fleet-status.json # guard ok, served 639
-```
-
-Lid-close/wake or LAN-only internet loss: tunnel respawns via `KeepAlive` within ~30s.
-
-## Install
-
 ```bash
-bash tools/fleet/install.sh          # idempotent: guard + tunnel + machine settings
-bash tools/fleet/install.sh --check  # check only (CI + healthcheck)
-# Manual:
-cp tools/fleet/amico-opencode-fleet-guard ~/.local/bin/amico-opencode-fleet-guard
-chmod +x ~/.local/bin/amico-opencode-fleet-guard
-# scope: machine — never synced
-# settings.json: "amicode.opencodeBinary": "/Users/aaron/.local/bin/amico-opencode-fleet-guard"
-#                "amicode.opencodePort": 4096
+cat ~/.amico/ops/fleet/fleet.json    # role + canonical
+lsof -nP -iTCP:4096 -sTCP:LISTEN    # ssh LISTEN (tunnel), no opencode
+curl http://127.0.0.1:4096/session   # 200 via tunnel
 ```
 
-## Prevention (added 2026-08-10)
+## Go Standalone
 
-* **In-extension fleet health** — `src/fleet_health.ts` + `amicode.healthcheck` now report `Fleet guard / Fleet settings / Fleet tunnel` (darwin-only). Activation also warns once with a **Fix fleet** button that runs `tools/fleet/install.sh` in a terminal.
-* **Installer** — `tools/fleet/install.sh` is the single source: guard compare, `chmod +x`, `settings.json` merge (machine scope), tunnel plist `15/2 + TCPKeepAlive` + `launchctl (un)load`. Re-run anytime; `install.sh --check` is the CI twin.
-* **CI gate** — `ci.yml` `fleet-gate` runs `install.sh --check` + `assert_fleet_guard.sh`.
-* **Vendored tunnel template** — `tools/fleet/co.harmoniqs.amico-tunnel.plist` is the hardened plist (source of truth for the installer + CI).
-
-## Local fallback (added 2026-08-11, CONTEXT.md)
-
-When the mini is offline (`tailscale status` `Online:false`, `ssh amico-mini` timeout):
+When the canonical is offline or you want to leave the fleet:
 
 ```bash
 # In VS Code:
-#   Command Palette → Amicode: Fleet — Enter Local Fallback (work offline)
-#   — creates ~/.amico/ops/fleet/fallback.json, clears the guard override
-#     (amicode.opencodeBinary="" + opencodePort=0 → ephemeral), restarts
-#     locally. Status bar shows `Fleet: LOCAL FALLBACK`.
+#   Command Palette → Amicode: Fleet — Go Standalone
+#   — writes fleet.json role=standalone, clears guard override
+#     (opencodeBinary="" + opencodePort=0 → ephemeral), unloads tunnel, restarts locally.
 
-# Check:
-cat ~/.amico/ops/fleet/fallback.json   # {active, since}
-bash tools/fleet/install.sh --check    # fallback-aware (guard/settings/tunnel skipped)
-./tools/fleet/amico-opencode-fleet-guard --help  # now execs opencode even on client
-
-# When the mini is back (tailscale Online:true, curl http://127.0.0.1:4096/ 200):
-#   Command Palette → Amicode: Fleet — Rejoin (merge fallback sessions)
-#   — archives ~/.local/share/opencode/opencode.db → ~/.amico/fleet-recovery/<date>/,
-#     exits fallback (restores guard + 4096), restarts to ride tunnel.
-#   Or: Amicode: Fleet — Exit Local Fallback (without archive)
-# Manual (no VS Code): touch ~/.amico/ops/fleet/fallback.json  to allow guard; rm it to restore.
+# Manual (no VS Code):
+cat > ~/.amico/ops/fleet/fleet.json << 'EOF'
+{"role": "standalone"}
+EOF
+# Then restart VS Code / the extension.
 ```
+
+## Prevention
+
+* **In-extension fleet health** — `src/fleet_health.ts` + `amicode.healthcheck` report `Fleet role / guard / settings / tunnel` (darwin-only, skipped when standalone).
+* **Installer** — `tools/fleet/install.sh` reads fleet.json for topology. No file = skip.
+* **CI gate** — `ci.yml` `fleet-gate` runs `assert_fleet_guard.sh` (verifies guard references fleet.json, has exit 1, packaged copies in sync).

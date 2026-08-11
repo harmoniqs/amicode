@@ -1,22 +1,20 @@
 // Fleet health — pure, testable checks that prevent the 2026-08-07 / 2026-08-09
-// silent-fork regressions (ADR 0005, #279, #324) from recurring.
+// silent-fork regressions (ADR 0005, #279, #324, #338) from recurring.
 //
 // Every check is synchronous + injectable (no direct fs/exec) so it is
 // unit-testable and never blocks activation. The extension's `amicode.healthcheck`
 // and activation warning call these; `tools/fleet/install.sh --check` is the CLI twin.
 //
-// Invariant: the MacBook (fleet client) must NEVER spawn a local opencode server.
-// The guard `tools/fleet/amico-opencode-fleet-guard` enforces it by `exit 1` on
-// any host whose LocalHostName != canonical. Without the guard the fixed-port
-// race (`amicode.opencodePort: 4096`) silently forks `opencode.db`.
+// Fleet role is determined by ~/.amico/ops/fleet/fleet.json (no file = standalone).
+// A fleet client must NEVER spawn a local opencode server. The guard
+// `tools/fleet/amico-opencode-fleet-guard` enforces it by reading fleet.json and
+// `exit 1` when role = "client".
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import { FALLBACK_PATH, isFallbackActive } from "./fleet_fallback";
+import { readFleetConfig, type FleetConfig } from "./fleet_fallback";
 
-export const FLEET_CANONICAL_HOST = "Aarons-Mac-mini";
-export const FLEET_PORT = 4096;
 export const FLEET_GUARD_REL = "tools/fleet/amico-opencode-fleet-guard";
 export const FLEET_GUARD_INSTALL = path.join(homedir(), ".local", "bin", "amico-opencode-fleet-guard");
 
@@ -37,7 +35,7 @@ export function checkFleetGuard(
   opts: { read?: (p: string) => string; isExecutable?: (p: string) => boolean; platform?: string } = {},
 ): FleetCheck {
   const read = opts.read ?? ((p: string) => fs.readFileSync(p, "utf8"));
-  // Fleet guard only matters on darwin; elsewhere it's a no-op (solo/Linux never uses the tunnel).
+  // Fleet guard only matters on darwin; elsewhere it's a no-op.
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet guard", ok: true, detail: "skipped (not darwin)" };
   }
@@ -67,18 +65,19 @@ export function checkFleetGuard(
   return { name: "Fleet guard", ok: true, detail: `installed and in sync (${installedGuardPath})` };
 }
 
-/** Settings check: amicode.opencodeBinary must point at the guard and opencodePort must be 4096 on darwin fleet hosts. */
+/** Settings check: amicode.opencodeBinary must point at the guard and opencodePort must match fleet config. */
 export function checkFleetSettings(
   configuredBinary: string,
   configuredPort: number,
-  opts: { platform?: string } = {},
+  opts: { platform?: string; fleetConfig?: FleetConfig | null } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet settings", ok: true, detail: "skipped (not darwin)" };
   }
+  const cfg = opts.fleetConfig ?? readFleetConfig();
+  const wantPort = cfg?.canonical?.port ?? 4096;
   const wantBinary = FLEET_GUARD_INSTALL;
   // Empty binary = vendored default → on a fleet client this would spawn a fork, so flag it.
-  // On the canonical host the vendored binary would also be wrong (should go through guard → frozen).
   if (!configuredBinary || configuredBinary.trim() === "") {
     return {
       name: "Fleet settings",
@@ -98,21 +97,21 @@ export function checkFleetSettings(
       fix: `set amicode.opencodeBinary to ${wantBinary} (scope: machine)`,
     };
   }
-  if (configuredPort !== FLEET_PORT) {
+  if (configuredPort !== wantPort) {
     return {
       name: "Fleet settings",
       ok: false,
-      detail: `amicode.opencodePort is ${configuredPort}, expected ${FLEET_PORT} (tunnel port)`,
-      fix: `set amicode.opencodePort to ${FLEET_PORT} (scope: machine)`,
+      detail: `amicode.opencodePort is ${configuredPort}, expected ${wantPort} (tunnel port)`,
+      fix: `set amicode.opencodePort to ${wantPort} (scope: machine)`,
     };
   }
-  return { name: "Fleet settings", ok: true, detail: `guard + port ${FLEET_PORT} (machine scope)` };
+  return { name: "Fleet settings", ok: true, detail: `guard + port ${wantPort} (machine scope)` };
 }
 
-/** Tunnel plist check: ServerAliveInterval 15, CountMax 2, TCPKeepAlive yes, -L 127.0.0.1:4096:127.0.0.1:4096 */
+/** Tunnel plist check: ServerAliveInterval 15, CountMax 2, TCPKeepAlive yes, correct port forward. */
 export function checkFleetTunnel(
   plistContent: string | null,
-  opts: { platform?: string } = {},
+  opts: { platform?: string; fleetConfig?: FleetConfig | null } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet tunnel", ok: true, detail: "skipped (not darwin)" };
@@ -125,19 +124,13 @@ export function checkFleetTunnel(
       fix: "bash tools/fleet/install.sh  (installs tunnel plist)",
     };
   }
+  const cfg = opts.fleetConfig ?? readFleetConfig();
+  const port = cfg?.canonical?.port ?? 4096;
+  const portForward = `127.0.0.1:${port}:127.0.0.1:${port}`;
+
   const issues: string[] = [];
-  if (!plistContent.includes("ServerAliveInterval") || !/<string>ServerAliveInterval<\/string>\s*<string>15<\/string>/.test(plistContent)) {
-    // Plist stores as <string>ServerAliveInterval=15</string> via ProgramArguments; be permissive.
-    if (!plistContent.includes("ServerAliveInterval=15") && !plistContent.includes("ServerAliveInterval</string>") ) {
-      // fallback strict check: look for 15 near ServerAliveInterval
-      const m = plistContent.match(/ServerAliveInterval[^\d]*(\d+)/);
-      if (!m || m[1] !== "15") issues.push("ServerAliveInterval should be 15");
-    } else if (!plistContent.includes("15")) {
-      issues.push("ServerAliveInterval should be 15");
-    }
-  }
-  // More robust: just check substrings that the hardened plist definitely contains.
-  if (!plistContent.includes("ServerAliveInterval=15") && !plistContent.includes("ServerAliveInterval") ) {
+  // Check ServerAliveInterval
+  if (!plistContent.includes("ServerAliveInterval=15") && !plistContent.includes("ServerAliveInterval")) {
     issues.push("ServerAliveInterval 15 missing");
   } else if (plistContent.includes("ServerAliveInterval=30")) {
     issues.push("ServerAliveInterval is 30 (stale, should be 15)");
@@ -148,59 +141,63 @@ export function checkFleetTunnel(
     issues.push("ServerAliveCountMax is 3 (stale, should be 2)");
   }
   if (!plistContent.includes("TCPKeepAlive=yes")) issues.push("TCPKeepAlive yes missing");
-  if (!plistContent.includes("127.0.0.1:4096:127.0.0.1:4096")) issues.push("LocalForward 127.0.0.1:4096:127.0.0.1:4096 missing");
+  if (!plistContent.includes(portForward)) issues.push(`LocalForward ${portForward} missing`);
 
   // Deduplicate and decide
   const uniq = [...new Set(issues)];
   if (uniq.length > 0) {
     return { name: "Fleet tunnel", ok: false, detail: uniq.join("; "), fix: "bash tools/fleet/install.sh  (tunes tunnel to 15/2 + TCPKeepAlive)" };
   }
-  return { name: "Fleet tunnel", ok: true, detail: "ServerAlive 15/2 + TCPKeepAlive, 4096 forward" };
+  return { name: "Fleet tunnel", ok: true, detail: `ServerAlive 15/2 + TCPKeepAlive, ${port} forward` };
 }
 
-/** Fallback state check — when fallback is active the guard/settings/tunnel drift is intentional. */
-export function checkFleetFallback(
-  fallbackPath: string = FALLBACK_PATH,
+/** Fleet role check — surfaces the current mode. */
+export function checkFleetRole(
   opts: { read?: (p: string) => string; platform?: string } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
-    return { name: "Fleet fallback", ok: true, detail: "skipped (not darwin)" };
+    return { name: "Fleet role", ok: true, detail: "skipped (not darwin)" };
   }
-  const active = isFallbackActive(fallbackPath, opts.read);
-  if (active) {
-    return { name: "Fleet fallback", ok: true, detail: "ACTIVE — local sessions, rejoin on reconnect → Amicode: Fleet — Rejoin" };
+  const cfg = readFleetConfig(undefined, opts.read);
+  const role = cfg?.role ?? "standalone";
+  if (role === "standalone") {
+    return { name: "Fleet role", ok: true, detail: "standalone (local server, no fleet)" };
   }
-  return { name: "Fleet fallback", ok: true, detail: "inactive (canonical via tunnel)" };
+  if (role === "server") {
+    return { name: "Fleet role", ok: true, detail: `server (canonical for fleet, host: ${cfg?.canonical?.host ?? "unknown"})` };
+  }
+  if (role === "client") {
+    return { name: "Fleet role", ok: true, detail: `client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096} via ${cfg?.canonical?.sshAlias ?? "ssh"}` };
+  }
+  return { name: "Fleet role", ok: false, detail: `unknown role: ${role}`, fix: "check ~/.amico/ops/fleet/fleet.json" };
 }
 
-/** Aggregate helper — returns all fleet checks (guard + settings + tunnel + fallback). */
+/** Aggregate helper — returns all fleet checks (role + guard + settings + tunnel).
+ *  When role is standalone, guard/settings/tunnel checks are skipped (not relevant). */
 export function fleetHealthReport(args: {
   repoGuardPath: string;
   installedGuardPath?: string;
   configuredBinary: string;
   configuredPort: number;
   plistContent: string | null;
-  fallbackPath?: string;
   read?: (p: string) => string;
   isExecutable?: (p: string) => boolean;
   platform?: string;
 }): FleetCheck[] {
-  // When fallback is active, guard/settings/tunnel checks are intentionally bypassed —
-  // the user deliberately spawned locally. Still surface them as OK with a fallback note
-  // so healthcheck doesn't red on intentional drift, but keep the fallback row visible.
-  const fallbackActive = isFallbackActive(args.fallbackPath ?? FALLBACK_PATH, args.read);
-  if (fallbackActive && (args.platform ?? process.platform) === "darwin") {
+  const cfg = readFleetConfig(undefined, args.read);
+  const role = cfg?.role ?? "standalone";
+
+  // Standalone: fleet checks are irrelevant — just surface the role.
+  if (role === "standalone" && (args.platform ?? process.platform) === "darwin") {
     return [
-      { name: "Fleet guard", ok: true, detail: "skipped — fallback active (local spawn allowed)" },
-      { name: "Fleet settings", ok: true, detail: "skipped — fallback active" },
-      { name: "Fleet tunnel", ok: true, detail: "skipped — fallback active (canonical unreachable)" },
-      checkFleetFallback(args.fallbackPath, { read: args.read, platform: args.platform }),
+      checkFleetRole({ read: args.read, platform: args.platform }),
     ];
   }
+
   return [
+    checkFleetRole({ read: args.read, platform: args.platform }),
     checkFleetGuard(args.repoGuardPath, args.installedGuardPath, { read: args.read, isExecutable: args.isExecutable, platform: args.platform }),
-    checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform }),
-    checkFleetTunnel(args.plistContent, { platform: args.platform }),
-    checkFleetFallback(args.fallbackPath, { read: args.read, platform: args.platform }),
+    checkFleetSettings(args.configuredBinary, args.configuredPort, { platform: args.platform, fleetConfig: cfg }),
+    checkFleetTunnel(args.plistContent, { platform: args.platform, fleetConfig: cfg }),
   ];
 }

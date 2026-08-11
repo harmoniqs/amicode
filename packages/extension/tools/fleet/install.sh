@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Fleet installer — idempotent, safe to re-run.
+# Reads fleet topology from ~/.amico/ops/fleet/fleet.json (no file = standalone, skip).
 # Installs/updates the fleet guard + tunnel on this host and fixes machine-scoped settings.
 # Usage:
 #   bash tools/fleet/install.sh          # install/repair (writes files, reloads launchd)
@@ -11,11 +12,33 @@ GUARD_DST="$HOME/.local/bin/amico-opencode-fleet-guard"
 PLIST_SRC="$REPO_ROOT/tools/fleet/co.harmoniqs.amico-tunnel.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist"
 SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
+FLEET_CONFIG="$HOME/.amico/ops/fleet/fleet.json"
 CHECK=0
 if [[ "${1:-}" == "--check" ]]; then CHECK=1; fi
 
 die() { echo "[fleet] $*" >&2; exit 1; }
 say() { echo "[fleet] $*"; }
+
+# --- read fleet config ---
+ROLE="standalone"
+FLEET_PORT=4096
+if [[ -f "$FLEET_CONFIG" ]]; then
+  ROLE="$(grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*"role"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo standalone)"
+  PORT_PARSED="$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' || echo 4096)"
+  if [[ -n "$PORT_PARSED" ]]; then FLEET_PORT="$PORT_PARSED"; fi
+fi
+
+# Standalone: nothing to install — the guard/tunnel are irrelevant.
+if [[ "$ROLE" == "standalone" ]]; then
+  if [[ $CHECK -eq 1 ]]; then
+    say "standalone (no fleet.json or role=standalone) — fleet checks skipped"
+  else
+    say "standalone mode — nothing to install (use 'Amicode: Fleet — Enroll' to join a fleet)"
+  fi
+  exit 0
+fi
+
+say "fleet role: $ROLE (port: $FLEET_PORT)"
 
 # --- guard ---
 if [[ ! -f "$GUARD_SRC" ]]; then die "repo guard missing at $GUARD_SRC (git pull?)"; fi
@@ -39,7 +62,7 @@ fi
 # --- machine-scoped settings (only on darwin; harmless elsewhere) ---
 if [[ "$(uname -s)" == "Darwin" ]]; then
   want_binary="$GUARD_DST"
-  want_port=4096
+  want_port="$FLEET_PORT"
   if [[ $CHECK -eq 1 ]]; then
     # check via node (json with comments not strict)
     node -e "
@@ -47,12 +70,13 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       const p=process.argv[1];
       let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){let t=fs.readFileSync(p,'utf8'); j=JSON.parse(t.replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''))} 
       const b=j['amicode.opencodeBinary']||''; const port=j['amicode.opencodePort'];
+      const wantPort=Number(process.argv[3]);
       let fail=0;
       if(b!==process.argv[2]){console.error('[fleet] FAIL amicode.opencodeBinary is '+(b||'(empty)')+', want '+process.argv[2]); fail=1}
-      if(port!==4096){console.error('[fleet] FAIL amicode.opencodePort is '+port+', want 4096'); fail=1}
+      if(port!==wantPort){console.error('[fleet] FAIL amicode.opencodePort is '+port+', want '+wantPort); fail=1}
       process.exit(fail);
-    " "$SETTINGS" "$want_binary" || exit 1
-    say "ok settings $SETTINGS (binary + port)"
+    " "$SETTINGS" "$want_binary" "$want_port" || exit 1
+    say "ok settings $SETTINGS (binary + port $want_port)"
   else
     if [[ -f "$SETTINGS" ]]; then
       # merge via node — preserve other settings, force fleet keys (machine scope)
@@ -86,8 +110,8 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       if ! grep -q "ServerAliveInterval=15" "$PLIST_DST"; then echo "[fleet] FAIL tunnel ServerAliveInterval 15 missing"; exit 1; fi
       if ! grep -q "ServerAliveCountMax=2" "$PLIST_DST"; then echo "[fleet] FAIL tunnel ServerAliveCountMax 2 missing"; exit 1; fi
       if ! grep -q "TCPKeepAlive=yes" "$PLIST_DST"; then echo "[fleet] FAIL tunnel TCPKeepAlive yes missing"; exit 1; fi
-      if ! grep -q "127.0.0.1:4096:127.0.0.1:4096" "$PLIST_DST"; then echo "[fleet] FAIL tunnel LocalForward 4096 missing"; exit 1; fi
-      say "ok tunnel $PLIST_DST (15/2 + TCPKeepAlive)"
+      if ! grep -q "127.0.0.1:${FLEET_PORT}:127.0.0.1:${FLEET_PORT}" "$PLIST_DST"; then echo "[fleet] FAIL tunnel LocalForward ${FLEET_PORT} missing"; exit 1; fi
+      say "ok tunnel $PLIST_DST (15/2 + TCPKeepAlive, port $FLEET_PORT)"
     else
       mkdir -p "$(dirname "$PLIST_DST")"
       cp "$PLIST_SRC" "$PLIST_DST"
@@ -96,16 +120,6 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
       launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
       say "installed tunnel $PLIST_DST and (re)loaded"
     fi
-  fi
-fi
-
-# --- fork hygiene hint (no auto-delete; just report) ---
-if [[ -f "$HOME/.local/share/opencode/opencode.db" ]] && [[ "$(uname -s)" == "Darwin" ]]; then
-  # If hostname != canonical and DB exists, it's likely a leftover fork from before the guard.
-  # The guard now prevents new forks; we just warn if the DB looks forked (tiny vs canonical).
-  host="$(scutil --get LocalHostName 2>/dev/null || hostname -s 2>/dev/null || echo unknown)"
-  if [[ "$host" != "Aarons-Mac-mini" ]] && [[ -d "$HOME/.local/share/opencode/archive" ]]; then
-    say "note: fork archive exists at ~/.local/share/opencode/archive/ (old forks archived, current DB is CLI's 3-session store — expected)"
   fi
 fi
 

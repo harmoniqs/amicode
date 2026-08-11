@@ -12,11 +12,10 @@ ok() { echo "[fleet-gate] ok $*"; }
 
 [[ -f "$GUARD" ]] || fail "guard missing at $GUARD (fleet hardening not merged?)"
 [[ -x "$GUARD" ]] || fail "guard not executable — chmod +x $GUARD"
-grep -q 'Aarons-Mac-mini' "$GUARD" || fail "guard does not mention canonical host Aarons-Mac-mini"
+grep -q 'fleet.json' "$GUARD" || fail "guard does not reference fleet.json config"
 grep -q 'exit 1' "$GUARD" || fail "guard missing client exit 1 (would not prevent fork)"
 grep -q 'FROZEN.*\.amico/server/bin/opencode' "$GUARD" || fail "guard missing frozen binary path"
-grep -q 'FALLBACK.*\.amico/ops/fleet/fallback.json' "$GUARD" || fail "guard missing fallback marker check (CONTEXT.md Local fallback)"
-grep -q 'Local fallback' "$GUARD" || fail "guard missing Local fallback comment/hint"
+grep -q 'FLEET_CONFIG' "$GUARD" || fail "guard missing FLEET_CONFIG variable"
 ok "guard $GUARD"
 
 [[ -f "$INSTALL" ]] || fail "installer missing at $INSTALL"
@@ -32,8 +31,7 @@ ok "tunnel plist $PLIST"
 
 # Guard + tunnel template are the source of truth for the installer; ensure the
 # installer itself is consistent (it references both).
-grep -q "FLEET_GUARD_REL" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing FLEET_GUARD_REL"
-grep -q "FLEET_PORT.*4096" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing FLEET_PORT 4096"
+grep -q "FLEET_GUARD_REL\|FLEET_CONFIG_PATH\|fleet.json" "$ROOT/packages/extension/src/fleet_health.ts" || fail "fleet_health.ts missing fleet config reference"
 
 # Packaged copy must stay in sync with repo root (the VSIX ships the packaged copy).
 PKG_GUARD="$ROOT/packages/extension/tools/fleet/amico-opencode-fleet-guard"

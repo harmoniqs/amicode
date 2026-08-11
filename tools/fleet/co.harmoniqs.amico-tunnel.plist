@@ -20,7 +20,7 @@
 		<string>TCPKeepAlive=yes</string>
 		<string>-L</string>
 		<string>127.0.0.1:4096:127.0.0.1:4096</string>
-		<string>amico-mini</string>
+		<string>FLEET_SSH_ALIAS</string>
 	</array>
 	<key>RunAtLoad</key>
 	<true/>
