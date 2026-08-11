@@ -1081,6 +1081,23 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[fleet] repair started: bash ${script} — watch the terminal`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.repair", () => void runFleetRepair()));
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.repo.sync", async () => {
+      const repoRoot = path.resolve(ctx.extensionPath, "..", "..");
+      const script = path.join(repoRoot, "scripts", "repo-sync.sh");
+      const use = fs.existsSync(script) ? script : path.resolve(ctx.extensionPath, "scripts", "repo-sync.sh");
+      // Prefer the repo-root script when running from a checked-out workspace (F5), else the packaged copy.
+      const target = fs.existsSync(path.join(repoRoot, "scripts", "repo-sync.sh")) ? path.join(repoRoot, "scripts", "repo-sync.sh") : path.resolve(ctx.extensionPath, "scripts", "repo-sync.sh");
+      if (!fs.existsSync(target)) {
+        void vscode.window.showErrorMessage(`Amicode: repo-sync not found at ${target} — git pull?`);
+        return;
+      }
+      const term = vscode.window.createTerminal({ name: "Amicode: Repo Sync" });
+      term.show();
+      term.sendText(`bash "${target}" --fix`);
+      opencodeChannel.appendLine(`[repo-sync] started: bash ${target} --fix`);
+    }),
+  );
 
   // Fleet fallback — Local fallback escape hatch per CONTEXT.md.
   // Marker: ~/.amico/ops/fleet/fallback.json (machine-scoped, never synced).

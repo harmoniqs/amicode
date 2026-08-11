@@ -189,6 +189,10 @@
       {
         "command": "amicode.fleet.rejoin",
         "title": "Amicode: Fleet — Rejoin (merge fallback sessions)"
+      },
+      {
+        "command": "amicode.repo.sync",
+        "title": "Amicode: Repo Sync (git + vendor + fleet)"
       }
     ],
     "configuration": {
