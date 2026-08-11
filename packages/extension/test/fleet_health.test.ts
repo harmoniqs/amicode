@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkFleetGuard, checkFleetSettings, checkFleetTunnel, fleetHealthReport, FLEET_GUARD_INSTALL } from "../src/fleet_health";
+import { checkFleetGuard, checkFleetSettings, checkFleetTunnel, checkFleetRole, fleetHealthReport, FLEET_GUARD_INSTALL } from "../src/fleet_health";
 
 const REPO = "/repo/tools/fleet/amico-opencode-fleet-guard";
 const INSTALLED = FLEET_GUARD_INSTALL;
@@ -43,19 +43,19 @@ describe("fleet_health", () => {
   });
 
   it("settings: fails when binary not set", () => {
-    const c = checkFleetSettings("", 4096, { platform: "darwin" });
+    const c = checkFleetSettings("", 4096, { platform: "darwin", fleetConfig: { role: "client", canonical: { port: 4096 } } });
     expect(c.ok).toBe(false);
     expect(c.detail).toMatch(/not set/);
   });
 
   it("settings: fails when port wrong", () => {
-    const c = checkFleetSettings(INSTALLED, 43117, { platform: "darwin" });
+    const c = checkFleetSettings(INSTALLED, 43117, { platform: "darwin", fleetConfig: { role: "client", canonical: { port: 4096 } } });
     expect(c.ok).toBe(false);
     expect(c.detail).toMatch(/43117/);
   });
 
-  it("settings: ok when guard + 4096", () => {
-    const c = checkFleetSettings(INSTALLED, 4096, { platform: "darwin" });
+  it("settings: ok when guard + matching port", () => {
+    const c = checkFleetSettings(INSTALLED, 4096, { platform: "darwin", fleetConfig: { role: "client", canonical: { port: 4096 } } });
     expect(c.ok).toBe(true);
   });
 
@@ -88,36 +88,43 @@ describe("fleet_health", () => {
     expect(c.ok).toBe(true);
   });
 
-  it("aggregate report has 4 checks (including fallback)", () => {
+  it("role: returns standalone when no config", () => {
+    const c = checkFleetRole({ platform: "darwin", read: () => { throw new Error("no file"); } });
+    expect(c.ok).toBe(true);
+    expect(c.detail).toMatch(/standalone/);
+  });
+
+  it("aggregate report: standalone skips guard/settings/tunnel", () => {
+    // No fleet.json = standalone → only the role check returned
+    const r = fleetHealthReport({
+      repoGuardPath: REPO,
+      configuredBinary: "", // would fail in client mode, but standalone skips
+      configuredPort: 0,
+      plistContent: null,
+      read: () => { throw new Error("no file"); },
+      isExecutable: () => true,
+      platform: "darwin",
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0].name).toBe("Fleet role");
+    expect(r[0].detail).toMatch(/standalone/);
+  });
+
+  it("aggregate report: client mode returns role + guard + settings + tunnel", () => {
+    const clientConfig = JSON.stringify({ role: "client", canonical: { host: "test", port: 4096, sshAlias: "test" } });
     const r = fleetHealthReport({
       repoGuardPath: REPO,
       configuredBinary: INSTALLED,
       configuredPort: 4096,
       plistContent: `ServerAliveInterval=15 ServerAliveCountMax=2 TCPKeepAlive=yes 127.0.0.1:4096:127.0.0.1:4096`,
-      read: () => guardContent,
+      read: (p) => {
+        if (p.includes("fleet.json")) return clientConfig;
+        return guardContent;
+      },
       isExecutable: () => true,
       platform: "darwin",
     });
     expect(r).toHaveLength(4);
     expect(r.every(c => c.ok)).toBe(true);
-  });
-
-  it("aggregate report in fallback skips guard/settings/tunnel and reports fallback active", () => {
-    const fallbackRead = (p: string) => {
-      if (p.includes("fallback.json")) return JSON.stringify({ active: true, since: new Date().toISOString() });
-      return guardContent;
-    };
-    const r = fleetHealthReport({
-      repoGuardPath: REPO,
-      configuredBinary: "", // would normally fail, but fallback skips it
-      configuredPort: 0,
-      plistContent: null,
-      read: fallbackRead,
-      isExecutable: () => true,
-      platform: "darwin",
-    });
-    expect(r).toHaveLength(4);
-    expect(r.find(c => c.name === "Fleet fallback")?.detail).toMatch(/ACTIVE/);
-    expect(r.filter(c => c.name !== "Fleet fallback").every(c => c.ok)).toBe(true);
   });
 });

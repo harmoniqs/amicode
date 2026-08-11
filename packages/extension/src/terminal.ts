@@ -68,10 +68,16 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     if (configContent) env.OPENCODE_CONFIG_CONTENT = configContent;
     if (spawnEnv.OPENCODE_SERVER_PASSWORD) env.OPENCODE_SERVER_PASSWORD = spawnEnv.OPENCODE_SERVER_PASSWORD;
     if (spawnEnv.OPENCODE_SERVER_USERNAME) env.OPENCODE_SERVER_USERNAME = spawnEnv.OPENCODE_SERVER_USERNAME;
-    // Carry fleet fallback hint as env for shell scripts that check it
+    // Carry fleet standalone hint as env for shell scripts that check it
     try {
+      const fleetJson = path.join(os.homedir(), ".amico", "ops", "fleet", "fleet.json");
+      if (fs.existsSync(fleetJson)) {
+        const cfg = JSON.parse(fs.readFileSync(fleetJson, "utf8"));
+        if (cfg?.role === "standalone") env.AMICO_FLEET_STANDALONE = "1";
+      }
+      // Legacy fallback.json — also treat as standalone hint
       const fallback = path.join(os.homedir(), ".amico", "ops", "fleet", "fallback.json");
-      if (fs.existsSync(fallback)) env.AMICO_FLEET_FALLBACK = "1";
+      if (fs.existsSync(fallback)) env.AMICO_FLEET_STANDALONE = "1";
     } catch {}
 
     // Also expose the repo root so `pnpm sync` works from any cwd
