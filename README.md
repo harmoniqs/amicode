@@ -61,6 +61,8 @@ Amicode reads your **vaults** — the stack you mount under `~/.amico/vaults/` (
 
 Your machines form one logical studio. Vault mounts sync via `armonia-sync-once` (launchd, every 15 min); the chat database stays canonical via an SSH mesh; WIP follows you between hosts with `leave`/`arrive`. No second writer ever touches the same SQLite file, no live `.git` is file-synced — the invariants are enforced, not assumed. Check it with `/fleet`; the skill is the playbook. Solo still works fully offline — the fleet simply means you never have to choose which machine holds the truth.
 
+When the canonical is unreachable, `Amicode: Fleet — Enter Local Fallback` lets you keep working offline (local sessions, `Fleet: LOCAL FALLBACK` in the status bar) and `Rejoin` merges back when the tunnel is back. Drift is surfaced by `Amicode: Healthcheck` (`Fleet guard / settings / tunnel`) and one-command `pnpm sync` (`--check` CI twin, `--fix` also `git pull` + `fetch:opencode` + `Fleet — Repair`) — `Amicode: Repo Sync` runs it, and `Amicode: Open Amicode Terminal` opens a shell whose `opencode` is the vendored, amicode-aware binary (same `OPENCODE_CONFIG_CONTENT` as the chat) so `pnpm sync` there diagnoses the same panel you see.
+
 ### Open system management — from pulse to device
 
 The extension manages the system around the solve, not just the solve itself. Lab profiles (`lab.toml`), device calibration graphs, and run capture are all rendered natively instead of buried in config files. You see system state where you act on it.
