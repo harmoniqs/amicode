@@ -56,6 +56,7 @@ import {
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL, FLEET_CANONICAL_HOST } from "./fleet_health";
 import { isFallbackActive, enterFallback, exitFallback, readFallback, fallbackStatusLabel } from "./fleet_fallback";
+import { registerAmicodeTerminal } from "./terminal";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -1231,6 +1232,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[repo-sync] started: bash ${target} --fix`);
     }),
   );
+
+  // Amicode terminal — bundles the canonical opencode (vendored + fleet-aware)
+  // so `opencode` in the terminal is the same binary + same OPENCODE_CONFIG_CONTENT
+  // the chat server was spawned with. That terminal can `pnpm sync`, `bash tools/fleet/install.sh --check`,
+  // `amico` etc., and its `opencode` knows about fleet/fallback and can be used
+  // to diagnose the same panel the user sees.
+  registerAmicodeTerminal(ctx, {
+    extensionPath: ctx.extensionPath,
+    getConfigContent: () => currentSpawnEnv?.OPENCODE_CONFIG_CONTENT,
+    getSpawnEnv: () => currentSpawnEnv,
+    channel: opencodeChannel,
+  });
 
   // Fleet fallback — Local fallback escape hatch per CONTEXT.md.
   // Marker: ~/.amico/ops/fleet/fallback.json (machine-scoped, never synced).

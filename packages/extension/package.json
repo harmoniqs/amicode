@@ -193,6 +193,10 @@
       {
         "command": "amicode.repo.sync",
         "title": "Amicode: Repo Sync (git + vendor + fleet)"
+      },
+      {
+        "command": "amicode.openAmicodeTerminal",
+        "title": "Amicode: Open Amicode Terminal (vendored opencode, fleet-aware)"
       }
     ],
     "configuration": {

@@ -54,6 +54,10 @@ pnpm sync --fork       # fork helper: clone status + pnpm opencode:build / openc
 
 `--check` is the CI twin (no network mutates beyond `git fetch --prune` + `gh` probes). `--fix` is idempotent and safe to re-run whenever `main` feels stale or the panel is stranded. Fleet machine-scoped settings (`~/.local/bin` guard, `~/Library/LaunchAgents` tunnel, `settings.json:opencodeBinary/Port`) are only repaired by `bash tools/fleet/install.sh` / `Fleet — Repair`, never by `repo-sync` alone — `repo-sync` just reports the `FAIL` with the fix line.
 
+## Amicode terminal (bundled canonical opencode)
+
+The integrated terminal's `opencode` is now the **vendored, amicode-aware binary** — the same `vendor/opencode/<platform>/opencode` + the same `OPENCODE_CONFIG_CONTENT` the chat server was spawned with. `Amicode: Open Amicode Terminal` (Command Palette) opens a shell whose `PATH` is prepended with `vendor/opencode/<platform>` (so `opencode` resolves to the vendored one) and `bin/launcher` (so `amico`/`amico-run` resolve), and whose env carries `OPENCODE_CONFIG_CONTENT` + `OPENCODE_SERVER_PASSWORD` + `AMICO_FLEET_FALLBACK`. That terminal's `opencode` knows about fleet/guard/fallback and the per-workspace skills/vault mounts, so `opencode` there can diagnose the same panel the user sees (`pnpm sync --check`, `bash tools/fleet/install.sh --check`, `amico fleet ...`), and `amico`/`pnpm sync` etc. all work without extra `PATH` setup. The terminal is a normal shell (not an opencode TUI) — run `opencode` on demand; `Amicode: Open Amicode Terminal` with arg `opencode` opens the TUI directly.
+
 macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 `xattr -d com.apple.quarantine packages/extension/vendor/opencode/darwin-arm64/opencode`
 
