@@ -54,6 +54,8 @@ import {
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
+import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
+import { isFallbackActive, enterFallback, exitFallback, readFallback, fallbackStatusLabel } from "./fleet_fallback";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -1026,6 +1028,31 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           results.push({ name: "LLM creds", ok: false, detail: "skipped (server down)" });
         }
 
+        // Fleet (ADR 0005, #279, #324): guard + settings + tunnel. Only enforced on
+        // darwin (the fleet is Mac fleet); elsewhere these checks self-skip as OK.
+        // Synchronous file reads; never throws — a bad read is a failed check, not a crash.
+        try {
+          const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
+          const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+          let plistContent: string | null = null;
+          try {
+            plistContent = fs.readFileSync(plistPath, "utf8");
+          } catch {
+            plistContent = null;
+          }
+          const fleetChecks = fleetHealthReport({
+            repoGuardPath,
+            configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
+            configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+            plistContent,
+          });
+          for (const c of fleetChecks) {
+            results.push({ name: c.name, ok: c.ok, detail: c.ok ? c.detail : `${c.detail} → ${c.fix ?? ""}`.trim() });
+          }
+        } catch (e) {
+          results.push({ name: "Fleet", ok: false, detail: `check failed: ${(e as Error).message}` });
+        }
+
         const report = formatHealthReport(results);
         opencodeChannel.appendLine(`[healthcheck] ${new Date().toISOString()}`);
         report.lines.forEach((l) => opencodeChannel.appendLine(`  ${l}`));
@@ -1039,6 +1066,241 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     );
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.healthcheck", () => void runHealthcheck()));
+
+  // Fleet repair: reinstall guard + tunnel + machine settings (idempotent).
+  // Exposed for the fleet health warning's "Fix fleet" action and palette.
+  const runFleetRepair = async (): Promise<void> => {
+    const script = path.resolve(ctx.extensionPath, "tools", "fleet", "install.sh");
+    if (!fs.existsSync(script)) {
+      void vscode.window.showErrorMessage(`Amicode: fleet installer not found at ${script} — git pull?`);
+      return;
+    }
+    const term = vscode.window.createTerminal({ name: "Amicode: Fleet repair" });
+    term.show();
+    term.sendText(`bash "${script}"`);
+    opencodeChannel.appendLine(`[fleet] repair started: bash ${script} — watch the terminal`);
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.repair", () => void runFleetRepair()));
+
+  // Fleet fallback — Local fallback escape hatch per CONTEXT.md.
+  // Marker: ~/.amico/ops/fleet/fallback.json (machine-scoped, never synced).
+  // Guard checks it before `exit 1`, so a Client can spawn locally when the
+  // canonical is unreachable. Visible state: status bar + healthcheck row.
+  const fallbackStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+  fallbackStatusItem.command = "amicode.fleet.rejoin";
+  ctx.subscriptions.push(fallbackStatusItem);
+  const refreshFallbackStatus = (): void => {
+    const active = isFallbackActive();
+    if (active) {
+      const st = readFallback();
+      fallbackStatusItem.text = "$(warning) Fleet: LOCAL FALLBACK";
+      fallbackStatusItem.tooltip = fallbackStatusLabel(st) + " — click to Rejoin";
+      fallbackStatusItem.backgroundColor = new vscode.ThemeColor("statusBarItem.warningBackground");
+      fallbackStatusItem.show();
+      statusBar?.setServerReady(true); // keep server dot from looking dead while fallback serves locally
+    } else {
+      fallbackStatusItem.hide();
+    }
+  };
+  refreshFallbackStatus();
+
+  const runFleetFallbackEnter = async (): Promise<void> => {
+    if (isFallbackActive()) {
+      const st = readFallback();
+      void vscode.window.showInformationMessage(`Amicode: already in Local fallback since ${st?.since ?? "unknown"} — ${fallbackStatusLabel(st)}`);
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      "Enter Local fallback? The MacBook will spawn a local server and work offline — sessions will be local-only until you Rejoin. Fleet history returns on reconnect.",
+      { modal: true },
+      "Enter fallback",
+      "Cancel",
+    );
+    if (choice !== "Enter fallback") return;
+    const cfg = vscode.workspace.getConfiguration("amicode");
+    const prevBinary = cfg.get<string>("opencodeBinary", "");
+    const prevPort = cfg.get<number>("opencodePort", 0);
+    enterFallback({ previousBinary: prevBinary, previousPort: prevPort, reason: "user: Enter Local Fallback" });
+    try {
+      // Bypass the fleet guard (clear override → vendored binary) and use a
+      // free port for the local server — the tunnel's 4096 is free while offline,
+      // but an ephemeral port avoids a race when the tunnel later recovers.
+      await cfg.update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
+      await cfg.update("opencodePort", 0, vscode.ConfigurationTarget.Global);
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] fallback enter: settings update failed: ${(e as Error).message}`);
+    }
+    refreshFallbackStatus();
+    opencodeChannel.appendLine(`[fleet] Local fallback entered — restarting server locally (was binary=${prevBinary || "(vendored)"} port=${prevPort})`);
+    try {
+      await serverManager?.stop();
+      statusBar?.setServerReady(false);
+      opencodeReadyUrl = undefined;
+      // respawn with new settings: binary will now resolve to vendored (no guard)
+      const resolved = resolveOpencodeBinary(ctx.extensionPath, "");
+      // reuse current spawn env builder — it still reads fresh config inside
+      const amicoRunBinDir2 = resolveAmicoRunBinDir(ctx.extensionPath);
+      const freshManager = new ServerManager({
+        binary: resolved.path,
+        cwd: opencodeProject.projectDir,
+        port: undefined, // ephemeral while in fallback
+        env: spawnEnv({
+          amicoRunBinDir: amicoRunBinDir2,
+          serverPassword,
+          configContent: buildOpencodeConfigContent(
+            opencodeProject.agentsPath,
+            opencodeProject.templatePath,
+            runsRoot,
+            undefined,
+            undefined,
+            opencodeProject.skillPaths,
+            opencodeProject.skillsStageDir,
+            opencodeProject.vaultDir,
+            opencodeProject.mounts,
+            vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+            telemetryOpen(),
+          ),
+        }),
+        channel: opencodeChannel,
+      });
+      serverManager = freshManager;
+      ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
+      freshManager.onReady((url) => {
+        opencodeReadyUrl = url;
+        statusBar?.setServerReady(true);
+        sseClient?.connect(url);
+        if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        }
+      });
+      await freshManager.start();
+      void vscode.window.showInformationMessage("Amicode: Local fallback active — working offline. Run 'Amicode: Fleet — Rejoin' when the mini is back.");
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Amicode: fallback enter failed — ${(e as Error).message}`);
+      opencodeChannel.appendLine(`[fleet] fallback enter failed: ${(e as Error).message}`);
+    }
+  };
+
+  const runFleetFallbackExit = async (): Promise<void> => {
+    const st = readFallback();
+    if (!st) {
+      void vscode.window.showInformationMessage("Amicode: not in Local fallback.");
+      return;
+    }
+    const choice = await vscode.window.showWarningMessage(
+      `Exit Local fallback? Will restore tunnel settings (guard + 4096) and restart. Local sessions stay in ~/.local/share/opencode/opencode.db — Rejoin will merge on reconnect.`,
+      { modal: true },
+      "Exit fallback",
+      "Cancel",
+    );
+    if (choice !== "Exit fallback") return;
+    const prev = exitFallback();
+    refreshFallbackStatus();
+    const cfg = vscode.workspace.getConfiguration("amicode");
+    try {
+      const restoreBinary = prev?.previousBinary ?? path.join(os.homedir(), ".local", "bin", "amico-opencode-fleet-guard");
+      const restorePort = prev?.previousPort ?? 4096;
+      await cfg.update("opencodeBinary", restoreBinary, vscode.ConfigurationTarget.Global);
+      await cfg.update("opencodePort", restorePort, vscode.ConfigurationTarget.Global);
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] fallback exit: settings restore failed: ${(e as Error).message}`);
+    }
+    opencodeChannel.appendLine(`[fleet] Local fallback exited — restored guard + 4096, restarting to ride tunnel`);
+    try {
+      await serverManager?.stop();
+      statusBar?.setServerReady(false);
+      opencodeReadyUrl = undefined;
+      // respawn will again go through the guard (host check) — if mini still offline, health probe will fail closed
+      await vscode.commands.executeCommand("amicode.restartServer");
+    } catch {}
+    void vscode.window.showInformationMessage("Amicode: Local fallback exited — panel will ride the tunnel when the mini is reachable.");
+  };
+
+  const runFleetRejoin = async (): Promise<void> => {
+    const st = readFallback();
+    if (!st) {
+      void vscode.window.showInformationMessage("Amicode: not in fallback — nothing to rejoin.");
+      return;
+    }
+    // Probe canonical via the tunnel — the rejoin merge runs server-side per ADR 0005,
+    // but for now we ensure the tunnel is actually up before exiting fallback.
+    let tunnelUp = false;
+    try {
+      const r = await fetch(`http://127.0.0.1:${vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 4096)}/`, { signal: AbortSignal.timeout(2000) });
+      tunnelUp = r.ok || (r.status >= 200 && r.status < 400);
+    } catch {
+      // also try the fleet port directly (fallback may have cleared it to 0)
+      try {
+        const r2 = await fetch(`http://127.0.0.1:4096/`, { signal: AbortSignal.timeout(2000) });
+        tunnelUp = r2.ok || (r2.status >= 200 && r2.status < 400);
+      } catch {}
+    }
+    if (!tunnelUp) {
+      const pick = await vscode.window.showWarningMessage(
+        "Canonical still unreachable (tunnel down / mini offline). Rejoin merges on the mini — stay in fallback until it is back, or exit anyway and keep the local shard archived?",
+        "Stay in fallback",
+        "Exit anyway",
+        "Check again",
+      );
+      if (pick === "Stay in fallback" || pick === "Check again" || !pick) return;
+    }
+    // Archive the local shard before leaving fallback — the merge fixture discipline
+    // (ADR 0005) says "preserve, never delete" on unmappable drift.
+    try {
+      const db = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+      if (fs.existsSync(db)) {
+        const destDir = path.join(os.homedir(), ".amico", "fleet-recovery", new Date().toISOString().slice(0, 10));
+        fs.mkdirSync(destDir, { recursive: true });
+        const shard = path.join(destDir, `opencode-fallback-${Date.now()}.db`);
+        fs.copyFileSync(db, shard);
+        opencodeChannel.appendLine(`[fleet] rejoin: archived local shard ${db} → ${shard}`);
+      }
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] rejoin: shard archive failed: ${(e as Error).message}`);
+    }
+    await runFleetFallbackExit();
+    // Surface healthcheck so the user sees the rejoin result (tunnel should now be green).
+    void vscode.commands.executeCommand("amicode.healthcheck");
+  };
+
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.fallback.enter", () => void runFleetFallbackEnter()));
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.fallback.exit", () => void runFleetFallbackExit()));
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.rejoin", () => void runFleetRejoin()));
+
+  // Activation-time fleet drift warning (darwin only). If the MacBook is a fleet
+  // client but the guard is missing/stale or the tunnel is mis-tuned, surface
+  // ONE warning with a Fix action — don't silently fork.
+  void (() => {
+    if (process.platform !== "darwin") return;
+    try {
+      const repoGuardPath = path.resolve(ctx.extensionPath, FLEET_GUARD_REL);
+      const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+      let plistContent: string | null = null;
+      try {
+        plistContent = fs.readFileSync(plistPath, "utf8");
+      } catch {
+        plistContent = null;
+      }
+      const checks = fleetHealthReport({
+        repoGuardPath,
+        configuredBinary: vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
+        configuredPort: vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0),
+        plistContent,
+      });
+      const failed = checks.filter((c) => !c.ok);
+      if (failed.length === 0) return;
+      const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
+      opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
+      void vscode.window
+        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
+        .then((pick) => {
+          if (pick === "Fix fleet") void runFleetRepair();
+          else if (pick === "Show details") opencodeChannel.show();
+        });
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
+    }
+  })();
 
   // Connect Cloud (amicode.setCloudKey): prompt for the cloud API key and POST
   // it to the local server's connections submit route (#171) — the SERVER owns
