@@ -613,8 +613,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // (or 401 if we missed the password, but the forward itself is loopback-only
     // so password is not needed for the probe; we send it anyway).
     let fleetReady = false;
+    let fleetChecks = 0;
+    let fleetNotified = false;
     const fleetPort = 4096;
     const checkFleet = async () => {
+      fleetChecks++;
       try {
         const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
           signal: AbortSignal.timeout(1500),
@@ -623,6 +626,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const up = r.ok || (r.status >= 200 && r.status < 400);
         if (up && !fleetReady) {
           fleetReady = true;
+          fleetNotified = false;
           opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
           statusBar?.setServerReady(true);
           sseClient?.connect(opencodeReadyUrl);
@@ -638,6 +642,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeReadyUrl = undefined;
           statusBar?.setServerReady(false);
           opencodeChannel.appendLine(`[fleet] tunnel down — mini unreachable (enter fallback to work offline)`);
+        } else if (!up && !fleetReady && fleetChecks === 1) {
+          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:4096 — mini unreachable, will retry`);
+        }
+        // After ~10s (5 checks) still down → offer fallback visibly, not just a log
+        if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
+          fleetNotified = true;
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering fallback`);
+          void vscode.window
+            .showWarningMessage(`Amicode: fleet tunnel down — mini unreachable. Work offline?`, `Enter Local Fallback`, `Show log`)
+            .then((pick) => {
+              if (pick === `Enter Local Fallback`) void vscode.commands.executeCommand(`amicode.fleet.fallback.enter`);
+              else if (pick === `Show log`) opencodeChannel.show();
+            });
         }
       } catch {
         if (fleetReady) {
@@ -645,6 +662,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeReadyUrl = undefined;
           statusBar?.setServerReady(false);
           opencodeChannel.appendLine(`[fleet] tunnel down — will retry`);
+        } else if (fleetChecks === 1) {
+          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:4096 — will retry`);
+        }
+        if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
+          fleetNotified = true;
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering fallback`);
+          void vscode.window
+            .showWarningMessage(`Amicode: fleet tunnel down — mini unreachable. Work offline?`, `Enter Local Fallback`, `Show log`)
+            .then((pick) => {
+              if (pick === `Enter Local Fallback`) void vscode.commands.executeCommand(`amicode.fleet.fallback.enter`);
+              else if (pick === `Show log`) opencodeChannel.show();
+            });
         }
       }
     };
