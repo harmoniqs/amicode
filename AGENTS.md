@@ -40,6 +40,20 @@ bash packages/extension/scripts/install.sh    # Julia project (~15 min first pre
 node packages/extension/scripts/healthcheck.mjs   # check: 4/4 ✓ (julia, opencode, amico-run, creds)
 ```
 
+## Repo sync (one-command drift check)
+
+Fleet + vendor + lock drift is how the last 3 fleet breaks hid (stale `main` behind `origin/main`, stale `~/.local/bin` guard, tunnel `30/3` → `15/2`, vendor `local` vs `release`). One check replaces the whole checklist:
+
+```bash
+pnpm sync              # check only: git fetch + gh auth + pnpm dry-run + fleet gate (no writes)
+pnpm sync --fix        # also writes: git pull --ff-only, pnpm install, fetch:opencode (pinned, --release), fleet install
+pnpm sync --fork       # fork helper: clone status + pnpm opencode:build / opencode:pin help
+# or: bash scripts/repo-sync.sh --check / --fix / --fork
+# VS Code: Command Palette → Amicode: Repo Sync (runs --fix in a terminal)
+```
+
+`--check` is the CI twin (no network mutates beyond `git fetch --prune` + `gh` probes). `--fix` is idempotent and safe to re-run whenever `main` feels stale or the panel is stranded. Fleet machine-scoped settings (`~/.local/bin` guard, `~/Library/LaunchAgents` tunnel, `settings.json:opencodeBinary/Port`) are only repaired by `bash tools/fleet/install.sh` / `Fleet — Repair`, never by `repo-sync` alone — `repo-sync` just reports the `FAIL` with the fix line.
+
 macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 `xattr -d com.apple.quarantine packages/extension/vendor/opencode/darwin-arm64/opencode`
 

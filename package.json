@@ -4,7 +4,10 @@
   "scripts": {
     "build": "pnpm -r run build",
     "typecheck": "pnpm -r run typecheck",
-    "test": "pnpm -r run test"
+    "test": "pnpm -r run test",
+    "sync": "bash scripts/repo-sync.sh --check",
+    "sync:fix": "bash scripts/repo-sync.sh --fix",
+    "sync:fork": "bash scripts/repo-sync.sh --fork"
   },
   "packageManager": "pnpm@9.15.9"
 }

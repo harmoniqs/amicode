@@ -3,6 +3,7 @@
 # exclusion pattern would otherwise swallow it — that's the trap β.2 exists to kill.
 !vendor/**
 !tools/**
+!scripts/repo-sync.sh
 src/**
 test/**
 scripts/**

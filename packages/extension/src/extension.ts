@@ -54,7 +54,7 @@ import {
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
-import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
+import { fleetHealthReport, FLEET_GUARD_REL, FLEET_CANONICAL_HOST } from "./fleet_health";
 import { isFallbackActive, enterFallback, exitFallback, readFallback, fallbackStatusLabel } from "./fleet_fallback";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
@@ -93,8 +93,31 @@ let opencodeReadyUrl: URL | undefined;
 let distillerSetup: DistillerSetup | undefined;
 /** Device Inspector poll timer (Spec A §5.1) — cleared on deactivate. */
 let devicePollTimer: ReturnType<typeof setInterval> | undefined;
+/** Fleet client tunnel poll — when the MacBook rides `Aarons-Mac-mini` via `amico-mini` (guard `exit 1`), we don't spawn. */
+let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
+
+/** Fleet client detection — mirrors tools/fleet/amico-opencode-fleet-guard.
+ *  A fleet client (darwin, guard installed, not in fallback, hostname != canonical)
+ *  must NOT spawn a local server; it rides the tunnel at 4096. This check
+ *  prevents the "opencode failed to start within 30s" storm when the guard
+ *  correctly `exit 1`s. */
+function isFleetClientGuard(binary: string | undefined): boolean {
+  if (process.platform !== "darwin") return false;
+  if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
+  if (isFallbackActive()) return false;
+  // scutil --get LocalHostName is the guard's source of truth; fall back to os.hostname()
+  let host = "";
+  try {
+    const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+    host = execFileSync("scutil", ["--get", "LocalHostName"], { encoding: "utf8", timeout: 1000 }).trim();
+  } catch {
+    host = os.hostname();
+  }
+  // os.hostname() may include .local, scutil does not — check both
+  return host !== FLEET_CANONICAL_HOST && !host.startsWith(FLEET_CANONICAL_HOST);
+}
 
 /** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
  *  card is durable knowledge (vault); this only READS it. Never throws. */
@@ -547,7 +570,90 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 
-  if (binary !== undefined) {
+  // Fleet client: guard would `exit 1` on this host (MacBook) when not in
+  // fallback — don't spawn and storm "opencode failed to start within 30s".
+  // Ride the tunnel at 127.0.0.1:4096 instead; fallback re-enables spawn.
+  const fleetClient = isFleetClientGuard(binary);
+  if (binary !== undefined && fleetClient) {
+    opencodeChannel.appendLine(`[fleet] client mode — guard ${binary} would refuse on ${os.hostname()} — riding tunnel 127.0.0.1:4096 (fallback not active)`);
+    opencodeChannel.appendLine(`[fleet] hint: canonical offline? Palette → Amicode: Fleet — Enter Local Fallback`);
+    // Distiller still arms on the client (uses vendored binary directly, not the guard)
+    const clientBinary = (() => {
+      try {
+        return resolveOpencodeBinary(ctx.extensionPath, "").path;
+      } catch {
+        return undefined;
+      }
+    })();
+    if (opencodeProject.vaultDir && clientBinary) {
+      try {
+        distillerSetup = {
+          binary: clientBinary,
+          distillerMdPath: path.resolve(ctx.extensionPath, "DISTILLER.md"),
+          vaultDir: opencodeProject.vaultDir,
+          opsDir: amicodeOpsDir(),
+          problemsRoot: path.join(os.homedir(), ".amico", "problems"),
+          runsRoot,
+          model: vscode.workspace.getConfiguration("amicode").get<string>("distillerModel", "opencode/big-pickle"),
+        };
+        initDistillerTransport(distillerSetup);
+        opencodeChannel.appendLine(`[boot] distiller armed (client, vault: ${opencodeProject.vaultDir})`);
+      } catch (e) {
+        opencodeChannel.appendLine(`[boot] distiller transport failed: ${e}`);
+        distillerSetup = undefined;
+      }
+    }
+    sseClient = new OpencodeEventClient({
+      channel: opencodeChannel,
+      statusBar,
+      authorization: serverAuthHeaders.Authorization,
+    });
+    ctx.subscriptions.push(sseClient);
+    // Poll the tunnel — when `amico-mini` is reachable the forward answers 200
+    // (or 401 if we missed the password, but the forward itself is loopback-only
+    // so password is not needed for the probe; we send it anyway).
+    let fleetReady = false;
+    const fleetPort = 4096;
+    const checkFleet = async () => {
+      try {
+        const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
+          signal: AbortSignal.timeout(1500),
+          headers: serverAuthHeaders,
+        });
+        const up = r.ok || (r.status >= 200 && r.status < 400);
+        if (up && !fleetReady) {
+          fleetReady = true;
+          opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
+          statusBar?.setServerReady(true);
+          sseClient?.connect(opencodeReadyUrl);
+          if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+            ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          }
+          void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
+            opencodeChannel.appendLine(sig.ok ? `[fleet] LLM provider: configured (${sig.provider})` : `[fleet] LLM provider: ${sig.reason} → ${sig.fix}`);
+          });
+          opencodeChannel.appendLine(`[fleet] tunnel up at ${opencodeReadyUrl} — chat attached`);
+        } else if (!up && fleetReady) {
+          fleetReady = false;
+          opencodeReadyUrl = undefined;
+          statusBar?.setServerReady(false);
+          opencodeChannel.appendLine(`[fleet] tunnel down — mini unreachable (enter fallback to work offline)`);
+        }
+      } catch {
+        if (fleetReady) {
+          fleetReady = false;
+          opencodeReadyUrl = undefined;
+          statusBar?.setServerReady(false);
+          opencodeChannel.appendLine(`[fleet] tunnel down — will retry`);
+        }
+      }
+    };
+    fleetClientPoll = setInterval(() => void checkFleet(), 2000);
+    ctx.subscriptions.push({ dispose: () => { if (fleetClientPoll) clearInterval(fleetClientPoll); fleetClientPoll = undefined; } });
+    void checkFleet();
+    // Fallback status bar already handles the fallback-active case; in pure
+    // client mode we surface tunnel health via the fleet health warning above.
+  } else if (binary !== undefined) {
     // amico-run is argv-only (β.1) — no AMICO_* env propagation (S37), with ONE
     // recorded exception: AMICO_PYTHON (Pasqal python provisioning) rides the
     // server child env for the FORK's validator spawn — server plumbing, not
@@ -1081,6 +1187,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[fleet] repair started: bash ${script} — watch the terminal`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.repair", () => void runFleetRepair()));
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.repo.sync", async () => {
+      const repoRoot = path.resolve(ctx.extensionPath, "..", "..");
+      // Prefer the repo-root script when running from a checked-out workspace (F5), else the packaged copy.
+      const target = fs.existsSync(path.join(repoRoot, "scripts", "repo-sync.sh")) ? path.join(repoRoot, "scripts", "repo-sync.sh") : path.resolve(ctx.extensionPath, "scripts", "repo-sync.sh");
+      if (!fs.existsSync(target)) {
+        void vscode.window.showErrorMessage(`Amicode: repo-sync not found at ${target} — git pull?`);
+        return;
+      }
+      const term = vscode.window.createTerminal({ name: "Amicode: Repo Sync" });
+      term.show();
+      term.sendText(`bash "${target}" --fix`);
+      opencodeChannel.appendLine(`[repo-sync] started: bash ${target} --fix`);
+    }),
+  );
 
   // Fleet fallback — Local fallback escape hatch per CONTEXT.md.
   // Marker: ~/.amico/ops/fleet/fallback.json (machine-scoped, never synced).
@@ -1574,6 +1695,27 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
       opencodeChannel.appendLine(`[boot] restart requested`);
+      // Fleet client: no local server to restart — just re-probe the tunnel
+      if (binary !== undefined && isFleetClientGuard(binary)) {
+        opencodeChannel.appendLine(`[fleet] client restart — re-probing tunnel 127.0.0.1:4096`);
+        statusBar?.setServerReady(false);
+        opencodeReadyUrl = undefined;
+        // poke the poll immediately — it will re-attach when the forward is back
+        try {
+          const r = await fetch(`http://127.0.0.1:4096/`, { signal: AbortSignal.timeout(1500), headers: serverAuthHeaders });
+          if (r.ok || (r.status >= 200 && r.status < 400)) {
+            opencodeReadyUrl = new URL(`http://127.0.0.1:4096`);
+            statusBar?.setServerReady(true);
+            sseClient?.connect(opencodeReadyUrl);
+            opencodeChannel.appendLine(`[fleet] tunnel up at ${opencodeReadyUrl}`);
+          } else {
+            opencodeChannel.appendLine(`[fleet] tunnel still down (status ${r.status}) — enter fallback to work offline`);
+          }
+        } catch (e) {
+          opencodeChannel.appendLine(`[fleet] tunnel still down — ${(e as Error).message} — enter fallback to work offline`);
+        }
+        return;
+      }
       await serverManager?.stop();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
@@ -1645,6 +1787,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function deactivate(): void {
+  if (fleetClientPoll) {
+    clearInterval(fleetClientPoll);
+    fleetClientPoll = undefined;
+  }
   if (devicePollTimer) {
     clearInterval(devicePollTimer);
     devicePollTimer = undefined;
