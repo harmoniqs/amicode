@@ -6,6 +6,7 @@
 
 import { defineStyle } from "../style";
 import { button } from "../atoms/button";
+import { createTopologyGraph } from "../components/fleet_topology";
 import type { FleetHostMessage, FleetWebviewMessage } from "../../../src/fleet_panel";
 
 defineStyle(
@@ -56,10 +57,10 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   topoLabel.textContent = "Topology";
   topoSection.appendChild(topoLabel);
 
-  const topoContent = document.createElement("div");
-  topoContent.className = "standalone-hint";
-  topoContent.textContent = "Standalone \u2014 all local";
-  topoSection.appendChild(topoContent);
+  const topoGraph = createTopologyGraph();
+  topoSection.appendChild(topoGraph.el);
+  // Initialize with standalone (no nodes)
+  topoGraph.update([], []);
   el.appendChild(topoSection);
 
   // ── Profiles section ─────────────────────────────────────────────────────
@@ -108,21 +109,15 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
         roleBadge.textContent =
           m.role === "standalone" ? "Standalone" : m.role === "server" ? "Server" : "Client";
         if (m.role === "standalone") {
-          topoContent.textContent = "Standalone \u2014 all local";
+          topoGraph.update([], []);
           createBtn.enable(false); // will be enabled when wizard lands
         } else {
-          topoContent.textContent = "";
           createBtn.enable(false);
         }
         break;
 
       case "topology":
-        // Topology graph rendering will be implemented in #353
-        if (m.nodes.length === 0) {
-          topoContent.textContent = "Standalone \u2014 all local";
-        } else {
-          topoContent.textContent = `${m.nodes.length} node${m.nodes.length === 1 ? "" : "s"}`;
-        }
+        topoGraph.update(m.nodes, m.edges);
         break;
 
       case "profiles":
