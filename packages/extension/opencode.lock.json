@@ -2,12 +2,12 @@
   "version": "1.18.10",
   "repo": "harmoniqs/opencode",
   "tag": "v1.18.10-amicode.5",
-  "source": "release",
-  "ref": "151d2637fa5af927eac0809b65153aa8eb404d89",
+  "source": "local",
+  "ref": "d50f3e98bc9bb24713432c12cd1107c58edf024e",
   "platforms": {
     "darwin-arm64": {
       "asset": "opencode-darwin-arm64.zip",
-      "sha256": "dc43c3cfcffd54e4209f817c74a782355692c509b5b0cdb4df72f3b253f8f9e4"
+      "sha256": "c3a22a96b4bbeac88b4ab23f1010616d580d9e76b53f4adafe3a62d8e1f3ef33"
     },
     "linux-arm64": {
       "asset": "opencode-linux-arm64.tar.gz",
