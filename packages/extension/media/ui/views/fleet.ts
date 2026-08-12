@@ -7,6 +7,7 @@
 import { defineStyle } from "../style";
 import { button } from "../atoms/button";
 import { createTopologyGraph } from "../components/fleet_topology";
+import { createProfilesView } from "../components/fleet_profiles_view";
 import type { FleetHostMessage, FleetWebviewMessage } from "../../../src/fleet_panel";
 
 defineStyle(
@@ -71,10 +72,8 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   profilesLabel.textContent = "Profiles";
   profilesSection.appendChild(profilesLabel);
 
-  const profilesContent = document.createElement("div");
-  profilesContent.className = "standalone-hint";
-  profilesContent.textContent = "No profiles yet";
-  profilesSection.appendChild(profilesContent);
+  const profilesView = createProfilesView(post);
+  profilesSection.appendChild(profilesView.el);
   el.appendChild(profilesSection);
 
   // ── Stats section ────────────────────────────────────────────────────────
@@ -121,11 +120,7 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
         break;
 
       case "profiles":
-        if (m.profiles.length === 0) {
-          profilesContent.textContent = "No profiles yet";
-        } else {
-          profilesContent.textContent = `${m.profiles.length} profile${m.profiles.length === 1 ? "" : "s"}`;
-        }
+        profilesView.update(m.profiles);
         break;
 
       case "stats":

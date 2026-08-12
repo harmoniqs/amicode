@@ -70,6 +70,7 @@ import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { registerFleetPanel } from "./fleet_panel";
+import { registerFleetProfiles } from "./fleet_profile_manager";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -349,7 +350,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
   registerDeviceInspector(ctx); // Spec A §3 — device dashboard, sibling to the Run Inspector
-  registerFleetPanel(ctx); // #350 — fleet topology, profiles, and stats panel
+  const fleetPanel = registerFleetPanel(ctx); // #350 — fleet topology, profiles, and stats panel
+  registerFleetProfiles(ctx, fleetPanel); // #356 — profile CRUD + fs.watch
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
