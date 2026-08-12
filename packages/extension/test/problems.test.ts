@@ -49,17 +49,30 @@ describe("problemsDir / problemDir", () => {
 });
 
 describe("createProblem", () => {
-  it("writes problem.toml + .json + entities/ and sets active", () => {
+  it("writes card.toml + card.json + entities/ and sets active (W2.1: problem.toml is the ProblemSpec)", () => {
     const meta = createProblem("X gate on Q1");
     expect(meta.slug).toBe("x-gate-on-q1");
     expect(meta.status).toBe("designing");
     const dir = problemDir("x-gate-on-q1");
-    expect(fs.existsSync(path.join(dir, "problem.toml"))).toBe(true);
-    expect(fs.existsSync(path.join(dir, "problem.json"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "card.toml"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "card.json"))).toBe(true);
     expect(fs.existsSync(path.join(dir, "entities"))).toBe(true);
+    // legacy problem.* must NOT exist — that basename is now the ProblemSpec
+    expect(fs.existsSync(path.join(dir, "problem.toml"))).toBe(false);
+    expect(fs.existsSync(path.join(dir, "problem.json"))).toBe(false);
     expect(readActiveSlug()).toBe("x-gate-on-q1");
-    const doc = parse(fs.readFileSync(path.join(dir, "problem.toml"), "utf8")) as any;
+    const doc = parse(fs.readFileSync(path.join(dir, "card.toml"), "utf8")) as any;
     expect(doc.problem.name).toBe("X gate on Q1");
+  });
+  it("reads legacy problem.json when card.json absent (backward compat)", () => {
+    const dir = problemDir("legacy-read");
+    fs.mkdirSync(dir, { recursive: true });
+    // Simulate old workspace with problem.json only
+    fs.writeFileSync(path.join(dir, "problem.json"), JSON.stringify({ name: "old", slug: "legacy-read", created: new Date().toISOString(), status: "designing" }));
+    fs.writeFileSync(path.join(dir, "problem.toml"), `[problem]\nname = "old"\nslug = "legacy-read"\ncreated = "2026-01-01T00:00:00Z"\nstatus = "designing"\nrecorded = "2026-01-01T00:00:00Z"\n`);
+    setActiveSlug("legacy-read");
+    const opened = openProblem("legacy-read");
+    expect(opened?.slug).toBe("legacy-read");
   });
   it("auto-suffixes a colliding slug", () => {
     createProblem("X gate");
@@ -229,8 +242,8 @@ describe("migrateLegacyEntities (injectable roots — env-skip lives at the call
     expect(fs.existsSync(path.join(ws, "score_manifest.json"))).toBe(true);
     expect(fs.existsSync(path.join(ws, "interview_state.json"))).toBe(true);
     expect(fs.existsSync(path.join(ws, "usage.jsonl"))).toBe(true);
-    // synthesized archived meta + active set (no other problem)
-    const meta = JSON.parse(fs.readFileSync(path.join(ws, "problem.json"), "utf8"));
+    // synthesized archived meta + active set (no other problem) — W2.1: card.* is the card
+    const meta = JSON.parse(fs.readFileSync(path.join(ws, "card.json"), "utf8"));
     expect(meta.status).toBe("archived");
     expect(fs.readFileSync(path.join(root, "active"), "utf8").trim()).toBe(dirs[0]);
     fs.rmSync(legacy, { recursive: true, force: true });

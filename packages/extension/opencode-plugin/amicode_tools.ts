@@ -212,6 +212,341 @@ function recordEntity(
   return sentinelLine(slug, kind, action, seq, diff);
 }
 
+// ── W2.1 deterministic projection: Formulation + CompositeSystem → ProblemSpec ─
+// No LLM; pure mapping per spec-20260717 master table. Mirrors
+// packages/schema/src/project.ts — keep them in sync. Dependency-free (the
+// plugin runs in Bun with no npm resolution), so TOML emission and light
+// validation are hand-rolled, not ajv/smol-toml. The real ajv gate lives in
+// @amicode/schema and in amico-run; this light validator catches the same
+// structural faults before we write.
+
+function projectionSystemTemplate(sys: CompositeSystem): string {
+  const p = sys.platform.toLowerCase();
+  const n = sys.components.length;
+  const hasCavity = sys.components.some((c) => c.role === "cavity" || c.role === "resonator" || c.role === "mode");
+  const hasQubit = sys.components.some((c) => c.role === "qubit" || c.role === "atom");
+  if (p === "transmon") return n === 1 ? "TransmonSystem" : "MultiTransmonSystem";
+  if (p === "rydberg") return "RydbergChainSystem";
+  if (p === "bosonic" || p === "cavity") {
+    if (hasQubit && hasCavity) return "TransmonCavitySystem";
+    return "CatSystem";
+  }
+  if (p === "ion" || p === "trapped-ion") return "IonChainSystem";
+  if (hasCavity && !hasQubit) return "CatSystem";
+  return n === 1 ? "TransmonSystem" : "MultiTransmonSystem";
+}
+
+function projectionPulseAndTemplate(p: Parameterization): { pulseKind: string; template: string } {
+  switch (p) {
+    case "smooth":
+      return { pulseKind: "zero_order", template: "SmoothPulseProblem" };
+    case "bang_bang":
+      return { pulseKind: "zero_order", template: "BangBangPulseProblem" };
+    case "linear_spline":
+      return { pulseKind: "linear_spline", template: "SplinePulseProblem" };
+    case "cubic_spline":
+      return { pulseKind: "cubic_spline", template: "SplinePulseProblem" };
+  }
+}
+
+function projectionParseIntegrator(raw: string | undefined, freePhase: boolean): { kind: string; alg: string } {
+  const s = (raw ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  let out: { kind: string; alg: string };
+  if (s.includes("magnusgl4") || s === "gl4") out = { kind: "exponential", alg: "magnus_gl4" };
+  else if (s.includes("magnusadapt4") || s.includes("adapt4")) out = { kind: "spline", alg: "magnus_adapt4" };
+  else if (s.includes("tsit5")) out = { kind: "bilinear", alg: "tsit5" };
+  else if (s.includes("bilinear")) out = { kind: "bilinear", alg: "tsit5" };
+  else if (s.includes("spline")) out = { kind: "spline", alg: "magnus_adapt4" };
+  else if (s.includes("exponential")) out = { kind: "exponential", alg: "magnus_gl4" };
+  else out = { kind: "bilinear", alg: "tsit5" };
+  if (freePhase && out.kind === "bilinear") out = { kind: "spline", alg: "magnus_adapt4" };
+  return out;
+}
+
+function projectionDtBoundsFromConstraints(constraints: FormulationEntity["constraints"]): [number, number] | undefined {
+  const c = constraints.find((x) => x.kind === "dt_bounds");
+  if (!c) return undefined;
+  const p = c.params as Record<string, number>;
+  const lo = (p.dt_min as number) ?? (p.lo as number) ?? (p.lower as number) ?? (p.min as number) ?? (p.dt_lower as number);
+  const hi = (p.dt_max as number) ?? (p.hi as number) ?? (p.upper as number) ?? (p.max as number) ?? (p.dt_upper as number);
+  if (typeof lo === "number" && typeof hi === "number" && Number.isFinite(lo) && Number.isFinite(hi)) return [lo, hi];
+  return undefined;
+}
+
+function projectionValidateLight(spec: Record<string, unknown>): string[] {
+  const errs: string[] = [];
+  if (spec.schema_version !== 1) errs.push("/schema_version: must be 1");
+  if (spec.kind !== "control") errs.push("/kind: must be control");
+  const sys = spec.system as Record<string, unknown> | undefined;
+  if (!sys || typeof sys.template !== "string") errs.push("/system/template: required");
+  const pulse = spec.pulse as Record<string, unknown> | undefined;
+  if (!pulse || typeof pulse.kind !== "string") errs.push("/pulse/kind: required");
+  if (!pulse || typeof pulse.T !== "number") errs.push("/pulse/T: required number");
+  const prob = spec.problem as Record<string, unknown> | undefined;
+  if (!prob || typeof prob.template !== "string") errs.push("/problem/template: required");
+  if (!prob || typeof prob.N !== "number") errs.push("/problem/N: required integer");
+  // template↔pulseKind conditional (mirrors schema if/then)
+  if (prob && pulse) {
+    if (prob.template === "SplinePulseProblem" && pulse.kind === "zero_order") errs.push("/pulse/kind: SplinePulseProblem requires cubic_spline|linear_spline");
+    if ((prob.template === "SmoothPulseProblem" || prob.template === "BangBangPulseProblem") && pulse.kind !== "zero_order")
+      errs.push(`/pulse/kind: ${prob.template} requires zero_order`);
+  }
+  // free_phase → integrator kind ∈ {exponential,spline}
+  if (prob && (prob as Record<string, unknown>).free_phase === true) {
+    const integ = spec.integrator as Record<string, unknown> | undefined;
+    if (integ && integ.kind === "bilinear") errs.push("/integrator/kind: free_phase requires exponential|spline");
+  }
+  return errs;
+}
+
+function problemSpecToml(spec: Record<string, unknown>): string {
+  // Hand-rolled TOML emitter for the control ProblemSpec — dependency-free.
+  // Only emits the fields projection produces; unknown shapes are omitted.
+  const esc = (s: string): string => `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  const num = (n: number): string => String(n);
+  const lines: string[] = [];
+  lines.push(`schema_version = ${spec.schema_version as number}`, `kind = ${esc(spec.kind as string)}`, "");
+  const sys = spec.system as Record<string, unknown>;
+  lines.push("[system]", `kind = ${esc(sys.kind as string)}`);
+  if (typeof sys.template === "string") lines.push(`template = ${esc(sys.template)}`);
+  if (sys.params && typeof sys.params === "object") {
+    const entries = Object.entries(sys.params as Record<string, number>);
+    if (entries.length) lines.push(`params = { ${entries.map(([k, v]) => `${k} = ${num(v)}`).join(", ")} }`);
+  }
+  if (sys.global_params && typeof sys.global_params === "object") {
+    const e = Object.entries(sys.global_params as Record<string, unknown>);
+    if (e.length) lines.push(`global_params = { ${e.map(([k, v]) => `${k} = ${typeof v === "number" ? num(v) : esc(String(v))}`).join(", ")} }`);
+  }
+  lines.push("");
+  const goal = spec.goal as Record<string, unknown> | undefined;
+  if (goal) {
+    lines.push("[goal]", `kind = ${esc(goal.kind as string)}`);
+    if (typeof goal.gate === "string") lines.push(`gate = ${esc(goal.gate)}`);
+    if (typeof goal.target === "string") lines.push(`target = ${esc(goal.target)}`);
+    if (Array.isArray(goal.subsystem_levels)) lines.push(`subsystem_levels = [${(goal.subsystem_levels as number[]).join(", ")}]`);
+    lines.push("");
+  }
+  const pulse = spec.pulse as Record<string, unknown>;
+  lines.push("[pulse]", `kind = ${esc(pulse.kind as string)}`, `T = ${num(pulse.T as number)}`);
+  if (typeof pulse.init === "string") lines.push(`init = ${esc(pulse.init)}`);
+  if (typeof pulse.seed === "number") lines.push(`seed = ${pulse.seed as number}`);
+  lines.push("");
+  const prob = spec.problem as Record<string, unknown>;
+  lines.push("[problem]", `template = ${esc(prob.template as string)}`, `N = ${prob.N as number}`);
+  if (typeof prob.goal_treatment === "string") lines.push(`goal_treatment = ${esc(prob.goal_treatment)}`);
+  if (prob.free_dt !== undefined) {
+    if (Array.isArray(prob.free_dt)) lines.push(`free_dt = [${(prob.free_dt as number[]).join(", ")}]`);
+    else lines.push(`free_dt = ${prob.free_dt as boolean}`);
+  }
+  if (typeof prob.Q === "number") lines.push(`Q = ${num(prob.Q)}`);
+  if (typeof prob.R === "number") lines.push(`R = ${num(prob.R)}`);
+  if (typeof prob.R_u === "number") lines.push(`R_u = ${num(prob.R_u)}`);
+  if (typeof prob.R_du === "number") lines.push(`R_du = ${num(prob.R_du)}`);
+  if (typeof prob.R_ddu === "number") lines.push(`R_ddu = ${num(prob.R_ddu)}`);
+  if (typeof prob.final_fidelity === "number") lines.push(`final_fidelity = ${num(prob.final_fidelity)}`);
+  if (typeof prob.free_phase === "boolean") lines.push(`free_phase = ${prob.free_phase}`);
+  if (Array.isArray(prob.calibration_targets)) lines.push(`calibration_targets = [${(prob.calibration_targets as string[]).map(esc).join(", ")}]`);
+  if (prob.global_bounds && typeof prob.global_bounds === "object") {
+    const e = Object.entries(prob.global_bounds as Record<string, number>);
+    if (e.length) lines.push(`global_bounds = { ${e.map(([k, v]) => `${k} = ${num(v)}`).join(", ")} }`);
+  }
+  if (typeof prob.du_bound === "number") lines.push(`du_bound = ${num(prob.du_bound)}`);
+  if (typeof prob.ddu_bound === "number") lines.push(`ddu_bound = ${num(prob.ddu_bound)}`);
+  if (prob.options && typeof prob.options === "object") {
+    const e = Object.entries(prob.options as Record<string, unknown>);
+    if (e.length) lines.push(`options = { ${e.map(([k, v]) => `${k} = ${typeof v === "number" ? num(v) : typeof v === "boolean" ? String(v) : esc(String(v))}`).join(", ")} }`);
+  }
+  if (Array.isArray(prob.objectives)) {
+    for (const o of prob.objectives as Array<Record<string, unknown>>) {
+      lines.push("", "[[problem.objectives]]", `kind = ${esc(o.kind as string)}`);
+      if (typeof o.weight === "number") lines.push(`weight = ${num(o.weight)}`);
+    }
+  }
+  // back to top-level for wrappers etc: TOML forbids adding keys after array-of-tables,
+  // but our spec only has objectives as AoT inside [problem] — we already emitted them
+  // inline via [[problem.objectives]] which is valid.
+  const traj = spec.trajectory as Record<string, unknown> | undefined;
+  if (traj && typeof traj.kind === "string") {
+    lines.push("", "[trajectory]", `kind = ${esc(traj.kind)}`);
+  }
+  const integ = spec.integrator as Record<string, unknown> | undefined;
+  if (integ) {
+    lines.push("", "[integrator]", `kind = ${esc(integ.kind as string)}`);
+    if (typeof integ.alg === "string") lines.push(`alg = ${esc(integ.alg)}`);
+  }
+  const solver = spec.solver as Record<string, unknown> | undefined;
+  if (solver) {
+    lines.push("", "[solver]", `backend = ${esc(solver.backend as string)}`);
+    if (typeof solver.device === "string") lines.push(`device = ${esc(solver.device)}`);
+    if (typeof solver.precision === "string") lines.push(`precision = ${esc(solver.precision)}`);
+    if (typeof solver.max_iter === "number") lines.push(`max_iter = ${solver.max_iter as number}`);
+    if (typeof solver.strategy === "string") lines.push(`strategy = ${esc(solver.strategy)}`);
+    if (typeof solver.tol === "number") lines.push(`tol = ${num(solver.tol)}`);
+  }
+  if (Array.isArray(spec.wrappers)) {
+    for (const w of spec.wrappers as Array<Record<string, unknown>>) {
+      lines.push("", "[[wrappers]]", `kind = ${esc(w.kind as string)}`);
+      if (Array.isArray(w.variants)) {
+        // variants are opaque objects — emit as inline tables if simple
+        for (const v of w.variants as Array<Record<string, unknown>>) {
+          const inner = Object.entries(v)
+            .map(([k, val]) => `${k} = ${typeof val === "number" ? num(val) : esc(String(val))}`)
+            .join(", ");
+          lines.push(`variants = [{ ${inner} }]`);
+          break; // one line carries all; schema allows array, we emit one table per wrapper for brevity
+        }
+        if ((w.variants as unknown[]).length === 0) lines.push(`variants = []`);
+      }
+      if (Array.isArray(w.weights)) lines.push(`weights = [${(w.weights as number[]).join(", ")}]`);
+    }
+  }
+  // warm_start etc. omitted (not projected)
+  lines.push("");
+  return lines.join("\n");
+}
+
+type ProjectionResult =
+  | { ok: true; spec: Record<string, unknown>; warnings: string[] }
+  | { ok: false; reason: string };
+
+function projectToProblemSpecLocal(
+  formulation: FormulationEntity,
+  system: CompositeSystem,
+): ProjectionResult {
+  const warnings: string[] = [];
+  const customObj = formulation.objectives.find((o) => o.kind === "custom");
+  if (customObj) return { ok: false, reason: `custom objective not spec-expressible: ${customObj.label ?? customObj.kind} — falls back to script-tier authoring` };
+  const customCon = formulation.constraints.find((c) => c.kind === "custom");
+  if (customCon) return { ok: false, reason: `custom constraint not spec-expressible: ${customCon.label ?? customCon.kind} — falls back to script-tier authoring` };
+  if (formulation.trajectory_type === "density" || formulation.trajectory_type === "multidensity" || formulation.trajectory_type === "multiket")
+    return { ok: false, reason: `trajectory_type "${formulation.trajectory_type}" not spec-expressible as a control ProblemSpec — falls back to script-tier` };
+
+  const template = projectionSystemTemplate(system);
+  const sys: Record<string, unknown> = { kind: "template", template };
+  const firstLevels = system.components[0]?.levels;
+  if (typeof firstLevels === "number") sys.params = { levels: firstLevels };
+  else if (system.components.length === 1 && Object.keys(system.components[0].params ?? {}).length > 0) {
+    const p: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(system.components[0].params)) if (typeof v === "number") p[k] = v;
+    if (Object.keys(p).length > 0) sys.params = p;
+  }
+
+  let trajectoryKind: string;
+  let goalKind: string;
+  if (formulation.trajectory_type === "gate") {
+    trajectoryKind = "unitary";
+    goalKind = "unitary";
+  } else {
+    trajectoryKind = "ket";
+    goalKind = "ket";
+  }
+  const subsystemLevels = system.components.map((c) => (typeof c.levels === "number" ? c.levels : 3));
+  const goal: Record<string, unknown> = { kind: goalKind, subsystem_levels: subsystemLevels };
+  if (goalKind === "unitary") goal.gate = formulation.target || "X";
+  else goal.target = formulation.target || "|0>";
+
+  const effParam = (formulation.solve?.parameterization as Parameterization | undefined) ?? formulation.parameterization;
+  const { pulseKind, template: probTemplate } = projectionPulseAndTemplate(effParam);
+  const T = formulation.solve?.T ?? 40;
+  const N = formulation.solve?.N ?? 40;
+  const pulse: Record<string, unknown> = { kind: pulseKind, T, init: "default", seed: 0 };
+  const problem: Record<string, unknown> = { template: probTemplate, N };
+
+  if (formulation.time_mode === "min_time") {
+    problem.goal_treatment = "both";
+    const bounds = projectionDtBoundsFromConstraints(formulation.constraints);
+    problem.free_dt = bounds ?? [0.01, 2.0];
+    const ff = formulation.time_params?.final_fidelity;
+    problem.final_fidelity = typeof ff === "number" ? ff : 0.99;
+    const D = formulation.time_params?.D;
+    const w = typeof D === "number" ? D : 100;
+    const objs: Array<Record<string, unknown>> = [{ kind: "time", weight: w }];
+    for (const o of formulation.objectives) {
+      if (o.kind === "reg_u" || o.kind === "reg_du" || o.kind === "reg_ddu" || o.kind === "sensitivity") {
+        const weight = (o.params as Record<string, unknown>).weight as number | undefined;
+        const k = o.kind === "reg_u" ? "reg_u" : o.kind === "reg_du" ? "reg_du" : o.kind === "reg_ddu" ? "reg_ddu" : "sensitivity";
+        objs.push({ kind: k, weight: typeof weight === "number" ? weight : 1 });
+      }
+    }
+    problem.objectives = objs;
+  } else {
+    problem.goal_treatment = "objective";
+    problem.free_dt = false;
+    const objs: Array<Record<string, unknown>> = [];
+    for (const o of formulation.objectives) {
+      if (o.kind === "reg_u") problem.R_u = ((o.params as Record<string, unknown>).weight as number) ?? ((o.params as Record<string, unknown>).value as number) ?? 1e-4;
+      else if (o.kind === "reg_du") problem.R_du = ((o.params as Record<string, unknown>).weight as number) ?? 1e-5;
+      else if (o.kind === "reg_ddu") problem.R_ddu = ((o.params as Record<string, unknown>).weight as number) ?? 1e-6;
+      else if (o.kind === "sensitivity") objs.push({ kind: "sensitivity", weight: (o.params as Record<string, unknown>).weight as number ?? 1 });
+    }
+    if (objs.length > 0) problem.objectives = objs;
+  }
+
+  if (formulation.free_phase) problem.free_phase = true;
+  if (formulation.leakage) {
+    const opts: Record<string, unknown> = { leakage_constraint: true };
+    const lp = formulation.leakage_params ?? {};
+    if (typeof lp.value === "number") opts.leakage_constraint_value = lp.value;
+    if (typeof lp.cost === "number") opts.leakage_cost = lp.cost;
+    problem.options = opts;
+  }
+  const cal = formulation.constraints.find((c) => c.kind === "calibration_pin");
+  if (cal) {
+    const names = Object.keys(cal.params ?? {});
+    if (names.length > 0) problem.calibration_targets = names;
+    else if (cal.label) problem.calibration_targets = [cal.label];
+  }
+  for (const c of formulation.constraints) {
+    if (c.kind === "bounds" && c.params) problem.global_bounds = { ...c.params };
+    else if (c.kind === "du_bound" && typeof (c.params as Record<string, unknown>).value === "number") problem.du_bound = (c.params as Record<string, unknown>).value as number;
+    else if (c.kind === "ddu_bound" && typeof (c.params as Record<string, unknown>).value === "number") problem.ddu_bound = (c.params as Record<string, unknown>).value as number;
+    else if (c.kind === "du_bound" && typeof (c.params as Record<string, unknown>).du_bound === "number") problem.du_bound = (c.params as Record<string, unknown>).du_bound as number;
+  }
+
+  const integrator = projectionParseIntegrator(formulation.solve?.integrator, formulation.free_phase);
+  const maxIter = formulation.solve?.max_iter;
+  const solver: Record<string, unknown> = {
+    backend: "ipopt",
+    device: "cpu",
+    precision: "f64",
+    max_iter: typeof maxIter === "number" ? maxIter : 500,
+    strategy: "direct",
+  };
+
+  let wrappers: Array<Record<string, unknown>> | undefined;
+  if (formulation.robustness.kind === "ensemble") {
+    const variants: unknown[] = [];
+    const maybeVariants = (formulation.robustness.params as Record<string, unknown>).variants;
+    if (Array.isArray(maybeVariants)) variants.push(...(maybeVariants as unknown[]));
+    else variants.push({ ...formulation.robustness.params });
+    const w: Record<string, unknown> = { kind: "sampling", variants };
+    const weights = (formulation.robustness.params as Record<string, unknown>).weights;
+    if (Array.isArray(weights)) w.weights = weights;
+    wrappers = [w];
+  } else if (formulation.robustness.kind === "sensitivity") {
+    wrappers = [{ kind: "robust", variants: [{ ...formulation.robustness.params }] }];
+  }
+
+  const spec: Record<string, unknown> = {
+    schema_version: 1,
+    kind: "control",
+    system: sys,
+    goal,
+    pulse,
+    problem,
+    trajectory: { kind: trajectoryKind },
+    integrator,
+    solver,
+  };
+  if (wrappers) spec.wrappers = wrappers;
+
+  if (probTemplate === "SplinePulseProblem" && pulseKind === "zero_order") warnings.push(`template ${probTemplate} requires cubic_spline|linear_spline pulse, got ${pulseKind}`);
+  if ((probTemplate === "SmoothPulseProblem" || probTemplate === "BangBangPulseProblem") && pulseKind !== "zero_order")
+    warnings.push(`template ${probTemplate} requires zero_order pulse, got ${pulseKind}`);
+
+  return { ok: true, spec, warnings };
+}
+
 // LaTeX shown at the PLATFORM stage — kept verbatim in sync with AGENTS.md's
 // "Pulse-designer interview" section (the agent renders these in chat).
 //
@@ -819,7 +1154,44 @@ export const AmicodeTools = async (_input: unknown) => ({
           merged.robustness.kind !== "none" ? merged.robustness.kind : undefined,
           merged.free_phase ? "free-phase" : undefined,
         ].filter(Boolean).join(" · ");
-        return `Formulation's locked for "${meta.slug}" — ${modes}, target ${merged.target}${warn}\n\n${sentinel}`;
+
+        // ── W2.1 projection: Formulation + CompositeSystem → ProblemSpec ──
+        // Deterministic, no LLM; ajv-validated before write. Entity TOMLs still
+        // written (UI unchanged); problem.toml is the scriptless artifact.
+        let projectionNote = "";
+        try {
+          const sysForProjRaw = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+          if (sysForProjRaw) {
+            const sysComposite = normalizeSystem(sysForProjRaw);
+            const proj = projectToProblemSpecLocal(merged as FormulationEntity, sysComposite);
+            if (proj.ok) {
+              const errs = projectionValidateLight(proj.spec);
+              if (errs.length === 0) {
+                const specToml = problemSpecToml(proj.spec);
+                const outPath = path.join(dir, "problem.toml");
+                const outJson = path.join(dir, "problem.json");
+                // atomic write TOML + JSON sidecar (JSON is the machine-read source for amicode_solve)
+                const tmpToml = outPath + ".tmp";
+                fs.writeFileSync(tmpToml, specToml, "utf8");
+                fs.renameSync(tmpToml, outPath);
+                fs.writeFileSync(outJson + ".tmp", JSON.stringify(proj.spec, null, 2) + "\n", "utf8");
+                fs.renameSync(outJson + ".tmp", outJson);
+                const pw = proj.warnings.length ? ` (${proj.warnings.join("; ")})` : "";
+                projectionNote = `\n\nProjected ProblemSpec → ${outPath} (ajv-valid)${pw} — ready for scriptless solvespec.`;
+              } else {
+                projectionNote = `\n\nProjection produced invalid ProblemSpec (not written): ${errs.join("; ")} — falls back to script-tier authoring.`;
+              }
+            } else {
+              projectionNote = `\n\nNot spec-expressible: ${proj.reason} — falls back to script-tier (composed/free) authoring (today's path, untouched).`;
+            }
+          } else {
+            projectionNote = `\n\nNo system recorded — cannot project ProblemSpec (record system first).`;
+          }
+        } catch (e) {
+          projectionNote = `\n\nProjection failed: ${(e as Error).message} — falls back to script-tier.`;
+        }
+
+        return `Formulation's locked for "${meta.slug}" — ${modes}, target ${merged.target}${warn}${projectionNote}\n\n${sentinel}`;
       },
     },
 
@@ -920,8 +1292,84 @@ export const AmicodeTools = async (_input: unknown) => ({
         ];
         const warn = missing.length ? ` Note: no recorded ${missing.join(" or ")}.` : "";
         const runWarn = given(a.run_dir) ? "" : " No run_dir yet — launch via the workflow's amico-run bash command.";
+
+        // ── W2.1: read problem.toml/problem.json, apply overrides, emit solvespec with problem_spec ──
+        // Still never launches — the AGENTS.md bash workflow owns launch for both tiers.
+        let solvespecNote = "";
+        try {
+          const specJsonPath = path.join(dir, "problem.json");
+          const specTomlPath = path.join(dir, "problem.toml");
+          let spec: Record<string, unknown> | undefined;
+          if (fs.existsSync(specJsonPath)) {
+            try {
+              spec = JSON.parse(fs.readFileSync(specJsonPath, "utf8")) as Record<string, unknown>;
+            } catch {
+              spec = undefined;
+            }
+          }
+          if (!spec && fs.existsSync(specTomlPath)) {
+            // Fallback: re-project from entities (avoids TOML parsing in the plugin)
+            const fRaw2 = readEntityJson<Record<string, unknown>>(meta.slug, "formulation");
+            const sRaw2 = readEntityJson<Record<string, unknown>>(meta.slug, "system");
+            if (fRaw2 && sRaw2) {
+              const f2 = normalizeFormulation(fRaw2);
+              const s2 = normalizeSystem(sRaw2);
+              const proj2 = projectToProblemSpecLocal(f2 as FormulationEntity, s2);
+              if (proj2.ok) spec = proj2.spec;
+            }
+          }
+          if (spec) {
+            let mutated = false;
+            if (given(a.T)) {
+              (spec.pulse as Record<string, unknown>).T = a.T;
+              mutated = true;
+            }
+            if (given(a.N)) {
+              (spec.problem as Record<string, unknown>).N = a.N;
+              mutated = true;
+            }
+            if (given(a.max_iter)) {
+              (spec.solver as Record<string, unknown>).max_iter = a.max_iter;
+              mutated = true;
+            }
+            if (given(a.integrator)) {
+              const integ = projectionParseIntegrator(a.integrator, !!((spec.problem as Record<string, unknown>).free_phase));
+              spec.integrator = integ as unknown as Record<string, unknown>;
+              mutated = true;
+            }
+            if (mutated) {
+              const errs = projectionValidateLight(spec);
+              if (errs.length === 0) {
+                const specToml = problemSpecToml(spec);
+                const tmpToml = specTomlPath + ".tmp";
+                fs.writeFileSync(tmpToml, specToml, "utf8");
+                fs.renameSync(tmpToml, specTomlPath);
+                const tmpJson = specJsonPath + ".tmp";
+                fs.writeFileSync(tmpJson, JSON.stringify(spec, null, 2) + "\n", "utf8");
+                fs.renameSync(tmpJson, specJsonPath);
+              } else {
+                solvespecNote = ` (overrides produced invalid spec: ${errs.join("; ")})`;
+              }
+            }
+            const solvespecPath = path.join(dir, "solvespec.json");
+            const solvespec: Record<string, unknown> = {
+              schema_version: "4",
+              lab_id: "default",
+              problem_spec: specTomlPath,
+            };
+            const tmpSpec = solvespecPath + ".tmp";
+            fs.writeFileSync(tmpSpec, JSON.stringify(solvespec, null, 2) + "\n", "utf8");
+            fs.renameSync(tmpSpec, solvespecPath);
+            solvespecNote += ` Solvespec → ${solvespecPath} (problem_spec path; still never launches — run via amico-run --spec).`;
+          } else {
+            solvespecNote = " No ProblemSpec to wrap — project first via amicode_formulate (or fallback to script-tier).";
+          }
+        } catch (e) {
+          solvespecNote = ` Solvespec emit failed: ${(e as Error).message}`;
+        }
+
         completeStage(dir, "solve");
-        return `Solve knobs set for "${meta.slug}".${warn}${runWarn}\n\n${sentinel}`;
+        return `Solve knobs set for "${meta.slug}".${warn}${runWarn}${solvespecNote}\n\n${sentinel}`;
       },
     },
 
