@@ -1,8 +1,8 @@
 # This file is machine-generated - editing it directly is not advised
 
-julia_version = "1.12.3"
+julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "7b8093d11837e508ee4e0b26e253dd86c7c18590"
+project_hash = "df144d85154ffa415b78f9c7d42d7acfe2b32654"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "bbc22a9a08a0ef6460041086d8a7b27940ed4ffd"
@@ -1134,6 +1134,18 @@ version = "1.6.1"
     [deps.JSON.weakdeps]
     ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
 
+[[deps.JSON3]]
+deps = ["Dates", "Mmap", "Parsers", "PrecompileTools", "StructTypes", "UUIDs"]
+git-tree-sha1 = "411eccfe8aba0814ffa0fdf4860913ed09c34975"
+uuid = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+version = "1.14.3"
+
+    [deps.JSON3.extensions]
+    JSON3ArrowExt = ["ArrowTypes"]
+
+    [deps.JSON3.weakdeps]
+    ArrowTypes = "31f734f8-188a-4ce0-8406-c8a06bd891cd"
+
 [[deps.JpegTurbo]]
 deps = ["CEnum", "FileIO", "ImageCore", "JpegTurbo_jll", "TOML"]
 git-tree-sha1 = "9496de8fb52c224a2e3f9ff403947674517317d9"
@@ -1392,7 +1404,7 @@ version = "0.3.4"
 
 [[deps.MozillaCACerts_jll]]
 uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
-version = "2025.5.20"
+version = "2025.11.4"
 
 [[deps.MuladdMacro]]
 git-tree-sha1 = "cac9cc5499c25554cba55cd3c30543cff5ca4fab"
@@ -1614,10 +1626,10 @@ uuid = "69de0a69-1ddd-5017-9359-2bf0b02dc9f0"
 version = "2.8.6"
 
 [[deps.Piccolo]]
-deps = ["DataInterpolations", "DirectTrajOpt", "Distributions", "ExponentialAction", "ForwardDiff", "JLD2", "LaTeXStrings", "Libdl", "LinearAlgebra", "Makie", "NamedTrajectories", "OrdinaryDiffEqLinear", "OrdinaryDiffEqTsit5", "Printf", "ProgressMeter", "Random", "Reexport", "SciMLBase", "SparseArrays", "SpecialFunctions", "SymbolicIndexingInterface", "TestItemRunner", "TestItems", "TrajectoryIndexingUtils", "UnicodePlots"]
-git-tree-sha1 = "0a0571604a425b3fbe4dd941e5976588a47767a3"
+deps = ["DataInterpolations", "DirectTrajOpt", "Distributions", "ExponentialAction", "ForwardDiff", "JLD2", "JSON3", "LaTeXStrings", "Libdl", "LinearAlgebra", "Makie", "NamedTrajectories", "OrdinaryDiffEqLinear", "OrdinaryDiffEqTsit5", "Pkg", "Printf", "ProgressMeter", "Random", "Reexport", "SHA", "SciMLBase", "SparseArrays", "SpecialFunctions", "SymbolicIndexingInterface", "TOML", "TestItemRunner", "TestItems", "TrajectoryIndexingUtils", "UnicodePlots"]
+git-tree-sha1 = "0a03f80967db3884791daeef476cb85a24248be5"
 uuid = "c4671d76-df94-11ed-2057-43d4fd632fad"
-version = "1.19.0"
+version = "1.21.0"
 
     [deps.Piccolo.extensions]
     PiccoloMakieExt = ["Makie"]
@@ -2118,6 +2130,12 @@ version = "0.7.3"
     LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
     SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
     StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+
+[[deps.StructTypes]]
+deps = ["Dates", "UUIDs"]
+git-tree-sha1 = "159331b30e94d7b11379037feeb9b690950cace8"
+uuid = "856f2bd8-1eba-4b0a-8007-ebc267875bd4"
+version = "1.11.0"
 
 [[deps.StructUtils]]
 deps = ["Dates", "UUIDs"]

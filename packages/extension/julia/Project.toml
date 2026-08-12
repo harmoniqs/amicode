@@ -13,13 +13,13 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 # Measured against the registry today: with no compat, `Pkg.update("Piccolo")` on the
 # shipped pair takes 1.19.0 -> 1.20.0. With `~1.19` it holds at 1.19.0.
 #
-# 1.20.0 is a deliberately breaking release (`integrator_type = :spline` now errors,
-# `fidelity(qcp)` became free-phase-aware and returns different numbers for
-# `free_phase = true` problems, and `sync_trajectory!` now warns on optimizer-vs-rollout
-# divergence). Every shipped score and template was vetted against 1.19.0, so moving is
-# a decision to make deliberately after re-vetting — not something a resolver should do
-# on a user's machine mid-session.
+# 1.20.0 and 1.21.0 are deliberately breaking releases (1.20: `integrator_type =
+# :spline` now errors, `fidelity(qcp)` became free-phase-aware, and
+# `sync_trajectory!` now warns on optimizer-vs-rollout divergence; 1.21: Specs
+# Phase 1 wire format). Every shipped score and template was vetted against 1.19.0
+# — re-vetted here against 1.21.0 (solve_template.jl et al. do not use the
+# breaking APIs, so no template changes were needed; see harmoniqs/Piccolo.jl#271).
 #
-# `~1.19` admits 1.19.x patches (non-breaking by SemVer) and refuses 1.20. Raise this in
-# the same PR that re-vets the templates against the new minor.
-Piccolo = "~1.19"
+# `~1.21` admits 1.21.x patches and refuses 1.22 (which will carry Phase 1b
+# parametric typing). Raise this with re-vetting for each new minor.
+Piccolo = "~1.21"
