@@ -21,8 +21,8 @@
       "description": "run-dir contract version (enum = the supported-version SET; grows by one entry per bump). v2 (spec C) adds tier + [hashes] for --spec launches"
     },
     "tier": {
-      "enum": ["vetted", "composed", "free"],
-      "description": "trust tier stamped by amico-run when launched via --spec (v2)"
+      "enum": ["spec", "vetted", "composed", "free", "hpc"],
+      "description": "trust tier stamped by amico-run when launched via --spec (v2; W2.2 adds spec above vetted)"
     },
     "hashes": {
       "type": "object",
@@ -31,7 +31,9 @@
         "system_hash": { "type": "string" },
         "formulation_hash": { "type": "string" },
         "warm_start_hash": { "type": "string" },
-        "spec_hash": { "type": "string" }
+        "spec_hash": { "type": "string" },
+        "structure_hash": { "type": "string" },
+        "problem_hash": { "type": "string" }
       },
       "description": "amicode#64 provenance hashes; spec_hash is gate-computed over the canonical solvespec.json (v2)"
     },

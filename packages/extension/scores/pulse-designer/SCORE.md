@@ -55,6 +55,7 @@ stages:
     emits: [run, pulse]
     executor: local
     template: templates/solve.jl
+    tier: spec  # W2.2: spec (typed ProblemSpec, no authored code) sits above vetted; vetted/composed/free are script tiers (see subcommands.ts resolveCommand)
     questions:
       - id: solve_params
         prompt: "Pulse duration T (ns), timesteps N, and max_iter?"

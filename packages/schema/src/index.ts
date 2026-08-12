@@ -24,6 +24,7 @@ import catalogEntrySchema from "../schemas/catalog-entry.schema.json" with { typ
 // emitted schemas for the cross-repo vendoring-drift gate). Regenerate via each repo's
 // src/specs/schema/regenerate.jl.
 import problemspecSchema from "../schemas/problemspec.schema.json" with { type: "json" };
+import problemspecOssRaw from "../schemas/problemspec.oss.schema.json" with { type: "json" };
 // ledger-record is a top-level `oneOf` discriminated on `type` (six record kinds);
 // like problemspec it has NO top-level properties.schema_version — see the SCHEMAS
 // note below and the SUPPORTED_VERSIONS_BY_KIND exclusion.
@@ -42,6 +43,15 @@ import planSchema from "../schemas/plan.schema.json" with { type: "json" };
 // package-internal `../src/hashing.js` relative path (this package has no
 // "exports" map, so a subpath import would work, but the root export is the
 // established, documented seam every other consumer uses — see `validate` below).
+// OSS variant needs a distinct $id so Ajv doesn't collide with the FULL schema's id
+// (both vendored files carry the same $id — they are byte-identical to the emitted
+// Julia schemas, and the .sha sidecars are the drift gate, so we don't rewrite the
+// files on disk; we just remap the id at compile time).
+const problemspecOssSchema = {
+  ...(problemspecOssRaw as Record<string, unknown>),
+  $id: "https://amico.harmoniqs.co/schema/problemspec-oss/v1",
+} as typeof problemspecOssRaw;
+
 export { structureHash, problemHash, canonicalJson, fullDict, structureFields, sha256hex, designHash, planHash } from "./hashing.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
@@ -64,6 +74,7 @@ const SCHEMAS = {
   // each branch, so it has no top-level `properties.schema_version` for the version
   // map to read (plan review correction #6 — same pattern as ledger-record).
   problemspec: problemspecSchema,
+  "problemspec-oss": problemspecOssSchema,
   // Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): ledger-record is a
   // top-level `oneOf` discriminated on `type` with NO top-level
   // properties.schema_version — including it in the version map would read
@@ -127,6 +138,21 @@ export function validate(artifact: unknown, kind: SchemaKind): Validation {
   const ok = v(artifact) as boolean;
   if (ok) return { ok: true, errors: [] };
   return { ok: false, errors: (v.errors ?? []).map(formatError) };
+}
+
+/** Entitlement-keyed ProblemSpec validation (W2.4): `issimo` ⇒ FULL schema
+ *  (`problemspec`), else the OSS subset (`problemspec-oss`). The OSS schema is
+ *  the public/private seam at the gate — a Piccolissimo-only integrator
+ *  (exponential/spline) passes FULL but fails OSS, so an OSS-entitled install
+ *  bounces before paying a Julia cold start. Mirrors Julia's "capability =
+ *  what's loaded" rule. */
+export function validateProblemSpec(artifact: unknown, hasIssimo: boolean): Validation {
+  return validate(artifact, hasIssimo ? "problemspec" : "problemspec-oss");
+}
+
+/** Whether an allowlist reflects the `issimo` entitlement (Piccolissimo packages). */
+export function hasIssimoEntitlement(allowlist: readonly string[]): boolean {
+  return allowlist.includes("Piccolissimo") || allowlist.includes("Legatissimo") || allowlist.includes("Intonatissimo");
 }
 
 /** Validate a bare WarrantBounds object against `$defs.bounds` of the ledger-record

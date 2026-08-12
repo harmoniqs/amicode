@@ -19,7 +19,8 @@ describe("valid golden fixtures validate clean", () => {
   // it has its own dedicated coverage in ledger-record.test.ts.
   // `spec` and `plan` join ledger-record in the exclusion: both are MARKDOWN-frontmatter
   // kinds with no TOML fixture form, so there is no `fixtures/valid/<kind>.toml` to load.
-  for (const kind of SCHEMA_KINDS.filter((k) => k !== "ledger-record" && k !== "spec" && k !== "plan")) {
+  // `problemspec-oss` is the entitlement-keyed OSS subset (W2.4) — no separate fixture.
+  for (const kind of SCHEMA_KINDS.filter((k) => k !== "ledger-record" && k !== "spec" && k !== "plan" && k !== "problemspec-oss")) {
     it(`${kind}: fixture conforms`, () => {
       const r = validateFile(fixtureFile(kind), kind);
       expect(r.errors).toEqual([]);
@@ -32,7 +33,7 @@ describe("schema set + exports", () => {
   it("exposes all five versioned schemas + the FINISHED sub-shape + the problemspec + ledger-record kinds", () => {
     expect(new Set(SCHEMA_KINDS)).toEqual(
       new Set([
-        "run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec", "ledger-record",
+        "run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec", "problemspec-oss", "ledger-record",
         // the deliberation artifacts (spec-20260728)
         "spec", "plan",
       ]),

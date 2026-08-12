@@ -6,7 +6,7 @@
 // process bootstrap. This is the "delegate to the existing code path" seam: `amico run
 // <args>` is exactly `launch(<args>)`, byte-for-byte the historical amico-run behavior.
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { LocalExecutor } from "./local_executor.js";
 import { RemoteExecutor } from "./remote_executor.js";
@@ -198,10 +198,38 @@ export async function launch(argv: string[]): Promise<number> {
         console.error(`amico-run: --project ${opts.julia!.project} overrides the spec's env.project ${env.project}`);
       else opts.julia!.project = env.project;
     }
+    // W4.1: when solvespec carries problem_spec, compute structureHash/problemHash
+    // in TS (byte-exact mirror of Piccolo.Specs) and stamp into run.toml [hashes].
+    // The gate already computed spec_hash; we augment the stamp here before submit.
+    const hashes = { ...gate.stamp.hashes };
+    if (hasProblemSpec && problemSpec !== undefined) {
+      try {
+        let specObj: Record<string, unknown> | undefined;
+        if (typeof problemSpec === "object" && problemSpec !== null) {
+          specObj = problemSpec as Record<string, unknown>;
+        } else if (typeof problemSpec === "string") {
+          const p = isAbsolute(problemSpec as string) ? (problemSpec as string) : join(dirname(specPath!), problemSpec as string);
+          // Try JSON first, then TOML
+          try {
+            const raw = readFileSync(p, "utf8");
+            specObj = raw.trimStart().startsWith("{") ? (JSON.parse(raw) as Record<string, unknown>) : (parseToml(raw) as Record<string, unknown>);
+          } catch {
+            // leave specObj undefined — honest gap, not a fake key
+          }
+        }
+        if (specObj) {
+          const { structureHash, problemHash } = await import("@amicode/schema");
+          hashes.structure_hash = structureHash(specObj);
+          hashes.problem_hash = problemHash(specObj);
+        }
+      } catch {
+        // honest gap — don't stamp fake keys
+      }
+    }
     opts.spec = {
       canonical: gate.stamp.specCanonical,
       tier: gate.stamp.tier,
-      hashes: gate.stamp.hashes,
+      hashes,
       julia_binary: opts.julia!.julia,
       env_project: opts.julia!.project,
       // v4: route the typed ProblemSpec to Piccolo.Specs.solve_spec (LocalExecutor)

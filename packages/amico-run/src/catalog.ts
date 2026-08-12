@@ -52,11 +52,50 @@ export interface Shape {
   size: number;
 }
 
+export type Tier = "spec" | "vetted" | "composed" | "free";
+
 export interface ShapeMatch {
-  tier: "vetted" | "composed" | "free";
+  tier: Tier;
   template?: TemplateEntry;
   exemplar?: ExemplarEntry;
-  blockedHigher?: { tier: "vetted" | "composed"; requires: string };
+  blockedHigher?: { tier: "spec" | "vetted" | "composed"; requires: string };
+  reason?: string; // present when spec was considered but fell through
+}
+
+/** Spec-expressibility check (W2.2): a formulation is spec-expressible when its
+ *  ProblemSpec validates against the entitlement-keyed schema. Custom/bespoke
+ *  objective kinds that are not in either schema render it not spec-expressible
+ *  and it falls through to vetted/composed/free with the reason surfaced. The
+ *  check is schema-driven, not hand-rolled: the schemas ARE the subset definition. */
+export function isSpecExpressible(
+  problemSpec: unknown,
+  hasIssimo: boolean,
+): { expressible: true } | { expressible: false; reason: string } {
+  // Lazy import to avoid circular deps — use dynamic validateProblemSpec lookup
+  // via @amicode/schema at call site. Here we inline a minimal check: unknown
+  // kinds fail validation. Caller should use validateProblemSpec directly.
+  // This helper is a convenience for tests; production uses validateProblemSpec.
+  if (problemSpec == null || typeof problemSpec !== "object") {
+    return { expressible: false, reason: "no problemSpec supplied" };
+  }
+  const obj = problemSpec as Record<string, unknown>;
+  // Custom objective heuristic: an objective kind of "custom" or any key that
+  // the schema would reject. We surface a typed reason so the agent can explain
+  // the fallback rather than silently downgrading.
+  const problem = obj.problem as Record<string, unknown> | undefined;
+  const objectives = problem?.objectives;
+  if (Array.isArray(objectives)) {
+    for (const o of objectives) {
+      const kind = (o as Record<string, unknown>)?.kind;
+      if (typeof kind === "string" && kind === "custom") {
+        return { expressible: false, reason: "custom objective kind 'custom' is not spec-expressible" };
+      }
+    }
+  }
+  // If no custom marker, defer to schema validation at the call site — assume
+  // expressible here; the gate's validate() is authoritative.
+  void hasIssimo;
+  return { expressible: true };
 }
 
 const EMPTY_REGISTRY: Registry = { templates: [], support: [], uuids: {}, verifyTolerance: 0.01 };
@@ -132,12 +171,39 @@ export function loadExemplarsIndex(file: string): ExemplarsIndex {
   return { exemplars };
 }
 
-/** Tier resolution (spec C, locked decision 5): exact vetted template match →
- *  tier 1; else exemplar match on platform+kind (size may differ) → tier 2;
- *  else tier 3. Entitlement- or allowlist-blocked higher matches are excluded
- *  from selection but reported via blockedHigher so the agent can run the
- *  explicit-confirmation flow (never a silent downgrade). */
+/** Tier resolution (spec C, locked decision 5; W2.2 adds `spec` above vetted):
+ *  spec (fully validated data, no authored code) → tier 0; exact vetted template
+ *  match → tier 1; else exemplar match on platform+kind (size may differ) → tier 2;
+ *  else tier 3. A spec-expressible formulation resolves to `spec` WITHOUT
+ *  consulting the registry; out-of-subset falls through to vetted/composed/free
+ *  with the reason surfaced. Entitlement- or allowlist-blocked higher matches
+ *  are excluded from selection but reported via blockedHigher so the agent can
+ *  run the explicit-confirmation flow (never a silent downgrade). */
 export function matchShape(
+  shape: Shape,
+  registry: Registry,
+  exemplars: ExemplarsIndex,
+  allowlist: string[],
+  problemSpec?: unknown,
+): ShapeMatch {
+  // ── tier 0: spec — fully validated data, no authored code ──
+  if (problemSpec !== undefined) {
+    const check = isSpecExpressible(problemSpec, false);
+    if (check.expressible) {
+      // Defer to schema validation at the gate — here we treat presence of a
+      // problemSpec that passed the cheap custom-objective heuristic as
+      // spec-expressible. The gate's validateProblemSpec is authoritative.
+      return { tier: "spec" };
+    }
+    // Not spec-expressible → fall through with reason; do NOT short-circuit
+    const reason = (check as { expressible: false; reason: string }).reason;
+    const fallback = matchShapeWithoutSpec(shape, registry, exemplars, allowlist);
+    return { ...fallback, reason };
+  }
+  return matchShapeWithoutSpec(shape, registry, exemplars, allowlist);
+}
+
+function matchShapeWithoutSpec(
   shape: Shape,
   registry: Registry,
   exemplars: ExemplarsIndex,

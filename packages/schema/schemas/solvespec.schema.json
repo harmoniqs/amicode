@@ -43,8 +43,8 @@
       "description": "whose machine runs it — per-solve and explicit (Δ10, #63). local = this machine; remote = company compute / the cloud runner (required by tier=hpc), set upstream only when the researcher confirms the routing offer. The estimator only suggests; it never sets this."
     },
     "tier": {
-      "enum": ["vetted", "composed", "free", "hpc"],
-      "description": "trust/product tier of the authored script (spec C resolver). free/composed/vetted run locally; hpc = the paid High-Performance + Cloud tier (Piccolissimo + Altissimo), which runs in the cloud (executor=remote, env=provisioned) and requires a cloud connection"
+      "enum": ["spec", "vetted", "composed", "free", "hpc"],
+      "description": "trust/product tier (W2.2: spec is the top tier — fully validated data, no authored code; vetted/composed/free are script tiers; hpc is cloud)"
     },
     "env": {
       "type": "object",

@@ -150,13 +150,23 @@ function emitSolveStanza(runDir: string): void {
     if (!result) return; // no result written (e.g. a bare script that doesn't emit one) — nothing to ledger
 
     const params = isRecord(result.params) ? result.params : {};
-    const structureHash = params.structure_hash;
-    const problemHash = params.problem_hash;
+    const manifest = readTomlSafe(join(runDir, "run.toml"));
+    const manifestHashes = isRecord(manifest?.hashes) ? manifest.hashes : {};
+    // W4.1: fall back to run.toml [hashes] when result.toml lacks the keys
+    // (script-authored runs never have result.toml [params] hashes today).
+    let structureHash = typeof params.structure_hash === "string" ? params.structure_hash : undefined;
+    let problemHash = typeof params.problem_hash === "string" ? params.problem_hash : undefined;
+    if (!structureHash && typeof manifestHashes.structure_hash === "string") structureHash = manifestHashes.structure_hash;
+    if (!problemHash && typeof manifestHashes.problem_hash === "string") problemHash = manifestHashes.problem_hash;
     if (typeof structureHash !== "string" || typeof problemHash !== "string") return; // no join key — skip
 
-    const manifest = readTomlSafe(join(runDir, "run.toml"));
     const scriptPath = typeof manifest?.script_path === "string" ? manifest.script_path : undefined;
-    const spec = scriptPath ? readSpecFromScriptPath(scriptPath) : undefined;
+    // W4.1: for spec-authored runs, the ProblemSpec is the summary source — try
+    // inline problem.toml first (the run's own spec), then scriptPath fallback.
+    let spec: Record<string, unknown> | undefined;
+    const inlineSpec = readTomlSafe(join(runDir, "problem.toml"));
+    if (inlineSpec && isRecord(inlineSpec.system)) spec = inlineSpec;
+    else if (scriptPath) spec = readSpecFromScriptPath(scriptPath);
     if (!spec) return; // base summary (per the design split above) comes from the solvespec only
 
     const summary = summaryFromProblemSpec(spec);
