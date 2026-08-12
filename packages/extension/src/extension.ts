@@ -69,6 +69,7 @@ import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
+import { registerFleetPanel } from "./fleet_panel";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -348,6 +349,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
   registerDeviceInspector(ctx); // Spec A §3 — device dashboard, sibling to the Run Inspector
+  registerFleetPanel(ctx); // #350 — fleet topology, profiles, and stats panel
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
@@ -396,6 +398,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
   statusBar = new StatusBarManager();
+  statusBar.setFleetRole(getFleetRole());
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // 2. Start the multi-run RunsManager immediately — it tails the append-only
@@ -1343,6 +1346,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
+
+  // Fleet panel focus command — status bar item clicks this to reveal the panel.
+  // VS Code auto-registers `amicode.fleet.focus` for the webview view, so we use
+  // a distinct command name that delegates to it.
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleetPanel.focus", () => {
+    void vscode.commands.executeCommand("amicode.fleet.focus");
+  }));
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface

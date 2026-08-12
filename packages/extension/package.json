@@ -41,6 +41,7 @@
     "onCommand:amicode.openInspector",
     "onView:amicode.runInspector",
     "onView:amicode.deviceInspector",
+    "onView:amicode.fleet",
     "onView:amicode.armonia",
     "onStartupFinished"
   ],
@@ -67,6 +68,11 @@
     },
     "views": {
       "amicode": [
+        {
+          "id": "amicode.fleet",
+          "name": "Fleet",
+          "type": "webview"
+        },
         {
           "id": "amicode.armonia",
           "name": "Armonia",
