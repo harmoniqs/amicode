@@ -1,0 +1,14 @@
+{
+  "name": "Amicode",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu-24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "harmoniqs.amicode"
+      ]
+    }
+  }
+}

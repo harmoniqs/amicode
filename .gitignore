@@ -9,3 +9,6 @@ packages/extension/bin/
 
 # superpowers scratch (visual-companion servers, generated galleries) — never committed
 .superpowers/
+
+# personal local dev config — machine-specific, not for the container
+opencode.json
