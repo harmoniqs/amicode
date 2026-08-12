@@ -62,6 +62,13 @@ fleet is not. This keeps the mental model simple (THE fleet, not A fleet) and ma
 single-`fleet.json` storage model. Multi-fleet is deferred indefinitely — the use case
 (one researcher, multiple studios) doesn't exist today.
 
+**Why remote host settings in the panel:** If your Mac Studio is the canonical server, you
+need to configure it (database path, port, binary, logs) without SSH-ing in by hand. The
+panel already has SSH access (from the setup wizard) — reusing it for settings read/write is
+natural. Changes that require a server restart show an indicator and offer one-click restart
+(stop + start the launchd service remotely). When the current machine IS the server,
+settings are local — no SSH needed.
+
 **Conditions of merge:** the setup wizard creates a working fleet from standalone in one
 flow (validates SSH, configures remote + local, starts server, validates tunnel); add/remove
 machines work post-setup; the panel renders the topology graph (SVG, hand-positioned star
