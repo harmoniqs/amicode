@@ -2,7 +2,7 @@
 
 Status: proposed (2026-08-12)
 
-Tracking: (issue TBD) · Glossary update: `CONTEXT.md` (app)
+Tracking: harmoniqs/amicode#351 · Glossary update: `CONTEXT.md` (app)
 
 The Run Inspector and Device Inspector — previously native VS Code `WebviewViewProvider` registrations in a dedicated bottom panel (`amicode-panel`) — relocate to the Work Column as dynamic SolidJS tabs. The bottom panel container and all its webview infrastructure are deleted. Data reaches the app via the existing `chat_bridge.ts` postMessage protocol, extended with typed run/device message families.
 
