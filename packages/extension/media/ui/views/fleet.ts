@@ -94,7 +94,8 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   const createBtn = button("Create Fleet", () => {
     post({ type: "action", action: "createFleet" });
   });
-  createBtn.enable(false); // disabled placeholder until wizard is implemented
+  // Enabled in standalone mode — wizard handles the flow
+  createBtn.enable(true);
   el.appendChild(createBtn.el);
 
   // ── Message handler ──────────────────────────────────────────────────────
@@ -109,9 +110,11 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
           m.role === "standalone" ? "Standalone" : m.role === "server" ? "Server" : "Client";
         if (m.role === "standalone") {
           topoGraph.update([], []);
-          createBtn.enable(false); // will be enabled when wizard lands
+          createBtn.enable(true);
+          createBtn.el.style.display = "";
         } else {
           createBtn.enable(false);
+          createBtn.el.style.display = "none";
         }
         break;
 
