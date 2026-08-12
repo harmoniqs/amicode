@@ -73,6 +73,8 @@ import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
 import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken } from "./fleet_wizard";
 import { readTopology } from "./fleet_topology_data";
+import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
+import { readProfile, PROFILES_DIR } from "./fleet_profiles";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -1475,6 +1477,40 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     }),
   );
+
+  // #357 — Session launch from profile + aggregate stats + sweep
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.launch", (payload?: { slug?: string }) => {
+      const slug = payload?.slug;
+      if (!slug) return;
+      const profile = readProfile(path.join(PROFILES_DIR, `${slug}.toml`));
+      if (!profile) {
+        void vscode.window.showErrorMessage(`Profile "${slug}" not found`);
+        return;
+      }
+      const { sessionId } = launchFromProfile(profile);
+      void vscode.window.showInformationMessage(`Session ${sessionId} spooling from "${profile.name}"`);
+      // Refresh stats
+      const panel = getFleetPanel();
+      if (panel) panel.postStats(getFleetStats());
+    }),
+    vscode.commands.registerCommand("amicode.fleet.sweep", () => {
+      const swept = sweepCrashed();
+      if (swept.length === 0) {
+        void vscode.window.showInformationMessage("No orphaned sessions found");
+      } else {
+        void vscode.window.showInformationMessage(`Swept ${swept.length} crashed session${swept.length === 1 ? "" : "s"}`);
+      }
+      const panel = getFleetPanel();
+      if (panel) panel.postStats(getFleetStats());
+    }),
+  );
+
+  // Push initial stats to the fleet panel
+  {
+    const panel = getFleetPanel();
+    if (panel) panel.postStats(getFleetStats());
+  }
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface
