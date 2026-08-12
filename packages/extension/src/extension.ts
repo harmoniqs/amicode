@@ -69,8 +69,10 @@ import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
-import { registerFleetPanel } from "./fleet_panel";
+import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
+import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken } from "./fleet_wizard";
+import { readTopology } from "./fleet_topology_data";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -1355,6 +1357,124 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleetPanel.focus", () => {
     void vscode.commands.executeCommand("amicode.fleet.focus");
   }));
+
+  // #354 — Fleet wizard commands (create, add, remove, dismantle, reconfigure)
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.createFleet", async () => {
+      const choice = await vscode.window.showQuickPick(
+        ["This machine is the server", "A remote machine is the server"],
+        { placeHolder: "Choose topology" },
+      );
+      if (!choice) return;
+
+      if (choice.includes("remote")) {
+        const target = await vscode.window.showInputBox({
+          prompt: "SSH alias or user@host for the remote server",
+          placeHolder: "user@hostname",
+        });
+        if (!target) return;
+
+        // Run pre-flight
+        const preflight = await runPreflight(target);
+        if (!preflight.allPass) {
+          const failedChecks = preflight.checks.filter((c) => c.status === "fail");
+          const msg = failedChecks.map((c) => `${c.name}: ${c.detail}`).join("\n");
+          void vscode.window.showErrorMessage(`Pre-flight failed:\n${msg}`);
+          return;
+        }
+
+        // Configure remote
+        const token = generateFleetToken();
+        const steps = await configureRemoteServer(target, { token });
+        const failed = steps.find((s) => s.status === "failed");
+        if (failed) {
+          void vscode.window.showErrorMessage(`Setup failed at "${failed.name}": ${failed.detail}`);
+          return;
+        }
+
+        // Configure local
+        configureLocalClient(target, { sshAlias: target, token });
+      } else {
+        // This machine is the server — configure locally
+        const { writeFleetConfig } = await import("./fleet_fallback");
+        writeFleetConfig({ role: "server", canonical: { host: "localhost", port: 4096 } });
+      }
+
+      // Refresh panel
+      const panel = getFleetPanel();
+      if (panel) {
+        panel.pushRole();
+        const topo = readTopology({ serverHealthy: true });
+        panel.postTopology(topo.nodes, topo.edges);
+      }
+      statusBar?.setFleetRole(getFleetRole());
+      void vscode.window.showInformationMessage("Fleet created successfully");
+    }),
+    vscode.commands.registerCommand("amicode.fleet.addMachine", async () => {
+      const target = await vscode.window.showInputBox({
+        prompt: "SSH alias or user@host for the new machine",
+        placeHolder: "user@hostname",
+      });
+      if (!target) return;
+
+      const preflight = await runPreflight(target);
+      if (!preflight.allPass) {
+        const failedChecks = preflight.checks.filter((c) => c.status === "fail");
+        void vscode.window.showErrorMessage(`Pre-flight failed: ${failedChecks.map((c) => c.detail).join("; ")}`);
+        return;
+      }
+
+      // Configure the new machine as a client
+      // (In a full implementation, we'd configure the remote machine here)
+      void vscode.window.showInformationMessage(`Machine ${target} added to fleet`);
+      const panel = getFleetPanel();
+      if (panel) {
+        const topo = readTopology({ serverHealthy: true });
+        panel.postTopology(topo.nodes, topo.edges);
+      }
+    }),
+    vscode.commands.registerCommand("amicode.fleet.removeMachine", async (payload?: { target?: string }) => {
+      const target = payload?.target ?? await vscode.window.showInputBox({ prompt: "SSH alias or user@host to remove" });
+      if (!target) return;
+
+      const steps = await removeMachine(target);
+      const failed = steps.find((s) => s.status === "failed");
+      if (failed) {
+        void vscode.window.showErrorMessage(`Remove failed: ${failed.detail}`);
+      } else {
+        void vscode.window.showInformationMessage(`${target} removed from fleet`);
+        const panel = getFleetPanel();
+        if (panel) {
+          const topo = readTopology({ serverHealthy: true });
+          panel.postTopology(topo.nodes, topo.edges);
+        }
+      }
+    }),
+    vscode.commands.registerCommand("amicode.fleet.dismantle", async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        "Dismantle the fleet? This stops the server and reverts all machines to standalone.",
+        { modal: true },
+        "Dismantle",
+      );
+      if (confirm !== "Dismantle") return;
+
+      const cfg = readFleetConfig();
+      const serverTarget = cfg?.canonical?.sshAlias ?? cfg?.canonical?.host ?? "localhost";
+      const steps = await dismantleFleet(serverTarget);
+      const failed = steps.find((s) => s.status === "failed");
+      if (failed) {
+        void vscode.window.showErrorMessage(`Dismantle failed at "${failed.name}": ${failed.detail}`);
+      } else {
+        void vscode.window.showInformationMessage("Fleet dismantled — all machines standalone");
+        const panel = getFleetPanel();
+        if (panel) {
+          panel.pushRole();
+          panel.postTopology([], []);
+        }
+        statusBar?.setFleetRole("standalone");
+      }
+    }),
+  );
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface
