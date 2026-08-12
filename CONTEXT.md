@@ -86,6 +86,14 @@ _Avoid_: API key, password
 The self-healing SSH local-forward a `client` uses to reach the Canonical Server — one component with two launchers. The extension spawns and supervises it for interactive panels (reconnect with backoff, address candidates probed LAN-before-overlay, health surfaced in the status bar); a headless launcher (`amico fleet tunnel`) serves panel-less consumers such as scheduled jobs. Failures are always visible to its consumer — never an invisible external service.
 _Avoid_: port forward (as a concept name), launchd tunnel
 
+**Fleet Profile**:
+A reusable template defining the model, variant, base, skills, gates, and permissions for launching fleet-managed Sessions. One TOML file per profile at `~/.amico/ops/fleet/profiles/<slug>.toml`. CRUD-managed from the Fleet panel; stamped onto a Session's `FleetRecord` at launch.
+_Avoid_: agent template, session config
+
+**Fleet-managed session**:
+A Session tracked by the fleet registry — launched from a Fleet Profile, has a `FleetRecord`, subject to fleet actions (steer, stop, re-tier). Distinguished from plain Sessions by a fleet icon in the sessions dropdown. It IS a Session (same entity, same store), just additionally tracked.
+_Avoid_: orchestrated session, fleet session (as a distinct entity type)
+
 ### Orthogonal axes
 
 **Entitlement**:
