@@ -75,6 +75,7 @@ import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFle
 import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
+import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -1511,6 +1512,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const panel = getFleetPanel();
     if (panel) panel.postStats(getFleetStats());
   }
+
+  // #358 — Fleet bridge: action handler + state watcher
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.bridgeAction", (payload?: { verb?: string; session_id?: string; params?: Record<string, unknown> }) => {
+      if (!payload?.verb || !payload?.session_id) return;
+      const action = parseFleetAction({ type: "fleet-action", ...payload });
+      if (action) {
+        enqueueFleetSignal(action);
+        // Refresh stats after action
+        const panel = getFleetPanel();
+        if (panel) panel.postStats(getFleetStats());
+      }
+    }),
+  );
+
+  // Fleet state watcher: debounced 500ms push to any connected panels/bridges
+  const fleetWatcher = createFleetStateWatcher((_snapshot) => {
+    // Push stats to the fleet panel on any record change
+    const panel = getFleetPanel();
+    if (panel) panel.postStats(getFleetStats());
+    // The snapshot would also be pushed to the app via the chat bridge
+    // (postToWebview). That wiring depends on the chat panel being open.
+  });
+  ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface
