@@ -297,8 +297,8 @@ set -euo pipefail
 # Rebuild script for the fleet server.
 # Run this on the server to pull latest and rebuild both repos.
 
-# Session DB backup
-DBDIR="$HOME/.config/opencode"
+# Session DB backup — the DB lives in $XDG_DATA_HOME/opencode/ (default: ~/.local/share/opencode/)
+DBDIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
 BACKUP="$DBDIR/.backup-$(date +%Y%m%d-%H%M%S)"
 if ls "$DBDIR"/opencode*.db 1>/dev/null 2>&1; then
   mkdir -p "$BACKUP"
