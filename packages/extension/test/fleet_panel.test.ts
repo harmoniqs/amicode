@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { FleetPanelView, registerFleetPanel } from "../src/fleet_panel";
 import type { FleetHostMessage, FleetWebviewMessage } from "../src/fleet_panel";
 import { fleetStatusBarLabel } from "../src/status_bar";
+import { commands } from "vscode";
 
 // ── Host provider tests ─────────────────────────────────────────────────────
 
@@ -100,14 +101,29 @@ describe("FleetPanelView postMessage protocol", () => {
     }
   });
 
-  it("webview action message dispatches as a command", () => {
+  it("webview action message dispatches as a VS Code command", () => {
     // Simulate webview posting an action
     const handler = (panel as any)._testMsgHandler;
-    if (handler) {
-      handler({ type: "action", action: "createFleet" });
-      // We can't easily assert vscode.commands.executeCommand was called
-      // without deeper mocking, but the handler doesn't throw
-    }
+    expect(handler).toBeDefined();
+
+    // Reset the executed commands tracker from the mock
+    (commands as any).executed.length = 0;
+
+    handler({ type: "action", action: "createFleet" });
+
+    // The panel should dispatch via executeCommand
+    expect((commands as any).executed).toContain("amicode.fleet.createFleet");
+  });
+
+  it("webview action message passes payload to the command", () => {
+    const handler = (panel as any)._testMsgHandler;
+    expect(handler).toBeDefined();
+
+    (commands as any).executed.length = 0;
+
+    handler({ type: "action", action: "removeMachine", payload: { target: "jj@100.77.141.50" } });
+
+    expect((commands as any).executed).toContain("amicode.fleet.removeMachine");
   });
 });
 

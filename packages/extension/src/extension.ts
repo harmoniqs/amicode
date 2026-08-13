@@ -1368,7 +1368,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   function launchFleetChat(prompt: string): void {
     const readyUrl = opencodeReadyUrl;
     if (!readyUrl) {
-      void vscode.window.showWarningMessage("Amicode server not ready — can't launch fleet session");
+      // Server not ready yet — open the main chat (which shows the loading
+      // state / triggers server boot) and queue the draft for when it's up.
+      void vscode.commands.executeCommand("amicode.openChat");
+      // Poll for readyUrl and post the draft once available
+      const poll = setInterval(() => {
+        if (opencodeReadyUrl) {
+          clearInterval(poll);
+          const panel = ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          panel.postDraftMessage(prompt);
+        }
+      }, 500);
+      // Give up after 30s
+      setTimeout(() => clearInterval(poll), 30000);
       return;
     }
     const chatPanel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
