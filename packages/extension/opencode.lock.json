@@ -1,9 +1,9 @@
 {
   "version": "1.18.10",
   "repo": "harmoniqs/opencode",
-  "tag": "v1.18.10-amicode.8",
+  "tag": "v1.18.10-amicode.9",
   "source": "local",
-  "ref": "21b96ef297680974f65e4a722190dd3200c537db",
+  "ref": "aaaaa973806a8ed61e6904e50e3de4390e4381d0",
   "platforms": {
     "darwin-arm64": {
       "asset": "opencode-darwin-arm64.zip",
