@@ -30,6 +30,8 @@ defineStyle(
                       display: inline-flex; align-items: center;
                       gap: var(--space-sm); margin-bottom: var(--space-sm); }
   .fleet-root > .btn { display: block; margin-bottom: var(--space-md); }
+  .fleet-root > .btn.create-fleet { border-color: var(--color-accent-ink);
+                      box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-ink) 40%, transparent); }
   .fleet-role-badge.standalone { color: var(--color-dim); }
   .fleet-role-badge.server { color: var(--color-ok); }
   .fleet-role-badge.client { color: var(--color-run); }
@@ -55,6 +57,7 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   const createBtn = button("Create Fleet", () => {
     post({ type: "action", action: "createFleet" });
   });
+  createBtn.el.classList.add("create-fleet");
   createBtn.enable(true);
   el.appendChild(createBtn.el);
 
