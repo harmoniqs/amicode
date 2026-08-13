@@ -1474,7 +1474,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         panel.postTopology(topo.nodes, topo.edges);
       }
       statusBar?.setFleetRole(getFleetRole());
-      void vscode.window.showInformationMessage("Fleet created successfully");
+      const reload = await vscode.window.showInformationMessage(
+        "Fleet created. Reload window to connect to the host server?",
+        "Reload Window",
+        "Later",
+      );
+      if (reload === "Reload Window") {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      }
     }),
     vscode.commands.registerCommand("amicode.fleet.addMachine", async () => {
       const target = await vscode.window.showInputBox({
