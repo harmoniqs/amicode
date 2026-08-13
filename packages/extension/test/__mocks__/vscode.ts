@@ -7,7 +7,11 @@ export const window = {
   showWarningMessage: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
-  createOutputChannel: () => ({ appendLine() {}, append() {}, dispose() {} }),
+  createOutputChannel: () => ({
+    appendLine() {},
+    append() {},
+    dispose() {},
+  }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
