@@ -149,7 +149,6 @@ export class ChatPanel {
   navigateToPath(path: string): void {
     const envelope = { source: "amicode" as const, kind: "navigate" as const, path };
     try { void this.panel.webview.postMessage(envelope); } catch {}
-    setTimeout(() => { try { void this.panel.webview.postMessage(envelope); } catch {} }, 1500);
   }
 
   /** The tab title of this chat panel. */
