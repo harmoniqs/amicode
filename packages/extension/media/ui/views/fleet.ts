@@ -50,6 +50,14 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   roleBadge.textContent = "Standalone";
   el.appendChild(roleBadge);
 
+  // ── Create Fleet button (right under the badge in standalone) ────────────
+  const createBtn = button("Create Fleet", () => {
+    post({ type: "action", action: "createFleet" });
+  });
+  createBtn.enable(true);
+  createBtn.el.style.marginBottom = "var(--space-md)";
+  el.appendChild(createBtn.el);
+
   // ── Topology section ─────────────────────────────────────────────────────
   const topoSection = document.createElement("div");
   topoSection.className = "fleet-section";
@@ -60,8 +68,9 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
 
   const topoGraph = createTopologyGraph();
   topoSection.appendChild(topoGraph.el);
-  // Initialize with standalone (no nodes)
-  topoGraph.update([], []);
+  // In standalone mode, hide the graph entirely (no empty SVG taking space)
+  topoGraph.el.style.display = "none";
+  topoSection.style.display = "none";
   el.appendChild(topoSection);
 
   // ── Profiles section ─────────────────────────────────────────────────────
@@ -90,14 +99,6 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   statsSection.appendChild(statsContent);
   el.appendChild(statsSection);
 
-  // ── Create Fleet button (shown in standalone) ────────────────────────────
-  const createBtn = button("Create Fleet", () => {
-    post({ type: "action", action: "createFleet" });
-  });
-  // Enabled in standalone mode — wizard handles the flow
-  createBtn.enable(true);
-  el.appendChild(createBtn.el);
-
   // ── Message handler ──────────────────────────────────────────────────────
   function onMessage(msg: unknown): void {
     const m = msg as FleetHostMessage;
@@ -109,10 +110,14 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
         roleBadge.textContent =
           m.role === "standalone" ? "Standalone" : m.role === "server" ? "Server" : "Client";
         if (m.role === "standalone") {
-          topoGraph.update([], []);
+          topoGraph.el.style.display = "none";
+          topoSection.style.display = "none";
           createBtn.enable(true);
           createBtn.el.style.display = "";
         } else {
+          topoGraph.el.style.display = "";
+          topoSection.style.display = "";
+          topoGraph.update([], []);
           createBtn.enable(false);
           createBtn.el.style.display = "none";
         }
