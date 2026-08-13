@@ -2,7 +2,7 @@
 name: fleet-troubleshooting
 description: Diagnose and resolve fleet issues — sync conflicts, tunnel connectivity, fleet drift, SSH failures, and sync errors. Launched automatically from fleet notifications.
 agents: [pulse-designer]
-surface: internal
+surface: public
 ---
 
 # Fleet Troubleshooting
