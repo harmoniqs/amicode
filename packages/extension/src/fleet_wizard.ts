@@ -571,7 +571,16 @@ export async function provisionDevClone(
   }
   scriptStep.status = "done";
 
-  // Step 8: Write server version file (for client compatibility probes)
+  // Step 8: Configure host repos to accept direct pushes from clients
+  const pushConfigStep: WizardStep = { name: "Configure direct-push", status: "running" };
+  steps.push(pushConfigStep);
+  await exec(target, `
+    cd ~/harmoniqs/amicode && git config receive.denyCurrentBranch updateInstead
+    cd ~/harmoniqs/opencode && git config receive.denyCurrentBranch updateInstead
+  `);
+  pushConfigStep.status = "done";
+
+  // Step 9: Write server version file (for client compatibility probes)
   const versionStep: WizardStep = { name: "Write server version file", status: "running" };
   steps.push(versionStep);
   const { buildServerVersionFile } = await import("./fleet_compat");
