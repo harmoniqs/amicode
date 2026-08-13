@@ -40,6 +40,8 @@ Two modes: **Development clone** (push local repos, build from source) and **Rel
 #### Step 1: Get the SSH target
 
 Ask the user for the SSH alias or `user@host` for the remote server.
+Use the `question` tool with `kind: "text"` and `options: []` (the schema
+requires the `options` key even for free-form text inputs).
 
 #### Step 2: Validate SSH connectivity
 
