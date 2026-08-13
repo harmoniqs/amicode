@@ -13,8 +13,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cp from "node:child_process";
-import type { SshExec } from "./fleet_wizard";
-import { defaultSshExec, resolveSessionDbDir, detectLocalRepos } from "./fleet_wizard";
+import type { SshExec } from "./fleet_ssh";
+import { defaultSshExec, resolveSessionDbDir, detectLocalRepos } from "./fleet_ssh";
 import { readFleetConfig, getFleetRole } from "./fleet_fallback";
 
 // ============================================================================

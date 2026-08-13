@@ -5,8 +5,8 @@
 // Part of #355 (Fleet Panel: remote host settings).
 
 import { readFleetConfig, getFleetRole } from "./fleet_fallback";
-import type { SshExec } from "./fleet_wizard";
-import { defaultSshExec } from "./fleet_wizard";
+import type { SshExec } from "./fleet_ssh";
+import { defaultSshExec } from "./fleet_ssh";
 
 export interface HostSettings {
   dbPath: string;
