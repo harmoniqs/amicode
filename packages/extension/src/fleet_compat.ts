@@ -7,8 +7,8 @@
 // - Degraded: minor mismatch, basic sessions work, new features don't render
 // - Incompatible: major version mismatch, warn and offer Go Standalone
 
-import type { SshExec } from "./fleet_wizard";
-import { defaultSshExec } from "./fleet_wizard";
+import type { SshExec } from "./fleet_ssh";
+import { defaultSshExec } from "./fleet_ssh";
 
 // ============================================================================
 // Version + Capabilities

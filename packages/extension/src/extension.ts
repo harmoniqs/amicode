@@ -71,8 +71,8 @@ import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
-import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, discoverLocalSessions, mergeSessionsToServer, detectLocalRepos, type BinaryMode } from "./fleet_wizard";
-import { readTopology } from "./fleet_topology_data";
+
+
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
 import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
@@ -1362,190 +1362,38 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.commands.executeCommand("amicode.fleet.focus");
   }));
 
-  // #354 — Fleet wizard commands (create, add, remove, dismantle, reconfigure)
+  // #363 — Fleet lifecycle commands: launch chat sessions with the fleet skill.
+  // The agent handles SSH, tool installation, builds, and service configuration
+  // interactively in the chat — replacing the former sequential QuickPick wizard.
+  function launchFleetChat(prompt: string): void {
+    const readyUrl = opencodeReadyUrl;
+    if (!readyUrl) {
+      void vscode.window.showWarningMessage("Amicode server not ready — can't launch fleet session");
+      return;
+    }
+    const draftUrl = new URL(readyUrl.href);
+    draftUrl.pathname = "/new-session";
+    draftUrl.search = "";
+    const chatPanel = ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    chatPanel.postDraftMessage(prompt);
+  }
+
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("amicode.fleet.createFleet", async () => {
-      const choice = await vscode.window.showQuickPick(
-        ["This machine is the server", "A remote machine is the server"],
-        { placeHolder: "Choose topology" },
-      );
-      if (!choice) return;
-
-      if (choice.includes("remote")) {
-        const target = await vscode.window.showInputBox({
-          prompt: "SSH alias or user@host for the remote server",
-          placeHolder: "user@hostname",
-        });
-        if (!target) return;
-
-        // Choose binary mode
-        const modeChoice = await vscode.window.showQuickPick(
-          [
-            { label: "Development clone", description: "Clone repos on the server, build from source — for amicode developers", detail: "dev-clone" },
-            { label: "Release binary", description: "Use the release binary (must already be installed on remote)", detail: "release" },
-          ],
-          { placeHolder: "How should the server run amicode?" },
-        );
-        if (!modeChoice) return;
-        const binaryMode: BinaryMode = modeChoice.detail === "dev-clone" ? "dev-clone" : "release";
-
-        // Run SSH pre-flight
-        const preflight = await runPreflight(target, {
-          // Skip binary check for dev-clone (we'll install it)
-          binaryName: binaryMode === "dev-clone" ? "echo" : "opencode",
-        });
-        if (!preflight.allPass) {
-          const failedChecks = preflight.checks.filter((c) => c.status === "fail");
-          const msg = failedChecks.map((c) => `${c.name}: ${c.detail}`).join("\n");
-          void vscode.window.showErrorMessage(`Pre-flight failed:\n${msg}`);
-          return;
-        }
-
-        let serverBinaryPath: string | undefined;
-
-        if (binaryMode === "dev-clone") {
-          // Check dev tools are available
-          const devChecks = await runDevPreflightChecks(target);
-          if (!devChecks.allPass) {
-            const failedChecks = devChecks.checks.filter((c) => c.status === "fail");
-            const msg = failedChecks.map((c) => `${c.name}: ${c.detail}${c.fix ? ` — ${c.fix}` : ""}`).join("\n");
-            void vscode.window.showErrorMessage(`Dev tools missing on remote:\n${msg}`);
-            return;
-          }
-
-          // Clone repos and build
-          void vscode.window.showInformationMessage("Pushing local repos to host and building — this may take a few minutes...");
-          const binaryPath = vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary") ?? "";
-          const localRepos = detectLocalRepos({ extensionPath: ctx.extensionPath, binaryPath });
-          const devSteps = await provisionDevClone(target, { localRepos });
-          const devFailed = devSteps.find((s) => s.status === "failed");
-          if (devFailed) {
-            void vscode.window.showErrorMessage(`Dev setup failed at "${devFailed.name}": ${devFailed.detail}`);
-            return;
-          }
-          serverBinaryPath = devBinaryPath();
-        }
-
-        // Configure remote as fleet server
-        const token = generateFleetToken();
-        const steps = await configureRemoteServer(target, { token, binaryPath: serverBinaryPath });
-        const failed = steps.find((s) => s.status === "failed");
-        if (failed) {
-          void vscode.window.showErrorMessage(`Setup failed at "${failed.name}": ${failed.detail}`);
-          return;
-        }
-
-        // Configure local as client
-        configureLocalClient(target, { sshAlias: target, token });
-
-        // Offer to merge local sessions to the server
-        const localSessions = discoverLocalSessions();
-        if (localSessions.nonEmpty > 0) {
-          const sizeMB = (localSessions.totalSize / (1024 * 1024)).toFixed(1);
-          const merge = await vscode.window.showInformationMessage(
-            `Found ${localSessions.nonEmpty} local session database(s) (${sizeMB} MB). Merge them into the fleet server?`,
-            { modal: true },
-            "Merge",
-            "Skip",
-          );
-          if (merge === "Merge") {
-            void vscode.window.showInformationMessage("Merging sessions to server...");
-            const mergeSteps = await mergeSessionsToServer(target);
-            const mergeFailed = mergeSteps.find((s) => s.status === "failed");
-            if (mergeFailed) {
-              void vscode.window.showWarningMessage(`Session merge issue: ${mergeFailed.detail}`);
-            } else {
-              const detail = mergeSteps.find((s) => s.detail)?.detail ?? "done";
-              void vscode.window.showInformationMessage(`Sessions merged: ${detail}`);
-            }
-          }
-        }
-      } else {
-        // This machine is the server — configure locally
-        const { writeFleetConfig } = await import("./fleet_fallback");
-        writeFleetConfig({ role: "server", canonical: { host: "localhost", port: 4096 } });
-      }
-
-      // Refresh panel
-      const panel = getFleetPanel();
-      if (panel) {
-        panel.pushRole();
-        const topo = readTopology({ serverHealthy: true });
-        panel.postTopology(topo.nodes, topo.edges);
-      }
-      statusBar?.setFleetRole(getFleetRole());
-      const reload = await vscode.window.showInformationMessage(
-        "Fleet created. Reload window to connect to the host server?",
-        "Reload Window",
-        "Later",
-      );
-      if (reload === "Reload Window") {
-        void vscode.commands.executeCommand("workbench.action.reloadWindow");
-      }
+    vscode.commands.registerCommand("amicode.fleet.createFleet", () => {
+      launchFleetChat("I want to create a fleet with a remote machine as the server.");
     }),
-    vscode.commands.registerCommand("amicode.fleet.addMachine", async () => {
-      const target = await vscode.window.showInputBox({
-        prompt: "SSH alias or user@host for the new machine",
-        placeHolder: "user@hostname",
-      });
-      if (!target) return;
-
-      const preflight = await runPreflight(target);
-      if (!preflight.allPass) {
-        const failedChecks = preflight.checks.filter((c) => c.status === "fail");
-        void vscode.window.showErrorMessage(`Pre-flight failed: ${failedChecks.map((c) => c.detail).join("; ")}`);
-        return;
-      }
-
-      // Configure the new machine as a client
-      // (In a full implementation, we'd configure the remote machine here)
-      void vscode.window.showInformationMessage(`Machine ${target} added to fleet`);
-      const panel = getFleetPanel();
-      if (panel) {
-        const topo = readTopology({ serverHealthy: true });
-        panel.postTopology(topo.nodes, topo.edges);
-      }
+    vscode.commands.registerCommand("amicode.fleet.addMachine", () => {
+      launchFleetChat("I want to add a new machine to my fleet.");
     }),
-    vscode.commands.registerCommand("amicode.fleet.removeMachine", async (payload?: { target?: string }) => {
-      const target = payload?.target ?? await vscode.window.showInputBox({ prompt: "SSH alias or user@host to remove" });
-      if (!target) return;
-
-      const steps = await removeMachine(target);
-      const failed = steps.find((s) => s.status === "failed");
-      if (failed) {
-        void vscode.window.showErrorMessage(`Remove failed: ${failed.detail}`);
-      } else {
-        void vscode.window.showInformationMessage(`${target} removed from fleet`);
-        const panel = getFleetPanel();
-        if (panel) {
-          const topo = readTopology({ serverHealthy: true });
-          panel.postTopology(topo.nodes, topo.edges);
-        }
-      }
+    vscode.commands.registerCommand("amicode.fleet.removeMachine", (payload?: { target?: string }) => {
+      const target = payload?.target;
+      const prompt = target
+        ? `I want to remove ${target} from my fleet.`
+        : "I want to remove a machine from my fleet.";
+      launchFleetChat(prompt);
     }),
-    vscode.commands.registerCommand("amicode.fleet.dismantle", async () => {
-      const confirm = await vscode.window.showWarningMessage(
-        "Dismantle the fleet? This stops the server and reverts all machines to standalone.",
-        { modal: true },
-        "Dismantle",
-      );
-      if (confirm !== "Dismantle") return;
-
-      const cfg = readFleetConfig();
-      const serverTarget = cfg?.canonical?.sshAlias ?? cfg?.canonical?.host ?? "localhost";
-      const steps = await dismantleFleet(serverTarget);
-      const failed = steps.find((s) => s.status === "failed");
-      if (failed) {
-        void vscode.window.showErrorMessage(`Dismantle failed at "${failed.name}": ${failed.detail}`);
-      } else {
-        void vscode.window.showInformationMessage("Fleet dismantled — all machines standalone");
-        const panel = getFleetPanel();
-        if (panel) {
-          panel.pushRole();
-          panel.postTopology([], []);
-        }
-        statusBar?.setFleetRole("standalone");
-      }
+    vscode.commands.registerCommand("amicode.fleet.dismantle", () => {
+      launchFleetChat("I want to dismantle my fleet and revert all machines to standalone.");
     }),
   );
 
