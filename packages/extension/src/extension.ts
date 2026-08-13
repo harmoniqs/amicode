@@ -71,7 +71,7 @@ import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
-import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, type BinaryMode } from "./fleet_wizard";
+import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, discoverLocalSessions, mergeSessionsToServer, type BinaryMode } from "./fleet_wizard";
 import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
@@ -1434,6 +1434,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
         // Configure local as client
         configureLocalClient(target, { sshAlias: target, token });
+
+        // Offer to merge local sessions to the server
+        const localSessions = discoverLocalSessions();
+        if (localSessions.nonEmpty > 0) {
+          const sizeMB = (localSessions.totalSize / (1024 * 1024)).toFixed(1);
+          const merge = await vscode.window.showInformationMessage(
+            `Found ${localSessions.nonEmpty} local session database(s) (${sizeMB} MB). Merge them into the fleet server?`,
+            { modal: true },
+            "Merge",
+            "Skip",
+          );
+          if (merge === "Merge") {
+            void vscode.window.showInformationMessage("Merging sessions to server...");
+            const mergeSteps = await mergeSessionsToServer(target);
+            const mergeFailed = mergeSteps.find((s) => s.status === "failed");
+            if (mergeFailed) {
+              void vscode.window.showWarningMessage(`Session merge issue: ${mergeFailed.detail}`);
+            } else {
+              const detail = mergeSteps.find((s) => s.detail)?.detail ?? "done";
+              void vscode.window.showInformationMessage(`Sessions merged: ${detail}`);
+            }
+          }
+        }
       } else {
         // This machine is the server — configure locally
         const { writeFleetConfig } = await import("./fleet_fallback");

@@ -670,3 +670,169 @@ fi
 echo ""
 echo "Done. Fleet server restarted with the new build."`;
 }
+
+// ============================================================================
+// Session database merge (local → server)
+// ============================================================================
+
+const SESSION_DB_DIR = path.join(homedir(), ".local", "share", "opencode");
+const REMOTE_SESSION_DB_DIR = "~/.local/share/opencode";
+
+export interface LocalSessionInfo {
+  dbFiles: string[];
+  totalSize: number;
+  nonEmpty: number;
+}
+
+/** Discover local session databases that could be merged to the server. */
+export function discoverLocalSessions(dir: string = SESSION_DB_DIR): LocalSessionInfo {
+  const dbFiles: string[] = [];
+  let totalSize = 0;
+  let nonEmpty = 0;
+
+  try {
+    const files = fs.readdirSync(dir);
+    for (const file of files) {
+      if (!file.startsWith("opencode") || !file.endsWith(".db")) continue;
+      const filePath = path.join(dir, file);
+      const stat = fs.statSync(filePath);
+      dbFiles.push(file);
+      totalSize += stat.size;
+      if (stat.size > 0) nonEmpty++;
+    }
+  } catch {
+    // Dir doesn't exist or unreadable
+  }
+
+  return { dbFiles, totalSize, nonEmpty };
+}
+
+/** Check if the server already has session databases (non-empty). */
+export async function serverHasSessions(
+  target: string,
+  opts: { exec?: SshExec } = {},
+): Promise<boolean> {
+  const exec = opts.exec ?? defaultSshExec;
+  const result = await exec(target, `find ${REMOTE_SESSION_DB_DIR} -name "opencode*.db" -size +0 2>/dev/null | head -1`);
+  return result.ok && result.stdout.trim().length > 0;
+}
+
+/** Copy local session databases to the server.
+ *  - If the server has NO sessions: copies all local DBs directly (clean merge).
+ *  - If the server HAS sessions: copies local DBs with a .local-merge suffix,
+ *    then runs sqlite3 to merge tables (best-effort). */
+export async function mergeSessionsToServer(
+  target: string,
+  opts: {
+    exec?: SshExec;
+    scp?: (localPath: string, target: string, remotePath: string) => Promise<SshExecResult>;
+    localDir?: string;
+  } = {},
+): Promise<WizardStep[]> {
+  const exec = opts.exec ?? defaultSshExec;
+  const scpFn = opts.scp ?? scpFile;
+  const localDir = opts.localDir ?? SESSION_DB_DIR;
+  const steps: WizardStep[] = [];
+
+  const localSessions = discoverLocalSessions(localDir);
+  if (localSessions.nonEmpty === 0) {
+    const skipStep: WizardStep = { name: "Check local sessions", status: "done", detail: "No non-empty session databases found locally" };
+    steps.push(skipStep);
+    return steps;
+  }
+
+  // Ensure remote dir exists
+  const mkdirStep: WizardStep = { name: "Prepare remote session dir", status: "running" };
+  steps.push(mkdirStep);
+  const mkdirResult = await exec(target, `mkdir -p ${REMOTE_SESSION_DB_DIR}`);
+  if (!mkdirResult.ok) {
+    mkdirStep.status = "failed";
+    mkdirStep.detail = mkdirResult.stderr;
+    return steps;
+  }
+  mkdirStep.status = "done";
+
+  // Check if server already has sessions
+  const hasExisting = await serverHasSessions(target, { exec });
+
+  if (!hasExisting) {
+    // Clean merge: server is fresh, just copy all DBs over
+    const copyStep: WizardStep = { name: `Copy ${localSessions.nonEmpty} session DB(s) to server`, status: "running" };
+    steps.push(copyStep);
+
+    for (const dbFile of localSessions.dbFiles) {
+      const localPath = path.join(localDir, dbFile);
+      if (fs.statSync(localPath).size === 0) continue;
+
+      const result = await scpFn(localPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}`);
+      if (!result.ok) {
+        copyStep.status = "failed";
+        copyStep.detail = `Failed to copy ${dbFile}: ${result.stderr}`;
+        return steps;
+      }
+
+      // Also copy WAL/SHM sidecars if they exist
+      const walPath = `${localPath}-wal`;
+      const shmPath = `${localPath}-shm`;
+      if (fs.existsSync(walPath)) await scpFn(walPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}-wal`);
+      if (fs.existsSync(shmPath)) await scpFn(shmPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}-shm`);
+    }
+    copyStep.status = "done";
+  } else {
+    // Server has existing sessions — copy with suffix and attempt sqlite merge
+    const copyStep: WizardStep = { name: `Copy ${localSessions.nonEmpty} local DB(s) for merge`, status: "running" };
+    steps.push(copyStep);
+
+    for (const dbFile of localSessions.dbFiles) {
+      const localPath = path.join(localDir, dbFile);
+      if (fs.statSync(localPath).size === 0) continue;
+
+      const mergeFile = dbFile.replace(/\.db$/, ".local-merge.db");
+      const result = await scpFn(localPath, target, `${REMOTE_SESSION_DB_DIR}/${mergeFile}`);
+      if (!result.ok) {
+        copyStep.status = "failed";
+        copyStep.detail = `Failed to copy ${dbFile}: ${result.stderr}`;
+        return steps;
+      }
+    }
+    copyStep.status = "done";
+
+    // Attempt SQLite merge on the server
+    const mergeStep: WizardStep = { name: "Merge session databases", status: "running" };
+    steps.push(mergeStep);
+
+    // For each .local-merge.db, attach it to the main DB and INSERT OR IGNORE
+    for (const dbFile of localSessions.dbFiles) {
+      if (fs.statSync(path.join(localDir, dbFile)).size === 0) continue;
+      const mainDb = `${REMOTE_SESSION_DB_DIR}/${dbFile}`;
+      const mergeDb = `${REMOTE_SESSION_DB_DIR}/${dbFile.replace(/\.db$/, ".local-merge.db")}`;
+
+      // Get tables from the merge DB and insert into main
+      const mergeResult = await exec(target, `
+        if command -v sqlite3 >/dev/null 2>&1; then
+          tables=$(sqlite3 "${mergeDb}" ".tables" 2>/dev/null)
+          for table in $tables; do
+            sqlite3 "${mainDb}" "ATTACH '${mergeDb}' AS merge_db; INSERT OR IGNORE INTO $table SELECT * FROM merge_db.$table;" 2>/dev/null || true
+          done
+          rm -f "${mergeDb}"
+          echo "merged"
+        else
+          echo "no-sqlite3"
+        fi
+      `);
+
+      if (mergeResult.stdout.includes("no-sqlite3")) {
+        mergeStep.status = "done";
+        mergeStep.detail = "sqlite3 not available on server — local DBs copied with .local-merge.db suffix for manual merge";
+        break;
+      }
+    }
+    if (!mergeStep.detail) {
+      mergeStep.status = "done";
+      mergeStep.detail = "Sessions merged successfully";
+    }
+  }
+
+  return steps;
+}
+
