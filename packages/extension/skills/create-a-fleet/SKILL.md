@@ -124,7 +124,33 @@ ssh <target> 'cd ~/harmoniqs/opencode && git checkout <branch> && cd ~/harmoniqs
 5-10 minutes. Report progress: "Pushing opencode (530 MB) — this can take several minutes
 on the first push."
 
-#### Step 8 (dev-clone only): Build on host
+#### Step 8: Copy session databases to server
+
+Copy local opencode session databases to the server **before** the build. This ensures
+sessions are in place before the binary or service starts (which would otherwise create
+empty DBs). The `local_rebuild_amicode.sh` script's backup/restore logic then protects
+them on subsequent rebuilds.
+
+```bash
+# Check if local session databases exist
+ls ~/.local/share/opencode/opencode*.db 2>/dev/null
+
+# Ensure target directory exists
+ssh <target> 'mkdir -p ~/.local/share/opencode'
+
+# Copy databases (clean copy — server has no sessions on first setup)
+scp ~/.local/share/opencode/opencode*.db <target>:~/.local/share/opencode/
+# Also copy WAL/SHM sidecars if present
+scp ~/.local/share/opencode/opencode*.db-wal <target>:~/.local/share/opencode/ 2>/dev/null || true
+scp ~/.local/share/opencode/opencode*.db-shm <target>:~/.local/share/opencode/ 2>/dev/null || true
+```
+
+If the server already has sessions (e.g. re-creating a fleet), copy with a `.local-merge.db`
+suffix and attempt a sqlite3 merge on the server instead of overwriting.
+
+Skip this step if no local session databases exist (first install).
+
+#### Step 9 (dev-clone only): Build on host
 
 ```bash
 # Build opencode binary
@@ -142,7 +168,7 @@ ssh <target> 'codesign --sign - --force ~/harmoniqs/opencode/packages/opencode/d
 - Node version too old: suggest nvm upgrade
 - pnpm lockfile mismatch: suggest `pnpm install --no-frozen-lockfile`
 
-#### Step 9: Create fleet directory and write fleet.json on host
+#### Step 10: Create fleet directory and write fleet.json on host
 
 ```bash
 ssh <target> 'mkdir -p ~/.amico/ops/fleet'
@@ -160,7 +186,7 @@ EOF
 mv ~/.amico/ops/fleet/fleet.json.tmp ~/.amico/ops/fleet/fleet.json'
 ```
 
-#### Step 10: Generate and store fleet token
+#### Step 11: Generate and store fleet token
 
 ```bash
 # Generate a 32-byte hex token
@@ -170,7 +196,7 @@ TOKEN=$(openssl rand -hex 32)
 ssh <target> "printf '%s' '${TOKEN}' > ~/.amico/ops/fleet/fleet_token.tmp && chmod 600 ~/.amico/ops/fleet/fleet_token.tmp && mv ~/.amico/ops/fleet/fleet_token.tmp ~/.amico/ops/fleet/fleet_token"
 ```
 
-#### Step 11: Install server service
+#### Step 12: Install server service
 
 **macOS (launchd):**
 ```bash
@@ -226,7 +252,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now amico-server.service'
 ```
 
-#### Step 12: Configure local machine as client
+#### Step 13: Configure local machine as client
 
 Write the local fleet.json:
 ```bash
@@ -249,7 +275,7 @@ chmod 600 ~/.amico/ops/fleet/fleet_token.tmp
 mv ~/.amico/ops/fleet/fleet_token.tmp ~/.amico/ops/fleet/fleet_token
 ```
 
-#### Step 13: Install tunnel plist (macOS client only)
+#### Step 14: Install tunnel plist (macOS client only)
 
 ```bash
 cat > ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist << 'EOF'
@@ -287,66 +313,6 @@ launchctl load ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist
 
 Replace `SSH_ALIAS` with the target, and `4096` with the chosen port.
 
-#### Step 14 (dev-clone only): Install rebuild script
-
-```bash
-ssh <target> 'cat > ~/harmoniqs/rebuild_amicode.sh << '\''EOF'\''
-#!/usr/bin/env bash
-set -euo pipefail
-
-# Rebuild script for the fleet server.
-# Run this on the server to pull latest and rebuild both repos.
-
-# Session DB backup — the DB lives in $XDG_DATA_HOME/opencode/ (default: ~/.local/share/opencode/)
-DBDIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
-BACKUP="$DBDIR/.backup-$(date +%Y%m%d-%H%M%S)"
-if ls "$DBDIR"/opencode*.db 1>/dev/null 2>&1; then
-  mkdir -p "$BACKUP"
-  for f in "$DBDIR"/opencode*.db "$DBDIR"/opencode*.db-wal "$DBDIR"/opencode*.db-shm; do
-    [ -f "$f" ] && cp -p "$f" "$BACKUP/"
-  done
-  echo "==> Session DBs backed up to $BACKUP"
-fi
-
-# Pull sources
-echo "==> Pulling opencode..."
-cd ~/harmoniqs/opencode && git fetch origin && git pull origin $(git rev-parse --abbrev-ref HEAD)
-
-echo "==> Pulling amicode..."
-cd ~/harmoniqs/amicode && git fetch origin && git pull origin $(git rev-parse --abbrev-ref HEAD)
-
-# Build
-echo "==> Building opencode binary..."
-cd ~/harmoniqs/opencode/packages/opencode && bun install && bun run script/build.ts --single --skip-install
-
-echo "==> Building amicode extension..."
-cd ~/harmoniqs/amicode && pnpm install && cd packages/extension && pnpm run build
-
-# Codesign (macOS)
-BUILT="$HOME/harmoniqs/opencode/packages/opencode/dist/opencode-darwin-arm64/bin/opencode"
-[ -f "$BUILT" ] && codesign --sign - --force "$BUILT" 2>/dev/null || true
-
-# Restart server
-echo "==> Restarting fleet server..."
-launchctl stop co.harmoniqs.amico-server 2>/dev/null || true
-sleep 1
-launchctl start co.harmoniqs.amico-server 2>/dev/null || true
-
-# Update server version file
-VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$HOME/harmoniqs/amicode/packages/extension/package.json','utf8')).version)" 2>/dev/null || echo "0.0.0")
-cat > ~/.amico/ops/fleet/server_version.json << VEOF
-{
-  "version": "$VERSION",
-  "schema": 1,
-  "capabilities": ["sessions", "fleet-state", "fleet-action", "profiles", "host-settings", "sweep", "topology"]
-}
-VEOF
-
-echo "Done. Fleet server restarted."
-EOF
-chmod +x ~/harmoniqs/rebuild_amicode.sh'
-```
-
 #### Step 15: Write server version file
 
 ```bash
@@ -361,22 +327,7 @@ cat > ~/.amico/ops/fleet/server_version.json << VEOF
 VEOF'
 ```
 
-#### Step 16: Offer session merge
-
-Check if local session databases exist:
-```bash
-ls ~/.local/share/opencode/opencode*.db 2>/dev/null
-```
-
-If they exist, offer to merge them to the server via scp:
-```bash
-scp ~/.local/share/opencode/opencode*.db <target>:~/.local/share/opencode/
-```
-
-(Only do clean merge if server has no existing sessions. If server already has sessions,
-copy with `.local-merge.db` suffix and attempt sqlite3 merge on the server.)
-
-#### Step 17: Verify and finish
+#### Step 16: Verify and finish
 
 Run the validation checklist:
 ```bash
