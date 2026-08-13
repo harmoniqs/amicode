@@ -13,9 +13,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as cp from "node:child_process";
-import { homedir } from "node:os";
 import type { SshExec } from "./fleet_wizard";
-import { defaultSshExec, resolveSessionDbDir } from "./fleet_wizard";
+import { defaultSshExec, resolveSessionDbDir, detectLocalRepos } from "./fleet_wizard";
 import { readFleetConfig, getFleetRole } from "./fleet_fallback";
 
 // ============================================================================
@@ -54,7 +53,7 @@ export interface SyncConflict {
 
 /** Get the local amicode repo git SHA. */
 export function getLocalSha(repoDir?: string): string | null {
-  const dir = repoDir ?? path.join(homedir(), "harmoniqs", "amicode");
+  const dir = repoDir ?? detectLocalRepos().amicode;
   try {
     return cp.execSync("git rev-parse HEAD", { cwd: dir, encoding: "utf8", timeout: 5000 }).trim();
   } catch {
@@ -83,8 +82,9 @@ export async function syncBuild(
 ): Promise<{ ok: boolean; error?: string }> {
   const exec = opts.exec ?? defaultSshExec;
   const progress = opts.onProgress ?? (() => {});
-  const repoDir = path.join(homedir(), "harmoniqs", "amicode");
-  const ocRepoDir = path.join(homedir(), "harmoniqs", "opencode");
+  const repos = detectLocalRepos();
+  const repoDir = repos.amicode;
+  const ocRepoDir = repos.opencode;
 
   // Get the host's exact SHAs + branches
   progress("Reading host state...");
@@ -171,8 +171,8 @@ export function ensureFleetRemote(
   target: string,
   opts: { repoDir?: string; ocRepoDir?: string } = {},
 ): void {
-  const repoDir = opts.repoDir ?? path.join(homedir(), "harmoniqs", "amicode");
-  const ocRepoDir = opts.ocRepoDir ?? path.join(homedir(), "harmoniqs", "opencode");
+  const repoDir = opts.repoDir ?? detectLocalRepos().amicode;
+  const ocRepoDir = opts.ocRepoDir ?? detectLocalRepos().opencode;
 
   for (const dir of [repoDir, ocRepoDir]) {
     const repoName = path.basename(dir); // "amicode" or "opencode"
@@ -219,8 +219,9 @@ export function pushToHost(opts: { onProgress?: (step: string) => void } = {}): 
   error?: string;
 } {
   const progress = opts.onProgress ?? (() => {});
-  const repoDir = path.join(homedir(), "harmoniqs", "amicode");
-  const ocRepoDir = path.join(homedir(), "harmoniqs", "opencode");
+  const repos = detectLocalRepos();
+  const repoDir = repos.amicode;
+  const ocRepoDir = repos.opencode;
   let amicodePushed = false;
   let opencodePushed = false;
 
