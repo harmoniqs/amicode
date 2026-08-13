@@ -675,8 +675,28 @@ echo "Done. Fleet server restarted with the new build."`;
 // Session database merge (local → server)
 // ============================================================================
 
-const SESSION_DB_DIR = path.join(homedir(), ".local", "share", "opencode");
-const REMOTE_SESSION_DB_DIR = "~/.local/share/opencode";
+/** Resolve the opencode data directory (where session DBs live).
+ *  Uses XDG_DATA_HOME/opencode if set, otherwise ~/.local/share/opencode.
+ *  This mirrors opencode's own resolution in packages/core/src/global.ts:
+ *  `path.join(xdgData, "opencode")` */
+export function resolveSessionDbDir(): string {
+  const xdgData = process.env.XDG_DATA_HOME ?? path.join(homedir(), ".local", "share");
+  return path.join(xdgData, "opencode");
+}
+
+/** The equivalent path on a remote machine. Queries XDG_DATA_HOME on the remote,
+ *  falls back to ~/.local/share/opencode. */
+export async function resolveRemoteSessionDbDir(
+  target: string,
+  opts: { exec?: SshExec } = {},
+): Promise<string> {
+  const exec = opts.exec ?? defaultSshExec;
+  const result = await exec(target, 'echo "${XDG_DATA_HOME:-$HOME/.local/share}/opencode"');
+  if (result.ok && result.stdout.trim()) {
+    return result.stdout.trim();
+  }
+  return "~/.local/share/opencode";
+}
 
 export interface LocalSessionInfo {
   dbFiles: string[];
@@ -685,16 +705,17 @@ export interface LocalSessionInfo {
 }
 
 /** Discover local session databases that could be merged to the server. */
-export function discoverLocalSessions(dir: string = SESSION_DB_DIR): LocalSessionInfo {
+export function discoverLocalSessions(dir?: string): LocalSessionInfo {
+  const sessionDir = dir ?? resolveSessionDbDir();
   const dbFiles: string[] = [];
   let totalSize = 0;
   let nonEmpty = 0;
 
   try {
-    const files = fs.readdirSync(dir);
+    const files = fs.readdirSync(sessionDir);
     for (const file of files) {
       if (!file.startsWith("opencode") || !file.endsWith(".db")) continue;
-      const filePath = path.join(dir, file);
+      const filePath = path.join(sessionDir, file);
       const stat = fs.statSync(filePath);
       dbFiles.push(file);
       totalSize += stat.size;
@@ -710,10 +731,11 @@ export function discoverLocalSessions(dir: string = SESSION_DB_DIR): LocalSessio
 /** Check if the server already has session databases (non-empty). */
 export async function serverHasSessions(
   target: string,
-  opts: { exec?: SshExec } = {},
+  opts: { exec?: SshExec; remoteDir?: string } = {},
 ): Promise<boolean> {
   const exec = opts.exec ?? defaultSshExec;
-  const result = await exec(target, `find ${REMOTE_SESSION_DB_DIR} -name "opencode*.db" -size +0 2>/dev/null | head -1`);
+  const remoteDir = opts.remoteDir ?? await resolveRemoteSessionDbDir(target, { exec });
+  const result = await exec(target, `find ${remoteDir} -name "opencode*.db" -size +0 2>/dev/null | head -1`);
   return result.ok && result.stdout.trim().length > 0;
 }
 
@@ -731,7 +753,8 @@ export async function mergeSessionsToServer(
 ): Promise<WizardStep[]> {
   const exec = opts.exec ?? defaultSshExec;
   const scpFn = opts.scp ?? scpFile;
-  const localDir = opts.localDir ?? SESSION_DB_DIR;
+  const localDir = opts.localDir ?? resolveSessionDbDir();
+  const remoteDir = await resolveRemoteSessionDbDir(target, { exec });
   const steps: WizardStep[] = [];
 
   const localSessions = discoverLocalSessions(localDir);
@@ -744,7 +767,7 @@ export async function mergeSessionsToServer(
   // Ensure remote dir exists
   const mkdirStep: WizardStep = { name: "Prepare remote session dir", status: "running" };
   steps.push(mkdirStep);
-  const mkdirResult = await exec(target, `mkdir -p ${REMOTE_SESSION_DB_DIR}`);
+  const mkdirResult = await exec(target, `mkdir -p ${remoteDir}`);
   if (!mkdirResult.ok) {
     mkdirStep.status = "failed";
     mkdirStep.detail = mkdirResult.stderr;
@@ -764,7 +787,7 @@ export async function mergeSessionsToServer(
       const localPath = path.join(localDir, dbFile);
       if (fs.statSync(localPath).size === 0) continue;
 
-      const result = await scpFn(localPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}`);
+      const result = await scpFn(localPath, target, `${remoteDir}/${dbFile}`);
       if (!result.ok) {
         copyStep.status = "failed";
         copyStep.detail = `Failed to copy ${dbFile}: ${result.stderr}`;
@@ -774,8 +797,8 @@ export async function mergeSessionsToServer(
       // Also copy WAL/SHM sidecars if they exist
       const walPath = `${localPath}-wal`;
       const shmPath = `${localPath}-shm`;
-      if (fs.existsSync(walPath)) await scpFn(walPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}-wal`);
-      if (fs.existsSync(shmPath)) await scpFn(shmPath, target, `${REMOTE_SESSION_DB_DIR}/${dbFile}-shm`);
+      if (fs.existsSync(walPath)) await scpFn(walPath, target, `${remoteDir}/${dbFile}-wal`);
+      if (fs.existsSync(shmPath)) await scpFn(shmPath, target, `${remoteDir}/${dbFile}-shm`);
     }
     copyStep.status = "done";
   } else {
@@ -788,7 +811,7 @@ export async function mergeSessionsToServer(
       if (fs.statSync(localPath).size === 0) continue;
 
       const mergeFile = dbFile.replace(/\.db$/, ".local-merge.db");
-      const result = await scpFn(localPath, target, `${REMOTE_SESSION_DB_DIR}/${mergeFile}`);
+      const result = await scpFn(localPath, target, `${remoteDir}/${mergeFile}`);
       if (!result.ok) {
         copyStep.status = "failed";
         copyStep.detail = `Failed to copy ${dbFile}: ${result.stderr}`;
@@ -804,8 +827,8 @@ export async function mergeSessionsToServer(
     // For each .local-merge.db, attach it to the main DB and INSERT OR IGNORE
     for (const dbFile of localSessions.dbFiles) {
       if (fs.statSync(path.join(localDir, dbFile)).size === 0) continue;
-      const mainDb = `${REMOTE_SESSION_DB_DIR}/${dbFile}`;
-      const mergeDb = `${REMOTE_SESSION_DB_DIR}/${dbFile.replace(/\.db$/, ".local-merge.db")}`;
+      const mainDb = `${remoteDir}/${dbFile}`;
+      const mergeDb = `${remoteDir}/${dbFile.replace(/\.db$/, ".local-merge.db")}`;
 
       // Get tables from the merge DB and insert into main
       const mergeResult = await exec(target, `
