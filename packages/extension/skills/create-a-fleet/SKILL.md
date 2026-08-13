@@ -313,6 +313,11 @@ cat > ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist << 'EOF'
 <dict>
   <key>Label</key>
   <string>co.harmoniqs.amico-tunnel</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/ssh</string>
@@ -339,6 +344,12 @@ EOF
 launchctl unload ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist 2>/dev/null
 launchctl load ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist
 ```
+
+> **Why the PATH:** launchd agents inherit a minimal environment. If the user's SSH
+> config has a `ProxyCommand` referencing binaries outside `/usr/bin` (e.g.
+> `tailscale nc %h %p` at `/usr/local/bin/tailscale`), the tunnel will silently fail
+> without this. Include both `/usr/local/bin` (Intel Homebrew, Tailscale) and
+> `/opt/homebrew/bin` (Apple Silicon Homebrew).
 
 Replace `SSH_ALIAS` with the target, and `4096` with the chosen port.
 
@@ -407,12 +418,11 @@ Tell the user: **"Fleet created. Reload VS Code to connect to the host server."*
 ### `/fleet remove <target>` — Remove a Machine
 
 1. SSH into the target
-2. Revert fleet.json to standalone:
+2. Revert fleet.json to standalone **but preserve canonical** (so the machine can reconnect later):
    ```bash
-   ssh <target> 'cat > ~/.amico/ops/fleet/fleet.json.tmp << '\''EOF'\''
-   {"role": "standalone"}
-   EOF
-   mv ~/.amico/ops/fleet/fleet.json.tmp ~/.amico/ops/fleet/fleet.json'
+   ssh <target> 'EXISTING=$(cat ~/.amico/ops/fleet/fleet.json 2>/dev/null || echo "{}") && \
+     echo "$EXISTING" | python3 -c "import sys,json; d=json.load(sys.stdin); d[\"role\"]=\"standalone\"; json.dump(d,open(\"/tmp/fleet.json.tmp\",\"w\"),indent=2)" && \
+     mv /tmp/fleet.json.tmp ~/.amico/ops/fleet/fleet.json'
    ```
 3. Unload tunnel/guard services:
    ```bash
@@ -431,8 +441,8 @@ Tell the user: **"Fleet created. Reload VS Code to connect to the host server."*
    # Linux:
    ssh <server> 'systemctl --user stop amico-server.service 2>/dev/null; systemctl --user disable amico-server.service 2>/dev/null; true'
    ```
-3. Revert server to standalone (same as remove)
-4. Revert local to standalone:
+3. Revert server to standalone (same as remove — preserves canonical)
+4. Revert local to standalone, **removing canonical** (dismantle = no fleet to reconnect to):
    ```bash
    cat > ~/.amico/ops/fleet/fleet.json.tmp << 'EOF'
    {"role": "standalone"}
