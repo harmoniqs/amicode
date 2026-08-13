@@ -1375,7 +1375,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         if (opencodeReadyUrl) {
           clearInterval(poll);
           const panel = ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-          panel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}`);
+          panel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}&autoSend=1`);
         }
       }, 500);
       // Give up after 30s
@@ -1383,7 +1383,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       return;
     }
     const chatPanel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-    chatPanel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}`);
+    chatPanel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}&autoSend=1`);
   }
 
   ctx.subscriptions.push(
