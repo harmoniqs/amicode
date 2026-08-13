@@ -1598,6 +1598,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
 
+  // Helper: launch a conflict-resolution chat with notification
+  async function launchConflictResolutionChat(prompt: string): Promise<void> {
+    const readyUrl = opencodeReadyUrl;
+    if (!readyUrl) {
+      void vscode.window.showWarningMessage("Amicode server not ready — can't launch resolution session");
+      return;
+    }
+    const draftUrl = new URL(readyUrl.href);
+    draftUrl.pathname = "/new-session";
+    draftUrl.search = "";
+    const chatPanel = ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    // Send the conflict resolution prompt as a draft (populates input)
+    chatPanel.postDraftMessage(prompt);
+    // Notify the user which session was opened
+    void vscode.window.showInformationMessage(
+      `Conflict resolution session launched in "${chatPanel.title}". Review the prompt and send to resolve.`,
+    );
+  }
+
   // Fleet auto-sync on activation (if client mode)
   const autoSync = shouldAutoSync();
   if (autoSync.should && autoSync.target) {
@@ -1622,12 +1641,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         );
         if (resolve === "Resolve with Amicode") {
           const prompt = buildConflictResolutionPrompt(result.conflict);
-          // Open a new chat with the conflict resolution prompt
-          void vscode.commands.executeCommand("amicode.newChat");
-          // Give the chat a moment to open, then send the prompt
-          setTimeout(() => {
-            void vscode.commands.executeCommand("amicode.sendMessage", prompt);
-          }, 1500);
+          await launchConflictResolutionChat(prompt);
         }
       } else if (result.synced) {
         if (panel) panel.postCompat("compatible", result.buildUpdated ? "Synced — reload window" : "Up to date");
@@ -1670,8 +1684,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       );
       if (resolve === "Resolve with Amicode") {
         const prompt = buildConflictResolutionPrompt(result.conflict);
-        void vscode.commands.executeCommand("amicode.newChat");
-        setTimeout(() => void vscode.commands.executeCommand("amicode.sendMessage", prompt), 1500);
+        await launchConflictResolutionChat(prompt);
       }
     } else if (result.synced && result.buildUpdated) {
       if (panel) panel.postCompat("compatible", "Synced — reload window");
