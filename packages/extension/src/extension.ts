@@ -406,7 +406,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
   statusBar = new StatusBarManager();
-  statusBar.setFleetRole(getFleetRole());
+  {
+    const role = getFleetRole();
+    const cfg = role === "client" ? readFleetConfig() : undefined;
+    const hostInfo = cfg?.canonical ? `${cfg.canonical.host ?? "unknown"}:${cfg.canonical.port ?? 4096}` : undefined;
+    statusBar.setFleetRole(role, hostInfo);
+  }
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // 2. Start the multi-run RunsManager immediately — it tails the append-only
@@ -1258,21 +1263,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Migrate legacy fallback.json on activation.
   migrateLegacyFallback();
 
-  const fleetStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-  ctx.subscriptions.push(fleetStatusItem);
-  const refreshFleetStatus = (): void => {
+  /** Update the single fleet status-bar item via StatusBarManager. */
+  const refreshFleetStatusBar = (): void => {
     const role = getFleetRole();
-    if (role === "client") {
-      const cfg = readFleetConfig();
-      fleetStatusItem.text = "$(cloud) Fleet: client";
-      fleetStatusItem.tooltip = `Fleet client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096}`;
-      fleetStatusItem.command = "amicode.fleet.goStandalone";
-      fleetStatusItem.show();
-    } else {
-      fleetStatusItem.hide();
-    }
+    const cfg = role === "client" ? readFleetConfig() : undefined;
+    const hostInfo = cfg?.canonical ? `${cfg.canonical.host ?? "unknown"}:${cfg.canonical.port ?? 4096}` : undefined;
+    statusBar?.setFleetRole(role, hostInfo);
   };
-  refreshFleetStatus();
 
   const runFleetGoStandalone = async (): Promise<void> => {
     const role = getFleetRole();
@@ -1309,7 +1306,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // plist may not exist or already unloaded — fine
       }
     }
-    refreshFleetStatus();
+    refreshFleetStatusBar();
     opencodeChannel.appendLine(`[fleet] Go Standalone — restarting server locally (was binary=${prevBinary || "(vendored)"} port=${prevPort})`);
     try {
       await serverManager?.stop();

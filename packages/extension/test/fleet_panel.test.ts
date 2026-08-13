@@ -171,21 +171,29 @@ describe("FleetPanelView renderHtml", () => {
 
 describe("fleetStatusBarLabel", () => {
   it("returns standalone label for standalone role", () => {
-    const { text, tooltip } = fleetStatusBarLabel("standalone");
+    const { text, tooltip, command } = fleetStatusBarLabel("standalone");
     expect(text).toContain("Fleet: standalone");
     expect(tooltip).toContain("No fleet configured");
+    expect(command).toBe("amicode.fleetPanel.focus");
   });
 
   it("returns server label for server role", () => {
-    const { text, tooltip } = fleetStatusBarLabel("server");
+    const { text, tooltip, command } = fleetStatusBarLabel("server");
     expect(text).toContain("Fleet: server");
     expect(tooltip).toContain("canonical server");
+    expect(command).toBe("amicode.fleetPanel.focus");
   });
 
   it("returns client label for client role", () => {
-    const { text, tooltip } = fleetStatusBarLabel("client");
+    const { text, tooltip, command } = fleetStatusBarLabel("client");
     expect(text).toContain("Fleet: client");
-    expect(tooltip).toContain("Connected to fleet server");
+    expect(tooltip).toContain("go standalone");
+    expect(command).toBe("amicode.fleet.goStandalone");
+  });
+
+  it("includes host info in client tooltip when provided", () => {
+    const { tooltip } = fleetStatusBarLabel("client", "jj@100.77.141.50:4096");
+    expect(tooltip).toContain("jj@100.77.141.50:4096");
   });
 });
 

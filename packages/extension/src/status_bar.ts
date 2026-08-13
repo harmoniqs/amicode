@@ -39,14 +39,14 @@ export function statusBarLabel(serverReady: boolean, run?: RunState): { text: st
 }
 
 /** Pure label/tooltip for the fleet status-bar item. */
-export function fleetStatusBarLabel(role: "standalone" | "server" | "client"): { text: string; tooltip: string } {
+export function fleetStatusBarLabel(role: "standalone" | "server" | "client", hostInfo?: string): { text: string; tooltip: string; command: string } {
   switch (role) {
     case "server":
-      return { text: "$(cloud) Fleet: server", tooltip: "This machine is the canonical server — click to open Fleet panel" };
+      return { text: "$(cloud) Fleet: server", tooltip: "This machine is the canonical server — click to open Fleet panel", command: "amicode.fleetPanel.focus" };
     case "client":
-      return { text: "$(cloud) Fleet: client", tooltip: "Connected to fleet server — click to open Fleet panel" };
+      return { text: "$(cloud) Fleet: client", tooltip: `Fleet client → ${hostInfo ?? "remote"} — click to go standalone`, command: "amicode.fleet.goStandalone" };
     default:
-      return { text: "$(cloud) Fleet: standalone", tooltip: "No fleet configured — click to open Fleet panel" };
+      return { text: "$(cloud) Fleet: standalone", tooltip: "No fleet configured — click to open Fleet panel", command: "amicode.fleetPanel.focus" };
   }
 }
 
@@ -56,6 +56,7 @@ export class StatusBarManager {
   private serverReady = false;
   private run?: RunState;
   private fleetRole: "standalone" | "server" | "client" = "standalone";
+  private fleetHostInfo?: string;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -64,9 +65,8 @@ export class StatusBarManager {
     this.item.show();
     this.render();
 
-    // Fleet status bar item — always visible, click focuses the Fleet panel.
+    // Fleet status bar item — always visible, command depends on role.
     this.fleetItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-    this.fleetItem.command = "amicode.fleetPanel.focus";
     this.fleetItem.show();
     this.renderFleet();
   }
@@ -81,8 +81,9 @@ export class StatusBarManager {
     this.render();
   }
 
-  setFleetRole(role: "standalone" | "server" | "client"): void {
+  setFleetRole(role: "standalone" | "server" | "client", hostInfo?: string): void {
     this.fleetRole = role;
+    this.fleetHostInfo = hostInfo;
     this.renderFleet();
   }
 
@@ -98,8 +99,9 @@ export class StatusBarManager {
   }
 
   private renderFleet(): void {
-    const { text, tooltip } = fleetStatusBarLabel(this.fleetRole);
+    const { text, tooltip, command } = fleetStatusBarLabel(this.fleetRole, this.fleetHostInfo);
     this.fleetItem.text = text;
     this.fleetItem.tooltip = tooltip;
+    this.fleetItem.command = command;
   }
 }

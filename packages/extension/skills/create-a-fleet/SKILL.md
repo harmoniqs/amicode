@@ -34,6 +34,15 @@ Use this skill when:
 
 ### `/fleet create` — Full Setup Flow
 
+> **⚠️ SESSION SAFETY — ordering invariant.** Writing `fleet.json` with
+> `"role": "client"` on the local machine is what triggers VS Code to switch
+> from the local standalone server to the remote fleet server. If the tunnel
+> or the server isn't ready when this happens, the session drops mid-setup.
+> Therefore: **ALL server-side work, the SSH tunnel, and end-to-end
+> verification MUST complete before the local fleet.json is written.** The
+> local fleet.json write is Step 17 — the absolute last operation. Never
+> reorder it earlier.
+
 Two modes: **Development clone** (push local repos, build from source) and **Release binary**
 (binary already installed on remote).
 
@@ -254,32 +263,49 @@ systemctl --user daemon-reload
 systemctl --user enable --now amico-server.service'
 ```
 
-#### Step 13: Configure local machine as client
+#### Step 13: Write server version file
 
-Write the local fleet.json:
 ```bash
+ssh <target> 'VERSION=$(node -e "console.log(JSON.parse(require(\"fs\").readFileSync(\"$HOME/harmoniqs/amicode/packages/extension/package.json\",\"utf8\")).version)" 2>/dev/null || echo "0.0.0")
 mkdir -p ~/.amico/ops/fleet
-cat > ~/.amico/ops/fleet/fleet.json.tmp << 'EOF'
+cat > ~/.amico/ops/fleet/server_version.json << VEOF
 {
-  "role": "client",
-  "canonical": {
-    "host": "<target>",
-    "port": 4096,
-    "sshAlias": "<target>"
-  }
+  "version": "$VERSION",
+  "schema": 1,
+  "capabilities": ["sessions", "fleet-state", "fleet-action", "profiles", "host-settings", "sweep", "topology"]
 }
-EOF
-mv ~/.amico/ops/fleet/fleet.json.tmp ~/.amico/ops/fleet/fleet.json
-
-# Store token locally
-printf '%s' "${TOKEN}" > ~/.amico/ops/fleet/fleet_token.tmp
-chmod 600 ~/.amico/ops/fleet/fleet_token.tmp
-mv ~/.amico/ops/fleet/fleet_token.tmp ~/.amico/ops/fleet/fleet_token
+VEOF'
 ```
 
-#### Step 14: Install tunnel plist (macOS client only)
+#### Step 14: Verify server is responding
+
+Before touching anything on the local machine, confirm the server is actually up and
+serving. If this fails, do NOT proceed to the client steps — debug the server first.
 
 ```bash
+# Server service running?
+ssh <target> 'launchctl list | grep co.harmoniqs.amico-server'  # macOS
+# or: ssh <target> 'systemctl --user is-active amico-server.service'  # Linux
+
+# Server responding on its own loopback?
+ssh <target> 'curl -s --max-time 5 http://127.0.0.1:4096/ | head -1'
+```
+
+If the service is not running or not responding, check logs and fix before continuing:
+```bash
+ssh <target> 'cat /tmp/amico-server.err.log'
+```
+
+**GATE: Do not proceed to Step 15 until the server responds successfully.**
+
+#### Step 15: Install tunnel plist (macOS client) and verify tunnel
+
+Install the SSH tunnel BEFORE writing the local fleet.json. The tunnel must be
+verified working so that when fleet.json flips to `"client"`, the local machine
+can immediately reach the server.
+
+```bash
+mkdir -p ~/Library/LaunchAgents
 cat > ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -310,38 +336,59 @@ cat > ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist << 'EOF'
 </dict>
 </plist>
 EOF
+launchctl unload ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist 2>/dev/null
 launchctl load ~/Library/LaunchAgents/co.harmoniqs.amico-tunnel.plist
 ```
 
 Replace `SSH_ALIAS` with the target, and `4096` with the chosen port.
 
-#### Step 15: Write server version file
-
+**Now verify the tunnel connects end-to-end** (wait a moment for the SSH handshake):
 ```bash
-ssh <target> 'VERSION=$(node -e "console.log(JSON.parse(require(\"fs\").readFileSync(\"$HOME/harmoniqs/amicode/packages/extension/package.json\",\"utf8\")).version)" 2>/dev/null || echo "0.0.0")
-mkdir -p ~/.amico/ops/fleet
-cat > ~/.amico/ops/fleet/server_version.json << VEOF
-{
-  "version": "$VERSION",
-  "schema": 1,
-  "capabilities": ["sessions", "fleet-state", "fleet-action", "profiles", "host-settings", "sweep", "topology"]
-}
-VEOF'
+sleep 2
+curl -s --max-time 5 http://127.0.0.1:4096/ | head -1
 ```
 
-#### Step 16: Verify and finish
-
-Run the validation checklist:
+If this does NOT return a response, the tunnel is broken. Check:
 ```bash
-# Server service running?
-ssh <target> 'launchctl list | grep co.harmoniqs.amico-server'  # macOS
-# or: ssh <target> 'systemctl --user is-active amico-server.service'  # Linux
+launchctl list | grep co.harmoniqs.amico-tunnel
+cat /tmp/amico-tunnel.err.log
+```
 
-# Server responding?
-ssh <target> 'curl -s http://127.0.0.1:4096/ | head -1'
+**GATE: Do not proceed to Step 16 until `curl http://127.0.0.1:4096/` succeeds locally.**
 
-# Tunnel connects (from local)?
-curl -s http://127.0.0.1:4096/ | head -1
+#### Step 16: Store fleet token locally
+
+Store the token before writing fleet.json — the token must be in place when VS Code
+reads the new role.
+
+```bash
+mkdir -p ~/.amico/ops/fleet
+printf '%s' "${TOKEN}" > ~/.amico/ops/fleet/fleet_token.tmp
+chmod 600 ~/.amico/ops/fleet/fleet_token.tmp
+mv ~/.amico/ops/fleet/fleet_token.tmp ~/.amico/ops/fleet/fleet_token
+```
+
+#### Step 17: Switch local to client (POINT OF NO RETURN)
+
+> **⚠️ SESSION SAFETY:** This is the step that causes VS Code to switch from the
+> local standalone server to the remote fleet server. Once this file is written,
+> the current session MAY disconnect. ALL server-side setup, the tunnel, and the
+> token MUST be verified working BEFORE this step executes. Never reorder this
+> step earlier in the flow.
+
+Write the local fleet.json — this is the **last** operation:
+```bash
+cat > ~/.amico/ops/fleet/fleet.json.tmp << 'EOF'
+{
+  "role": "client",
+  "canonical": {
+    "host": "<target>",
+    "port": 4096,
+    "sshAlias": "<target>"
+  }
+}
+EOF
+mv ~/.amico/ops/fleet/fleet.json.tmp ~/.amico/ops/fleet/fleet.json
 ```
 
 Tell the user: **"Fleet created. Reload VS Code to connect to the host server."**
