@@ -562,7 +562,7 @@ export async function provisionDevClone(
   try {
     cp.execSync("git remote remove fleet-host 2>/dev/null || true", { cwd: repos.opencode, timeout: 5000 });
     cp.execSync(`git remote add fleet-host ${target}:${root}/opencode`, { cwd: repos.opencode, timeout: 5000 });
-    cp.execSync(`git push fleet-host ${opencodeBranch}:${opencodeBranch} --force`, { cwd: repos.opencode, encoding: "utf8", timeout: 60000 });
+    cp.execSync(`git push fleet-host ${opencodeBranch}:${opencodeBranch} --force`, { cwd: repos.opencode, encoding: "utf8", timeout: 600000 });
   } catch (err) { ocPushStep.status = "failed"; ocPushStep.detail = String(err); return steps; }
   ocPushStep.status = "done";
 
@@ -572,7 +572,7 @@ export async function provisionDevClone(
   try {
     cp.execSync("git remote remove fleet-host 2>/dev/null || true", { cwd: repos.amicode, timeout: 5000 });
     cp.execSync(`git remote add fleet-host ${target}:${root}/amicode`, { cwd: repos.amicode, timeout: 5000 });
-    cp.execSync(`git push fleet-host ${amicodeBranch}:${amicodeBranch} --force`, { cwd: repos.amicode, encoding: "utf8", timeout: 60000 });
+    cp.execSync(`git push fleet-host ${amicodeBranch}:${amicodeBranch} --force`, { cwd: repos.amicode, encoding: "utf8", timeout: 600000 });
   } catch (err) { acPushStep.status = "failed"; acPushStep.detail = String(err); return steps; }
   acPushStep.status = "done";
 
