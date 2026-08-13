@@ -28,7 +28,8 @@ defineStyle(
                       border-radius: var(--border-radius-round);
                       border: var(--border-width) solid currentColor;
                       display: inline-flex; align-items: center;
-                      gap: var(--space-sm); margin-bottom: var(--space-md); }
+                      gap: var(--space-sm); margin-bottom: var(--space-sm); }
+  .fleet-root > .btn { display: block; margin-bottom: var(--space-md); }
   .fleet-role-badge.standalone { color: var(--color-dim); }
   .fleet-role-badge.server { color: var(--color-ok); }
   .fleet-role-badge.client { color: var(--color-run); }
@@ -55,7 +56,6 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
     post({ type: "action", action: "createFleet" });
   });
   createBtn.enable(true);
-  createBtn.el.style.marginBottom = "var(--space-md)";
   el.appendChild(createBtn.el);
 
   // ── Topology section ─────────────────────────────────────────────────────
