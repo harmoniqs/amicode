@@ -467,6 +467,55 @@ export async function runDevPreflightChecks(
   return { checks, allPass: checks.every((c) => c.status === "pass") };
 }
 
+// ============================================================================
+// Local repo detection — find amicode + opencode repos from the running build
+// ============================================================================
+
+/** Find the git repo root by walking up from a starting directory. */
+function findGitRoot(startDir: string): string | null {
+  let dir = startDir;
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Detect the local amicode repo root from the extension path.
+ *  The extension lives inside the repo — walk up to .git.
+ *  Falls back to ~/harmoniqs/amicode if detection fails. */
+export function detectAmicodeRepoDir(extensionPath?: string): string {
+  if (extensionPath) {
+    const root = findGitRoot(extensionPath);
+    if (root) return root;
+  }
+  return path.join(homedir(), "harmoniqs", "amicode");
+}
+
+/** Detect the local opencode repo root from the configured binary path.
+ *  The binary lives inside the repo — walk up to .git.
+ *  Falls back to ~/harmoniqs/opencode if detection fails. */
+export function detectOpencodeRepoDir(binaryPath?: string): string {
+  if (binaryPath) {
+    const root = findGitRoot(path.dirname(binaryPath));
+    if (root) return root;
+  }
+  return path.join(homedir(), "harmoniqs", "opencode");
+}
+
+/** Detect both repo paths from the running build context. */
+export function detectLocalRepos(opts?: { extensionPath?: string; binaryPath?: string }): {
+  amicode: string;
+  opencode: string;
+} {
+  return {
+    amicode: detectAmicodeRepoDir(opts?.extensionPath),
+    opencode: detectOpencodeRepoDir(opts?.binaryPath),
+  };
+}
+
 /** Clone repos + build on the remote (the "Development clone" mode).
  *  Adapted from ~/harmoniqs/rebuild_amicode.sh for remote execution. */
 export async function provisionDevClone(
