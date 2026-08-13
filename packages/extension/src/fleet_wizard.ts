@@ -516,130 +516,108 @@ export function detectLocalRepos(opts?: { extensionPath?: string; binaryPath?: s
   };
 }
 
-/** Clone repos + build on the remote (the "Development clone" mode).
- *  Adapted from ~/harmoniqs/rebuild_amicode.sh for remote execution. */
+/** Provision the remote with the client's exact local state (the "Development
+ *  clone" mode). Pushes directly from the local repos to the host over SSH —
+ *  no GitHub needed. Detects repo paths from the running build. */
 export async function provisionDevClone(
   target: string,
   opts: {
     exec?: SshExec;
-    opencodeBranch?: string;
-    amicodeBranch?: string;
+    localRepos?: { amicode: string; opencode: string };
+    remoteRoot?: string;
   } = {},
 ): Promise<WizardStep[]> {
   const exec = opts.exec ?? defaultSshExec;
-  const opencodeBranch = opts.opencodeBranch ?? "local/amicode";
-  const amicodeBranch = opts.amicodeBranch ?? "main";
+  const repos = opts.localRepos ?? detectLocalRepos();
+  const root = opts.remoteRoot ?? "~/harmoniqs";
   const steps: WizardStep[] = [];
 
-  // Step 1: Create directory structure
-  const mkdirStep: WizardStep = { name: "Create ~/harmoniqs", status: "running" };
-  steps.push(mkdirStep);
-  const mkdirResult = await exec(target, "mkdir -p ~/harmoniqs");
-  if (!mkdirResult.ok) {
-    mkdirStep.status = "failed";
-    mkdirStep.detail = mkdirResult.stderr;
-    return steps;
-  }
-  mkdirStep.status = "done";
+  // Detect current local branches
+  let opencodeBranch: string;
+  let amicodeBranch: string;
+  try {
+    opencodeBranch = cp.execSync("git rev-parse --abbrev-ref HEAD", { cwd: repos.opencode, encoding: "utf8", timeout: 5000 }).trim();
+  } catch { opencodeBranch = "local/amicode"; }
+  try {
+    amicodeBranch = cp.execSync("git rev-parse --abbrev-ref HEAD", { cwd: repos.amicode, encoding: "utf8", timeout: 5000 }).trim();
+  } catch { amicodeBranch = "main"; }
 
-  // Step 2: Clone opencode (or pull if exists)
-  const ocStep: WizardStep = { name: "Clone/pull opencode", status: "running" };
-  steps.push(ocStep);
-  const ocResult = await exec(target, `
-    if [ -d ~/harmoniqs/opencode/.git ]; then
-      cd ~/harmoniqs/opencode && git fetch origin && git checkout ${opencodeBranch} && git pull origin ${opencodeBranch}
-    else
-      git clone https://github.com/harmoniqs/opencode.git ~/harmoniqs/opencode && cd ~/harmoniqs/opencode && git checkout ${opencodeBranch}
-    fi
+  // Step 1: Create directory + init repos on host
+  const initStep: WizardStep = { name: "Init host repos", status: "running" };
+  steps.push(initStep);
+  const initResult = await exec(target, `
+    mkdir -p ${root}/opencode ${root}/amicode
+    for repo in opencode amicode; do
+      cd ${root}/$repo
+      if [ ! -d .git ]; then git init; fi
+      git config receive.denyCurrentBranch updateInstead
+    done
   `);
-  if (!ocResult.ok) {
-    ocStep.status = "failed";
-    ocStep.detail = ocResult.stderr;
-    return steps;
-  }
-  ocStep.status = "done";
+  if (!initResult.ok) { initStep.status = "failed"; initStep.detail = initResult.stderr; return steps; }
+  initStep.status = "done";
 
-  // Step 3: Clone amicode (or pull if exists)
-  const acStep: WizardStep = { name: "Clone/pull amicode", status: "running" };
-  steps.push(acStep);
-  const acResult = await exec(target, `
-    if [ -d ~/harmoniqs/amicode/.git ]; then
-      cd ~/harmoniqs/amicode && git fetch origin && git checkout ${amicodeBranch} && git pull origin ${amicodeBranch}
-    else
-      git clone https://github.com/harmoniqs/amicode.git ~/harmoniqs/amicode && cd ~/harmoniqs/amicode && git checkout ${amicodeBranch}
-    fi
-  `);
-  if (!acResult.ok) {
-    acStep.status = "failed";
-    acStep.detail = acResult.stderr;
-    return steps;
-  }
-  acStep.status = "done";
+  // Step 2: Push opencode from local to host
+  const ocPushStep: WizardStep = { name: "Push opencode to host", status: "running" };
+  steps.push(ocPushStep);
+  try {
+    cp.execSync("git remote remove fleet-host 2>/dev/null || true", { cwd: repos.opencode, timeout: 5000 });
+    cp.execSync(`git remote add fleet-host ${target}:${root}/opencode`, { cwd: repos.opencode, timeout: 5000 });
+    cp.execSync(`git push fleet-host ${opencodeBranch}:${opencodeBranch} --force`, { cwd: repos.opencode, encoding: "utf8", timeout: 60000 });
+  } catch (err) { ocPushStep.status = "failed"; ocPushStep.detail = String(err); return steps; }
+  ocPushStep.status = "done";
 
-  // Step 4: Install opencode deps + build
-  const ocBuildStep: WizardStep = { name: "Build opencode binary", status: "running" };
+  // Step 3: Push amicode from local to host
+  const acPushStep: WizardStep = { name: "Push amicode to host", status: "running" };
+  steps.push(acPushStep);
+  try {
+    cp.execSync("git remote remove fleet-host 2>/dev/null || true", { cwd: repos.amicode, timeout: 5000 });
+    cp.execSync(`git remote add fleet-host ${target}:${root}/amicode`, { cwd: repos.amicode, timeout: 5000 });
+    cp.execSync(`git push fleet-host ${amicodeBranch}:${amicodeBranch} --force`, { cwd: repos.amicode, encoding: "utf8", timeout: 60000 });
+  } catch (err) { acPushStep.status = "failed"; acPushStep.detail = String(err); return steps; }
+  acPushStep.status = "done";
+
+  // Step 4: Checkout branches on host
+  const checkoutStep: WizardStep = { name: "Checkout branches", status: "running" };
+  steps.push(checkoutStep);
+  const coResult = await exec(target, `cd ${root}/opencode && git checkout ${opencodeBranch} && cd ${root}/amicode && git checkout ${amicodeBranch}`);
+  if (!coResult.ok) { checkoutStep.status = "failed"; checkoutStep.detail = coResult.stderr; return steps; }
+  checkoutStep.status = "done";
+
+  // Step 5: Build opencode
+  const ocBuildStep: WizardStep = { name: "Build opencode", status: "running" };
   steps.push(ocBuildStep);
-  const ocBuildResult = await exec(target,
-    "cd ~/harmoniqs/opencode/packages/opencode && bun install && bun run script/build.ts --single --skip-install");
-  if (!ocBuildResult.ok) {
-    ocBuildStep.status = "failed";
-    ocBuildStep.detail = ocBuildResult.stderr;
-    return steps;
-  }
+  const ocBuildResult = await exec(target, `cd ${root}/opencode/packages/opencode && bun install && bun run script/build.ts --single --skip-install`);
+  if (!ocBuildResult.ok) { ocBuildStep.status = "failed"; ocBuildStep.detail = ocBuildResult.stderr; return steps; }
   ocBuildStep.status = "done";
 
-  // Step 5: Install amicode deps + build
-  const acBuildStep: WizardStep = { name: "Build amicode extension", status: "running" };
+  // Step 6: Build amicode
+  const acBuildStep: WizardStep = { name: "Build amicode", status: "running" };
   steps.push(acBuildStep);
-  const acBuildResult = await exec(target,
-    "cd ~/harmoniqs/amicode && pnpm install && cd packages/extension && pnpm run build");
-  if (!acBuildResult.ok) {
-    acBuildStep.status = "failed";
-    acBuildStep.detail = acBuildResult.stderr;
-    return steps;
-  }
+  const acBuildResult = await exec(target, `cd ${root}/amicode && pnpm install && cd packages/extension && pnpm run build`);
+  if (!acBuildResult.ok) { acBuildStep.status = "failed"; acBuildStep.detail = acBuildResult.stderr; return steps; }
   acBuildStep.status = "done";
 
-  // Step 6: Ad-hoc codesign the binary (macOS)
-  const signStep: WizardStep = { name: "Codesign binary", status: "running" };
+  // Step 7: Codesign (macOS)
+  const signStep: WizardStep = { name: "Codesign", status: "running" };
   steps.push(signStep);
-  const builtBinaryPath = devBinaryPath();
-  await exec(target, `codesign --sign - --force ${builtBinaryPath} 2>/dev/null || true`);
+  await exec(target, `codesign --sign - --force ${root}/opencode/packages/opencode/dist/opencode-darwin-arm64/bin/opencode 2>/dev/null || true`);
   signStep.status = "done";
 
-  // Step 7: Install rebuild script
+  // Step 8: Install rebuild script
   const scriptStep: WizardStep = { name: "Install rebuild script", status: "running" };
   steps.push(scriptStep);
   const script = buildRemoteRebuildScript(opencodeBranch, amicodeBranch);
-  const scriptResult = await exec(target,
-    `cat > ~/harmoniqs/rebuild_amicode.sh << 'SCRIPTEOF'\n${script}\nSCRIPTEOF\nchmod +x ~/harmoniqs/rebuild_amicode.sh`);
-  if (!scriptResult.ok) {
-    scriptStep.status = "failed";
-    scriptStep.detail = scriptResult.stderr;
-    return steps;
-  }
+  const scriptResult = await exec(target, `cat > ${root}/rebuild_amicode.sh << 'SCRIPTEOF'\n${script}\nSCRIPTEOF\nchmod +x ${root}/rebuild_amicode.sh`);
+  if (!scriptResult.ok) { scriptStep.status = "failed"; scriptStep.detail = scriptResult.stderr; return steps; }
   scriptStep.status = "done";
 
-  // Step 8: Configure host repos to accept direct pushes from clients
-  const pushConfigStep: WizardStep = { name: "Configure direct-push", status: "running" };
-  steps.push(pushConfigStep);
-  await exec(target, `
-    cd ~/harmoniqs/amicode && git config receive.denyCurrentBranch updateInstead
-    cd ~/harmoniqs/opencode && git config receive.denyCurrentBranch updateInstead
-  `);
-  pushConfigStep.status = "done";
-
-  // Step 9: Write server version file (for client compatibility probes)
-  const versionStep: WizardStep = { name: "Write server version file", status: "running" };
+  // Step 9: Write server version file
+  const versionStep: WizardStep = { name: "Write version file", status: "running" };
   steps.push(versionStep);
   const { buildServerVersionFile } = await import("./fleet_compat");
-  // Read the version from the built amicode package.json on the remote
-  const versionRead = await exec(target,
-    `node -e "console.log(JSON.parse(require('fs').readFileSync('$HOME/harmoniqs/amicode/packages/extension/package.json','utf8')).version)" 2>/dev/null || echo "0.0.0"`);
-  const serverVersion = versionRead.stdout.trim() || "0.0.0";
-  const versionFileContent = buildServerVersionFile(serverVersion);
-  await exec(target,
-    `mkdir -p ~/.amico/ops/fleet && cat > ~/.amico/ops/fleet/server_version.json << 'VEOF'\n${versionFileContent}\nVEOF`);
+  const versionRead = await exec(target, `node -e "console.log(JSON.parse(require('fs').readFileSync('${root}/amicode/packages/extension/package.json','utf8')).version)" 2>/dev/null || echo "0.0.0"`);
+  const versionFileContent = buildServerVersionFile(versionRead.stdout.trim() || "0.0.0");
+  await exec(target, `mkdir -p ~/.amico/ops/fleet && cat > ~/.amico/ops/fleet/server_version.json << 'VEOF'\n${versionFileContent}\nVEOF`);
   versionStep.status = "done";
 
   return steps;
