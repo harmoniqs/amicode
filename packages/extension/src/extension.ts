@@ -71,7 +71,7 @@ import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
-import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, discoverLocalSessions, mergeSessionsToServer, type BinaryMode } from "./fleet_wizard";
+import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, discoverLocalSessions, mergeSessionsToServer, detectLocalRepos, type BinaryMode } from "./fleet_wizard";
 import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
@@ -1414,8 +1414,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           }
 
           // Clone repos and build
-          void vscode.window.showInformationMessage("Cloning repos and building on the server — this may take a few minutes...");
-          const devSteps = await provisionDevClone(target);
+          void vscode.window.showInformationMessage("Pushing local repos to host and building — this may take a few minutes...");
+          const binaryPath = vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary") ?? "";
+          const localRepos = detectLocalRepos({ extensionPath: ctx.extensionPath, binaryPath });
+          const devSteps = await provisionDevClone(target, { localRepos });
           const devFailed = devSteps.find((s) => s.status === "failed");
           if (devFailed) {
             void vscode.window.showErrorMessage(`Dev setup failed at "${devFailed.name}": ${devFailed.detail}`);
