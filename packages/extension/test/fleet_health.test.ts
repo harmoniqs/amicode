@@ -48,13 +48,12 @@ describe("fleet_health", () => {
     expect(c.detail).toMatch(/not set/);
   });
 
-  it("settings: fails when port wrong", () => {
+  it("settings: port is not checked (user's standalone preference, irrelevant in client mode)", () => {
     const c = checkFleetSettings(INSTALLED, 43117, { platform: "darwin", fleetConfig: { role: "client", canonical: { port: 4096 } } });
-    expect(c.ok).toBe(false);
-    expect(c.detail).toMatch(/43117/);
+    expect(c.ok).toBe(true);
   });
 
-  it("settings: ok when guard + matching port", () => {
+  it("settings: ok when guard set (port ignored)", () => {
     const c = checkFleetSettings(INSTALLED, 4096, { platform: "darwin", fleetConfig: { role: "client", canonical: { port: 4096 } } });
     expect(c.ok).toBe(true);
   });

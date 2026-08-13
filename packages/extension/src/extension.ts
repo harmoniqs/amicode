@@ -1292,9 +1292,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
     try {
-      // Clear the fleet guard override → vendored binary, ephemeral port
+      // Clear the fleet guard override → vendored binary. Port is NEVER touched
+      // by fleet enrollment (it's the user's standalone preference), so leave it.
       await cfg.update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
-      await cfg.update("opencodePort", 0, vscode.ConfigurationTarget.Global);
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] go standalone: settings update failed: ${(e as Error).message}`);
     }

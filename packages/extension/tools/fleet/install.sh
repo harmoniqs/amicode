@@ -60,41 +60,43 @@ else
 fi
 
 # --- machine-scoped settings (only on darwin; harmless elsewhere) ---
+# NOTE: we set amicode.opencodeBinary (to the fleet guard) but NEVER touch
+# amicode.opencodePort. In fleet-client mode the extension reads the tunnel port
+# from fleet.json (canonical.port), not from the VS Code setting. The port setting
+# is the user's standalone preference and must survive fleet enrollment unchanged
+# so the local session isn't killed mid-transition.
 if [[ "$(uname -s)" == "Darwin" ]]; then
   want_binary="$GUARD_DST"
-  want_port="$FLEET_PORT"
   if [[ $CHECK -eq 1 ]]; then
     # check via node (json with comments not strict)
     node -e "
       const fs=require('fs');
       const p=process.argv[1];
       let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){let t=fs.readFileSync(p,'utf8'); j=JSON.parse(t.replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''))} 
-      const b=j['amicode.opencodeBinary']||''; const port=j['amicode.opencodePort'];
-      const wantPort=Number(process.argv[3]);
+      const b=j['amicode.opencodeBinary']||'';
       let fail=0;
       if(b!==process.argv[2]){console.error('[fleet] FAIL amicode.opencodeBinary is '+(b||'(empty)')+', want '+process.argv[2]); fail=1}
-      if(port!==wantPort){console.error('[fleet] FAIL amicode.opencodePort is '+port+', want '+wantPort); fail=1}
       process.exit(fail);
-    " "$SETTINGS" "$want_binary" "$want_port" || exit 1
-    say "ok settings $SETTINGS (binary + port $want_port)"
+    " "$SETTINGS" "$want_binary" || exit 1
+    say "ok settings $SETTINGS (binary = guard)"
   else
     if [[ -f "$SETTINGS" ]]; then
-      # merge via node — preserve other settings, force fleet keys (machine scope)
+      # merge via node — preserve other settings, set binary to guard only
       node -e "
-        const fs=require('fs'), p=process.argv[1], b=process.argv[2], port=Number(process.argv[3]);
+        const fs=require('fs'), p=process.argv[1], b=process.argv[2];
         let j={}; try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(e){ j={} }
         // tolerate jsonc: strip // and /* */
         try{j=JSON.parse(fs.readFileSync(p,'utf8'))}catch(_){
           try{ const t=fs.readFileSync(p,'utf8').replace(/\/\/.*|\/\*[\s\S]*?\*\//g,''); j=JSON.parse(t)}catch(__){ j={} }
         }
-        j['amicode.opencodeBinary']=b; j['amicode.opencodePort']=port;
+        j['amicode.opencodeBinary']=b;
         fs.mkdirSync(require('path').dirname(p),{recursive:true});
         fs.writeFileSync(p, JSON.stringify(j,null,2)+'\n');
         console.log('[fleet] wrote settings '+p);
-      " "$SETTINGS" "$want_binary" "$want_port"
+      " "$SETTINGS" "$want_binary"
     else
       mkdir -p "$(dirname "$SETTINGS")"
-      printf '{\n  "amicode.opencodeBinary": "%s",\n  "amicode.opencodePort": %d\n}\n' "$want_binary" "$want_port" > "$SETTINGS"
+      printf '{\n  "amicode.opencodeBinary": "%s"\n}\n' "$want_binary" > "$SETTINGS"
       say "wrote new settings $SETTINGS"
     fi
   fi

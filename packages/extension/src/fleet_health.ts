@@ -65,17 +65,19 @@ export function checkFleetGuard(
   return { name: "Fleet guard", ok: true, detail: `installed and in sync (${installedGuardPath})` };
 }
 
-/** Settings check: amicode.opencodeBinary must point at the guard and opencodePort must match fleet config. */
+/** Settings check: amicode.opencodeBinary must point at the guard.
+ *  NOTE: amicode.opencodePort is NOT checked — in fleet-client mode the extension
+ *  reads the tunnel port from fleet.json (canonical.port), not from the VS Code
+ *  setting. The port setting is the user's standalone preference and is never
+ *  touched by fleet enrollment (preserves the local session during transition). */
 export function checkFleetSettings(
   configuredBinary: string,
-  configuredPort: number,
+  _configuredPort: number,
   opts: { platform?: string; fleetConfig?: FleetConfig | null } = {},
 ): FleetCheck {
   if ((opts.platform ?? process.platform) !== "darwin") {
     return { name: "Fleet settings", ok: true, detail: "skipped (not darwin)" };
   }
-  const cfg = opts.fleetConfig ?? readFleetConfig();
-  const wantPort = cfg?.canonical?.port ?? 4096;
   const wantBinary = FLEET_GUARD_INSTALL;
   // Empty binary = vendored default → on a fleet client this would spawn a fork, so flag it.
   if (!configuredBinary || configuredBinary.trim() === "") {
@@ -97,15 +99,7 @@ export function checkFleetSettings(
       fix: `set amicode.opencodeBinary to ${wantBinary} (scope: machine)`,
     };
   }
-  if (configuredPort !== wantPort) {
-    return {
-      name: "Fleet settings",
-      ok: false,
-      detail: `amicode.opencodePort is ${configuredPort}, expected ${wantPort} (tunnel port)`,
-      fix: `set amicode.opencodePort to ${wantPort} (scope: machine)`,
-    };
-  }
-  return { name: "Fleet settings", ok: true, detail: `guard + port ${wantPort} (machine scope)` };
+  return { name: "Fleet settings", ok: true, detail: `guard binary set (machine scope)` };
 }
 
 /** Tunnel plist check: ServerAliveInterval 15, CountMax 2, TCPKeepAlive yes, correct port forward. */
