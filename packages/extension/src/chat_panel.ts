@@ -289,20 +289,11 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin.
         if (d && d.source === "amicode" && d.kind === "navigate") {
-          // Navigate the iframe to a new in-app route (e.g. /new-session?prompt=...)
-          // Preserve boot params (auth_token, colorScheme, etc.) from the current src.
+          // Client-side navigate: post into the iframe so the SPA router picks
+          // it up without a full page reload (preserves auth state).
           var f = document.querySelector("iframe");
-          if (f && d.path) {
-            try {
-              var base = new URL(f.src);
-              var target = new URL(d.path, base.origin);
-              // Carry over boot params the app needs (auth, theme, hide-project, bug-report)
-              ["auth_token", "colorScheme", "amicode_hide_project", "amicode_bug_report"].forEach(function(k) {
-                var v = base.searchParams.get(k);
-                if (v && !target.searchParams.has(k)) target.searchParams.set(k, v);
-              });
-              f.src = target.href;
-            } catch(e) { /* malformed path — ignore */ }
+          if (f && f.contentWindow && d.path) {
+            f.contentWindow.postMessage(d, ${origin});
           }
           return;
         }
