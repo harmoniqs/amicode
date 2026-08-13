@@ -572,3 +572,9 @@ Run these to confirm the fleet is healthy:
 - Fleet.json writes MUST be atomic (tmp + rename)
 - The canonical server MUST be a system service (launchd/systemd), not a child process
 - Sessions MUST survive client disconnect (the service config ensures this)
+
+## Cross-reference
+
+For fleet troubleshooting (sync conflicts, tunnel down, drift, SSH failures),
+use `/fleet-troubleshooting` instead. It is launched automatically from fleet
+notifications when an issue is detected.

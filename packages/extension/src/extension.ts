@@ -76,7 +76,7 @@ import { registerFleetProfiles } from "./fleet_profile_manager";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
 import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
-import { syncFromHost, shouldAutoSync, buildConflictResolutionPrompt } from "./fleet_sync";
+import { syncFromHost, shouldAutoSync } from "./fleet_sync";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -646,16 +646,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         } else if (!up && !fleetReady && fleetChecks === 1) {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
         }
-        // After ~10s (5 checks) still down → offer standalone visibly, not just a log
+        // After ~10s (5 checks) still down → notify via unified fleet-issue mechanism
         if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
           fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering resolution`);
+          notifyFleetIssue({
+            kind: "tunnel-down",
+            summary: `Fleet tunnel down — canonical server unreachable at 127.0.0.1:${fleetPort}`,
+            context: {
+              host: "127.0.0.1",
+              port: fleetPort,
+              checks_failed: fleetChecks,
+              last_status: "connection refused or timeout",
+            },
+          });
         }
       } catch {
         if (fleetReady) {
@@ -668,13 +672,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }
         if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
           fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering resolution`);
+          notifyFleetIssue({
+            kind: "tunnel-down",
+            summary: `Fleet tunnel down — canonical server unreachable at 127.0.0.1:${fleetPort}`,
+            context: {
+              host: "127.0.0.1",
+              port: fleetPort,
+              checks_failed: fleetChecks,
+              last_status: "fetch threw (network error)",
+            },
+          });
         }
       }
     };
@@ -1362,6 +1370,51 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.commands.executeCommand("amicode.fleet.focus");
   }));
 
+  // #363 — Fleet issue notifications: any fleet problem surfaces a VS Code
+  // notification with a "Resolve with Amico" button that opens a new chat
+  // session routed to /fleet-troubleshooting with structured diagnostic context.
+  type FleetIssueKind = "sync-conflict" | "tunnel-down" | "fleet-drift" | "ssh-failure" | "sync-error";
+  interface FleetIssue {
+    kind: FleetIssueKind;
+    summary: string;
+    context: Record<string, string | number | boolean | undefined>;
+  }
+
+  function buildTroubleshootingPrompt(issue: FleetIssue): string {
+    const lines: string[] = [
+      `/fleet-troubleshooting`,
+      ``,
+      `## Fleet Issue: ${issue.kind}`,
+      ``,
+      issue.summary,
+      ``,
+      `### Diagnostic Context`,
+      ``,
+    ];
+    for (const [key, val] of Object.entries(issue.context)) {
+      if (val !== undefined) lines.push(`- **${key}**: ${val}`);
+    }
+    return lines.join("\n");
+  }
+
+  function notifyFleetIssue(issue: FleetIssue): void {
+    opencodeChannel.appendLine(`[fleet] issue: ${issue.kind} — ${issue.summary}`);
+    void vscode.window
+      .showWarningMessage(
+        `Amicode fleet: ${issue.summary}`,
+        "Resolve with Amico",
+        "Show log",
+      )
+      .then((pick) => {
+        if (pick === "Resolve with Amico") {
+          const prompt = buildTroubleshootingPrompt(issue);
+          launchFleetChat(prompt);
+        } else if (pick === "Show log") {
+          opencodeChannel.show();
+        }
+      });
+  }
+
   // #363 — Fleet lifecycle commands: launch chat sessions with the fleet skill.
   // The agent handles SSH, tool installation, builds, and service configuration
   // interactively in the chat — replacing the former sequential QuickPick wizard.
@@ -1463,24 +1516,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
 
-  // Helper: launch a conflict-resolution chat with notification
-  async function launchConflictResolutionChat(prompt: string): Promise<void> {
-    const readyUrl = opencodeReadyUrl;
-    if (!readyUrl) {
-      void vscode.window.showWarningMessage("Amicode server not ready — can't launch resolution session");
-      return;
-    }
-    const draftUrl = new URL(readyUrl.href);
-    draftUrl.pathname = "/new-session";
-    draftUrl.search = "";
-    const chatPanel = ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
-    // Send the conflict resolution prompt as a draft (populates input)
-    chatPanel.postDraftMessage(prompt);
-    // Notify the user which session was opened
-    void vscode.window.showInformationMessage(
-      `Conflict resolution session launched in "${chatPanel.title}". Review the prompt and send to resolve.`,
-    );
-  }
+
 
   // Fleet auto-sync on activation (if client mode)
   const autoSync = shouldAutoSync();
@@ -1497,17 +1533,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       });
 
       if (result.conflict) {
-        // Conflict detected — show banner and offer to launch resolution session
+        // Conflict detected — notify via unified fleet-issue mechanism
         if (panel) panel.postCompat("incompatible", `Sync conflict in ${result.conflict.repo} — click to resolve`);
-        const resolve = await vscode.window.showWarningMessage(
-          `Fleet sync conflict in ${result.conflict.repo}: local and host have diverged. Launch an Amicode session to resolve?`,
-          "Resolve with Amicode",
-          "Dismiss",
-        );
-        if (resolve === "Resolve with Amicode") {
-          const prompt = buildConflictResolutionPrompt(result.conflict);
-          await launchConflictResolutionChat(prompt);
-        }
+        notifyFleetIssue({
+          kind: "sync-conflict",
+          summary: `Sync conflict in ${result.conflict.repo}: local and host have diverged`,
+          context: {
+            repo: result.conflict.repo,
+            conflict_type: result.conflict.type,
+            local_sha: result.conflict.localSha,
+            remote_sha: result.conflict.remoteSha,
+            detail: result.conflict.detail,
+          },
+        });
       } else if (result.synced) {
         if (panel) panel.postCompat("compatible", result.buildUpdated ? "Synced — reload window" : "Up to date");
         if (result.buildUpdated) {
@@ -1521,6 +1559,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }
       } else if (result.error) {
         if (panel) panel.postCompat("degraded", `Sync error: ${result.error}`);
+        notifyFleetIssue({
+          kind: "sync-error",
+          summary: `Sync failed: ${result.error}`,
+          context: { error: result.error },
+        });
       }
     })();
   }
@@ -1542,15 +1585,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
     if (result.conflict) {
       if (panel) panel.postCompat("incompatible", `Conflict in ${result.conflict.repo}`);
-      const resolve = await vscode.window.showWarningMessage(
-        `Sync conflict in ${result.conflict.repo}. Launch Amicode to resolve?`,
-        "Resolve with Amicode",
-        "Dismiss",
-      );
-      if (resolve === "Resolve with Amicode") {
-        const prompt = buildConflictResolutionPrompt(result.conflict);
-        await launchConflictResolutionChat(prompt);
-      }
+      notifyFleetIssue({
+        kind: "sync-conflict",
+        summary: `Sync conflict in ${result.conflict.repo}: local and host have diverged`,
+        context: {
+          repo: result.conflict.repo,
+          conflict_type: result.conflict.type,
+          local_sha: result.conflict.localSha,
+          remote_sha: result.conflict.remoteSha,
+          detail: result.conflict.detail,
+        },
+      });
     } else if (result.synced && result.buildUpdated) {
       if (panel) panel.postCompat("compatible", "Synced — reload window");
       const reload = await vscode.window.showInformationMessage("Sync complete. Reload?", "Reload Window");
@@ -1585,12 +1630,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (failed.length === 0) return;
       const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
       opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
-      void vscode.window
-        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
-        .then((pick) => {
-          if (pick === "Fix fleet") void runFleetRepair();
-          else if (pick === "Show details") opencodeChannel.show();
-        });
+      notifyFleetIssue({
+        kind: "fleet-drift",
+        summary: `Fleet drift — ${failed.map((c) => c.name).join(", ")}`,
+        context: {
+          failed_checks: failed.map((c) => c.name).join(", "),
+          details: detail,
+          platform: "darwin",
+        },
+      });
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
     }
