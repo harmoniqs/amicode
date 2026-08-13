@@ -29,7 +29,7 @@ defineStyle(
                       border-radius: var(--border-radius-round);
                       border: var(--border-width) solid currentColor;
                       display: inline-flex; align-items: center;
-                      gap: var(--space-sm); margin-bottom: var(--space-sm); }
+                      gap: var(--space-sm); margin-bottom: 16px; }
   .fleet-root > .btn { display: block; margin-bottom: var(--space-md); }
   .fleet-root > .btn.create-fleet { border-color: var(--color-accent-ink);
                       box-shadow: 0 0 8px color-mix(in srgb, var(--color-accent-ink) 40%, transparent);
