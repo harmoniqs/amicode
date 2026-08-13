@@ -144,6 +144,14 @@ export class ChatPanel {
     setTimeout(() => { try { void this.panel.webview.postMessage(envelope); } catch {} }, 1500);
   }
 
+  /** Navigate the iframe to a new in-app route. Used to open a new session
+   *  with a pre-filled prompt: navigateToPath("/new-session?prompt=..."). */
+  navigateToPath(path: string): void {
+    const envelope = { source: "amicode" as const, kind: "navigate" as const, path };
+    try { void this.panel.webview.postMessage(envelope); } catch {}
+    setTimeout(() => { try { void this.panel.webview.postMessage(envelope); } catch {} }, 1500);
+  }
+
   /** The tab title of this chat panel. */
   get title(): string { return this.tabTitle; }
 
@@ -280,6 +288,12 @@ export class ChatPanel {
         // Lane 2 — extension → iframe: posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin.
+        if (d && d.source === "amicode" && d.kind === "navigate") {
+          // Navigate the iframe to a new in-app route (e.g. /new-session?prompt=...)
+          var f = document.querySelector("iframe");
+          if (f && d.path) f.src = ${origin} + d.path;
+          return;
+        }
         if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "draft-message")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
