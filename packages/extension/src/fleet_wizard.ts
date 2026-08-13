@@ -146,12 +146,14 @@ export async function configureRemoteServer(
     port?: number;
     token?: string;
     platform?: "darwin" | "linux";
+    binaryPath?: string;
   } = {},
 ): Promise<WizardStep[]> {
   const exec = opts.exec ?? defaultSshExec;
   const port = opts.port ?? 4096;
   const token = opts.token ?? generateFleetToken();
   const platform = opts.platform ?? "darwin";
+  const binaryPath = opts.binaryPath;
   const steps: WizardStep[] = [];
 
   // Step 1: Create fleet directory
@@ -195,7 +197,7 @@ export async function configureRemoteServer(
   steps.push(serviceStep);
   if (platform === "darwin") {
     // Create launchd plist
-    const plist = buildServerLaunchdPlist(port);
+    const plist = buildServerLaunchdPlist(port, binaryPath);
     const svcResult = await exec(target,
       `mkdir -p ~/Library/LaunchAgents && cat > ~/Library/LaunchAgents/co.harmoniqs.amico-server.plist.tmp << 'PLISTEOF'\n${plist}\nPLISTEOF\nmv ~/Library/LaunchAgents/co.harmoniqs.amico-server.plist.tmp ~/Library/LaunchAgents/co.harmoniqs.amico-server.plist && launchctl load ~/Library/LaunchAgents/co.harmoniqs.amico-server.plist 2>/dev/null; launchctl start co.harmoniqs.amico-server`);
     if (!svcResult.ok) {
@@ -205,7 +207,7 @@ export async function configureRemoteServer(
     }
   } else {
     // systemd unit
-    const unit = buildServerSystemdUnit(port);
+    const unit = buildServerSystemdUnit(port, binaryPath);
     const svcResult = await exec(target,
       `mkdir -p ~/.config/systemd/user && cat > ~/.config/systemd/user/amico-server.service.tmp << 'UNITEOF'\n${unit}\nUNITEOF\nmv ~/.config/systemd/user/amico-server.service.tmp ~/.config/systemd/user/amico-server.service && systemctl --user daemon-reload && systemctl --user enable --now amico-server.service`);
     if (!svcResult.ok) {
@@ -354,7 +356,8 @@ export async function dismantleFleet(
 // Service file generators (pure, testable)
 // ============================================================================
 
-export function buildServerLaunchdPlist(port: number): string {
+export function buildServerLaunchdPlist(port: number, binaryPath?: string): string {
+  const bin = binaryPath ?? "opencode";
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -363,8 +366,7 @@ export function buildServerLaunchdPlist(port: number): string {
   <string>co.harmoniqs.amico-server</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/usr/bin/env</string>
-    <string>opencode</string>
+    <string>${bin}</string>
     <string>serve</string>
     <string>--port</string>
     <string>${port}</string>
@@ -381,13 +383,14 @@ export function buildServerLaunchdPlist(port: number): string {
 </plist>`;
 }
 
-export function buildServerSystemdUnit(port: number): string {
+export function buildServerSystemdUnit(port: number, binaryPath?: string): string {
+  const bin = binaryPath ?? "opencode";
   return `[Unit]
 Description=Amico Fleet Server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/env opencode serve --port ${port}
+ExecStart=${bin} serve --port ${port}
 Restart=always
 RestartSec=5
 
@@ -424,4 +427,246 @@ export function buildTunnelLaunchdPlist(sshAlias: string, port: number): string 
   <string>/tmp/amico-tunnel.err.log</string>
 </dict>
 </plist>`;
+}
+
+// ============================================================================
+// Binary provisioning mode
+// ============================================================================
+
+export type BinaryMode = "release" | "dev-clone";
+
+/** Pre-flight checks specific to the dev-clone mode: git, node, pnpm, bun. */
+export async function runDevPreflightChecks(
+  target: string,
+  opts: { exec?: SshExec } = {},
+): Promise<PreflightResult> {
+  const exec = opts.exec ?? defaultSshExec;
+  const checks: PreflightCheck[] = [];
+
+  const tools = [
+    { name: "git", cmd: "git --version", fix: "Install git on the remote machine" },
+    { name: "node", cmd: "node --version", fix: "Install Node.js (v20+) on the remote machine" },
+    { name: "pnpm", cmd: "pnpm --version", fix: "Install pnpm: npm install -g pnpm" },
+    { name: "bun", cmd: "bun --version", fix: "Install bun: curl -fsSL https://bun.sh/install | bash" },
+  ];
+
+  for (const tool of tools) {
+    const check: PreflightCheck = { name: `${tool.name} available`, status: "pending" };
+    checks.push(check);
+    const result = await exec(target, tool.cmd);
+    if (result.ok) {
+      check.status = "pass";
+      check.detail = result.stdout.trim();
+    } else {
+      check.status = "fail";
+      check.detail = `${tool.name} not found`;
+      check.fix = tool.fix;
+    }
+  }
+
+  return { checks, allPass: checks.every((c) => c.status === "pass") };
+}
+
+/** Clone repos + build on the remote (the "Development clone" mode).
+ *  Adapted from ~/harmoniqs/rebuild_amicode.sh for remote execution. */
+export async function provisionDevClone(
+  target: string,
+  opts: {
+    exec?: SshExec;
+    opencodeBranch?: string;
+    amicodeBranch?: string;
+  } = {},
+): Promise<WizardStep[]> {
+  const exec = opts.exec ?? defaultSshExec;
+  const opencodeBranch = opts.opencodeBranch ?? "local/amicode";
+  const amicodeBranch = opts.amicodeBranch ?? "main";
+  const steps: WizardStep[] = [];
+
+  // Step 1: Create directory structure
+  const mkdirStep: WizardStep = { name: "Create ~/harmoniqs", status: "running" };
+  steps.push(mkdirStep);
+  const mkdirResult = await exec(target, "mkdir -p ~/harmoniqs");
+  if (!mkdirResult.ok) {
+    mkdirStep.status = "failed";
+    mkdirStep.detail = mkdirResult.stderr;
+    return steps;
+  }
+  mkdirStep.status = "done";
+
+  // Step 2: Clone opencode (or pull if exists)
+  const ocStep: WizardStep = { name: "Clone/pull opencode", status: "running" };
+  steps.push(ocStep);
+  const ocResult = await exec(target, `
+    if [ -d ~/harmoniqs/opencode/.git ]; then
+      cd ~/harmoniqs/opencode && git fetch origin && git checkout ${opencodeBranch} && git pull origin ${opencodeBranch}
+    else
+      git clone https://github.com/harmoniqs/opencode.git ~/harmoniqs/opencode && cd ~/harmoniqs/opencode && git checkout ${opencodeBranch}
+    fi
+  `);
+  if (!ocResult.ok) {
+    ocStep.status = "failed";
+    ocStep.detail = ocResult.stderr;
+    return steps;
+  }
+  ocStep.status = "done";
+
+  // Step 3: Clone amicode (or pull if exists)
+  const acStep: WizardStep = { name: "Clone/pull amicode", status: "running" };
+  steps.push(acStep);
+  const acResult = await exec(target, `
+    if [ -d ~/harmoniqs/amicode/.git ]; then
+      cd ~/harmoniqs/amicode && git fetch origin && git checkout ${amicodeBranch} && git pull origin ${amicodeBranch}
+    else
+      git clone https://github.com/harmoniqs/amicode.git ~/harmoniqs/amicode && cd ~/harmoniqs/amicode && git checkout ${amicodeBranch}
+    fi
+  `);
+  if (!acResult.ok) {
+    acStep.status = "failed";
+    acStep.detail = acResult.stderr;
+    return steps;
+  }
+  acStep.status = "done";
+
+  // Step 4: Install opencode deps + build
+  const ocBuildStep: WizardStep = { name: "Build opencode binary", status: "running" };
+  steps.push(ocBuildStep);
+  const ocBuildResult = await exec(target,
+    "cd ~/harmoniqs/opencode/packages/opencode && bun install && bun run script/build.ts --single --skip-install");
+  if (!ocBuildResult.ok) {
+    ocBuildStep.status = "failed";
+    ocBuildStep.detail = ocBuildResult.stderr;
+    return steps;
+  }
+  ocBuildStep.status = "done";
+
+  // Step 5: Install amicode deps + build
+  const acBuildStep: WizardStep = { name: "Build amicode extension", status: "running" };
+  steps.push(acBuildStep);
+  const acBuildResult = await exec(target,
+    "cd ~/harmoniqs/amicode && pnpm install && cd packages/extension && pnpm run build");
+  if (!acBuildResult.ok) {
+    acBuildStep.status = "failed";
+    acBuildStep.detail = acBuildResult.stderr;
+    return steps;
+  }
+  acBuildStep.status = "done";
+
+  // Step 6: Ad-hoc codesign the binary (macOS)
+  const signStep: WizardStep = { name: "Codesign binary", status: "running" };
+  steps.push(signStep);
+  const builtBinaryPath = devBinaryPath();
+  await exec(target, `codesign --sign - --force ${builtBinaryPath} 2>/dev/null || true`);
+  signStep.status = "done";
+
+  // Step 7: Install rebuild script
+  const scriptStep: WizardStep = { name: "Install rebuild script", status: "running" };
+  steps.push(scriptStep);
+  const script = buildRemoteRebuildScript(opencodeBranch, amicodeBranch);
+  const scriptResult = await exec(target,
+    `cat > ~/harmoniqs/rebuild_amicode.sh << 'SCRIPTEOF'\n${script}\nSCRIPTEOF\nchmod +x ~/harmoniqs/rebuild_amicode.sh`);
+  if (!scriptResult.ok) {
+    scriptStep.status = "failed";
+    scriptStep.detail = scriptResult.stderr;
+    return steps;
+  }
+  scriptStep.status = "done";
+
+  return steps;
+}
+
+/** The path to the dev-built opencode binary on the remote (macOS arm64). */
+export function devBinaryPath(platform?: string, arch?: string): string {
+  const p = platform ?? "darwin";
+  const a = arch ?? "arm64";
+  return `~/harmoniqs/opencode/packages/opencode/dist/opencode-${p}-${a}/bin/opencode`;
+}
+
+/** Generate the rebuild script for the remote host. Same logic as the user's
+ *  local rebuild_amicode.sh but without the VS Code settings update (the
+ *  server runs headless). */
+export function buildRemoteRebuildScript(opencodeBranch: string, amicodeBranch: string): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+# Rebuild script for the fleet server (generated by the fleet wizard).
+# Run this on the server to pull latest and rebuild both repos.
+
+# ── Session DB backup ──────────────────────────────────────────────────────────
+DBDIR="$HOME/.config/opencode"
+BACKUP="$DBDIR/.backup-$(date +%Y%m%d-%H%M%S)"
+
+if ls "$DBDIR"/opencode*.db 1>/dev/null 2>&1; then
+  mkdir -p "$BACKUP"
+  for f in "$DBDIR"/opencode*.db "$DBDIR"/opencode*.db-wal "$DBDIR"/opencode*.db-shm; do
+    [ -f "$f" ] && cp -p "$f" "$BACKUP/"
+  done
+  echo "==> Session DBs backed up to $BACKUP"
+else
+  echo "==> No session DBs found to back up"
+fi
+
+# ── Pull sources ───────────────────────────────────────────────────────────────
+echo ""
+echo "==> Pulling opencode (${opencodeBranch})..."
+cd ~/harmoniqs/opencode
+git fetch origin
+git checkout ${opencodeBranch}
+git pull origin ${opencodeBranch}
+
+echo ""
+echo "==> Pulling amicode (${amicodeBranch})..."
+cd ~/harmoniqs/amicode
+git fetch origin
+git checkout ${amicodeBranch}
+git pull origin ${amicodeBranch}
+
+# ── Build ──────────────────────────────────────────────────────────────────────
+echo ""
+echo "==> Building opencode binary..."
+cd ~/harmoniqs/opencode/packages/opencode
+bun install
+bun run script/build.ts --single --skip-install
+
+echo ""
+echo "==> Building amicode extension..."
+cd ~/harmoniqs/amicode
+pnpm install
+cd packages/extension
+pnpm run build
+
+# ── Codesign (macOS) ───────────────────────────────────────────────────────────
+BUILT="${devBinaryPath()}"
+if [ -f "$BUILT" ]; then
+  codesign --sign - --force "$BUILT" 2>/dev/null || true
+  echo "==> Binary ready: $BUILT"
+else
+  echo "==> WARNING: binary not found at $BUILT"
+fi
+
+# ── Restart server service ─────────────────────────────────────────────────────
+echo ""
+echo "==> Restarting fleet server..."
+launchctl stop co.harmoniqs.amico-server 2>/dev/null || true
+sleep 1
+launchctl start co.harmoniqs.amico-server 2>/dev/null || true
+
+# ── Restore session DBs if zeroed ─────────────────────────────────────────────
+if [ -d "$BACKUP" ]; then
+  restored=0
+  for f in "$BACKUP"/opencode*.db; do
+    [ -f "$f" ] || continue
+    basename="$(basename "$f")"
+    target="$DBDIR/$basename"
+    if [ ! -s "$target" ] && [ -s "$f" ]; then
+      cp -p "$f" "$target"
+      [ -f "$f-wal" ] && cp -p "$f-wal" "$target-wal"
+      [ -f "$f-shm" ] && cp -p "$f-shm" "$target-shm"
+      restored=$((restored + 1))
+    fi
+  done
+  [ $restored -gt 0 ] && echo "==> Restored $restored session DB(s) from backup"
+fi
+
+echo ""
+echo "Done. Fleet server restarted with the new build."`;
 }

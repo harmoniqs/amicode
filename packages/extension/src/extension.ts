@@ -71,7 +71,7 @@ import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
 import { registerFleetProfiles } from "./fleet_profile_manager";
-import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken } from "./fleet_wizard";
+import { runPreflight, configureRemoteServer, configureLocalClient, dismantleFleet, removeMachine, generateFleetToken, runDevPreflightChecks, provisionDevClone, devBinaryPath, type BinaryMode } from "./fleet_wizard";
 import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
@@ -1377,8 +1377,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
         if (!target) return;
 
-        // Run pre-flight
-        const preflight = await runPreflight(target);
+        // Choose binary mode
+        const modeChoice = await vscode.window.showQuickPick(
+          [
+            { label: "Development clone", description: "Clone repos on the server, build from source — for amicode developers", detail: "dev-clone" },
+            { label: "Release binary", description: "Use the release binary (must already be installed on remote)", detail: "release" },
+          ],
+          { placeHolder: "How should the server run amicode?" },
+        );
+        if (!modeChoice) return;
+        const binaryMode: BinaryMode = modeChoice.detail === "dev-clone" ? "dev-clone" : "release";
+
+        // Run SSH pre-flight
+        const preflight = await runPreflight(target, {
+          // Skip binary check for dev-clone (we'll install it)
+          binaryName: binaryMode === "dev-clone" ? "echo" : "opencode",
+        });
         if (!preflight.allPass) {
           const failedChecks = preflight.checks.filter((c) => c.status === "fail");
           const msg = failedChecks.map((c) => `${c.name}: ${c.detail}`).join("\n");
@@ -1386,16 +1400,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           return;
         }
 
-        // Configure remote
+        let serverBinaryPath: string | undefined;
+
+        if (binaryMode === "dev-clone") {
+          // Check dev tools are available
+          const devChecks = await runDevPreflightChecks(target);
+          if (!devChecks.allPass) {
+            const failedChecks = devChecks.checks.filter((c) => c.status === "fail");
+            const msg = failedChecks.map((c) => `${c.name}: ${c.detail}${c.fix ? ` — ${c.fix}` : ""}`).join("\n");
+            void vscode.window.showErrorMessage(`Dev tools missing on remote:\n${msg}`);
+            return;
+          }
+
+          // Clone repos and build
+          void vscode.window.showInformationMessage("Cloning repos and building on the server — this may take a few minutes...");
+          const devSteps = await provisionDevClone(target);
+          const devFailed = devSteps.find((s) => s.status === "failed");
+          if (devFailed) {
+            void vscode.window.showErrorMessage(`Dev setup failed at "${devFailed.name}": ${devFailed.detail}`);
+            return;
+          }
+          serverBinaryPath = devBinaryPath();
+        }
+
+        // Configure remote as fleet server
         const token = generateFleetToken();
-        const steps = await configureRemoteServer(target, { token });
+        const steps = await configureRemoteServer(target, { token, binaryPath: serverBinaryPath });
         const failed = steps.find((s) => s.status === "failed");
         if (failed) {
           void vscode.window.showErrorMessage(`Setup failed at "${failed.name}": ${failed.detail}`);
           return;
         }
 
-        // Configure local
+        // Configure local as client
         configureLocalClient(target, { sshAlias: target, token });
       } else {
         // This machine is the server — configure locally
