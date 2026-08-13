@@ -1388,20 +1388,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.fleet.createFleet", () => {
-      launchFleetChat("I want to create a fleet with a remote machine as the server.");
+      launchFleetChat("/fleet I want to create a fleet with a remote machine as the server.");
     }),
     vscode.commands.registerCommand("amicode.fleet.addMachine", () => {
-      launchFleetChat("I want to add a new machine to my fleet.");
+      launchFleetChat("/fleet I want to add a new machine to my fleet.");
     }),
     vscode.commands.registerCommand("amicode.fleet.removeMachine", (payload?: { target?: string }) => {
       const target = payload?.target;
       const prompt = target
-        ? `I want to remove ${target} from my fleet.`
-        : "I want to remove a machine from my fleet.";
+        ? `/fleet I want to remove ${target} from my fleet.`
+        : "/fleet I want to remove a machine from my fleet.";
       launchFleetChat(prompt);
     }),
     vscode.commands.registerCommand("amicode.fleet.dismantle", () => {
-      launchFleetChat("I want to dismantle my fleet and revert all machines to standalone.");
+      launchFleetChat("/fleet I want to dismantle my fleet and revert all machines to standalone.");
     }),
   );
 
