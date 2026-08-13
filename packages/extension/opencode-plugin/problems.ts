@@ -66,22 +66,39 @@ export function setActiveSlug(slug: string): void {
 }
 
 // --- problem.json (the machine-read source) ----------------------------------
+// W2.1: the workspace *card* is now `card.toml`/`card.json` (the `problem.toml`
+// basename is the typed ProblemSpec, validated as `problemspec`). Legacy
+// workspaces with `problem.toml`/`problem.json` still read correctly via fallback.
 
 function readProblemMeta(slug: string): ProblemMeta | undefined {
-  const file = path.join(problemDir(slug), "problem.json");
-  if (!fs.existsSync(file)) return undefined;
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8")) as ProblemMeta;
-  } catch {
-    return undefined;
+  const candidates = [path.join(problemDir(slug), "card.json"), path.join(problemDir(slug), "problem.json")];
+  for (const file of candidates) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      return JSON.parse(fs.readFileSync(file, "utf8")) as ProblemMeta;
+    } catch {
+      continue;
+    }
   }
+  return undefined;
 }
 
-/** Write both problem.toml and its .json sidecar, stamping `recorded` = now. */
+/** Write card.toml + card.json, stamping `recorded` = now. Legacy `problem.*`
+ *  files are removed on next write to free the `problem.toml` basename for the
+ *  typed ProblemSpec (W2.1). Reading still falls back to the legacy path. */
 function writeProblemMeta(meta: ProblemMeta): void {
   const stamped: ProblemMeta = { ...meta, recorded: new Date().toISOString() };
-  atomicWrite(path.join(problemDir(meta.slug), "problem.toml"), problemToml(stamped));
-  atomicWrite(path.join(problemDir(meta.slug), "problem.json"), problemJson(stamped));
+  const dir = problemDir(meta.slug);
+  atomicWrite(path.join(dir, "card.toml"), problemToml(stamped));
+  atomicWrite(path.join(dir, "card.json"), problemJson(stamped));
+  // Migrate legacy files away (best-effort, ignore ENOENT)
+  for (const legacy of [path.join(dir, "problem.toml"), path.join(dir, "problem.json")]) {
+    try {
+      if (fs.existsSync(legacy)) fs.unlinkSync(legacy);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** First non-colliding slug: `base`, then `base-2`, `base-3`, … */
@@ -289,8 +306,8 @@ export function migrateLegacyEntities(
     status: "archived",
     recorded: new Date().toISOString(),
   };
-  fs.writeFileSync(path.join(ws, "problem.toml"), problemToml(meta));
-  fs.writeFileSync(path.join(ws, "problem.json"), problemJson(meta));
+  fs.writeFileSync(path.join(ws, "card.toml"), problemToml(meta));
+  fs.writeFileSync(path.join(ws, "card.json"), problemJson(meta));
   const others = fs
     .readdirSync(problemsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== slug);
