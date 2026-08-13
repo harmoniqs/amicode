@@ -16,7 +16,8 @@ defineStyle(
   body { margin: 0; min-height: 100vh; font-family: var(--text-font);
          font-size: var(--text-body); color: var(--vscode-foreground);
          padding: var(--space-lg); }
-  .fleet-section { margin-bottom: var(--space-xl); }
+  .fleet-section { margin-bottom: 24px; }
+  .fleet-section + .fleet-section { padding-top: 4px; }
   .section-label { font-size: var(--text-label); text-transform: uppercase;
                    letter-spacing: 0.6px; font-weight: 600; color: var(--color-dim);
                    margin-bottom: var(--space-xs); }
