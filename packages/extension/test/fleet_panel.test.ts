@@ -3,6 +3,7 @@ import { FleetPanelView, registerFleetPanel } from "../src/fleet_panel";
 import type { FleetHostMessage, FleetWebviewMessage } from "../src/fleet_panel";
 import { fleetStatusBarLabel } from "../src/status_bar";
 import { commands } from "vscode";
+import { ChatPanel } from "../src/chat_panel";
 
 // ── Host provider tests ─────────────────────────────────────────────────────
 
@@ -185,5 +186,38 @@ describe("fleetStatusBarLabel", () => {
     const { text, tooltip } = fleetStatusBarLabel("client");
     expect(text).toContain("Fleet: client");
     expect(tooltip).toContain("Connected to fleet server");
+  });
+});
+
+// ── ChatPanel.navigateToPath end-to-end test ────────────────────────────────
+
+describe("ChatPanel.navigateToPath", () => {
+  it("posts a navigate message with the correct path to the webview", () => {
+    const ctx = {
+      extensionUri: { fsPath: "/mock/ext" },
+      subscriptions: [] as any[],
+    };
+
+    const panel = ChatPanel.openOrReveal(
+      ctx as any,
+      new URL("http://127.0.0.1:4096"),
+      "token",
+      "/mock/project",
+    );
+
+    panel.navigateToPath("/new-session?prompt=I+want+to+create+a+fleet");
+
+    // Get the underlying webview panel's posted messages
+    const webview = (panel as any).panel.webview;
+    const msgs = webview.posted.filter((m: any) => m?.kind === "navigate");
+    expect(msgs.length).toBeGreaterThanOrEqual(1);
+    expect(msgs[0]).toEqual({
+      source: "amicode",
+      kind: "navigate",
+      path: "/new-session?prompt=I+want+to+create+a+fleet",
+    });
+
+    // Clean up
+    (panel as any).panel.dispose();
   });
 });

@@ -17,12 +17,15 @@ export const window = {
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
+    const posted: unknown[] = [];
     return {
       webview: {
         html: "",
         cspSource: "test:",
         asWebviewUri: (u: unknown) => u,
         onDidReceiveMessage: () => ({ dispose() {} }),
+        postMessage: (msg: unknown) => { posted.push(msg); return Promise.resolve(true); },
+        posted,
       },
       revealCount: 0,
       reveal() {
