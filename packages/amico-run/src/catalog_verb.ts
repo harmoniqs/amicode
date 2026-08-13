@@ -24,6 +24,7 @@
 // non-colliding name. (`--kind` here is also a DIFFERENT axis from `amico resolve
 // --kind`, where kind = problem-kind such as gate_synthesis.)
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import {
@@ -208,6 +209,13 @@ export function catalogIngest(argv: string[]): VerbResult {
   meta.warm_start = warmStart;
   if (tags) meta.tags = tags;
   meta.date = new Date().toISOString().slice(0, 10);
+  // W4.1: content hash of pulse.jld2 for verifiable warm-start provenance
+  try {
+    const data = readFileSync(pulse);
+    meta.pulse_hash = "sha256:" + createHash("sha256").update(data).digest("hex");
+  } catch {
+    // if pulse unreadable, omit hash (honest gap)
+  }
 
   if (dryRun) {
     return {

@@ -10,6 +10,7 @@
 // exactly like src/catalog.ts's template/exemplar loaders degrade to tier 3. A
 // record missing a discriminating field (id/platform/gate/fidelity) is skipped,
 // not fatal.
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +32,16 @@ export interface PulseRecord {
   warm_start?: string; // lineage: the incumbent id this was warm-started from
   tags?: string[];
   date?: string; // ISO date "YYYY-MM-DD"
+  pulse_hash?: string; // W4.1: content hash of pulse.jld2 (verifiable warm-start)
   dir: string; // ABS path to the entry directory
+}
+
+/** W4.1: content hash of a pulse file (sha256:<hex>), for warm-start provenance.
+ *  Stored as `pulse_hash` in the catalog record so a warm_start spec referencing
+ *  a mutated pulse fails loudly. */
+export function pulseHashForFile(path: string): string {
+  const data = readFileSync(path);
+  return "sha256:" + createHash("sha256").update(data).digest("hex");
 }
 
 /** The repertoire's `pulses/` directory. `$AMICO_CATALOG_DIR` overrides it (tests
@@ -85,6 +95,7 @@ function parseRecord(file: string, dir: string): PulseRecord | undefined {
     warm_start: str(parsed.warm_start) ?? str(parsed.warm_started_from),
     tags: Array.isArray(parsed.tags) ? parsed.tags.filter((t): t is string => typeof t === "string") : undefined,
     date: dateStr(parsed.date),
+    pulse_hash: str(parsed.pulse_hash),
   };
 }
 

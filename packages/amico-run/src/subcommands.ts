@@ -6,10 +6,11 @@
 // the launch contract).
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseToml } from "smol-toml";
 import { validate } from "@amicode/schema";
 import { readAuthoring } from "./authoring.js";
 import { loadExemplarsIndex, loadRegistry, matchShape } from "./catalog.js";
-import { estimateFromVars, extractKeyVars } from "./estimate.js";
+import { estimateFromVars, extractKeyVars, extractKeyVarsFromSpec } from "./estimate.js";
 import { JULIA_STDLIBS } from "./import_scan.js";
 import { ConfigError } from "./types.js";
 
@@ -160,9 +161,39 @@ export function estimateCommand(argv: string[]): number {
       return 64;
     }
     const sp = (specRaw as { script_path?: string }).script_path;
-    // A v4 solvespec may carry problem_spec instead of script_path (schema:
-    // exactly one). estimate sizes a *script*, so a scriptless spec has nothing
-    // to size — reject cleanly rather than crash on an undefined path.
+    const ps = (specRaw as { problem_spec?: unknown }).problem_spec;
+    // W2.3: when the solvespec carries problem_spec, size from typed spec fields
+    // (no regex), reusing fixtures as inputs. The script path is not needed.
+    if (ps !== undefined) {
+      let specObj: Record<string, unknown> | undefined;
+      if (typeof ps === "string") {
+        const psPath = isAbsolute(ps) ? ps : resolve(dirname(specPath), ps);
+        try {
+          const raw = readFileSync(psPath, "utf8");
+          specObj = raw.trimStart().startsWith("{") ? (JSON.parse(raw) as Record<string, unknown>) : (parseToml(raw) as Record<string, unknown>);
+        } catch (e) {
+          console.error(`amico-run estimate: cannot read problem_spec ${psPath}: ${(e as Error).message}`);
+          return 64;
+        }
+      } else if (typeof ps === "object" && ps !== null) {
+        specObj = ps as Record<string, unknown>;
+      }
+      if (!specObj) {
+        console.error(`amico-run estimate: problem_spec is not an object`);
+        return 64;
+      }
+      const vars = extractKeyVarsFromSpec(specObj);
+      try {
+        console.log(JSON.stringify(estimateFromVars(vars)));
+        return 0;
+      } catch (e) {
+        if (e instanceof ConfigError) {
+          console.error(`amico-run estimate: ${e.message} (spec: ${specPath})`);
+          return 64;
+        }
+        throw e;
+      }
+    }
     if (typeof sp !== "string") {
       console.error(`amico-run estimate: --spec has no script_path (a problem_spec spec has no script to size)`);
       return 64;

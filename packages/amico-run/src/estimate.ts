@@ -37,6 +37,11 @@ export interface KeyVars {
    *  stores an error string instead of values; we keep that message here and the
    *  score computation skips levels exactly as get_memory_estimate does. */
   levelsUnresolved?: string;
+  /** Typed-spec path (W2.3): trajectory kind drives dimension scaling (unitary
+   *  squares the state dim, ket/density do not) and wrapper count multiplies the
+   *  score (sampling). Absent = unitary (the historical script-path assumption). */
+  trajectoryKind?: string;
+  wrapperMultiplier?: number;
 }
 
 export type SizeClass = "SMALL" | "MEDIUM";
@@ -93,14 +98,95 @@ export function extractKeyVars(content: string): KeyVars {
   return out;
 }
 
+/** Typed-spec adapter (W2.3): read N/levels/trajectory/wrappers from a parsed
+ *  ProblemSpec object (smol-toml output), mirroring hashing.ts's field mapping.
+ *  Shared size model with the regex path — same score contract, different adapter. */
+export function extractKeyVarsFromSpec(spec: Record<string, unknown>): KeyVars {
+  const out: KeyVars = {};
+  const problem = (spec.problem as Record<string, unknown> | undefined) ?? {};
+  const system = (spec.system as Record<string, unknown> | undefined) ?? {};
+  const goal = (spec.goal as Record<string, unknown> | undefined) ?? {};
+  const trajectory = (spec.trajectory as Record<string, unknown> | undefined) ?? {};
+  const pulse = (spec.pulse as Record<string, unknown> | undefined) ?? {};
+  const wrappers = spec.wrappers;
+
+  if (typeof problem.N === "number") out.N = problem.N;
+  else if (typeof problem.N === "bigint") out.N = Number(problem.N);
+
+  // Levels: system.params.levels (scalar or array) wins; else goal.subsystem_levels;
+  // else system.components (composite — take each component's levels).
+  const sysParams = system.params as Record<string, unknown> | undefined;
+  const rawLevels = sysParams?.levels;
+  if (typeof rawLevels === "number") {
+    out.levels = { length: 1, values: [rawLevels] };
+    out.num_qudits = 1;
+  } else if (Array.isArray(rawLevels)) {
+    const vals = (rawLevels as unknown[]).map((v) => Number(v));
+    if (vals.every((v) => Number.isInteger(v))) {
+      out.levels = { length: vals.length, values: vals };
+      out.num_qudits = vals.length;
+    }
+  } else if (Array.isArray(goal.subsystem_levels)) {
+    const vals = (goal.subsystem_levels as unknown[]).map((v) => Number(v));
+    if (vals.every((v) => Number.isInteger(v))) {
+      out.levels = { length: vals.length, values: vals };
+      out.num_qudits = vals.length;
+    }
+  } else if (Array.isArray(system.components)) {
+    const comps = system.components as unknown[];
+    const vals: number[] = [];
+    for (const c of comps) {
+      const params = (c as Record<string, unknown>)?.params as Record<string, unknown> | undefined;
+      const lev = params?.levels;
+      if (typeof lev === "number") vals.push(lev);
+    }
+    if (vals.length > 0) {
+      out.levels = { length: vals.length, values: vals };
+      out.num_qudits = vals.length;
+    }
+  }
+
+  // Trajectory kind drives the dimension squaring (unitary = squared, ket/density = single)
+  const trajKind =
+    typeof trajectory.kind === "string"
+      ? trajectory.kind
+      : typeof goal.kind === "string"
+        ? goal.kind
+        : typeof pulse.kind === "string" && pulse.kind.includes("ket")
+          ? "ket"
+          : undefined;
+  if (trajKind) out.trajectoryKind = trajKind;
+
+  // Wrapper count: sampling multiplies (ensemble). Each wrapper with N variants multiplies score.
+  if (Array.isArray(wrappers) && wrappers.length > 0) {
+    let mult = 1;
+    for (const w of wrappers) {
+      const variants = (w as Record<string, unknown>)?.variants;
+      if (Array.isArray(variants) && variants.length > 0) mult *= variants.length;
+      else mult *= 1;
+    }
+    if (mult > 1) out.wrapperMultiplier = mult;
+  }
+
+  // Fallback pulse.T not needed for score but keep for completeness
+  void pulse;
+
+  return out;
+}
+
 /** Port of get_memory_estimate: N × (prod(levels))⁴; absent/unresolved levels
- *  contribute nothing (knot_point_state_dim stays 1), exactly as the reference. */
+ *  contribute nothing (knot_point_state_dim stays 1), exactly as the reference.
+ *  W2.3: trajectory kind and wrapper multiplier adjust the shared model — ket
+ *  trajectories do NOT square the state dim, and sampling wrappers multiply N. */
 export function memoryScore(vars: KeyVars): number {
   if (vars.N === undefined) throw new ConfigError("could not extract N (needed by the tshirt-sizing estimator)");
   let knotPointStateDim = 1;
   if (vars.levels) for (const v of vars.levels.values) knotPointStateDim *= v;
-  knotPointStateDim *= knotPointStateDim; // assumes a unitary trajectory problem
-  return vars.N * knotPointStateDim ** 2;
+  const isUnitary = !vars.trajectoryKind || vars.trajectoryKind === "unitary";
+  if (isUnitary) knotPointStateDim *= knotPointStateDim;
+  let score = vars.N * knotPointStateDim ** 2;
+  if (vars.wrapperMultiplier && vars.wrapperMultiplier > 1) score *= vars.wrapperMultiplier;
+  return score;
 }
 
 /** Port of get_tshirt_size: strict >, two classes in A-v1. */

@@ -12,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
-import { validate } from "@amicode/schema";
+import { validate, validateProblemSpec, hasIssimoEntitlement } from "@amicode/schema";
 import type { AuthoringConfig } from "./authoring.js";
 import { checkImports, scanImports } from "./import_scan.js";
 import { maskedHash } from "./baseline.js";
@@ -99,6 +99,27 @@ export function runGate(
   const env = (typeof spec.env === "object" && spec.env !== null ? spec.env : undefined) as
     | { kind?: string; project?: string }
     | undefined;
+
+  // ── step 1b: problem_spec validation (W2.4) — entitlement-keyed schema variant ──
+  // A v4 problem_spec solvespec carries an inline object or will be resolved from a
+  // path; the solvespec schema only checked `{type: object}`. Here we validate against
+  // the vendored ProblemSpec schemas: `issimo` entitlement ⇒ FULL, else OSS. This
+  // makes problemspec.oss.schema.json load-bearing and enforces the public/private
+  // seam before paying a Julia cold start. A Piccolissimo-only integrator
+  // (exponential/spline) fails on OSS, passes on issimo.
+  const problemSpec = (spec as Record<string, unknown>).problem_spec;
+  if (problemSpec !== undefined && typeof problemSpec === "object" && problemSpec !== null) {
+    const hasIssimo = hasIssimoEntitlement(authoring.allowlist);
+    const psValidation = validateProblemSpec(problemSpec, hasIssimo);
+    if (!psValidation.ok) {
+      const isEntitlementGated =
+        psValidation.errors.some((e) => e.includes("exponential") || e.includes("spline") || e.includes("hermite_bending")) ||
+        JSON.stringify(problemSpec).includes('"exponential"') ||
+        JSON.stringify(problemSpec).includes('"spline"');
+      const hint = !hasIssimo && isEntitlementGated ? " (requires issimo entitlement — Piccolissimo-only integrator/objective)" : "";
+      return { ok: false, reason: `problem_spec schema: ${psValidation.errors[0]}${hint}` };
+    }
+  }
 
   // ── step 2: import scan ──
   // A v4 problem_spec solvespec (schema: exactly one of script_path|problem_spec)
