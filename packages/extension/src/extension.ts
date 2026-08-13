@@ -76,6 +76,7 @@ import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
 import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
+import { checkCompatibility, probeServerInfo, CLIENT_VERSION } from "./fleet_compat";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -1596,6 +1597,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // (postToWebview). That wiring depends on the chat panel being open.
   });
   ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
+
+  // Fleet compatibility probe — check server version on activation (if client mode)
+  if (getFleetRole() === "client") {
+    const cfg = readFleetConfig();
+    const serverTarget = cfg?.canonical?.sshAlias ?? cfg?.canonical?.host;
+    if (serverTarget) {
+      void (async () => {
+        const serverInfo = await probeServerInfo(serverTarget, { port: cfg?.canonical?.port });
+        const panel = getFleetPanel();
+        if (serverInfo && panel) {
+          const compat = checkCompatibility(CLIENT_VERSION, serverInfo);
+          panel.postCompat(compat.state, compat.message);
+        }
+      })();
+    }
+  }
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface

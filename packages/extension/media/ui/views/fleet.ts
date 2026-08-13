@@ -37,6 +37,15 @@ defineStyle(
   .fleet-role-badge.standalone { color: var(--color-dim); }
   .fleet-role-badge.server { color: var(--color-ok); }
   .fleet-role-badge.client { color: var(--color-run); }
+  .fleet-compat-banner { font-size: var(--text-small); padding: var(--space-sm) var(--space-md);
+                         border-radius: var(--border-radius); margin-bottom: 12px;
+                         border: var(--border-width) solid; display: none; }
+  .fleet-compat-banner.degraded { color: var(--color-run); border-color: var(--color-run);
+                                   background: color-mix(in srgb, var(--color-run) 8%, transparent); }
+  .fleet-compat-banner.incompatible { color: var(--color-fail); border-color: var(--color-fail);
+                                       background: color-mix(in srgb, var(--color-fail) 8%, transparent); }
+  .fleet-compat-banner .compat-action { font-weight: 600; cursor: pointer;
+                                         text-decoration: underline; margin-left: var(--space-sm); }
 `,
 );
 
@@ -54,6 +63,11 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
   roleBadge.className = "fleet-role-badge standalone";
   roleBadge.textContent = "Standalone";
   el.appendChild(roleBadge);
+
+  // ── Compatibility banner (shown when degraded/incompatible) ──────────────
+  const compatBanner = document.createElement("div");
+  compatBanner.className = "fleet-compat-banner";
+  el.appendChild(compatBanner);
 
   // ── Create Fleet button (right under the badge in standalone) ────────────
   const createBtn = button("Create Fleet", () => {
@@ -141,6 +155,26 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
           statsContent.textContent = "No active sessions";
         } else {
           statsContent.textContent = `${m.stats.active} active (${m.stats.running} running, ${m.stats.blocked} blocked) \u00B7 ${m.stats.tokensToday} tokens today`;
+        }
+        break;
+
+      case "compat":
+        if (m.state === "compatible") {
+          compatBanner.style.display = "none";
+        } else {
+          compatBanner.className = `fleet-compat-banner ${m.state}`;
+          compatBanner.style.display = "block";
+          compatBanner.innerHTML = m.state === "incompatible"
+            ? `${m.message} <span class="compat-action" data-action="goStandalone">Go Standalone</span>`
+            : m.message;
+
+          // Wire up Go Standalone action
+          const action = compatBanner.querySelector(".compat-action");
+          if (action) {
+            action.addEventListener("click", () => {
+              post({ type: "action", action: "goStandalone" });
+            });
+          }
         }
         break;
     }

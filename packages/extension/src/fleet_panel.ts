@@ -18,7 +18,8 @@ export type FleetHostMessage =
   | { type: "topology"; nodes: FleetNode[]; edges: FleetEdge[] }
   | { type: "profiles"; profiles: FleetProfileSummary[] }
   | { type: "stats"; stats: FleetStats }
-  | { type: "role"; role: "standalone" | "server" | "client" };
+  | { type: "role"; role: "standalone" | "server" | "client" }
+  | { type: "compat"; state: "compatible" | "degraded" | "incompatible"; message: string };
 
 /** Messages the webview sends TO the host. */
 export type FleetWebviewMessage =
@@ -106,6 +107,11 @@ export class FleetPanelView implements vscode.WebviewViewProvider {
   /** Push aggregate stats to the webview. */
   postStats(stats: FleetStats): void {
     this.post({ type: "stats", stats });
+  }
+
+  /** Push compatibility status to the webview. */
+  postCompat(state: "compatible" | "degraded" | "incompatible", message: string): void {
+    this.post({ type: "compat", state, message });
   }
 
   /** Push the current fleet role (standalone/server/client). */
