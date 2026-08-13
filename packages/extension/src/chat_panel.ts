@@ -290,8 +290,20 @@ export class ChatPanel {
         // our own envelopes, pinned to the opencode origin.
         if (d && d.source === "amicode" && d.kind === "navigate") {
           // Navigate the iframe to a new in-app route (e.g. /new-session?prompt=...)
+          // Preserve boot params (auth_token, colorScheme, etc.) from the current src.
           var f = document.querySelector("iframe");
-          if (f && d.path) f.src = ${origin} + d.path;
+          if (f && d.path) {
+            try {
+              var base = new URL(f.src);
+              var target = new URL(d.path, base.origin);
+              // Carry over boot params the app needs (auth, theme, hide-project, bug-report)
+              ["auth_token", "colorScheme", "amicode_hide_project", "amicode_bug_report"].forEach(function(k) {
+                var v = base.searchParams.get(k);
+                if (v && !target.searchParams.has(k)) target.searchParams.set(k, v);
+              });
+              f.src = target.href;
+            } catch(e) { /* malformed path — ignore */ }
+          }
           return;
         }
         if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "draft-message")) {
