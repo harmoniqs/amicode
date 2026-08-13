@@ -76,7 +76,7 @@ import { readTopology } from "./fleet_topology_data";
 import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
 import { readProfile, PROFILES_DIR } from "./fleet_profiles";
 import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
-import { checkCompatibility, probeServerInfo, CLIENT_VERSION } from "./fleet_compat";
+import { syncFromHost, shouldAutoSync, buildConflictResolutionPrompt } from "./fleet_sync";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -1598,21 +1598,90 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   });
   ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
 
-  // Fleet compatibility probe — check server version on activation (if client mode)
-  if (getFleetRole() === "client") {
-    const cfg = readFleetConfig();
-    const serverTarget = cfg?.canonical?.sshAlias ?? cfg?.canonical?.host;
-    if (serverTarget) {
-      void (async () => {
-        const serverInfo = await probeServerInfo(serverTarget, { port: cfg?.canonical?.port });
-        const panel = getFleetPanel();
-        if (serverInfo && panel) {
-          const compat = checkCompatibility(CLIENT_VERSION, serverInfo);
-          panel.postCompat(compat.state, compat.message);
+  // Fleet auto-sync on activation (if client mode)
+  const autoSync = shouldAutoSync();
+  if (autoSync.should && autoSync.target) {
+    const syncTarget = autoSync.target;
+    void (async () => {
+      const panel = getFleetPanel();
+      if (panel) panel.postCompat("compatible", "Syncing...");
+
+      const result = await syncFromHost(syncTarget, {
+        onProgress: (step) => {
+          if (panel) panel.postCompat("compatible", step);
+        },
+      });
+
+      if (result.conflict) {
+        // Conflict detected — show banner and offer to launch resolution session
+        if (panel) panel.postCompat("incompatible", `Sync conflict in ${result.conflict.repo} — click to resolve`);
+        const resolve = await vscode.window.showWarningMessage(
+          `Fleet sync conflict in ${result.conflict.repo}: local and host have diverged. Launch an Amicode session to resolve?`,
+          "Resolve with Amicode",
+          "Dismiss",
+        );
+        if (resolve === "Resolve with Amicode") {
+          const prompt = buildConflictResolutionPrompt(result.conflict);
+          // Open a new chat with the conflict resolution prompt
+          void vscode.commands.executeCommand("amicode.newChat");
+          // Give the chat a moment to open, then send the prompt
+          setTimeout(() => {
+            void vscode.commands.executeCommand("amicode.sendMessage", prompt);
+          }, 1500);
         }
-      })();
-    }
+      } else if (result.synced) {
+        if (panel) panel.postCompat("compatible", result.buildUpdated ? "Synced — reload window" : "Up to date");
+        if (result.buildUpdated) {
+          const reload = await vscode.window.showInformationMessage(
+            "Fleet sync complete — extension updated. Reload to pick up changes?",
+            "Reload Window",
+          );
+          if (reload === "Reload Window") {
+            void vscode.commands.executeCommand("workbench.action.reloadWindow");
+          }
+        }
+      } else if (result.error) {
+        if (panel) panel.postCompat("degraded", `Sync error: ${result.error}`);
+      }
+    })();
   }
+
+  // Manual sync command
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.sync", async () => {
+    const { should, target } = shouldAutoSync();
+    if (!should || !target) {
+      void vscode.window.showInformationMessage("Not in fleet client mode — nothing to sync");
+      return;
+    }
+    const panel = getFleetPanel();
+    if (panel) panel.postCompat("compatible", "Syncing...");
+
+    const result = await syncFromHost(target, {
+      forceBuild: true,
+      onProgress: (step) => { if (panel) panel.postCompat("compatible", step); },
+    });
+
+    if (result.conflict) {
+      if (panel) panel.postCompat("incompatible", `Conflict in ${result.conflict.repo}`);
+      const resolve = await vscode.window.showWarningMessage(
+        `Sync conflict in ${result.conflict.repo}. Launch Amicode to resolve?`,
+        "Resolve with Amicode",
+        "Dismiss",
+      );
+      if (resolve === "Resolve with Amicode") {
+        const prompt = buildConflictResolutionPrompt(result.conflict);
+        void vscode.commands.executeCommand("amicode.newChat");
+        setTimeout(() => void vscode.commands.executeCommand("amicode.sendMessage", prompt), 1500);
+      }
+    } else if (result.synced && result.buildUpdated) {
+      if (panel) panel.postCompat("compatible", "Synced — reload window");
+      const reload = await vscode.window.showInformationMessage("Sync complete. Reload?", "Reload Window");
+      if (reload === "Reload Window") void vscode.commands.executeCommand("workbench.action.reloadWindow");
+    } else {
+      if (panel) panel.postCompat("compatible", "Up to date");
+      void vscode.window.showInformationMessage("Already in sync with host");
+    }
+  }));
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface
