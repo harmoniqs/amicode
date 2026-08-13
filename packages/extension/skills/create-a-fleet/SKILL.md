@@ -1,5 +1,5 @@
 ---
-name: fleet
+name: create-a-fleet
 description: "Fleet lifecycle management — create, add machines, remove, dismantle, reconfigure. Use when the user clicks Create Fleet or asks to set up/manage a fleet."
 agents: [researcher, experimenter]
 surface: public
