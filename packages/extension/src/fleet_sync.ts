@@ -36,7 +36,16 @@ export interface SyncResult {
   synced: boolean;
   buildUpdated: boolean;
   sessionsUpdated: boolean;
+  conflict?: SyncConflict;
   error?: string;
+}
+
+export interface SyncConflict {
+  repo: "amicode" | "opencode";
+  type: "push-rejected" | "merge-conflict" | "diverged";
+  localSha: string;
+  remoteSha: string;
+  detail: string;
 }
 
 // ============================================================================
@@ -200,11 +209,13 @@ export async function configureHostForDirectPush(
 }
 
 /** Push any local commits directly to the host's repo over SSH.
- *  Called on reconnect so the host has the client's standalone work. */
+ *  Called on reconnect so the host has the client's standalone work.
+ *  Returns conflict info if the push is rejected (non-fast-forward). */
 export function pushToHost(opts: { onProgress?: (step: string) => void } = {}): {
   pushed: boolean;
   amicodePushed: boolean;
   opencodePushed: boolean;
+  conflict?: SyncConflict;
   error?: string;
 } {
   const progress = opts.onProgress ?? (() => {});
@@ -224,11 +235,25 @@ export function pushToHost(opts: { onProgress?: (step: string) => void } = {}): 
     if (parseInt(ahead.trim()) > 0) {
       progress("Pushing amicode to host...");
       const branch = cp.execSync("git rev-parse --abbrev-ref HEAD", { cwd: repoDir, encoding: "utf8", timeout: 5000 }).trim();
-      cp.execSync(`git push ${FLEET_REMOTE} ${branch}`, { cwd: repoDir, encoding: "utf8", timeout: 30000 });
-      amicodePushed = true;
+      try {
+        cp.execSync(`git push ${FLEET_REMOTE} ${branch}`, { cwd: repoDir, encoding: "utf8", timeout: 30000 });
+        amicodePushed = true;
+      } catch (pushErr) {
+        const errMsg = String(pushErr);
+        // Detect non-fast-forward (conflict)
+        if (errMsg.includes("non-fast-forward") || errMsg.includes("rejected") || errMsg.includes("diverged")) {
+          const localSha = cp.execSync("git rev-parse HEAD", { cwd: repoDir, encoding: "utf8", timeout: 5000 }).trim();
+          const remoteSha = cp.execSync(`git rev-parse ${FLEET_REMOTE}/HEAD 2>/dev/null || echo unknown`, { cwd: repoDir, encoding: "utf8", timeout: 5000 }).trim();
+          return {
+            pushed: false, amicodePushed: false, opencodePushed: false,
+            conflict: { repo: "amicode", type: "push-rejected", localSha, remoteSha, detail: errMsg },
+          };
+        }
+        return { pushed: false, amicodePushed: false, opencodePushed: false, error: `amicode push failed: ${errMsg}` };
+      }
     }
   } catch (err) {
-    return { pushed: false, amicodePushed: false, opencodePushed: false, error: `amicode push failed: ${err}` };
+    return { pushed: false, amicodePushed: false, opencodePushed: false, error: `amicode sync check failed: ${err}` };
   }
 
   // Push opencode
@@ -241,11 +266,24 @@ export function pushToHost(opts: { onProgress?: (step: string) => void } = {}): 
     if (parseInt(ahead.trim()) > 0) {
       progress("Pushing opencode to host...");
       const branch = cp.execSync("git rev-parse --abbrev-ref HEAD", { cwd: ocRepoDir, encoding: "utf8", timeout: 5000 }).trim();
-      cp.execSync(`git push ${FLEET_REMOTE} ${branch}`, { cwd: ocRepoDir, encoding: "utf8", timeout: 30000 });
-      opencodePushed = true;
+      try {
+        cp.execSync(`git push ${FLEET_REMOTE} ${branch}`, { cwd: ocRepoDir, encoding: "utf8", timeout: 30000 });
+        opencodePushed = true;
+      } catch (pushErr) {
+        const errMsg = String(pushErr);
+        if (errMsg.includes("non-fast-forward") || errMsg.includes("rejected") || errMsg.includes("diverged")) {
+          const localSha = cp.execSync("git rev-parse HEAD", { cwd: ocRepoDir, encoding: "utf8", timeout: 5000 }).trim();
+          const remoteSha = cp.execSync(`git rev-parse ${FLEET_REMOTE}/HEAD 2>/dev/null || echo unknown`, { cwd: ocRepoDir, encoding: "utf8", timeout: 5000 }).trim();
+          return {
+            pushed: amicodePushed, amicodePushed, opencodePushed: false,
+            conflict: { repo: "opencode", type: "push-rejected", localSha, remoteSha, detail: errMsg },
+          };
+        }
+        return { pushed: amicodePushed, amicodePushed, opencodePushed: false, error: `opencode push failed: ${errMsg}` };
+      }
     }
   } catch (err) {
-    return { pushed: amicodePushed, amicodePushed, opencodePushed: false, error: `opencode push failed: ${err}` };
+    return { pushed: amicodePushed, amicodePushed, opencodePushed: false, error: `opencode sync check failed: ${err}` };
   }
 
   return { pushed: amicodePushed || opencodePushed, amicodePushed, opencodePushed };
@@ -322,6 +360,7 @@ export async function syncSessions(
 
 /** Full sync. On reconnect from standalone:
  *  1. Push local commits directly to host (client's standalone dev work)
+ *     — if conflict detected, returns it for resolution via amicode chat
  *  2. Trigger host rebuild (so it picks up the pushed commits)
  *  3. Pull the host's state down (host → client, builds + sessions)
  *
@@ -340,8 +379,19 @@ export async function syncFromHost(
   // Step 1: Push local work to host (if any)
   ensureFleetRemote(target);
   const pushResult = pushToHost({ onProgress: progress });
+
+  // Conflict detected — return it so the caller can launch a resolution session
+  if (pushResult.conflict) {
+    progress(`Conflict in ${pushResult.conflict.repo} — needs resolution`);
+    return {
+      synced: false,
+      buildUpdated: false,
+      sessionsUpdated: false,
+      conflict: pushResult.conflict,
+    };
+  }
+
   if (pushResult.error) {
-    // Push failure is non-fatal for the sync — warn but continue pulling
     progress(`Push warning: ${pushResult.error}`);
   }
 
@@ -350,7 +400,6 @@ export async function syncFromHost(
     const rebuildResult = await triggerHostRebuild(target, { exec, onProgress: progress });
     if (!rebuildResult.ok) {
       progress(`Host rebuild warning: ${rebuildResult.error}`);
-      // Continue — we'll still pull whatever the host has now
     }
   }
 
@@ -389,4 +438,36 @@ export function shouldAutoSync(): { should: boolean; target?: string } {
   if (!target) return { should: false };
   return { should: true, target };
 }
+
+// ============================================================================
+// Conflict resolution — launches an amicode chat to resolve sync conflicts
+// ============================================================================
+
+/** Build the initial prompt for a conflict-resolution amicode session. */
+export function buildConflictResolutionPrompt(conflict: SyncConflict): string {
+  const repoDir = conflict.repo === "amicode"
+    ? "~/harmoniqs/amicode"
+    : "~/harmoniqs/opencode";
+
+  return `Fleet sync conflict detected in **${conflict.repo}** (${repoDir}).
+
+## What happened
+
+The local branch has diverged from the fleet host. The push to the host was rejected because both sides have commits the other doesn't.
+
+- **Local HEAD**: \`${conflict.localSha}\`
+- **Host HEAD**: \`${conflict.remoteSha}\`
+- **Type**: ${conflict.type}
+
+## What needs to happen
+
+Resolve the divergence so both client and host are on the same commit. Options:
+
+1. **Rebase local onto host** — \`git fetch fleet-host && git rebase fleet-host/HEAD\` — preserves local work on top of the host's state. Resolve any file conflicts, then push.
+2. **Force-push local** — \`git push fleet-host --force-with-lease\` — overwrites the host with local state. Only if you're sure the host's divergent commits are disposable.
+3. **Reset local to host** — \`git reset --hard fleet-host/HEAD\` — discards local work, mirrors the host exactly. Use if the local changes are expendable.
+
+Please inspect the divergence (\`git log --oneline fleet-host/HEAD..HEAD\` for local-only commits, \`git log --oneline HEAD..fleet-host/HEAD\` for host-only commits) and resolve it. After resolution, re-run the fleet sync.`;
+}
+
 
