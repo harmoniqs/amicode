@@ -135,6 +135,18 @@ export class ChatPanel {
     setTimeout(post, 1500);
   }
 
+  /** Post a draft message to the chat. The app will populate the input with this
+   *  text (user can review before sending). Posted twice for reliability (same
+   *  pattern as postComputeConnect). */
+  postDraftMessage(message: string): void {
+    const envelope = { source: "amicode", kind: "draft-message", message };
+    try { void this.panel.webview.postMessage(envelope); } catch {}
+    setTimeout(() => { try { void this.panel.webview.postMessage(envelope); } catch {} }, 1500);
+  }
+
+  /** The tab title of this chat panel. */
+  get title(): string { return this.tabTitle; }
+
   /** Lowest free tab label: the lone tab reads "Amicode Chat"; extras take the
    *  smallest unused "Amicode Chat N" (N ≥ 2). Numbers free up on dispose, so a
    *  closed tab's number is reused — existing tabs are never retitled. */
