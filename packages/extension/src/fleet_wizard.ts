@@ -571,6 +571,19 @@ export async function provisionDevClone(
   }
   scriptStep.status = "done";
 
+  // Step 8: Write server version file (for client compatibility probes)
+  const versionStep: WizardStep = { name: "Write server version file", status: "running" };
+  steps.push(versionStep);
+  const { buildServerVersionFile } = await import("./fleet_compat");
+  // Read the version from the built amicode package.json on the remote
+  const versionRead = await exec(target,
+    `node -e "console.log(JSON.parse(require('fs').readFileSync('$HOME/harmoniqs/amicode/packages/extension/package.json','utf8')).version)" 2>/dev/null || echo "0.0.0"`);
+  const serverVersion = versionRead.stdout.trim() || "0.0.0";
+  const versionFileContent = buildServerVersionFile(serverVersion);
+  await exec(target,
+    `mkdir -p ~/.amico/ops/fleet && cat > ~/.amico/ops/fleet/server_version.json << 'VEOF'\n${versionFileContent}\nVEOF`);
+  versionStep.status = "done";
+
   return steps;
 }
 
@@ -649,6 +662,17 @@ echo "==> Restarting fleet server..."
 launchctl stop co.harmoniqs.amico-server 2>/dev/null || true
 sleep 1
 launchctl start co.harmoniqs.amico-server 2>/dev/null || true
+
+# ── Update server version file (for client compatibility probes) ───────────────
+VERSION=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$HOME/harmoniqs/amicode/packages/extension/package.json','utf8')).version)" 2>/dev/null || echo "0.0.0")
+cat > ~/.amico/ops/fleet/server_version.json << VEOF
+{
+  "version": "$VERSION",
+  "schema": 1,
+  "capabilities": ["sessions", "fleet-state", "fleet-action", "profiles", "host-settings", "sweep", "topology"]
+}
+VEOF
+echo "==> Server version file updated: v$VERSION"
 
 # ── Restore session DBs if zeroed ─────────────────────────────────────────────
 if [ -d "$BACKUP" ]; then
