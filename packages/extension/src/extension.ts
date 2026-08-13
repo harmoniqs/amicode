@@ -1371,10 +1371,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void vscode.window.showWarningMessage("Amicode server not ready — can't launch fleet session");
       return;
     }
-    const draftUrl = new URL(readyUrl.href);
-    draftUrl.pathname = "/new-session";
-    draftUrl.search = "";
-    const chatPanel = ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    const chatPanel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     chatPanel.postDraftMessage(prompt);
   }
 
