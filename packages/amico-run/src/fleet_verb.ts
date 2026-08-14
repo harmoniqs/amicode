@@ -4,6 +4,7 @@
 // are three renderings of one deterministic verb, so the fleet layer never has to speak
 // and never has two answers.
 //
+//   amico fleet list --org <org>  → coordination org projection (spec #318 §5): shows every live session the token may see, with user/host/org
 //   amico fleet list   [--state <s>] [--root D] [--json]
 //   amico fleet status --session <id> [--root D] [--json]
 //       → READ verbs: a derived view over the one-file-per-session records, plus each

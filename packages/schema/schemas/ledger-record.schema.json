@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://amico.harmoniqs.co/schema/ledger-record/v1",
   "title": "amico run-ledger record",
-  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the eleven record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval|spec_review|plan_compiled|todo). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
+  "description": "One append-only line in ~/.amico/ledger/runs.jsonl. A oneOf discriminated on `type` over the twelve record kinds (solve|verdict|attempt_error|fallback|override|burn|dispatch|approval|spec_review|plan_compiled|todo|claim). Ops-data, not vault knowledge. Registered in @amicode/schema SCHEMAS ONLY — NOT SUPPORTED_VERSIONS_BY_KIND (no top-level properties.schema_version; a oneOf like this would crash the version-map builder at module load, same as problemspec).",
   "$defs": {
     "bounds": {
       "type": "object",
@@ -303,6 +303,27 @@
         "bounds": { "$ref": "#/$defs/bounds" },
         "expires_at": { "type": "string" },
         "issued_by": { "type": "string", "minLength": 1 }
+      }
+    },
+    {
+      "title": "claim",
+      "description": "Coordination claim (spec-20260804-014823 §3): lease-bound claim on a work_id. Server-side issued_at/lease_expires are the sole serializer; validated on write; lapsed is derived. Idempotent on content hash. Org-scoped via token; only verified results publish.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ts", "work_id", "agent_id", "user", "org", "host", "lease_expires"],
+      "properties": {
+        "type": { "const": "claim" },
+        "ts": { "type": "string", "format": "date-time" },
+        "work_id": { "type": "string", "minLength": 1, "description": "work_id v1 canonical work identity" },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "user": { "type": "string", "minLength": 1 },
+        "org": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "lease_expires": { "type": "string", "format": "date-time" },
+        "variant_axis": { "type": "string", "description": "multistart axis when claiming variant" },
+        "run_id": { "type": "string", "minLength": 1 },
+        "outcome": { "enum": ["claimed", "solved", "failed", "abandoned"], "description": "terminal state; lapsed is derived, not stored" },
+        "issued_at": { "type": "string", "format": "date-time", "description": "server-side time, sole serializer" }
       }
     }
   ]
