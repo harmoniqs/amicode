@@ -368,14 +368,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         reply.reloadNeeded = true;
         io.postToWebview(reply);
 
-        // Prompt the reload
-        const action = await vscode.window.showInformationMessage(
-          "Extension rebuilt. Reload to apply changes.",
-          "Reload Now",
-        );
-        if (action === "Reload Now") {
+        // Auto-reload after a short delay so the webview can persist state.
+        setTimeout(() => {
           void vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }
+        }, 500);
       })();
     } else if (reply.amicodeValid && !amicodePath) {
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
@@ -512,7 +508,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
         );
 
-        // ── Restart server + prompt reload ──
+        // ── Restart server + auto-reload ──
         void vscode.commands.executeCommand("amicode.restartServer");
 
         io.postToWebview({
@@ -520,13 +516,11 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           state: "done",
         });
 
-        const action = await vscode.window.showInformationMessage(
-          "Rebuild complete. Reload to apply changes.",
-          "Reload Now",
-        );
-        if (action === "Reload Now") {
+        // Auto-reload the window after a short delay so the webview can
+        // persist the "rebuilt" flag to localStorage before the reload hits.
+        setTimeout(() => {
           void vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }
+        }, 500);
       } catch (e: unknown) {
         io.postToWebview({
           source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
