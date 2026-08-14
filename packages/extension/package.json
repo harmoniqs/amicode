@@ -38,9 +38,6 @@
     "onCommand:amicode.openChat",
     "onCommand:amicode.newChat",
     "onCommand:amicode.chatDeck",
-    "onCommand:amicode.openInspector",
-    "onView:amicode.runInspector",
-    "onView:amicode.deviceInspector",
     "onView:amicode.armonia",
     "onStartupFinished"
   ],
@@ -53,13 +50,6 @@
       "activitybar": [
         {
           "id": "amicode",
-          "title": "Amicode",
-          "icon": "media/amico_reduced.svg"
-        }
-      ],
-      "panel": [
-        {
-          "id": "amicode-panel",
           "title": "Amicode",
           "icon": "media/amico_reduced.svg"
         }
@@ -76,20 +66,6 @@
           "id": "amicode.catalog",
           "name": "Catalog",
           "type": "tree"
-        }
-      ],
-      "amicode-panel": [
-        {
-          "id": "amicode.runInspector",
-          "name": "Run Inspector",
-          "type": "webview",
-          "when": "amicode.inspectorRevealed"
-        },
-        {
-          "id": "amicode.deviceInspector",
-          "name": "Device Inspector",
-          "type": "webview",
-          "when": "amicode.deviceInspectorRevealed"
         }
       ]
     },
@@ -129,14 +105,6 @@
       {
         "command": "amicode.setCloudKey",
         "title": "Amico: Connect Cloud (Piccolissimo + Altissimo)"
-      },
-      {
-        "command": "amicode.openInspector",
-        "title": "Amicode: Open Run Inspector"
-      },
-      {
-        "command": "amicode.openDeviceInspector",
-        "title": "Amicode: Open Device Inspector"
       },
       {
         "command": "amicode.device.refresh",
@@ -198,11 +166,6 @@
           "type": "string",
           "default": "",
           "description": "Default model for new chats, as \"provider/model-id\" (e.g. \"anthropic/claude-sonnet-5\", \"opencode/deepseek-v4-flash-free\"). Empty = auto (a model in your global ~/.config/opencode/opencode.json if set, else a sensible fallback from your available credentials). The in-chat model picker still overrides per session."
-        },
-        "amicode.inspector.autoOpen": {
-          "type": "boolean",
-          "default": false,
-          "description": "Automatically reveal the Run Inspector panel when a solve starts (default off, so a starting solve never steals focus). Leave off to open it on demand — the status-bar item or the \"Amicode: Open Run Inspector\" command. Turn on to have a starting solve reveal the panel automatically."
         },
         "amicode.opencodeBinary": {
           "type": "string",

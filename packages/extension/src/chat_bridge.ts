@@ -584,5 +584,11 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #351 reverse: Work Column Device Inspector → extension refresh
+  if (msg.kind === "device:refresh" && typeof (msg as { device?: unknown }).device === "string") {
+    void vscode.commands.executeCommand("amicode.device.refresh");
+    return true;
+  }
+
   return false;
 }

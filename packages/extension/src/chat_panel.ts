@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
+import { registerInspectorPoster } from "./inspector_bridge";
 import { getBugReport } from "./bug_report";
 
 // ============================================================================
@@ -57,6 +58,9 @@ export class ChatPanel {
     this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     ChatPanel.live.add(this);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    // #351: register this panel as an inspector poster — RunsManager / device
+    // poll fan out run/device envelopes to every live chat webview.
+    this.disposables.push(registerInspectorPoster((msg) => void this.panel.webview.postMessage(msg)));
     // Live theme bridge: editor theme changes flow extension → outer relay →
     // iframe → the app's setColorScheme (boot theme rides ?colorScheme=).
     vscode.window.onDidChangeActiveColorTheme(
@@ -260,15 +264,16 @@ export class ChatPanel {
             replyClipboardImage(d.nonce);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "device:refresh")) {
             vscode.postMessage(d);
           }
           return;
         }
         // Lane 2 — extension → iframe: posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
-        // our own envelopes, pinned to the opencode origin.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status")) {
+        // our own envelopes, pinned to the opencode origin. #351 adds
+        // run:*/device:* envelopes for the Work Column inspector tabs.
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }

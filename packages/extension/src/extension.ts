@@ -6,7 +6,6 @@ import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerRunInspector, revealInspector } from "./run_inspector";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
@@ -68,12 +67,12 @@ import {
 import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
-import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import type { QueueView } from "./qick_job_server";
+import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
 // ============================================================================
 // Extension entry point. Boot order on activate:
@@ -138,19 +137,14 @@ function readDeviceCard(cardPath: string): { driveLines: DriveLine[]; qubits: st
   }
 }
 
-/** Poll tick (Spec A §3, §5.1). Dormant until `amicode.device.name` +
- *  `amicode.device.graph` are set. All I/O is never-reject: a dead endpoint /
- *  missing file degrades the projection to uncharacterized/offline, never
- *  crashes the session. The heavy package-resolution entitlement authority
- *  (qick_client.isQilcEntitled) runs at session prep, not this hot path — here
- *  the fast health() capability flag is the advisory hint (§5.2). */
+/** Poll tick (Spec A §3, §5.1) — now posts to the Work Column bridge instead
+ *  of the deleted Device Inspector webview. Dormant until `amicode.device.name`
+ *  + `amicode.device.graph` are set. */
 async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<void> {
-  const inspector = getDeviceInspector();
-  if (!inspector) return;
   const cfg = vscode.workspace.getConfiguration("amicode");
   const deviceName = (cfg.get<string>("device.name", "") || "").trim();
   const graphPath = (cfg.get<string>("device.graph", "") || "").trim();
-  if (!deviceName || !graphPath) return; // dormant until a device is configured
+  if (!deviceName || !graphPath) return;
 
   try {
     const loaded = loadGraph(fs.readFileSync(graphPath, "utf8"));
@@ -158,7 +152,6 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
       channel.appendLine(`[device] graph ${graphPath} failed to load: ${loaded.error}`);
       return;
     }
-    // rolling ops state (§4.2): ~/.amico/amicode/devices/<name>/state.json
     const stateFile = path.join(amicodeOpsDir(), "devices", deviceName, "state.json");
     let state = {};
     try {
@@ -168,8 +161,6 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
     }
     const card = readDeviceCard((cfg.get<string>("device.card", "") || "").trim());
 
-    // queue + health from the configured job-server endpoint (never-reject); no
-    // endpoint → empty queue (idle) + no online channels (all drive lines offline).
     let queue: QueueView = { running: undefined, pending: [] };
     let onlineChannels: string[] | undefined;
     let capabilities: string[] | undefined;
@@ -198,12 +189,12 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
       onlineChannels,
       mainConfig,
     });
-    const entitled = capabilityHint("qilc", capabilities); // advisory hint; authority = package resolution (prep)
+    const entitled = capabilityHint("qilc", capabilities);
     const { ranked_actions } = nextActions(loaded.graph, state, queue, now, { entitled });
 
-    inspector.postDeviceStatus(deviceName, status);
-    inspector.postActions(deviceName, ranked_actions);
-    inspector.activate(deviceName);
+    postDeviceStatus(deviceName, status);
+    postDeviceActions(deviceName, ranked_actions);
+    postDeviceActivate(deviceName);
   } catch (e) {
     channel.appendLine(`[device] refresh error: ${(e as Error).message}`);
   }
@@ -346,8 +337,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   // 1. UI surfaces
   const trees = registerTrees(ctx);
-  registerRunInspector(ctx);
-  registerDeviceInspector(ctx); // Spec A §3 — device dashboard, sibling to the Run Inspector
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
@@ -398,16 +387,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
-  // 2. Start the multi-run RunsManager immediately — it tails the append-only
-  // runs/index (1.2, #57), so solves from prior dev-host sessions register and
-  // a still-live run resumes; every concurrent run is tracked to completion.
+  // 2. Start the multi-run RunsManager — tails the append-only runs/index;
+  // #351: posts run data to the Work Column bridge (no bottom panel).
   fs.mkdirSync(runsRoot, { recursive: true });
   runsManager = new RunsManager({
     runsRoot,
     channel: runsChannel,
-    statusBar,
-    // Distill trigger 1 (spec-20260705-002847 §4.1): every LIVE completion —
-    // including failures (failure lessons are first-class knowledge, §4.4).
     onRunFinished: ({ runId }) => {
       if (distillerSetup) triggerRunDistill(distillerSetup, runId);
     },
@@ -1489,12 +1474,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // bridge command share this one handler — the manager owns create/arm/open,
     // the lifecycle, and the single-open invariant.
     vscode.commands.registerCommand(REPORT_BUG_COMMAND, () => void bugReport.reportBug()),
-    vscode.commands.registerCommand("amicode.openInspector", async () => {
-      await revealInspector();
-    }),
-    // Run picker (pre-UX4 utility): switch the inspector between tracked runs.
-    // Picking pins the selection (a background solve won't steal the view);
-    // "Follow latest" releases the pin and resumes newest-run auto-follow.
+    // Run picker: switch the Work Column Run Inspector between tracked runs.
+    // Now posts to the bridge (no bottom panel to reveal).
     vscode.commands.registerCommand("amicode.selectRun", async () => {
       const runs = runsManager?.runs() ?? [];
       if (runs.length === 0) {
@@ -1508,8 +1489,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           follow: true,
         },
         ...[...runs].reverse().map((r) => {
-          // A "live" run whose log has gone cold is stalled — the picker must
-          // agree with the status bar, not advertise a wedge as live.
           const stalled = r.phase === "live" && stopPlan(r.runDir) === "force";
           return {
             label: `${r.phase === "live" ? (stalled ? "$(warning)" : "$(pulse)") : r.status === "completed" ? "$(pass)" : r.status === "stopped" ? "$(debug-pause)" : "$(error)"} ${r.runId}`,
@@ -1532,7 +1511,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (!pick) return;
       if (pick.follow) runsManager?.resumeAutoFollow();
       else if (pick.runId) runsManager?.selectRun(pick.runId);
-      await revealInspector();
     }),
     vscode.commands.registerCommand("amicode.stopRun", async () => {
       const dir = runsManager?.getActiveRunDir();
@@ -1700,10 +1678,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         runsManager?.pokeDiscovery();
         runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
-        await revealInspector();
-        // Save-to-catalog prompt (#47): the watcher suppresses the promote
-        // prompt for runs already finished at switch (anti-re-pop), so the
-        // explicit replay owns its own prompt → the catalog card.
         const fid = Number((readTomlSafe(path.join(runDir, "result.toml")) ?? {}).fidelity ?? NaN);
         if (fid >= 0.99) {
           const choice = await vscode.window.showInformationMessage(
@@ -1719,12 +1693,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
 
-  // Device Inspector commands + poll loop (Spec A §3, §5.1).
+  // Device Inspector poll loop — now posts to the Work Column bridge.
   ctx.subscriptions.push(
-    vscode.commands.registerCommand("amicode.openDeviceInspector", async () => {
-      await revealDeviceInspector();
-      void refreshDeviceInspector(devicesChannel);
-    }),
     vscode.commands.registerCommand("amicode.device.refresh", () => {
       void refreshDeviceInspector(devicesChannel);
     }),
