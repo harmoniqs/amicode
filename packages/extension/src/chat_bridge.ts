@@ -590,5 +590,106 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Data & Storage settings (#378): query resolved defaults on mount, and
+  // update overrides (validate, write VS Code settings, restart server).
+  if (msg.kind === "data-storage-query") {
+    // Resolve the XDG defaults that opencode would use if no override is set.
+    const xdgData = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+    const defaultDbPath = path.join(xdgData, "opencode", "opencode.db");
+    const defaultConfigDir = path.join(xdgConfig, "opencode");
+    io.postToWebview({
+      source: "amicode",
+      kind: "data-storage-defaults",
+      databasePath: defaultDbPath,
+      configDir: defaultConfigDir,
+      tab: msg.tab,
+    });
+    return true;
+  }
+
+  if (msg.kind === "data-storage-update") {
+    const databasePath = typeof (msg as { databasePath?: unknown }).databasePath === "string"
+      ? (msg as unknown as { databasePath: string }).databasePath.trim()
+      : "";
+    const configDir = typeof (msg as { configDir?: unknown }).configDir === "string"
+      ? (msg as unknown as { configDir: string }).configDir.trim()
+      : "";
+
+    const reply: {
+      source: "amicode"; kind: "data-storage-status"; tab?: string;
+      databaseValid: boolean; databaseError?: string;
+      configValid: boolean; configError?: string;
+      serverRestarted: boolean;
+    } = {
+      source: "amicode",
+      kind: "data-storage-status",
+      tab: msg.tab,
+      databaseValid: true,
+      configValid: true,
+      serverRestarted: false,
+    };
+
+    // Validate database path: must be absolute, parent directory must exist.
+    if (databasePath) {
+      if (!path.isAbsolute(databasePath)) {
+        reply.databaseValid = false;
+        reply.databaseError = "Path must be absolute";
+      } else {
+        const parentDir = path.dirname(databasePath);
+        try {
+          const stat = fs.statSync(parentDir);
+          if (!stat.isDirectory()) {
+            reply.databaseValid = false;
+            reply.databaseError = "Parent path exists but is not a directory";
+          }
+        } catch {
+          reply.databaseValid = false;
+          reply.databaseError = "Parent directory does not exist";
+        }
+      }
+    }
+
+    // Validate config directory: must be absolute and must exist as a directory.
+    if (configDir) {
+      if (!path.isAbsolute(configDir)) {
+        reply.configValid = false;
+        reply.configError = "Path must be absolute";
+      } else {
+        try {
+          const stat = fs.statSync(configDir);
+          if (!stat.isDirectory()) {
+            reply.configValid = false;
+            reply.configError = "Path exists but is not a directory";
+          }
+        } catch {
+          reply.configValid = false;
+          reply.configError = "Directory does not exist";
+        }
+      }
+    }
+
+    // Write valid settings and restart server
+    if (reply.databaseValid) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "sessionDatabase", databasePath, vscode.ConfigurationTarget.Global,
+      );
+    }
+    if (reply.configValid) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "configDir", configDir, vscode.ConfigurationTarget.Global,
+      );
+    }
+
+    // Restart the server so it picks up the new env vars
+    if (reply.databaseValid && reply.configValid) {
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+    }
+
+    io.postToWebview(reply);
+    return true;
+  }
+
   return false;
 }

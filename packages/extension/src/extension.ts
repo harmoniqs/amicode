@@ -279,12 +279,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
    *  otherwise). */
   const spawnEnv = (
     o: Omit<Parameters<typeof buildServerSpawnEnv>[0], "amicoPython" | "telemetry">,
-  ): Record<string, string> =>
-    (currentSpawnEnv = buildServerSpawnEnv({
+  ): Record<string, string> => {
+    const env = buildServerSpawnEnv({
       ...o,
       amicoPython,
       telemetry: resolveTelemetryContext(ctx, { sessionId: telemetrySessionId }),
-    }));
+    });
+    // Data & Storage overrides (#378): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
+    // from the user's VS Code settings when non-empty. On cold start + on
+    // restartServer, the new env reaches the fresh server process.
+    const cfg = vscode.workspace.getConfiguration("amicode");
+    const sessionDb = cfg.get<string>("sessionDatabase", "");
+    const configDirOverride = cfg.get<string>("configDir", "");
+    if (sessionDb) env.OPENCODE_DB = sessionDb;
+    if (configDirOverride) env.OPENCODE_CONFIG_DIR = configDirOverride;
+    return (currentSpawnEnv = env);
+  };
 
   /** Is the telemetry gate open RIGHT NOW? Threaded into buildOpencodeConfigContent
    *  at each spawn site so the config's experimental.openTelemetry (span generation)

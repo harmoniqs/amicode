@@ -404,7 +404,7 @@ window.addEventListener("message", (e) => {
     if (d.kind === "clipboard" && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
-    if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status") && typeof d.tab === "string") {
+    if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status") && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
     // #351: inspector fan-out — broadcast to every live pane (no tab routing;
@@ -478,7 +478,7 @@ window.addEventListener("message", (e) => {
 
   // Everything else rides up to the extension, tagged with the asking pane so
   // replies (clipboard text) route back correctly.
-  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "device:refresh") {
+  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "device:refresh") {
     vscode.postMessage({ ...d, tab: tabId });
   }
 });
