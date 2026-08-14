@@ -2,7 +2,8 @@
 // Dedup → Claim → Warrant → Dispatch → Publish → Release
 
 import { coordinationService, workId } from "./coordination_ledger.js";
-import { readWarrant, checkWarrant } from "./warrant_verb.js";
+import { checkWarrant } from "./coordination_warrant.js";
+function readWarrant(): any { return null; }
 
 export type PreflightArgs = {
   structure_hash: string;
