@@ -281,6 +281,23 @@ export function designHash(spec: Record<string, unknown>): string {
 /** The compiled Plan's hash: `goal` + `steps` only. `design_hash` and `compiled_at` are
  *  excluded so a recompile that changed nothing does not mint a new hash — which would
  *  invalidate a live warrant for no reason. */
+
+// ── work_id v1 (spec-20260804-014823 §2) ─────────────────────────────────────
+// Content-addressed work identity: sha256(canonical({structure_hash, goal, N, T, facet_tuple}))
+// versioned, with max_iter explicitly excluded and free_phase/min-time included.
+// This is the sole dedup/claim/result key; queries relax fine→coarse before miss.
+export function workIdV1(args: { structure_hash: string; goal: string; N: number; T: number; facet_tuple?: unknown }): string {
+  const payload: Record<string, unknown> = {
+    v: 1,
+    structure_hash: String(args.structure_hash),
+    goal: String(args.goal),
+    N: Number(args.N),
+    T: Number(args.T),
+  };
+  if (args.facet_tuple !== undefined) payload.facet_tuple = args.facet_tuple as unknown as Json;
+  return sha256hex(canonicalJson(payload as unknown as Json));
+}
+
 export function planHash(plan: Record<string, unknown>): string {
   return sha256hex(canonicalJson(compact({ goal: plan.goal, steps: plan.steps }) as Json));
 }
