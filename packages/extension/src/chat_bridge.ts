@@ -291,17 +291,31 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       }
     }
 
-    // Validate amicode path: must be an existing directory
+    // Validate amicode path: must be a repo root with packages/extension
     if (amicodePath) {
+      const extensionDir = path.join(amicodePath, "packages", "extension");
       try {
-        const stat = fs.statSync(amicodePath);
+        const stat = fs.statSync(extensionDir);
         if (!stat.isDirectory()) {
           reply.amicodeValid = false;
-          reply.amicodeError = "Path exists but is not a directory";
+          reply.amicodeError = "packages/extension not found in repo";
         }
       } catch {
-        reply.amicodeValid = false;
-        reply.amicodeError = "Directory does not exist";
+        // Fall back: check if the path itself is a directory (maybe they pointed at the repo root
+        // but packages/extension doesn't exist yet)
+        try {
+          const stat = fs.statSync(amicodePath);
+          if (!stat.isDirectory()) {
+            reply.amicodeValid = false;
+            reply.amicodeError = "Path exists but is not a directory";
+          } else {
+            reply.amicodeValid = false;
+            reply.amicodeError = "packages/extension not found in repo — is this the Amicode repo root?";
+          }
+        } catch {
+          reply.amicodeValid = false;
+          reply.amicodeError = "Directory does not exist";
+        }
       }
     }
 
@@ -320,15 +334,58 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     }
 
     if (reply.amicodeValid && amicodePath) {
-      void vscode.workspace.getConfiguration("amicode").update(
-        "devAssetRoot", amicodePath, vscode.ConfigurationTarget.Global,
-      );
-      reply.reloadNeeded = true;
+      // Run a full extension build in the amicode repo root, then set devAssetRoot
+      // to the built extension directory and prompt a reload with deep-link to
+      // the developer tools section for continuity.
+      const extensionDir = path.join(amicodePath, "packages", "extension");
+
+      // Notify the app that a build is in progress
+      io.postToWebview({ ...reply, building: true });
+
+      // Build + reload is async; fire-and-forget from the sync handler.
+      void (async () => {
+        const { exec } = await import("child_process");
+        const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
+            if (err) {
+              resolve({ ok: false, error: stderr?.trim() || err.message });
+            } else {
+              resolve({ ok: true });
+            }
+          });
+        });
+
+        if (!buildResult.ok) {
+          reply.amicodeValid = false;
+          reply.amicodeError = `Build failed: ${buildResult.error?.slice(0, 200) ?? "unknown error"}`;
+          io.postToWebview(reply);
+          return;
+        }
+
+        void vscode.workspace.getConfiguration("amicode").update(
+          "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
+        );
+        reply.reloadNeeded = true;
+        io.postToWebview(reply);
+
+        // Prompt the reload
+        const action = await vscode.window.showInformationMessage(
+          "Extension rebuilt. Reload to apply changes.",
+          "Reload Now",
+        );
+        if (action === "Reload Now") {
+          void vscode.commands.executeCommand("workbench.action.reloadWindow");
+        }
+      })();
     } else if (reply.amicodeValid && !amicodePath) {
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
     }
 
-    io.postToWebview(reply);
+    // For the async build case, the reply is posted from within the IIFE.
+    // For all other cases, post the reply here.
+    if (!(reply.amicodeValid && amicodePath)) {
+      io.postToWebview(reply);
+    }
     return true;
   }
 
