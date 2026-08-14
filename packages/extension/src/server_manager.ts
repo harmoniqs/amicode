@@ -59,6 +59,14 @@ export class ServerManager {
     this._port = port;
     this.opts.channel.appendLine(`[server] spawning opencode serve --port=${port} (cwd=${this.opts.cwd})`);
 
+    // Browser wiring for Google connector (and any MCP OAuth): VS Code remote sets
+    // BROWSER to the helper that does `code --openExternal` via VSCODE_IPC_HOOK_CLI.
+    // The opencode McpBrowser now respects BROWSER first (fallback to xdg-open),
+    // but only if the server inherits it. Explicitly log what we propagate so a
+    // "browser doesn't launch" failure is diagnosable from the output channel.
+    const browserEnv = process.env.BROWSER ? `BROWSER=${process.env.BROWSER}` : "BROWSER=(unset)"
+    const ipcEnv = process.env.VSCODE_IPC_HOOK_CLI ? "VSCODE_IPC_HOOK_CLI=present" : "VSCODE_IPC_HOOK_CLI=(unset)"
+    this.opts.channel.appendLine(`[server] browser env: ${browserEnv}, ${ipcEnv}`)
     const child = cp.spawn(this.opts.binary, ["serve", "--port", String(port)], {
       cwd: this.opts.cwd,
       env: { ...process.env, ...this.opts.env },
