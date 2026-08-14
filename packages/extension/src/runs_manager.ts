@@ -28,7 +28,7 @@ import {
   type PromoteInfo,
   type RunSink,
 } from "./run_dir_reader";
-import { STALL_AFTER_MS } from "./run_controls";
+
 
 export interface RunsManagerOptions {
   runsRoot: string;
@@ -83,7 +83,6 @@ export class RunsManager implements vscode.Disposable {
   private poll?: NodeJS.Timeout;
   private selected?: string;
   private pinned = false;
-  private booting = false;
   private schedulerDispose?: () => void;
   private readonly promotedRuns = new Set<string>();
   private static readonly POLL_MS = 700;
@@ -101,9 +100,7 @@ export class RunsManager implements vscode.Disposable {
         if (e) this.registerRun(e.runId, path.join(this.opts.runsRoot, e.runId), e.createdAt, e.scriptPath);
       },
     });
-    this.booting = true;
     this.indexTailer.start();
-    this.booting = false;
     this.rootWatcher = fs.watch(this.opts.runsRoot, { persistent: false }, (_e, filename) => {
       if (filename === "index") this.indexTailer?.poke();
     });
@@ -330,21 +327,6 @@ export class RunsManager implements vscode.Disposable {
       },
       promote: (info: PromoteInfo) => this.promptPromote(info),
     };
-  }
-
-  private readonly liveStatusCache = new Map<string, { at: number; val: "running" | "stalled" }>();
-  private liveStatus(runDir: string): "running" | "stalled" {
-    const now = Date.now();
-    const hit = this.liveStatusCache.get(runDir);
-    if (hit && now - hit.at < 2000) return hit.val;
-    let val: "running" | "stalled" = "running";
-    try {
-      if (now - fs.statSync(path.join(runDir, "run.log")).mtimeMs > STALL_AFTER_MS) val = "stalled";
-    } catch {
-      /* no run.log yet — brand-new run, trust the tailer */
-    }
-    this.liveStatusCache.set(runDir, { at: now, val });
-    return val;
   }
 
   private routeIter(p: RunPipeline, rec: IterRecord): void {
