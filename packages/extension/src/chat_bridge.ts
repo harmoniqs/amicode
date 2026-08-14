@@ -446,20 +446,21 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Git pull (remote mode only) ──
+        // opencode: checkout local/amicode, amicode: checkout main
         if (mode === "remote") {
-          const pullOc = await run("git pull", opencodePath);
-          if (!pullOc.ok) {
+          const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull origin local/amicode", opencodePath);
+          if (!checkoutOc.ok) {
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-              state: "failed", error: `git pull (opencode) failed: ${pullOc.error?.slice(0, 150)}`,
+              state: "failed", error: `git pull (opencode) failed: ${checkoutOc.error?.slice(0, 150)}`,
             });
             return;
           }
-          const pullAc = await run("git pull", amicodePath);
-          if (!pullAc.ok) {
+          const checkoutAc = await run("git fetch origin && git checkout main && git pull origin main", amicodePath);
+          if (!checkoutAc.ok) {
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-              state: "failed", error: `git pull (amicode) failed: ${pullAc.error?.slice(0, 150)}`,
+              state: "failed", error: `git pull (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
             });
             return;
           }

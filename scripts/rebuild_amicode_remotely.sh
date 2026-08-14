@@ -24,14 +24,18 @@ fi
 
 # ── Pull sources ───────────────────────────────────────────────────────────────
 echo ""
-echo "==> Pulling opencode..."
+echo "==> Pulling opencode (local/amicode)..."
 cd "$OPENCODE_ROOT"
-git pull
+git fetch origin
+git checkout local/amicode
+git pull origin local/amicode
 
 echo ""
-echo "==> Pulling amicode..."
+echo "==> Pulling amicode (main)..."
 cd "$AMICODE_ROOT"
-git pull
+git fetch origin
+git checkout main
+git pull origin main
 
 # ── Build opencode binary ──────────────────────────────────────────────────────
 echo ""
