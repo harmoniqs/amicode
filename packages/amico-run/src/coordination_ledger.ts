@@ -150,6 +150,22 @@ export class SqliteCoordinationService extends CoordinationService {
 }
 
 // ── offline degraded mode ──
+
+export function offlineReplay(localClaims: Claim[], remoteClaims: Claim[]): { kept: Claim[]; waste: { work_id: string; reason: string }[] } {
+  const waste: { work_id: string; reason: string }[] = [];
+  const kept: Claim[] = [];
+  for (const local of localClaims) {
+    const remote = remoteClaims.find(r => r.work_id === local.work_id);
+    if (remote && remote.issued_at > local.issued_at) {
+      // remote verified-better wins, local is waste but recorded visibly
+      waste.push({ work_id: local.work_id, reason: "duplicate_at_sync: remote verified-better" });
+    } else {
+      kept.push(local);
+    }
+  }
+  return { kept, waste };
+}
+
 export function degradedStamp(): { coordination: "degraded" } {
   return { coordination: "degraded" };
 }
