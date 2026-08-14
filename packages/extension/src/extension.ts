@@ -55,7 +55,7 @@ import {
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
-import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, writeFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
@@ -1360,6 +1360,83 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
 
+  // Reconnect Fleet — inverse of Go Standalone. Seamlessly switch back to client
+  // mode without a window reload: stop local server, write client role, load tunnel,
+  // start polling the canonical server.
+  const runFleetReconnect = async (): Promise<void> => {
+    const cfg = readFleetConfig();
+    if (!cfg?.canonical?.host) {
+      void vscode.window.showErrorMessage("Amicode: no fleet configuration found. Use Create Fleet instead.");
+      return;
+    }
+    const fleetPort = cfg.canonical.port ?? 4096;
+    opencodeChannel.appendLine(`[fleet] reconnecting to canonical at 127.0.0.1:${fleetPort}...`);
+
+    // Write client role (canonical already preserved)
+    writeFleetConfig({ ...cfg, role: "client" });
+
+    // Load the tunnel plist if not already active (best-effort, darwin only)
+    if (process.platform === "darwin") {
+      try {
+        const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+        execFileSync("launchctl", ["load", plistPath], { timeout: 5000, stdio: "ignore" });
+        opencodeChannel.appendLine(`[fleet] loaded tunnel plist`);
+      } catch {
+        // Already loaded or doesn't exist — fine
+      }
+    }
+
+    // Stop the local server
+    try {
+      await serverManager?.stop();
+      serverManager = undefined;
+      statusBar?.setServerReady(false);
+      opencodeReadyUrl = undefined;
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] failed to stop local server: ${(e as Error).message}`);
+    }
+
+    // Clear any existing poll
+    if (fleetClientPoll) { clearInterval(fleetClientPoll); fleetClientPoll = undefined; }
+
+    // Start polling the tunnel (same logic as activation client path)
+    let fleetReady = false;
+    let fleetChecks = 0;
+    const checkFleet = async () => {
+      fleetChecks++;
+      try {
+        const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
+          signal: AbortSignal.timeout(1500),
+          headers: serverAuthHeaders,
+        });
+        const up = r.ok || (r.status >= 200 && r.status < 400);
+        if (up && !fleetReady) {
+          fleetReady = true;
+          opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
+          statusBar?.setServerReady(true);
+          sseClient?.connect(opencodeReadyUrl);
+          if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+            ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          }
+          opencodeChannel.appendLine(`[fleet] reconnected — tunnel up at ${opencodeReadyUrl}`);
+          void vscode.window.showInformationMessage("Amicode: Reconnected to fleet.");
+        }
+      } catch {
+        if (fleetChecks === 1) {
+          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort}...`);
+        }
+      }
+    };
+    fleetClientPoll = setInterval(() => void checkFleet(), 2000);
+    void checkFleet();
+
+    refreshFleetStatusBar();
+    fleetPanel?.pushRole();
+  };
+
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.reconnectFleet", () => void runFleetReconnect()));
+
   // Fleet panel focus command — status bar item clicks this to reveal the panel.
   // VS Code auto-registers `amicode.fleet.focus` for the webview view, so we use
   // a distinct command name that delegates to it.
@@ -1439,11 +1516,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.fleet.createFleet", () => {
       launchFleetChat("/create-a-fleet I want to create a fleet with a remote machine as the server.");
-    }),
-    vscode.commands.registerCommand("amicode.fleet.reconnectFleet", () => {
-      const cfg = readFleetConfig();
-      const host = cfg?.canonical?.host ?? "the configured server";
-      launchFleetChat(`/create-a-fleet I want to reconnect to my existing fleet at ${host}. The fleet was previously configured — just re-validate and switch me back to client mode.`);
     }),
     vscode.commands.registerCommand("amicode.fleet.addMachine", () => {
       launchFleetChat("/create-a-fleet I want to add a new machine to my fleet.");
