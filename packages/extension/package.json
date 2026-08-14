@@ -209,6 +209,11 @@
           "default": "",
           "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
         },
+        "amicode.devAssetRoot": {
+          "type": "string",
+          "default": "",
+          "description": "Override the extension's resource root for scores, templates, and bin/ (dev only). Empty = use the installed extension path. Set via the Developer Tools section in settings."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,

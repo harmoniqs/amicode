@@ -221,5 +221,116 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Developer Tools settings: validate paths, write VS Code settings, restart
+  // server / prompt reload as appropriate. The app posts on blur and on toggle.
+  if (msg.kind === "dev-tools-update") {
+    const enabled = (msg as { enabled?: unknown }).enabled === true;
+    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim()
+      : "";
+    const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim()
+      : "";
+
+    const reply: {
+      source: "amicode"; kind: "dev-tools-status"; tab?: string;
+      opencodeValid: boolean; opencodeError?: string;
+      amicodeValid: boolean; amicodeError?: string;
+      serverRestarted: boolean; reloadNeeded: boolean;
+    } = {
+      source: "amicode",
+      kind: "dev-tools-status",
+      tab: msg.tab,
+      opencodeValid: true,
+      amicodeValid: true,
+      serverRestarted: false,
+      reloadNeeded: false,
+    };
+
+    if (!enabled) {
+      // Toggle OFF: clear overrides and restart with vendored binary
+      void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
+      void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+      io.postToWebview(reply);
+      return true;
+    }
+
+    // Validate opencode path: resolve the binary from the repo root
+    let resolvedBinary = "";
+    if (opencodePath) {
+      // The dev binary lives at <root>/packages/opencode/dist/opencode/bin/opencode
+      // or <root>/cmd/opencode (Go), or the user may point directly at a binary.
+      const candidates = [
+        path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
+        path.join(opencodePath, "dist", "opencode", "bin", "opencode"),
+        opencodePath, // direct binary path
+      ];
+      for (const candidate of candidates) {
+        try {
+          const stat = fs.statSync(candidate);
+          if (stat.isFile()) {
+            // Check executable bit (unix)
+            try {
+              fs.accessSync(candidate, fs.constants.X_OK);
+              resolvedBinary = candidate;
+              break;
+            } catch {
+              reply.opencodeValid = false;
+              reply.opencodeError = "Binary exists but is not executable";
+            }
+          }
+        } catch {
+          // not found, try next
+        }
+      }
+      if (!resolvedBinary && reply.opencodeValid) {
+        reply.opencodeValid = false;
+        reply.opencodeError = "Binary not found at this path";
+      }
+    }
+
+    // Validate amicode path: must be an existing directory
+    if (amicodePath) {
+      try {
+        const stat = fs.statSync(amicodePath);
+        if (!stat.isDirectory()) {
+          reply.amicodeValid = false;
+          reply.amicodeError = "Path exists but is not a directory";
+        }
+      } catch {
+        reply.amicodeValid = false;
+        reply.amicodeError = "Directory does not exist";
+      }
+    }
+
+    // Apply valid settings
+    if (reply.opencodeValid && opencodePath) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "opencodeBinary", resolvedBinary || opencodePath, vscode.ConfigurationTarget.Global,
+      );
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+    } else if (reply.opencodeValid && !opencodePath) {
+      // Empty path with enabled ON → clear the override (use vendored)
+      void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+    }
+
+    if (reply.amicodeValid && amicodePath) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "devAssetRoot", amicodePath, vscode.ConfigurationTarget.Global,
+      );
+      reply.reloadNeeded = true;
+    } else if (reply.amicodeValid && !amicodePath) {
+      void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
+    }
+
+    io.postToWebview(reply);
+    return true;
+  }
+
   return false;
 }
