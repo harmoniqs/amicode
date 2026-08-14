@@ -69,7 +69,9 @@ export function writeFleetConfig(config: FleetConfig, p: string = FLEET_CONFIG_P
  *  potential re-enrollment. Removes legacy fallback.json if present. */
 export function goStandalone(opts: { previousBinary?: string; previousPort?: number; path?: string } = {}): FleetConfig {
   const p = opts.path ?? FLEET_CONFIG_PATH;
+  const existing = readFleetConfig(p);
   const config: FleetConfig = {
+    ...existing,
     role: "standalone",
     previousBinary: opts.previousBinary,
     previousPort: opts.previousPort,

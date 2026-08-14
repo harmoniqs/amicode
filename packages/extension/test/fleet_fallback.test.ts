@@ -51,4 +51,21 @@ describe("fleet_fallback (fleet config)", () => {
     expect(cfg.previousBinary).toBe("/old/bin");
     expect(cfg.previousPort).toBe(4096);
   });
+
+  it("goStandalone preserves canonical coordinates from existing config", () => {
+    // Pre-existing fleet config with canonical
+    writeFleetConfig({ role: "client", canonical: { host: "mac-studio", port: 4096, sshAlias: "studio" } }, p);
+
+    // Go standalone — should keep canonical for reconnect
+    const cfg = goStandalone({ path: p, previousBinary: "/bin/oc", previousPort: 4096 });
+    expect(cfg.role).toBe("standalone");
+    expect(cfg.canonical?.host).toBe("mac-studio");
+    expect(cfg.canonical?.port).toBe(4096);
+    expect(cfg.canonical?.sshAlias).toBe("studio");
+
+    // Verify it persisted to disk
+    const read = readFleetConfig(p);
+    expect(read?.role).toBe("standalone");
+    expect(read?.canonical?.host).toBe("mac-studio");
+  });
 });
