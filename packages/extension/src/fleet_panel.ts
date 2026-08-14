@@ -7,7 +7,7 @@
 
 import * as vscode from "vscode";
 import { inspectorResourceRootDirs } from "./opencode_paths";
-import { getFleetRole } from "./fleet_fallback";
+import { getFleetRole, readFleetConfig } from "./fleet_fallback";
 
 // ============================================================================
 // Message protocol (host ↔ webview)
@@ -18,7 +18,7 @@ export type FleetHostMessage =
   | { type: "topology"; nodes: FleetNode[]; edges: FleetEdge[] }
   | { type: "profiles"; profiles: FleetProfileSummary[] }
   | { type: "stats"; stats: FleetStats }
-  | { type: "role"; role: "standalone" | "server" | "client" }
+  | { type: "role"; role: "standalone" | "server" | "client"; hasCanonical: boolean }
   | { type: "compat"; state: "compatible" | "degraded" | "incompatible"; message: string };
 
 /** Messages the webview sends TO the host. */
@@ -117,7 +117,9 @@ export class FleetPanelView implements vscode.WebviewViewProvider {
   /** Push the current fleet role (standalone/server/client). */
   pushRole(): void {
     this.currentRole = getFleetRole();
-    this.post({ type: "role", role: this.currentRole });
+    const cfg = readFleetConfig();
+    const hasCanonical = !!(cfg?.canonical?.host);
+    this.post({ type: "role", role: this.currentRole, hasCanonical });
   }
 
   // ── Private ──────────────────────────────────────────────────────────────

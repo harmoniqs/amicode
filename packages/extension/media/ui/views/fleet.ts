@@ -133,6 +133,13 @@ export function createFleetView(post: (msg: FleetWebviewMessage) => void): Fleet
           topoSection.style.display = "none";
           createBtn.enable(true);
           createBtn.el.style.display = "";
+          if (m.hasCanonical) {
+            createBtn.el.textContent = "Reconnect Fleet";
+            createBtn.el.onclick = () => post({ type: "action", action: "reconnectFleet" });
+          } else {
+            createBtn.el.textContent = "Create Fleet";
+            createBtn.el.onclick = () => post({ type: "action", action: "createFleet" });
+          }
         } else {
           topoGraph.el.style.display = "";
           topoSection.style.display = "";

@@ -1440,6 +1440,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("amicode.fleet.createFleet", () => {
       launchFleetChat("/create-a-fleet I want to create a fleet with a remote machine as the server.");
     }),
+    vscode.commands.registerCommand("amicode.fleet.reconnectFleet", () => {
+      const cfg = readFleetConfig();
+      const host = cfg?.canonical?.host ?? "the configured server";
+      launchFleetChat(`/create-a-fleet I want to reconnect to my existing fleet at ${host}. The fleet was previously configured — just re-validate and switch me back to client mode.`);
+    }),
     vscode.commands.registerCommand("amicode.fleet.addMachine", () => {
       launchFleetChat("/create-a-fleet I want to add a new machine to my fleet.");
     }),
