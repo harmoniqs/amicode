@@ -448,7 +448,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // ── Git pull (remote mode only) ──
         // opencode: checkout local/amicode, amicode: checkout main
         if (mode === "remote") {
-          const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull origin local/amicode", opencodePath);
+          const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull --rebase origin local/amicode", opencodePath);
           if (!checkoutOc.ok) {
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
@@ -456,7 +456,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             });
             return;
           }
-          const checkoutAc = await run("git fetch origin && git checkout main && git pull origin main", amicodePath);
+          const checkoutAc = await run("git fetch origin && git checkout main && git pull --rebase origin main", amicodePath);
           if (!checkoutAc.ok) {
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,

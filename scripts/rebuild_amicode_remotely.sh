@@ -28,14 +28,14 @@ echo "==> Pulling opencode (local/amicode)..."
 cd "$OPENCODE_ROOT"
 git fetch origin
 git checkout local/amicode
-git pull origin local/amicode
+git pull --rebase origin local/amicode
 
 echo ""
 echo "==> Pulling amicode (main)..."
 cd "$AMICODE_ROOT"
 git fetch origin
 git checkout main
-git pull origin main
+git pull --rebase origin main
 
 # ── Build opencode binary ──────────────────────────────────────────────────────
 echo ""
