@@ -151,6 +151,14 @@ export class SqliteCoordinationService extends CoordinationService {
 
 // ── offline degraded mode ──
 
+
+export async function idempotentPublish(result: { work_id: string; verification: { agree: boolean }; fidelity: number; catalog_pointer: string; platform: string; kind: string }): Promise<{ kept: boolean }> {
+  const existing = coordinationService._results().get(result.work_id);
+  if (existing && existing.fidelity >= result.fidelity) return { kept: false };
+  await coordinationService.publish(result);
+  return { kept: true };
+}
+
 export function offlineReplay(localClaims: Claim[], remoteClaims: Claim[]): { kept: Claim[]; waste: { work_id: string; reason: string }[] } {
   const waste: { work_id: string; reason: string }[] = [];
   const kept: Claim[] = [];
