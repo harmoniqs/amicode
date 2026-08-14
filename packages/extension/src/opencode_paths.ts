@@ -1,6 +1,17 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import * as vscode from "vscode";
+
+/** Resolve the effective extension root — if `amicode.devAssetRoot` is set and
+ *  the directory exists, use that; otherwise fall back to the installed
+ *  extension path. This is how the Developer Tools section overrides resource
+ *  resolution for scores, templates, and `bin/`. */
+export function resolveExtensionRoot(installedRoot: string): string {
+  const override = (vscode.workspace.getConfiguration("amicode").get<string>("devAssetRoot", "") ?? "").trim();
+  if (override && existsSync(override)) return override;
+  return installedRoot;
+}
 
 /** Dir to prepend to opencode's PATH so `amico-run` resolves.
  *  Packaged: <ext>/bin/launcher (staged by esbuild). Dev: workspace sibling. */

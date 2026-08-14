@@ -221,5 +221,368 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Developer Tools settings: validate paths, write VS Code settings, restart
+  // server / prompt reload as appropriate. The app posts on blur and on toggle.
+  if (msg.kind === "dev-tools-update") {
+    const enabled = (msg as { enabled?: unknown }).enabled === true;
+    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim()
+      : "";
+    const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim()
+      : "";
+
+    const reply: {
+      source: "amicode"; kind: "dev-tools-status"; tab?: string;
+      opencodeValid: boolean; opencodeError?: string;
+      amicodeValid: boolean; amicodeError?: string;
+      serverRestarted: boolean; reloadNeeded: boolean;
+    } = {
+      source: "amicode",
+      kind: "dev-tools-status",
+      tab: msg.tab,
+      opencodeValid: true,
+      amicodeValid: true,
+      serverRestarted: false,
+      reloadNeeded: false,
+    };
+
+    if (!enabled) {
+      // Toggle OFF: clear overrides, restore marketplace extension, and reload.
+      void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
+      void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
+
+      // Restore the marketplace extension dist if a backup exists
+      const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
+      if (installedExt) {
+        const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
+        const installedDist = path.join(installedExt.extensionPath, "dist");
+        if (fs.existsSync(backupDist)) {
+          try {
+            const backupFiles = fs.readdirSync(backupDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
+            for (const f of backupFiles) {
+              fs.copyFileSync(path.join(backupDist, f), path.join(installedDist, f));
+            }
+            console.log("[amicode/bridge] restored marketplace dist from backup");
+          } catch (restoreErr) {
+            console.warn("[amicode/bridge] marketplace dist restore failed:", restoreErr);
+          }
+        }
+      }
+
+      // Don't restart server separately — reloading the window does it.
+      // Don't send reloadNeeded — the auto-reload handles it silently.
+      io.postToWebview(reply);
+      setTimeout(() => {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      }, 300);
+      return true;
+    }
+
+    // Validate opencode path: resolve the binary from the repo root
+    let resolvedBinary = "";
+    if (opencodePath) {
+      // The dev binary lives at <root>/packages/opencode/dist/opencode/bin/opencode
+      // or <root>/cmd/opencode (Go), or the user may point directly at a binary.
+      const candidates = [
+        path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
+        path.join(opencodePath, "dist", "opencode", "bin", "opencode"),
+        opencodePath, // direct binary path
+      ];
+      for (const candidate of candidates) {
+        try {
+          const stat = fs.statSync(candidate);
+          if (stat.isFile()) {
+            // Check executable bit (unix)
+            try {
+              fs.accessSync(candidate, fs.constants.X_OK);
+              resolvedBinary = candidate;
+              break;
+            } catch {
+              reply.opencodeValid = false;
+              reply.opencodeError = "Binary exists but is not executable";
+            }
+          }
+        } catch {
+          // not found, try next
+        }
+      }
+      if (!resolvedBinary && reply.opencodeValid) {
+        reply.opencodeValid = false;
+        reply.opencodeError = "Binary not found at this path";
+      }
+    }
+
+    // Validate amicode path: must be a repo root with packages/extension
+    if (amicodePath) {
+      const extensionDir = path.join(amicodePath, "packages", "extension");
+      try {
+        const stat = fs.statSync(extensionDir);
+        if (!stat.isDirectory()) {
+          reply.amicodeValid = false;
+          reply.amicodeError = "packages/extension not found in repo";
+        }
+      } catch {
+        // Fall back: check if the path itself is a directory (maybe they pointed at the repo root
+        // but packages/extension doesn't exist yet)
+        try {
+          const stat = fs.statSync(amicodePath);
+          if (!stat.isDirectory()) {
+            reply.amicodeValid = false;
+            reply.amicodeError = "Path exists but is not a directory";
+          } else {
+            reply.amicodeValid = false;
+            reply.amicodeError = "packages/extension not found in repo — is this the Amicode repo root?";
+          }
+        } catch {
+          reply.amicodeValid = false;
+          reply.amicodeError = "Directory does not exist";
+        }
+      }
+    }
+
+    // Apply valid settings
+    if (reply.opencodeValid && opencodePath) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "opencodeBinary", resolvedBinary || opencodePath, vscode.ConfigurationTarget.Global,
+      );
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+    } else if (reply.opencodeValid && !opencodePath) {
+      // Empty path with enabled ON → clear the override (use vendored)
+      void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
+      void vscode.commands.executeCommand("amicode.restartServer");
+      reply.serverRestarted = true;
+    }
+
+    if (reply.amicodeValid && amicodePath) {
+      // Run a full extension build in the amicode repo root, then set devAssetRoot
+      // to the built extension directory and prompt a reload with deep-link to
+      // the developer tools section for continuity.
+      const extensionDir = path.join(amicodePath, "packages", "extension");
+
+      // Notify the app that a build is in progress
+      io.postToWebview({ ...reply, building: true });
+
+      // Build + reload is async; fire-and-forget from the sync handler.
+      void (async () => {
+        const { exec } = await import("child_process");
+        const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
+            if (err) {
+              resolve({ ok: false, error: stderr?.trim() || err.message });
+            } else {
+              resolve({ ok: true });
+            }
+          });
+        });
+
+        if (!buildResult.ok) {
+          reply.amicodeValid = false;
+          reply.amicodeError = `Build failed: ${buildResult.error?.slice(0, 200) ?? "unknown error"}`;
+          io.postToWebview(reply);
+          return;
+        }
+
+        void vscode.workspace.getConfiguration("amicode").update(
+          "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
+        );
+        reply.reloadNeeded = true;
+        io.postToWebview(reply);
+
+        // Auto-reload after a short delay so the webview can persist state.
+        setTimeout(() => {
+          void vscode.commands.executeCommand("workbench.action.reloadWindow");
+        }, 500);
+      })();
+    } else if (reply.amicodeValid && !amicodePath) {
+      void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
+    }
+
+    // For the async build case, the reply is posted from within the IIFE.
+    // For all other cases, post the reply here.
+    if (!(reply.amicodeValid && amicodePath)) {
+      io.postToWebview(reply);
+    }
+    return true;
+  }
+
+  // Full rebuild: builds both opencode and amicode, then triggers reload.
+  // mode: "local" = build from whatever's on disk; "remote" = git pull first.
+  if (msg.kind === "dev-tools-rebuild") {
+    const mode = (msg as { mode?: string }).mode === "remote" ? "remote" : "local";
+    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
+      : "";
+    const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
+      : "";
+
+    if (!opencodePath || !amicodePath) {
+      io.postToWebview({
+        source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+        state: "failed", error: "Both repo paths must be set",
+      });
+      return true;
+    }
+
+    // Notify the app that a rebuild is in progress
+    io.postToWebview({
+      source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+      state: "rebuilding",
+    });
+
+    void (async () => {
+      const { exec } = await import("child_process");
+      const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string }> =>
+        new Promise((resolve) => {
+          exec(cmd, { cwd, timeout: 180_000 }, (err, _stdout, stderr) => {
+            if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
+            else resolve({ ok: true });
+          });
+        });
+
+      try {
+        // ── Session DB backup ──
+        const dbDir = path.join(os.homedir(), ".local", "share", "opencode");
+        const backupDir = path.join(dbDir, `.backup-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+        try {
+          const files = fs.readdirSync(dbDir).filter(f => f.startsWith("opencode") && f.endsWith(".db"));
+          if (files.length > 0) {
+            fs.mkdirSync(backupDir, { recursive: true });
+            for (const f of files) {
+              fs.copyFileSync(path.join(dbDir, f), path.join(backupDir, f));
+              // Copy sidecars if they exist
+              for (const ext of ["-wal", "-shm"]) {
+                const sidecar = path.join(dbDir, f + ext);
+                if (fs.existsSync(sidecar)) fs.copyFileSync(sidecar, path.join(backupDir, f + ext));
+              }
+            }
+          }
+        } catch {
+          // DB backup is best-effort
+        }
+
+        // ── Git pull (remote mode only) ──
+        // opencode: checkout local/amicode, amicode: checkout main
+        if (mode === "remote") {
+          const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull --rebase origin local/amicode", opencodePath);
+          if (!checkoutOc.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `git pull (opencode) failed: ${checkoutOc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+          const checkoutAc = await run("git fetch origin && git checkout main && git pull --rebase origin main", amicodePath);
+          if (!checkoutAc.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `git pull (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+        }
+
+        // ── Build opencode ──
+        const ocBuildDir = path.join(opencodePath, "packages", "opencode");
+        const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir);
+        if (!buildOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `opencode build failed: ${buildOc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
+        // ── Build amicode ──
+        const buildAc = await run("bun run build", amicodePath);
+        if (!buildAc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `amicode build failed: ${buildAc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
+        // ── Resolve and codesign the built binary ──
+        const candidates = [
+          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-arm64`, "bin", "opencode"),
+          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-x64`, "bin", "opencode"),
+          path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
+        ];
+        let resolvedBinary = "";
+        for (const c of candidates) {
+          try { if (fs.statSync(c).isFile()) { resolvedBinary = c; break; } } catch { /* next */ }
+        }
+        if (resolvedBinary) {
+          await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
+        }
+
+        // ── Copy built extension into the installed extension dir ──
+        // VS Code loads extension.js from the installed path; devAssetRoot only
+        // overrides resource resolution (templates, scores). To make the rebuild
+        // self-hosting, we copy the freshly-built dist into the installed location.
+        const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
+        if (installedExt) {
+          const installedDist = path.join(installedExt.extensionPath, "dist");
+          const builtDist = path.join(amicodePath, "packages", "extension", "dist");
+          // Backup the original marketplace dist once (idempotent)
+          const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
+          if (!fs.existsSync(backupDist)) {
+            try {
+              fs.cpSync(installedDist, backupDist, { recursive: true });
+              console.log("[amicode/bridge] backed up marketplace dist to", backupDist);
+            } catch (backupErr) {
+              console.warn("[amicode/bridge] dist backup failed:", backupErr);
+            }
+          }
+          // Copy all built .js and .js.map files over
+          try {
+            const builtFiles = fs.readdirSync(builtDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
+            for (const f of builtFiles) {
+              fs.copyFileSync(path.join(builtDist, f), path.join(installedDist, f));
+            }
+            console.log("[amicode/bridge] copied", builtFiles.length, "files to installed extension dist");
+          } catch (copyErr) {
+            console.warn("[amicode/bridge] extension dist copy failed:", copyErr);
+          }
+        }
+
+        // ── Apply VS Code settings ──
+        const extensionDir = path.join(amicodePath, "packages", "extension");
+        if (resolvedBinary) {
+          void vscode.workspace.getConfiguration("amicode").update(
+            "opencodeBinary", resolvedBinary, vscode.ConfigurationTarget.Global,
+          );
+        }
+        void vscode.workspace.getConfiguration("amicode").update(
+          "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
+        );
+
+        // ── Auto-reload ──
+        // Don't restart the server separately — reloading the window restarts
+        // the entire extension host, which spawns a fresh server with the new
+        // binary. Restarting the server first kills the webview's HTTP source
+        // and makes the "Rebuilding..." state vanish prematurely.
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+          state: "done",
+        });
+
+        // Brief pause so the webview can persist localStorage flags before reload
+        await new Promise(r => setTimeout(r, 300));
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      } catch (e: unknown) {
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+          state: "failed", error: e instanceof Error ? e.message : "Unknown error",
+        });
+      }
+    })();
+
+    return true;
+  }
+
   return false;
 }
