@@ -21,8 +21,18 @@ kind_for_filename(path) = begin
     b == "run.toml" ? "run" :
     b == "result.toml"   ? "result"   :
     b == "lab.toml"      ? "lab"       :
-    b == "problem.toml"  ? "problemspec" :
-    b == "FINISHED"      ? "finished"  : nothing
+    b == "FINISHED"      ? "finished"  :
+    b == "card.toml"     ? nothing :
+    b == "problem.toml"  ? begin
+        # Table-sniff: legacy workspace cards share the basename but carry `[problem]`/`name =`.
+        # Return nothing (no schema) for a card so the CLI prompts for --schema instead of mis-validating.
+        try
+            raw = read(path, String)[1:min(4096, end)]
+            occursin(r"^\[problem\]"m, raw) && occursin(r"\bname\s*=\s*\"", raw) ? nothing : "problemspec"
+        catch
+            "problemspec"
+        end
+    end : nothing
 end
 
 schema_path(kind) = joinpath(SCHEMA_DIR, "$(kind).schema.json")

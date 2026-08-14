@@ -43,6 +43,8 @@ import planSchema from "../schemas/plan.schema.json" with { type: "json" };
 // "exports" map, so a subpath import would work, but the root export is the
 // established, documented seam every other consumer uses — see `validate` below).
 export { structureHash, problemHash, canonicalJson, fullDict, structureFields, sha256hex, designHash, planHash } from "./hashing.js";
+export { projectToProblemSpec, isSpecExpressible } from "./project.js";
+export type { FormulationEntityLike, CompositeSystemLike, ProjectionResult } from "./project.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -101,14 +103,33 @@ export interface Validation {
 /** Resolve a schema kind from a file's basename, for the fixed-filename artifacts
  *  (run.toml, result.toml, lab.toml, FINISHED). Returns undefined for files
  *  with no canonical name (SolveSpec, catalog-entry) — those need an explicit
- *  --schema. The amico-validate CLI uses this for file-role resolution. */
+ *  --schema. The amico-validate CLI uses this for file-role resolution.
+ *
+ *  `problem.toml` is the ProblemSpec control artifact (schema_version=1, kind=control).
+ *  The workspace *card* (`~/.amico/problems/<slug>/card.toml`, formerly `problem.toml`)
+ *  shares the basename on older workspaces — to avoid misfiring, this function
+ *  table-sniffs when the file exists: a file whose first 4 KiB contains a `[problem]`
+ *  table with a `name =`/`slug =` key is the card, not a ProblemSpec, and returns
+ *  undefined so the caller prompts for --schema instead of mis-validating. */
 export function kindForFilename(filePath: string): SchemaKind | undefined {
   const base = filePath.replace(/^.*[\\/]/, "");
   if (base === "run.toml") return "run";
   if (base === "result.toml") return "result";
   if (base === "lab.toml") return "lab";
   if (base === "FINISHED") return "finished";
-  if (base === "problem.toml") return "problemspec";
+  if (base === "problem.toml") {
+    // Table-sniff to disambiguate legacy workspace cards (W2.1).
+    // A card's TOML starts with `[problem]` and carries `name`/`slug`; a ProblemSpec
+    // starts with `schema_version = 1` / `kind = "control"` and a `[system]` table.
+    try {
+      const raw = readFileSync(filePath, "utf8").slice(0, 4096);
+      if (/^\[problem\]/m.test(raw) && /\bname\s*=\s*"/m.test(raw)) return undefined;
+    } catch {
+      // file absent / unreadable — fall through to the basename verdict
+    }
+    return "problemspec";
+  }
+  if (base === "card.toml") return undefined; // workspace card — no schema
   return undefined;
 }
 
