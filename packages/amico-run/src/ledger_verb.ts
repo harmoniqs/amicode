@@ -167,7 +167,7 @@ export async function ledgerClaim(argv: string[]): Promise<VerbResult> {
   const { preflight } = await import("./coordination_preflight.js");
   // Derive structure_hash from work_id for preflight — for CLI, treat work_id as structure_hash + goal split
   const res = await preflight({ structure_hash: work_id, goal: "claim", N: 100, T: 30, agent_id, user, org, host });
-  return { json: { verb: "ledger", subcommand: "claim", work_id, ...res }, code: 0 };
+  return { json: { verb: "ledger", subcommand: "claim", ...res }, code: 0 };
 }
 
 export function ledgerApprove(argv: string[]): VerbResult {
