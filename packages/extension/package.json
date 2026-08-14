@@ -182,6 +182,16 @@
           "default": 43117,
           "description": "Fixed port for the spawned opencode server. Set to 0 to pick a free ephemeral port on each start instead."
         },
+        "amicode.sessionDatabase": {
+          "type": "string",
+          "default": "",
+          "description": "Override the session database path. The value is injected as OPENCODE_DB into the spawned server process. Empty = opencode uses its XDG default (~/.local/share/opencode/opencode.db)."
+        },
+        "amicode.configDir": {
+          "type": "string",
+          "default": "",
+          "description": "Override the configuration directory. The value is injected as OPENCODE_CONFIG_DIR into the spawned server process. Empty = opencode uses its XDG default (~/.config/opencode)."
+        },
         "amicode.juliaProject": {
           "type": "string",
           "default": "",
