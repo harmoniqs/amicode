@@ -135,6 +135,25 @@ export class ChatPanel {
     setTimeout(post, 1500);
   }
 
+  /** Post a draft message to the chat. The app will populate the input with this
+   *  text (user can review before sending). Posted twice for reliability (same
+   *  pattern as postComputeConnect). */
+  postDraftMessage(message: string): void {
+    const envelope = { source: "amicode", kind: "draft-message", message };
+    try { void this.panel.webview.postMessage(envelope); } catch {}
+    setTimeout(() => { try { void this.panel.webview.postMessage(envelope); } catch {} }, 1500);
+  }
+
+  /** Navigate the iframe to a new in-app route. Used to open a new session
+   *  with a pre-filled prompt: navigateToPath("/new-session?prompt=..."). */
+  navigateToPath(path: string): void {
+    const envelope = { source: "amicode" as const, kind: "navigate" as const, path };
+    try { void this.panel.webview.postMessage(envelope); } catch {}
+  }
+
+  /** The tab title of this chat panel. */
+  get title(): string { return this.tabTitle; }
+
   /** Lowest free tab label: the lone tab reads "Amicode Chat"; extras take the
    *  smallest unused "Amicode Chat N" (N ≥ 2). Numbers free up on dispose, so a
    *  closed tab's number is reused — existing tabs are never retitled. */
@@ -268,7 +287,16 @@ export class ChatPanel {
         // Lane 2 — extension → iframe: posted by the extension host
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report")) {
+        if (d && d.source === "amicode" && d.kind === "navigate") {
+          // Client-side navigate: post into the iframe so the SPA router picks
+          // it up without a full page reload (preserves auth state).
+          var f = document.querySelector("iframe");
+          if (f && f.contentWindow && d.path) {
+            f.contentWindow.postMessage(d, ${origin});
+          }
+          return;
+        }
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "draft-message")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }

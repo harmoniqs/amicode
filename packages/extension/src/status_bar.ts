@@ -38,10 +38,25 @@ export function statusBarLabel(serverReady: boolean, run?: RunState): { text: st
   }
 }
 
+/** Pure label/tooltip for the fleet status-bar item. */
+export function fleetStatusBarLabel(role: "standalone" | "server" | "client", hostInfo?: string): { text: string; tooltip: string; command: string } {
+  switch (role) {
+    case "server":
+      return { text: "$(cloud) Fleet: server", tooltip: "This machine is the canonical server — click to open Fleet panel", command: "amicode.fleetPanel.focus" };
+    case "client":
+      return { text: "$(cloud) Fleet: client", tooltip: `Fleet client → ${hostInfo ?? "remote"} — click to go standalone`, command: "amicode.fleet.goStandalone" };
+    default:
+      return { text: "$(cloud) Fleet: standalone", tooltip: "No fleet configured — click to open Fleet panel", command: "amicode.fleetPanel.focus" };
+  }
+}
+
 export class StatusBarManager {
   private readonly item: vscode.StatusBarItem;
+  private readonly fleetItem: vscode.StatusBarItem;
   private serverReady = false;
   private run?: RunState;
+  private fleetRole: "standalone" | "server" | "client" = "standalone";
+  private fleetHostInfo?: string;
 
   constructor() {
     this.item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -49,6 +64,11 @@ export class StatusBarManager {
     this.item.command = "amicode.openInspector";
     this.item.show();
     this.render();
+
+    // Fleet status bar item — always visible, command depends on role.
+    this.fleetItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    this.fleetItem.show();
+    this.renderFleet();
   }
 
   setServerReady(ready: boolean): void {
@@ -61,13 +81,27 @@ export class StatusBarManager {
     this.render();
   }
 
+  setFleetRole(role: "standalone" | "server" | "client", hostInfo?: string): void {
+    this.fleetRole = role;
+    this.fleetHostInfo = hostInfo;
+    this.renderFleet();
+  }
+
   dispose(): void {
     this.item.dispose();
+    this.fleetItem.dispose();
   }
 
   private render(): void {
     const { text, tooltip } = statusBarLabel(this.serverReady, this.run);
     this.item.text = text;
     this.item.tooltip = tooltip;
+  }
+
+  private renderFleet(): void {
+    const { text, tooltip, command } = fleetStatusBarLabel(this.fleetRole, this.fleetHostInfo);
+    this.fleetItem.text = text;
+    this.fleetItem.tooltip = tooltip;
+    this.fleetItem.command = command;
   }
 }

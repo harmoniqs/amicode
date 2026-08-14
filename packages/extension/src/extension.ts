@@ -55,7 +55,7 @@ import {
 } from "./substrate/julia_setup";
 import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
-import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, writeFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
@@ -69,6 +69,14 @@ import * as os from "node:os";
 import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { registerDeviceInspector, getDeviceInspector, revealDeviceInspector } from "./device_inspector";
+import { registerFleetPanel, getFleetPanel } from "./fleet_panel";
+import { registerFleetProfiles } from "./fleet_profile_manager";
+
+
+import { launchFromProfile, getFleetStats, sweepCrashed } from "./fleet_launch";
+import { readProfile, PROFILES_DIR } from "./fleet_profiles";
+import { parseFleetAction, enqueueFleetSignal, createFleetStateWatcher } from "./fleet_bridge";
+import { syncFromHost, shouldAutoSync } from "./fleet_sync";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
@@ -348,6 +356,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const trees = registerTrees(ctx);
   registerRunInspector(ctx);
   registerDeviceInspector(ctx); // Spec A §3 — device dashboard, sibling to the Run Inspector
+  const fleetPanel = registerFleetPanel(ctx); // #350 — fleet topology, profiles, and stats panel
+  registerFleetProfiles(ctx, fleetPanel); // #356 — profile CRUD + fs.watch
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
@@ -396,6 +406,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
   statusBar = new StatusBarManager();
+  {
+    const role = getFleetRole();
+    const cfg = role === "client" ? readFleetConfig() : undefined;
+    const hostInfo = cfg?.canonical ? `${cfg.canonical.host ?? "unknown"}:${cfg.canonical.port ?? 4096}` : undefined;
+    statusBar.setFleetRole(role, hostInfo);
+  }
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
   // 2. Start the multi-run RunsManager immediately — it tails the append-only
@@ -635,16 +651,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         } else if (!up && !fleetReady && fleetChecks === 1) {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
         }
-        // After ~10s (5 checks) still down → offer standalone visibly, not just a log
+        // After ~10s (5 checks) still down → notify via unified fleet-issue mechanism
         if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
           fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering resolution`);
+          notifyFleetIssue({
+            kind: "tunnel-down",
+            summary: `Fleet tunnel down — canonical server unreachable at 127.0.0.1:${fleetPort}`,
+            context: {
+              host: "127.0.0.1",
+              port: fleetPort,
+              checks_failed: fleetChecks,
+              last_status: "connection refused or timeout",
+            },
+          });
         }
       } catch {
         if (fleetReady) {
@@ -657,13 +677,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         }
         if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
           fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering resolution`);
+          notifyFleetIssue({
+            kind: "tunnel-down",
+            summary: `Fleet tunnel down — canonical server unreachable at 127.0.0.1:${fleetPort}`,
+            context: {
+              host: "127.0.0.1",
+              port: fleetPort,
+              checks_failed: fleetChecks,
+              last_status: "fetch threw (network error)",
+            },
+          });
         }
       }
     };
@@ -1239,21 +1263,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Migrate legacy fallback.json on activation.
   migrateLegacyFallback();
 
-  const fleetStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
-  ctx.subscriptions.push(fleetStatusItem);
-  const refreshFleetStatus = (): void => {
+  /** Update the single fleet status-bar item via StatusBarManager. */
+  const refreshFleetStatusBar = (): void => {
     const role = getFleetRole();
-    if (role === "client") {
-      const cfg = readFleetConfig();
-      fleetStatusItem.text = "$(cloud) Fleet: client";
-      fleetStatusItem.tooltip = `Fleet client → ${cfg?.canonical?.host ?? "unknown"}:${cfg?.canonical?.port ?? 4096}`;
-      fleetStatusItem.command = "amicode.fleet.goStandalone";
-      fleetStatusItem.show();
-    } else {
-      fleetStatusItem.hide();
-    }
+    const cfg = role === "client" ? readFleetConfig() : undefined;
+    const hostInfo = cfg?.canonical ? `${cfg.canonical.host ?? "unknown"}:${cfg.canonical.port ?? 4096}` : undefined;
+    statusBar?.setFleetRole(role, hostInfo);
   };
-  refreshFleetStatus();
 
   const runFleetGoStandalone = async (): Promise<void> => {
     const role = getFleetRole();
@@ -1273,9 +1289,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const prevPort = cfg.get<number>("opencodePort", 0);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
     try {
-      // Clear the fleet guard override → vendored binary, ephemeral port
+      // Clear the fleet guard override → vendored binary. Port is NEVER touched
+      // by fleet enrollment (it's the user's standalone preference), so leave it.
       await cfg.update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
-      await cfg.update("opencodePort", 0, vscode.ConfigurationTarget.Global);
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] go standalone: settings update failed: ${(e as Error).message}`);
     }
@@ -1290,7 +1306,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // plist may not exist or already unloaded — fine
       }
     }
-    refreshFleetStatus();
+    refreshFleetStatusBar();
     opencodeChannel.appendLine(`[fleet] Go Standalone — restarting server locally (was binary=${prevBinary || "(vendored)"} port=${prevPort})`);
     try {
       await serverManager?.stop();
@@ -1344,6 +1360,326 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
 
+  // Reconnect Fleet — inverse of Go Standalone. Seamlessly switch back to client
+  // mode without a window reload: stop local server, write client role, load tunnel,
+  // start polling the canonical server.
+  const runFleetReconnect = async (): Promise<void> => {
+    const cfg = readFleetConfig();
+    if (!cfg?.canonical?.host) {
+      void vscode.window.showErrorMessage("Amicode: no fleet configuration found. Use Create Fleet instead.");
+      return;
+    }
+    const fleetPort = cfg.canonical.port ?? 4096;
+    opencodeChannel.appendLine(`[fleet] reconnecting to canonical at 127.0.0.1:${fleetPort}...`);
+
+    // Write client role (canonical already preserved)
+    writeFleetConfig({ ...cfg, role: "client" });
+
+    // Load the tunnel plist if not already active (best-effort, darwin only)
+    if (process.platform === "darwin") {
+      try {
+        const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", "co.harmoniqs.amico-tunnel.plist");
+        const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+        execFileSync("launchctl", ["load", plistPath], { timeout: 5000, stdio: "ignore" });
+        opencodeChannel.appendLine(`[fleet] loaded tunnel plist`);
+      } catch {
+        // Already loaded or doesn't exist — fine
+      }
+    }
+
+    // Stop the local server
+    try {
+      await serverManager?.stop();
+      serverManager = undefined;
+      statusBar?.setServerReady(false);
+      opencodeReadyUrl = undefined;
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] failed to stop local server: ${(e as Error).message}`);
+    }
+
+    // Clear any existing poll
+    if (fleetClientPoll) { clearInterval(fleetClientPoll); fleetClientPoll = undefined; }
+
+    // Start polling the tunnel (same logic as activation client path)
+    let fleetReady = false;
+    let fleetChecks = 0;
+    const checkFleet = async () => {
+      fleetChecks++;
+      try {
+        const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
+          signal: AbortSignal.timeout(1500),
+          headers: serverAuthHeaders,
+        });
+        const up = r.ok || (r.status >= 200 && r.status < 400);
+        if (up && !fleetReady) {
+          fleetReady = true;
+          opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
+          statusBar?.setServerReady(true);
+          sseClient?.connect(opencodeReadyUrl);
+          if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+            ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          }
+          opencodeChannel.appendLine(`[fleet] reconnected — tunnel up at ${opencodeReadyUrl}`);
+          void vscode.window.showInformationMessage("Amicode: Reconnected to fleet.");
+        }
+      } catch {
+        if (fleetChecks === 1) {
+          opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort}...`);
+        }
+      }
+    };
+    fleetClientPoll = setInterval(() => void checkFleet(), 2000);
+    void checkFleet();
+
+    refreshFleetStatusBar();
+    fleetPanel?.pushRole();
+  };
+
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.reconnectFleet", () => void runFleetReconnect()));
+
+  // Fleet panel focus command — status bar item clicks this to reveal the panel.
+  // VS Code auto-registers `amicode.fleet.focus` for the webview view, so we use
+  // a distinct command name that delegates to it.
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleetPanel.focus", () => {
+    void vscode.commands.executeCommand("amicode.fleet.focus");
+  }));
+
+  // #363 — Fleet issue notifications: any fleet problem surfaces a VS Code
+  // notification with a "Resolve with Amico" button that opens a new chat
+  // session routed to /fleet-troubleshooting with structured diagnostic context.
+  type FleetIssueKind = "sync-conflict" | "tunnel-down" | "fleet-drift" | "ssh-failure" | "sync-error";
+  interface FleetIssue {
+    kind: FleetIssueKind;
+    summary: string;
+    context: Record<string, string | number | boolean | undefined>;
+  }
+
+  function buildTroubleshootingPrompt(issue: FleetIssue): string {
+    const lines: string[] = [
+      `/fleet-troubleshooting`,
+      ``,
+      `## Fleet Issue: ${issue.kind}`,
+      ``,
+      issue.summary,
+      ``,
+      `### Diagnostic Context`,
+      ``,
+    ];
+    for (const [key, val] of Object.entries(issue.context)) {
+      if (val !== undefined) lines.push(`- **${key}**: ${val}`);
+    }
+    return lines.join("\n");
+  }
+
+  function notifyFleetIssue(issue: FleetIssue): void {
+    opencodeChannel.appendLine(`[fleet] issue: ${issue.kind} — ${issue.summary}`);
+    void vscode.window
+      .showWarningMessage(
+        `Amicode fleet: ${issue.summary}`,
+        "Resolve with Amico",
+        "Show log",
+      )
+      .then((pick) => {
+        if (pick === "Resolve with Amico") {
+          const prompt = buildTroubleshootingPrompt(issue);
+          launchFleetChat(prompt);
+        } else if (pick === "Show log") {
+          opencodeChannel.show();
+        }
+      });
+  }
+
+  // #363 — Fleet lifecycle commands: launch chat sessions with the fleet skill.
+  // The agent handles SSH, tool installation, builds, and service configuration
+  // interactively in the chat — replacing the former sequential QuickPick wizard.
+  function launchFleetChat(prompt: string): void {
+    const readyUrl = opencodeReadyUrl;
+    if (!readyUrl) {
+      // Server not ready yet — open the main chat (triggers server boot)
+      // and poll for readyUrl, then navigate once available.
+      void vscode.commands.executeCommand("amicode.openChat");
+      const poll = setInterval(() => {
+        if (opencodeReadyUrl) {
+          clearInterval(poll);
+          const panel = ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          panel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}&autoSend=1`);
+        }
+      }, 500);
+      // Give up after 30s
+      setTimeout(() => clearInterval(poll), 30000);
+      return;
+    }
+    const chatPanel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+    chatPanel.navigateToPath(`/new-session?prompt=${encodeURIComponent(prompt)}&autoSend=1`);
+  }
+
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.createFleet", () => {
+      launchFleetChat("/create-a-fleet I want to create a fleet with a remote machine as the server.");
+    }),
+    vscode.commands.registerCommand("amicode.fleet.addMachine", () => {
+      launchFleetChat("/create-a-fleet I want to add a new machine to my fleet.");
+    }),
+    vscode.commands.registerCommand("amicode.fleet.removeMachine", (payload?: { target?: string }) => {
+      const target = payload?.target;
+      const prompt = target
+        ? `/create-a-fleet I want to remove ${target} from my fleet.`
+        : "/create-a-fleet I want to remove a machine from my fleet.";
+      launchFleetChat(prompt);
+    }),
+    vscode.commands.registerCommand("amicode.fleet.dismantle", () => {
+      launchFleetChat("/create-a-fleet I want to dismantle my fleet and revert all machines to standalone.");
+    }),
+  );
+
+  // #357 — Session launch from profile + aggregate stats + sweep
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.launch", (payload?: { slug?: string }) => {
+      const slug = payload?.slug;
+      if (!slug) return;
+      const profile = readProfile(path.join(PROFILES_DIR, `${slug}.toml`));
+      if (!profile) {
+        void vscode.window.showErrorMessage(`Profile "${slug}" not found`);
+        return;
+      }
+      const { sessionId } = launchFromProfile(profile);
+      void vscode.window.showInformationMessage(`Session ${sessionId} spooling from "${profile.name}"`);
+      // Refresh stats
+      const panel = getFleetPanel();
+      if (panel) panel.postStats(getFleetStats());
+    }),
+    vscode.commands.registerCommand("amicode.fleet.sweep", () => {
+      const swept = sweepCrashed();
+      if (swept.length === 0) {
+        void vscode.window.showInformationMessage("No orphaned sessions found");
+      } else {
+        void vscode.window.showInformationMessage(`Swept ${swept.length} crashed session${swept.length === 1 ? "" : "s"}`);
+      }
+      const panel = getFleetPanel();
+      if (panel) panel.postStats(getFleetStats());
+    }),
+  );
+
+  // Push initial stats to the fleet panel
+  {
+    const panel = getFleetPanel();
+    if (panel) panel.postStats(getFleetStats());
+  }
+
+  // #358 — Fleet bridge: action handler + state watcher
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.fleet.bridgeAction", (payload?: { verb?: string; session_id?: string; params?: Record<string, unknown> }) => {
+      if (!payload?.verb || !payload?.session_id) return;
+      const action = parseFleetAction({ type: "fleet-action", ...payload });
+      if (action) {
+        enqueueFleetSignal(action);
+        // Refresh stats after action
+        const panel = getFleetPanel();
+        if (panel) panel.postStats(getFleetStats());
+      }
+    }),
+  );
+
+  // Fleet state watcher: debounced 500ms push to any connected panels/bridges
+  const fleetWatcher = createFleetStateWatcher((_snapshot) => {
+    // Push stats to the fleet panel on any record change
+    const panel = getFleetPanel();
+    if (panel) panel.postStats(getFleetStats());
+    // The snapshot would also be pushed to the app via the chat bridge
+    // (postToWebview). That wiring depends on the chat panel being open.
+  });
+  ctx.subscriptions.push({ dispose: () => fleetWatcher.dispose() });
+
+
+
+  // Fleet auto-sync on activation (if client mode)
+  const autoSync = shouldAutoSync();
+  if (autoSync.should && autoSync.target) {
+    const syncTarget = autoSync.target;
+    void (async () => {
+      const panel = getFleetPanel();
+      if (panel) panel.postCompat("compatible", "Syncing...");
+
+      const result = await syncFromHost(syncTarget, {
+        onProgress: (step) => {
+          if (panel) panel.postCompat("compatible", step);
+        },
+      });
+
+      if (result.conflict) {
+        // Conflict detected — notify via unified fleet-issue mechanism
+        if (panel) panel.postCompat("incompatible", `Sync conflict in ${result.conflict.repo} — click to resolve`);
+        notifyFleetIssue({
+          kind: "sync-conflict",
+          summary: `Sync conflict in ${result.conflict.repo}: local and host have diverged`,
+          context: {
+            repo: result.conflict.repo,
+            conflict_type: result.conflict.type,
+            local_sha: result.conflict.localSha,
+            remote_sha: result.conflict.remoteSha,
+            detail: result.conflict.detail,
+          },
+        });
+      } else if (result.synced) {
+        if (panel) panel.postCompat("compatible", result.buildUpdated ? "Synced — reload window" : "Up to date");
+        if (result.buildUpdated) {
+          const reload = await vscode.window.showInformationMessage(
+            "Fleet sync complete — extension updated. Reload to pick up changes?",
+            "Reload Window",
+          );
+          if (reload === "Reload Window") {
+            void vscode.commands.executeCommand("workbench.action.reloadWindow");
+          }
+        }
+      } else if (result.error) {
+        if (panel) panel.postCompat("degraded", `Sync error: ${result.error}`);
+        notifyFleetIssue({
+          kind: "sync-error",
+          summary: `Sync failed: ${result.error}`,
+          context: { error: result.error },
+        });
+      }
+    })();
+  }
+
+  // Manual sync command
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.sync", async () => {
+    const { should, target } = shouldAutoSync();
+    if (!should || !target) {
+      void vscode.window.showInformationMessage("Not in fleet client mode — nothing to sync");
+      return;
+    }
+    const panel = getFleetPanel();
+    if (panel) panel.postCompat("compatible", "Syncing...");
+
+    const result = await syncFromHost(target, {
+      forceBuild: true,
+      onProgress: (step) => { if (panel) panel.postCompat("compatible", step); },
+    });
+
+    if (result.conflict) {
+      if (panel) panel.postCompat("incompatible", `Conflict in ${result.conflict.repo}`);
+      notifyFleetIssue({
+        kind: "sync-conflict",
+        summary: `Sync conflict in ${result.conflict.repo}: local and host have diverged`,
+        context: {
+          repo: result.conflict.repo,
+          conflict_type: result.conflict.type,
+          local_sha: result.conflict.localSha,
+          remote_sha: result.conflict.remoteSha,
+          detail: result.conflict.detail,
+        },
+      });
+    } else if (result.synced && result.buildUpdated) {
+      if (panel) panel.postCompat("compatible", "Synced — reload window");
+      const reload = await vscode.window.showInformationMessage("Sync complete. Reload?", "Reload Window");
+      if (reload === "Reload Window") void vscode.commands.executeCommand("workbench.action.reloadWindow");
+    } else {
+      if (panel) panel.postCompat("compatible", "Up to date");
+      void vscode.window.showInformationMessage("Already in sync with host");
+    }
+  }));
+
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface
   // ONE warning with a Fix action — don't silently fork.
@@ -1368,12 +1704,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (failed.length === 0) return;
       const detail = failed.map((c) => `${c.name}: ${c.detail}`).join("; ");
       opencodeChannel.appendLine(`[fleet] drift detected: ${detail}`);
-      void vscode.window
-        .showWarningMessage(`Amicode fleet drift — ${failed.map((c) => c.name).join(", ")}: ${failed[0].detail}`, "Fix fleet", "Show details")
-        .then((pick) => {
-          if (pick === "Fix fleet") void runFleetRepair();
-          else if (pick === "Show details") opencodeChannel.show();
-        });
+      notifyFleetIssue({
+        kind: "fleet-drift",
+        summary: `Fleet drift — ${failed.map((c) => c.name).join(", ")}`,
+        context: {
+          failed_checks: failed.map((c) => c.name).join(", "),
+          details: detail,
+          platform: "darwin",
+        },
+      });
     } catch (e) {
       opencodeChannel.appendLine(`[fleet] drift check failed: ${(e as Error).message}`);
     }

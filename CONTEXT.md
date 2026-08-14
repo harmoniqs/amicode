@@ -75,7 +75,7 @@ The user's machines acting as one logical studio: exactly one Canonical Server p
 _Avoid_: mesh, cluster
 
 **Go Standalone**:
-The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself permanently. Not an escape hatch: a first-class choice. Sessions made locally stay local. Re-enrollment in a fleet is a separate flow (Enroll, deferred).
+The user-invoked mode switch from `client` to `standalone` — the machine leaves the fleet and serves itself. Not an escape hatch: a first-class choice. Sessions made locally stay local. The `canonical` coordinates are preserved in `fleet.json` so the panel can offer "Reconnect Fleet" (one-click rejoin) rather than forcing a full re-setup. Only "Dismantle Fleet" removes the coordinates entirely.
 _Avoid_: local fallback, offline mode, degraded mode
 
 **Fleet token**:

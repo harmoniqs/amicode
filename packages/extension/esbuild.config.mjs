@@ -104,6 +104,19 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // Fleet Panel webview bundle (activity bar sidebar — #350)
+  {
+    entryPoints: ["src/fleet_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/fleet_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+    loader: { ".svg": "text" },
+  },
 ];
 
 if (watch) {

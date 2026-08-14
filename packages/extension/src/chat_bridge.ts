@@ -30,6 +30,10 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   // the fork forwards it here so the editor's Command Palette (where every
   // Amicode: command lives) opens as users expect.
   "workbench.action.showCommands",
+  // #358 fleet actions from the sessions dropdown context menu
+  "amicode.fleet.steer",
+  "amicode.fleet.stop",
+  "amicode.fleet.reTier",
 ]);
 
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
@@ -217,6 +221,18 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const model = (msg as unknown as { model: string }).model.trim();
     if (model.length > 0 && model.length <= 200 && /^[\w.-]+\/[\w.:-]+$/.test(model)) {
       void vscode.workspace.getConfiguration("amicode").update("defaultModel", model, vscode.ConfigurationTarget.Global);
+    }
+    return true;
+  }
+
+  // #358 Fleet action from the sessions dropdown context menu (app → extension).
+  // The app posts fleet-action messages with verb + session_id; we enqueue signal
+  // files (same single-writer path as CLI verbs).
+  if (msg.kind === "fleet-action") {
+    const verb = (msg as unknown as { verb?: unknown }).verb;
+    const sessionId = (msg as unknown as { session_id?: unknown }).session_id;
+    if (typeof verb === "string" && typeof sessionId === "string" && sessionId !== "") {
+      void vscode.commands.executeCommand(`amicode.fleet.bridgeAction`, { verb, session_id: sessionId, params: (msg as unknown as { params?: unknown }).params ?? {} });
     }
     return true;
   }
