@@ -248,12 +248,34 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     };
 
     if (!enabled) {
-      // Toggle OFF: clear overrides and restart with vendored binary
+      // Toggle OFF: clear overrides, restore marketplace extension, and reload.
       void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
-      void vscode.commands.executeCommand("amicode.restartServer");
-      reply.serverRestarted = true;
+
+      // Restore the marketplace extension dist if a backup exists
+      const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
+      if (installedExt) {
+        const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
+        const installedDist = path.join(installedExt.extensionPath, "dist");
+        if (fs.existsSync(backupDist)) {
+          try {
+            const backupFiles = fs.readdirSync(backupDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
+            for (const f of backupFiles) {
+              fs.copyFileSync(path.join(backupDist, f), path.join(installedDist, f));
+            }
+            console.log("[amicode/bridge] restored marketplace dist from backup");
+          } catch (restoreErr) {
+            console.warn("[amicode/bridge] marketplace dist restore failed:", restoreErr);
+          }
+        }
+      }
+
+      // Don't restart server separately — reloading the window does it.
+      // Don't send reloadNeeded — the auto-reload handles it silently.
       io.postToWebview(reply);
+      setTimeout(() => {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
+      }, 300);
       return true;
     }
 
@@ -497,6 +519,36 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
         }
 
+        // ── Copy built extension into the installed extension dir ──
+        // VS Code loads extension.js from the installed path; devAssetRoot only
+        // overrides resource resolution (templates, scores). To make the rebuild
+        // self-hosting, we copy the freshly-built dist into the installed location.
+        const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
+        if (installedExt) {
+          const installedDist = path.join(installedExt.extensionPath, "dist");
+          const builtDist = path.join(amicodePath, "packages", "extension", "dist");
+          // Backup the original marketplace dist once (idempotent)
+          const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
+          if (!fs.existsSync(backupDist)) {
+            try {
+              fs.cpSync(installedDist, backupDist, { recursive: true });
+              console.log("[amicode/bridge] backed up marketplace dist to", backupDist);
+            } catch (backupErr) {
+              console.warn("[amicode/bridge] dist backup failed:", backupErr);
+            }
+          }
+          // Copy all built .js and .js.map files over
+          try {
+            const builtFiles = fs.readdirSync(builtDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
+            for (const f of builtFiles) {
+              fs.copyFileSync(path.join(builtDist, f), path.join(installedDist, f));
+            }
+            console.log("[amicode/bridge] copied", builtFiles.length, "files to installed extension dist");
+          } catch (copyErr) {
+            console.warn("[amicode/bridge] extension dist copy failed:", copyErr);
+          }
+        }
+
         // ── Apply VS Code settings ──
         const extensionDir = path.join(amicodePath, "packages", "extension");
         if (resolvedBinary) {
@@ -508,19 +560,19 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
         );
 
-        // ── Restart server + auto-reload ──
-        void vscode.commands.executeCommand("amicode.restartServer");
-
+        // ── Auto-reload ──
+        // Don't restart the server separately — reloading the window restarts
+        // the entire extension host, which spawns a fresh server with the new
+        // binary. Restarting the server first kills the webview's HTTP source
+        // and makes the "Rebuilding..." state vanish prematurely.
         io.postToWebview({
           source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
           state: "done",
         });
 
-        // Auto-reload the window after a short delay so the webview can
-        // persist the "rebuilt" flag to localStorage before the reload hits.
-        setTimeout(() => {
-          void vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }, 500);
+        // Brief pause so the webview can persist localStorage flags before reload
+        await new Promise(r => setTimeout(r, 300));
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
       } catch (e: unknown) {
         io.postToWebview({
           source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,

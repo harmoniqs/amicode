@@ -59,6 +59,26 @@ else
   echo "==> WARNING: built binary not found at $BUILT"
 fi
 
+# ── Copy built extension into the installed extension dir ──────────────────────
+INSTALLED_EXT="$(find "$HOME/.vscode/extensions" -maxdepth 1 -name 'harmoniqs.amicode-*' -type d | sort -V | tail -1)"
+if [ -n "$INSTALLED_EXT" ] && [ -d "$INSTALLED_EXT/dist" ]; then
+  BUILT_DIST="$AMICODE_ROOT/packages/extension/dist"
+  BACKUP_DIST="$INSTALLED_EXT/dist.marketplace-backup"
+  if [ ! -d "$BACKUP_DIST" ]; then
+    cp -R "$INSTALLED_EXT/dist" "$BACKUP_DIST"
+    echo "==> Backed up marketplace extension dist to $BACKUP_DIST"
+  fi
+  copied=0
+  for f in "$BUILT_DIST"/*.js "$BUILT_DIST"/*.js.map; do
+    [ -f "$f" ] || continue
+    cp -f "$f" "$INSTALLED_EXT/dist/"
+    copied=$((copied + 1))
+  done
+  echo "==> Copied $copied file(s) to installed extension at $INSTALLED_EXT/dist/"
+else
+  echo "==> WARNING: could not find installed amicode extension to copy into"
+fi
+
 # ── Restore session DBs if they were zeroed ────────────────────────────────────
 if [ -d "$BACKUP" ]; then
   restored=0
@@ -77,6 +97,27 @@ if [ -d "$BACKUP" ]; then
     echo ""
     echo "==> Restored $restored session DB(s) from backup (they were zeroed by the build)."
   fi
+fi
+
+# ── Re-apply VS Code settings to point at the dev build ────────────────────────
+VSCODE_SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
+if [ -f "$VSCODE_SETTINGS" ] && command -v python3 &>/dev/null; then
+  python3 -c "
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    settings = json.load(f)
+settings['amicode.opencodeBinary'] = sys.argv[2]
+settings['amicode.devAssetRoot'] = sys.argv[3]
+with open(path, 'w') as f:
+    json.dump(settings, f, indent=2)
+    f.write('\n')
+" "$VSCODE_SETTINGS" "$BUILT" "$AMICODE_ROOT/packages/extension"
+  echo "==> VS Code settings updated: amicode.opencodeBinary + amicode.devAssetRoot"
+else
+  echo "==> WARNING: could not update VS Code settings automatically."
+  echo "   Set amicode.opencodeBinary to: $BUILT"
+  echo "   Set amicode.devAssetRoot to: $AMICODE_ROOT/packages/extension"
 fi
 
 echo ""

@@ -246,7 +246,7 @@ export class ChatPanel {
       // iframe to the extension host. Origin-checked; the extension side keeps a
       // strict allowlist (BRIDGE_ALLOWED_COMMANDS). Iframe keystrokes never reach
       // VS Code directly, so this bridge is how the framed app triggers ops.
-      var vscode = acquireVsCodeApi();
+       var vscode = acquireVsCodeApi();
       window.addEventListener("message", function (e) {
         var d = e.data;
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
