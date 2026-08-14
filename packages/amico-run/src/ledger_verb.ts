@@ -20,6 +20,10 @@
 //         allowed and coarse, and the provenance string reports which you got.
 //         Delegates to ledger_query.ts (Task 4).
 //
+
+//   amico ledger claim --work-id <id> --agent-id <a> --user <u> --org <o> --host <h> [--variant-axis <v>] [--ttl <s>]
+//       → coordination preflight Claim (spec #318 §3): Dedup→Claim→Warrant gate before any dispatch.
+//         Serializes on work_id via server time, returns holder on conflict with yield/steer/variant menu.
 //   amico ledger dispatch --work-id <id> --task-type <t>
 //                         [--variant <v>] [--stamp <model>] [--include-simulated]
 //       → the tier-dispatch table (fleet §6.3 Rev 5): per-(model, variant) cells with
@@ -149,6 +153,21 @@ function positiveInt(raw: string | undefined, name: string): number | string | u
   const n = Number(raw);
   if (!Number.isInteger(n) || n < 1) return `${name} must be a positive integer (got "${raw}")`;
   return n;
+}
+
+
+export async function ledgerClaim(argv: string[]): Promise<VerbResult> {
+  const fail = (error: string): VerbResult => ({ json: { verb: "ledger", subcommand: "claim", error }, code: 64 });
+  const work_id = argv.includes("--work-id") ? argv[argv.indexOf("--work-id")+1] : undefined;
+  const agent_id = argv.includes("--agent-id") ? argv[argv.indexOf("--agent-id")+1] : undefined;
+  const user = argv.includes("--user") ? argv[argv.indexOf("--user")+1] : undefined;
+  const org = argv.includes("--org") ? argv[argv.indexOf("--org")+1] : undefined;
+  const host = argv.includes("--host") ? argv[argv.indexOf("--host")+1] : undefined;
+  if (!work_id || !agent_id || !user || !org || !host) return fail("--work-id --agent-id --user --org --host are required");
+  const { preflight } = await import("./coordination_preflight.js");
+  // Derive structure_hash from work_id for preflight — for CLI, treat work_id as structure_hash + goal split
+  const res = await preflight({ structure_hash: work_id, goal: "claim", N: 100, T: 30, agent_id, user, org, host });
+  return { json: { verb: "ledger", subcommand: "claim", work_id, ...res }, code: 0 };
 }
 
 export function ledgerApprove(argv: string[]): VerbResult {
