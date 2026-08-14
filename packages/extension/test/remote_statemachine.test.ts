@@ -1,26 +1,19 @@
-// packages/extension/test/remote_statemachine.test.ts
-// Δ9 (#33): a REMOTE run consumed through the SAME state machine as local —
-// index-tail discovery, warming, run.log tail via the poll backstop, and
-// FINISHED-keyed completion. Asserts the same inspector calls as the local
-// flow in runs_manager.test.ts:90-112. ZERO extension production code changed.
+// Δ9 (#33): a REMOTE run consumed through the SAME state machine as local
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const { inspector } = vi.hoisted(() => ({
-  inspector: {
-    setWarmingUp: vi.fn(),
-    postTiming: vi.fn(),
-    postCompletion: vi.fn(),
-    postIterationRecord: vi.fn(),
-    postPulse: vi.fn(),
-    setRunLabel: vi.fn(),
-    activate: vi.fn(),
-    reveal: vi.fn(),
-  },
+const bridge = vi.hoisted(() => ({
+  postRunIteration: vi.fn(),
+  postRunPulse: vi.fn(),
+  postRunPulseMeta: vi.fn(),
+  postRunCompletion: vi.fn(),
+  postRunActivate: vi.fn(),
+  postRunLabel: vi.fn(),
+  postRunTiming: vi.fn(),
 }));
-vi.mock("../src/run_inspector", () => ({ getInspector: () => inspector }));
+vi.mock("../src/inspector_bridge", () => bridge);
 
 import { RunsManager } from "../src/runs_manager";
 import { RemoteExecutor, Scheduler } from "@amicode/amico-run";
@@ -38,11 +31,11 @@ const until = async (pred: () => boolean, ms = 3000): Promise<void> => {
 
 describe("Δ9 — remote run through the SAME inspector state machine", () => {
   beforeEach(() => {
-    for (const f of Object.values(inspector)) f.mockClear();
+    for (const f of Object.values(bridge)) f.mockClear();
   });
 
-  it("warming → poll-delivered iters/frames → completion: same inspector calls as a local run", async () => {
-    const fake = new FakeCloud(); // Pending, alive, no iters: warming
+  it("warming → poll-delivered iters/frames → completion: same bridge calls as a local run", async () => {
+    const fake = new FakeCloud();
     await fake.start();
     const root = mkdtempSync(join(tmpdir(), "runs-"));
     const m = new RunsManager({ runsRoot: root, channel });
@@ -51,41 +44,32 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
     try {
       const script = join(root, "s.jl");
       writeFileSync(script, "// content posted to the cloud\n");
-      const h = await ex.submit(script, { runsRoot: root }); // mirror dir + index line land NOW
-      tick(m); // poll backstop drains the index → discovery (runs_manager.ts:170)
+      const h = await ex.submit(script, { runsRoot: root });
+      tick(m);
 
-      // 1. warming — identical to the local fresh-run lane (runs_manager.test.ts:98-101)
-      expect(inspector.setWarmingUp).toHaveBeenCalledWith(h.runId);
-      expect(inspector.setRunLabel).toHaveBeenCalledWith(h.runId, h.runId);
-      expect(inspector.activate).toHaveBeenCalledWith(h.runId);
+      expect(bridge.postRunLabel).toHaveBeenCalledWith(h.runId, h.runId);
+      expect(bridge.postRunActivate).toHaveBeenCalledWith(h.runId);
       expect(m.selectedRun).toBe(h.runId);
 
-      // 2. poll-delivered iter + frame (Δ4 → mirror → run.log tail via the backstop)
       fake.state.task_status = "Running";
       fake.state.iters = [{ iter: 7, f: "1.0e-2", inf_pr: "1e-8", inf_du: "1e-6" }];
       fake.state.frame = { iter: 7, png_base64: Buffer.from("png-bytes").toString("base64") };
       await until(() => readFileSync(join(h.runDir, "run.log"), "utf8").includes("iter=7"));
-      tick(m); // backstop re-pokes the tail — the "no new paradigm" hinge
-      expect(inspector.postIterationRecord).toHaveBeenCalledWith(h.runId, expect.objectContaining({ iter: 7 }));
-      // 5-digit: the name BOTH the S3 layout and the local Julia solve use
-      // (iter_00007.png). Was iter_007.png, which matched neither, so cloud
-      // frames and local frames landed under two schemes in one run dir.
-      await until(() => existsSync(join(h.runDir, "iter_00007.png"))); // frames mirrored best-effort
+      tick(m);
+      expect(bridge.postRunIteration).toHaveBeenCalledWith(h.runId, 7, expect.any(Number), expect.any(Number), expect.any(Number));
+      await until(() => existsSync(join(h.runDir, "iter_00007.png")));
 
-      // 3. completion — FINISHED authoritative via the status poll (resolution (d))
       fake.state.finished = { status: "completed" };
       await h.finished;
-      tick(m); // same idempotent FINISHED re-check as local (checkFinished)
-      expect(inspector.postCompletion).toHaveBeenCalledWith(h.runId, "completed", undefined);
-      // fidelity undefined: result.toml mirroring is the NAMED Δ4 seam (status
-      // shape doesn't carry it yet) — the CALL SHAPE is identical to local.
+      tick(m);
+      expect(bridge.postRunCompletion).toHaveBeenCalledWith(h.runId, expect.any(Number), expect.any(Number), "completed");
     } finally {
       m.dispose();
       await fake.stop();
     }
   });
 
-  it("scheduler lane: remote run via Scheduler.enqueue registers on `started` and completes (S12 passthrough)", async () => {
+  it("scheduler lane: remote run via Scheduler.enqueue registers on `started` and completes", async () => {
     const fake = new FakeCloud();
     await fake.start();
     fake.state = { task_status: "Running", liveness: "alive", iters: [], finished: { status: "completed" } };
@@ -93,18 +77,16 @@ describe("Δ9 — remote run through the SAME inspector state machine", () => {
     const m = new RunsManager({ runsRoot: root, channel });
     m.start();
     try {
-      const s = new Scheduler(
-        new RemoteExecutor({ config: { baseUrl: fake.base, token: fake.token }, pollMs: 10 }),
-      );
+      const s = new Scheduler(new RemoteExecutor({ config: { baseUrl: fake.base, token: fake.token }, pollMs: 10 }));
       m.attachScheduler(s);
       const script = join(root, "s.jl");
       writeFileSync(script, "//\n");
       const r = s.enqueue({ scriptPath: script, opts: { runsRoot: root } });
-      const h = await r.handle; // the RunHandle IS the executor's (scheduler.test.ts:78)
-      expect(m.selectedRun).toBe(h.runId); // `started` registered it — no index wait
+      const h = await r.handle;
+      expect(m.selectedRun).toBe(h.runId);
       await h.finished;
       tick(m);
-      expect(inspector.postCompletion).toHaveBeenCalledWith(h.runId, "completed", undefined);
+      expect(bridge.postRunCompletion).toHaveBeenCalledWith(h.runId, expect.any(Number), expect.any(Number), "completed");
     } finally {
       m.dispose();
       await fake.stop();

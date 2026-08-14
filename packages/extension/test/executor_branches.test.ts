@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 const FILES = [
   "runs_manager.ts",
   "run_registry.ts",
-  "run_inspector.ts",
+  "inspector_bridge.ts",
   "run_dir_reader.ts",
   "run_controls.ts",
   "status_bar.ts",

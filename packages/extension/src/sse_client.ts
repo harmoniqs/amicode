@@ -1,6 +1,5 @@
 import * as http from "node:http";
 import * as vscode from "vscode";
-import { getInspector } from "./run_inspector";
 import type { StatusBarManager } from "./status_bar";
 
 // ============================================================================
@@ -156,7 +155,6 @@ export class OpencodeEventClient implements vscode.Disposable {
       const tool = String(props.tool ?? "");
       if (tool.includes("amico")) {
         this.opts.channel.appendLine(`[sse] tool completed: ${tool}`);
-        getInspector()?.reveal();
       }
       return;
     }

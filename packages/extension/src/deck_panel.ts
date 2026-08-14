@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
+import { registerInspectorPoster } from "./inspector_bridge";
 import { tabIconPath, themeKindToScheme } from "./chat_panel";
 import { getBugReport } from "./bug_report";
 
@@ -27,6 +28,7 @@ export class DeckPanel {
   ) {
     this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.disposables.push(registerInspectorPoster((msg) => void this.panel.webview.postMessage(msg)));
     // Theme fan-out: extension → shell → EVERY pane's iframe (the shell owns
     // the per-pane relay; boot scheme rides the bootstrap config).
     vscode.window.onDidChangeActiveColorTheme(

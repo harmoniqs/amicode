@@ -395,7 +395,7 @@ window.addEventListener("message", (e) => {
   if (!d || d.source !== "amicode") return;
 
   // Lane 1 — extension → shell (webview-internal origin, never the app origin):
-  // theme fan-out and clipboard replies (routed to the asking pane by `tab`).
+  // theme fan-out, clipboard replies, inspector fan-out, dev-tools replies.
   if (e.origin !== boot.origin) {
     if (d.kind === "theme" && (d.colorScheme === "light" || d.colorScheme === "dark")) {
       boot.colorScheme = d.colorScheme;
@@ -406,6 +406,11 @@ window.addEventListener("message", (e) => {
     }
     if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status") && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
+    }
+    // #351: inspector fan-out — broadcast to every live pane (no tab routing;
+    // the app's Work Column tabs buffer per-run/per-device themselves).
+    if (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) {
+      for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
     }
     return;
   }
@@ -473,7 +478,7 @@ window.addEventListener("message", (e) => {
 
   // Everything else rides up to the extension, tagged with the asking pane so
   // replies (clipboard text) route back correctly.
-  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild") {
+  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "device:refresh") {
     vscode.postMessage({ ...d, tab: tabId });
   }
 });

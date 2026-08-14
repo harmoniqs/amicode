@@ -66,32 +66,6 @@ const targets = [
     logLevel: "info",
     loader: { ".svg": "text" },
   },
-  // bottom-panel Run Inspector webview bundle
-  {
-    entryPoints: ["src/inspector_webview.ts"],
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    outfile: "dist/inspector_webview.js",
-    sourcemap: true,
-    minify: false,
-    logLevel: "info",
-    loader: { ".svg": "text" },
-  },
-  // panel Device Inspector webview bundle (Spec A §3 — sibling to the Run Inspector)
-  {
-    entryPoints: ["src/device_inspector_webview.ts"],
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    outfile: "dist/device_inspector_webview.js",
-    sourcemap: true,
-    minify: false,
-    logLevel: "info",
-    loader: { ".svg": "text" },
-  },
   // Chat Deck webview bundle — pane-manager shell (src/deck/shell.ts + model)
   {
     entryPoints: ["src/deck/shell.ts"],
