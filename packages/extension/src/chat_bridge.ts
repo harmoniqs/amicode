@@ -594,15 +594,18 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   // update overrides (validate, write VS Code settings, restart server).
   if (msg.kind === "data-storage-query") {
     // Resolve the XDG defaults that opencode would use if no override is set.
+    // Display with ~/ prefix for readability (consistent with Developer Tools).
     const xdgData = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
     const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
     const defaultDbPath = path.join(xdgData, "opencode", "opencode.db");
     const defaultConfigDir = path.join(xdgConfig, "opencode");
+    const home = os.homedir();
+    const shorten = (p: string) => p.startsWith(home) ? "~" + p.slice(home.length) : p;
     io.postToWebview({
       source: "amicode",
       kind: "data-storage-defaults",
-      databasePath: defaultDbPath,
-      configDir: defaultConfigDir,
+      databasePath: shorten(defaultDbPath),
+      configDir: shorten(defaultConfigDir),
       tab: msg.tab,
     });
     return true;
@@ -610,10 +613,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
   if (msg.kind === "data-storage-update") {
     const databasePath = typeof (msg as { databasePath?: unknown }).databasePath === "string"
-      ? (msg as unknown as { databasePath: string }).databasePath.trim()
+      ? (msg as unknown as { databasePath: string }).databasePath.trim().replace(/^~/, os.homedir())
       : "";
     const configDir = typeof (msg as { configDir?: unknown }).configDir === "string"
-      ? (msg as unknown as { configDir: string }).configDir.trim()
+      ? (msg as unknown as { configDir: string }).configDir.trim().replace(/^~/, os.homedir())
       : "";
 
     const reply: {
