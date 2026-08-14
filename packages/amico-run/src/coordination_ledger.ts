@@ -3,6 +3,21 @@
 // This module is the single-writer extension of the run ledger.
 
 import { createHash } from "node:crypto";
+import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+
+function claimsFile(): string {
+  return process.env.AMICO_CLAIMS_FILE ?? path.join(homedir(), ".amico", "ledger", "claims.jsonl");
+}
+function appendClaimLine(claim: Claim): void {
+  const file = claimsFile();
+  mkdirSync(path.dirname(file), { recursive: true });
+  const line = JSON.stringify(claim) + "\n";
+  if (Buffer.byteLength(line) > 4096) throw new Error("claim line exceeds PIPE_BUF");
+  appendFileSync(file, line);
+}
+
 import { canonicalJson, sha256hex, workIdV1 } from "@amicode/schema";
 
 // ── work_id v1 canonicalization ──
@@ -83,6 +98,7 @@ class CoordinationService {
       issued_at: now,
     };
     this.claims.set(req.work_id, claim);
+    try { appendClaimLine(claim); } catch {}
     return { ok: true, claim };
   }
 
