@@ -547,6 +547,44 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           } catch (copyErr) {
             console.warn("[amicode/bridge] extension dist copy failed:", copyErr);
           }
+          // Sync content directories that resolve via __dirname or
+          // ctx.extensionPath at runtime. Without this, local changes to
+          // skills, scores, templates, exemplars, the plugin, julia pins,
+          // AGENTS.md, and tools are invisible until a fresh vsix install.
+          const contentDirs = [
+            "skills",
+            "scores",
+            "templates",
+            "exemplars",
+            "opencode-plugin",
+            "julia",
+            "tools",
+          ];
+          for (const dir of contentDirs) {
+            try {
+              const src = path.join(amicodePath, "packages", "extension", dir);
+              const dest = path.join(installedExt.extensionPath, dir);
+              if (fs.existsSync(src)) {
+                fs.cpSync(src, dest, { recursive: true });
+              }
+            } catch (syncErr) {
+              console.warn(`[amicode/bridge] ${dir}/ sync failed:`, syncErr);
+            }
+          }
+          // Sync top-level markdown files (AGENTS.md, DISTILLER.md, etc.)
+          const mdFiles = ["AGENTS.md", "DISTILLER.md", "CONTRACT.md"];
+          for (const f of mdFiles) {
+            try {
+              const src = path.join(amicodePath, "packages", "extension", f);
+              const dest = path.join(installedExt.extensionPath, f);
+              if (fs.existsSync(src)) {
+                fs.copyFileSync(src, dest);
+              }
+            } catch (syncErr) {
+              console.warn(`[amicode/bridge] ${f} sync failed:`, syncErr);
+            }
+          }
+          console.log("[amicode/bridge] synced content dirs + markdown to installed extension");
         }
 
         // ── Apply VS Code settings ──
