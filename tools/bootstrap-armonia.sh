@@ -8,7 +8,7 @@ set -euo pipefail
 #   ~/armonia/repos/packages/   Julia libraries (Piccolo.jl, …)
 #   ~/armonia/repos/demos/      demo galleries (atoms-demo, …)
 #   ~/armonia/repos/<flat>      apps, forks, projects (amicode, …)
-#   ~/armonia/data/{env,problems,runs,vaults}
+#   ~/armonia/data/{config,env/julia,problems,runs,vaults,library,fleet,ledger,devices,authoring,amicode}
 #
 # Usage:
 #   bootstrap-armonia.sh [--minimal|--standard|--full]
@@ -31,7 +31,7 @@ for arg in "$@"; do
   case "$arg" in
     --minimal|--standard|--full) TIER="${arg#--}" ;;
     -h|--help)
-      sed -n '2,22p' "$0"; exit 0 ;;
+      sed -n '2,24p' "$0"; exit 0 ;;
     *) echo "unknown arg: $arg" >&2; exit 64 ;;
   esac
 done
@@ -74,7 +74,7 @@ main() {
 
   echo
   echo "==> Done."
-  echo "    Layout:  ~/armonia/{repos/{packages,demos,...}, data/{env,problems,runs,vaults}}"
+  echo "    Layout:  ~/armonia/{repos/{packages,demos,...}, data/{config,env/julia,problems,...}}"
   echo "    Open it: open ~/armonia/  (or add ~/armonia to your VS Code workspace)"
 }
 
@@ -82,9 +82,19 @@ main() {
 make_layout() {
   echo "--- layout ---"
   mkdir -p "${ARMONIA}/repos/packages" "${ARMONIA}/repos/demos" \
-           "${ARMONIA}/data/env" "${ARMONIA}/data/problems" \
-           "${ARMONIA}/data/runs" "${ARMONIA}/data/vaults"
-  echo "  ~/armonia/{repos/{packages,demos}, data/{env,problems,runs,vaults}} ready"
+           "${ARMONIA}/data/config" \
+           "${ARMONIA}/data/env/julia" \
+           "${ARMONIA}/data/problems" \
+           "${ARMONIA}/data/runs" \
+           "${ARMONIA}/data/vaults" \
+           "${ARMONIA}/data/library" \
+           "${ARMONIA}/data/fleet" \
+           "${ARMONIA}/data/ledger" \
+           "${ARMONIA}/data/devices" \
+           "${ARMONIA}/data/authoring" \
+           "${ARMONIA}/data/amicode"
+  echo "  ~/armonia/data/{config,env/julia,problems,runs,vaults,library,fleet,ledger,devices,authoring,amicode} ready"
+  echo "  ~/armonia/repos/{packages,demos} ready"
 }
 
 # -------------------------------------------------------------------
@@ -92,13 +102,38 @@ make_layout() {
 # If ~/.amico/<name> already exists as a REAL directory with content, that is
 # the migration case — point the user at migrate-to-armonia.sh instead of
 # clobbering it.
+#
+# The full symlink farm (10 links):
+#   julia       → data/env/julia
+#   problems    → data/problems
+#   runs        → data/runs
+#   vaults      → data/vaults
+#   library     → data/library
+#   ops/fleet   → data/fleet       (ops/ is a real dir; fleet is the symlink inside)
+#   ledger      → data/ledger
+#   devices     → data/devices
+#   authoring   → data/authoring
+#   amicode     → data/amicode
 wire_amico_links() {
   echo "--- ~/.amico links ---"
-  local pairs=("julia:env" "problems:problems" "runs:runs" "vaults:vaults")
+  mkdir -p "$AMICO"
+
+  # Standard directory symlinks: "amico_name:armonia_target"
+  local pairs=(
+    "julia:env/julia"
+    "problems:problems"
+    "runs:runs"
+    "vaults:vaults"
+    "library:library"
+    "ledger:ledger"
+    "devices:devices"
+    "authoring:authoring"
+    "amicode:amicode"
+  )
+
   for pair in "${pairs[@]}"; do
     local name="${pair%%:*}" target="${pair##*:}"
     local src="${AMICO}/${name}" dest="${ARMONIA}/data/${target}"
-    mkdir -p "$AMICO"
     if [[ -L "$src" ]]; then
       echo "  (symlink) ~/.amico/${name}"
     elif [[ -d "$src" && -n "$(ls -A "$src" 2>/dev/null)" ]]; then
@@ -111,6 +146,22 @@ wire_amico_links() {
       echo "  linked ~/.amico/${name} → data/${target}"
     fi
   done
+
+  # Special case: ops/fleet (ops/ is a real dir, fleet is a symlink inside it)
+  mkdir -p "${AMICO}/ops"
+  local fleet_src="${AMICO}/ops/fleet"
+  local fleet_dest="${ARMONIA}/data/fleet"
+  if [[ -L "$fleet_src" ]]; then
+    echo "  (symlink) ~/.amico/ops/fleet"
+  elif [[ -d "$fleet_src" && -n "$(ls -A "$fleet_src" 2>/dev/null)" ]]; then
+    echo "  (real dir, not empty) ~/.amico/ops/fleet — run tools/migrate-to-armonia.sh first"
+  elif [[ -d "$fleet_src" ]]; then
+    rmdir "$fleet_src" && ln -s "$fleet_dest" "$fleet_src"
+    echo "  linked ~/.amico/ops/fleet → data/fleet"
+  else
+    ln -s "$fleet_dest" "$fleet_src"
+    echo "  linked ~/.amico/ops/fleet → data/fleet"
+  fi
 }
 
 # -------------------------------------------------------------------

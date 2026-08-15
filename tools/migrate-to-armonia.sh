@@ -10,7 +10,13 @@ set -euo pipefail
 #   ~/armonia/repos/packages/   Julia libraries (Piccolo.jl, …)
 #   ~/armonia/repos/demos/      demo galleries (atoms-demo, …)
 #   ~/armonia/repos/<flat>      apps, forks, research projects (amicode, passaggio, …)
-#   ~/armonia/data/{env,problems,runs,vaults}
+#   ~/armonia/data/{config,env/julia,problems,runs,vaults,library,fleet,ledger,devices,authoring,amicode}
+#
+# Also:
+#   - Copies config files to data/config/ (profile.json, cloud.json, pasqal.json,
+#     connections.json, lab.toml, mounts.toml) WITHOUT removing originals from ~/.amico/
+#   - Scans VS Code global settings.json for stale paths, prompts before rewriting
+#   - Final diagnostic warns about non-symlink entries under ~/.amico/ not in the known set
 
 ARMONIA="${HOME}/armonia"
 AMICO="${HOME}/.amico"
@@ -27,10 +33,34 @@ REPO_SOURCES=(
 # ---- discover data dirs to migrate ----
 # Each entry: "amico_dir  armonia_target"
 DATA_DIRS=(
-  "julia     env"
+  "julia     env/julia"
   "problems  problems"
   "runs      runs"
   "vaults    vaults"
+  "library   library"
+  "ledger    ledger"
+  "devices   devices"
+  "authoring authoring"
+  "amicode   amicode"
+)
+
+# Special: ops/fleet → data/fleet (ops/ is a real dir, fleet is the symlink inside)
+# Handled separately in migrate_data_special.
+
+# Config files that stay as real files at ~/.amico/ but are COPIED to data/config/.
+CONFIG_FILES=(
+  profile.json
+  cloud.json
+  pasqal.json
+  connections.json
+  lab.toml
+  mounts.toml
+)
+
+# Known entries under ~/.amico/ that are expected after migration (symlinks + config + ops/).
+KNOWN_ENTRIES=(
+  julia problems runs vaults library ledger devices authoring amicode ops
+  profile.json cloud.json pasqal.json connections.json lab.toml mounts.toml
 )
 
 # Known demo repo names → routed to repos/demos/. A source dir literally named
@@ -46,12 +76,25 @@ main() {
   echo
 
   mkdir -p "${ARMONIA}/repos/packages" "${ARMONIA}/repos/demos" \
-           "${ARMONIA}/data/env" "${ARMONIA}/data/problems" \
-           "${ARMONIA}/data/runs" "${ARMONIA}/data/vaults"
+           "${ARMONIA}/data/config" \
+           "${ARMONIA}/data/env/julia" \
+           "${ARMONIA}/data/problems" \
+           "${ARMONIA}/data/runs" \
+           "${ARMONIA}/data/vaults" \
+           "${ARMONIA}/data/library" \
+           "${ARMONIA}/data/fleet" \
+           "${ARMONIA}/data/ledger" \
+           "${ARMONIA}/data/devices" \
+           "${ARMONIA}/data/authoring" \
+           "${ARMONIA}/data/amicode"
 
   converge_buckets
   migrate_repos
   migrate_data
+  migrate_data_special
+  copy_config_files
+  scan_vscode_settings
+  diagnostic_pass
   cleanup_empty_parents
 
   echo
@@ -196,15 +239,194 @@ migrate_data() {
       continue
     fi
 
-    # source is a real dir, dest does not exist → move + symlink
+    # source is a real dir, dest does not exist or is empty → move + symlink
     if [[ -d "$src" && ! -L "$src" ]]; then
       echo "  mv  ~/.amico/${amico_name} → data/${armonia_name}"
-      mv "$src" "$dest"
+      # Move contents rather than dir (dest already exists from mkdir -p)
+      if [[ -n "$(ls -A "$src" 2>/dev/null)" ]]; then
+        cp -a "$src"/. "$dest"/
+      fi
+      rm -rf "$src"
       ln -s "$dest" "$src"
     else
-      echo "  (skip) ~/.amico/${amico_name} does not exist"
+      # source doesn't exist → create the symlink anyway
+      echo "  linked ~/.amico/${amico_name} → data/${armonia_name}"
+      ln -s "$dest" "$src"
     fi
   done
+}
+
+# -------------------------------------------------------------------
+# Special case: ~/.amico/ops/fleet → ~/armonia/data/fleet
+# ops/ is a real directory; fleet is a symlink inside it.
+migrate_data_special() {
+  echo "--- data (special: ops/fleet) ---"
+  mkdir -p "${AMICO}/ops"
+  local fleet_src="${AMICO}/ops/fleet"
+  local fleet_dest="${ARMONIA}/data/fleet"
+
+  if [[ -L "$fleet_src" ]]; then
+    echo "  (symlink) ~/.amico/ops/fleet"
+  elif [[ -d "$fleet_src" && -n "$(ls -A "$fleet_src" 2>/dev/null)" ]]; then
+    echo "  mv  ~/.amico/ops/fleet → data/fleet"
+    cp -a "$fleet_src"/. "$fleet_dest"/
+    rm -rf "$fleet_src"
+    ln -s "$fleet_dest" "$fleet_src"
+  elif [[ -d "$fleet_src" ]]; then
+    rmdir "$fleet_src"
+    ln -s "$fleet_dest" "$fleet_src"
+    echo "  linked ~/.amico/ops/fleet → data/fleet"
+  else
+    ln -s "$fleet_dest" "$fleet_src"
+    echo "  linked ~/.amico/ops/fleet → data/fleet"
+  fi
+}
+
+# -------------------------------------------------------------------
+# Copy config files to data/config/ WITHOUT removing originals.
+# Config files stay as real files at ~/.amico/ (atomic write pattern).
+copy_config_files() {
+  echo "--- config files → data/config/ ---"
+  for f in "${CONFIG_FILES[@]}"; do
+    local src="${AMICO}/${f}"
+    local dest="${ARMONIA}/data/config/${f}"
+    if [[ -f "$src" ]]; then
+      cp -p "$src" "$dest"
+      echo "  copied ~/.amico/${f} → data/config/${f}"
+    else
+      echo "  (skip) ~/.amico/${f} does not exist"
+    fi
+  done
+}
+
+# -------------------------------------------------------------------
+# Scan VS Code global settings.json for paths pointing at moved directories.
+# Print the stale→new mapping and prompt for confirmation before rewriting.
+scan_vscode_settings() {
+  echo "--- VS Code settings scan ---"
+
+  # Platform-dependent settings location
+  local settings_file
+  case "$(uname)" in
+    Darwin) settings_file="${HOME}/Library/Application Support/Code/User/settings.json" ;;
+    Linux)  settings_file="${HOME}/.config/Code/User/settings.json" ;;
+    *)      echo "  (skip) unsupported platform for settings scan"; return 0 ;;
+  esac
+
+  if [[ ! -f "$settings_file" ]]; then
+    echo "  (skip) settings.json not found at: $settings_file"
+    return 0
+  fi
+
+  # Source paths that have been moved into armonia. We scan for any amicode.*
+  # setting whose value contains these prefixes.
+  local -a stale_paths=()
+  local -a new_paths=()
+  local found_stale=0
+
+  # Check for stale harmoniqs source paths that are now under armonia/repos
+  for src_dir in "${REPO_SOURCES[@]}"; do
+    if grep -q "$src_dir" "$settings_file" 2>/dev/null; then
+      found_stale=1
+      break
+    fi
+  done
+
+  if [[ $found_stale -eq 0 ]]; then
+    echo "  (ok) no stale paths found in settings.json"
+    return 0
+  fi
+
+  echo ""
+  echo "  Found paths in VS Code settings that may be stale after migration:"
+  echo ""
+
+  # Build the mapping and show it
+  local -a sed_args=()
+  for src_dir in "${REPO_SOURCES[@]}"; do
+    if grep -q "$src_dir" "$settings_file" 2>/dev/null; then
+      # Map the old source dir to armonia/repos (the move destination)
+      local escaped_src escaped_dest
+      escaped_src=$(printf '%s\n' "$src_dir" | sed 's/[&/\]/\\&/g')
+      escaped_dest=$(printf '%s\n' "${ARMONIA}/repos" | sed 's/[&/\]/\\&/g')
+      sed_args+=(-e "s|${src_dir}|${ARMONIA}/repos|g")
+      # Show specific matches
+      grep -n "$src_dir" "$settings_file" | while IFS= read -r line; do
+        echo "    $line"
+      done
+      echo "    → would replace: $src_dir → ${ARMONIA}/repos"
+      echo ""
+    fi
+  done
+
+  if [[ ${#sed_args[@]} -eq 0 ]]; then
+    echo "  (ok) no actionable stale paths"
+    return 0
+  fi
+
+  # Prompt for confirmation
+  echo -n "  Rewrite these paths in settings.json? [y/N] "
+  if [[ -t 0 ]]; then
+    read -r answer
+  else
+    answer="n"
+    echo "(non-interactive, skipping)"
+  fi
+
+  if [[ "$answer" =~ ^[Yy] ]]; then
+    # Backup then rewrite
+    cp -p "$settings_file" "${settings_file}.bak.$(date +%s)"
+    sed -i '' "${sed_args[@]}" "$settings_file"
+    echo "  done (backup saved as settings.json.bak.*)"
+  else
+    echo "  skipped — you can manually update these paths later"
+  fi
+}
+
+# -------------------------------------------------------------------
+# Final diagnostic: warn about any non-symlink entries under ~/.amico/ that
+# are not in the known list. Informational only — never moves unknown entries.
+diagnostic_pass() {
+  echo "--- diagnostic ---"
+  local unknown_found=0
+
+  if [[ ! -d "$AMICO" ]]; then
+    echo "  (ok) ~/.amico/ does not exist"
+    return 0
+  fi
+
+  while IFS= read -r entry; do
+    [[ -z "$entry" ]] && continue
+    local name
+    name=$(basename "$entry")
+
+    # Check if this is a known entry
+    local known=0
+    for k in "${KNOWN_ENTRIES[@]}"; do
+      if [[ "$name" == "$k" ]]; then
+        known=1
+        break
+      fi
+    done
+
+    if [[ $known -eq 0 ]]; then
+      if [[ $unknown_found -eq 0 ]]; then
+        echo "  WARNING: unknown entries found under ~/.amico/ (not migrated):"
+        unknown_found=1
+      fi
+      if [[ -L "$entry" ]]; then
+        echo "    (symlink) $name → $(readlink "$entry")"
+      elif [[ -d "$entry" ]]; then
+        echo "    (dir)  $name"
+      else
+        echo "    (file) $name"
+      fi
+    fi
+  done < <(find "$AMICO" -mindepth 1 -maxdepth 1 2>/dev/null)
+
+  if [[ $unknown_found -eq 0 ]]; then
+    echo "  (ok) all entries under ~/.amico/ are known"
+  fi
 }
 
 # -------------------------------------------------------------------
