@@ -1,0 +1,71 @@
+# The quantum-control pack — the bundled default domain pack (WS1, #369).
+# One manifest per domain; the score is one FIELD of this pack. Paths are
+# relative to this pack dir. Scores still live at the extension root (scores/)
+# for WS1 byte-parity; WS2 folds them into this dir physically.
+#
+# tier "open" = ships in the open repo. An entitlement bundle id (e.g. the
+# -issimo codes) names the tier gating an entry; flowing a feature back to
+# open-source is a manifest edit plus a content move.
+schema_version = "1"
+id = "quantum-control"
+name = "Quantum Control"
+version = 1
+
+# Order matters: it reproduces today's effective repertoire order (the router
+# renders cards in the order handed to it).
+scores = [
+  "../../scores/overture",
+  "../../scores/pasqal-mis",
+  "../../scores/pulse-designer",
+]
+catalog_schema = "catalog-entry"
+eval_corpus = "prova://corpora/pulse-design"
+
+[onboarding]
+primary = "pulse-designer"
+head = "overture"
+
+# Declarative in WS1 (staging still flows through the existing skill-index
+# seam); WS2's runtime-instruction rewrite makes this the source of truth.
+[[skills]]
+path = "../../skills/transmon"
+tier = "open"
+
+[[skills]]
+path = "../../skills/atoms"
+tier = "open"
+
+[[skills]]
+path = "../../skills/bosonic"
+tier = "open"
+
+[[skills]]
+path = "../../skills/fluxonium"
+tier = "open"
+
+[[skills]]
+path = "../../skills/ions"
+tier = "open"
+
+[[skills]]
+path = "../../skills/pasqal"
+tier = "open"
+
+[templates.solve]
+path = "../../scores/pulse-designer/templates/solve.jl"
+tier = "open"
+
+# The corrector: the gate contract the runner (amico-run) enforces — the
+# vetted template's FILL-IN block and the composed exemplar index
+# (masked-baseline). Integrity is a LOAD-TIME property (#369): the loader
+# verifies these sha256s and that the paths resolve outside agent-editable
+# trees. Deeper independence (the separate-repo gate pattern the QEC pack
+# uses) lands with WS3.
+[corrector]
+name = "amico-run gate (vetted template + exemplar baseline)"
+paths = [
+  "../../scores/pulse-designer/templates/solve.jl",
+  "../../exemplars/index.json",
+]
+integrity = "corrector/integrity.toml"
+tier = "open"
