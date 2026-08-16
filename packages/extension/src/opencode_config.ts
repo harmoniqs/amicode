@@ -113,11 +113,13 @@ export function resolveJuliaProject(configValue: string): string {
  *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
  *      pass this explicitly once .vsix packaging of opencode-plugin/ is
  *      verified; the default keeps existing call sites working unchanged.
- *    - `agent: {"pulse-designer": …}` — the interview agent; its prompt defers
- *      to the "Pulse-designer interview" section of the injected AGENTS.md so
- *      the interview script lives in ONE place.
  *    - `default_agent: "plan"` — plan-first posture: new sessions open on
  *      opencode's built-in read-only plan agent, not straight into execution.
+ *      The picker stays plan/build ONLY (roles-not-modes, #368): the interview
+ *      content lives in the compiled AGENTS.md score section (visible to every
+ *      agent), and the pulse-designer agent entry is RETIRED (#389) — it was
+ *      a four-line prompt shell over the config-root permission block, doing
+ *      nothing build did not already do.
  *    - an `external_directory` grant for the Problem-workspaces root, so the
  *      AGENT's file tools can read back system/formulation/run/event TOML the
  *      plugin wrote (the plugin's own fs writes are host-process calls and need
@@ -433,15 +435,11 @@ export function buildOpencodeConfigContent(
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
     // into cfg.experimental alongside any user keys (see telemetryOpen above).
     ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
-    agent: {
-      "pulse-designer": {
-        description: "Guided quantum pulse design interview",
-        prompt:
-          "You are Amico's pulse-designer. Follow the 'Pulse-designer interview' section of " +
-          "the project instructions exactly: one question at a time, record each stage with " +
-          "the amicode_* tools, and use the solve workflow for launches.",
-      },
-    },
+    // No `agent` overrides: the picker is opencode's native plan/build only
+    // (#389 — the pulse-designer agent entry is retired; its prompt was a
+    // shell deferring to the compiled AGENTS.md interview section, and its
+    // permission grants were always the config-root block above). The
+    // interview runs from ANY agent via the injected instructions.
     permission: {
       bash: "allow",
       edit: "allow",

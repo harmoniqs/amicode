@@ -4,8 +4,8 @@ import { ScoreManifest, Stage } from "./schema";
 
 // Compile a score into the injected-prompt section — "data-defined, prompt-executed"
 // (spec §6). The heading is kept EXACTLY "## Pulse-designer interview" for score #0
-// compatibility: the pulse-designer agent prompt in buildOpencodeConfigContent refers
-// to that section by name. Pure and deterministic: same score → same string.
+// compatibility: spliced section lookups (and the hardcoded fallback section in
+// AGENTS.md) match on it by name. Pure and deterministic: same score → same string.
 
 const INTERVIEW_CONTRACT = [
   "**Interview contract:** ONE question at a time — never batch. Ask, wait, record,",

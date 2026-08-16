@@ -89,18 +89,13 @@ describe("buildOpencodeConfigContent", () => {
     );
     expect(withStage.skills).toEqual({ paths: ["/tmp/proj/skills"] }); // absolute per-session dir (guarded set), never a library root
   });
-  it("declares the pulse-designer agent whose prompt defers to the AGENTS.md interview", () => {
+  it("retires the pulse-designer agent shell — the picker is plan/build only (#389)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    const pd = cfg.agent["pulse-designer"];
-    expect(pd.description).toBe("Guided quantum pulse design interview");
-    expect(pd.prompt).toContain("one question at a time"); // the interview protocol
-    expect(pd.prompt).toContain("'Pulse-designer interview'"); // script lives in AGENTS.md, not here
-    expect(pd.prompt).toContain("amicode_"); // record stages via the tool pack
-    expect(pd.prompt).toContain("solve workflow"); // launches stay on the bash workflow
+    expect(cfg.agent ?? {}).toEqual({}); // no custom agents: the interview lives in AGENTS.md, agent-agnostic
   });
   it("pins default_agent to plan (plan-first posture for new sessions)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.default_agent).toBe("plan"); // read-only open; the user switches to pulse-designer/build to execute
+    expect(cfg.default_agent).toBe("plan"); // read-only open; the user switches to build to execute
   });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
@@ -242,15 +237,16 @@ describe.skipIf(!existsSync(OC_BIN))("opencode config injection + merge (1.17.3)
     // the user's global config SURVIVED the deep-merge:
     expect(cfg.model).toBe("anthropic/claude-sonnet-4-6"); // provider/model preserved (Q129 needs this)
     expect(cfg.permission.doom_loop).toBe("deny"); // user permission key preserved (#22)
-    // L0 pulse-designer registration survived resolution against the REAL binary.
+    // L0 registration survived resolution against the REAL binary.
     // NOTE: `debug config` IMPORTS listed plugins before printing JSON to stdout
     // (verified on 1.17.3) — so JSON.parse(out) succeeding above doubles as a
     // regression guard that amicode_tools.ts loads cleanly AND never writes to
     // stdout at module scope (its load line must stay on stderr).
     expect(cfg.plugin).toHaveLength(1);
     expect(cfg.plugin[0].endsWith(join("opencode-plugin", "amicode_tools.ts"))).toBe(true);
-    expect(cfg.agent["pulse-designer"].description).toBe("Guided quantum pulse design interview");
-    expect(cfg.agent["pulse-designer"].prompt).toContain("one question at a time");
+    // #389: the pulse-designer agent shell is retired; default is plan.
+    expect(cfg.agent?.["pulse-designer"]).toBeUndefined();
+    expect(cfg.default_agent).toBe("plan");
   });
 });
 
