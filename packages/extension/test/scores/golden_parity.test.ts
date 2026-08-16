@@ -22,6 +22,14 @@ const SCORES_ROOT = path.resolve(__dirname, "..", "..", "scores");
 const PACKS_ROOT = path.resolve(__dirname, "..", "..", "packs");
 const GOLDEN_DIR = path.resolve(__dirname, "golden");
 
+// The compiled output embeds ABSOLUTE template paths, which differ per
+// checkout. The goldens are therefore stored PATH-PORTABLE: the repo root is
+// normalized to <workspace> on both write and compare. The pack-vs-today
+// equivalence assertions below stay RAW (same machine, strict byte equality);
+// only the golden-file comparisons are normalized.
+const WORKSPACE_ROOT = path.resolve(__dirname, "..", "..", "..");
+const portable = (s: string) => s.split(WORKSPACE_ROOT).join("<workspace>");
+
 function today() {
   const load = loadRepertoire(SCORES_ROOT);
   const score0 = load.scores.find((s) => s.manifest.id === "pulse-designer");
@@ -44,8 +52,8 @@ function golden(name: string, content: string): string {
   const file = path.join(GOLDEN_DIR, name);
   if (process.env.GEN_GOLDEN) {
     fs.mkdirSync(GOLDEN_DIR, { recursive: true });
-    fs.writeFileSync(file, content);
-    return content;
+    fs.writeFileSync(file, portable(content));
+    return portable(content);
   }
   return fs.readFileSync(file, "utf8");
 }
@@ -74,15 +82,16 @@ describe("golden parity — the pack path is byte-identical to today's path", ()
 
   it("compileScore(pulse-designer) === today === golden", () => {
     const t = todaySurfaces();
-    expect(viaPack().primary && compileScore(viaPack().primary)).toBe(t.compileScore);
-    expect(t.compileScore).toBe(golden("compile-score.md", t.compileScore));
+    const p = viaPack();
+    expect(compileScore(p.primary)).toBe(t.compileScore); // raw byte equality
+    expect(portable(t.compileScore)).toBe(golden("compile-score.md", t.compileScore));
   });
 
   it("compileChainedScore(overture → pulse-designer) === today === golden", () => {
     const t = todaySurfaces();
     const { primary, head } = viaPack();
-    expect(compileChainedScore(head, primary)).toBe(t.compileChained);
-    expect(t.compileChained).toBe(golden("compile-chained.md", t.compileChained));
+    expect(compileChainedScore(head, primary)).toBe(t.compileChained); // raw byte equality
+    expect(portable(t.compileChained)).toBe(golden("compile-chained.md", t.compileChained));
   });
 
   it("buildRouterSection over the pack's visible scores === today === golden", () => {
@@ -91,6 +100,6 @@ describe("golden parity — the pack path is byte-identical to today's path", ()
     // the router renders the repertoire in the order it is handed; the pack's
     // manifest order must reproduce today's effective order exactly
     expect(buildRouterSection(pack.scores)).toBe(t.router);
-    expect(t.router).toBe(golden("router-section.md", t.router));
+    expect(portable(t.router)).toBe(golden("router-section.md", t.router));
   });
 });

@@ -31,7 +31,7 @@ gate's checks pass.
 6. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
-   - vetted template (absolute): `/Users/aaron/armonia/repos/amicode/packages/extension/scores/pulse-designer/templates/solve.jl`
+   - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
 7. **inspect**
 8. **hardware** (optional)
