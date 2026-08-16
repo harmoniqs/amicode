@@ -1,0 +1,14 @@
+# INVALID: corrector.integrity is missing (the threshold condition is a
+# load-time property — a corrector without an integrity manifest is malformed),
+# and onboarding has no primary score.
+schema_version = "1"
+id = "quantum-control"
+name = "Quantum Control"
+version = 1
+scores = ["scores/pulse-designer"]
+
+[onboarding]
+
+[corrector]
+name = "amico-run verification"
+paths = ["corrector/verify_jl.sh"]
