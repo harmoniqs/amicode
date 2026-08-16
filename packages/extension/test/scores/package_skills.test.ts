@@ -332,7 +332,7 @@ describe("buildSkillIndexSection", () => {
 });
 
 describe("stageOpencodeSkills", () => {
-  it("copies ONLY the resolved set into <root>/<name>/SKILL.md and returns the root", () => {
+  it("copies ONLY the resolved set into <root>/<name>/ and returns the root", () => {
     const src = fs.mkdtempSync(path.join(os.tmpdir(), "skillsrc-"));
     fs.mkdirSync(path.join(src, "atoms"));
     fs.writeFileSync(path.join(src, "atoms", "SKILL.md"), "---\nname: atoms\ndescription: d\nagents: [x]\n---\nbody\n");
@@ -347,6 +347,22 @@ describe("stageOpencodeSkills", () => {
     expect(fs.readFileSync(staged, "utf8")).toContain("agents: [x]");
     // nothing else staged — only the one resolved entry's dir exists
     expect(fs.readdirSync(stageRoot).sort()).toEqual(["atoms"]);
+  });
+  it("stages companion files so SKILL.md relative links resolve (amicode#393)", () => {
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), "skillsrc-"));
+    fs.mkdirSync(path.join(src, "tdd"));
+    fs.mkdirSync(path.join(src, "tdd", "references"));
+    fs.writeFileSync(path.join(src, "tdd", "SKILL.md"), "---\nname: tdd\ndescription: d\n---\nSee [tests.md](tests.md).\n");
+    fs.writeFileSync(path.join(src, "tdd", "tests.md"), "# tests\n");
+    fs.writeFileSync(path.join(src, "tdd", "references", "r.md"), "# r\n");
+    const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));
+    stageOpencodeSkills(stageRoot, [
+      { source: "library", name: "tdd", description: "d", path: path.join(src, "tdd", "SKILL.md") },
+    ]);
+    expect(fs.existsSync(path.join(stageRoot, "tdd", "tests.md"))).toBe(true);
+    expect(fs.existsSync(path.join(stageRoot, "tdd", "references", "r.md"))).toBe(true);
+    // still only the resolved set at the stage root
+    expect(fs.readdirSync(stageRoot)).toEqual(["tdd"]);
   });
   it("empty set → '' (no skills.paths registered)", () => {
     const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));

@@ -46,7 +46,7 @@ Before dispatching an experiment, acquire a lock to prevent concurrent writes to
 
 ### Acquiring a lock
 
-Create `~/.amico/ops/locks/devices/{name}.lock` with contents:
+Create `~/.amico/ops/locks/devices/{name}.lock` (mkdir the parent first: `mkdir -p ~/.amico/ops/locks/devices`) with contents:
 
 ```
 session_id: {uuid}
