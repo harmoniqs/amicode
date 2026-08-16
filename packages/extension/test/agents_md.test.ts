@@ -1,8 +1,22 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { compileScore, spliceIntoAgentsMd } from "../src/scores/compiler";
+import { buildRouterSection } from "../src/scores/router";
+import { loadPacks } from "../src/scores/packs";
 
 const AGENTS = readFileSync(join(__dirname, "..", "AGENTS.md"), "utf8");
+
+// WS2 (#370): pulse authoring content moved from the static template into the
+// quantum-control pack's score content — the assertions that pinned it on the
+// template now pin it on the COMPILED surface (what the agent actually reads).
+function compiledAgents(): string {
+  const load = loadPacks([join(__dirname, "..", "packs")]);
+  const pack = load.packs.find((p) => p.manifest.id === "quantum-control");
+  if (!pack) throw new Error(`pack missing: ${JSON.stringify(load.errors)}`);
+  const primary = pack.scores.find((s) => s.manifest.id === pack.manifest.onboarding.primary)!;
+  return spliceIntoAgentsMd(AGENTS, buildRouterSection(pack.scores), compileScore(primary));
+}
 
 describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   it("teaches the tiered resolve → author → --spec launch (spec C), not a single bundled template", () => {
@@ -28,16 +42,17 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
     expect(AGENTS).not.toMatch(/wait for (the )?solve to finish/i);
   });
   it("author-first: multi-qubit transmon ROUTES to the free-tier offer (unvetted, verified), never a flat decline", () => {
-    expect(AGENTS).toMatch(/single[- ]qubit/i);
-    expect(AGENTS).toMatch(/multi-qubit|two-qubit|2-qubit|CNOT/i);
+    const COMPILED = compiledAgents();
+    expect(COMPILED).toMatch(/single[- ]qubit/i);
+    expect(COMPILED).toMatch(/multi-qubit|two-qubit|2-qubit|CNOT/i);
     // spec-20260704-113005 §5: "no template → decline" is retired — it routes to
     // the free-tier offer with an honest unvetted caveat, not a stop.
-    expect(AGENTS).toMatch(/free[- ]tier/i);
-    expect(AGENTS).toMatch(/unvetted/i);
-    expect(AGENTS).not.toMatch(/say so plainly and stop/i);
+    expect(COMPILED).toMatch(/free[- ]tier/i);
+    expect(COMPILED).toMatch(/unvetted/i);
+    expect(COMPILED).not.toMatch(/say so plainly and stop/i);
     // the reconciliation: 2-qubit Rydberg CZ IS supported (composed exemplar / Piccolissimo path).
     // whitespace-tolerant: markdown reflow may wrap any gap in the phrase.
-    expect(AGENTS).toMatch(/Rydberg\s+CZ\s+is\s+the\s+exception/i);
+    expect(COMPILED).toMatch(/Rydberg\s+CZ\s+is\s+the\s+exception/i);
   });
   it("author-first PLATFORM intake: no coercion, records the actual platform, offers free-tier (spec §5)", () => {
     expect(AGENTS).toMatch(/as stated/i); // acknowledge the platform as itself
@@ -62,12 +77,13 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
     expect(AGENTS).not.toMatch(/load_pulse/);
   });
   it("teaches the Formulation → Piccolo authoring map (typed facets)", () => {
-    expect(AGENTS).toMatch(/Formulation authoring map/);
-    expect(AGENTS).toMatch(/MinimumTimeProblem/);
-    expect(AGENTS).toMatch(/SamplingProblem/);
-    expect(AGENTS).toMatch(/trajectory_type/);
-    expect(AGENTS).toMatch(/free_phase = true/);
-    expect(AGENTS).toMatch(/primary infidelity objective is derived/i);
+    const COMPILED = compiledAgents(); // WS2: the map arrives via the pack's score content
+    expect(COMPILED).toMatch(/Formulation authoring map/);
+    expect(COMPILED).toMatch(/MinimumTimeProblem/);
+    expect(COMPILED).toMatch(/SamplingProblem/);
+    expect(COMPILED).toMatch(/trajectory_type/);
+    expect(COMPILED).toMatch(/free_phase = true/);
+    expect(COMPILED).toMatch(/primary infidelity objective is derived/i);
   });
 });
 
