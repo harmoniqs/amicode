@@ -95,7 +95,7 @@ describe("spliceIntoAgentsMd", () => {
     expect(out).toContain("## Onset router");
     expect(out).toContain("COMPILED");
     expect(out).toContain("## Identity"); // section before, untouched
-    expect(out).toContain("## Scope & parameter guidance"); // section after, untouched
+    expect(out).toContain("## The run-dir contract your script MUST emit"); // section after, untouched (WS2: the maps moved into the pack's score content)
     // the hardcoded interview body is gone from the spliced output
     expect(out).not.toContain("Stages, in order:");
     // exactly one interview heading remains

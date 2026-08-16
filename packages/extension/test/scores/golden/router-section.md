@@ -9,7 +9,7 @@ native `question` tool, with these options:
 - `overture` — **Welcome — let's set up your studio**: A profile Amico remembers: who you are, your platforms, your control environment, your devices · 3–5 min, then straight into designing a pulse
 - `pasqal-mis` — **Solve a graph problem on a Pasqal atom array**: An optimized adiabatic waveform solving YOUR graph's MIS, validated on an emulator · 60–90 min · QPU-runnable
 
-**Start from a system** — run the `pulse-designer` score (the platform-first interview below).
+**Start from a system** — run the pack's `pulse-designer` onboarding interview (the platform-first interview below); it is one path among these, not the spine.
 
 **Bring your own problem** — the user has papers, notes, or a graph file;
 extract candidate entities, confirm each one before recording, then join the

@@ -26,7 +26,7 @@ export function buildRouterSection(visible: Score[]): string {
     lines.push("");
   }
   lines.push(
-    `**Start from a system** — run the \`${SYSTEM_FIRST_SCORE}\` score (the platform-first interview below).`,
+    `**Start from a system** — run the pack's \`${SYSTEM_FIRST_SCORE}\` onboarding interview (the platform-first interview below); it is one path among these, not the spine.`,
     "",
     "**Bring your own problem** — the user has papers, notes, or a graph file;",
     "extract candidate entities, confirm each one before recording, then join the",
