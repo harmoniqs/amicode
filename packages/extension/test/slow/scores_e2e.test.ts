@@ -117,7 +117,7 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())("scores runtime live e2e (cr
         const r = await fetch(`${s.url}/session/${ses.id}/message`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ agent: "pulse-designer", parts: [{ type: "text", text }] }),
+          body: JSON.stringify({ agent: "build", parts: [{ type: "text", text }] }),
         });
         expect(r.ok, `message POST ${r.status}`).toBe(true);
         const msg = (await r.json()) as {

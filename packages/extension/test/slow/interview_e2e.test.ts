@@ -121,10 +121,10 @@ afterAll(() => {
 });
 
 describe.skipIf(!existsSync(OC_BIN))("L0 registration against the real binary (creds-free)", () => {
-  it("A: pulse-designer appears in GET /agent", { timeout: 60_000 }, async () => {
+  it("A: the pulse-designer agent shell is retired — picker is plan/build", { timeout: 60_000 }, async () => {
     const s = await serve({ hermetic: true, port: 14310 });
     const agents = (await (await fetch(s.url + "/agent")).json()) as Array<{ name: string }>;
-    expect(agents.map((a) => a.name)).toContain("pulse-designer");
+    expect(agents.map((a) => a.name)).not.toContain("pulse-designer"); // retired (#389): picker is plan/build only
   });
 
   it.skipIf(!existsSync(PLUGIN))("B: amicode_tools plugin loads on session creation", { timeout: 60_000 }, async () => {
@@ -152,7 +152,7 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())("live interview turns (creds
       const r = await fetch(`${s.url}/session/${ses.id}/message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ agent: "pulse-designer", parts: [{ type: "text", text }] }),
+        body: JSON.stringify({ agent: "build", parts: [{ type: "text", text }] }),
       });
       expect(r.ok, `message POST ${r.status}`).toBe(true);
       const msg = (await r.json()) as {
@@ -208,7 +208,7 @@ describe.skipIf(!existsSync(OC_BIN) || !hasCreds())("live interview turns (creds
         const r = await fetch(`${s.url}/session/${ses.id}/message`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ agent: "pulse-designer", parts: [{ type: "text", text }] }),
+          body: JSON.stringify({ agent: "build", parts: [{ type: "text", text }] }),
         });
         expect(r.ok, `message POST ${r.status}`).toBe(true);
         const msg = (await r.json()) as {
