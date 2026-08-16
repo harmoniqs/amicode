@@ -61,7 +61,19 @@ function fixturePack(root: string, id: string, scoreId = "demo") {
     PACK_TOML.replace(/id = "fixture-pack"/, `id = "${id}"`).replace(/scores = \[.*\]/, `scores = ["scores/${scoreId}"]`),
   );
   fs.writeFileSync(path.join(dir, "gates", "verify.sh"), "#!/bin/sh\nexit 0\n");
+  // coverage keys match corrector.paths strings EXACTLY (relative to pack dir)
+  writeIntegrity(dir, { "gates/verify.sh": sha256(path.join(dir, "gates", "verify.sh")) });
   return dir;
+}
+
+import { createHash } from "node:crypto";
+const sha256 = (f: string) => createHash("sha256").update(fs.readFileSync(f)).digest("hex");
+
+/** Write a corrector integrity manifest (path → sha256, relative to pack dir). */
+function writeIntegrity(packDir: string, files: Record<string, string>) {
+  const lines = ["[files]"];
+  for (const [k, v] of Object.entries(files)) lines.push(`"${k}" = "${v}"`);
+  fs.writeFileSync(path.join(packDir, "gates", "integrity.toml"), lines.join("\n") + "\n");
 }
 
 describe("loadPacks", () => {
@@ -142,5 +154,61 @@ describe("loadPacks", () => {
     fs.mkdirSync(path.join(root, "not-a-pack"), { recursive: true });
     expect(loadPacks([root, "/nonexistent/packs"]).packs).toEqual([]);
     expect(loadPacks([root, "/nonexistent/packs"]).errors).toEqual([]);
+  });
+});
+
+describe("corrector integrity (load-time property, #369)", () => {
+  it("a corrector path whose sha256 mismatches the integrity manifest breaks the pack", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-"));
+    const dir = fixturePack(root, "tampered");
+    writeIntegrity(dir, { "../gates/verify.sh": "0".repeat(64) }); // wrong hash
+
+    const load = loadPacks([root]);
+    expect(load.packs).toHaveLength(0);
+    expect(load.errors[0].path).toContain("tampered");
+    expect(load.errors[0].errors.join()).toMatch(/sha256|integrity/i);
+  });
+
+  it("a corrector path with NO integrity coverage breaks the pack", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-"));
+    const dir = fixturePack(root, "uncovered");
+    writeIntegrity(dir, {}); // manifest exists but covers nothing
+
+    const load = loadPacks([root]);
+    expect(load.packs).toHaveLength(0);
+    expect(load.errors[0].errors.join()).toMatch(/not covered|integrity/i);
+  });
+
+  it("a missing integrity manifest file breaks the pack", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-"));
+    const dir = fixturePack(root, "no-integrity");
+    fs.rmSync(path.join(dir, "gates", "integrity.toml"));
+
+    const load = loadPacks([root]);
+    expect(load.packs).toHaveLength(0);
+  });
+
+  it("a corrector path inside an agent-editable tree is rejected", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-"));
+    fixturePack(root, "self-hosted");
+    const agentTree = fs.mkdtempSync(path.join(os.tmpdir(), "agent-"));
+    // re-point the corrector into the agent tree
+    const dir = path.join(root, "self-hosted");
+    fs.mkdirSync(agentTree, { recursive: true });
+    fs.copyFileSync(path.join(dir, "gates", "verify.sh"), path.join(agentTree, "verify.sh"));
+    const manifest = fs.readFileSync(path.join(dir, "PACK.toml"), "utf8")
+      .replace('paths = ["gates/verify.sh"]', `paths = ["${path.join(agentTree, "verify.sh")}"]`);
+    fs.writeFileSync(path.join(dir, "PACK.toml"), manifest);
+    writeIntegrity(dir, { [path.join(agentTree, "verify.sh")]: sha256(path.join(agentTree, "verify.sh")) });
+
+    const load = loadPacks([root], { agentTrees: [agentTree] });
+    expect(load.packs).toHaveLength(0);
+    expect(load.errors[0].errors.join()).toMatch(/agent-editable/i);
+  });
+
+  it("the bundled quantum-control pack passes its own integrity check", () => {
+    const load = loadPacks([path.resolve(__dirname, "..", "..", "packs")]);
+    expect(load.errors).toEqual([]);
+    expect(load.packs.map((p) => p.manifest.id)).toContain("quantum-control");
   });
 });

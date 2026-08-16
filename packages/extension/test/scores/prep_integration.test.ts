@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { prepareOpencodeProject, buildOpencodeConfigContent, DEFAULT_SCORES_ROOT } from "../../src/opencode_config";
 
 // Hermeticity: prepareOpencodeProject writes the plugin's manifest transport to
@@ -367,7 +368,15 @@ PACKDRIVEN-BODY-MARKER.
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-prep-"));
     const dir = path.join(root, "quantum-control");
     fs.mkdirSync(path.join(dir, "scores", "custom"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "gates"), { recursive: true });
     fs.writeFileSync(path.join(dir, "scores", "custom", "SCORE.md"), SCORE_MD);
+    fs.writeFileSync(path.join(dir, "gates", "verify.sh"), "#!/bin/sh\nexit 0\n");
+    // the load-time corrector contract (#369): coverage key = corrector.paths string
+    const gateSha = createHash("sha256").update(fs.readFileSync(path.join(dir, "gates", "verify.sh"))).digest("hex");
+    fs.writeFileSync(
+      path.join(dir, "gates", "integrity.toml"),
+      `[files]\n"gates/verify.sh" = "${gateSha}"\n`,
+    );
     fs.writeFileSync(
       path.join(dir, "PACK.toml"),
       [

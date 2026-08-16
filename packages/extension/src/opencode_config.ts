@@ -571,7 +571,17 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     // source — the score is one field of the pack. A missing or broken pack
     // root falls back to the legacy scores-dir scan, so boot behaves exactly
     // as today in every degenerate case (never brick).
-    const packsLoad = loadPacks([opts.packsRoot ?? DEFAULT_PACKS_ROOT]);
+    const packsLoad = loadPacks([opts.packsRoot ?? DEFAULT_PACKS_ROOT], {
+      // The agent-editable trees at boot (#369): a corrector path resolving
+      // under any of these breaks the pack — the gate must live where the
+      // agent cannot write. The staging dir hosts the agent's own project.
+      agentTrees: [
+        problemsRoot(),
+        SCRATCH_DIR,
+        path.join(os.homedir(), ".amico", "server", "opencode-project-staging"),
+        ...(vaultDir ? [path.join(vaultDir, "amicode")] : []),
+      ],
+    });
     const pack = packsLoad.packs.find((p) => p.manifest.id === DEFAULT_PACK_ID) ?? packsLoad.packs[0];
     if (!pack && packsLoad.errors.length > 0) {
       console.warn(`amicode: pack load failed, falling back to scores root: ${JSON.stringify(packsLoad.errors)}`);

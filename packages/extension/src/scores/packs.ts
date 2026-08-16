@@ -9,6 +9,7 @@
 // boot (the same isolation property loadRepertoire carries).
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { validateFile } from "@amicode/schema";
 import { parse as parseToml } from "smol-toml";
 import { parseScoreMd, Score } from "./loader";
@@ -42,10 +43,18 @@ export interface PacksLoad {
 
 const MANIFEST = "PACK.toml";
 
+export interface LoadPacksOptions {
+  /** Agent-editable trees (absolute). A corrector path resolving under any of
+   *  them breaks the pack: the threshold condition is a load-time property —
+   *  a gate living where the agent writes is below threshold by construction
+   *  (#369 Constraints). */
+  agentTrees?: string[];
+}
+
 /** Load every pack found under the ordered roots. Roots are scanned in
  *  precedence order (earlier root shadows later on id collision); each dir
  *  carrying a PACK.toml is a pack; everything else is skipped silently. */
-export function loadPacks(roots: string[]): PacksLoad {
+export function loadPacks(roots: string[], opts: LoadPacksOptions = {}): PacksLoad {
   const out: PacksLoad = { packs: [], errors: [] };
   const seen = new Set<string>();
   for (const root of roots) {
@@ -58,6 +67,7 @@ export function loadPacks(roots: string[]): PacksLoad {
       let manifest: PackManifest;
       try {
         manifest = parsePackManifest(manifestPath);
+        verifyCorrectorIntegrity(manifest, dir, opts.agentTrees ?? []);
       } catch (e) {
         out.errors.push({ path: manifestPath, errors: [String(e)] });
         continue;
@@ -96,4 +106,43 @@ export function parsePackManifest(manifestPath: string): PackManifest {
   const v = validateFile(manifestPath, "pack");
   if (!v.ok) throw new Error(`${manifestPath}: invalid pack manifest:\n  ${v.errors.join("\n  ")}`);
   return parseToml(fs.readFileSync(manifestPath, "utf8")) as unknown as PackManifest;
+}
+
+const sha256 = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+
+/** The load-time corrector checks (#369): every named gate artifact must be
+ *  covered by the integrity manifest, hash-match it, and resolve OUTSIDE the
+ *  agent-editable trees. Any violation throws (the caller reports the pack
+ *  broken whole) — a corrector is never silently trusted. */
+export function verifyCorrectorIntegrity(
+  manifest: PackManifest,
+  packDir: string,
+  agentTrees: string[],
+): void {
+  const { corrector } = manifest;
+  const integrityPath = path.resolve(packDir, corrector.integrity);
+  if (!fs.existsSync(integrityPath))
+    throw new Error(`corrector integrity manifest missing: ${integrityPath}`);
+  let covered: Record<string, string>;
+  try {
+    covered = (parseToml(fs.readFileSync(integrityPath, "utf8")) as { files?: Record<string, string> }).files ?? {};
+  } catch (e) {
+    throw new Error(`corrector integrity manifest unreadable (${integrityPath}): ${e}`);
+  }
+  for (const rel of corrector.paths) {
+    const abs = path.resolve(packDir, rel);
+    if (!covered[rel])
+      throw new Error(`corrector path not covered by integrity manifest: ${rel}`);
+    if (!fs.existsSync(abs))
+      throw new Error(`corrector path missing on disk: ${abs}`);
+    const actual = sha256(abs);
+    if (actual !== covered[rel])
+      throw new Error(`corrector sha256 mismatch for ${rel}: expected ${covered[rel]}, got ${actual}`);
+    for (const tree of agentTrees) {
+      if (abs === tree || abs.startsWith(tree + path.sep))
+        throw new Error(
+          `corrector path lives inside an agent-editable tree (below threshold by construction): ${abs} is under ${tree}`,
+        );
+    }
+  }
 }
