@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { parse as parseToml } from "smol-toml";
 import { loadRepertoire } from "./scores/loader";
+import { loadPacks } from "./scores/packs";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
@@ -140,6 +141,11 @@ const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "am
 /** Default scores repertoire root — same sibling-of-src-and-dist trick as the
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
 export const DEFAULT_SCORES_ROOT = path.resolve(__dirname, "..", "scores");
+// Pack-manifest repertoire (WS1 #369): the bundled packs root + the default
+// pack id. The pack's manifest is the source of the repertoire; the legacy
+// scores-dir scan remains the fallback until WS2 folds scores/ into the pack.
+export const DEFAULT_PACKS_ROOT = path.resolve(__dirname, "..", "packs");
+export const DEFAULT_PACK_ID = "quantum-control";
 
 /** Skill-index roots (spec-20260704-113005 §3). Package skills are co-located
  *  in the workspace package repos; library (public) skills ship IN this repo
@@ -465,8 +471,12 @@ export interface OpencodeConfigOptions {
   /** Julia project (--project) the agent should use; already resolved (see
    *  resolveJuliaProject). Substituted into AGENTS.md as {{JULIA_PROJECT}}. */
   juliaProject: string | undefined;
-  /** Scores repertoire root (SCORE.md manifests). Default: the bundled scores/. */
+  /** Scores repertoire root (SCORE.md manifests). Legacy fallback when no
+   *  pack loads (WS1 #369); default: the bundled scores/. */
   scoresRoot?: string;
+  /** Packs root (PACK.toml manifests, precedence order). Default: the
+   *  bundled packs/. The default pack's manifest drives the repertoire. */
+  packsRoot?: string;
   /** Dir holding the user's entitlements.toml (access-code stub). Default: ~/.amico/amicode. */
   entitlementsDir?: string;
   /** Roots to search for co-located package skills (spec §3). Default: DEFAULT_SKILL_ROOTS. */
@@ -557,12 +567,20 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
 
   let finalContent = filled;
   try {
-    const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
-    const load = loadRepertoire(scoresRoot);
+    // Pack-manifest repertoire (WS1 #369): the default pack's manifest is the
+    // source — the score is one field of the pack. A missing or broken pack
+    // root falls back to the legacy scores-dir scan, so boot behaves exactly
+    // as today in every degenerate case (never brick).
+    const packsLoad = loadPacks([opts.packsRoot ?? DEFAULT_PACKS_ROOT]);
+    const pack = packsLoad.packs.find((p) => p.manifest.id === DEFAULT_PACK_ID) ?? packsLoad.packs[0];
+    if (!pack && packsLoad.errors.length > 0) {
+      console.warn(`amicode: pack load failed, falling back to scores root: ${JSON.stringify(packsLoad.errors)}`);
+    }
     const ents = readLocalEntitlements(opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode"));
-    const visible = filterRepertoire(load.scores, ents.entitlements);
-    const score0 = visible.find((s) => s.manifest.id === "pulse-designer");
-    const overture = visible.find((s) => s.manifest.id === "overture");
+    const repertoire = pack ? pack.scores : loadRepertoire(opts.scoresRoot ?? DEFAULT_SCORES_ROOT).scores;
+    const visible = filterRepertoire(repertoire, ents.entitlements);
+    const score0 = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.primary ?? "pulse-designer"));
+    const overture = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.head ?? "overture"));
     // Routing predicate (spec §3): onboard (chain overture → pulse-designer)
     // ONLY when there is a vault to remember into AND the user has neither a
     // materialized profile NOR a completion marker (the second disjunct closes
