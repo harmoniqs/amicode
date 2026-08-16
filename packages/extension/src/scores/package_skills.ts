@@ -178,22 +178,26 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[]): SkillIndexEntry[
 }
 
 /** Stage the resolved (guarded) skill set as opencode-native skills for this
- *  session: copy each SKILL.md to `<stageRoot>/<name>/SKILL.md` so opencode's
+ *  session: copy each skill's WHOLE dir to `<stageRoot>/<name>/` so opencode's
  *  loader — pointed HERE via config `skills.paths` (an absolute dir) — registers
  *  exactly this set and no more. We must NOT point `skills.paths` at a library
  *  root: opencode scans it recursively for `**​/SKILL.md`, which would leak the
  *  ~50 process skills (the exact guard from spec §3). Folder name = frontmatter
  *  `name`, satisfying opencode's name-matches-folder rule; content is copied
  *  verbatim (opencode ignores the extra `agents:` field — verified 2026-07-04).
- *  Returns the stage root, or "" if nothing was staged (→ no `skills.paths`). */
+ *  Companions (tdd's craft docs, the physics references/ dirs) ride along:
+ *  SKILL.md relative links must resolve inside the stage copy, and the source
+ *  dir is already fully granted to the agent (skillGrants), so staging them
+ *  exposes nothing new (amicode#393). Still ONLY the resolved set — one dir
+ *  per entry, nothing else. Returns the stage root, or "" if nothing was
+ *  staged (→ no `skills.paths`). */
 export function stageOpencodeSkills(stageRoot: string, entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return "";
   let staged = 0;
   for (const e of entries) {
     try {
       const dir = path.join(stageRoot, e.name);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.copyFileSync(e.path, path.join(dir, "SKILL.md"));
+      fs.cpSync(path.dirname(e.path), dir, { recursive: true });
       staged++;
     } catch (err) {
       console.warn(`amicode: could not stage skill ${e.name} for opencode: ${err}`); // never dead-end (spec §9)

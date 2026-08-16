@@ -21,7 +21,7 @@ Use this skill when reading channel discussions, sending updates to Harmoniqs Sl
 2. **Hyperlinks in Slack mrkdwn (MANDATORY)**:
    - Standard markdown links `[text](url)` **DO NOT WORK** in Slack!
    - **Always use Slack mrkdwn link format:** `<URL|display text>`
-     - Example: `<https://github.com/harmoniqs/amico-plugin/pull/49|PR #49>`
+     - Example: `<https://github.com/harmoniqs/amicode/pull/391|PR #391>`
      - Example: `<https://news.fnal.gov/...|Fermilab press release>`
    - For raw URLs without labels: `<https://example.com>`
 
