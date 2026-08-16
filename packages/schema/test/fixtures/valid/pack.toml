@@ -1,0 +1,32 @@
+# The quantum-control pack manifest — the bundled default pack (WS1, #369).
+# Paths are relative to the pack dir. Tier "open" = ships in the open repo;
+# an entitlement bundle id names the -issimo tier gating an entry.
+schema_version = "1"
+id = "quantum-control"
+name = "Quantum Control"
+version = 1
+scores = ["scores/overture", "scores/pulse-designer", "scores/pasqal-mis"]
+catalog_schema = "catalog-entry"
+eval_corpus = "prova://corpora/pulse-design"
+
+[onboarding]
+primary = "pulse-designer"
+head = "overture"
+
+[[skills]]
+path = "skills/transmon"
+tier = "open"
+
+[[skills]]
+path = "skills/atoms"
+tier = "open"
+
+[templates.solve]
+path = "templates/solve_template.jl"
+tier = "open"
+
+[corrector]
+name = "amico-run verification"
+paths = ["corrector/verify_jl.sh", "corrector/verify_spec.sh"]
+integrity = "corrector/integrity.toml"
+tier = "open"

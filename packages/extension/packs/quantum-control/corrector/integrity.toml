@@ -1,0 +1,7 @@
+# sha256 integrity manifest for the quantum-control pack's corrector paths
+# (relative to the pack dir). Verified at load time (WS1 #369): a mismatch
+# makes the pack BROKEN — reported, never silently trusted.
+# Regenerate: shasum -a 256 <path> from packages/extension/
+[files]
+"../../scores/pulse-designer/templates/solve.jl" = "b285f55f445bdfec7533cc8558b72cd262f3a2a84aa5d48147d58617c867ace8"
+"../../exemplars/index.json" = "0d187afd4d1efc0109b63740859eb8e3dc5c2eceafa163e3d63c487d3576d2af"

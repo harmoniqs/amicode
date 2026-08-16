@@ -61,6 +61,9 @@ jobs:
           # the non-filename schemas (AC5: all five) via --schema
           $V packages/schema/test/fixtures/valid/solvespec.toml --schema solvespec
           $V packages/schema/test/fixtures/valid/catalog-entry.toml --schema catalog-entry
+          # the shipped pack manifest (WS1 #369) — kinded by filename (PACK.toml),
+          # so this also exercises the kindForFilename mapping.
+          $V packages/extension/packs/quantum-control/PACK.toml
           # ledger-record (Plan 3 / L1 Task 9): oneOf-on-`type`, JSON on disk (JSONL
           # lines in the real ~/.amico/ledger/runs.jsonl) — validateFile parses by
           # .json extension, not TOML.

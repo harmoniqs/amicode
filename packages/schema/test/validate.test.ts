@@ -35,6 +35,8 @@ describe("schema set + exports", () => {
         "run", "result", "lab", "solvespec", "catalog-entry", "finished", "problemspec", "ledger-record",
         // the deliberation artifacts (spec-20260728)
         "spec", "plan",
+        // the domain-pack manifest (autoresearch studio WS1, #369)
+        "pack",
       ]),
     );
   });
@@ -49,6 +51,9 @@ describe("schema set + exports", () => {
       // schema_version enum, so unlike problemspec/ledger-record they join the map.
       spec: ["1"],
       plan: ["1"],
+      // the domain-pack manifest (WS1, #369): carries a top-level
+      // schema_version enum, so it joins the map.
+      pack: ["1"],
     });
   });
   it("an unknown kind is a clean error, not a throw", () => {

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { prepareOpencodeProject, buildOpencodeConfigContent, DEFAULT_SCORES_ROOT } from "../../src/opencode_config";
 
 // Hermeticity: prepareOpencodeProject writes the plugin's manifest transport to
@@ -110,11 +111,17 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(guardCopy.manifest.id).toBe("pulse-designer");
   });
 
-  it("FALLBACK: a corrupt scores root leaves the substituted AGENTS.md unchanged (never brick the boot)", () => {
+  it("FALLBACK: a corrupt repertoire source (pack AND scores root) leaves the substituted AGENTS.md unchanged (never brick the boot)", () => {
     const badRoot = fs.mkdtempSync(path.join(os.tmpdir(), "bad-scores-"));
     fs.mkdirSync(path.join(badRoot, "pulse-designer"));
     fs.writeFileSync(path.join(badRoot, "pulse-designer", "SCORE.md"), "---\ntype: junk\n---\n");
-    const proj = prep({ scoresRoot: badRoot });
+    // WS1 #369: the pack is the repertoire source — breaking only the legacy
+    // scores root must NOT degrade boot (the pack still compiles). The
+    // never-brick fallback holds when BOTH sources are broken.
+    const packOnly = prep({ scoresRoot: badRoot });
+    expect(fs.readFileSync(packOnly.agentsPath, "utf8")).toContain("## Onset router"); // pack carried the boot
+
+    const proj = prep({ scoresRoot: badRoot, packsRoot: "/nonexistent/packs" });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("Stages, in order:"); // hardcoded interview kept as fallback
     expect(agents).not.toContain("## Onset router");
@@ -122,7 +129,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
   });
 
   it("missing scores root behaves like fallback (no throw)", () => {
-    const proj = prep({ scoresRoot: "/nonexistent/scores" });
+    const proj = prep({ scoresRoot: "/nonexistent/scores", packsRoot: "/nonexistent/packs" });
     expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("Stages, in order:");
   });
 
@@ -292,6 +299,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     fs.copyFileSync(path.join(DEFAULT_SCORES_ROOT, "entitlements.toml"), path.join(badRoot, "entitlements.toml"));
     const proj = prep({
       scoresRoot: badRoot,
+      packsRoot: "/nonexistent/packs", // WS1: break the pack source too — independence is from repertoire failure
       entitlementsDir: entitledDir(),
       skillRoots: [mkPkgSkillRoot()],
       skillLibraryRoots: [mkLibRoot()],
@@ -330,5 +338,81 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     const skills = readSkills();
     expect(skills.every((e) => e.source === "package")).toBe(true); // no platform entries
     expect(pkgNames(skills)).toContain("Piccolissimo");
+  });
+});
+
+// ── pack-manifest boot selection (WS1 #369) ──
+// The repertoire loads through the default pack's manifest: a fixture pack
+// root (via packsRoot) with a distinct onboarding primary DRIVES the compiled
+// AGENTS.md and the manifest transport — no loader code per pack.
+describe("prepareOpencodeProject — pack-manifest repertoire (WS1)", () => {
+  const SCORE_MD = `---
+type: score
+schema_version: 1
+id: custom-interview
+version: 1
+derived_from: null
+name: "Custom"
+outcome: "A custom outcome"
+audience: [testers]
+entitlements: []
+stages:
+  - id: only
+    questions:
+      - {id: q1, prompt: "Pick?", choices: [a, b], default: a}
+---
+
+PACKDRIVEN-BODY-MARKER.
+`;
+  function fixturePacksRoot() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "packs-prep-"));
+    const dir = path.join(root, "quantum-control");
+    fs.mkdirSync(path.join(dir, "scores", "custom"), { recursive: true });
+    fs.mkdirSync(path.join(dir, "gates"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "scores", "custom", "SCORE.md"), SCORE_MD);
+    fs.writeFileSync(path.join(dir, "gates", "verify.sh"), "#!/bin/sh\nexit 0\n");
+    // the load-time corrector contract (#369): coverage key = corrector.paths string
+    const gateSha = createHash("sha256").update(fs.readFileSync(path.join(dir, "gates", "verify.sh"))).digest("hex");
+    fs.writeFileSync(
+      path.join(dir, "gates", "integrity.toml"),
+      `[files]\n"gates/verify.sh" = "${gateSha}"\n`,
+    );
+    fs.writeFileSync(
+      path.join(dir, "PACK.toml"),
+      [
+        'schema_version = "1"',
+        'id = "quantum-control"',
+        'name = "Quantum Control"',
+        "version = 1",
+        'scores = ["scores/custom"]',
+        "[onboarding]",
+        'primary = "custom-interview"',
+        "[corrector]",
+        'name = "fixture gate"',
+        'paths = ["gates/verify.sh"]',
+        'integrity = "gates/integrity.toml"',
+      ].join("\n") + "\n",
+    );
+    return root;
+  }
+
+  it("the default pack's manifest drives the compiled interview + manifest transport", () => {
+    const packsRoot = fixturePacksRoot();
+    const proj = prep({ packsRoot });
+    const md = fs.readFileSync(proj.agentsPath, "utf8");
+    expect(md).toContain("**only**");
+    expect(md).toContain("PACKDRIVEN-BODY-MARKER.");
+    expect(md).toContain("custom-interview"); // compiled-from attribution line
+    const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
+    expect(manifest.manifest.id).toBe("custom-interview");
+    expect(manifest.score_dir).toBe(path.join(packsRoot, "quantum-control", "scores", "custom"));
+  });
+
+  it("missing packs root falls back to the bundled scores repertoire exactly as today", () => {
+    const proj = prep({ packsRoot: "/nonexistent/packs" });
+    const md = fs.readFileSync(proj.agentsPath, "utf8");
+    // today's pulse-designer compilation, unchanged (AC4)
+    expect(md).toContain("## Pulse-designer interview");
+    expect(md).toContain("> Compiled from score `pulse-designer`");
   });
 });

@@ -1,0 +1,101 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/pack/v1",
+  "title": "amico pack manifest",
+  "description": "The unit of generality for a domain pack (autoresearch studio WS1, #369): one manifest per domain bundling skills, a template registry, the corrector with its integrity manifest, the catalog schema, the onboarding score, and an eval corpus pointer. Owned by the schema package; one validator consumed by the extension, the CLI, and CI. A score is one FIELD of a pack, not a peer of it. The per-entry tier (open vs an entitlement bundle id) encodes the open-core boundary: flowing a feature back to open-source is a manifest edit plus a content move, not a migration. Pack ids are deliberately NOT an enum — the taxonomy is manifest data, revisable without a schema version bump.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "id", "name", "scores", "onboarding", "corrector"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "description": "pack id, kebab-case, free-form (quantum-control, qec, calibration, ...)"
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "pack content version — bump when content moves between tiers"
+    },
+    "scores": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "score dirs this pack contributes, relative to the pack dir"
+    },
+    "onboarding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary"],
+      "properties": {
+        "primary": {
+          "type": "string",
+          "minLength": 1,
+          "description": "score id compiled as the spine (score #0)"
+        },
+        "head": {
+          "type": "string",
+          "minLength": 1,
+          "description": "optional chain head (e.g. overture): when present and routing says onboard, head ++ primary compile as ONE chained section"
+        }
+      }
+    },
+    "skills": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/tieredPath" },
+      "description": "skill dirs this pack contributes, relative to the pack dir"
+    },
+    "templates": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/tieredPath" },
+      "description": "template registry: name → tiered path (e.g. solve → the vetted template)"
+    },
+    "corrector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "paths", "integrity"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 },
+          "description": "the gate artifacts — must resolve OUTSIDE agent-editable trees (a load-time property, not a convention)"
+        },
+        "integrity": {
+          "type": "string",
+          "minLength": 1,
+          "description": "path to the sha256 integrity manifest covering every named path, relative to the pack dir"
+        },
+        "tier": { "$ref": "#/$defs/tier" }
+      }
+    },
+    "catalog_schema": {
+      "type": "string",
+      "minLength": 1,
+      "description": "registered schema kind for this pack's catalog entries (e.g. catalog-entry)"
+    },
+    "eval_corpus": {
+      "type": "string",
+      "minLength": 1,
+      "description": "pointer to the pack's eval corpus (e.g. a Prova corpus ref)"
+    }
+  },
+  "$defs": {
+    "tier": {
+      "anyOf": [{ "const": "open" }, { "type": "string", "pattern": "^[a-z0-9-]+$" }],
+      "description": "open (default when absent), or the entitlement bundle id gating this entry"
+    },
+    "tieredPath": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "tier": { "$ref": "#/$defs/tier" }
+      }
+    }
+  }
+}
