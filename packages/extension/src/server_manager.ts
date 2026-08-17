@@ -64,9 +64,12 @@ export class ServerManager {
     // The opencode McpBrowser now respects BROWSER first (fallback to xdg-open),
     // but only if the server inherits it. Explicitly log what we propagate so a
     // "browser doesn't launch" failure is diagnosable from the output channel.
+    // Google token path (like Claude): paste a token into the connections panel
+    // as with Slack/GitHub — no browser needed when a token is available.
     const browserEnv = process.env.BROWSER ? `BROWSER=${process.env.BROWSER}` : "BROWSER=(unset)"
     const ipcEnv = process.env.VSCODE_IPC_HOOK_CLI ? "VSCODE_IPC_HOOK_CLI=present" : "VSCODE_IPC_HOOK_CLI=(unset)"
     this.opts.channel.appendLine(`[server] browser env: ${browserEnv}, ${ipcEnv}`)
+    this.opts.channel.appendLine(`[server] google connector supports token paste (like Claude) + browser OAuth`)
     const child = cp.spawn(this.opts.binary, ["serve", "--port", String(port)], {
       cwd: this.opts.cwd,
       env: { ...process.env, ...this.opts.env },
