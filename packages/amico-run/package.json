@@ -9,8 +9,12 @@
     "amico-run": "./launcher/amico-run",
     "amico": "./launcher/amico",
     "amico-pasqal": "./launcher/amico-pasqal",
-    "amico-git-credential": "./launcher/amico-git-credential",
-    "gh": "./launcher/gh"
+    "amico-git-credential": "./launcher/amico-git-credential"
+  },
+  "amicode": {
+    "shadowBins": {
+      "gh": "./launcher/gh"
+    }
   },
   "engines": {
     "node": ">=20"

@@ -47,16 +47,28 @@ const UNKNOWN_EXECUTOR = /unknown --executor/;
 
 /** Declared bins from the CLI package's `bin` map → staged file layout.
  *  Staging convention (extension esbuild.config.mjs): bin key K ships as
- *  bin/launcher/<basename> + bin/dist/<basename>.js. */
+ *  bin/launcher/<basename> + bin/dist/<basename>.js.
+ *
+ *  #399 SHADOW bins (the package's `amicode.shadowBins` map, e.g. `gh`) are
+ *  appended with the same shape: they are staged for the agent-session PATH
+ *  but deliberately kept OUT of the npm `bin` map (a bin-map entry would link
+ *  `gh` into node_modules/.bin and shadow the developer's own gh for every
+ *  pnpm script). They are gated exactly like declared bins — staged, probed,
+ *  and fail-closed if the probe is missing. */
 export function declaredBins(binMapPath = DEFAULT_BIN_MAP) {
   const pkg = JSON.parse(readFileSync(binMapPath, "utf8"));
   const bin = pkg.bin;
   if (!bin || typeof bin !== "object" || Object.keys(bin).length === 0)
     throw new Error(`${binMapPath}: no \`bin\` map — nothing to gate is a failure, not a pass`);
-  return Object.entries(bin).map(([name, launcherPath]) => {
+  const fromMap = Object.entries(bin).map(([name, launcherPath]) => {
     const base = basename(String(launcherPath));
     return { name, launcher: join("launcher", base), dist: join("dist", `${base}.js`) };
   });
+  const shadow = Object.entries(pkg.amicode?.shadowBins ?? {}).map(([name, launcherPath]) => {
+    const base = basename(String(launcherPath));
+    return { name, launcher: join("launcher", name), dist: join("dist", `${base}.js`) };
+  });
+  return [...fromMap, ...shadow];
 }
 
 /** Per-bin behavioral probes. Each entry: a list of { check, args(missingScript),

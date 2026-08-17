@@ -4,7 +4,7 @@
 // obvious fakes (ghs_test_…), and one assertion class explicitly checks that
 // no error message can carry a real one.
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseGithubAppConfig,
@@ -181,6 +181,32 @@ describe("resolveRealGh", () => {
     writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n"); // would loop if picked
     writeFileSync(join(other, "gh"), "#!/bin/sh\nexit 0\n");
     expect(resolveRealGh(`${own}:${other}`, own)).toBe(join(other, "gh"));
+  });
+  it("skips a SYMLINK alias of the shim planted in another PATH dir (the .bin trap)", () => {
+    // The CI failure mode: a PATH dir ahead of the real gh contains a gh that
+    // is a symlink TO our launcher. Realpath comparison must see through it.
+    const root = tmpRoot();
+    const own = join(root, "launcher");
+    const alias = join(root, "node_modules", ".bin");
+    const other = join(root, "real-bin");
+    mkdirSync(own, { recursive: true });
+    mkdirSync(alias, { recursive: true });
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n");
+    symlinkSync(join(own, "gh"), join(alias, "gh"));
+    writeFileSync(join(other, "gh"), "#!/bin/sh\nexit 0\n");
+    expect(resolveRealGh(`${alias}:${other}`, own)).toBe(join(other, "gh"));
+  });
+  it("a DIFFERENT gh in an earlier dir still wins (the guard must not over-skip)", () => {
+    const root = tmpRoot();
+    const own = join(root, "launcher");
+    const other = join(root, "real-bin");
+    mkdirSync(own, { recursive: true });
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n");
+    const realGh = join(other, "gh");
+    writeFileSync(realGh, "#!/bin/sh\nexit 0\n");
+    expect(resolveRealGh(`${other}:${own}`, own)).toBe(realGh);
   });
   it("no gh anywhere → undefined", () => {
     const root = tmpRoot();

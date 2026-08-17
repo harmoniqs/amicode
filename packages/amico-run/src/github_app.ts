@@ -223,14 +223,18 @@ export async function ensureInstallationToken(deps: EnsureDeps = {}): Promise<In
   return token;
 }
 
-/** Scan PATH for the REAL gh, skipping the directory this bundle's launcher
- *  lives in (a bare exec would recurse into the shim itself). Pure. */
+/** Scan PATH for the REAL gh, skipping every alias of THIS shim — a bare exec
+ *  would recurse. The skip is by realpath of the candidate gh FILE against the
+ *  realpath of our own launcher script, so it covers both the launcher dir
+ *  itself AND symlink aliases planted in other PATH dirs (node_modules/.bin
+ *  style). Pure; nonexistent candidates fall back to their own path. */
 export function resolveRealGh(pathValue: string | undefined, ownLauncherDir: string | undefined): string | undefined {
-  const skip = ownLauncherDir ? realPathOrSelf(ownLauncherDir) : undefined;
+  const own = ownLauncherDir ? realPathOrSelf(join(ownLauncherDir, "gh")) : undefined;
   for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
-    if (skip && realPathOrSelf(dir) === skip) continue;
     const candidate = join(dir, "gh");
-    if (existsSync(candidate)) return candidate;
+    if (!existsSync(candidate)) continue;
+    if (own && realPathOrSelf(candidate) === own) continue;
+    return candidate;
   }
   return undefined;
 }
