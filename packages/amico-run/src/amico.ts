@@ -22,6 +22,7 @@ function usage(): string {
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
+    ["doctor", "validate the studio binding — paths, mounts, drift (#402)"],
     [
       "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
       "Pasqal device path — list/select + gated submit (#160)",
@@ -69,6 +70,15 @@ export async function main(argv: string[]): Promise<number> {
       return launch(["sandbox", ...rest]);
     case "estimate":
       return launch(["estimate", ...rest]);
+
+    case "doctor": {
+      // The studio binding's health check (#402): the manifest's world —
+      // paths exist, mounts readable, exactly one rw personal, drift flagged.
+      const { doctorReport } = await import("./doctor.js");
+      const report = await doctorReport();
+      console.log(report.rendered);
+      return report.exit;
+    }
 
     // ── the Pasqal device path (#160): device selection + gated submission,
     // reading status ONLY from the connections cache and submitting through the
