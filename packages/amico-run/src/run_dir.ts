@@ -1,6 +1,5 @@
 import { existsSync, writeFileSync, renameSync, appendFileSync, symlinkSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { homedir } from "node:os";
 import { join, dirname, basename, resolve } from "node:path";
 import { studioPathsOrLegacy } from "@amicode/schema";
 import { ConfigError, type RunStatus } from "./types.js";

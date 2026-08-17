@@ -18,7 +18,6 @@
 // cross-process guarantee is exercised by a real-subprocess concurrency test at the
 // `ledger` verb layer (ledger_verb.test.ts), where the built CLI exists.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { validate, studioPathsOrLegacy } from "@amicode/schema";
 
