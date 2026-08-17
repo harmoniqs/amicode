@@ -17,6 +17,7 @@ import {
   type LibraryRootSpec,
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
+import { studioPathsOrLegacy } from "@amicode/schema";
 import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
@@ -134,7 +135,10 @@ const SCRATCH_DIR = "/tmp/amicode-work"; // matches AGENTS.md step 2/3
 function problemsRoot(): string {
   const env = process.env.AMICODE_PROBLEMS_DIR;
   if (env && env.trim() !== "") return env;
-  return path.join(os.homedir(), ".amico", "problems");
+  // The #402 ladder: studio manifest root → legacy ~/.amico/problems. Absent
+  // manifest = exactly today's path (parity); malformed manifest = warn +
+  // legacy (never brick — studioPathsOrLegacy degrades silently by design).
+  return studioPathsOrLegacy().problems;
 }
 
 /** Default location of the amicode_* opencode plugin: a sibling directory of
