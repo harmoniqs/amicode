@@ -11,7 +11,7 @@
 
 Your vaults, your fleet, your devices, your pulses — composed by conversation.
 
-<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · chat harness vendored from [opencode](https://github.com/sst/opencode) · model-agnostic — Kimi K3, Muse Spark, open models</sub>
+<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · open [opencode](https://github.com/sst/opencode) chat harness · telaio research harness by subscription (arriving) · model-agnostic — Kimi K3, Muse Spark, open models</sub>
 
 </div>
 
@@ -26,6 +26,15 @@ Leveraging **Kimi K3** (Moonshot AI), **Muse Spark** (Meta), and other open mode
 We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, **hardware in the loop via Strumento.jl / QICK** — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science. Plenty will sell you a closed “superintelligence” that never touches the hardware. We ship open, down to the RFSoC.
 
 **This repo is the whole product:** the VS Code extension (`packages/extension`), the `amico` / `amico-run` CLI (`packages/amico-run`), and the public skill library (`packages/extension/skills/`) — skills are product content, versioned with the extension and bundled into every vsix. Additional skills load from your own vault mounts (never shipped), and package skills ride their Julia repos behind entitlements.
+
+## Harnesses
+
+The studio runs on **switchable chat harnesses** — the loop is the product, the harness is where it runs:
+
+- **opencode (open)** — the default. Plan-first: sessions open read-only and execution is an explicit switch. Full transcript, the guided interview rail. Maintained as a first-class harness, not a stopgap.
+- **telaio (subscription)** — the autonomous-research harness: the campaign rail, role dispatch, durable unattended loops. Arriving; the interactive role loop on the open harness is its preview.
+
+The studio — vaults, runs, catalogs, skills, domain packs — is harness-agnostic and stays yours on either. The studio and the open harness are open source; telaio and the `-issimo` performance tiers are how we keep building them.
 
 ## The studio
 
