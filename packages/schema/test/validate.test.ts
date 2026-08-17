@@ -37,6 +37,8 @@ describe("schema set + exports", () => {
         "spec", "plan",
         // the domain-pack manifest (autoresearch studio WS1, #369)
         "pack",
+        // the studio manifest — one file binding the installation (#402)
+        "amicode-config",
       ]),
     );
   });
@@ -54,6 +56,8 @@ describe("schema set + exports", () => {
       // the domain-pack manifest (WS1, #369): carries a top-level
       // schema_version enum, so it joins the map.
       pack: ["1"],
+      // the studio manifest (#402): same — top-level enum, joins the map.
+      "amicode-config": ["1"],
     });
   });
   it("an unknown kind is a clean error, not a throw", () => {
