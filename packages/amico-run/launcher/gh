@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Thin launcher for the `gh` PATH shim (issue #399): resolve node, exec the
+# bundled shim. No logic lives here (mirror of launcher/amico-run). The shim
+# itself is transparent when no GitHub App credential file exists — this file
+# only exists so the bin dir (prepended to the server PATH) shadows the real
+# gh, making every agent gh call ride the App identity when configured.
+set -euo pipefail
+SOURCE="${BASH_SOURCE[0]}"
+while [ -h "$SOURCE" ]; do                       # resolve symlink chains (node_modules/.bin)
+  DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  SOURCE="$(readlink "$SOURCE")"
+  [[ $SOURCE != /* ]] && SOURCE="$DIR/$SOURCE"
+done
+DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+if ! command -v node >/dev/null 2>&1; then
+  echo "gh: node >= 20 not found on PATH (amico-gh shim cannot run; install node or fix PATH)" >&2
+  exit 64
+fi
+exec node "$DIR/../dist/gh.js" "$@"
