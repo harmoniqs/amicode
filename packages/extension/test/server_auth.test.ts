@@ -326,7 +326,7 @@ describe("buildGitCredentialHelperEnv — the #399 gate", () => {
   it("configured + launcher dir → registers the helper for https github.com by ABSOLUTE path", () => {
     expect(buildGitCredentialHelperEnv(binDir, configuredEnv)).toEqual({
       GIT_CONFIG_COUNT: "1",
-      GIT_CONFIG_KEY_0: "http.https://github.com/.helper",
+      GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
       GIT_CONFIG_VALUE_0: `!"/ext/bin/launcher/amico-git-credential"`,
     });
   });
@@ -337,7 +337,7 @@ describe("buildGitCredentialHelperEnv — the #399 gate", () => {
       serverPassword: "pw",
       env: configuredEnv,
     });
-    expect(open.GIT_CONFIG_KEY_0).toBe("http.https://github.com/.helper");
+    expect(open.GIT_CONFIG_KEY_0).toBe("credential.https://github.com.helper");
     expect(open.GIT_CONFIG_VALUE_0).toBe(`!"/ext/bin/launcher/amico-git-credential"`);
     const closed = buildServerSpawnEnv({
       amicoRunBinDir: binDir,

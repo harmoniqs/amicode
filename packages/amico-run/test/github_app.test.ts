@@ -4,7 +4,7 @@
 // obvious fakes (ghs_test_…), and one assertion class explicitly checks that
 // no error message can carry a real one.
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import {
   parseGithubAppConfig,
@@ -79,9 +79,12 @@ describe("github_app JWT", () => {
     expect(p.iat).toBe(Math.floor(now / 1000) - 60);
     expect(p.exp - p.iat).toBe(180);
     expect(verifyAppJwt(jwt, publicKey)).toBe(true);
-    // Deterministic tamper: flip the last signature char to a DIFFERENT char.
-    const last = jwt.slice(-1);
-    expect(verifyAppJwt(jwt.slice(0, -1) + (last === "A" ? "B" : "A"), publicKey)).toBe(false);
+    // Deterministic tamper: mutate a real signature byte, not padding.
+    const [header, payload, sig] = jwt.split(".");
+    const sigBuf = Buffer.from(sig, "base64url");
+    sigBuf[0] ^= 0xff;
+    const tampered = `${header}.${payload}.${sigBuf.toString("base64url")}`;
+    expect(verifyAppJwt(tampered, publicKey)).toBe(false);
   });
   it("garbage PEM → ConfigError that never contains key material", () => {
     const pem = "-----BEGIN RSA PRIVATE KEY-----\nnot a key\n-----END RSA PRIVATE KEY-----\n";
@@ -102,6 +105,7 @@ describe("github_app token cache", () => {
     expect(isCacheFresh({ token: "t", expiresAt: at(600) }, now)).toBe(true);
     expect(isCacheFresh({ token: "t", expiresAt: at(100) }, now)).toBe(false);
     expect(isCacheFresh({ token: "t", expiresAt: at(301) }, now)).toBe(true);
+    expect(isCacheFresh({ token: "t", expiresAt: at(300) }, now)).toBe(false);
     expect(isCacheFresh({ token: "t", expiresAt: "not-a-date" }, now)).toBe(false);
   });
   it("absent → undefined; corrupt → undefined (never an error); write is 0600 + round-trips", () => {
@@ -158,7 +162,7 @@ describe("ensureInstallationToken", () => {
     await ensureInstallationToken({ env, fetchImpl: fake.impl });
     expect(fake.calls).toBe(1);
     // Expire the cache: re-mint, and the cache file is rewritten.
-    const stale = { token: "ghs_test_4", expires_at: new Date(Date.now() - 1000).toISOString() };
+    const stale = { token: "ghs_test_4", expiresAt: new Date(Date.now() - 1000).toISOString() };
     writeFileSync(env.AMICO_GITHUB_TOKEN_FILE, JSON.stringify(stale));
     const t2 = await ensureInstallationToken({ env, fetchImpl: fake.impl });
     expect(fake.calls).toBe(2);
@@ -179,7 +183,9 @@ describe("resolveRealGh", () => {
     mkdirSync(own, { recursive: true });
     mkdirSync(other, { recursive: true });
     writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n"); // would loop if picked
+    chmodSync(join(own, "gh"), 0o755);
     writeFileSync(join(other, "gh"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(other, "gh"), 0o755);
     expect(resolveRealGh(`${own}:${other}`, own)).toBe(join(other, "gh"));
   });
   it("skips a SYMLINK alias of the shim planted in another PATH dir (the .bin trap)", () => {
@@ -193,8 +199,10 @@ describe("resolveRealGh", () => {
     mkdirSync(alias, { recursive: true });
     mkdirSync(other, { recursive: true });
     writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n");
+    chmodSync(join(own, "gh"), 0o755);
     symlinkSync(join(own, "gh"), join(alias, "gh"));
     writeFileSync(join(other, "gh"), "#!/bin/sh\nexit 0\n");
+    chmodSync(join(other, "gh"), 0o755);
     expect(resolveRealGh(`${alias}:${other}`, own)).toBe(join(other, "gh"));
   });
   it("a DIFFERENT gh in an earlier dir still wins (the guard must not over-skip)", () => {
@@ -204,8 +212,10 @@ describe("resolveRealGh", () => {
     mkdirSync(own, { recursive: true });
     mkdirSync(other, { recursive: true });
     writeFileSync(join(own, "gh"), "#!/bin/sh\nexit 99\n");
+    chmodSync(join(own, "gh"), 0o755);
     const realGh = join(other, "gh");
     writeFileSync(realGh, "#!/bin/sh\nexit 0\n");
+    chmodSync(realGh, 0o755);
     expect(resolveRealGh(`${other}:${own}`, own)).toBe(realGh);
   });
   it("no gh anywhere → undefined", () => {

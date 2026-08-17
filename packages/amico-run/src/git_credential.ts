@@ -17,7 +17,8 @@ import { ConfigError } from "./types.js";
 /** Parse the helper request: protocol + host are all we route on. */
 export function parseCredentialRequest(input: string): { protocol?: string; host?: string } {
   const out: { protocol?: string; host?: string } = {};
-  for (const line of input.split("\n")) {
+  for (const raw of input.split("\n")) {
+    const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
     if (line === "") break; // blank line ends the request
     const m = line.match(/^(protocol|host)=(.*)$/);
     if (m) out[m[1] as "protocol" | "host"] = m[2];
@@ -25,7 +26,13 @@ export function parseCredentialRequest(input: string): { protocol?: string; host
   return out;
 }
 
-export async function credentialMain(input: string, env: NodeJS.ProcessEnv = process.env): Promise<{ stdout: string; code: number }> {
+export async function credentialMain(
+  input: string,
+  env: NodeJS.ProcessEnv = process.env,
+  operation: string | undefined = "get",
+): Promise<{ stdout: string; code: number }> {
+  // git calls store/erase too; only `get` may produce credentials.
+  if (operation !== "get") return { stdout: "", code: 0 };
   const req = parseCredentialRequest(input);
   if (req.protocol !== "https" || req.host !== "github.com") return { stdout: "", code: 0 };
   if (!existsSync(githubAppConfigFile(env))) return { stdout: "", code: 0 };

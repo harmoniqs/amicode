@@ -8,7 +8,7 @@ let input = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (c: string) => (input += c));
 process.stdin.on("end", () => {
-  credentialMain(input).then(
+  credentialMain(input, process.env, process.argv[2]).then(
     ({ stdout, code }) => {
       process.stdout.write(stdout);
       process.exitCode = code;

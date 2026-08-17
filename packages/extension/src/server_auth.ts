@@ -218,7 +218,7 @@ export function buildGitCredentialHelperEnv(
   if (!existsSync(githubAppConfigFile(env))) return {};
   return {
     GIT_CONFIG_COUNT: "1",
-    GIT_CONFIG_KEY_0: "http.https://github.com/.helper",
+    GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
     GIT_CONFIG_VALUE_0: `!"${join(amicoRunBinDir, "amico-git-credential")}"`,
   };
 }

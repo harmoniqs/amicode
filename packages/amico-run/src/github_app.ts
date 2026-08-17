@@ -17,7 +17,7 @@
 // never an error — it is re-minted. Only CONFIG faults (missing keys,
 // unreadable PEM, mint rejected) are exit-64-class.
 import { createPrivateKey, sign as cryptoSign, verify as cryptoVerify, generateKeyPairSync, KeyObject } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { ConfigError } from "./types.js";
@@ -42,6 +42,8 @@ export interface GithubAppConfig {
 export interface InstallationToken {
   token: string; // ghs_… — secret; env/stdout carriage ONLY
   expiresAt: string; // ISO 8601 (GitHub returns UTC); not a secret
+  appId?: string; // cache identity, not a secret
+  installationId?: string; // cache identity, not a secret
 }
 
 /** $AMICO_GITHUB_FILE overrides the config path (tests / sandbox isolation) —
@@ -136,12 +138,16 @@ export function isCacheFresh(cache: InstallationToken, nowMs: number = Date.now(
 }
 
 /** Parse the access-token endpoint's body. The token never lands in an error. */
-export function parseInstallationToken(json: string): InstallationToken {
+export function parseInstallationToken(body: unknown): InstallationToken {
   let d: unknown;
-  try {
-    d = JSON.parse(json);
-  } catch {
-    throw new ConfigError("GitHub App token mint returned a malformed body — retry, or remove the credential file to fall back to your own gh login");
+  if (typeof body === "string") {
+    try {
+      d = JSON.parse(body);
+    } catch {
+      throw new ConfigError("GitHub App token mint returned a malformed body — retry, or remove the credential file to fall back to your own gh login");
+    }
+  } else {
+    d = body;
   }
   const o = (typeof d === "object" && d !== null ? d : {}) as Record<string, unknown>;
   if (typeof o.token !== "string" || o.token === "" || typeof o.expires_at !== "string" || o.expires_at === "")
@@ -149,23 +155,43 @@ export function parseInstallationToken(json: string): InstallationToken {
   return { token: o.token, expiresAt: o.expires_at };
 }
 
-export type FetchImpl = (url: string, init: { method: string; headers: Record<string, string> }) => Promise<{ status: number; json(): Promise<unknown> }>;
+export type FetchImpl = (
+  url: string,
+  init: { method: string; headers: Record<string, string>; signal?: AbortSignal },
+) => Promise<{ status: number; json(): Promise<unknown> }>;
+
+/** One mint must never outlive a human's patience for `gh` or `git push`. */
+export const MINT_TIMEOUT_MS = 15_000;
 
 /** POST /app/installations/{id}/access_tokens with the JWT as bearer. */
 export async function fetchInstallationToken(jwt: string, installationId: string, fetchImpl: FetchImpl): Promise<InstallationToken> {
-  const res = await fetchImpl(`https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${jwt}`, // secret: header carriage ONLY
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-    },
-  });
+  let res: { status: number; json(): Promise<unknown> };
+  try {
+    res = await fetchImpl(`https://api.github.com/app/installations/${encodeURIComponent(installationId)}/access_tokens`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${jwt}`, // secret: header carriage ONLY
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+    });
+  } catch {
+    throw new ConfigError(
+      `GitHub App token mint did not answer within ${MINT_TIMEOUT_MS / 1000}s — retry, or remove the credential file to fall back to your own gh login`,
+    );
+  }
   if (res.status !== 201)
     throw new ConfigError(
       `GitHub App token mint failed (HTTP ${res.status}) — check app_id/installation_id and that the PEM matches the App; or remove the credential file to fall back to your own gh login`,
     );
-  return parseInstallationToken(JSON.stringify(await res.json()));
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    throw new ConfigError("GitHub App token mint returned a malformed body — retry, or remove the credential file to fall back to your own gh login");
+  }
+  return parseInstallationToken(body);
 }
 
 /** Cache read: absent or corrupt → undefined, NEVER an error (the cache is an
@@ -175,8 +201,13 @@ export function readTokenCache(env: NodeJS.ProcessEnv = process.env): Installati
   if (!existsSync(file)) return undefined;
   try {
     const d = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
-    if (typeof d.token === "string" && d.token !== "" && typeof d.expiresAt === "string" && d.expiresAt !== "")
-      return { token: d.token, expiresAt: d.expiresAt };
+    if (typeof d.token === "string" && d.token !== "" && typeof d.expiresAt === "string" && d.expiresAt !== "") {
+      const out: InstallationToken = { token: d.token, expiresAt: d.expiresAt };
+      if (typeof d.appId === "string" && d.appId !== "") out.appId = d.appId;
+      if (typeof d.installationId === "string" && d.installationId !== "") out.installationId = d.installationId;
+      // legacy cache without identity fields is still usable (backward compat)
+      return out;
+    }
     return undefined;
   } catch {
     return undefined;
@@ -205,10 +236,18 @@ export interface EnsureDeps {
  *  JWT → API) → cache → return. The single entry point both CLIs share. */
 export async function ensureInstallationToken(deps: EnsureDeps = {}): Promise<InstallationToken> {
   const env = deps.env ?? process.env;
-  const cached = readTokenCache(env);
   const now = deps.nowMs ?? Date.now;
-  if (cached && isCacheFresh(cached, now())) return cached;
+  // Read config first so an unreadable config is an error even on a fresh cache
+  // (config faults are exit-64-class) and so we can key the cache by identity.
   const cfg = readGithubAppConfig(env);
+  const cached = readTokenCache(env);
+  if (
+    cached &&
+    isCacheFresh(cached, now()) &&
+    (cached.appId === undefined || cached.appId === cfg.appId) &&
+    (cached.installationId === undefined || cached.installationId === cfg.installationId)
+  )
+    return cached;
   let pem: string;
   try {
     pem = (deps.readPem ?? ((p: string) => readFileSync(p, "utf8")))(cfg.pemPath);
@@ -219,8 +258,9 @@ export async function ensureInstallationToken(deps: EnsureDeps = {}): Promise<In
   }
   const jwt = mintAppJwt(cfg.appId, pem, now());
   const token = await fetchInstallationToken(jwt, cfg.installationId, deps.fetchImpl ?? (fetch as unknown as FetchImpl));
-  writeTokenCache(token, env);
-  return token;
+  const toCache: InstallationToken = { ...token, appId: cfg.appId, installationId: cfg.installationId };
+  writeTokenCache(toCache, env);
+  return toCache;
 }
 
 /** Scan PATH for the REAL gh, skipping every alias of THIS shim — a bare exec
@@ -232,11 +272,21 @@ export function resolveRealGh(pathValue: string | undefined, ownLauncherDir: str
   const own = ownLauncherDir ? realPathOrSelf(join(ownLauncherDir, "gh")) : undefined;
   for (const dir of (pathValue ?? "").split(":").filter(Boolean)) {
     const candidate = join(dir, "gh");
-    if (!existsSync(candidate)) continue;
+    if (!isExecutableFile(candidate)) continue;
     if (own && realPathOrSelf(candidate) === own) continue;
     return candidate;
   }
   return undefined;
+}
+
+function isExecutableFile(p: string): boolean {
+  try {
+    if (!statSync(p).isFile()) return false;
+    accessSync(p, fsConstants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function realPathOrSelf(p: string): string {
