@@ -8,3 +8,6 @@ relevance = "high"
 systems = ["transmon", "bosonic"]
 tags = ["paper", "tempo"]
 source = "dream-distill"
+
+journal = "PRX Quantum 3, 040336 (2022)"
+hardware = "ibm-heron-boston"

@@ -42,11 +42,24 @@ describe("the library-paper kind", () => {
     expect(validate(rec({ status: "staged" }), "library-paper")).toMatchObject({ ok: true });
     expect(validate(rec({ status: "published" }), "library-paper").ok).toBe(false);
   });
-  it("relevance is an enum when present", () => {
-    expect(validate(rec({ relevance: "meh" }), "library-paper").ok).toBe(false);
+  it("relevance: enum for queryability; PROSE relevance tolerated (production data)", () => {
+    expect(validate(rec({ relevance: "Original transmon paper; foundational reference for all transmon work" }), "library-paper")).toMatchObject({ ok: true });
+    expect(validate(rec({ relevance: 3 }), "library-paper").ok).toBe(false);
   });
-  it("arxiv ids are the canonical dotted form (version suffixes normalize at the fold, not the schema)", () => {
-    expect(validate(rec({ arxiv: "1711.09641v2" }), "library-paper").ok).toBe(false);
+  it("null arxiv is type-tolerated but identity still required (the anyOf flags the gap)", () => {
+    expect(validate(rec({ arxiv: null, doi: "10.1234/x" }), "library-paper")).toMatchObject({ ok: true });
+    expect(validate(rec({ arxiv: null }), "library-paper").ok).toBe(false);
+  });
+  it("the team vault's vocabulary is absorbed: journal/published/species/read_depth/hardware/promoted_from", () => {
+    expect(
+      validate(
+        rec({ journal: "PRX Quantum 3, 040336 (2022)", published: "2025-09-24", species: "cesium", read_depth: "skim", hardware: "ibm-heron-boston", promoted_from: null }),
+        "library-paper",
+      ),
+    ).toMatchObject({ ok: true });
+  });
+  it("arxiv ids: dotted form, version suffix TOLERATED (the fold normalizes); garbage refuses", () => {
+    expect(validate(rec({ arxiv: "1711.09641v2" }), "library-paper").ok).toBe(true);
     expect(validate(rec({ arxiv: "not-an-id" }), "library-paper").ok).toBe(false);
   });
   it("provenance: source is an enum of the known pipelines; session_id a string", () => {
