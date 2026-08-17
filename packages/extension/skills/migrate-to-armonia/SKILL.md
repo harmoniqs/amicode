@@ -159,17 +159,34 @@ bash ~/armonia/repos/amicode/tools/retire-amico-symlinks.sh
 
 This removes all symlinks, moves config files from `~/.amico/` to `data/config/` (making it authoritative), and removes `~/.amico/` if empty.
 
-### Step 5: VS Code settings (optional, manual)
+### Step 5: VS Code settings
 
-If the migration script's VS Code scan was skipped (non-interactive) or the user wants to revisit:
+After migration, stale paths in VS Code settings will silently break skill loading,
+the dev asset pipeline, or the opencode binary resolution. This step is **required**.
 
-The settings to check in `~/Library/Application Support/Code/User/settings.json` (macOS) or `~/.config/Code/User/settings.json` (Linux):
+Read the user's settings file:
 
-- `amicode.opencodeBinary` — should point to the binary under `~/armonia/repos/amicode/` if it moved
-- `amicode.devAssetRoot` — same
-- `amicode.skillRoots` — the code default is now `~/armonia/repos/packages/`; if explicitly set, update it
+```bash
+# macOS
+cat ~/Library/Application\ Support/Code/User/settings.json | grep -i "amicode\|armonia\|harmoniqs"
+# Linux
+# cat ~/.config/Code/User/settings.json | grep -i "amicode\|armonia\|harmoniqs"
+```
 
-Show the user the current values and suggest corrections. Never rewrite without asking.
+Check each of these keys (if present):
+
+| Key | Old value (stale) | Correct value |
+|-----|-------------------|---------------|
+| `amicode.opencodeBinary` | `~/harmoniqs/amicode/…` or `~/_dev/harmoniqs/amicode/…` | `~/armonia/repos/amicode/…` (same relative suffix) |
+| `amicode.devAssetRoot` | `~/harmoniqs/amicode/packages/extension` | `~/armonia/repos/amicode/packages/extension` |
+| `amicode.skillRoots` | `~/harmoniqs/packages` | **Remove the key entirely** — the code default is now `~/armonia/repos/packages/`. Only set it explicitly if the user has a non-standard layout. |
+
+For each stale entry found:
+1. Show the user the current value and what it should be
+2. Ask for confirmation before rewriting
+3. Apply the edit (or removal) only after explicit go-ahead
+
+If no Amicode-related keys exist in settings, report "no overrides found — code defaults are correct" and move on.
 
 ---
 
