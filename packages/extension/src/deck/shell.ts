@@ -407,6 +407,19 @@ window.addEventListener("message", (e) => {
     if ((d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status") && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
+    if (
+      typeof d.kind === "string" &&
+      (d.kind === "connections-credential-result" ||
+        d.kind === "connections-disconnect-result" ||
+        d.kind === "connections-revalidate-result" ||
+        d.kind === "connections-auth-result" ||
+        d.kind === "connections-choose-project-result" ||
+        d.kind === "connections-add-custom-result" ||
+        d.kind === "connections-remove-result") &&
+      typeof d.tab === "string"
+    ) {
+      frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
+    }
     // #351: inspector fan-out — broadcast to every live pane (no tab routing;
     // the app's Work Column tabs buffer per-run/per-device themselves).
     if (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) {
@@ -478,7 +491,27 @@ window.addEventListener("message", (e) => {
 
   // Everything else rides up to the extension, tagged with the asking pane so
   // replies (clipboard text) route back correctly.
-  if (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "device:refresh") {
+  if (
+    d.kind === "command" ||
+    d.kind === "clipboard-request" ||
+    d.kind === "clipboard-write" ||
+    d.kind === "open-external" ||
+    d.kind === "open-file" ||
+    d.kind === "save-file" ||
+    d.kind === "set-default-model" ||
+    d.kind === "dev-tools-update" ||
+    d.kind === "dev-tools-rebuild" ||
+    d.kind === "data-storage-query" ||
+    d.kind === "data-storage-update" ||
+    d.kind === "device:refresh" ||
+    d.kind === "connections-credential" ||
+    d.kind === "connections-disconnect" ||
+    d.kind === "connections-revalidate" ||
+    d.kind === "connections-auth" ||
+    d.kind === "connections-choose-project" ||
+    d.kind === "connections-add-custom" ||
+    d.kind === "connections-remove"
+  ) {
     vscode.postMessage({ ...d, tab: tabId });
   }
 });

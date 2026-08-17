@@ -41,6 +41,8 @@ export class DeckPanel {
       null,
       this.disposables,
     );
+    const serverAuth = authToken ? `Basic ${authToken}` : undefined;
+    const serverUrl = opencodeUrl.origin;
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
         // Pane → extension bridge: the shell tags each envelope with the asking
@@ -49,6 +51,7 @@ export class DeckPanel {
         const handled = handleAmicodeBridgeMessage(msg, {
           visible: () => this.panel.visible,
           postToWebview: (m) => void this.panel.webview.postMessage(m),
+          ...(serverAuth ? { server: { url: serverUrl, authorization: serverAuth } } : {}),
           // Bug-session lifecycle (#250) — deck panes never carry the
           // amicode_bug_report boot param, so no dock lives here; wired for
           // uniformity (the manager drops unknown ids anyway).
