@@ -1,0 +1,4 @@
+# INVALID: no identity key (neither arxiv nor doi).
+type = "paper"
+title = "A title"
+authors = ["Someone"]

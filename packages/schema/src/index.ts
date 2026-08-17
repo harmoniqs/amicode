@@ -43,6 +43,10 @@ import packSchema from "../schemas/pack.schema.json" with { type: "json" };
 // root, the ordered vault mount stack, derived-root overrides. NOT filename-
 // kinded (config.toml is too generic a name to claim).
 import amicodeConfigSchema from "../schemas/amicode-config.schema.json" with { type: "json" };
+// The paper record (#405, literature plane): the vault reading-note frontmatter
+// contract — identity, lifecycle, provenance, scoping. NOT filename-kinded
+// (notes are markdown frontmatter, validated as parsed objects).
+import libraryPaperSchema from "../schemas/library-paper.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -98,6 +102,11 @@ const SCHEMAS = {
   plan: planSchema,
   pack: packSchema,
   "amicode-config": amicodeConfigSchema,
+// Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): library-paper
+// is the vault NOTE frontmatter contract (#405) — notes carry no top-level
+// schema_version (real-data parity with the two production notes), same
+// pattern as problemspec/ledger-record.
+  "library-paper": libraryPaperSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -110,8 +119,10 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  solvespec v4 also adds problem_spec, the typed ProblemSpec runner target);
  *  the rest remain v1 and bump independently. `finished` (no schema_version),
  *  `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
- *  top-level properties.schema_version) are excluded from this string-version map. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]> =
+ *  top-level properties.schema_version), and `library-paper` (vault note
+ *  frontmatter — real notes carry no schema_version) are excluded from this
+ *  string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper">, string[]> =
   Object.fromEntries(
     (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack", "amicode-config"] as const).map((kind) => [
       kind,

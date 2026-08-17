@@ -1,0 +1,10 @@
+# The TEMPO frontmatter as a TOML fixture (real-data parity).
+type = "paper"
+title = "Efficient non-Markovian quantum dynamics using TEMPO"
+authors = ["Strathearn", "Kirton", "Kilda", "Keeling", "Lovett"]
+arxiv = "1711.09641"
+date_read = "2026-07-03"
+relevance = "high"
+systems = ["transmon", "bosonic"]
+tags = ["paper", "tempo"]
+source = "dream-distill"

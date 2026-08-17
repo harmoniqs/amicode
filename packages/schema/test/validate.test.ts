@@ -39,6 +39,9 @@ describe("schema set + exports", () => {
         "pack",
         // the studio manifest — one file binding the installation (#402)
         "amicode-config",
+        // the paper record — vault note frontmatter (#405); joins the
+        // SCHEMAS-only set (no top-level schema_version)
+        "library-paper",
       ]),
     );
   });
