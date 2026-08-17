@@ -92,7 +92,9 @@ describe("diagnoseStudio", () => {
   });
 
   test("the KNOWN legacy drift is flagged as warnings, not errors — the relocation to-do list", async () => {
-    const r = await diagnoseStudio(legacyStudioPaths(), exists);
+    // always-true probe: this tests DRIFT LOGIC, not existence — a CI runner
+    // has no ~/.amico at all, and missing roots are a different (error) path.
+    const r = await diagnoseStudio(legacyStudioPaths(), () => Promise.resolve(true));
     expect(r.ok).toBe(true); // drift ≠ broken
     expect(r.warnings.some((w) => /ledger.*dotdir|dotdir.*ledger/.test(w))).toBe(true);
     expect(r.warnings.some((w) => /no studio catalog/.test(w))).toBe(true);
