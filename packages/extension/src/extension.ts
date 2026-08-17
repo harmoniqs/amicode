@@ -8,6 +8,7 @@ import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
+import { RunInspectorViewProvider } from "./run_inspector_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -348,6 +349,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  // Sidebar Run Inspector under the context tree (amicode → Armonia / Catalog / Run Inspector)
+  const runInspector = new RunInspectorViewProvider(ctx);
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(RunInspectorViewProvider.viewType, runInspector),
+    runInspector,
+  );
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
     // the card. Both prompts (demo replay, live promote) route through here.

@@ -66,6 +66,11 @@
           "id": "amicode.catalog",
           "name": "Catalog",
           "type": "tree"
+        },
+        {
+          "id": "amicode.runInspector",
+          "name": "Run Inspector",
+          "type": "webview"
         }
       ]
     },
