@@ -434,8 +434,11 @@ window.addEventListener("message", (e) => {
   // route-info (fork bridge): live label + current route for future rebuilds.
   // Adopt paths only — never absolute URLs (an injected message must not be
   // able to point a pane at an arbitrary origin).
+  // Fix #381: a revert that leaves path empty/undefined previously blanked the
+  // pane (tab.url → "" → iframe src without route); guard so blank sessions
+  // never overwrite a valid URL and the rolled-back dock remains dismissible.
   if (d.kind === "route-info" && typeof d.path === "string" && tabId) {
-    const safe = d.path.startsWith("/") && !d.path.startsWith("//") ? d.path : undefined;
+    const safe = d.path.startsWith("/") && !d.path.startsWith("//") && d.path.length > 1 ? d.path : undefined;
     let changed = false;
     if (safe) {
       for (const g of deck.groups) {
