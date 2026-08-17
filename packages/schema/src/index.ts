@@ -52,6 +52,22 @@ import amicodeConfigSchema from "../schemas/amicode-config.schema.json" with { t
 // established, documented seam every other consumer uses — see `validate` below).
 export { structureHash, problemHash, canonicalJson, fullDict, structureFields, sha256hex, designHash, planHash, workIdV1 } from "./hashing.js";
 
+// The studio reader (#402): one library owns manifest parsing + root
+// resolution. Consumers import { studioPathsOrLegacy } from the root — the
+// same documented seam as everything else above.
+export {
+  expandTilde,
+  resolveStudioPaths,
+  legacyStudioPaths,
+  loadStudioBinding,
+  studioManifestCandidates,
+  studioPathsOrLegacy,
+  type StudioManifest,
+  type StudioMount,
+  type StudioMountDecl,
+  type StudioPaths,
+} from "./studio.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
