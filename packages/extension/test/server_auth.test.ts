@@ -1,15 +1,28 @@
 import { describe, it, expect } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   mintServerPassword,
   serverAuthHeader,
   serverAuthToken,
   buildServerSpawnEnv,
   buildTelemetryEnv,
+  buildGitCredentialHelperEnv,
+  githubAppConfigFile,
   telemetryGateOpen,
   TELEMETRY_ENV_KEYS,
   type TelemetryContext,
 } from "../src/server_auth";
 import { buildOpencodeConfigContent } from "../src/opencode_config";
+
+/** A controlled env for spawn-env key-set assertions: AMICO_GITHUB_FILE pinned
+ *  at a nonexistent path, so (a) the #399 credential-helper gate reads CLOSED
+ *  and (b) the passthrough adds exactly that one key — deterministic on any
+ *  machine, including one with a real configured ~/.amico/github.json. */
+function hermeticGithubEnv(): { AMICO_GITHUB_FILE: string } {
+  return { AMICO_GITHUB_FILE: join(mkdtempSync(join(tmpdir(), "amico-auth-test-")), "github.json") };
+}
 
 // ============================================================================
 // Per-boot server password (#163, ADR 0002 graft 1). The fork's route auth
@@ -69,8 +82,11 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
   it("adds EXACTLY PATH + config + password + the headless plot backends (AC1)", () => {
     // Exactly the ADDED keys — the server inherits the host env by platform
     // design (ServerManager spreads process.env under these), so full-env
-    // equality is a known-wrong assertion; the contract is what WE add.
-    expect(Object.keys(buildServerSpawnEnv(opts)).sort()).toEqual([
+    // equality is a known-wrong assertion; the contract is what WE add. With
+    // the controlled env, that set is the base five + AMICO_GITHUB_FILE (the
+    // passthrough echoing exactly what we pinned; the #399 gate stays closed).
+    expect(Object.keys(buildServerSpawnEnv({ ...opts, env: hermeticGithubEnv() })).sort()).toEqual([
+      "AMICO_GITHUB_FILE",
       "GKSwstype",
       "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
@@ -97,9 +113,11 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
   it("carries AMICO_PYTHON iff amicoPython is set — absent (never empty) otherwise, so the fork's python3 fallback is untouched", () => {
     // The fork's validator spawn resolves $AMICO_PYTHON → bare `python3`; the
     // provisioned venv interpreter rides this seam so no respawn path drops it.
-    const withPython = buildServerSpawnEnv({ ...opts, amicoPython: "/ops/venvs/pasqal-connector/bin/python" });
+    const he = hermeticGithubEnv();
+    const withPython = buildServerSpawnEnv({ ...opts, amicoPython: "/ops/venvs/pasqal-connector/bin/python", env: he });
     expect(withPython.AMICO_PYTHON).toBe("/ops/venvs/pasqal-connector/bin/python");
     expect(Object.keys(withPython).sort()).toEqual([
+      "AMICO_GITHUB_FILE",
       "AMICO_PYTHON",
       "GKSwstype",
       "MPLBACKEND",
@@ -108,8 +126,8 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
       "PATH",
     ]);
     // unset branch byte-identical to pre-provisioning behavior (AC7)
-    expect("AMICO_PYTHON" in buildServerSpawnEnv(opts)).toBe(false);
-    expect("AMICO_PYTHON" in buildServerSpawnEnv({ ...opts, amicoPython: undefined })).toBe(false);
+    expect("AMICO_PYTHON" in buildServerSpawnEnv({ ...opts, env: he })).toBe(false);
+    expect("AMICO_PYTHON" in buildServerSpawnEnv({ ...opts, amicoPython: undefined, env: he })).toBe(false);
   });
   it("passes the config content through verbatim (the instructions/permission merge)", () => {
     expect(buildServerSpawnEnv(opts).OPENCODE_CONFIG_CONTENT).toBe(opts.configContent);
@@ -270,13 +288,68 @@ describe("buildServerSpawnEnv — telemetry integration (gate applied through th
     for (const k of TELEMETRY_ENV_KEYS) expect(k in env).toBe(false);
   });
   it("no telemetry opt at all → identical to the pre-telemetry builder (base keys only)", () => {
-    expect(Object.keys(buildServerSpawnEnv(base)).sort()).toEqual([
+    expect(Object.keys(buildServerSpawnEnv({ ...base, env: hermeticGithubEnv() })).sort()).toEqual([
+      "AMICO_GITHUB_FILE",
       "GKSwstype",
       "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
     ]);
+  });
+});
+
+// ============================================================================
+// GitHub App credential-helper gate (issue #399 — amico[bot]). When the App
+// connection file exists, the spawn env registers the bundled
+// amico-git-credential helper for https github.com via GIT_CONFIG env, so
+// `git push` authenticates as the App while commit authorship stays the
+// researcher's. Unconfigured → ZERO vars: git behavior byte-identical.
+// ============================================================================
+
+describe("buildGitCredentialHelperEnv — the #399 gate", () => {
+  const binDir = "/ext/bin/launcher";
+  const configuredEnv = (() => {
+    const dir = mkdtempSync(join(tmpdir(), "amico-auth-test-"));
+    const file = join(dir, "github.json");
+    writeFileSync(file, JSON.stringify({ app_id: "1", installation_id: "2", pem_path: join(dir, "k.pem") }));
+    return { AMICO_GITHUB_FILE: file };
+  })();
+  const unconfiguredEnv = { AMICO_GITHUB_FILE: join(mkdtempSync(join(tmpdir(), "amico-auth-test-")), "github.json") };
+
+  it("unconfigured → {} (git untouched — regression-safe)", () => {
+    expect(buildGitCredentialHelperEnv(binDir, unconfiguredEnv)).toEqual({});
+  });
+  it("no launcher dir → {} even when configured (boot-warn state, never a broken path)", () => {
+    expect(buildGitCredentialHelperEnv(undefined, configuredEnv)).toEqual({});
+  });
+  it("configured + launcher dir → registers the helper for https github.com by ABSOLUTE path", () => {
+    expect(buildGitCredentialHelperEnv(binDir, configuredEnv)).toEqual({
+      GIT_CONFIG_COUNT: "1",
+      GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+      GIT_CONFIG_VALUE_0: `!"/ext/bin/launcher/amico-git-credential"`,
+    });
+  });
+  it("flows through buildServerSpawnEnv: gate open adds the three keys, gate closed adds none", () => {
+    const open = buildServerSpawnEnv({
+      amicoRunBinDir: binDir,
+      configContent: "{}",
+      serverPassword: "pw",
+      env: configuredEnv,
+    });
+    expect(open.GIT_CONFIG_KEY_0).toBe("credential.https://github.com.helper");
+    expect(open.GIT_CONFIG_VALUE_0).toBe(`!"/ext/bin/launcher/amico-git-credential"`);
+    const closed = buildServerSpawnEnv({
+      amicoRunBinDir: binDir,
+      configContent: "{}",
+      serverPassword: "pw",
+      env: unconfiguredEnv,
+    });
+    expect("GIT_CONFIG_COUNT" in closed).toBe(false);
+  });
+  it("githubAppConfigFile honors $AMICO_GITHUB_FILE (path contract shared with amico-run)", () => {
+    expect(githubAppConfigFile({ AMICO_GITHUB_FILE: "/x/github.json" })).toBe("/x/github.json");
+    expect(githubAppConfigFile({})).toContain(join(".amico", "github.json"));
   });
 });
 

@@ -14,9 +14,20 @@ const watch = process.argv.includes("--watch");
 // `pnpm --filter amicode build` alone must not die) — CI reds them via
 // scripts/assert_packaged_cli.mjs, which re-reads the same bin map.
 const arRoot = "../amico-run";
-const declaredBins = Object.values(JSON.parse(readFileSync(`${arRoot}/package.json`, "utf8")).bin ?? {}).map((p) =>
-  basename(p),
-);
+const arPkg = JSON.parse(readFileSync(`${arRoot}/package.json`, "utf8"));
+const declaredBins = Object.values(arPkg.bin ?? {}).map((p) => basename(p));
+// #399 SHADOW bins (the package's `amicode.shadowBins` map): staged into
+// bin/launcher so they ride the extension's prepended PATH — but deliberately
+// NOT in the npm `bin` map, because a bin-map entry makes pnpm link the name
+// into node_modules/.bin where it shadows the DEVELOPER's tooling for every
+// pnpm script (CI's fetch:opencode died exactly that way: its `gh` resolved to
+// our shim, which re-found the .bin alias, and pnpm's wrapper grew NODE_PATH
+// on every recursive pass until exec hit E2BIG). The shadowing contract is
+// agent-session-only: extension bin dir, nowhere else.
+const shadowBins = Object.entries(arPkg.amicode?.shadowBins ?? {}).map(([name, p]) => ({
+  name,
+  launcher: basename(String(p)),
+}));
 if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
   mkdirSync("bin/launcher", { recursive: true });
   mkdirSync("bin/dist", { recursive: true });
@@ -28,6 +39,16 @@ if (declaredBins.some((name) => existsSync(`${arRoot}/dist/${name}.js`))) {
     cpSync(`${arRoot}/launcher/${name}`, `bin/launcher/${name}`, { dereference: true });
     cpSync(`${arRoot}/dist/${name}.js`, `bin/dist/${name}.js`, { dereference: true });
     chmodSync(`bin/launcher/${name}`, 0o755); // guarantee +x survives pack/unpack
+  }
+  for (const { name, launcher } of shadowBins) {
+    const distName = launcher.replace(/(?:\.js)?$/, "") + ".js";
+    if (!existsSync(`${arRoot}/dist/${distName}`)) {
+      console.warn(`[esbuild] amico-run/dist/${distName} not built — shadow bin "${name}" will be absent from the package`);
+      continue;
+    }
+    cpSync(`${arRoot}/launcher/${launcher}`, `bin/launcher/${name}`, { dereference: true });
+    cpSync(`${arRoot}/dist/${distName}`, `bin/dist/${distName}`, { dereference: true });
+    chmodSync(`bin/launcher/${name}`, 0o755);
   }
   // The CLI bundles are ESM (amico-run has "type": "module"); without a scoped
   // marker node warns-and-reparses on EVERY invocation (MODULE_TYPELESS_PACKAGE_JSON

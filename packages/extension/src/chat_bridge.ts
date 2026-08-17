@@ -46,6 +46,10 @@ export interface BridgeIo {
   visible(): boolean;
   /** Replies (clipboard text) go back to the host webview; `tab` echoes along. */
   postToWebview(msg: unknown): void;
+  /** Local opencode server for Connections proxy — lets the webview delegate
+   *  credential POSTs to the extension host so they succeed even while the
+   *  chat SSE is streaming (browser per-host connection-pool starvation). */
+  server?: { url: string; authorization: string };
   /** Bug-session lifecycle (bug-filed / bug-report-closed). Undefined until the
    *  manager registers at activation; the kinds are consumed regardless. */
   bugReport?: BugReportSink;
@@ -625,6 +629,66 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   // #351 reverse: Work Column Device Inspector → extension refresh
   if (msg.kind === "device:refresh" && typeof (msg as { device?: unknown }).device === "string") {
     void vscode.commands.executeCommand("amicode.device.refresh");
+    return true;
+  }
+
+  // Connections proxy (chat-busy fix): the webview delegates credential
+  // mutations to the extension host so they don't compete with the chat SSE
+  // for the browser's per-host connection pool. The extension forwards via
+  // Node fetch with the per-boot Authorization header.
+  if (
+    typeof msg.kind === "string" &&
+    (msg.kind === "connections-credential" ||
+      msg.kind === "connections-disconnect" ||
+      msg.kind === "connections-revalidate" ||
+      msg.kind === "connections-auth" ||
+      msg.kind === "connections-choose-project" ||
+      msg.kind === "connections-add-custom" ||
+      msg.kind === "connections-remove")
+  ) {
+    const tab = (msg as { tab?: string }).tab;
+    const nonce = (msg as { nonce?: string }).nonce;
+    const routeMap: Record<string, string> = {
+      "connections-credential": "/amicode/connections/credential",
+      "connections-disconnect": "/amicode/connections/disconnect",
+      "connections-revalidate": "/amicode/connections/revalidate",
+      "connections-auth": "/amicode/connections/auth",
+      "connections-choose-project": "/amicode/connections/choose-project",
+      "connections-add-custom": "/amicode/connections/add-custom",
+      "connections-remove": "/amicode/connections/remove",
+    };
+    const route = routeMap[msg.kind];
+    if (!route) return true;
+    if (!io.server) {
+      io.postToWebview({ source: "amicode", kind: `${msg.kind}-result`, tab, nonce, ok: false, error: "Amico server not ready" });
+      return true;
+    }
+    const body = (msg as { body?: unknown }).body;
+    const payload = typeof body === "string" ? body : JSON.stringify(body ?? {});
+    void fetch(new URL(route, io.server.url).toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: io.server.authorization },
+      body: payload,
+    })
+      .then(async (res) => {
+        let text: string;
+        try {
+          text = await res.text();
+        } catch {
+          text = JSON.stringify({ ok: false, error: "proxy: failed to read response" });
+        }
+        io.postToWebview({ source: "amicode", kind: `${msg.kind}-result`, tab, nonce, ok: res.ok, body: text, status: res.status });
+      })
+      .catch((e) => {
+        io.postToWebview({
+          source: "amicode",
+          kind: `${msg.kind}-result`,
+          tab,
+          nonce,
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      });
     return true;
   }
 

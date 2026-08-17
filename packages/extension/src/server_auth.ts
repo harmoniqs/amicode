@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // ============================================================================
 // Per-boot server password (#163, ADR 0002 graft 1).
@@ -67,6 +70,8 @@ const SANDBOX_ENV_PASSTHROUGH = [
   "AMICODE_OPS_DIR",
   "AMICO_PASQAL_KEYCHAIN_SERVICE",
   "AMICO_PASQAL_VALIDATOR",
+  "AMICO_GITHUB_FILE",
+  "AMICO_GITHUB_TOKEN_FILE",
 ] as const
 
 // ============================================================================
@@ -189,6 +194,35 @@ export function buildTelemetryEnv(t: TelemetryContext | undefined): Record<strin
   };
 }
 
+/** GitHub App connection state file — path contract SHARED with amico-run's
+ *  github_app.ts (githubAppConfigFile); duplicated here because the extension
+ *  spawns the CLI package, it does not import it (the pasqal_devices.ts
+ *  precedent for ~/.amico defaults). */
+export function githubAppConfigFile(env: NodeJS.ProcessEnv = process.env): string {
+  const v = env.AMICO_GITHUB_FILE;
+  if (v && v.trim() !== "") return v;
+  return join(homedir(), ".amico", "github.json");
+}
+
+/** GIT_CONFIG env (git's documented config-in-env mechanism) registering the
+ *  bundled credential helper for https github.com ONLY when the GitHub App
+ *  connection is configured (issue #399) — absent file → zero vars, so git
+ *  behavior is byte-identical to pre-#399 when unconfigured. ssh remotes are
+ *  untouched: the helper only serves the https URL space, and commit
+ *  authorship never reads transport credentials. */
+export function buildGitCredentialHelperEnv(
+  amicoRunBinDir: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  if (!amicoRunBinDir) return {};
+  if (!existsSync(githubAppConfigFile(env))) return {};
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
+    GIT_CONFIG_VALUE_0: `!"${join(amicoRunBinDir, "amico-git-credential")}"`,
+  };
+}
+
 export function buildServerSpawnEnv(opts: {
   /** amico-run launcher bin dir; undefined = launcher missing (boot warns). */
   amicoRunBinDir: string | undefined;
@@ -207,7 +241,12 @@ export function buildServerSpawnEnv(opts: {
    *  buildTelemetryEnv applies the consent gate, so an un-gated context still
    *  yields zero OTLP vars — the exporter only wakes when the gate is open. */
   telemetry?: TelemetryContext;
+  /** Env the sandbox passthrough + the #399 credential-helper gate read.
+   *  Default: the host env (the spawn inherits it underneath anyway). Tests
+   *  pass a controlled env so key-set assertions stay machine-independent. */
+  env?: NodeJS.ProcessEnv;
 }): Record<string, string> {
+  const envSource = opts.env ?? process.env;
   const env: Record<string, string> = {
     PATH: `${opts.amicoRunBinDir ? opts.amicoRunBinDir + ":" : ""}${process.env.PATH ?? ""}`,
     OPENCODE_CONFIG_CONTENT: opts.configContent,
@@ -222,9 +261,12 @@ export function buildServerSpawnEnv(opts: {
     ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
     // Gated OTLP env (contract). {} unless enabled + consent + endpoint all hold.
     ...buildTelemetryEnv(opts.telemetry),
+    // Gated git credential helper (issue #399). {} unless the GitHub App
+    // connection file exists AND the launcher dir resolved.
+    ...buildGitCredentialHelperEnv(opts.amicoRunBinDir, envSource),
   };
   for (const key of SANDBOX_ENV_PASSTHROUGH) {
-    const value = process.env[key];
+    const value = envSource[key];
     if (value !== undefined && value !== "") env[key] = value;
   }
   return env;

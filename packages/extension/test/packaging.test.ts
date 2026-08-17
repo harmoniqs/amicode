@@ -14,6 +14,13 @@ const REQUIRED = [
   "extension/bin/launcher/amico",
   "extension/bin/dist/amico-pasqal.js",
   "extension/bin/launcher/amico-pasqal",
+  // #399 — the GitHub App identity bins: amico-git-credential (map-declared)
+  // and the gh PATH shim (a SHADOW bin — staged beyond the bin map precisely
+  // so pnpm cannot link it into node_modules/.bin; that pin lives HERE).
+  "extension/bin/dist/amico-git-credential.js",
+  "extension/bin/launcher/amico-git-credential",
+  "extension/bin/dist/gh.js",
+  "extension/bin/launcher/gh",
   // Pasqal connector assets — staged to <opsDir>/scripts/pasqal-connector at
   // activation (the Connections panel's default validator path, #161). Kept in
   // the vsix by explicit .vscodeignore negations against scripts/**.

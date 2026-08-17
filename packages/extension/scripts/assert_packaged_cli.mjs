@@ -31,7 +31,7 @@
 //   --bin-map  the CLI package.json carrying the `bin` map
 //              (default: packages/amico-run/package.json)
 import { execFile } from "node:child_process";
-import { accessSync, constants as fsConstants, existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -47,16 +47,28 @@ const UNKNOWN_EXECUTOR = /unknown --executor/;
 
 /** Declared bins from the CLI package's `bin` map → staged file layout.
  *  Staging convention (extension esbuild.config.mjs): bin key K ships as
- *  bin/launcher/<basename> + bin/dist/<basename>.js. */
+ *  bin/launcher/<basename> + bin/dist/<basename>.js.
+ *
+ *  #399 SHADOW bins (the package's `amicode.shadowBins` map, e.g. `gh`) are
+ *  appended with the same shape: they are staged for the agent-session PATH
+ *  but deliberately kept OUT of the npm `bin` map (a bin-map entry would link
+ *  `gh` into node_modules/.bin and shadow the developer's own gh for every
+ *  pnpm script). They are gated exactly like declared bins — staged, probed,
+ *  and fail-closed if the probe is missing. */
 export function declaredBins(binMapPath = DEFAULT_BIN_MAP) {
   const pkg = JSON.parse(readFileSync(binMapPath, "utf8"));
   const bin = pkg.bin;
   if (!bin || typeof bin !== "object" || Object.keys(bin).length === 0)
     throw new Error(`${binMapPath}: no \`bin\` map — nothing to gate is a failure, not a pass`);
-  return Object.entries(bin).map(([name, launcherPath]) => {
+  const fromMap = Object.entries(bin).map(([name, launcherPath]) => {
     const base = basename(String(launcherPath));
     return { name, launcher: join("launcher", base), dist: join("dist", `${base}.js`) };
   });
+  const shadow = Object.entries(pkg.amicode?.shadowBins ?? {}).map(([name, launcherPath]) => {
+    const base = basename(String(launcherPath));
+    return { name, launcher: join("launcher", name), dist: join("dist", `${base}.js`) };
+  });
+  return [...fromMap, ...shadow];
 }
 
 /** Per-bin behavioral probes. Each entry: a list of { check, args(missingScript),
@@ -117,11 +129,50 @@ export const PROBES = {
           : `--help is not the amico-pasqal launcher usage (exit ${code})`,
     },
   ],
+  // The gh PATH shim (#399) is probed through its CONFIG lane: the probe seeds
+  // a MALFORMED credential file into the scratch HOME, so a fresh bundle fails
+  // config-class (exit 64, the amico-gh one-liner) BEFORE exec'ing any real gh
+  // — deterministic with or without gh installed, no network, no secrets. A
+  // stale/half-staged bundle cannot produce this line.
+  gh: [
+    {
+      check: "config-class rejection on malformed credential file",
+      args: () => ["pr", "list"],
+      setup: (home) => {
+        mkdirSync(join(home, ".amico"), { recursive: true });
+        writeFileSync(join(home, ".amico", "github.json"), "{not-json");
+      },
+      expect: ({ code, stderr }) =>
+        code === 64 && /amico-gh: malformed GitHub App credential file/.test(stderr)
+          ? null
+          : `did not reject a malformed credential file config-class (exit ${code}) — stale or wrong bundle`,
+    },
+  ],
+  // The git credential helper (#399): same malformed-file seed, driven through
+  // the git-credential stdin protocol. A fresh bundle answers NOTHING on
+  // stdout (protocol-clean fallthrough) while TRACEING the config fault on
+  // stderr — proving the bundle engaged the credential lane without blocking
+  // auth. Silence-with-no-stderr would mean the config lane is dead.
+  "amico-git-credential": [
+    {
+      check: "protocol-clean fallthrough traces the config lane",
+      args: () => [],
+      input: "protocol=https\nhost=github.com\n\n",
+      setup: (home) => {
+        mkdirSync(join(home, ".amico"), { recursive: true });
+        writeFileSync(join(home, ".amico", "github.json"), "{not-json");
+      },
+      expect: ({ code, stdout, stderr }) =>
+        code === 0 && stdout === "" && /amico-git-credential: malformed GitHub App credential file/.test(stderr)
+          ? null
+          : `did not trace the malformed-config fault and stay protocol-clean (exit ${code}, stdout ${JSON.stringify(stdout)})`,
+    },
+  ],
 };
 
-function execCapture(file, args, env) {
+function execCapture(file, args, env, input) {
   return new Promise((resolveP) => {
-    execFile(file, args, { env, timeout: 30_000, encoding: "utf8" }, (err, stdout, stderr) => {
+    const child = execFile(file, args, { env, timeout: 30_000, encoding: "utf8" }, (err, stdout, stderr) => {
       // err.code is the exit code for non-zero exits; spawn faults carry errno strings.
       const code = err ? (typeof err.code === "number" ? err.code : -1) : 0;
       resolveP({
@@ -131,6 +182,7 @@ function execCapture(file, args, env) {
         spawnError: err && typeof err.code !== "number" ? String(err.code ?? err.message) : undefined,
       });
     });
+    if (input !== undefined) child.stdin.end(input); // protocol-driven bins read stdin
   });
 }
 
@@ -175,7 +227,8 @@ export async function runGate({ binDir = DEFAULT_BIN_DIR, binMapPath = DEFAULT_B
       continue;
     }
     for (const probe of probes) {
-      const r = await execCapture(launcher, probe.args(missingScript), env);
+      probe.setup?.(scratchHome);
+      const r = await execCapture(launcher, probe.args(missingScript), env, probe.input);
       if (r.spawnError) {
         push(bin.name, probe.check, `launcher did not run: ${r.spawnError}`);
         continue;

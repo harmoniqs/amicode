@@ -69,6 +69,8 @@ try {
     ["src/cli.ts", "amico-run.js"],
     ["src/amico.ts", "amico.js"],
     ["src/pasqal_cli.ts", "amico-pasqal.js"],
+    ["src/gh_cli.ts", "gh.js"],
+    ["src/git_credential_cli.ts", "amico-git-credential.js"],
   ]) {
     const tmp = join(staging, name);
     await build({ ...common, entryPoints: [entry], outfile: tmp });

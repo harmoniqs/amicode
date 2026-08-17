@@ -90,6 +90,13 @@ describe("declaredBins", () => {
     expect(names).toContain("amico-run");
     expect(names).toContain("amico");
     expect(names).toContain("amico-pasqal");
+    expect(names).toContain("amico-git-credential");
+  });
+  it("appends the #399 shadow bins (gh) under their STAGED names — gated like declared bins", () => {
+    const gh = declaredBins(REAL_BIN_MAP).find((b) => b.name === "gh")!;
+    expect(gh).toBeDefined();
+    expect(gh.launcher).toBe(join("launcher", "gh"));
+    expect(gh.dist).toBe(join("dist", "gh.js"));
   });
   it("maps each bin to its staged launcher + dist bundle", () => {
     const run = declaredBins(REAL_BIN_MAP).find((b) => b.name === "amico-run")!;
