@@ -1638,6 +1638,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       void vscode.window.showInformationMessage("Amicode: distilling recent sessions in the background.");
     }),
     vscode.commands.registerCommand("amicode.restartServer", async () => {
+      // Fix #382: error page's Restart now posts this from the iframe
+      // (opencode#210's entry.tsx posts amicode.restartServer before reload);
+      // the bridge allowlist already permits it, so the server restart here
+      // clears the "Something went wrong" state instead of being a no-op.
       opencodeChannel.appendLine(`[boot] restart requested`);
       // Fleet client: no local server to restart — just re-probe the tunnel
       if (binary !== undefined && isFleetClientGuard(binary)) {
