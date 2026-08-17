@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { opsDir } from "./paths.js";
 
 // ============================================================================
 // The selected solver, read from the extension's solver-mode.json contract.
@@ -22,7 +22,7 @@ export type SolverMode = "piccolo" | "hp";
  *  the file the extension wrote. */
 function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
   const v = env.AMICODE_OPS_DIR;
-  return v && v.trim() !== "" ? v : join(homedir(), ".amico", "amicode");
+  return v && v.trim() !== "" ? v : opsDir();
 }
 
 export function solverModeFile(env: NodeJS.ProcessEnv = process.env): string {

@@ -34,9 +34,10 @@
 // `retierEventFor` are that mapping, kept pure and here so the CLI cannot invent a
 // fourth reading of it.
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
-import { homedir, hostname } from "node:os";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
+import { fleetDir } from "./paths.js";
 
 // ── §3.2 states ──────────────────────────────────────────────────────────────────
 /** The six registry states. Entered when:
@@ -887,7 +888,7 @@ export function signalFromToml(text: string): { ok: true; signal: FleetSignal } 
 /** The registry root. Precedence: explicit argument (tests, `--root`) → `$AMICO_FLEET_DIR`
  *  → `~/.amico/ops/fleet` (§3.2). Mirrors ledger.ts's single-env idiom. */
 export function fleetRoot(explicit?: string): string {
-  return explicit || process.env.AMICO_FLEET_DIR || join(homedir(), ".amico", "ops", "fleet");
+  return explicit || fleetDir();
 }
 
 export function recordPath(root: string, session_id: string): string {

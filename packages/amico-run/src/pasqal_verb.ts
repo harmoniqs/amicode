@@ -24,9 +24,9 @@
 // token appears in the digest, the JSON output, or the launcher argv.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { opsDir } from "./paths.js";
 import {
   pulseSha256,
   readDevicePathStatus,
@@ -61,7 +61,7 @@ function flagValue(argv: string[], name: string): string | undefined {
 function amicodeOpsDir(env: NodeJS.ProcessEnv): string {
   const v = env.AMICODE_OPS_DIR;
   if (v && v.trim() !== "") return v;
-  return join(homedir(), ".amico", "amicode");
+  return opsDir();
 }
 
 /** $AMICO_PASQAL_CONNECTOR overrides; default is the staged submit connector. */

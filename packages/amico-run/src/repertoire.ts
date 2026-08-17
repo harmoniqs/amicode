@@ -11,8 +11,8 @@
 // record missing a discriminating field (id/platform/gate/fidelity) is skipped,
 // not fatal.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { catalogPulsesDir as _catalogPulsesDir } from "./paths.js";
 import { parse as parseToml } from "smol-toml";
 
 /** A flat `metadata.toml` pulse record (amico-catalog Phase-0 schema). Known keys
@@ -41,7 +41,7 @@ export interface PulseRecord {
 export function catalogPulsesDir(): string {
   const env = process.env.AMICO_CATALOG_DIR;
   if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "vaults", "armonissima", "catalog", "pulses");
+  return _catalogPulsesDir();
 }
 
 function num(v: unknown): number | undefined {

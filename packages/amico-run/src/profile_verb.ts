@@ -26,12 +26,12 @@
 // `base` applies when it is DISPATCHED, not when it is WORN. `--mode spool-up`
 // enforces that and reports the ignored value rather than silently dropping it.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { TASK_TYPES } from "./ledger.js";
 import { FRONTIER_MODELS, LADDER } from "./ledger_dispatch.js";
 import type { VerbResult } from "./verbs.js";
+import { profilesVaultDir, opsDir } from "./paths.js";
 
 // ── vocabularies (closed sets, extensible only by schema revision — §2.1) ─────────
 const BASES = ["resident", "executor", "headless"] as const;
@@ -108,7 +108,7 @@ const strList = (v: unknown): string[] | undefined =>
  *  the extension looks for internal library skills (DEFAULT_LIBRARY_ROOTS). Overridable
  *  per-flag and per-env so CI and tests point at a fixture tree. */
 function profilesDir(argv: string[]): string {
-  return flagValue(argv, "--profiles-dir") ?? process.env.AMICO_PROFILES_DIR ?? join(homedir(), ".amico", "vaults", "armonissima", "profiles");
+  return flagValue(argv, "--profiles-dir") ?? process.env.AMICO_PROFILES_DIR ?? profilesVaultDir();
 }
 function siblingDir(argv: string[], flag: string, env: string, name: string): string {
   const explicit = flagValue(argv, flag) ?? process.env[env];
@@ -149,7 +149,7 @@ function readEntitlements(argv: string[], warnings: string[]): { codes: string[]
   if (inline !== undefined) {
     return { codes: inline.split(",").map((c) => c.trim()).filter((c) => c.length > 0), source: "flag/env" };
   }
-  const dir = flagValue(argv, "--entitlements-dir") ?? process.env.AMICO_ENTITLEMENTS_DIR ?? join(homedir(), ".amico", "amicode");
+  const dir = flagValue(argv, "--entitlements-dir") ?? process.env.AMICO_ENTITLEMENTS_DIR ?? opsDir();
   const file = join(dir, "entitlements.toml");
   if (!existsSync(file)) return { codes: [], source: "none (no entitlements.toml — public only)" };
   try {

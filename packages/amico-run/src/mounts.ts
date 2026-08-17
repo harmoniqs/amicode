@@ -41,9 +41,9 @@
 // House style (mirrors repertoire.ts): never-throwing loaders (a missing/corrupt
 // vault or manifest degrades to a warning, never a throw) + pure functions.
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { vaultsRoot, mountsTomlFile } from "./paths.js";
 
 /** One resolved Armonia vault mount. `writable` is the effective posture after the
  *  kind default + any manifest override. */
@@ -80,14 +80,10 @@ function defaultWritable(kind: string): boolean {
 
 // ── env-seam defaults ─────────────────────────────────────────────────────────
 function defaultVaultsRoot(): string {
-  const env = process.env.AMICO_VAULTS_ROOT;
-  if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "vaults");
+  return vaultsRoot();
 }
 function defaultMountsToml(): string {
-  const env = process.env.AMICO_MOUNTS_TOML;
-  if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "mounts.toml");
+  return mountsTomlFile();
 }
 
 // ── manifest (`mounts.toml`) ─────────────────────────────────────────────────────

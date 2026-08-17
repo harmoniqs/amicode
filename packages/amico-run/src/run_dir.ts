@@ -1,8 +1,8 @@
 import { existsSync, writeFileSync, renameSync, appendFileSync, symlinkSync, rmSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { join, dirname, basename, resolve } from "node:path";
-import { studioPathsOrLegacy } from "@amicode/schema";
 import { ConfigError, type RunStatus } from "./types.js";
+import { runsRoot } from "./paths.js";
 
 const ID_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -19,10 +19,9 @@ export function deriveLabId(lab: string): string {
 }
 
 export function defaultRunsRoot(labId: string): string {
-  // The #402 ladder: manifest studio root → legacy ~/.amico. Absent manifest
-  // = exactly today's path (the transition symlinks resolve at IO time).
-  const paths = studioPathsOrLegacy();
-  return join(paths.runs, labId);
+  // Path policy (env override → baseDir ladder) lives in paths.ts — the single
+  // source of truth; see its header for the resolution order.
+  return runsRoot(labId);
 }
 
 export function generateRunId(runsRoot: string, now = new Date()): string {
