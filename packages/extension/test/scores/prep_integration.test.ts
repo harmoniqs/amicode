@@ -416,3 +416,68 @@ PACKDRIVEN-BODY-MARKER.
     expect(md).toContain("> Compiled from score `pulse-designer`");
   });
 });
+
+// ── studio-manifest root adoption (#402) ──
+// The ladder: hermetic env override → MANIFEST → legacy ~/.amico. Absent
+// manifest = exactly today's behavior; the hermetic escapes still win.
+describe("prepareOpencodeProject — studio manifest roots (#402)", () => {
+  function studioCfg(root: string, over: Record<string, string> = {}): string {
+    const file = path.join(root, "config.toml");
+    const lines = [`schema_version = "1"`, `studio_root = "${path.join(root, "studio")}"`];
+    for (const [k, v] of Object.entries(over)) lines.push(`${k} = "${v}"`);
+    fs.writeFileSync(file, lines.join("\n") + "\n");
+    return file;
+  }
+
+  it("a manifest redirects the problems root (grants + manifest transport)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ext-studio-"));
+    const cfg = studioCfg(root, { problems: path.join(root, "elsewhere", "problems") });
+    const prevProblems = process.env.AMICODE_PROBLEMS_DIR; // the suite sets it in beforeAll — env must NOT mask the manifest here
+    delete process.env.AMICODE_PROBLEMS_DIR;
+    process.env.AMICODE_STUDIO_CONFIG = cfg;
+    try {
+      prep({});
+      const cfgJson = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/tpl", "/runs"));
+      const grant = Object.keys(cfgJson.permission.external_directory).find((k) => k.includes("problems"));
+      expect(grant).toContain(path.join(root, "elsewhere", "problems"));
+      expect(fs.existsSync(path.join(root, "elsewhere", "problems", "score_manifest.json"))).toBe(true);
+    } finally {
+      delete process.env.AMICODE_STUDIO_CONFIG;
+      if (prevProblems === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
+      else process.env.AMICODE_PROBLEMS_DIR = prevProblems;
+    }
+  });
+
+  it("AMICODE_PROBLEMS_DIR still outranks the manifest (hermetic escape)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "ext-studio-"));
+    const cfg = studioCfg(root, { problems: path.join(root, "manifest-problems") });
+    const envDir = path.join(root, "env-problems");
+    process.env.AMICODE_STUDIO_CONFIG = cfg;
+    process.env.AMICODE_PROBLEMS_DIR = envDir;
+    try {
+      prep({});
+      const cfgJson = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/tpl", "/runs"));
+      const grant = Object.keys(cfgJson.permission.external_directory).find((k) => k.includes("problems"));
+      expect(grant).toContain("env-problems");
+    } finally {
+      delete process.env.AMICODE_STUDIO_CONFIG;
+      delete process.env.AMICODE_PROBLEMS_DIR; // the suite's beforeAll value is restored by its own afterAll contract
+    }
+  });
+
+  it("absent manifest = legacy problems root exactly (parity)", () => {
+    const prevProblems = process.env.AMICODE_PROBLEMS_DIR;
+    delete process.env.AMICODE_PROBLEMS_DIR;
+    process.env.AMICODE_STUDIO_CONFIG = path.join(os.tmpdir(), `no-such-studio-${Date.now()}.toml`);
+    try {
+      prep({});
+      const cfgJson = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", "/abs/tpl", "/runs"));
+      const grant = Object.keys(cfgJson.permission.external_directory).find((k) => k.includes("problems"));
+      expect(grant).toContain(path.join(os.homedir(), ".amico", "problems"));
+    } finally {
+      delete process.env.AMICODE_STUDIO_CONFIG;
+      if (prevProblems === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
+      else process.env.AMICODE_PROBLEMS_DIR = prevProblems;
+    }
+  });
+});

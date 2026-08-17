@@ -207,3 +207,48 @@ describe("releaseCoords — fork-mirror pinning", async () => {
     );
   });
 });
+
+describe("fetchOpencode — fork-mirror release fetch order (2026-08-17 CI incident)", () => {
+  it("fork coordinates download via plain HTTPS first — no gh, no token", async () => {
+    const { bytes, hash } = fixtureArchive();
+    const root = rootWith({
+      version: "9.9.9",
+      repo: "harmoniqs/opencode",
+      tag: "v9.9.9-amicode.1",
+      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: hash } },
+    });
+    let sawUrl = "";
+    const download = async (url) => {
+      sawUrl = url;
+      return bytes;
+    };
+    const r = await fetchOpencode({ root, platform: "linux-x64", download });
+    expect(r.skipped).toBe(false);
+    expect(sawUrl).toBe("https://github.com/harmoniqs/opencode/releases/download/v9.9.9-amicode.1/a.tar.gz");
+    expect(existsSync(join(root, "vendor", "opencode", "linux-x64", "opencode"))).toBe(true);
+  });
+
+  it("a public 404 falls back to the gh path, and a gh failure names BOTH paths", async () => {
+    const { bytes, hash } = fixtureArchive();
+    const root = rootWith({
+      version: "9.9.9",
+      repo: "harmoniqs/opencode",
+      tag: "v9.9.9-amicode.1",
+      platforms: { "linux-x64": { asset: "a.tar.gz", sha256: hash } },
+    });
+    // public fetch 404s (genuinely private asset) AND gh is unavailable (PATH
+    // stripped) — the error must name both, so CI operators see the real story
+    const download = async () => {
+      throw new Error("download failed: HTTP 404");
+    };
+    const prevPath = process.env.PATH;
+    process.env.PATH = "/nonexistent";
+    try {
+      await expect(
+        fetchOpencode({ root, platform: "linux-x64", download }),
+      ).rejects.toThrow(/not publicly fetchable.*gh fallback failed/);
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});

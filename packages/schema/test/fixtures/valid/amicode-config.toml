@@ -1,0 +1,3 @@
+# The studio manifest, minimal and valid: the binding IS the root.
+schema_version = "1"
+studio_root = "~/armonia"

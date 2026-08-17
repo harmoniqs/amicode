@@ -1,0 +1,2 @@
+# INVALID: no studio_root — a manifest that binds nothing.
+schema_version = "1"

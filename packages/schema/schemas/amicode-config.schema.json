@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/amicode-config/v1",
+  "title": "amicode studio manifest",
+  "description": "The manifest that binds an Amicode installation (#402): one file (~/.amicode/config.toml) declaring the studio root, the ordered vault mount stack, and the roots for catalog/ledger/harness/packs. Research capital lives under the studio root (visible, git-syncable); engine state lives in the dotdir. Absent manifest = exactly today's behavior (the fallback ladder) — never brick. Deliberately NOT filename-kinded: 'config.toml' is too generic a name to claim; validate via --schema. Structural checks only — semantic checks (exactly one rw personal mount, drift) belong to `amicode doctor`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "studio_root"],
+  "properties": {
+    "schema_version": { "enum": ["1"] },
+    "studio_root": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the visible studio root (default ~/armonia); ~ allowed; every derived root defaults beneath it"
+    },
+    "tenant": {
+      "type": "string",
+      "minLength": 1,
+      "description": "harness namespacing default (telaio tenants); default 'local'"
+    },
+    "vaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mounts": {
+          "type": "array",
+          "description": "the ordered mount stack — document order IS precedence (first rw personal wins writes by kind)",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "kind", "mode", "path"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "kind": {
+                "type": "string",
+                "enum": ["personal", "engagement", "project", "restricted", "team", "public"],
+                "description": "the vault kind — write-routing and precedence key (matches the mount-stack resolver)"
+              },
+              "mode": { "type": "string", "enum": ["rw", "ro"] },
+              "path": { "type": "string", "minLength": 1, "description": "~ allowed" }
+            }
+          }
+        }
+      }
+    },
+    "catalog": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the warm-start banks (pulses, codes); default <studio_root>/catalog"
+    },
+    "ledger": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the event log of the science (runs.jsonl, campaign books); default <studio_root>/ledger"
+    },
+    "harness": {
+      "type": "string",
+      "minLength": 1,
+      "description": "harness session logs (telaio tenants) — the warrant audit trail; default <studio_root>/ledger/harness"
+    },
+    "packs_external": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the external pack root (second resolution root after the bundled packs); default <studio_root>/packs"
+    },
+    "problems": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the problem workspaces (design records); default <studio_root>/problems — set explicitly while an install still lives on a legacy layout (doctor flags the drift)"
+    },
+    "runs": {
+      "type": "string",
+      "minLength": 1,
+      "description": "local compute output (run dirs) — retained, never synced; default <studio_root>/runs"
+    },
+    "vaults_root": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the directory mounts' relative paths resolve against; default <studio_root>/vaults"
+    }
+  }
+}

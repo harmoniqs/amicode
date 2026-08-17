@@ -198,10 +198,32 @@ async function fetchFromRelease({ root, manifest, key, download }) {
     return { skipped: true, path: bin, source: provenance }; // offline repeat builds
   }
 
-  const bytes =
-    coords.private && download === defaultDownload
-      ? ghDownload(coords.repo, coords.tag, asset)
-      : await download(assetUrl(manifest, key));
+  // Fork releases (repo set in the lock) historically went straight through
+  // the gh CLI because the mirror was PRIVATE. The fork is public now, and a
+  // gh-only path couples CI to OPENCODE_FETCH_TOKEN's org access (observed
+  // 2026-08-17: SSO/token-policy change 403'd boot-smoke while the asset is
+  // plainly fetchable). Order: plain HTTPS FIRST (works for any public
+  // release, tokenless), gh ONLY as the fallback for a genuinely private
+  // asset. Both paths end at the same sha256 gate.
+  let bytes;
+  if (coords.private) {
+    try {
+      bytes = await download(assetUrl(manifest, key));
+    } catch (e) {
+      const viaGh = (() => {
+        try {
+          return ghDownload(coords.repo, coords.tag, asset);
+        } catch (ghErr) {
+          throw new Error(
+            `asset not publicly fetchable (${e.message}) and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
+          );
+        }
+      })();
+      bytes = viaGh;
+    }
+  } else {
+    bytes = await download(assetUrl(manifest, key));
+  }
   const got = sha256(bytes);
   if (got !== want) {
     // Possible supply-chain signal: no retry, no override (spec §3 step 4).

@@ -18,9 +18,8 @@
 // cross-process guarantee is exercised by a real-subprocess concurrency test at the
 // `ledger` verb layer (ledger_verb.test.ts), where the built CLI exists.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { validate } from "@amicode/schema";
+import { validate, studioPathsOrLegacy } from "@amicode/schema";
 
 /** POSIX minimum PIPE_BUF; O_APPEND writes at or under this size are atomic on
  *  Linux (a single `write(2)` never interleaves with another). */
@@ -291,9 +290,11 @@ export type LedgerRecord =
   | PlanCompiledRecord
   | TodoRecord;
 
-/** The ledger file path: `$AMICO_LEDGER` override, else `~/.amico/ledger/runs.jsonl`. */
+/** The ledger file path: `$AMICO_LEDGER` override, else the studio ladder
+ *  (manifest ledger root → legacy ~/.amico/ledger). Absent manifest = today. */
 export function ledgerPath(): string {
-  return process.env.AMICO_LEDGER || join(homedir(), ".amico", "ledger", "runs.jsonl");
+  if (process.env.AMICO_LEDGER) return process.env.AMICO_LEDGER;
+  return join(studioPathsOrLegacy().ledger, "runs.jsonl");
 }
 
 /** Append one record as a single JSONL line. Validates against the `ledger-record`

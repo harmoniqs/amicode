@@ -39,6 +39,10 @@ import planSchema from "../schemas/plan.schema.json" with { type: "json" };
 // for a domain pack. Registered AFTER plan: it references nothing, but keeping
 // the insertion order append-only makes the $ref-resolution note above stable.
 import packSchema from "../schemas/pack.schema.json" with { type: "json" };
+// The studio manifest (#402) — one file binding the installation: studio
+// root, the ordered vault mount stack, derived-root overrides. NOT filename-
+// kinded (config.toml is too generic a name to claim).
+import amicodeConfigSchema from "../schemas/amicode-config.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -47,6 +51,22 @@ import packSchema from "../schemas/pack.schema.json" with { type: "json" };
 // "exports" map, so a subpath import would work, but the root export is the
 // established, documented seam every other consumer uses — see `validate` below).
 export { structureHash, problemHash, canonicalJson, fullDict, structureFields, sha256hex, designHash, planHash, workIdV1 } from "./hashing.js";
+
+// The studio reader (#402): one library owns manifest parsing + root
+// resolution. Consumers import { studioPathsOrLegacy } from the root — the
+// same documented seam as everything else above.
+export {
+  expandTilde,
+  resolveStudioPaths,
+  legacyStudioPaths,
+  loadStudioBinding,
+  studioManifestCandidates,
+  studioPathsOrLegacy,
+  type StudioManifest,
+  type StudioMount,
+  type StudioMountDecl,
+  type StudioPaths,
+} from "./studio.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
@@ -77,6 +97,7 @@ const SCHEMAS = {
   spec: specSchema,
   plan: planSchema,
   pack: packSchema,
+  "amicode-config": amicodeConfigSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -92,7 +113,7 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  top-level properties.schema_version) are excluded from this string-version map. */
 export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]> =
   Object.fromEntries(
-    (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack"] as const).map((kind) => [
+    (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack", "amicode-config"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),
