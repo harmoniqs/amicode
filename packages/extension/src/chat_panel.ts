@@ -47,6 +47,8 @@ export class ChatPanel {
    *  only when the report-a-bug skill is there to answer it. */
   private static bugReportAvailable = false;
   private readonly disposables: vscode.Disposable[] = [];
+  /** The origin the iframe was built with — used to detect port changes on restart. */
+  readonly origin: string;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -55,6 +57,7 @@ export class ChatPanel {
     authToken?: string,
     hideProjectDir?: string,
   ) {
+    this.origin = opencodeUrl.origin;
     this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     ChatPanel.live.add(this);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
@@ -106,6 +109,30 @@ export class ChatPanel {
     const envelope = { source: "amicode", kind: "open-compute-connect" };
     void this.panel.webview.postMessage(envelope);
     setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
+  }
+
+  /** Notify all live panels that the server URL changed (or that the server
+   *  restarted on the same port). If the port changed, the panel's iframe is
+   *  stale and must be recreated — returns true if recreation is needed. */
+  static notifyServerUrlChanged(url: URL): boolean {
+    const current = ChatPanel.current;
+    if (!current) return false;
+    if (current.origin !== url.origin) return true
+    // Same origin — just inform the webview the server restarted.
+    for (const panel of ChatPanel.live) {
+      void panel.panel.webview.postMessage({
+        source: "amicode",
+        kind: "server-url-changed",
+        url: url.href,
+      });
+    }
+    return false;
+  }
+
+  /** Dispose the current primary panel (closes the VS Code tab). Used when the
+   *  server port changed and the iframe needs to be rebuilt with a new origin. */
+  static disposeCurrent(): void {
+    ChatPanel.current?.panel.dispose();
   }
 
   /** AC5's gate setter — called after each session prep with
@@ -273,7 +300,7 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "server-url-changed" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }

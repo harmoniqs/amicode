@@ -833,6 +833,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // If the server restarted on a different port (ephemeral mode), the
+      // existing panel's iframe is stale — dispose it so openOrReveal creates a
+      // fresh one with the correct origin. If same port, push a notification so
+      // the web app's SSE loop knows the server restarted (boot-ID detection
+      // handles the rest).
+      if (ChatPanel.notifyServerUrlChanged(url)) {
+        ChatPanel.disposeCurrent();
+      }
       // Open the chat as soon as the server is up (amicode.chat.autoOpen,
       // default on) — the chat IS the product's front door.
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
