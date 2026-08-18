@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/library-paper/v1",
+  "title": "amico library-paper record",
+  "description": "The paper record (#405, literature-plane slice 1): the frontmatter contract for a vault reading note, formalized from the two production notes (TEMPO, mitten-qLDPC). The record IS the note's frontmatter — PDF (evidence) and note (projection) stay distinct artifacts; this contract binds identity (title+authors, arxiv xor doi at minimum), lifecycle (staged→distilled; absent = distilled, the historical notes), provenance (which pipeline ingested it), and scoping (relevance/systems/tags — study-relative fields). Bots stage; humans (or distill sessions) promote. Deliberately NOT filename-kinded — notes are markdown frontmatter, validated as parsed objects.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["type", "title", "authors"],
+  "properties": {
+    "type": { "const": "paper" },
+    "title": { "type": "string", "minLength": 1 },
+    "authors": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "arxiv": {
+      "type": ["string", "null"],
+      "pattern": "^(\\d{4}\\.\\d{4,5}(v\\d+)?|(cond-mat|quant-ph|hep-th|math|cs|astro-ph|gr-qc|hep-lat|hep-ex|hep-ph|nucl-ex|nucl-th|physics|q-bio|q-fin|stat|nlin|acc-phys|ao-sci|atom-ph|bayes-an|chao-dyn|chem-ph|comp-gas|cond-mat|dg-ga|funct-an|mtrl-th|patt-sol|physics|plasm-ph|solv-int|supr-con)/\\d{7})$",
+      "description": "new dotted form (optional v-suffix tolerated) OR the legacy archive form (cond-mat/0703002, quant-ph/9906066) — pre-2007 ids are production data; the fold normalizes before compare. null = identity unresolved (arxiv OR doi still required; the anyOf flags the gap honestly)"
+    },
+    "doi": { "type": ["string", "null"], "pattern": "^10\\.\\d{4,9}/\\S+$" },
+    "status": {
+      "enum": ["staged", "distilled"],
+      "description": "lifecycle: bots stage, humans promote. Absent = distilled (the historical notes predate the gate)"
+    },
+    "date_read": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "minLength": 1 },
+    "relevance": {
+      "anyOf": [{ "enum": ["high", "medium", "low"] }, { "type": "string", "minLength": 1 }],
+      "description": "enum for queryability; free-text justification tolerated (the team vault's earlier pipeline wrote prose relevance — production data)"
+    },
+    "systems": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "visibility": { "type": "string", "minLength": 1 },
+    "route_intent": { "type": "string", "minLength": 1 },
+    "session_id": { "type": ["string", "null"] },
+    "source": {
+      "enum": ["dream-distill", "papers-channel", "arxiv-subscription", "upload", "manual", "doc-ingest"],
+      "description": "the ingestion pipeline that produced the note"
+    },
+    "source_session": { "type": ["string", "null"] },
+    "journal": { "type": "string", "minLength": 1 },
+    "published": { "type": "string", "minLength": 1 },
+    "species": { "type": "string", "minLength": 1 },
+    "read_depth": { "type": "string", "minLength": 1 },
+    "hardware": { "type": "string", "minLength": 1 },
+    "promoted_from": { "type": ["string", "null"] },
+    "merged_into": { "type": "string", "minLength": 1 },
+    "date_full_text_read": { "type": "string", "minLength": 1 },
+    "triaged_from": { "type": "string", "minLength": 1 }
+  },
+  "anyOf": [
+    { "required": ["arxiv"], "properties": { "arxiv": { "type": "string" } } },
+    { "required": ["doi"], "properties": { "doi": { "type": "string" } } }
+  ],
+  "$comment": "identity = at least one NON-NULL id. The branch-level type constraint is what enforces it — `required` alone is presence-based and would let arxiv: null through."
+}

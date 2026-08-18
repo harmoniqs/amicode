@@ -15,6 +15,7 @@
 
 import { catalogVerb } from "./catalog_verb.js";
 import { vaultVerb } from "./vault_verb.js";
+import { papersVerb } from "./papers_verb.js";
 import { deviceVerb } from "./device_verb.js";
 import { noteVerb } from "./note_verb.js";
 import { ledgerVerb } from "./ledger_verb.js";
@@ -186,4 +187,15 @@ const handoff: Verb = {
   run: (args) => handoffVerb(args),
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff];
+// papers — the unified literature corpus (#405): one read-only view over
+// vault paper notes + the library PDF store — collected, unified, deduped
+// (reported, never merged), orphans surfaced both ways. Read-only.
+const papers: Verb = {
+  name: "papers",
+  summary: "list the unified literature corpus (vault notes + library PDFs; filters + drift)",
+  generalizes: "the literature plane's collect/unify/search surface (spec-20260817-140000)",
+  slice: "literature plane (1)",
+  run: papersVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers];
