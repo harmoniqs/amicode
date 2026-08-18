@@ -3,7 +3,7 @@
 // identity, content-addressed join, orphans surfaced. The fold NEVER writes
 // (dedup reports; merging is a human promote act).
 import { describe, it, expect, beforeEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { foldCorpus } from "../src/papers.js";
@@ -94,12 +94,18 @@ describe("foldCorpus", () => {
     cleanup();
   });
 
-  it("THE REAL CORPUS: the two production notes validate against the contract unchanged", () => {
-    // fixtures-by-copy — they are the contract's source of truth
-    const real = "/Users/aaron/.amico/vaults/vault-aaron/papers";
-    const r = foldCorpus(["/Users/aaron/.amico/vaults"], "/Users/aaron/.amico/library");
-    expect(r.invalid.filter((x) => x.file.startsWith(real))).toEqual([]);
-    expect(r.papers.filter((p) => p.file.startsWith(real)).length).toBeGreaterThanOrEqual(2);
-    cleanup();
-  });
+  // Machine-local parity: the production notes are the contract's source of
+  // truth — but they exist only on a machine carrying the real vaults. CI
+  // runners have none; the fold returns 0 there and the check is meaningless.
+  // (The contract itself is pinned by the schema suite's fixtures-by-copy.)
+  it.skipIf(!existsSync("/Users/aaron/.amico/vaults/vault-aaron/papers"))(
+    "THE REAL CORPUS: the production notes validate against the contract unchanged",
+    () => {
+      const real = "/Users/aaron/.amico/vaults/vault-aaron/papers";
+      const r = foldCorpus(["/Users/aaron/.amico/vaults"], "/Users/aaron/.amico/library");
+      expect(r.invalid.filter((x) => x.file.startsWith(real))).toEqual([]);
+      expect(r.papers.filter((p) => p.file.startsWith(real)).length).toBeGreaterThanOrEqual(2);
+      cleanup();
+    },
+  );
 });
