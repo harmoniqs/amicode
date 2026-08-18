@@ -68,7 +68,13 @@ export class RemoteExecutor implements Executor {
     this.pollMs = opts.pollMs ?? 2000;
     this.warmingBudgetMs = opts.warmingBudgetMs ?? 15 * 60 * 1000;
     this.lostAfterMs = opts.lostAfterMs ?? 10 * 60 * 1000;
-    this.maxWallclock = opts.maxWallclock;
+    // The wall-clock cap is NEVER optional (2026-08-18 GPU-plane pass): the
+    // cloud bundle has no cooperative stop, so an uncapped run is a billing
+    // hang by construction. Ladder: explicit > env > generous default (2h —
+    // typical solves are minutes; hard two-mode problems < 1h; 2h covers the
+    // legitimate tail without letting a wedged run outlive the day).
+    const envCap = Number(process.env.AMICODE_REMOTE_MAX_WALLCLOCK_S);
+    this.maxWallclock = opts.maxWallclock ?? (Number.isFinite(envCap) && envCap > 0 ? envCap : 7200);
   }
 
   async submit(scriptPath: string | undefined, opts: SubmitOpts = {}): Promise<RunHandle> {
@@ -87,7 +93,7 @@ export class RemoteExecutor implements Executor {
 
     // ---- step 2: Δ2 submit — still no run dir; a rejected submit ran nothing ----
     const payload: Record<string, unknown> = { script: readFileSync(script, "utf8"), filename: basename(script) };
-    if (this.maxWallclock !== undefined) payload.max_wallclock = this.maxWallclock;
+    payload.max_wallclock = this.maxWallclock!; // always set — see the constructor ladder
     let res: Response;
     try {
       res = await fetch(`${cfg.baseUrl}/solves`, {
