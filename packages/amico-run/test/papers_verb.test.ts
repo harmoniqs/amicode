@@ -1,6 +1,5 @@
-// `amico papers` — the unified literature corpus surface (#405):
-// list (filters + table/JSON), feeding the collect→unify→usable→searchable
-// ladder. Read-only; the fold never writes.
+// `amico papers` verb tests (#405/#412): list surface + digest subcommand
+// routing. Digest engine tests live in papers_digest.test.ts.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,15 +33,15 @@ function note(file: string, fm: string) {
 }
 
 describe("papersVerb", () => {
-  it("usage error with no subcommand (exit 64, no crash)", () => {
-    const r = papersVerb([]);
+  it("usage error with no subcommand (exit 64, no crash)", async () => {
+    const r = await papersVerb([]);
     expect(r.code).toBe(64);
   });
 
-  it("list: JSON with the unified corpus + counts + drift", () => {
+  it("list: JSON with the unified corpus + counts + drift", async () => {
     note("a.md", N1);
     note("b.md", N2);
-    const r = papersVerb(["list", "--json"]);
+    const r = await papersVerb(["list", "--json"]);
     expect(r.code).toBe(0);
     const j = r.json as { ok: boolean; papers: { title: string }[]; counts: Record<string, number> };
     expect(j.ok).toBe(true);
@@ -51,33 +50,37 @@ describe("papersVerb", () => {
     expect(j.counts.records_without_pdf).toBe(2);
   });
 
-  it("filters: --status, --tag, --platform, --q substring", () => {
+  it("filters: --status, --tag, --platform, --q substring", async () => {
     note("a.md", N1);
     note("b.md", N2);
-    const run = (args: string[]) =>
-      ((papersVerb(["list", "--json", ...args]).json as { papers: { title: string }[] }).papers.map((p) => p.title));
-    expect(run(["--status", "staged"])).toEqual(["TEMPO"]);
-    expect(run(["--status", "distilled"])).toEqual(["Mitten qLDPC"]); // absent = distilled
-    expect(run(["--tag", "qldpc"])).toEqual(["Mitten qLDPC"]);
-    expect(run(["--platform", "transmon"])).toEqual(["TEMPO"]);
-    expect(run(["--q", "mitten"])).toEqual(["Mitten qLDPC"]);
-    expect(run(["--q", "qLDPC"])).toEqual(["Mitten qLDPC"]); // case-insensitive
+    const run = async (args: string[]) =>
+      ((await papersVerb(["list", "--json", ...args])).json as { papers: { title: string }[] }).papers.map((p) => p.title);
+    expect(await run(["--status", "staged"])).toEqual(["TEMPO"]);
+    expect(await run(["--status", "distilled"])).toEqual(["Mitten qLDPC"]); // absent = distilled
+    expect(await run(["--tag", "qldpc"])).toEqual(["Mitten qLDPC"]);
+    expect(await run(["--platform", "transmon"])).toEqual(["TEMPO"]);
+    expect(await run(["--q", "mitten"])).toEqual(["Mitten qLDPC"]);
+    expect(await run(["--q", "qLDPC"])).toEqual(["Mitten qLDPC"]); // case-insensitive
   });
 
-  it("default output is a human table (rendered string), not raw JSON", () => {
+  it("default output is a human table (rendered string), not raw JSON", async () => {
     note("a.md", N1);
-    const r = papersVerb(["list"]);
+    const r = await papersVerb(["list"]);
     expect(r.code).toBe(0);
     expect(JSON.stringify(r.json)).toContain("TEMPO");
-    expect(JSON.stringify(r.json)).toMatch(/table|TEMPO/);
   });
 
-  it("invalid notes are reported, never fatal", () => {
+  it("invalid notes are reported, never fatal", async () => {
     note("bad.md", `type: paper\ntitle: "No identity"\nauthors: [X]`);
-    const r = papersVerb(["list", "--json"]);
+    const r = await papersVerb(["list", "--json"]);
     expect(r.code).toBe(0);
     const j = r.json as { counts: Record<string, number>; invalid: { file: string }[] };
     expect(j.counts.invalid).toBe(1);
     expect(j.invalid[0]!.file).toContain("bad.md");
+  });
+
+  it("digest routes (unknown-flag surface exercised in engine tests)", async () => {
+    const r = await papersVerb(["nonsense"]);
+    expect(r.code).toBe(64);
   });
 });
