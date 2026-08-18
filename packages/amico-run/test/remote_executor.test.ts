@@ -26,6 +26,34 @@ async function collect(events: AsyncIterable<RunEvent>): Promise<RunEvent[]> {
   return out;
 }
 
+describe("RemoteExecutor.submit — the wall-clock cap is NEVER optional (GPU-plane anti-hang)", () => {
+  // 2026-08-18 architecture pass: launch.ts constructed RemoteExecutor() bare,
+  // so max_wallclock was NEVER sent — an uncapped cloud run on a bundle with
+  // no cooperative stop bills until the heat death of the instance. The cap
+  // is now always in the payload: explicit > env > generous default.
+  it("always sends max_wallclock — the generous default when nothing sets it", async () => {
+    await withCloud(async (fake) => {
+      await ex(fake).submit(fakeJulia(tmpRoot(), "solve.jl", "// julia body"), { runsRoot: join(tmpRoot(), "runs") });
+      expect(fake.submits[0].body.max_wallclock).toBe(7200);
+    });
+  });
+  it("an explicit cap rides the payload verbatim; env override beats the default", async () => {
+    await withCloud(async (fake) => {
+      await ex(fake, { maxWallclock: 300 }).submit(fakeJulia(tmpRoot(), "solve.jl", "// julia body"), { runsRoot: join(tmpRoot(), "runs") });
+      expect(fake.submits[0].body.max_wallclock).toBe(300);
+    });
+    await withCloud(async (fake) => {
+      process.env.AMICODE_REMOTE_MAX_WALLCLOCK_S = "1200";
+      try {
+        await ex(fake).submit(fakeJulia(tmpRoot(), "solve.jl", "// julia body"), { runsRoot: join(tmpRoot(), "runs") });
+        expect(fake.submits[0].body.max_wallclock).toBe(1200);
+      } finally {
+        delete process.env.AMICODE_REMOTE_MAX_WALLCLOCK_S;
+      }
+    });
+  });
+});
+
 describe("RemoteExecutor.submit — Δ2 wire shape + local mirror", () => {
   it("POSTs script CONTENT + filename with the Bearer credential; 202 → conforming mirror run dir", async () => {
     await withCloud(async (fake) => {
