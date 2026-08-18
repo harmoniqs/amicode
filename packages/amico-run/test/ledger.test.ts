@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendRecord, readRecords, ledgerPath, PIPE_BUF, type SolveRecord } from "../src/ledger.js";
+import { appendRecord, readRecords, ledgerPath, PIPE_BUF, gpuTotals, type SolveRecord, type LedgerRecord } from "../src/ledger.js";
 
 let dir: string;
 const prevEnv = process.env.AMICO_LEDGER;
@@ -18,6 +18,12 @@ afterEach(() => {
   if (prevEnv === undefined) delete process.env.AMICO_LEDGER;
   else process.env.AMICO_LEDGER = prevEnv;
 });
+
+
+function writeTmpLedger(rows: LedgerRecord[]): string {
+  for (const r of rows) appendRecord(r);
+  return ledgerPath();
+}
 
 const solve = (over: Partial<SolveRecord> = {}): SolveRecord => ({
   type: "solve",
@@ -87,5 +93,27 @@ describe("ledger core", () => {
     appendRecord(solve());
     const line = readFileSync(ledgerPath(), "utf8").split("\n").filter(Boolean)[0];
     expect(Buffer.byteLength(line + "\n", "utf8")).toBeLessThan(PIPE_BUF);
+  });
+});
+
+// ── ledger gpu (#425): sum the receipt rows — the warrant fold's view ──────
+describe("ledger gpu totals (receipt rows, #425)", () => {
+  it("sums gpu_seconds/cost across receipt rows, breaks down by SKU, counts by status", () => {
+    const f = writeTmpLedger([
+      { type: "receipt", ts: "2026-08-18T10:00:00Z", task_id: "a", executor: "remote", gpu_sku: "H100-80GB", gpu_seconds: 900, cost_usd: 2.7, status: "completed" },
+      { type: "receipt", ts: "2026-08-18T11:00:00Z", task_id: "b", executor: "remote", gpu_sku: "H100-80GB", gpu_seconds: 300, cost_usd: 0.9, status: "failed" },
+      { type: "receipt", ts: "2026-08-18T12:00:00Z", task_id: "c", executor: "remote", gpu_sku: "A100-40GB", gpu_seconds: 600 },
+      { type: "solve", ts: "2026-08-18T13:00:00Z", structure_hash: "x", problem_hash: "y", kind: "control", tier: "hpc", summary: { platform: "p", template: "t", trajectory: "g", N: 10, T: 10, goal: "g", solver: "s", strategy: "s" }, source: "user", outcome: { converged: true, fidelity: 0.99, iterations: 5 } },
+    ]);
+    const t = gpuTotals(f);
+    expect(t.receipts).toBe(3);
+    expect(t.gpu_seconds).toBe(1800);
+    expect(t.cost_usd).toBeCloseTo(3.6);
+    expect(t.by_sku).toEqual({ "H100-80GB": { gpu_seconds: 1200, cost_usd: 3.6 }, "A100-40GB": { gpu_seconds: 600 } });
+    expect(t.by_status).toEqual({ completed: 1, failed: 1 });
+  });
+  it("an empty or receipt-less ledger is zeros, never a throw", () => {
+    const t = gpuTotals(writeTmpLedger([]));
+    expect(t).toEqual({ receipts: 0, gpu_seconds: 0, cost_usd: 0, by_sku: {}, by_status: {} });
   });
 });

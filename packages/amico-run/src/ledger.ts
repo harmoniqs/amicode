@@ -267,6 +267,22 @@ export interface PlanCompiledRecord {
 
 /** One ADVISORY todo transition. `open` is the absence of a row; multiple rows per id
  *  resolve last-ts-wins. No `actor` field — no trustworthy actor identity exists here. */
+/** GPU/compute accounting for a remote run (#425, GPU-plane spec): pure
+ *  spend record — no fidelity, never feeds priors. The campaign warrant fold
+ *  sums these (unit-keyed bounds). Emitted by the remote executor at settle. */
+export interface ReceiptRecord {
+  type: "receipt";
+  ts: string;
+  task_id: string;
+  executor: "remote";
+  gpu_sku?: string;
+  gpu_seconds?: number;
+  cost_usd?: number;
+  problem?: string;
+  session?: string;
+  status?: "completed" | "failed" | "aborted";
+}
+
 export interface TodoRecord {
   type: "todo";
   ts: string;
@@ -279,6 +295,7 @@ export interface TodoRecord {
 
 export type LedgerRecord =
   | SolveRecord
+  | ReceiptRecord
   | VerdictRecord
   | AttemptErrorRecord
   | FallbackRecord
@@ -295,6 +312,49 @@ export type LedgerRecord =
 export function ledgerPath(): string {
   if (process.env.AMICO_LEDGER) return process.env.AMICO_LEDGER;
   return join(studioPathsOrLegacy().ledger, "runs.jsonl");
+}
+
+/** GPU spend totals over receipt rows (#425) — the warrant fold's view.
+ *  Pure aggregation: never throws, zeros on empty. by_sku/by_status keyed
+ *  breakdowns; cost_usd omitted per-row when the runner didn't report it. */
+export interface GpuTotals {
+  receipts: number;
+  gpu_seconds: number;
+  cost_usd: number;
+  by_sku: Record<string, { gpu_seconds?: number; cost_usd?: number }>;
+  by_status: Record<string, number>;
+}
+
+export function gpuTotals(file = ledgerPath()): GpuTotals {
+  const t: GpuTotals = { receipts: 0, gpu_seconds: 0, cost_usd: 0, by_sku: {}, by_status: {} };
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return t; // absent ledger = zero spend, not an error
+  }
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let rec: LedgerRecord;
+    try {
+      rec = JSON.parse(line) as LedgerRecord;
+    } catch {
+      continue; // a torn line never breaks accounting
+    }
+    if (rec.type !== "receipt") continue;
+    t.receipts += 1;
+    if (rec.gpu_seconds !== undefined) t.gpu_seconds += rec.gpu_seconds;
+    if (rec.cost_usd !== undefined) t.cost_usd += rec.cost_usd;
+    if (rec.gpu_sku !== undefined) {
+      const b = t.by_sku[rec.gpu_sku] ?? {};
+      if (rec.gpu_seconds !== undefined) b.gpu_seconds = (b.gpu_seconds ?? 0) + rec.gpu_seconds;
+      if (rec.cost_usd !== undefined) b.cost_usd = (b.cost_usd ?? 0) + rec.cost_usd;
+      t.by_sku[rec.gpu_sku] = b;
+    }
+    if (rec.status !== undefined) t.by_status[rec.status] = (t.by_status[rec.status] ?? 0) + 1;
+  }
+  t.cost_usd = Math.round(t.cost_usd * 1e4) / 1e4;
+  return t;
 }
 
 /** Append one record as a single JSONL line. Validates against the `ledger-record`

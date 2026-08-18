@@ -227,3 +227,39 @@ describe("ledger-record schema — discriminator", () => {
     expect(validate({ type: "nonesuch", ts: "t" }, "ledger-record").ok).toBe(false);
   });
 });
+
+// ── the receipt record (#425): GPU accounting for remote runs ─────────────
+describe("the receipt record (GPU accounting, #425)", () => {
+  const receipt = (over: Record<string, unknown> = {}) => ({
+    type: "receipt",
+    ts: "2026-08-18T12:00:00.000Z",
+    task_id: "419a57e6",
+    executor: "remote",
+    gpu_sku: "H100-80GB",
+    gpu_seconds: 1800,
+    cost_usd: 5.4,
+    ...over,
+  });
+  it("accepts a complete GPU receipt", () => {
+    expect(validate(receipt(), "ledger-record")).toMatchObject({ ok: true });
+  });
+  it("accepts a partial receipt — the runner may report sku-only or seconds-only", () => {
+    expect(validate(receipt({ gpu_seconds: undefined, cost_usd: undefined }), "ledger-record")).toMatchObject({ ok: true });
+    expect(validate(receipt({ gpu_sku: undefined, gpu_seconds: undefined }), "ledger-record")).toMatchObject({ ok: true });
+  });
+  it("requires type/ts/task_id/executor — a receipt names WHAT consumed and WHERE", () => {
+    for (const k of ["ts", "task_id", "executor"] as const)
+      expect(validate({ ...receipt(), [k]: undefined }, "ledger-record").ok, k).toBe(false);
+  });
+  it("gpu_seconds/cost_usd are positive numbers when present", () => {
+    expect(validate(receipt({ gpu_seconds: -1 }), "ledger-record").ok).toBe(false);
+    expect(validate(receipt({ gpu_seconds: "1800" }), "ledger-record").ok).toBe(false);
+    expect(validate(receipt({ cost_usd: -0.01 }), "ledger-record").ok).toBe(false);
+  });
+  it("executor is an enum — local receipts make no sense (nothing burns)", () => {
+    expect(validate(receipt({ executor: "local" }), "ledger-record").ok).toBe(false);
+  });
+  it("optional problem/session stamps for attribution", () => {
+    expect(validate(receipt({ problem: "cx-cat-cat-cavity", session: "s1" }), "ledger-record")).toMatchObject({ ok: true });
+  });
+});

@@ -397,3 +397,48 @@ describe("stats records arrive in either shape", () => {
     });
   });
 });
+
+// ── GPU receipt accounting (#425): remote settle → receipt ledger row ──────
+describe("RemoteExecutor — GPU receipt accounting (#425)", () => {
+  it("a completed run whose finished payload carries GPU fields emits a receipt ledger row + mirror receipt.toml", async () => {
+    await withCloud(async (fake) => {
+      fake.state.finished = { status: "completed", gpu_sku: "H100-80GB", gpu_seconds: 900, cost_usd: 2.7 };
+      const ledgerFile = join(tmpRoot(), `ledger-${Date.now()}.jsonl`);
+      process.env.AMICO_LEDGER = ledgerFile;
+      try {
+        const h = await ex(fake, { pollMs: 5, warmingBudgetMs: 5000, lostAfterMs: 5000 })
+          .submit(fakeJulia(tmpRoot(), "solve.jl", "// julia body"), { runsRoot: join(tmpRoot(), "runs"), lab: "t" });
+        for await (const _ of h.events) void _;
+        const rows = readFileSync(ledgerFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+        const receipt = rows.find((r) => r.type === "receipt");
+        expect(receipt).toMatchObject({
+          task_id: fake.taskId, executor: "remote",
+          gpu_sku: "H100-80GB", gpu_seconds: 900, cost_usd: 2.7,
+        });
+        // the mirror carries the durable artifact too
+        const mirror = join(h.runDir, "receipt.toml");
+        expect(readFileSync(mirror, "utf8")).toContain('gpu_sku = "H100-80GB"');
+      } finally {
+        delete process.env.AMICO_LEDGER;
+      }
+    });
+  });
+  it("a finished payload WITHOUT GPU fields emits no receipt row (nothing to account)", async () => {
+    await withCloud(async (fake) => {
+      fake.state.finished = { status: "completed" };
+      const ledgerFile = join(tmpRoot(), `ledger-${Date.now()}.jsonl`);
+      process.env.AMICO_LEDGER = ledgerFile;
+      try {
+        const h = await ex(fake, { pollMs: 5, warmingBudgetMs: 5000, lostAfterMs: 5000 })
+          .submit(fakeJulia(tmpRoot(), "solve.jl", "// julia body"), { runsRoot: join(tmpRoot(), "runs"), lab: "t2" });
+        for await (const _ of h.events) void _;
+        if (existsSync(ledgerFile)) {
+          const rows = readFileSync(ledgerFile, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+          expect(rows.some((r) => r.type === "receipt")).toBe(false);
+        }
+      } finally {
+        delete process.env.AMICO_LEDGER;
+      }
+    });
+  });
+});

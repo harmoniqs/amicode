@@ -9,6 +9,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { EventQueue } from "./event_queue.js";
+import { appendRecord, type ReceiptRecord } from "./ledger.js";
 import { classifyLine } from "./telemetry.js";
 import {
   appendIndex,
@@ -160,6 +161,12 @@ export class RemoteExecutor implements Executor {
       events.push(classifyLine(line, "stdout"));
     };
 
+    // #425 GPU receipt: the runner-contract fields ride the finished payload;
+    // stashed here, consumed at settle. Absent fields → null → no receipt row
+    // (nothing to account — the pre-contract runner emits none).
+    type GpuReceipt = { gpu_sku?: string; gpu_seconds?: number; cost_usd?: number };
+    let gpuReceipt: GpuReceipt | null = null;
+
     const settle = (status: RunStatus, exitCode: number): void => {
       if (settled) return;
       settled = true;
@@ -167,6 +174,32 @@ export class RemoteExecutor implements Executor {
         writeFinished(runDir, status, exitCode); // atomic; the mirror's authoritative verdict
       } catch (e) {
         process.stderr.write(`amico-run: failed to write FINISHED: ${(e as Error).message}\n`);
+      }
+      // GPU accounting (#425): the receipt row is spend, not science —
+      // emitted on FAILED runs too (they burn the same GPU time), never
+      // feeding priors (no fidelity field exists on it by design).
+      if (gpuReceipt) {
+        try {
+          const rec: ReceiptRecord = {
+            type: "receipt",
+            ts: new Date().toISOString(),
+            task_id: taskId,
+            executor: "remote",
+            ...gpuReceipt,
+          };
+          if (status === "completed" || status === "failed" || status === "aborted") rec.status = status;
+          appendRecord(rec); // validates against the ledger-record schema
+          atomicWriteFile(runDir, "receipt.toml", [
+            "# GPU receipt (runner contract #424) — mirrored from the cloud finished payload",
+            `task_id = "${taskId}"`,
+            ...(rec.gpu_sku ? [`gpu_sku = ${JSON.stringify(rec.gpu_sku)}`] : []),
+            ...(rec.gpu_seconds !== undefined ? [`gpu_seconds = ${rec.gpu_seconds}`] : []),
+            ...(rec.cost_usd !== undefined ? [`cost_usd = ${rec.cost_usd}`] : []),
+            `status = "${status}"`,
+          ].join("\n") + "\n");
+        } catch (e) {
+          process.stderr.write(`amico-run: failed to emit GPU receipt stanza: ${(e as Error).message}\n`);
+        }
       }
       events.push({ kind: "finished", status, exitCode });
       events.close();
@@ -321,6 +354,16 @@ export class RemoteExecutor implements Executor {
         emitLine(`AMICODE_REMOTE_LOST instance gone without FINISHED (task ${taskId})`);
         settle("failed", EXIT_INFERRED);
         return;
+      }
+      const fin = s.finished as
+        | { status?: string; gpu_sku?: unknown; gpu_seconds?: unknown; cost_usd?: unknown }
+        | undefined;
+      if (fin && gpuReceipt === null) {
+        const sku = typeof fin.gpu_sku === "string" && fin.gpu_sku !== "" ? fin.gpu_sku : undefined;
+        const secs = typeof fin.gpu_seconds === "number" && Number.isFinite(fin.gpu_seconds) && fin.gpu_seconds > 0 ? fin.gpu_seconds : undefined;
+        const cost = typeof fin.cost_usd === "number" && Number.isFinite(fin.cost_usd) && fin.cost_usd > 0 ? fin.cost_usd : undefined;
+        if (sku !== undefined || secs !== undefined || cost !== undefined)
+          gpuReceipt = { ...(sku !== undefined ? { gpu_sku: sku } : {}), ...(secs !== undefined ? { gpu_seconds: secs } : {}), ...(cost !== undefined ? { cost_usd: cost } : {}) };
       }
       const f = s.finished?.status;
       if (f === "completed" || f === "failed" || f === "aborted") settle(f, EXIT[f]);
