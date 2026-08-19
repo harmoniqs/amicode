@@ -99,6 +99,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // Onboarding webview bundle — Stage 0 model setup (#433)
+  {
+    entryPoints: ["src/onboarding_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/onboarding_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {
