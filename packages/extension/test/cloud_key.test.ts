@@ -483,6 +483,7 @@ describe("cloud URL resolution (review finding 6 — single-sourced)", () => {
       .contributes.configuration.properties;
     expect(props["amicode.cloudUrl"].default).toBe("");
     expect(props["amicode.cloudUrl"].description).toMatch(/built-in production endpoint/i);
+    expect(props["amicode.telemetry.enabled"].default).toBe(false);
   });
 
   // ACCOUNT COUPLING. The ONE token in ~/.amico/cloud.json authenticates BOTH the
