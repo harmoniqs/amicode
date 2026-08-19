@@ -82,8 +82,8 @@ describe("compileChainedScore (real overture → pulse-designer)", () => {
     expect(md).not.toContain("plain text");
   });
   it("keeps the overture's choice questions as option cards, default first (amicode#245 AC6 regression)", () => {
-    expect(md).toContain("simulation only for now (recommended)");
-    expect(md).toContain("extant QICK control code (on-prem, à la Stanford/UChicago)");
+    expect(md).toContain("Research (recommended)");
+    expect(md).toContain("General coding and software development");
   });
 });
 

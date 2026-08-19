@@ -23,7 +23,7 @@ export const SECRET_RE = /api[_-]?key|token|secret|password|Bearer |AKIA[0-9A-Z]
 export type OnboardingEntity = "profile" | "environment" | "device" | "onboarding_completed";
 
 const ENTITY_FIELDS: Record<OnboardingEntity, string[]> = {
-  profile: ["name", "role", "org", "platforms", "goals"],
+  profile: ["name", "role", "org", "platforms", "goals", "intent"],
   environment: ["slug", "archetype", "control_stack", "integration", "emulator", "endpoints"],
   device: ["name", "platform", "environment", "qubits", "params", "status"],
   onboarding_completed: [],
