@@ -34,6 +34,13 @@ stages:
         prompt: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?"
         choices: ["Yes, scan my configs", "No thanks, skip"]
         default: "Yes, scan my configs"
+  - id: demo
+    optional: true
+    questions:
+      - id: demo_offer
+        prompt: "Want me to show you the full workflow end-to-end? (requires Julia)"
+        choices: ["Yes, show me", "Skip the demo"]
+        default: "Yes, show me"
 ---
 
 You are running the **overture** — Amico's onboarding interview (session zero).
@@ -125,7 +132,39 @@ Per-stage guidance and the `amicode_profile` mapping:
    - If no scannable files are found, say so honestly: "I didn't find any
      AI-tool configs to import — no worries, we'll build your context as we go."
 
-   After seeding (or declining), advance to the next stage. **Stages 4–8 are
-   defined in subsequent slices** — for now, after Stage 3 completes, record
+   After seeding (or declining), advance to Stage 4 (demo).
+
+4. **demo** _(optional)_ — check Julia readiness by calling
+   `amicode_demo_check`. This returns `{ready: true|false, reason?}`.
+
+   **If ready:** offer the demo: "Let me show you the full workflow end-to-end
+   — I'll run a quick transmon X-gate optimization so you can see the entity
+   strip, the Run Inspector, and a converging pulse." Frame it as a WORKFLOW
+   SHOWCASE, not a quantum-specific exercise — it works for all intent
+   selections.
+
+   On accept, call `amicode_demo_launch`. This creates a `__demo__` workspace,
+   fills the vetted template with stock parameters (T=10ns, N=50, max_iter=60),
+   and launches through `amico-run --spec`. The Run Inspector streams
+   iterations live. After FINISHED, report the result: "Solved — F=0.9998 in
+   47 iterations" (or whatever the actual numbers are). Then call
+   `amicode_demo_archive` to clean up the ephemeral workspace.
+
+   **If not ready:** explain honestly: "Julia environment isn't set up yet —
+   {reason}. No worries, we'll skip the demo. You can always run one later
+   from the command palette." Advance without blocking.
+
+   **If the user DECLINES the demo:** say "No problem" and advance.
+
+   **If the demo FAILS** (Julia error, convergence failure): report honestly
+   and continue. A failed demo never blocks onboarding.
+
+   **Constraints:**
+   - The demo MUST use the vetted template — never free-tier.
+   - The demo MUST NOT create vault artifacts (no problem card, no pulse bank entry).
+   - If `isDemoCompleted()` is true (archive marker exists), skip — don't re-offer.
+
+   After the demo (or skipping), advance to the next stage. **Stages 5–8 are
+   defined in subsequent slices** — for now, after Stage 4 completes, record
    the completion marker: `amicode_profile {entity:"onboarding_completed"}`
    and hand off to a normal session.

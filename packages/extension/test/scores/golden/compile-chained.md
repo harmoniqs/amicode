@@ -18,29 +18,31 @@ gate's checks pass.
    - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Research (recommended) | Exploring
 3. **context_seed** (optional)
    - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
-4. **platform**
+4. **demo** (optional)
+   - Q `demo_offer`: "Want me to show you the full workflow end-to-end? (requires Julia)" — options: Yes, show me (recommended) | Skip the demo
+5. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
-5. **model**
+6. **model**
    - emits: system — record via the matching `amicode_*` tool
    - Q `levels`: "How many levels should the model keep? (I'll recommend based on your system — see guidance)" — default: platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)
    - Q `drives`: "Drive parameterization and amplitude bound (drive_max)?" — default: two quadratures, drive_max = 0.2 GHz
-6. **mode**
+7. **mode**
    - Q `mode`: "Simulate first, or go straight to solve?" — options: solve (recommended) | simulate
    - Q `warm_start`: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?" — options: cold start (recommended) | warm start
      - skip if: mode == simulate
-7. **problem**
+8. **problem**
    - Q `target`: "What is the target — a gate, or a state to prepare?" — default: a single-qubit gate
-8. **formulate**
+9. **formulate**
    - emits: formulation — record via the matching `amicode_*` tool
    - Q `formulation`: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)" — default: a fixed-time gate, free-phase on for entangling gates
      - [Why?] hooks: free-phase-objective-only, pin-globals-first-solve (read `scores/memory/<hook>.md` on request)
-9. **solve**
+10. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
    - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
-10. **inspect**
-11. **hardware** (optional)
+11. **inspect**
+12. **hardware** (optional)
    - emits: device_session — record via the matching `amicode_*` tool
 
 ---
@@ -134,8 +136,40 @@ Per-stage guidance and the `amicode_profile` mapping:
    - If no scannable files are found, say so honestly: "I didn't find any
      AI-tool configs to import — no worries, we'll build your context as we go."
 
-   After seeding (or declining), advance to the next stage. **Stages 4–8 are
-   defined in subsequent slices** — for now, after Stage 3 completes, record
+   After seeding (or declining), advance to Stage 4 (demo).
+
+4. **demo** _(optional)_ — check Julia readiness by calling
+   `amicode_demo_check`. This returns `{ready: true|false, reason?}`.
+
+   **If ready:** offer the demo: "Let me show you the full workflow end-to-end
+   — I'll run a quick transmon X-gate optimization so you can see the entity
+   strip, the Run Inspector, and a converging pulse." Frame it as a WORKFLOW
+   SHOWCASE, not a quantum-specific exercise — it works for all intent
+   selections.
+
+   On accept, call `amicode_demo_launch`. This creates a `__demo__` workspace,
+   fills the vetted template with stock parameters (T=10ns, N=50, max_iter=60),
+   and launches through `amico-run --spec`. The Run Inspector streams
+   iterations live. After FINISHED, report the result: "Solved — F=0.9998 in
+   47 iterations" (or whatever the actual numbers are). Then call
+   `amicode_demo_archive` to clean up the ephemeral workspace.
+
+   **If not ready:** explain honestly: "Julia environment isn't set up yet —
+   {reason}. No worries, we'll skip the demo. You can always run one later
+   from the command palette." Advance without blocking.
+
+   **If the user DECLINES the demo:** say "No problem" and advance.
+
+   **If the demo FAILS** (Julia error, convergence failure): report honestly
+   and continue. A failed demo never blocks onboarding.
+
+   **Constraints:**
+   - The demo MUST use the vetted template — never free-tier.
+   - The demo MUST NOT create vault artifacts (no problem card, no pulse bank entry).
+   - If `isDemoCompleted()` is true (archive marker exists), skip — don't re-offer.
+
+   After the demo (or skipping), advance to the next stage. **Stages 5–8 are
+   defined in subsequent slices** — for now, after Stage 4 completes, record
    the completion marker: `amicode_profile {entity:"onboarding_completed"}`
    and hand off to a normal session.
 
