@@ -49,7 +49,7 @@ describe("overture routing predicate (spec §3)", () => {
     expect(manifest.manifest.id).toBe("overture");
     // chained manifest carries BOTH stage sets → the guard sees the whole flow
     const ids = manifest.manifest.stages.map((s: { id: string }) => s.id);
-    expect(ids).toContain("identity"); // overture
+    expect(ids).toContain("orientation"); // overture
     expect(ids).toContain("solve"); // pulse-designer
   });
   it("non-empty PROFILE.md → pulse-designer only (no overture)", () => {
