@@ -20,29 +20,37 @@ gate's checks pass.
    - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
 4. **demo** (optional)
    - Q `demo_offer`: "Want me to show you the full workflow end-to-end? (requires Julia)" — options: Yes, show me (recommended) | Skip the demo
-5. **platform**
+5. **environment**
+   - Q `environment`: "How will pulses eventually reach hardware — what are we patching into?" — options: QICK lab (on-prem control code) | Cloud system with emulator (e.g. Pasqal) | Simulation only for now (recommended) | Something else
+6. **devices** (optional)
+   - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, qubit count — or skip)" — default: skip for now
+7. **goals**
+   - Q `goals`: "What are you hoping to accomplish with Amico?"
+8. **handoff**
+   - Q `handoff`: "Ready to get started?" — options: Walk me through designing a pulse (recommended) | Open a normal session | Show me around first
+9. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
-6. **model**
+10. **model**
    - emits: system — record via the matching `amicode_*` tool
    - Q `levels`: "How many levels should the model keep? (I'll recommend based on your system — see guidance)" — default: platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)
    - Q `drives`: "Drive parameterization and amplitude bound (drive_max)?" — default: two quadratures, drive_max = 0.2 GHz
-7. **mode**
+11. **mode**
    - Q `mode`: "Simulate first, or go straight to solve?" — options: solve (recommended) | simulate
    - Q `warm_start`: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?" — options: cold start (recommended) | warm start
      - skip if: mode == simulate
-8. **problem**
+12. **problem**
    - Q `target`: "What is the target — a gate, or a state to prepare?" — default: a single-qubit gate
-9. **formulate**
+13. **formulate**
    - emits: formulation — record via the matching `amicode_*` tool
    - Q `formulation`: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)" — default: a fixed-time gate, free-phase on for entangling gates
      - [Why?] hooks: free-phase-objective-only, pin-globals-first-solve (read `scores/memory/<hook>.md` on request)
-10. **solve**
+14. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
    - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
-11. **inspect**
-12. **hardware** (optional)
+15. **inspect**
+16. **hardware** (optional)
    - emits: device_session — record via the matching `amicode_*` tool
 
 ---
@@ -168,10 +176,53 @@ Per-stage guidance and the `amicode_profile` mapping:
    - The demo MUST NOT create vault artifacts (no problem card, no pulse bank entry).
    - If `isDemoCompleted()` is true (archive marker exists), skip — don't re-offer.
 
-   After the demo (or skipping), advance to the next stage. **Stages 5–8 are
-   defined in subsequent slices** — for now, after Stage 4 completes, record
-   the completion marker: `amicode_profile {entity:"onboarding_completed"}`
-   and hand off to a normal session.
+   After the demo (or skipping), advance to Stage 5.
+
+5. **environment** — ask how pulses will reach hardware. **Pre-fill from
+   seeds:** call `amicode_profile {entity:"status"}` and check if an
+   environment is already recorded from the context-seed (Stage 3). If so,
+   present it as a confirmation: "I found you use {archetype} — confirm, or
+   change?" via the `question` tool. If no seed, ask the standard choice
+   question with the options above.
+
+   Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
+   Follow up on details per archetype if confirmed (QICK: tProc version,
+   repo pointer; cloud-Pasqal: which provider, emulator access; etc.).
+
+6. **devices** _(optional)_ — same pre-fill pattern: if a device was seeded,
+   confirm it. Otherwise ask: "Any specific device(s) you want me to remember?"
+   This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
+
+   Record: `amicode_profile {entity:"device", payload:{name, platform, qubits}}`.
+   If skipped, move on without recording.
+
+7. **goals** — free-text question via `question` tool with `kind: "text"`:
+   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
+   personal, not inferrable from configs).
+
+   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
+
+8. **handoff** — the terminal stage. FIRST, record the completion marker:
+   `amicode_profile {entity:"onboarding_completed"}` (exactly once — this is
+   what lets Amico remember them next time and triggers the distiller to
+   materialize the vault).
+
+   Then route by the user's intent selections (from Stage 2 — read from the
+   events stream, do NOT re-ask):
+
+   - **Research** selected (alone or combined) → "Let's design your first
+     pulse" → continue straight into the **pulse-designer interview** in this
+     same session. Use everything learned (platform, environment, device) to
+     skip pulse-design questions already answered.
+   - **Research + General coding** → same as above, but acknowledge: "I'm also
+     your general coding companion — you can switch modes any time."
+   - **General coding only** (no Research) → open a normal session: "You're all
+     set — I'll remember your context across sessions. Ask me anything."
+     Highlight memory + vault features briefly.
+   - **Exploring only** → "Welcome aboard — want a quick tour of what I can do,
+     or just dive in?" Offer a brief orientation tour.
+
+   The handoff does NOT re-ask intent — it reads what was recorded and routes.
 
 ---
 
