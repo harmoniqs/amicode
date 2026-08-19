@@ -41,6 +41,35 @@ stages:
         prompt: "Want me to show you the full workflow end-to-end? (requires Julia)"
         choices: ["Yes, show me", "Skip the demo"]
         default: "Yes, show me"
+  - id: environment
+    questions:
+      - id: environment
+        prompt: "How will pulses eventually reach hardware — what are we patching into?"
+        choices:
+          [
+            "QICK lab (on-prem control code)",
+            "Cloud system with emulator (e.g. Pasqal)",
+            "Simulation only for now",
+            "Something else",
+          ]
+        default: "Simulation only for now"
+  - id: devices
+    optional: true
+    questions:
+      - id: devices
+        prompt: "Any specific device(s) you want me to remember? (name, platform, qubit count — or skip)"
+        default: "skip for now"
+  - id: goals
+    questions:
+      - id: goals
+        prompt: "What are you hoping to accomplish with Amico?"
+        kind: text
+  - id: handoff
+    questions:
+      - id: handoff
+        prompt: "Ready to get started?"
+        choices: ["Walk me through designing a pulse", "Open a normal session", "Show me around first"]
+        default: "Walk me through designing a pulse"
 ---
 
 You are running the **overture** — Amico's onboarding interview (session zero).
@@ -164,7 +193,50 @@ Per-stage guidance and the `amicode_profile` mapping:
    - The demo MUST NOT create vault artifacts (no problem card, no pulse bank entry).
    - If `isDemoCompleted()` is true (archive marker exists), skip — don't re-offer.
 
-   After the demo (or skipping), advance to the next stage. **Stages 5–8 are
-   defined in subsequent slices** — for now, after Stage 4 completes, record
-   the completion marker: `amicode_profile {entity:"onboarding_completed"}`
-   and hand off to a normal session.
+   After the demo (or skipping), advance to Stage 5.
+
+5. **environment** — ask how pulses will reach hardware. **Pre-fill from
+   seeds:** call `amicode_profile {entity:"status"}` and check if an
+   environment is already recorded from the context-seed (Stage 3). If so,
+   present it as a confirmation: "I found you use {archetype} — confirm, or
+   change?" via the `question` tool. If no seed, ask the standard choice
+   question with the options above.
+
+   Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
+   Follow up on details per archetype if confirmed (QICK: tProc version,
+   repo pointer; cloud-Pasqal: which provider, emulator access; etc.).
+
+6. **devices** _(optional)_ — same pre-fill pattern: if a device was seeded,
+   confirm it. Otherwise ask: "Any specific device(s) you want me to remember?"
+   This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
+
+   Record: `amicode_profile {entity:"device", payload:{name, platform, qubits}}`.
+   If skipped, move on without recording.
+
+7. **goals** — free-text question via `question` tool with `kind: "text"`:
+   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
+   personal, not inferrable from configs).
+
+   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
+
+8. **handoff** — the terminal stage. FIRST, record the completion marker:
+   `amicode_profile {entity:"onboarding_completed"}` (exactly once — this is
+   what lets Amico remember them next time and triggers the distiller to
+   materialize the vault).
+
+   Then route by the user's intent selections (from Stage 2 — read from the
+   events stream, do NOT re-ask):
+
+   - **Research** selected (alone or combined) → "Let's design your first
+     pulse" → continue straight into the **pulse-designer interview** in this
+     same session. Use everything learned (platform, environment, device) to
+     skip pulse-design questions already answered.
+   - **Research + General coding** → same as above, but acknowledge: "I'm also
+     your general coding companion — you can switch modes any time."
+   - **General coding only** (no Research) → open a normal session: "You're all
+     set — I'll remember your context across sessions. Ask me anything."
+     Highlight memory + vault features briefly.
+   - **Exploring only** → "Welcome aboard — want a quick tour of what I can do,
+     or just dive in?" Offer a brief orientation tour.
+
+   The handoff does NOT re-ask intent — it reads what was recorded and routes.
