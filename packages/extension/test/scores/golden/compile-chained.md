@@ -16,29 +16,31 @@ gate's checks pass.
    - Q `name`: "What should I call you?"
 2. **intent**
    - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Research (recommended) | Exploring
-3. **platform**
+3. **context_seed** (optional)
+   - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
+4. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
-4. **model**
+5. **model**
    - emits: system — record via the matching `amicode_*` tool
    - Q `levels`: "How many levels should the model keep? (I'll recommend based on your system — see guidance)" — default: platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)
    - Q `drives`: "Drive parameterization and amplitude bound (drive_max)?" — default: two quadratures, drive_max = 0.2 GHz
-5. **mode**
+6. **mode**
    - Q `mode`: "Simulate first, or go straight to solve?" — options: solve (recommended) | simulate
    - Q `warm_start`: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?" — options: cold start (recommended) | warm start
      - skip if: mode == simulate
-6. **problem**
+7. **problem**
    - Q `target`: "What is the target — a gate, or a state to prepare?" — default: a single-qubit gate
-7. **formulate**
+8. **formulate**
    - emits: formulation — record via the matching `amicode_*` tool
    - Q `formulation`: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)" — default: a fixed-time gate, free-phase on for entangling gates
      - [Why?] hooks: free-phase-objective-only, pin-globals-first-solve (read `scores/memory/<hook>.md` on request)
-8. **solve**
+9. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
    - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
-9. **inspect**
-10. **hardware** (optional)
+10. **inspect**
+11. **hardware** (optional)
    - emits: device_session — record via the matching `amicode_*` tool
 
 ---
@@ -98,11 +100,44 @@ Per-stage guidance and the `amicode_profile` mapping:
    keeps the overture fast and generic.
 
    After recording intent, acknowledge briefly ("Got it — let's get you set up")
-   and advance to the next stage. **Stages 3–8 are defined in subsequent slices**
-   — for now, after Stage 2 completes, record the completion marker:
-   `amicode_profile {entity:"onboarding_completed"}` and hand off to a normal
-   session. (Later slices will insert context-seed, demo, collection, and
-   handoff stages between intent and completion.)
+   and advance to Stage 3.
+
+3. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
+   existing AI-tool configs (CLAUDE.md, cursor rules, opencode config) to
+   bootstrap your workspace — want me to?" via the `question` tool with the
+   two choices above.
+
+   **If the user DECLINES:** perform ZERO file reads. Say "No problem" and
+   advance to the next stage immediately.
+
+   **If the user ACCEPTS:** call `amicode_context_seed` with `action: "scan"`.
+   This scans allowlisted paths only (CLAUDE.md, AGENTS.md, .cursorrules,
+   opencode configs at known roots), applies secret redaction at read time, and
+   returns a grouped preview of extractable facts:
+   - **Profile facts** (name, role, platforms) — with source provenance
+   - **Memory cards** (project context, tool preferences) — with source provenance
+
+   Present the preview to the user, grouped by category, showing which file
+   each fact came from. Ask: "Want me to import all of these, or deselect any
+   groups?" via the `question` tool with `multiple: true` options for each group.
+
+   On confirm, call `amicode_context_seed` with `action: "write"` and the
+   selected groups. The tool writes seeds to `events.jsonl` via
+   `appendOnboardingEvent()`. Seeds flow through the existing distiller pipeline
+   to materialize in the vault.
+
+   **Constraints:**
+   - Secrets (API keys, tokens, passwords, PEM blocks) are NEVER stored — they
+     are redacted to `«credential omitted»` before you ever see the content.
+   - Seeds MUST NOT invent facts — every line traces to a scanned file.
+   - Re-running is idempotent (match-before-create).
+   - If no scannable files are found, say so honestly: "I didn't find any
+     AI-tool configs to import — no worries, we'll build your context as we go."
+
+   After seeding (or declining), advance to the next stage. **Stages 4–8 are
+   defined in subsequent slices** — for now, after Stage 3 completes, record
+   the completion marker: `amicode_profile {entity:"onboarding_completed"}`
+   and hand off to a normal session.
 
 ---
 
