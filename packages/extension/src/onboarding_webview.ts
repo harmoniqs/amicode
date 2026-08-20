@@ -929,16 +929,8 @@ window.addEventListener("message", (event) => {
         if (ring) ring.style.animation = "none";
       }
 
-      // Find the inner-most animated group to append the mouth
+      // Find the inner-most animated group to switch animation
       const enterGroup = svg.querySelector(".mark-enter") || svg.querySelector(".mark-breathe");
-      if (enterGroup) {
-        // Add wide grin (single bar, no corners)
-        const ns = "http://www.w3.org/2000/svg";
-        const grin = document.createElementNS(ns, "rect");
-        grin.setAttribute("x", "1430"); grin.setAttribute("y", "2150");
-        grin.setAttribute("width", "793"); grin.setAttribute("height", "130");
-        enterGroup.appendChild(grin);
-      }
 
       // Switch from idle animations to excited jump
       const breatheGroup = svg.querySelector(".mark-breathe") as HTMLElement;
