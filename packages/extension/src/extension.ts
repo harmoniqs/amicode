@@ -41,7 +41,12 @@ import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
-import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
+import {
+  createLocalPersonalVault,
+  sanitizeVaultName,
+  suggestVaultName,
+  ensureVaultEcosystem,
+} from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
   hasJuliaup,
@@ -58,6 +63,14 @@ import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLega
 import { registerAmicodeTerminal } from "./terminal";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
+import {
+  findWorkspaceRepos,
+  syncOneRepo,
+  isSyncDue,
+  SYNC_INTERVAL_MS,
+  LAST_SYNC_KEY,
+  SYNC_DISMISSED_KEY,
+} from "./substrate/sync";
 import {
   registerBugReport,
   unregisterBugReport,
@@ -442,6 +455,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const parsed = parseLibraryRootSpecs(raw);
     return parsed.length ? parsed : undefined;
   };
+  // Vault ecosystem — first-run auto-provision (personal + public + mounts.toml).
+  // Idempotent and never throws; runs before the first project prep so the
+  // mount stack is correct on boot. The named `amicode.setupVault` command
+  // remains for manual re-entry.
+  try {
+    const eco = ensureVaultEcosystem();
+    if (eco.personal) opencodeChannel.appendLine(`[vault] auto-provisioned local personal vault: ${eco.personal.path} (git=${eco.personal.gitInit})`);
+    if (eco.publicCloned) opencodeChannel.appendLine(`[vault] public vault cloned: vault-public`);
+    else if (eco.publicPlaceholder) opencodeChannel.appendLine(`[vault] public vault placeholder (offline or no git)`);
+    if (eco.mountsWritten) opencodeChannel.appendLine(`[vault] mounts.toml written`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[vault] ecosystem ensure failed: ${(e as Error).message}`);
+  }
+
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
@@ -973,28 +1000,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
-  // Personal vault by default. The onboarding wizard (opencode-side) writes the
-  // profile but NOT a vault, and a genuine first-timer has none — so Amico would
-  // have nowhere to remember them (distiller disabled, session unpersonalized).
-  // Silently provision a LOCAL personal vault on first run when none resolves —
-  // no modal, like the Julia project. The `amicode.setupVault` command remains
-  // for naming / re-creating; the wizard finale offers attaching other vaults.
-  // Failure-tolerant: a creation error just leaves the session unpersonalized.
-  const ensureDefaultPersonalVault = async (): Promise<void> => {
-    if (personalMount(resolveMountStack())) return;
-    let created;
-    try {
-      created = createLocalPersonalVault(defaultVaultsRoot(), suggestVaultName());
-    } catch (e) {
-      opencodeChannel.appendLine(`[vault] default personal vault not created: ${(e as Error).message}`);
-      return;
-    }
-    opencodeChannel.appendLine(
-      `[vault] auto-provisioned local personal vault: ${created.path} (git=${created.gitInit})`,
-    );
-    await respawnForVault();
-  };
-  void ensureDefaultPersonalVault();
 
   // Julia setup (#8): amicode manages the Julia toolchain via juliaup — install
   // juliaup if absent, add the channel pinned to the Manifest's MINOR, and
@@ -1078,6 +1083,95 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     })
   ) {
     void runJuliaSetup(false);
+  }
+
+  // ── Workspace sync (opt-in, extension-host) ──────────────────────────
+  // Single toggle amicode.sync.enabled (off by default). First-run nudge,
+  // missed-nightly check on activation (if >20h since last sync, run within
+  // 2 min), and manual Amicode: Sync now. Keeps any git repo in the open
+  // workspace current: clean WIP auto-rebases onto freshly fast-forwarded main,
+  // dirty skips rebase, conflicts abort cleanly. Output: channel log + notifications
+  // only on attention-needed (failed/conflicted). Julia env: check+nudge only (stub).
+  const syncChannel = vscode.window.createOutputChannel("Amicode — sync");
+  ctx.subscriptions.push(syncChannel);
+
+  const isSyncEnabled = (): boolean =>
+    vscode.workspace.getConfiguration("amicode").get<boolean>("sync.enabled", false);
+
+  const runWorkspaceSync = async (source: "startup" | "manual"): Promise<void> => {
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    const repos = findWorkspaceRepos(folders);
+    if (repos.length === 0) {
+      syncChannel.appendLine(`[sync:${source}] no git repos in workspace — nothing to do`);
+      return;
+    }
+    syncChannel.appendLine(`[sync:${source}] ${repos.length} repo(s): ${repos.map((r) => path.basename(r)).join(", ")}`);
+    let ok = 0,
+      skipped = 0,
+      failed = 0;
+    const failures: string[] = [];
+    for (const repoPath of repos) {
+      const res = syncOneRepo(repoPath);
+      syncChannel.appendLine(`[sync] ${res.repo} (${res.branch}) — ${res.status}: ${res.detail}`);
+      if (res.status === "ok") ok++;
+      else if (res.status === "skipped") skipped++;
+      else {
+        failed++;
+        failures.push(`${res.repo} (${res.branch}): ${res.detail}`);
+      }
+    }
+    syncChannel.appendLine(`[sync:${source}] done — ${ok} ok, ${skipped} skipped, ${failed} failed`);
+    await ctx.globalState.update(LAST_SYNC_KEY, new Date().toISOString());
+    // Subtle UX: silent success, noisy failure (grilled).
+    if (failed > 0) {
+      const detail = failures.slice(0, 3).join("; ") + (failures.length > 3 ? ` (+${failures.length - 3} more)` : "");
+      const pick = await vscode.window.showWarningMessage(
+        `Amicode sync: ${failed} repo(s) need attention — ${detail}`,
+        "Show log",
+      );
+      if (pick === "Show log") syncChannel.show();
+    }
+  };
+
+  const maybePromptSyncOptIn = async (): Promise<void> => {
+    if (isSyncEnabled()) return;
+    if (ctx.globalState.get<boolean>(SYNC_DISMISSED_KEY) === true) return;
+    // Only prompt if there's actually a workspace with git repos to sync.
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    if (findWorkspaceRepos(folders).length === 0) return;
+    const choice = await vscode.window.showInformationMessage(
+      "Keep your workspace in sync? Amicode can keep your git repos current overnight — fast-forwarding clean branches and keeping WIP up to date with main. Off by default, change anytime in Settings.",
+      "Enable sync",
+      "Not now",
+      "Don't ask again",
+    );
+    if (choice === "Enable sync") {
+      await vscode.workspace.getConfiguration("amicode").update("sync.enabled", true, vscode.ConfigurationTarget.Global);
+      void vscode.window.showInformationMessage("Amicode sync enabled — will run overnight and keep WIP current with main.");
+      // Run once now so the user sees it work.
+      void runWorkspaceSync("manual");
+    } else if (choice === "Don't ask again") {
+      await ctx.globalState.update(SYNC_DISMISSED_KEY, true);
+    }
+  };
+
+  // Register manual command.
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.sync.now", () => void runWorkspaceSync("manual")));
+
+  // First-run nudge (fire-and-forget, like vault/julia prompts).
+  void maybePromptSyncOptIn();
+
+  // Missed-nightly check: if enabled and >20h since last sync, run within 2 min.
+  if (isSyncEnabled()) {
+    const last = ctx.globalState.get<string>(LAST_SYNC_KEY);
+    if (isSyncDue(last)) {
+      const delayMs = 30_000 + Math.floor(Math.random() * 90_000); // 30-120s jitter
+      syncChannel.appendLine(`[sync:startup] last sync ${last ?? "never"} — scheduling run in ${Math.round(delayMs / 1000)}s`);
+      const timer = setTimeout(() => void runWorkspaceSync("startup"), delayMs);
+      ctx.subscriptions.push({ dispose: () => clearTimeout(timer) });
+    } else {
+      syncChannel.appendLine(`[sync:startup] last sync ${last} — not due (interval ${Math.round(SYNC_INTERVAL_MS / 3600000)}h)`);
+    }
   }
 
   // Healthcheck (the real `amicode.healthcheck`): verify the managed Julia
