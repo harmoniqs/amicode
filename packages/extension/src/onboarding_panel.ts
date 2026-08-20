@@ -163,7 +163,7 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
   anthropic: "https://api.anthropic.com/v1/messages",
   openai: "https://api.openai.com/v1/chat/completions",
   google: "https://generativelanguage.googleapis.com/v1beta/models",
-  opencode: "https://opencode.ai/api/v1/chat/completions",
+  opencode: "https://api.opencode.ai/v1/models",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   vercel: "https://api.vercel.ai/v1/chat/completions",
 };
@@ -226,7 +226,7 @@ function buildTestRequest(
     };
   }
 
-  if (config.provider === "openai" || config.provider === "opencode" || config.provider === "openrouter" || config.provider === "vercel") {
+  if (config.provider === "openai" || config.provider === "openrouter" || config.provider === "vercel") {
     return {
       url: endpoint,
       options: {
