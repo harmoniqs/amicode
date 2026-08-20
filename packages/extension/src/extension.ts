@@ -844,10 +844,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // which then opens chat.
       if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         void vscode.commands.executeCommand("amicode.onboarding.open");
-        // Wire: when onboarding completes, auto-open chat
-        onOnboardingComplete(() => {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        });
+        // Wire: when onboarding completes, the server restarts and the
+        // onReady handler (else-if branch below) opens the chat panel.
+        // We do NOT open chat here — that would race the server restart
+        // and show behind the transition splash.
         // Wire: when onboarding is cancelled (X), open chat normally
         onOnboardingCancelled(() => {
           ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);

@@ -911,8 +911,10 @@ window.addEventListener("message", (event) => {
     // Hide the cancel button
     const cancelEl = document.getElementById("cancel-btn");
     if (cancelEl) cancelEl.style.display = "none";
-    // Show the animation container (it may already be visible if animation played)
+    // Show the animation container (restore from the post-animation hidden state)
     animationEl.style.display = "flex";
+    animationEl.style.opacity = "1";
+    animationEl.style.transition = "none";
     // Add "Getting Amico ready..." text below the animation
     let transitionText = document.getElementById("transition-text");
     if (!transitionText) {
