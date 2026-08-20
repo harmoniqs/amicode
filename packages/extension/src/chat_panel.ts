@@ -474,23 +474,65 @@ export class ChatPanel {
       font-family: var(--vscode-font-family, system-ui);
     }
     .splash-mark {
-      width: 80px; height: 80px;
+      width: 120px; height: 107px;
       fill: var(--vscode-foreground, #ccc);
-      animation: breathe 3s ease-in-out infinite;
+      overflow: visible;
+    }
+    .splash-mark .mark-breathe {
+      transform-box: fill-box; transform-origin: 50% 100%;
+      animation: breathe 4.5s ease-in-out infinite;
+    }
+    .splash-mark .eye-ring {
+      transform-box: fill-box; transform-origin: center;
+      animation: blink 7s linear infinite;
+    }
+    .splash-mark .eye-lid {
+      transform-box: fill-box; transform-origin: center;
+      opacity: 0;
     }
     @keyframes breathe {
-      0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.04); }
+      0%, 100% { transform: scale(1, 1); }
+      50% { transform: scale(0.992, 1.014); }
+    }
+    @keyframes blink {
+      0%, 30% { transform: scaleY(1); }
+      31.3% { transform: scaleY(0.1); }
+      32.2% { transform: scaleY(0.1); }
+      35.2%, 100% { transform: scaleY(1); }
     }
   </style>
 </head>
 <body>
   <div class="splash-overlay" id="splash">
-    <svg class="splash-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-      <rect x="10" y="30" width="30" height="50" rx="4" />
-      <rect x="60" y="30" width="30" height="50" rx="4" />
-      <rect x="20" y="10" width="10" height="15" rx="3" />
-      <rect x="70" y="10" width="10" height="15" rx="3" />
+    <svg class="splash-mark" viewBox="2 74 3596 3212" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Amico">
+      <g class="mark-breathe">
+        <path fill-rule="evenodd" d="M2279.19,374.09v622.56h-958.38V374.09H202.07v2851.83h1118.74v-520.15h958.38v520.15h1118.74V374.09h-1118.74ZM3165.55,2523.71H478.91v-1338.38h2686.65v1338.38Z"/>
+        <polygon points="888.52 1864.8 754.93 1864.8 754.93 1727.36 888.55 1727.36 888.55 1864.77 1022.15 1864.77 1022.15 2002.21 888.52 2002.21 888.52 1864.8"/>
+        <polygon points="621.31 1589.92 754.9 1589.92 754.9 1452.48 888.52 1452.48 888.52 1589.92 754.93 1589.92 754.93 1727.36 621.31 1727.36 621.31 1589.92"/>
+        <polygon points="754.92 1452.48 888.51 1452.48 888.51 1315.04 1022.13 1315.04 1022.13 1452.48 888.54 1452.48 888.54 1589.92 754.92 1589.92 754.92 1452.48"/>
+        <g class="eye left-eye">
+          <g class="eye-ring">
+            <rect x="1503.05" y="1446.71" width="133.62" height="423.84"/>
+            <rect x="1139.77" y="1446.71" width="133.62" height="423.84"/>
+            <rect x="1273.58" y="1309.27" width="229.47" height="137.44"/>
+            <rect x="1273.58" y="1870.54" width="229.47" height="137.44"/>
+          </g>
+          <rect class="eye-lid" x="1139.77" y="1589.91" width="496.90" height="137.44"/>
+        </g>
+        <rect x="1778.31" y="1312.43" width="107.11" height="692.38"/>
+        <g class="eye right-eye">
+          <g class="eye-ring">
+            <rect x="2373.03" y="1451.19" width="133.62" height="423.84"/>
+            <rect x="2009.75" y="1451.19" width="133.62" height="423.84"/>
+            <rect x="2143.56" y="1313.76" width="229.47" height="137.44"/>
+            <rect x="2143.56" y="1875.03" width="229.47" height="137.44"/>
+          </g>
+          <rect class="eye-lid" x="2009.75" y="1594.40" width="496.90" height="137.44"/>
+        </g>
+        <polygon points="2769.41 1463.57 2903.01 1463.57 2903.01 1601.01 2769.39 1601.01 2769.39 1463.6 2635.79 1463.6 2635.79 1326.16 2769.41 1326.16 2769.41 1463.57"/>
+        <polygon points="3036.63 1738.45 2903.03 1738.45 2903.03 1875.89 2769.41 1875.89 2769.41 1738.45 2903.01 1738.45 2903.01 1601.01 3036.63 1601.01 3036.63 1738.45"/>
+        <polygon points="2903.02 1875.89 2769.43 1875.89 2769.43 2013.33 2635.81 2013.33 2635.81 1875.89 2769.4 1875.89 2769.4 1738.45 2903.02 1738.45 2903.02 1875.89"/>
+      </g>
     </svg>
     <div class="splash-text">Getting Amico ready...</div>
   </div>
@@ -500,7 +542,7 @@ export class ChatPanel {
       var vscode = acquireVsCodeApi();
       var origin = ${origin};
       var splashStart = Date.now();
-      var MIN_SPLASH_MS = 10000; // minimum 10s display time
+      var MIN_SPLASH_MS = 5000; // minimum 5s display time
 
       function fadeSplash() {
         var splash = document.getElementById("splash");
