@@ -921,8 +921,12 @@ export function readRecord(root: string, session_id: string): (ValidateOk & { pa
 }
 
 /** Write a record atomically (tmp + rename), so a reader never sees a partial record.
- *  ONE WRITER PER FILE is the caller's responsibility — that is the §3.2 discipline, and
- *  in this package only `fleet sweep` is entitled to call this. */
+ *  ONE WRITER PER FILE is the caller's responsibility — that is the §3.2 discipline. In
+ *  this package exactly three paths are entitled to call this: `fleet sweep` (the
+ *  pid-liveness-guarded orphan adoption), and the #426 holder verbs — `fleet launch`
+ *  (creation, ONCE — a record that already exists is refused, so creation cannot race
+ *  a second writer) and `fleet finish` (the holder's terminal write, guarded by pid
+ *  identity with the record). Everything else enqueues a signal and writes nothing. */
 export function writeRecord(root: string, rec: FleetRecord): string {
   mkdirSync(root, { recursive: true });
   const path = recordPath(root, rec.session_id);
