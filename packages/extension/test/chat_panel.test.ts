@@ -245,3 +245,86 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg).toBeDefined();
   });
 });
+
+describe("ChatPanel.adopt — transforms an existing panel into the chat singleton", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearPendingOnboardingGreeting();
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  it("adopt wraps an existing WebviewPanel as the ChatPanel singleton (no new panel created)", () => {
+    // Create a panel externally BEFORE installing the capture spy
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    // Now install the spy — any new panel creation will be captured
+    const cap = capturePanel();
+    restore = cap.restore;
+
+    // Adopt it
+    const chatPanel = ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    expect(chatPanel).toBeDefined();
+    // No NEW panel should have been created via createWebviewPanel
+    expect(cap.created).toHaveLength(0);
+    // openOrReveal should now return the adopted panel (it's the singleton)
+    const revealed = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(revealed).toBe(chatPanel);
+    // Still no new panel
+    expect(cap.created).toHaveLength(0);
+  });
+
+  it("adopt sets the panel HTML to the chat iframe content with splash overlay", () => {
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    // The HTML should contain both the iframe and the splash overlay
+    const html = existingPanel.webview.html;
+    expect(html).toContain("iframe");
+    expect(html).toContain("splash-overlay");
+    expect(html).toContain("127.0.0.1:43117");
+  });
+
+  it("adopt wires app-ready so it fires onAppReady callbacks", async () => {
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    const readyFired: boolean[] = [];
+    ChatPanel.onAppReady(() => readyFired.push(true));
+
+    ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    // Simulate app-ready arriving from the iframe
+    const webview = existingPanel as unknown as { webview: { _simulateMessage: (msg: unknown) => void } };
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readyFired).toHaveLength(1);
+  });
+});

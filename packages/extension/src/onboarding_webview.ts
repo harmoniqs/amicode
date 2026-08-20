@@ -911,6 +911,9 @@ window.addEventListener("message", (event) => {
     // Hide the cancel button
     const cancelEl = document.getElementById("cancel-btn");
     if (cancelEl) cancelEl.style.display = "none";
+    // Remove the "Get Started" button left over from the welcome animation
+    const ctaBtn = animationEl.querySelector(".welcome-cta");
+    if (ctaBtn) ctaBtn.remove();
     // Show the animation container (restore from the post-animation hidden state)
     animationEl.style.display = "flex";
     animationEl.style.opacity = "1";
