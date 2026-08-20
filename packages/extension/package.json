@@ -38,7 +38,7 @@
     "onCommand:amicode.openChat",
     "onCommand:amicode.newChat",
     "onCommand:amicode.chatDeck",
-    "onView:amicode.armonia",
+    "onView:amicode.workspace",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
@@ -58,9 +58,14 @@
     "views": {
       "amicode": [
         {
-          "id": "amicode.armonia",
-          "name": "Armonia",
+          "id": "amicode.workspace",
+          "name": "Workspace",
           "type": "tree"
+        },
+        {
+          "id": "amicode.runInspector",
+          "name": "Run Inspector",
+          "type": "webview"
         }
       ]
     },
@@ -299,8 +304,25 @@
       "view/title": [
         {
           "command": "amicode.openChat",
-          "when": "view == amicode.armonia",
+          "when": "view == amicode.workspace",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "vscode.open",
+          "when": "view == amicode.workspace && viewItem == workspaceFile",
+          "group": "inline"
+        },
+        {
+          "command": "vscode.copyFilePath",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste"
+        },
+        {
+          "command": "revealFileInOS",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste"
         }
       ]
     }

@@ -6,7 +6,7 @@ import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerTrees } from "./trees";
+import { registerWorkspaceTree } from "./workspace_tree";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -344,8 +344,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-  // 1. UI surfaces
-  registerTrees(ctx);
+  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6) + Run Inspector
+  registerWorkspaceTree(ctx);
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
