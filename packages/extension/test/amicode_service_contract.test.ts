@@ -25,7 +25,7 @@ import { createAmicodeService } from "../src/amicode_service";
 const FIXTURE = fileURLToPath(new URL("./fixtures/amicode/golden.json", import.meta.url));
 // Loaded at module scope: the it() cases are GENERATED at collection time,
 // before beforeAll runs.
-const META: { fork: { tag: string }; sandbox: string; sandboxReal: string; entries: any[] } =
+const META: { fork: { tag: string }; sandbox: string; sandboxReal: string; seededAt: number; entries: any[] } =
   JSON.parse(readFileSync(FIXTURE, "utf8"));
 
 describe("amicode service — golden-fixture parity with the fork", () => {
@@ -35,6 +35,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
   let base: string;
   let auth: string;
   let meta = META;
+  let testSeededAt = 0;
 
   /** Normalize the sandbox roots (unresolved + realpath forms) to <SANDBOX>. */
   const normalize = (text: string, dirs: string[]): string => {
@@ -63,6 +64,21 @@ describe("amicode service — golden-fixture parity with the fork", () => {
    *  so the value legitimately differs between recording and replay. It is the
    *  ONLY wall-clock field; terminal runs pin FINISHED mtimes to fixed epochs
    *  and stay exactly comparable. */
+  /** added_ms on a route-WRITTEN paper (an upload) is its write time —
+   *  wall-clock, legitimately different between recording and replay. Seeded
+   *  papers have pinned epochs and compare exactly; anything newer than this
+   *  side's seed time normalizes to <NOW> on both sides. Sort order is
+   *  unaffected (fresh > pinned). */
+  const normalizeFreshTimestamps = (obj: any, seededAt: number): any => {
+    if (obj && typeof obj === "object" && Array.isArray(obj.papers)) {
+      const papers = obj.papers.map((p: any) =>
+        typeof p?.added_ms === "number" && p.added_ms > seededAt ? { ...p, added_ms: "<NOW>" } : p,
+      );
+      return { ...obj, papers };
+    }
+    return obj;
+  };
+
   const normalizeWallClock = (obj: any): any => {
     if (
       obj &&
@@ -78,9 +94,9 @@ describe("amicode service — golden-fixture parity with the fork", () => {
   };
 
   beforeAll(async () => {
-    meta = JSON.parse(readFileSync(FIXTURE, "utf8"));
     sandbox = mkdtempSync(join(tmpdir(), "amicode-parity-"));
-    const { env } = seedAmicodeSandbox(sandbox);
+    const { env, seededAt } = seedAmicodeSandbox(sandbox);
+    testSeededAt = seededAt;
     // Redirect every state root to the sandbox (the port resolves these at
     // call time). PATH is pinned to the seeded stub dir on BOTH sides (the
     // recorder pins it for the fork spawn) so `amico` is the stub and
@@ -136,8 +152,9 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       const received = normalize(await r.text(), [sandbox, realpathSync(sandbox)]);
       // Deep-equal on parsed JSON: key order in the serialized body is the
       // port's business, structure and values are the contract.
-      const canon = (o: any) => normalizeListOrder(normalizeWallClock(o));
-      expect(canon(JSON.parse(received))).toEqual(canon(JSON.parse(expected)));
+      const canon = (o: any, seededAt: number) =>
+        normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)));
+      expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
     });
   }
 

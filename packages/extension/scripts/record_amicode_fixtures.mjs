@@ -130,6 +130,27 @@ const REQUESTS = [
   { method: "GET", path: "/amicode/run-series?run=r20260818-000000Z-4h5i6j", name: "run series — stalled (cold run.log)" },
   { method: "GET", path: "/amicode/run-series?run=r20260812-000000Z-5c6d7e&lab=other", name: "run series — explicit lab" },
   { method: "GET", path: "/amicode/run-series?run=no-such-run", name: "run series — not_found" },
+  // ── library (slice 4) ──────────────────────────────────────────────────────
+  { method: "GET", path: "/amicode/library", name: "library — seeded papers, newest first" },
+  {
+    method: "POST",
+    path: "/amicode/library",
+    body: { filename: "new paper.pdf", data_b64: Buffer.from("%PDF-1.4 uploaded paper body\n").toString("base64") },
+    name: "library upload — valid PDF (refreshed listing)",
+  },
+  {
+    method: "POST",
+    path: "/amicode/library",
+    body: { filename: "not-a-pdf.txt", data_b64: Buffer.from("plain text\n").toString("base64") },
+    name: "library upload — bad_filetype refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/library",
+    body: { filename: "ok.pdf" },
+    name: "library upload — missing data_b64 refusal",
+  },
+  { method: "GET", path: "/amicode/library", name: "library — post-upload state" },
 ];
 
 async function main() {
@@ -139,7 +160,7 @@ async function main() {
   console.log(`[record] fork binary: ${binary} (${version})`);
 
   const sandbox = mkdtempSync(join(tmpdir(), "amicode-fixture-"));
-  const { env: seedEnv } = seedAmicodeSandbox(sandbox);
+  const { env: seedEnv, seededAt } = seedAmicodeSandbox(sandbox);
   const password = "fixture-recording-password";
   const port = 4601 + Math.floor(Math.random() * 400);
 
@@ -227,6 +248,7 @@ async function main() {
         // normalizes these to <SANDBOX> on both sides before comparing.
         sandbox: sandbox,
         sandboxReal: realpathSync(sandbox),
+        seededAt: seededAt, // added_ms of route-WRITTEN files (uploads) is wall-clock — normalized at replay
         entries,
       },
       null,
