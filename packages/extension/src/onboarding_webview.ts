@@ -915,10 +915,47 @@ window.addEventListener("message", (event) => {
     // Remove the "Get Started" button left over from the welcome animation
     const ctaBtn = animationEl.querySelector(".welcome-cta");
     if (ctaBtn) ctaBtn.remove();
+    // Remove the welcome text ("Welcome" / subtitle)
+    const welcomeText = animationEl.querySelector(".welcome-text");
+    if (welcomeText) welcomeText.remove();
     // Show the animation container (restore from the post-animation hidden state)
     animationEl.style.display = "flex";
     animationEl.style.opacity = "1";
     animationEl.style.transition = "none";
+
+    // Swap the face to happy expression: replace square eyes with ∩ arcs + add grin
+    const svg = animationEl.querySelector(".amico-mark");
+    if (svg) {
+      // Remove existing eyes
+      const leftEye = svg.querySelector(".left-eye");
+      const rightEye = svg.querySelector(".right-eye");
+      const divider = svg.querySelector(".divider");
+      if (leftEye) leftEye.remove();
+      if (rightEye) rightEye.remove();
+
+      // Find the inner-most animated group to append to
+      const enterGroup = svg.querySelector(".mark-enter") || svg.querySelector(".mark-breathe");
+      if (enterGroup) {
+        // Add happy eyes (∩ shapes) and grin
+        const ns = "http://www.w3.org/2000/svg";
+        const leftHappy = document.createElementNS(ns, "path");
+        leftHappy.setAttribute("d", "M1160,1750 C1160,1350 1620,1350 1620,1750 L1490,1750 C1490,1500 1290,1500 1290,1750 Z");
+        const rightHappy = document.createElementNS(ns, "path");
+        rightHappy.setAttribute("d", "M2030,1750 C2030,1350 2490,1350 2490,1750 L2360,1750 C2360,1500 2160,1500 2160,1750 Z");
+        const grin = document.createElementNS(ns, "path");
+        grin.setAttribute("d", "M1350,2100 C1500,2380 2100,2380 2250,2100 L2130,2100 C2020,2280 1580,2280 1470,2100 Z");
+        enterGroup.appendChild(leftHappy);
+        enterGroup.appendChild(rightHappy);
+        enterGroup.appendChild(grin);
+      }
+
+      // Switch from idle animations to excited jump
+      const breatheGroup = svg.querySelector(".mark-breathe") as HTMLElement;
+      if (breatheGroup) {
+        breatheGroup.style.animation = "amico-jump 2.0s ease-in-out infinite";
+      }
+    }
+
     // Add "Getting Amico ready..." text below the animation
     let transitionText = document.getElementById("transition-text");
     if (!transitionText) {
