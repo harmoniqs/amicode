@@ -469,8 +469,8 @@ export class ChatPanel {
       opacity: 0; transform: scale(1.05); pointer-events: none;
     }
     .splash-text {
-      margin-top: 24px; font-size: 14px;
-      color: var(--vscode-descriptionForeground, #999);
+      margin-top: 16px; font-size: 1.4rem;
+      color: var(--vscode-foreground, #ccc);
       font-family: var(--vscode-font-family, system-ui);
     }
     .splash-mark {
