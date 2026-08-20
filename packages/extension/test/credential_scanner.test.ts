@@ -551,4 +551,31 @@ describe("scanCredentials — batch config writing integration (AC7)", () => {
     // Active model should be openai's first model
     expect(written.model).toContain("openai/");
   });
+
+  it("only writes providers that passed connection test (failed ones excluded)", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+
+    // Simulate the panel filtering: only passed providers get written
+    const allCredentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "sk-ant-pass", source: "env" },
+      { provider: "openai", key: "sk-openai-fail", source: "env" },
+      { provider: "google", key: "AIza-pass", source: "env" },
+    ];
+
+    // Simulate testResults: anthropic=true, openai=false, google=true
+    const testResults = new Map([["anthropic", true], ["openai", false], ["google", true]]);
+    const passedCredentials = allCredentials.filter(
+      (c) => testResults.get(c.provider) !== false,
+    );
+
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(passedCredentials, "anthropic", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+
+    // anthropic and google written (passed), openai excluded (failed)
+    expect(written.provider.anthropic).toBeDefined();
+    expect(written.provider.google).toBeDefined();
+    expect(written.provider.openai).toBeUndefined();
+  });
 });

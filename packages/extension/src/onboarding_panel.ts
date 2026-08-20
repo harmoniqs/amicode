@@ -337,6 +337,7 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
 
       // Handle messages from the webview
       let heldCredentials: DetectedCredential[] = [];
+      const testResults = new Map<string, boolean>(); // provider -> passed
       let scanAborted = false;
 
       panel.webview.onDidReceiveMessage(
@@ -395,6 +396,7 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
                     model,
                     apiKey: cred.key,
                   });
+                  testResults.set(cred.provider, result.ok);
                   if (!scanAborted) {
                     panel.webview.postMessage({
                       type: "test-status-update",
@@ -414,12 +416,16 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
               }
             }
           } else if (msg.type === "confirm-import") {
-            // User confirmed the import — write batch config
+            // User confirmed the import — write only providers that passed connection test
             const payload = msg.payload as { activeProvider: string };
-            if (heldCredentials.length > 0) {
-              writeBatchConfig(heldCredentials, payload.activeProvider);
+            const passedCredentials = heldCredentials.filter(
+              (c) => testResults.get(c.provider) !== false,
+            );
+            if (passedCredentials.length > 0) {
+              writeBatchConfig(passedCredentials, payload.activeProvider);
             }
             heldCredentials = [];
+            testResults.clear();
             panel.dispose();
             fireOnboardingComplete();
           }
