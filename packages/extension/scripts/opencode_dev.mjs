@@ -114,7 +114,7 @@ export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloa
   if (!tag) throw new Error("pin: a release tag is required (e.g. pnpm opencode:pin v1.17.3-amicode.5)");
   const lockPath = join(root, "opencode.lock.json");
   const m = JSON.parse(readFileSync(lockPath, "utf8"));
-  const repo = m.repo ?? "sst/opencode";
+  const repo = m.repo ?? "anomalyco/opencode";
   const shas = {};
   for (const [key, p] of Object.entries(m.platforms ?? {})) {
     const bytes = download(repo, tag, p.asset);

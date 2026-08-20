@@ -51,12 +51,12 @@ export function resolvePlatform(manifest, flag) {
   return key;
 }
 
-/** Release coordinates: default = upstream sst/opencode at v<version>; a manifest
+/** Release coordinates: default = upstream anomalyco/opencode at v<version>; a manifest
  *  with `repo`/`tag` set points at our fork's release instead (harmoniqs/opencode,
  *  private — downloads go through the authenticated `gh` path in that case). */
 export function releaseCoords(manifest) {
   return {
-    repo: manifest.repo ?? "sst/opencode",
+    repo: manifest.repo ?? "anomalyco/opencode",
     tag: manifest.tag ?? `v${manifest.version}`,
     private: manifest.repo != null, // our mirror is private; upstream is not
   };

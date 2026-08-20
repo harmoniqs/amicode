@@ -11,7 +11,7 @@
 
 Your vaults, your fleet, your devices, your pulses — composed by conversation.
 
-<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · open [opencode](https://github.com/sst/opencode) chat harness · telaio research harness by subscription (arriving) · model-agnostic — Kimi K3, Muse Spark, open models</sub>
+<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · open [opencode](https://github.com/anomalyco/opencode) chat harness · telaio research harness by subscription (arriving) · model-agnostic — Kimi K3, Muse Spark, open models</sub>
 
 </div>
 
@@ -21,7 +21,7 @@ Amicode is an **open autonomous research studio** that lives in your editor — 
 
 Describe what you want in plain language — a gate, a state preparation, a calibration sweep — and Amicode designs the pulse, runs the solve, and shows you the result. Every run is captured, every pulse versioned for warm-start, and every session distilled into durable knowledge. The loop gets smarter as you use it.
 
-Leveraging **Kimi K3** (Moonshot AI), **Muse Spark** (Meta), and other open models — on the open [opencode](https://github.com/sst/opencode) ecosystem (SST, vendored from `sst/opencode`). Model-agnostic by design: the loop, not the model, is the product.
+Leveraging **Kimi K3** (Moonshot AI), **Muse Spark** (Meta), and other open models — on the open [opencode](https://github.com/anomalyco/opencode) ecosystem (vendored from `anomalyco/opencode`). Model-agnostic by design: the loop, not the model, is the product.
 
 We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, **hardware in the loop via Strumento.jl / QICK** — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science. Plenty will sell you a closed “superintelligence” that never touches the hardware. We ship open, down to the RFSoC.
 
