@@ -270,12 +270,33 @@ export function webviewSafeResults(credentials: DetectedCredential[]): SafeCrede
   });
 }
 
+// ─── Key validation (#455) ───────────────────────────────────────────────────
+
+/** Known placeholder keys that should never be persisted to config. */
+const PLACEHOLDER_KEYS = new Set(["sk-test"]);
+
+/**
+ * Returns true if the API key is valid for writing to config.
+ * Rejects: empty strings, known placeholders, and keys shorter than 10 chars.
+ * Empty string is allowed ONLY when the caller explicitly passes it (OAuth
+ * providers like github-copilot don't use API keys at all — they pass empty
+ * and the entry is written without options.apiKey). This function is called
+ * only when a key IS present (non-empty), so empty returns false here.
+ */
+export function isValidApiKey(key: string): boolean {
+  if (!key || key.trim() === "") return false;
+  if (PLACEHOLDER_KEYS.has(key.trim())) return false;
+  if (key.trim().length < 10) return false;
+  return true;
+}
+
 // ─── Batch config writing (AC7) ──────────────────────────────────────────────
 
 /**
  * Write all detected providers to opencode.json in one pass.
  * The `activeProvider` becomes the active `model` (using its first model entry).
  * Uses the same schema as writeOnboardingConfig: provider.<id>.options.apiKey, env as string[].
+ * Credentials with placeholder or invalid keys are silently skipped (#455).
  */
 export function writeBatchConfig(
   credentials: DetectedCredential[],
@@ -301,6 +322,9 @@ export function writeBatchConfig(
   };
 
   for (const cred of credentials) {
+    // Skip credentials with invalid/placeholder keys (#455)
+    if (!isValidApiKey(cred.key)) continue;
+
     const entry: Record<string, unknown> = {};
     if (cred.key) {
       entry.options = { apiKey: cred.key };

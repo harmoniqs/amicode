@@ -197,7 +197,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     fs.writeFileSync(configPath, JSON.stringify({ permission: { bash: "allow" } }));
 
     writeOnboardingConfig(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-x" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-ant-valid-key-123456" },
       configPath,
     );
 

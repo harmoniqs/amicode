@@ -17,6 +17,7 @@ import {
   defaultScanOptions,
   webviewSafeResults,
   writeBatchConfig,
+  isValidApiKey,
   type DetectedCredential,
 } from "./credential_scanner";
 
@@ -93,7 +94,8 @@ function defaultConfigPath(): string {
 }
 
 /** Write the onboarding config to the opencode config file.
- *  Creates parent directories if needed. Merges with existing config if present. */
+ *  Creates parent directories if needed. Merges with existing config if present.
+ *  Rejects placeholder/invalid API keys — the provider entry is not written (#455). */
 export function writeOnboardingConfig(
   config: OnboardingConfig,
   configPath: string = defaultConfigPath(),
@@ -108,6 +110,19 @@ export function writeOnboardingConfig(
     }
   } catch {
     // If parsing fails, start fresh
+  }
+
+  // Reject placeholder/invalid keys (#455) — but allow empty keys (OAuth providers)
+  if (config.apiKey && !isValidApiKey(config.apiKey)) {
+    // Key is non-empty but invalid — don't write this provider, just preserve existing config
+    const result = {
+      ...existing,
+      $schema: "https://opencode.ai/config.json",
+      provider: existing.provider ?? {},
+      model: config.model,
+    };
+    fs.writeFileSync(configPath, JSON.stringify(result, null, 2) + "\n");
+    return;
   }
 
   // Provider-specific key env var name
