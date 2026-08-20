@@ -59,9 +59,9 @@ Scrubbing is keyed to **content taint, not destination repo** — even a misrout
 Both are read-only searches with **scrubbed terms only**, run before drafting so their results feed the footer. Silent on no match. If `gh` is unavailable or unauthenticated, skip both checks silently — the browser fallback in step 7 still files, and the footer records no upstream claim.
 
 - **Dedup.** Search the target repo's open issues (`gh search issues --repo <target> --state open`). On a likely-match open issue, offer **comment-on-existing vs file-anyway** — the only conditional prompt besides the gates.
-- **Upstream check (fork-vendored surfaces only — today, the vendored engine).** The pin makes "does the fix already exist upstream?" mechanically decidable: parse the release tag's upstream base (`v<base>-amicode.<n>` → `v<base>` of `sst/opencode`), then search upstream issues **and** PRs with scrubbed terms:
+- **Upstream check (fork-vendored surfaces only — today, the vendored engine).** The pin makes "does the fix already exist upstream?" mechanically decidable: parse the release tag's upstream base (`v<base>-amicode.<n>` → `v<base>` of `anomalyco/opencode`), then search upstream issues **and** PRs with scrubbed terms:
   - **A matching merged fix** (merged PR / closed-as-fixed issue) at a release newer than the vendored base → offer an **upstream-bump chore issue instead of the `BUG:` filing** (merge the newer upstream; never re-implement what upstream already fixed).
-  - **A matching open upstream issue** → file the intake bug normally, footer `upstream: sst/opencode#N (open)` — maturation watches rather than implements.
+  - **A matching open upstream issue** → file the intake bug normally, footer `upstream: anomalyco/opencode#N (open)` — maturation watches rather than implements.
   - **No trace** → footer `upstream: none found`.
 
 ## 5. Compose the intake issue

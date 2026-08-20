@@ -34,4 +34,4 @@ Run **Amicode: Healthcheck** from the Command Palette any time to verify your se
 
 ---
 
-<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · chat harness vendored from [opencode](https://github.com/sst/opencode) (MIT). Pre-release software.</sub>
+<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · chat harness vendored from [opencode](https://github.com/anomalyco/opencode) (MIT). Pre-release software.</sub>
