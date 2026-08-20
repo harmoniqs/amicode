@@ -493,6 +493,28 @@ describe("scanCredentials — end-to-end with real default paths", () => {
     expect(safe[0].provider).toBe("opencode");
     expect(safe[0].source).toBe("opencode (account)");
   });
+
+  it("testConnection succeeds for opencode with real credentials", async () => {
+    const { testConnection } = await import("../src/onboarding_panel");
+    const result = await scanCredentials(defaultScanOptions());
+    const oc = result.credentials.find((c) => c.provider === "opencode");
+    if (!oc) {
+      console.log("  [e2e] No opencode credential found — skipping live test");
+      return;
+    }
+
+    const { PROVIDER_MODELS } = await import("../src/onboarding_panel");
+    const model = PROVIDER_MODELS["opencode"]?.[0]?.id ?? "anthropic/claude-sonnet-4-5";
+
+    const testResult = await testConnection({
+      provider: "opencode",
+      model,
+      apiKey: oc.key,
+    });
+
+    console.log(`  [e2e] testConnection for opencode: ok=${testResult.ok}, error=${testResult.error ?? "none"}`);
+    expect(testResult.ok).toBe(true);
+  }, 15000);
 });
 
 describe("scanCredentials — batch config writing integration (AC7)", () => {
