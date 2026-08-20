@@ -157,7 +157,7 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg).toBeDefined();
     expect(navigateMsg!.path).toContain("/new-session");
     expect(navigateMsg!.path).toContain("autoSend=1");
-    expect(navigateMsg!.path).toContain("prompt=");
+    expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Begin onboarding"));
   });
 
   it("does NOT post greeting when onboarding flag is not set", async () => {
