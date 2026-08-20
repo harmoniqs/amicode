@@ -6,7 +6,6 @@ import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerCatalogCard } from "./catalog_card_shell";
 import { registerTrees } from "./trees";
 import { StatusBarManager } from "./status_bar";
 import {
@@ -35,7 +34,7 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
+import { writeStopFile, savePulseTo, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
@@ -350,56 +349,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-   // 1. UI surfaces
-  const trees = registerTrees(ctx);
-  registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  // 1. UI surfaces
+  registerTrees(ctx);
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
-  ctx.subscriptions.push(
-    // #47 session catalog: record the save (workspaceState + tree), then open
-    // the card. Both prompts (demo replay, live promote) route through here.
-    vscode.commands.registerCommand("amicode.catalog.save", async (runDir: string) => {
-      const manifest = readTomlSafe(path.join(runDir, "run.toml")) ?? {};
-      const result = readTomlSafe(path.join(runDir, "result.toml")) ?? {};
-      const params = (result.params ?? {}) as Record<string, unknown>;
-      const family = typeof params.system === "string" ? params.system : undefined;
-      // System identity is USER-NAMED (researchers think in named devices —
-      // "Emerald-Q3" — not families); the family prefills as the default and
-      // level counts stay in the card's params rows. Esc keeps the family.
-      const name = await vscode.window.showInputBox({
-        prompt: "Name this system (shown on the catalog entry)",
-        value: family ?? "",
-        placeHolder: "e.g. Emerald-Q3",
-      });
-      const system = name?.trim() ? name.trim() : family;
-      // Tags: the quick-digest handles for hyperparameter sweeps ("high-R",
-      // "T=8", "fast-ansatz") — optional, comma-separated.
-      const tagsRaw = await vscode.window.showInputBox({
-        prompt: "Tags (comma-separated, optional)",
-        placeHolder: "e.g. high-R, T=8, fast",
-      });
-      const tags =
-        tagsRaw
-          ?.split(",")
-          .map((t) => t.trim())
-          .filter(Boolean) ?? [];
-      await trees.catalog.save({
-        run_id: String(manifest.run_id ?? path.basename(runDir)),
-        runDir,
-        lab_id: String(manifest.lab_id ?? "default"),
-        gate: typeof params.gate === "string" ? params.gate : undefined,
-        system,
-        tags,
-        fidelity: Number(result.fidelity ?? 0),
-        saved_at: new Date().toISOString(),
-      });
-      await vscode.commands.executeCommand("amicode.catalogCard.open", runDir, system, tags);
-    }),
-    vscode.commands.registerCommand("amicode.catalog.refresh", () => trees.catalog.refresh()),
-    // Context-menu removal: unsave the pointer; run artifacts stay on disk.
-    vscode.commands.registerCommand("amicode.catalog.remove", async (entry?: { run_id?: string }) => {
-      if (entry?.run_id) await trees.catalog.remove(entry.run_id);
-    }),
-  );
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
@@ -1638,24 +1590,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage("Amicode: no active run.");
         return;
       }
-      const catalog = catalogPulsesDir();
-      const picks = [catalog ? "Save to catalog" : undefined, "Save to file…"].filter(Boolean) as string[];
-      const choice = await vscode.window.showQuickPick(picks, { title: "Save pulse" });
-      if (!choice) return;
       try {
-        if (choice === "Save to catalog" && catalog) {
-          const name = `${path.basename(dir)}.jld2`;
-          savePulseTo(dir, path.join(catalog, name));
-          vscode.window.showInformationMessage(`Amicode: saved pulse to catalog (${name}).`);
-        } else {
-          const uri = await vscode.window.showSaveDialog({
-            filters: { JLD2: ["jld2"] },
-            defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
-          });
-          if (uri) {
-            savePulseTo(dir, uri.fsPath);
-            vscode.window.showInformationMessage("Amicode: pulse saved.");
-          }
+        const uri = await vscode.window.showSaveDialog({
+          filters: { JLD2: ["jld2"] },
+          defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
+        });
+        if (uri) {
+          savePulseTo(dir, uri.fsPath);
+          vscode.window.showInformationMessage("Amicode: pulse saved.");
         }
       } catch (e) {
         vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
@@ -1725,15 +1667,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         runsManager?.pokeDiscovery();
         runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
-        const fid = Number((readTomlSafe(path.join(runDir, "result.toml")) ?? {}).fidelity ?? NaN);
-        if (fid >= 0.99) {
-          const choice = await vscode.window.showInformationMessage(
-            `Amicode: demo solve converged (F=${fid.toFixed(4)}). Save to catalog?`,
-            "Save to catalog",
-            "Not now",
-          );
-          if (choice === "Save to catalog") await vscode.commands.executeCommand("amicode.catalog.save", runDir);
-        }
       } catch (e) {
         void vscode.window.showErrorMessage(`Amicode: replay failed — ${(e as Error).message}`);
       }

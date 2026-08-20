@@ -386,15 +386,8 @@ export class RunsManager implements vscode.Disposable {
   private promptPromote(info: PromoteInfo): void {
     if (this.promotedRuns.has(info.runId)) return;
     this.promotedRuns.add(info.runId);
-    void (async () => {
-      const choice = await vscode.window.showInformationMessage(
-        `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Promote pulse to catalog?`,
-        "Yes — promote",
-        "No — keep local only",
-      );
-      if (choice === "Yes — promote") {
-        await vscode.commands.executeCommand("amicode.catalog.save", info.runDir).then(undefined, () => undefined);
-      }
-    })();
+    void vscode.window.showInformationMessage(
+      `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Use Amicode: Save pulse to save the pulse to a file.`,
+    );
   }
 }
