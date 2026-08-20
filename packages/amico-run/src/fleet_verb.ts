@@ -30,6 +30,20 @@
 //         pure machine as everyone else, so it cannot invent an edge the table lacks —
 //         an orphaned `blocked` record is REPORTED, not laundered into a crash.
 //
+//   amico fleet launch --session <id> --pid <n>          (#426, the hunt path)
+//   amico fleet finish  --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]
+//       → THE HOLDER VERBS — how a WRAPPER (ops/hunt.sh) joins the registry instead of
+//         being ps-grepped. A wrapper is its own harness: it holds the record from
+//         instant zero, so there is no spooling and no signal to enqueue — launch
+//         CREATES ONCE (a record that already exists is refused, so creation can never
+//         race a second writer), and finish is the holder's TERMINAL write, guarded by
+//         pid identity: only the pid the record names may settle or crash it. Everyone
+//         else still routes around the discipline — user intent via a signal, orphans
+//         via sweep. The machine stays the authority for both edges (`settle`/`crash`
+//         apply only to a `running` record). Hunt records carry a hunt-shaped profile
+//         (base = "hunt", no model/variant — a hunt has no tier) so the fleet view can
+//         tell them from sessions at a glance.
+//
 // `--json` is accepted on every subcommand and is a no-op: these verbs are JSON-out by
 // construction (amico.ts prints `VerbResult.json`), exactly like the other spine verbs.
 import { FRONTIER_MODELS, ladderRungs } from "./ledger_dispatch.js";
@@ -45,6 +59,7 @@ import {
   legalEvents,
   listSignals,
   localHost,
+  normalizeRecord,
   readAllRecords,
   readRecord,
   recordHolder,
@@ -350,6 +365,162 @@ export function fleetRetier(argv: string[]): VerbResult {
   });
 }
 
+// ── launch / finish: the holder verbs (#426) ──────────────────────────────────────
+/** The two ways a pid may fail the `--pid` contract of the holder verbs: absent, or
+ *  not a positive integer. pid 0 is REFUSED, not defaulted — it is the registry's
+ *  "unknown holder" sentinel, and an unknown holder can never be sweep-adopted, which
+ *  is the entire reason these verbs exist. */
+function parseHolderPid(pidRaw: string | undefined): { pid: number } | { errors: string[] } {
+  if (pidRaw === undefined) return { errors: ["--pid <n> is required — the holder's own pid, so `fleet sweep` can guard on liveness once the holder is gone"] };
+  if (!/^\d+$/.test(pidRaw) || Number(pidRaw) <= 0) {
+    return {
+      errors: [
+        `--pid "${pidRaw}" must be a positive integer — pid 0 is the registry's unknown-holder sentinel (a record that can never be sweep-adopted), so launch/finish refuse to stamp it rather than mint an unsweepable record`,
+      ],
+    };
+  }
+  return { pid: Number(pidRaw) };
+}
+
+// ── launch (creation, once) ──────────────────────────────────────────────────────
+export function fleetLaunch(argv: string[]): VerbResult {
+  const root = rootOf(argv);
+  const session = flagValue(argv, "--session");
+  if (!session) return fail("launch", ["--session <id> is required"], { root });
+  if (!isValidSessionId(session)) return fail("launch", [`--session ${JSON.stringify(session)} is not a valid session id`], { root });
+  const pidOr = parseHolderPid(flagValue(argv, "--pid"));
+  if ("errors" in pidOr) return fail("launch", pidOr.errors, { root, session_id: session });
+
+  // CREATES ONCE. An existing record — readable or not — is never clobbered: creation
+  // over an existing file would be a second writer muscling in on a held record.
+  const existing = readRecord(root, session);
+  if (existing.ok || !existing.missing) {
+    return fail("launch", [`a record for ${JSON.stringify(session)} already exists (${existing.path}) — creation is ONCE; re-running a hunt is a NEW session id, and a held record has exactly one writer (§3.2)`], {
+      root,
+      session_id: session,
+      path: existing.path,
+      state: existing.ok ? existing.record.state : "",
+    });
+  }
+
+  // A wrapper is its own harness: it holds the record from instant zero, so the record
+  // is born `running` — there is no spooling (no triage precedes it) and no handoff.
+  // pid/host are stamped at creation BECAUSE that pair is what makes a dead holder
+  // sweep-detectable later. Liveness is deliberately NOT probed here: a pid that is
+  // dead at launch is an orphan at birth, and sweep — not this verb — says so.
+  const rec = normalizeRecord({
+    session_id: session,
+    state: "running",
+    started: new Date().toISOString(),
+    pid: pidOr.pid,
+    host: localHost(),
+    profile: {
+      name: "hunt",
+      base: "hunt",
+      model: "",
+      variant: "",
+      task_type: "hunt",
+      skills: [],
+      gates: [],
+      permissions: {},
+    },
+  });
+  const path = writeRecord(root, rec);
+  return {
+    json: {
+      verb: "fleet",
+      subcommand: "launch",
+      ok: true,
+      root,
+      session_id: session,
+      path,
+      state: rec.state,
+      pid: rec.pid,
+      host: rec.host,
+      written: true,
+      note: "record CREATED running and held by this pid — finish it yourself (settled/crashed); if you die first, `fleet sweep` adopts it (pid-liveness guarded)",
+    },
+    code: 0,
+  };
+}
+
+// ── finish (the holder's terminal write) ─────────────────────────────────────────
+export function fleetFinish(argv: string[]): VerbResult {
+  const root = rootOf(argv);
+  const session = flagValue(argv, "--session");
+  if (!session) return fail("finish", ["--session <id> is required"], { root });
+  if (!isValidSessionId(session)) return fail("finish", [`--session ${JSON.stringify(session)} is not a valid session id`], { root });
+  const outcome = flagValue(argv, "--outcome");
+  if (outcome !== "settled" && outcome !== "crashed") {
+    return fail("finish", ['--outcome must be "settled" (the hunt concluded normally) or "crashed" (nonzero exit, timeout kill, or signal)'], { root, session_id: session });
+  }
+  const pidOr = parseHolderPid(flagValue(argv, "--pid"));
+  if ("errors" in pidOr) return fail("finish", pidOr.errors, { root, session_id: session });
+
+  const r = readRecord(root, session);
+  if (!r.ok) return fail("finish", r.errors, { root, session_id: session, missing: r.missing, path: r.path });
+  const rec = r.record;
+
+  // The machine rules on the EDGE first — `settle`/`crash` apply only to a `running`
+  // record, and saying so beats speculating about who is asking. Only then does the
+  // holder guard speak.
+  const event = outcome === "settled" ? "settle" : "crash";
+  const edge = step(rec.state, event);
+  if (!edge.ok) {
+    return fail("finish", [edge.reason], { root, session_id: session, state: rec.state, legal_events: legalEvents(rec.state) });
+  }
+
+  // HOLDER-GUARDED. finish is the holder writing its own terminal state — the pid must
+  // match the one the record names. Anything else keeps the discipline: a non-holder
+  // stop goes through a signal (applied by the holder), an orphan goes through sweep.
+  if (rec.pid === 0) {
+    return fail("finish", ["this record's holder pid is unknown (pid = 0) — an unknown holder cannot finish it; the orphan authority is `fleet sweep` (§3.2)"], { root, session_id: session, state: rec.state });
+  }
+  if (rec.pid !== pidOr.pid) {
+    return fail("finish", [`--pid ${pidOr.pid} does not match the record's holder pid ${rec.pid} — finish is the HOLDER's terminal write (§3.2 single-writer discipline); a non-holder stop enqueues a signal, an orphan is swept`], {
+      root,
+      session_id: session,
+      state: rec.state,
+      holder_pid: rec.pid,
+    });
+  }
+
+  // The pid is zeroed by the write (a finished holder holds nothing), and runtime is
+  // frozen at the holder's last tick: elapsed seconds from `started`, never less than
+  // whatever the record already accumulated.
+  const started_ms = rec.started === "" ? NaN : Date.parse(rec.started);
+  const runtime = Number.isFinite(started_ms) ? Math.max(rec.runtime, Math.round((Date.now() - started_ms) / 1000)) : rec.runtime;
+  const applied = applyEvent(rec, event, {
+    pid: 0,
+    current_step: flagValue(argv, "--step") ?? rec.current_step,
+    runtime,
+  });
+  if (!applied.ok) {
+    // Unreachable while `step()` gates on the same table above, but the machine stays
+    // the single authority — finish never writes a state the table did not produce.
+    return fail("finish", applied.errors, { root, session_id: session, state: rec.state, legal_events: legalEvents(rec.state) });
+  }
+  const path = writeRecord(root, applied.record);
+  return {
+    json: {
+      verb: "fleet",
+      subcommand: "finish",
+      ok: true,
+      root,
+      session_id: session,
+      path,
+      from: rec.state,
+      to: applied.record.state,
+      pid: applied.record.pid,
+      runtime: applied.record.runtime,
+      current_step: applied.record.current_step,
+      written: true,
+      note: "the holder's terminal write — the record now reads finished; no signal was enqueued (there is no live session to apply one)",
+    },
+    code: 0,
+  };
+}
+
 // ── sweep (the one write) ────────────────────────────────────────────────────────
 export function fleetSweep(argv: string[]): VerbResult {
   const root = rootOf(argv);
@@ -400,7 +571,7 @@ export function fleetSweep(argv: string[]): VerbResult {
       marked,
       skipped,
       unreadable,
-      note: "the ONLY `amico fleet` path that writes a record (§3.2), and only for an orphaned holder pid — a live pid, an unknown pid (0), and a foreign-host record are never marked",
+      note: "the only `amico fleet` path that writes a record it does not hold (§3.2), and only for an orphaned holder pid — a live pid, an unknown pid (0), and a foreign-host record are never marked",
     },
     code: 0,
   };
@@ -411,6 +582,8 @@ const USAGE =
   "amico fleet list [--state <s>] [--root D]  |  amico fleet status --session <id>  |  " +
   'amico fleet steer --session <id> --message "<instruction>"  |  amico fleet stop --session <id> [--reason "<why>"]  |  ' +
   "amico fleet re-tier --session <id> --model <provider/id> [--variant <v>]  |  amico fleet sweep [--dry-run]  |  " +
+  "amico fleet launch --session <id> --pid <n>  |  " +
+  'amico fleet finish --session <id> --outcome settled|crashed --pid <n> [--step "<s>"]  |  ' +
   "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]";
 
 /** The `fleet` verb body: route on the subcommand. Backs BOTH the CLI (amico.ts) and the
@@ -424,6 +597,8 @@ export function fleetVerb(argv: string[]): VerbResult {
   if (sub === "stop") return fleetStop(rest);
   if (sub === "re-tier") return fleetRetier(rest);
   if (sub === "sweep") return fleetSweep(rest);
+  if (sub === "launch") return fleetLaunch(rest);
+  if (sub === "finish") return fleetFinish(rest);
   if (sub === "digest") return fleetDigest(rest);
   return {
     json: { verb: "fleet", error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`, usage: USAGE },

@@ -18,6 +18,7 @@ import { fleetVerb } from "../src/fleet_verb.js";
 import {
   listSignals,
   normalizeRecord,
+  readRecord,
   recordPath,
   toToml,
   writeRecord,
@@ -486,6 +487,186 @@ describe("amico fleet sweep — the pid-liveness guard", () => {
     put("sess-orphan", "running", { pid: deadPid(), host: hostname() });
     run(["sweep"]);
     expect(listSignals(root, "sess-orphan")).toEqual([]);
+  });
+});
+
+// ── launch / finish: the hunt holder's write path (#426) ─────────────────────────
+// Hunts (and any wrapper acting as its own harness) enter the registry HERE, not by
+// hand-written TOML: `launch` creates the record the wrapper will hold, `finish` is the
+// holder's terminal transition. Three properties to defend:
+//   1. launch CREATES ONCE — a second launch over an existing record is refused and the
+//      file stays byte-identical (single-writer discipline starts at creation).
+//   2. finish is HOLDER-GUARDED — only the pid the record names may write the terminal
+//      state; everyone else routes through signals or sweep.
+//   3. an abandoned running record (holder gone) is SWEEP-ADOPTABLE — that is the whole
+//      point: launch with a dead pid, sweep marks it crashed. No more ps-grep.
+describe("amico fleet launch — record creation for self-held holders (#426)", () => {
+  it("creates a running record stamped pid/host/started, readable back through status", () => {
+    const r = run(["launch", "--session", "hunt-abc", "--pid", String(process.pid)]);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({
+      verb: "fleet",
+      subcommand: "launch",
+      ok: true,
+      session_id: "hunt-abc",
+      state: "running",
+      pid: process.pid,
+      host: hostname(),
+      path: recordPath(root, "hunt-abc"),
+      written: true,
+    });
+    const after = run(["status", "--session", "hunt-abc"]);
+    expect(after.code).toBe(0);
+    expect(after.json).toMatchObject({
+      state: "running",
+      holder: "harness",
+      pid: process.pid,
+      pid_alive: true,
+      host: hostname(),
+      host_local: true,
+    });
+    expect(after.json.started).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("the created file is a schema-conformant record — not a bash-shaped lookalike", () => {
+    run(["launch", "--session", "hunt-abc", "--pid", String(process.pid)]);
+    const rec = readRecord(root, "hunt-abc");
+    expect(rec.ok).toBe(true);
+    expect(rec.ok && rec.record).toMatchObject({
+      schema: 1,
+      session_id: "hunt-abc",
+      state: "running",
+      pid: process.pid,
+      host: hostname(),
+      respooled_to: "",
+      profile: { name: "hunt", base: "hunt", task_type: "hunt", skills: [], gates: [] },
+    });
+  });
+
+  it("launch CREATES ONCE: an existing record is refused and left byte-identical", () => {
+    run(["launch", "--session", "hunt-abc", "--pid", String(process.pid)]);
+    const before = readFileSync(recordPath(root, "hunt-abc"), "utf8");
+    const again = run(["launch", "--session", "hunt-abc", "--pid", String(process.pid)]);
+    expect(again.code).toBe(64);
+    expect(again.json).toMatchObject({ verb: "fleet", subcommand: "launch", ok: false });
+    expect((again.json.errors as string[]).join(" ")).toMatch(/already exists/);
+    expect(readFileSync(recordPath(root, "hunt-abc"), "utf8")).toBe(before);
+  });
+
+  it("--session is required and must be a safe id; --pid is required and must be a positive integer", () => {
+    const noSession = run(["launch", "--pid", "123"]);
+    expect(noSession.code).toBe(64);
+    expect((noSession.json.errors as string[]).join(" ")).toMatch(/--session/);
+
+    const badId = run(["launch", "--session", "../escape", "--pid", "123"]);
+    expect(badId.code).toBe(64);
+    expect((badId.json.errors as string[]).join(" ")).toMatch(/not a valid session id/);
+
+    const noPid = run(["launch", "--session", "hunt-abc"]);
+    expect(noPid.code).toBe(64);
+    expect((noPid.json.errors as string[]).join(" ")).toMatch(/--pid/);
+
+    // pid 0 is the "unknown holder" sentinel — an unsweepable record that defeats the
+    // adoption path launch exists to build. Refused, never defaulted.
+    for (const bad of ["0", "-1", "3.5", "notapid"]) {
+      const r = run(["launch", "--session", "hunt-abc", "--pid", bad]);
+      expect(r.code, `--pid ${bad}`).toBe(64);
+      expect((r.json.errors as string[]).join(" ")).toMatch(/--pid/);
+    }
+  });
+
+  it("launch does NOT probe pid liveness — a dead-pid record is allowed and sweep adopts it", () => {
+    const dead = deadPid();
+    const r = run(["launch", "--session", "hunt-orphan", "--pid", String(dead)]);
+    expect(r.code).toBe(0);
+    // THE retirement of ps-grep: the record says running, the pid is gone, sweep — not
+    // the operator — is the authority that marks it crashed.
+    const swept = run(["sweep"]);
+    expect(swept.json).toMatchObject({ marked_crashed: 1 });
+    expect((swept.json.marked as Array<Record<string, unknown>>)[0]).toMatchObject({
+      session_id: "hunt-orphan",
+      from: "running",
+      to: "crashed",
+      pid: dead,
+    });
+    expect(run(["status", "--session", "hunt-orphan"]).json).toMatchObject({ state: "crashed", pid: 0 });
+  });
+});
+
+describe("amico fleet finish — the holder's terminal write (#426)", () => {
+  it("settled: a matching holder settles its record, zeroes the pid, stamps runtime and step", () => {
+    put("hunt-abc", "running");
+    const r = run(["finish", "--session", "hunt-abc", "--outcome", "settled", "--pid", String(process.pid), "--step", "exit=0"]);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ ok: true, session_id: "hunt-abc", from: "running", to: "settled", written: true });
+    const after = run(["status", "--session", "hunt-abc"]);
+    expect(after.json).toMatchObject({ state: "settled", pid: 0, current_step: "exit=0" });
+    // runtime is the accumulated seconds, frozen at the holder's last tick: started is a
+    // minute in the past (the fixture stamps 2026-07-25), so runtime must be > 0 now.
+    expect(after.json.runtime as number).toBeGreaterThan(0);
+  });
+
+  it("crashed: a matching holder crashes its record (the wrapper's timeout/nonzero path)", () => {
+    put("hunt-abc", "running");
+    const r = run(["finish", "--session", "hunt-abc", "--outcome", "crashed", "--pid", String(process.pid), "--step", "exit=124 timeout"]);
+    expect(r.code).toBe(0);
+    expect(r.json).toMatchObject({ from: "running", to: "crashed" });
+    expect(run(["status", "--session", "hunt-abc"]).json).toMatchObject({ state: "crashed", pid: 0, current_step: "exit=124 timeout" });
+  });
+
+  it("HOLDER-GUARDED: a pid that is not the record's holder is refused, byte-identical", () => {
+    put("hunt-abc", "running");
+    const before = readFileSync(recordPath(root, "hunt-abc"), "utf8");
+    const r = run(["finish", "--session", "hunt-abc", "--outcome", "settled", "--pid", "999999"]);
+    expect(r.code).toBe(64);
+    expect(r.json).toMatchObject({ verb: "fleet", subcommand: "finish", ok: false });
+    expect((r.json.errors as string[]).join(" ")).toMatch(/holder/);
+    expect(readFileSync(recordPath(root, "hunt-abc"), "utf8")).toBe(before);
+  });
+
+  it("pid = 0 means the holder is unknown — finish refuses and points at sweep, the orphan authority", () => {
+    put("hunt-abc", "running", { pid: 0 });
+    const r = run(["finish", "--session", "hunt-abc", "--outcome", "settled", "--pid", "123"]);
+    expect(r.code).toBe(64);
+    expect((r.json.errors as string[]).join(" ")).toMatch(/sweep/);
+  });
+
+  it("the state machine stays the authority: finish on a non-running record is refused with its reason", () => {
+    for (const [state, over] of [
+      ["settled", {}],
+      ["crashed", { pid: process.pid }],
+      ["killed", { pid: 0 }],
+    ] as Array<[FleetState, Partial<FleetRecord>]>) {
+      put("hunt-x", state, over);
+      const r = run(["finish", "--session", "hunt-x", "--outcome", "settled", "--pid", String(process.pid)]);
+      expect(r.code, state).toBe(64);
+      expect(r.json).toMatchObject({ ok: false, state });
+      expect((r.json.errors as string[]).join(" ")).toMatch(/settle|terminal|crashed/);
+      expect(r.json.legal_events).toBeDefined();
+    }
+  });
+
+  it("--outcome must be settled|crashed; --session/--pid are required; a missing record is missing:true", () => {
+    const badOutcome = run(["finish", "--session", "hunt-abc", "--outcome", "exploded", "--pid", "1"]);
+    expect(badOutcome.code).toBe(64);
+    expect((badOutcome.json.errors as string[]).join(" ")).toMatch(/--outcome/);
+
+    const noOutcome = run(["finish", "--session", "hunt-abc", "--pid", "1"]);
+    expect(noOutcome.code).toBe(64);
+    expect((noOutcome.json.errors as string[]).join(" ")).toMatch(/--outcome/);
+
+    expect(run(["finish", "--outcome", "settled", "--pid", "1"]).code).toBe(64);
+    expect(run(["finish", "--session", "hunt-abc", "--outcome", "settled"]).code).toBe(64);
+
+    const absent = run(["finish", "--session", "hunt-nope", "--outcome", "settled", "--pid", "1"]);
+    expect(absent.code).toBe(64);
+    expect(absent.json).toMatchObject({ ok: false, missing: true });
+  });
+
+  it("finish NEVER enqueues a signal — it is a direct holder write, not an instruction", () => {
+    put("hunt-abc", "running");
+    run(["finish", "--session", "hunt-abc", "--outcome", "settled", "--pid", String(process.pid)]);
+    expect(listSignals(root, "hunt-abc")).toEqual([]);
   });
 });
 
