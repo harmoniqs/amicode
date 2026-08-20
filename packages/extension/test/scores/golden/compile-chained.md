@@ -16,41 +16,43 @@ gate's checks pass.
    - Q `name`: "What should I call you?"
 2. **intent**
    - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Perform (automated) experiments and gain scientific insights (recommended) | Exploring
-3. **context_seed** (optional)
+3. **research_area** (optional)
+   - Q `research_area`: "What research area and what kind of experiments?"
+4. **context_seed** (optional)
    - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
-4. **demo** (optional)
+5. **demo** (optional)
    - Q `demo_offer`: "Want me to show you the full workflow end-to-end? (requires Julia)" — options: Yes, show me (recommended) | Skip the demo
-5. **environment** (optional)
+6. **environment** (optional)
    - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
-6. **devices** (optional)
+7. **devices** (optional)
    - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
-7. **goals**
+8. **goals**
    - Q `goals`: "What are you hoping to accomplish with Amico?"
-8. **handoff**
+9. **handoff**
    - Q `handoff`: "Ready to get started?" — options: Let's dive into my first task (recommended) | Open a normal session | Show me around first
-9. **platform**
+10. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
-10. **model**
+11. **model**
    - emits: system — record via the matching `amicode_*` tool
    - Q `levels`: "How many levels should the model keep? (I'll recommend based on your system — see guidance)" — default: platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)
    - Q `drives`: "Drive parameterization and amplitude bound (drive_max)?" — default: two quadratures, drive_max = 0.2 GHz
-11. **mode**
+12. **mode**
    - Q `mode`: "Simulate first, or go straight to solve?" — options: solve (recommended) | simulate
    - Q `warm_start`: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?" — options: cold start (recommended) | warm start
      - skip if: mode == simulate
-12. **problem**
+13. **problem**
    - Q `target`: "What is the target — a gate, or a state to prepare?" — default: a single-qubit gate
-13. **formulate**
+14. **formulate**
    - emits: formulation — record via the matching `amicode_*` tool
    - Q `formulation`: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)" — default: a fixed-time gate, free-phase on for entangling gates
      - [Why?] hooks: free-phase-objective-only, pin-globals-first-solve (read `scores/memory/<hook>.md` on request)
-14. **solve**
+15. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
    - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
-15. **inspect**
-16. **hardware** (optional)
+16. **inspect**
+17. **hardware** (optional)
    - emits: device_session — record via the matching `amicode_*` tool
 
 ---
@@ -103,15 +105,18 @@ Per-stage guidance and the `amicode_profile` mapping:
    `amicode_profile {entity:"profile", payload:{intent:["research","general_coding","exploring"]}}`.
    Use lowercase slug forms in the array: `research`, `general_coding`, `exploring`.
 
-   **DO NOT ask research sub-type here.** Platform, problem type, and domain
-   specifics are deferred to later — they will be asked when the user starts
-   their first research task, not during onboarding. This keeps the overture
-   fast and generic.
-
    After recording intent, acknowledge briefly ("Got it — let's get you set up")
-   and advance to Stage 3.
+   and advance.
 
-3. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
+3. **research_area** _(optional — only if user selected the experiments intent)_ —
+   ask via the `question` tool with `kind: "text"`: "What research area and what
+   kind of experiments?" This is free-form — the user can say anything from
+   "quantum optimal control for transmon gates" to "protein folding simulations"
+   to "materials science DFT sweeps." Record whatever they say:
+   `amicode_profile {entity:"profile", payload:{research_area:"..."}}`.
+   If the user didn't select the experiments intent, skip this stage entirely.
+
+4. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
    existing AI-tool configs (CLAUDE.md, cursor rules, opencode config) to
    bootstrap your workspace — want me to?" via the `question` tool with the
    two choices above.
@@ -143,9 +148,9 @@ Per-stage guidance and the `amicode_profile` mapping:
    - If no scannable files are found, say so honestly: "I didn't find any
      AI-tool configs to import — no worries, we'll build your context as we go."
 
-   After seeding (or declining), advance to Stage 4 (demo).
+   After seeding (or declining), advance to Stage 5 (demo).
 
-4. **demo** _(optional)_ — check Julia readiness by calling
+5. **demo** _(optional)_ — check Julia readiness by calling
    `amicode_demo_check`. This returns `{ready: true|false, reason?}`.
 
    **If ready:** offer the demo: "Want me to run a quick optimization demo so
@@ -174,9 +179,9 @@ Per-stage guidance and the `amicode_profile` mapping:
    - The demo MUST NOT create vault artifacts (no problem card, no pulse bank entry).
    - If `isDemoCompleted()` is true (archive marker exists), skip — don't re-offer.
 
-   After the demo (or skipping), advance to Stage 5.
+   After the demo (or skipping), advance to Stage 6.
 
-5. **environment** — _(only if user selected the experiments intent)_ — ask how
+6. **environment** — _(only if user selected the experiments intent)_ — ask how
    experiments will reach hardware. **Pre-fill from seeds:** call
    `amicode_profile {entity:"status"}` and check if an environment is already
    recorded from the context-seed (Stage 3). If so, present it as a
@@ -187,7 +192,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
    Follow up on details per archetype if confirmed.
 
-6. **devices** _(optional, only if user selected the experiments intent)_ —
+7. **devices** _(optional, only if user selected the experiments intent)_ —
    same pre-fill pattern: if a device was seeded, confirm it. Otherwise ask:
    "Any specific device(s) you want me to remember?"
    This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
@@ -195,13 +200,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-7. **goals** — free-text question via `question` tool with `kind: "text"`:
+8. **goals** — free-text question via `question` tool with `kind: "text"`:
    "What are you hoping to accomplish with Amico?" No pre-fill (goals are
    personal, not inferrable from configs).
 
    Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
 
-8. **handoff** — the terminal stage. FIRST, record the completion marker:
+9. **handoff** — the terminal stage. FIRST, record the completion marker:
    `amicode_profile {entity:"onboarding_completed"}` (exactly once — this is
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).

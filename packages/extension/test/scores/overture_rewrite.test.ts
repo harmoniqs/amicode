@@ -110,8 +110,8 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toMatch(/intent.*\[.*research.*general_coding.*exploring.*\]/s);
   });
 
-  it("AC6: does NOT ask research sub-type (deferred to pulse-designer)", () => {
-    expect(md).toContain("DO NOT ask research sub-type");
+  it("AC6: asks research area as free-form, does NOT ask platform-specific sub-types", () => {
+    expect(md).toContain("What research area and what kind of experiments?");
     expect(md).not.toContain("Which platform");
     expect(md).not.toContain("qubit platforms");
   });
