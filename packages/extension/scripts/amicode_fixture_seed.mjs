@@ -297,6 +297,23 @@ export function seedAmicodeSandbox(dir) {
   paper("rydberg-blockade-2024.pdf", "%PDF-1.4 fake rydberg paper\n", "2026-08-02T00:00:00Z");
   paper("piccolo-trajectory-2023.pdf", "%PDF-1.4 fake piccolo paper\n", "2026-08-06T00:00:00Z");
 
+  // --- widgets + dashboard (the widget kernel) -------------------------------
+  // widgets dir: EMPTY of user widgets at seed (the fork-arc populates it
+  // mid-sequence); env-redirected so the fork never sees the host's.
+  const widgetsDir = join(dir, "widgets");
+  mkdirSync(widgetsDir, { recursive: true });
+  // Stored dashboard state: a hidden builtin, an entry with passthrough keys
+  // (group/view), an UNKNOWN id (→ missing:true), and reserved top-level keys.
+  writeJson(join(amico, "dashboard.json"), {
+    version: 1,
+    widget: [
+      { id: "meet-amico", hidden: true, config: {} },
+      { id: "about-you", config: {}, group: "left", view: "expanded" },
+      { id: "ghost-widget", config: { any: "values" } },
+    ],
+    views: { home: "grid" },
+  });
+
   // --- stub PATH: `amico` exists (fixed output → deterministic approve fixture),
   //     `amico-vault` does NOT (forces the CLI-less scanMounts path on both
   //     sides, so fixtures never depend on a real CLI being installed). ----------
@@ -327,6 +344,8 @@ export function seedAmicodeSandbox(dir) {
       AMICO_LEDGER: join(ledger, "runs.jsonl"),
       AMICODE_PROJECT_DIR: dir,
       AMICODE_LIBRARY_DIR: libraryDir,
+      AMICODE_WIDGETS_DIR: widgetsDir,
+      AMICODE_DASHBOARD_FILE: join(amico, "dashboard.json"),
       PATH: stubbin,
     },
   };

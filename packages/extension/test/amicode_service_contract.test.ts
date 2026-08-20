@@ -148,13 +148,21 @@ describe("amicode service — golden-fixture parity with the fork", () => {
         body,
       });
       expect(r.status).toBe(entry.status);
+      expect(r.headers.get("content-type")).toBe(entry.contentType);
+      expect(r.headers.get("content-security-policy")).toBe(entry.csp ?? null);
       const expected = normalize(entry.body, [meta.sandbox, meta.sandboxReal]);
       const received = normalize(await r.text(), [sandbox, realpathSync(sandbox)]);
-      // Deep-equal on parsed JSON: key order in the serialized body is the
-      // port's business, structure and values are the contract.
-      const canon = (o: any, seededAt: number) =>
-        normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)));
-      expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
+      if ((entry.contentType ?? "").includes("application/json")) {
+        // JSON routes: deep-equal on parsed bodies (key order is the port's
+        // business; structure and values are the contract).
+        const canon = (o: any, seededAt: number) =>
+          normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)));
+        expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
+      } else {
+        // Non-JSON routes (the served widget frame): byte-exact after sandbox
+        // normalization — the frame document IS the contract.
+        expect(received).toBe(expected);
+      }
     });
   }
 
