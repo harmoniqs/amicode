@@ -46,6 +46,37 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     return out;
   };
 
+  /** /amicode/problems iterates readdirSync order — unspecified by the fork
+   *  (varies per filesystem; the app sorts client-side), so the parity
+   *  contract is the same SET of problems, not the same order. Keyed on slug.
+   *  (run-cards sorts by finished_at server-side — deterministic, untouched.) */
+  const normalizeListOrder = (obj: any): any => {
+    if (obj && typeof obj === "object" && Array.isArray(obj.problems)) {
+      const problems = [...obj.problems].sort((a: any, b: any) => String(a?.slug ?? "").localeCompare(String(b?.slug ?? "")));
+      return { ...obj, problems };
+    }
+    return obj;
+  };
+
+  /** elapsed_ms on a NON-terminal run-series (solving/stalled) is measured to
+   *  the observation clock — seed pins run.log mtime to each side's own now,
+   *  so the value legitimately differs between recording and replay. It is the
+   *  ONLY wall-clock field; terminal runs pin FINISHED mtimes to fixed epochs
+   *  and stay exactly comparable. */
+  const normalizeWallClock = (obj: any): any => {
+    if (
+      obj &&
+      typeof obj === "object" &&
+      obj.run &&
+      typeof obj.run === "object" &&
+      (obj.run.status === "solving" || obj.run.status === "stalled") &&
+      typeof obj.run.elapsed_ms === "number"
+    ) {
+      return { ...obj, run: { ...obj.run, elapsed_ms: "<ELAPSED>" } };
+    }
+    return obj;
+  };
+
   beforeAll(async () => {
     meta = JSON.parse(readFileSync(FIXTURE, "utf8"));
     sandbox = mkdtempSync(join(tmpdir(), "amicode-parity-"));
@@ -105,7 +136,8 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       const received = normalize(await r.text(), [sandbox, realpathSync(sandbox)]);
       // Deep-equal on parsed JSON: key order in the serialized body is the
       // port's business, structure and values are the contract.
-      expect(JSON.parse(received)).toEqual(JSON.parse(expected));
+      const canon = (o: any) => normalizeListOrder(normalizeWallClock(o));
+      expect(canon(JSON.parse(received))).toEqual(canon(JSON.parse(expected)));
     });
   }
 

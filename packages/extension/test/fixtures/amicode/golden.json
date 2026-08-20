@@ -1,11 +1,11 @@
 {
-  "recordedAt": "2026-08-20T20:31:57.396Z",
+  "recordedAt": "2026-08-20T20:40:09.600Z",
   "fork": {
     "version": "1.18.10",
     "tag": "v1.18.10-amicode.11"
   },
-  "sandbox": "/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj",
-  "sandboxReal": "/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj",
+  "sandbox": "/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY",
+  "sandboxReal": "/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY",
   "entries": [
     {
       "name": "cold read — synthesized identity + stats + remembers",
@@ -14,7 +14,7 @@
         "path": "/amicode/profile"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg CZ\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg CZ\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":6,\"best_fidelity\":0.9999,\"banked\":1,\"since\":\"2026-08-01\"},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
     },
     {
       "name": "edit focus",
@@ -23,7 +23,7 @@
         "path": "/amicode/profile?focus=Rydberg%20blockade"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":6,\"best_fidelity\":0.9999,\"banked\":1,\"since\":\"2026-08-01\"},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
     },
     {
       "name": "clear name — mounts.toml fallback fires",
@@ -32,7 +32,7 @@
         "path": "/amicode/profile?name="
       },
       "status": 200,
-      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":6,\"best_fidelity\":0.9999,\"banked\":1,\"since\":\"2026-08-01\"},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
     },
     {
       "name": "warm read — post-save state",
@@ -41,7 +41,7 @@
         "path": "/amicode/profile"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":6,\"best_fidelity\":0.9999,\"banked\":1,\"since\":\"2026-08-01\"},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
     },
     {
       "name": "vaults — CLI-less scan (mounts, kind order)",
@@ -62,7 +62,7 @@
         }
       },
       "status": 200,
-      "body": "{\"ok\":true,\"name\":\"attachable-demo\",\"kind\":\"personal\",\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/vaults/attachable-demo\"}"
+      "body": "{\"ok\":true,\"name\":\"attachable-demo\",\"kind\":\"personal\",\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY/vaults/attachable-demo\"}"
     },
     {
       "name": "vaults — post-attach (cache bust, new mount)",
@@ -156,7 +156,7 @@
         "path": "/amicode/resolve-file?path=%7BSANDBOX%7D%2Fdocs%2Freadme.md"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
     },
     {
       "name": "resolve mount-prefixed (tier 3)",
@@ -165,7 +165,7 @@
         "path": "/amicode/resolve-file?path=personal-main%2Fnotes%2Fnote.md"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"found\":true,\"path\":\"/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/vaults/personal-main/notes/note.md\",\"mount\":\"personal-main\",\"kind\":\"file\"}"
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY/vaults/personal-main/notes/note.md\",\"mount\":\"personal-main\",\"kind\":\"file\"}"
     },
     {
       "name": "resolve relative w/ dir part (tier 4 → project dir)",
@@ -174,7 +174,7 @@
         "path": "/amicode/resolve-file?path=docs%2Freadme.md"
       },
       "status": 200,
-      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-b9qBZY/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
     },
     {
       "name": "resolve bare typed-prefix — miss (tier 5)",
@@ -193,6 +193,141 @@
       },
       "status": 200,
       "body": "{\"ok\":true,\"found\":false}"
+    },
+    {
+      "name": "problems list — active + slugs + entity kinds",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/problems"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"active\":\"x-gate-transmon\",\"problems\":[{\"slug\":\"x-gate-transmon\",\"name\":\"X Gate (Transmon)\",\"status\":\"solved\",\"score\":\"pulse-designer\",\"recorded\":\"2026-08-15\",\"entity_kinds\":[\"formulation\",\"system\"]},{\"slug\":\"t-gate-transmon\",\"name\":\"T Gate (Transmon)\",\"status\":\"solved\",\"score\":null,\"recorded\":null,\"entity_kinds\":[\"system\"]},{\"slug\":\"cat-state-cavity\",\"name\":\"Cat State (Cavity)\",\"status\":\"designing\",\"score\":null,\"recorded\":null,\"entity_kinds\":[\"system\"]}],\"error\":null}"
+    },
+    {
+      "name": "problem detail — active slug (score stamped)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/problem"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"problem\":{\"slug\":\"x-gate-transmon\",\"name\":\"X Gate (Transmon)\",\"platform\":\"transmon\",\"status\":\"solved\",\"score\":{\"id\":\"pulse-designer\"},\"recorded\":\"2026-08-15\"},\"entities\":{\"formulation\":{\"params\":{\"T\":10,\"N\":50}},\"system\":{\"platform\":\"transmon\",\"params\":{\"platform\":\"transmon\",\"gate\":\"X\"}}},\"score_stages\":[\"system\",\"formulation\",\"run\"],\"events\":[{\"seq\":1,\"entity\":\"system\",\"action\":\"recorded\",\"source\":{\"tool\":\"amicode_pick_system\"}},{\"seq\":2,\"entity\":\"formulation\",\"action\":\"recorded\",\"source\":{\"tool\":\"amicode_formulate\"}},{\"seq\":3,\"entity\":\"run\",\"action\":\"recorded\",\"source\":{\"tool\":\"amicode_solve\"}}],\"runs\":[{\"run_id\":\"r20260801-000000Z-0a1b2c\",\"lab\":\"default\"},{\"run_id\":\"r20260805-000000Z-9z8y7x\",\"lab\":\"default\"},{\"run_id\":\"r20260810-000000Z-3d4e5f\",\"lab\":\"default\"},{\"run_id\":\"r20260815-000000Z-6a7b8c\",\"lab\":\"default\"},{\"run_id\":\"r20260818-000000Z-4h5i6j\",\"lab\":\"default\"}],\"error\":null}"
+    },
+    {
+      "name": "problem detail — score_stages via interview_state fallback",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/problem?slug=t-gate-transmon"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"problem\":{\"slug\":\"t-gate-transmon\",\"name\":\"T Gate (Transmon)\",\"platform\":\"transmon\",\"status\":\"solved\"},\"entities\":{\"system\":{\"platform\":\"transmon\",\"params\":{\"platform\":\"transmon\",\"gate\":\"T\"}}},\"score_stages\":[\"system\",\"formulation\",\"run\"],\"events\":[],\"runs\":[],\"error\":null}"
+    },
+    {
+      "name": "problem detail — no entities dir, no runs",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/problem?slug=cat-state-cavity"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"problem\":{\"slug\":\"cat-state-cavity\",\"name\":\"Cat State (Cavity)\",\"platform\":\"cavity\",\"status\":\"designing\"},\"entities\":{\"system\":{\"platform\":\"cavity\",\"params\":{\"platform\":\"cavity\"}}},\"score_stages\":[],\"events\":[],\"runs\":[{\"run_id\":\"r20260812-000000Z-5c6d7e\",\"lab\":\"other\"}],\"error\":null}"
+    },
+    {
+      "name": "problem detail — not_found",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/problem?slug=no-such-problem"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"problem\":null,\"entities\":{},\"score_stages\":[],\"events\":[],\"runs\":[],\"error\":\"not_found:no-such-problem: no such problem workspace\"}"
+    },
+    {
+      "name": "run status — active problem, all terminal states",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-status"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"runs\":[{\"run_id\":\"r20260801-000000Z-0a1b2c\",\"status\":\"finished\",\"fidelity\":0.9999,\"iteration\":5},{\"run_id\":\"r20260805-000000Z-9z8y7x\",\"status\":\"stopped\",\"fidelity\":null,\"iteration\":null},{\"run_id\":\"r20260810-000000Z-3d4e5f\",\"status\":\"solving\",\"fidelity\":0.35,\"iteration\":2},{\"run_id\":\"r20260815-000000Z-6a7b8c\",\"status\":\"failed\",\"fidelity\":null,\"iteration\":null},{\"run_id\":\"r20260818-000000Z-4h5i6j\",\"status\":\"stalled\",\"fidelity\":0.59,\"iteration\":2}],\"error\":null}"
+    },
+    {
+      "name": "run status — other-lab ref",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-status?slug=cat-state-cavity"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"runs\":[{\"run_id\":\"r20260812-000000Z-5c6d7e\",\"status\":\"finished\",\"fidelity\":0.998,\"iteration\":4}],\"error\":null}"
+    },
+    {
+      "name": "run cards — trophy case (completed only, newest first)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-cards"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"cards\":[{\"slug\":\"cat-state-cavity\",\"problem\":\"Cat State (Cavity)\",\"platform\":\"cavity\",\"gate\":null,\"run_id\":\"r20260812-000000Z-5c6d7e\",\"lab\":\"other\",\"fidelity\":0.998,\"iterations\":4,\"elapsed_ms\":45000,\"finished_at\":1786492845000,\"series\":[{\"iter\":1,\"f\":0.2},{\"iter\":2,\"f\":0.08},{\"iter\":3,\"f\":0.02},{\"iter\":4,\"f\":0.002}],\"pulse\":{\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]}},{\"slug\":\"x-gate-transmon\",\"problem\":\"X Gate (Transmon)\",\"platform\":\"transmon\",\"gate\":\"X\",\"run_id\":\"r20260801-000000Z-0a1b2c\",\"lab\":\"default\",\"fidelity\":0.9999,\"iterations\":5,\"elapsed_ms\":120000,\"finished_at\":1785542520000,\"series\":[{\"iter\":1,\"f\":0.25},{\"iter\":2,\"f\":0.1},{\"iter\":3,\"f\":0.03},{\"iter\":4,\"f\":0.005},{\"iter\":5,\"f\":0.001}],\"pulse\":{\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]}}],\"error\":null}"
+    },
+    {
+      "name": "run series — completed (pulse + series + elapsed)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260801-000000Z-0a1b2c"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260801-000000Z-0a1b2c\",\"lab\":\"default\",\"status\":\"finished\",\"iteration\":5,\"fidelity\":0.9999,\"best_f\":0.001,\"last_f\":0.001,\"elapsed_ms\":120000,\"series\":[{\"iter\":1,\"f\":0.25},{\"iter\":2,\"f\":0.1},{\"iter\":3,\"f\":0.03},{\"iter\":4,\"f\":0.005},{\"iter\":5,\"f\":0.001}],\"pulse\":{\"iter\":5,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=2.5e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=1.0e-01 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_ITER iter=3 f=3.0e-02 inf_pr=1.0e-03 inf_du=5.0e-03\",\"AMICODE_ITER iter=4 f=5.0e-03 inf_pr=1.0e-04 inf_du=5.0e-04\",\"AMICODE_ITER iter=5 f=1.0e-03 inf_pr=1.0e-05 inf_du=5.0e-05\",\"AMICODE_PULSE iter=5 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\",\"DONE fidelity=0.9999\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — stopped (cooperative-stop relabel)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260805-000000Z-9z8y7x"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260805-000000Z-9z8y7x\",\"lab\":\"default\",\"status\":\"stopped\",\"iteration\":2,\"fidelity\":null,\"best_f\":0.29,\"last_f\":0.29,\"elapsed_ms\":180000,\"series\":[{\"iter\":1,\"f\":0.3},{\"iter\":2,\"f\":0.29}],\"pulse\":{\"iter\":2,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=3.0e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=2.9e-01 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_PULSE iter=2 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\",\"AMICODE_STOPPED\",\"DONE fidelity=0.71\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — solving (DONE is a hint only)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260810-000000Z-3d4e5f"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260810-000000Z-3d4e5f\",\"lab\":\"default\",\"status\":\"solving\",\"iteration\":2,\"fidelity\":null,\"best_f\":0.35,\"last_f\":0.35,\"elapsed_ms\":938407998,\"series\":[{\"iter\":1,\"f\":0.4},{\"iter\":2,\"f\":0.35}],\"pulse\":{\"iter\":2,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=4.0e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=3.5e-01 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_PULSE iter=2 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — failed (result.toml ≠ finished)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260815-000000Z-6a7b8c"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260815-000000Z-6a7b8c\",\"lab\":\"default\",\"status\":\"failed\",\"iteration\":3,\"fidelity\":null,\"best_f\":0.47,\"last_f\":0.47,\"elapsed_ms\":90000,\"series\":[{\"iter\":1,\"f\":0.5},{\"iter\":2,\"f\":0.48},{\"iter\":3,\"f\":0.47}],\"pulse\":{\"iter\":3,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=5.0e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=4.8e-01 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_ITER iter=3 f=4.7e-01 inf_pr=1.0e-03 inf_du=5.0e-03\",\"AMICODE_PULSE iter=3 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — stalled (cold run.log)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260818-000000Z-4h5i6j"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260818-000000Z-4h5i6j\",\"lab\":\"default\",\"status\":\"stalled\",\"iteration\":2,\"fidelity\":null,\"best_f\":0.59,\"last_f\":0.59,\"elapsed_ms\":240007999,\"series\":[{\"iter\":1,\"f\":0.6},{\"iter\":2,\"f\":0.59}],\"pulse\":{\"iter\":2,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=6.0e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=5.9e-01 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_PULSE iter=2 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — explicit lab",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=r20260812-000000Z-5c6d7e&lab=other"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"run\":{\"run_id\":\"r20260812-000000Z-5c6d7e\",\"lab\":\"other\",\"status\":\"finished\",\"iteration\":4,\"fidelity\":0.998,\"best_f\":0.002,\"last_f\":0.002,\"elapsed_ms\":45000,\"series\":[{\"iter\":1,\"f\":0.2},{\"iter\":2,\"f\":0.08},{\"iter\":3,\"f\":0.02},{\"iter\":4,\"f\":0.002}],\"pulse\":{\"iter\":4,\"dt\":0.2,\"values\":[0.01,0.02,0.03,0.04,0.05,0.06]},\"pulse_meta\":{\"drives\":2,\"knots\":3,\"labels\":[\"a_1\",\"a_2\"]},\"tail\":[\"AMICODE_PULSE_META drives=2 knots=3 labels=\\\"a_1\\\",\\\"a_2\\\" bounds=-0.2:0.2,-0.2:0.2\",\"AMICODE_ITER iter=1 f=2.0e-01 inf_pr=1.0e-01 inf_du=5.0e-01\",\"AMICODE_ITER iter=2 f=8.0e-02 inf_pr=1.0e-02 inf_du=5.0e-02\",\"AMICODE_ITER iter=3 f=2.0e-02 inf_pr=1.0e-03 inf_du=5.0e-03\",\"AMICODE_ITER iter=4 f=2.0e-03 inf_pr=1.0e-04 inf_du=5.0e-04\",\"AMICODE_PULSE iter=4 dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06\",\"DONE fidelity=0.998\"]},\"error\":null}"
+    },
+    {
+      "name": "run series — not_found",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/run-series?run=no-such-run"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"run\":null,\"error\":\"not_found:no-such-run: no such run dir\"}"
     }
   ]
 }

@@ -114,6 +114,22 @@ const REQUESTS = [
     path: `/amicode/resolve-file?path=${encodeURIComponent("https://example.com/x")}`,
     name: "resolve scheme-ful string — not a file ref",
   },
+  // ── problems family (slice 3) ──────────────────────────────────────────────
+  { method: "GET", path: "/amicode/problems", name: "problems list — active + slugs + entity kinds" },
+  { method: "GET", path: "/amicode/problem", name: "problem detail — active slug (score stamped)" },
+  { method: "GET", path: "/amicode/problem?slug=t-gate-transmon", name: "problem detail — score_stages via interview_state fallback" },
+  { method: "GET", path: "/amicode/problem?slug=cat-state-cavity", name: "problem detail — no entities dir, no runs" },
+  { method: "GET", path: "/amicode/problem?slug=no-such-problem", name: "problem detail — not_found" },
+  { method: "GET", path: "/amicode/run-status", name: "run status — active problem, all terminal states" },
+  { method: "GET", path: "/amicode/run-status?slug=cat-state-cavity", name: "run status — other-lab ref" },
+  { method: "GET", path: "/amicode/run-cards", name: "run cards — trophy case (completed only, newest first)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260801-000000Z-0a1b2c", name: "run series — completed (pulse + series + elapsed)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260805-000000Z-9z8y7x", name: "run series — stopped (cooperative-stop relabel)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260810-000000Z-3d4e5f", name: "run series — solving (DONE is a hint only)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260815-000000Z-6a7b8c", name: "run series — failed (result.toml ≠ finished)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260818-000000Z-4h5i6j", name: "run series — stalled (cold run.log)" },
+  { method: "GET", path: "/amicode/run-series?run=r20260812-000000Z-5c6d7e&lab=other", name: "run series — explicit lab" },
+  { method: "GET", path: "/amicode/run-series?run=no-such-run", name: "run series — not_found" },
 ];
 
 async function main() {
