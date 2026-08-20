@@ -17,6 +17,7 @@
 import * as http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { mintServerPassword, serverAuthHeader } from "../server_auth";
+import { setBindHostname } from "./bind_host";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -136,6 +137,9 @@ export class AmicodeServiceServer {
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("amicode service: no port");
     this._port = addr.port;
+    // Stamp the bind hostname for the loopback gates (vault browser, future
+    // credentials surface) — the service binds 127.0.0.1 by construction.
+    setBindHostname("127.0.0.1");
     return this.url!;
   }
 
