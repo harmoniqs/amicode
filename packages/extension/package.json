@@ -294,8 +294,8 @@
         },
         "amicode.telemetry.enabled": {
           "type": "boolean",
-          "default": true,
-          "description": "Capture agent runs to Harmoniqs' internal run corpus (OpenTelemetry). Runs include your prompts and tool output, which may contain source code. On by default, but NOTHING is transmitted until ALL of: you answer the first-run consent prompt, an endpoint is configured (amicode.telemetry.endpoint), and your Amico cloud connection is set up (\"Amico: Connect Cloud\") — capture authenticates with your per-user cloud token. Turn off to disable capture entirely."
+          "default": false,
+          "description": "Capture agent runs to Harmoniqs' internal run corpus (OpenTelemetry). Runs include your prompts and tool output, which may contain source code. Off by default; enable explicitly after confirming the configured ingest endpoint is reachable from your network. Nothing is transmitted until you answer the first-run consent prompt, an endpoint is configured (amicode.telemetry.endpoint), and your Amico cloud connection is set up (\"Amico: Connect Cloud\"). Capture authenticates with your per-user cloud token."
         },
         "amicode.telemetry.endpoint": {
           "type": "string",
