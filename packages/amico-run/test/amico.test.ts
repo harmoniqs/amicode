@@ -4,11 +4,12 @@
 // unknown-verb → 64, verbatim delegation of run/resolve/sandbox, and the stub verbs +
 // mcp-serve facade. Run: `pnpm --filter @amicode/amico-run test`.
 import { describe, it, expect, beforeAll } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
+import { FakeCloud } from "./fake_cloud.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico.js");
 beforeAll(() => {
@@ -69,7 +70,7 @@ describe("amico router — help + unknown verb", () => {
   it("--help lists the full verb surface, exit 0", () => {
     const r = run(["--help"]);
     expect(r.code).toBe(0);
-    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "mcp-serve"]) {
+    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "mcp-serve"]) {
       expect(r.stdout).toContain(`amico ${v}`);
     }
   });
@@ -133,6 +134,57 @@ describe("amico router — resolve/sandbox delegate verbatim to the subcommands"
     expect(deps.Piccolo).toBe("c4671d76-df94-11ed-2057-43d4fd632fad");
     rmSync(dir, { recursive: true, force: true });
     rmSync(target, { recursive: true, force: true });
+  });
+});
+
+describe("amico router — the cloud verb (#460): the thin client, routed", () => {
+  // Async spawn, NOT the sync run() helper: the child calls BACK into this
+  // worker's FakeCloud over HTTP, and execFileSync would block the worker's
+  // event loop — the fake could never answer, and parent+child would deadlock.
+  const runAsync = (args: string[], env: Record<string, string> = {}): Promise<{ code: number; stdout: string; stderr: string }> =>
+    new Promise((resolveP, rejectP) => {
+      execFile(
+        "node",
+        [BUNDLE, ...args],
+        { encoding: "utf8", timeout: 30_000, env: { ...process.env, ...hermeticOpsEnv(), ...env } },
+        (err, stdout, stderr) => {
+          if (err && err.code === undefined && (err as Error & { killed?: boolean }).killed) rejectP(err);
+          else resolveP({ code: err ? (err.code as number) : 0, stdout: stdout ?? "", stderr: stderr ?? "" });
+        },
+      );
+    });
+
+  it("submit + status through the built bundle against FakeCloud (env-pair config)", async () => {
+    const fake = new FakeCloud();
+    await fake.start();
+    try {
+      const root = tmpRoot();
+      const env = { AMICO_CLOUD_URL: fake.base, AMICO_CLOUD_TOKEN: fake.token };
+      const s = await runAsync(["cloud", "submit", fakeJulia(root, "s.jl", "// body")], env);
+      expect(s.code).toBe(0);
+      const submitted = JSON.parse(s.stdout);
+      expect(submitted).toMatchObject({ verb: "cloud", subcommand: "submit", ok: true, task_id: fake.taskId });
+
+      fake.state.task_status = "Running";
+      const st = await runAsync(["cloud", "status", "--task", fake.taskId], env);
+      expect(st.code).toBe(0);
+      expect(JSON.parse(st.stdout)).toMatchObject({ ok: true, task_status: "Running", terminal: false });
+
+      expect((await runAsync(["cloud", "nope"], env)).code).toBe(64); // unknown subcommand → usage
+    } finally {
+      await fake.stop();
+    }
+  });
+  it("no cloud config → one honest JSON failure line, exit 64 (the #423-era reality)", () => {
+    const r = run(["cloud", "status", "--task", "t-1"], {
+      AMICO_CLOUD_FILE: "/nonexistent/amico-test/cloud.json",
+      AMICO_CLOUD_URL: "",
+      AMICO_CLOUD_TOKEN: "",
+    });
+    expect(r.code).toBe(64);
+    const j = JSON.parse(r.stdout);
+    expect(j.ok).toBe(false);
+    expect(j.errors[0]).toContain("cloud config not found");
   });
 });
 
