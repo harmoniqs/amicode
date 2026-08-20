@@ -499,16 +499,26 @@ export class ChatPanel {
     (function () {
       var vscode = acquireVsCodeApi();
       var origin = ${origin};
+      var splashStart = Date.now();
+      var MIN_SPLASH_MS = 10000; // minimum 10s display time
+
+      function fadeSplash() {
+        var splash = document.getElementById("splash");
+        if (splash) {
+          splash.classList.add("fade-out");
+          splash.addEventListener("transitionend", function () { splash.remove(); });
+        }
+      }
+
       window.addEventListener("message", function (e) {
         var d = e.data;
         if (e.origin === origin) {
-          // app-ready: fade the splash overlay and relay to extension
+          // app-ready: fade the splash overlay after minimum display time
           if (d && d.source === "amicode" && d.kind === "app-ready") {
-            var splash = document.getElementById("splash");
-            if (splash) {
-              splash.classList.add("fade-out");
-              splash.addEventListener("transitionend", function () { splash.remove(); });
-            }
+            var elapsed = Date.now() - splashStart;
+            var remaining = Math.max(0, MIN_SPLASH_MS - elapsed);
+            setTimeout(fadeSplash, remaining);
+            // Relay to extension immediately (so navigate posts on time)
             vscode.postMessage(d);
             return;
           }
