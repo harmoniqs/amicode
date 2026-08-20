@@ -157,7 +157,7 @@ export class ChatPanel {
   }
 
   /** Post an arbitrary message to the webview (relayed to the iframe). */
-  postMessage(msg: unknown): Promise<boolean> {
+  postMessage(msg: unknown): Thenable<boolean> {
     return this.panel.webview.postMessage(msg);
   }
 
