@@ -15,19 +15,19 @@ gate's checks pass.
 1. **orientation**
    - Q `name`: "What should I call you?"
 2. **intent**
-   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Research (recommended) | Exploring
+   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Perform (automated) experiments and gain scientific insights (recommended) | Exploring
 3. **context_seed** (optional)
    - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
 4. **demo** (optional)
    - Q `demo_offer`: "Want me to show you the full workflow end-to-end? (requires Julia)" — options: Yes, show me (recommended) | Skip the demo
-5. **environment**
-   - Q `environment`: "How will pulses eventually reach hardware — what are we patching into?" — options: QICK lab (on-prem control code) | Cloud system with emulator (e.g. Pasqal) | Simulation only for now (recommended) | Something else
+5. **environment** (optional)
+   - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
 6. **devices** (optional)
-   - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, qubit count — or skip)" — default: skip for now
+   - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
 7. **goals**
    - Q `goals`: "What are you hoping to accomplish with Amico?"
 8. **handoff**
-   - Q `handoff`: "Ready to get started?" — options: Walk me through designing a pulse (recommended) | Open a normal session | Show me around first
+   - Q `handoff`: "Ready to get started?" — options: Let's dive into my first task (recommended) | Open a normal session | Show me around first
 9. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
 10. **model**
@@ -85,10 +85,9 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    **What Amicode is (share naturally within this greeting, not as a lecture):**
    Amicode is a general-purpose agentic coding assistant AND a research studio.
-   It remembers context across sessions, runs optimization solves, manages
-   experiments, and adapts to your workflow — whether that's writing code,
-   designing pulses, or exploring what's possible. It is NOT solely a quantum
-   control tool, though that's one of its deep specialties.
+   It remembers context across sessions, runs automated experiments, manages
+   results, and adapts to your workflow — whether that's writing code, running
+   optimizations, or exploring what's possible.
 
    Do NOT ask about experience level. Do NOT branch by expertise. The same
    warm, brief orientation for everyone.
@@ -97,7 +96,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    `multiple: true`. The question: "What brings you to Amicode?" with exactly
    three options:
    - "General coding and software development"
-   - "Research"
+   - "Perform (automated) experiments and gain scientific insights"
    - "Exploring"
 
    The user may select any combination (1, 2, or all 3). Record:
@@ -105,9 +104,9 @@ Per-stage guidance and the `amicode_profile` mapping:
    Use lowercase slug forms in the array: `research`, `general_coding`, `exploring`.
 
    **DO NOT ask research sub-type here.** Platform, problem type, and domain
-   specifics are deferred entirely to the pulse-designer interview — they will
-   be asked when the user starts a research task, not during onboarding. This
-   keeps the overture fast and generic.
+   specifics are deferred to later — they will be asked when the user starts
+   their first research task, not during onboarding. This keeps the overture
+   fast and generic.
 
    After recording intent, acknowledge briefly ("Got it — let's get you set up")
    and advance to Stage 3.
@@ -149,11 +148,10 @@ Per-stage guidance and the `amicode_profile` mapping:
 4. **demo** _(optional)_ — check Julia readiness by calling
    `amicode_demo_check`. This returns `{ready: true|false, reason?}`.
 
-   **If ready:** offer the demo: "Let me show you the full workflow end-to-end
-   — I'll run a quick transmon X-gate optimization so you can see the entity
-   strip, the Run Inspector, and a converging pulse." Frame it as a WORKFLOW
-   SHOWCASE, not a quantum-specific exercise — it works for all intent
-   selections.
+   **If ready:** offer the demo: "Want me to run a quick optimization demo so
+   you can see the workflow end-to-end — the Run Inspector, live iterations,
+   and a converging result?" Frame it as a WORKFLOW SHOWCASE, not a
+   domain-specific exercise — it works for all intent selections.
 
    On accept, call `amicode_demo_launch`. This creates a `__demo__` workspace,
    fills the vetted template with stock parameters (T=10ns, N=50, max_iter=60),
@@ -178,22 +176,23 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    After the demo (or skipping), advance to Stage 5.
 
-5. **environment** — ask how pulses will reach hardware. **Pre-fill from
-   seeds:** call `amicode_profile {entity:"status"}` and check if an
-   environment is already recorded from the context-seed (Stage 3). If so,
-   present it as a confirmation: "I found you use {archetype} — confirm, or
-   change?" via the `question` tool. If no seed, ask the standard choice
-   question with the options above.
+5. **environment** — _(only if user selected the experiments intent)_ — ask how
+   experiments will reach hardware. **Pre-fill from seeds:** call
+   `amicode_profile {entity:"status"}` and check if an environment is already
+   recorded from the context-seed (Stage 3). If so, present it as a
+   confirmation: "I found you use {archetype} — confirm, or change?" via the
+   `question` tool. If no seed, ask the standard choice question with the
+   options above.
 
    Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
-   Follow up on details per archetype if confirmed (QICK: tProc version,
-   repo pointer; cloud-Pasqal: which provider, emulator access; etc.).
+   Follow up on details per archetype if confirmed.
 
-6. **devices** _(optional)_ — same pre-fill pattern: if a device was seeded,
-   confirm it. Otherwise ask: "Any specific device(s) you want me to remember?"
+6. **devices** _(optional, only if user selected the experiments intent)_ —
+   same pre-fill pattern: if a device was seeded, confirm it. Otherwise ask:
+   "Any specific device(s) you want me to remember?"
    This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
 
-   Record: `amicode_profile {entity:"device", payload:{name, platform, qubits}}`.
+   Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
 7. **goals** — free-text question via `question` tool with `kind: "text"`:
@@ -210,10 +209,10 @@ Per-stage guidance and the `amicode_profile` mapping:
    Then route by the user's intent selections (from Stage 2 — read from the
    events stream, do NOT re-ask):
 
-   - **Research** selected (alone or combined) → "Let's design your first
-     pulse" → continue straight into the **pulse-designer interview** in this
-     same session. Use everything learned (platform, environment, device) to
-     skip pulse-design questions already answered.
+   - **Research/experiments** selected (alone or combined) → "Let's set up your
+     first experiment" → continue straight into the **pulse-designer interview**
+     in this same session. Use everything learned (environment, device) to
+     skip questions already answered.
    - **Research + General coding** → same as above, but acknowledge: "I'm also
      your general coding companion — you can switch modes any time."
    - **General coding only** (no Research) → open a normal session: "You're all
