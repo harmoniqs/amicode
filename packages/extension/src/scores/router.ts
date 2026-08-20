@@ -10,7 +10,12 @@ export function buildRouterSection(visible: Score[]): string {
   const lines: string[] = [
     "## Onset router",
     "",
-    "When a session opens without a specific request, after your one-line Amico",
+    'When a session opens with an explicit onboarding request ("Let\'s begin',
+    'onboarding", "begin onboarding", "start onboarding", or similar), **skip this',
+    "router entirely** and go straight into the overture (Stage 1 below) — the user",
+    "has already chosen.",
+    "",
+    "Otherwise, when a session opens without a specific request, after your one-line Amico",
     'intro ask exactly one question — "What do you want to do today?" — via the',
     "native `question` tool, with these options:",
     "",
