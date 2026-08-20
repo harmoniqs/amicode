@@ -143,6 +143,20 @@ function scanAccountJson(filePath: string, add: AddFn): void {
     const data = JSON.parse(raw);
     if (typeof data !== "object" || data === null) return;
 
+    // v2 format: { version: 2, accounts: { <id>: { serviceID, credential: { type, key } } }, active: { <serviceID>: <id> } }
+    if (data.version === 2 && typeof data.accounts === "object" && data.accounts !== null) {
+      for (const [, entry] of Object.entries(data.accounts)) {
+        if (typeof entry !== "object" || entry === null) continue;
+        const acct = entry as { serviceID?: string; credential?: { type?: string; key?: string } };
+        if (!acct.serviceID) continue;
+        if (acct.credential?.type === "api" && typeof acct.credential.key === "string") {
+          add(acct.serviceID, acct.credential.key, "opencode (account)");
+        }
+      }
+      return;
+    }
+
+    // Legacy flat format: { <serviceID>: { token: "..." } }
     for (const [serviceId, entry] of Object.entries(data)) {
       if (typeof entry === "object" && entry !== null && "token" in entry) {
         const token = (entry as { token: unknown }).token;
@@ -162,15 +176,12 @@ function scanAuthJson(filePath: string, add: AddFn): void {
     const data = JSON.parse(raw);
     if (typeof data !== "object" || data === null) return;
 
-    const providers = (data as { provider?: unknown }).provider;
-    if (typeof providers !== "object" || providers === null) return;
-
-    for (const [providerId, entry] of Object.entries(providers)) {
-      if (typeof entry === "object" && entry !== null && "key" in entry) {
-        const key = (entry as { key: unknown }).key;
-        if (typeof key === "string") {
-          add(providerId, key, "opencode (auth)");
-        }
+    // v1 format: flat { <serviceID>: { type: "api", key: "..." } }
+    for (const [serviceId, entry] of Object.entries(data)) {
+      if (typeof entry !== "object" || entry === null) continue;
+      const cred = entry as { type?: string; key?: string };
+      if (cred.type === "api" && typeof cred.key === "string") {
+        add(serviceId, cred.key, "opencode (auth)");
       }
     }
   } catch {
