@@ -12,6 +12,7 @@ import * as os from "node:os";
 import {
   scanCredentials,
   defaultScanOptions,
+  disconnectProviders,
   type DetectedCredential,
   type ScanOptions,
   type ScanResult,
@@ -762,5 +763,64 @@ describe("writeBatchConfig — replaces provider section (redo overwrites)", () 
     expect(written.provider.openai.options.apiKey).toBe("sk-openai-real-key-12345");
     // Non-provider settings are still preserved
     expect(written.permission).toEqual({ bash: "allow" });
+  });
+});
+
+// ─── disconnectProviders — remove excluded providers from auth stores ────────
+
+describe("disconnectProviders — removes credentials from opencode auth stores", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("removes excluded provider from account.json v2", () => {
+    const accountPath = writeJson(tmpDir, "account.json", {
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } },
+        acc2: { id: "acc2", serviceID: "amazon-bedrock", credential: { type: "api", key: "aws-key" } },
+      },
+      active: { opencode: "acc1", "amazon-bedrock": "acc2" },
+    });
+
+    disconnectProviders(["opencode"], { accountJsonPath: accountPath, authJsonPath: "/nonexistent" });
+
+    const result = JSON.parse(fs.readFileSync(accountPath, "utf8"));
+    // opencode removed
+    expect(result.accounts.acc1).toBeUndefined();
+    expect(result.active.opencode).toBeUndefined();
+    // amazon-bedrock preserved
+    expect(result.accounts.acc2).toBeDefined();
+    expect(result.active["amazon-bedrock"]).toBe("acc2");
+  });
+
+  it("removes excluded provider from auth.json v1", () => {
+    const authPath = writeJson(tmpDir, "auth.json", {
+      "opencode-go": { type: "api", key: "sk-oc" },
+      "amazon-bedrock": { type: "api", key: "aws-key" },
+    });
+
+    disconnectProviders(["opencode"], { accountJsonPath: "/nonexistent", authJsonPath: authPath });
+
+    const result = JSON.parse(fs.readFileSync(authPath, "utf8"));
+    // opencode-go removed (alias of opencode)
+    expect(result["opencode-go"]).toBeUndefined();
+    // amazon-bedrock preserved
+    expect(result["amazon-bedrock"]).toBeDefined();
+  });
+
+  it("handles missing files gracefully", () => {
+    // Should not throw
+    expect(() =>
+      disconnectProviders(["opencode"], {
+        accountJsonPath: "/nonexistent/account.json",
+        authJsonPath: "/nonexistent/auth.json",
+      }),
+    ).not.toThrow();
   });
 });

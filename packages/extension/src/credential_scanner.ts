@@ -348,3 +348,67 @@ export function writeBatchConfig(
 
   fs.writeFileSync(targetPath, JSON.stringify(result, null, 2) + "\n");
 }
+
+// ─── Disconnect excluded providers from auth stores ──────────────────────────
+
+/**
+ * Remove credentials for excluded providers from opencode's auth stores.
+ * After a server restart, excluded providers will no longer auto-connect.
+ */
+export function disconnectProviders(
+  providers: string[],
+  options?: { accountJsonPath?: string; authJsonPath?: string },
+): void {
+  const home = os.homedir();
+  const dataDir = path.join(home, ".local", "share", "opencode");
+  const accountPath = options?.accountJsonPath ?? path.join(dataDir, "account.json");
+  const authPath = options?.authJsonPath ?? path.join(dataDir, "auth.json");
+
+  // Build the set of serviceIDs to remove, including aliases
+  const excludeSet = new Set(providers);
+  if (excludeSet.has("opencode")) excludeSet.add("opencode-go");
+
+  // Remove from account.json (v2)
+  try {
+    const raw = fs.readFileSync(accountPath, "utf8");
+    const data = JSON.parse(raw);
+    if (data.version === 2 && typeof data.accounts === "object" && data.accounts !== null) {
+      let modified = false;
+      for (const [id, entry] of Object.entries(data.accounts)) {
+        const acct = entry as { serviceID?: string };
+        if (acct.serviceID && excludeSet.has(acct.serviceID)) {
+          delete data.accounts[id];
+          if (data.active && acct.serviceID in data.active) {
+            delete data.active[acct.serviceID];
+          }
+          modified = true;
+        }
+      }
+      if (modified) {
+        fs.writeFileSync(accountPath, JSON.stringify(data, null, 2) + "\n");
+      }
+    }
+  } catch {
+    // Skip if file doesn't exist or is malformed
+  }
+
+  // Remove from auth.json (v1)
+  try {
+    const raw = fs.readFileSync(authPath, "utf8");
+    const data = JSON.parse(raw);
+    if (typeof data === "object" && data !== null) {
+      let modified = false;
+      for (const serviceId of excludeSet) {
+        if (serviceId in data) {
+          delete data[serviceId];
+          modified = true;
+        }
+      }
+      if (modified) {
+        fs.writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
+      }
+    }
+  } catch {
+    // Skip if file doesn't exist or is malformed
+  }
+}

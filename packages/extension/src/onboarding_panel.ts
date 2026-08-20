@@ -17,6 +17,7 @@ import {
   defaultScanOptions,
   webviewSafeResults,
   writeBatchConfig,
+  disconnectProviders,
   isValidApiKey,
   type DetectedCredential,
 } from "./credential_scanner";
@@ -443,6 +444,13 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             );
             if (passedCredentials.length > 0) {
               writeBatchConfig(passedCredentials, payload.activeProvider);
+            }
+            // Disconnect providers the user explicitly excluded from auth stores
+            const excluded = heldCredentials
+              .map((c) => c.provider)
+              .filter((p) => !included.has(p));
+            if (excluded.length > 0) {
+              disconnectProviders(excluded);
             }
             heldCredentials = [];
             testResults.clear();
