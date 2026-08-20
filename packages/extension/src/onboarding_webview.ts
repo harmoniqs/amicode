@@ -717,17 +717,17 @@ function buildForm(): void {
       importPreview.innerHTML = `
         <div style="margin-bottom: 12px;">
           <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
-            Choose which providers to import and pick your default:
+            Select which providers to import (tested credentials will be auto-selected):
           </p>
           ${providers
             .map(
               (p, i) => `
             <div class="import-provider-row" id="provider-row-${p.provider}">
               <label style="flex: 0 0 auto;">
-                <input type="checkbox" name="import-include" value="${p.provider}" checked />
+                <input type="checkbox" name="import-include" value="${p.provider}" />
               </label>
               <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} />
+                <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} disabled />
                 <span><strong>${providerNames[p.provider] ?? p.provider}</strong></span>
                 <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">from ${p.source}</span>
               </label>
@@ -757,7 +757,8 @@ function buildForm(): void {
         </p>
       `;
 
-      // Wire checkbox ↔ radio sync: unchecking a provider disables its radio
+      // Wire checkbox ↔ radio sync: unchecking a provider disables its radio;
+      // checking enables it
       const allCheckboxes = document.querySelectorAll<HTMLInputElement>('input[name="import-include"]');
       allCheckboxes.forEach((cb) => {
         cb.addEventListener("change", () => {
@@ -783,6 +784,9 @@ function buildForm(): void {
           } else {
             if (row) row.style.opacity = "1";
             if (radio) radio.disabled = false;
+            // If no default is selected, select this one
+            const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
+            if (!anyDefault && radio) radio.checked = true;
           }
           updateConfirmState();
         });
@@ -839,11 +843,23 @@ function buildForm(): void {
         if (ok) {
           statusEl.textContent = "✓";
           statusEl.style.color = "var(--vscode-testing-iconPassed, #73c991)";
+          // Auto-check passing providers and enable their radio (#455: opt-in, but
+          // passing the test is an explicit signal the credential works)
+          if (rowEl) {
+            rowEl.style.opacity = "1";
+            const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
+            const radio = rowEl.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+            if (checkbox && !checkbox.checked) checkbox.checked = true;
+            if (radio) radio.disabled = false;
+            // If no default is selected yet, select this one
+            const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
+            if (!anyDefault && radio) radio.checked = true;
+          }
         } else {
           statusEl.textContent = "✗";
           statusEl.style.color = "var(--vscode-testing-iconFailed, #f14c4c)";
           statusEl.title = error ?? "Connection failed";
-          // Uncheck and dim failed providers
+          // Dim failed providers and ensure they stay unchecked
           if (rowEl) {
             rowEl.style.opacity = "0.5";
             const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
