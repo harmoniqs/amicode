@@ -40,7 +40,7 @@ import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from ".
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } from "./onboarding_panel";
-import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
+import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
