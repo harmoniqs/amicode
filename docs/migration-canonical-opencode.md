@@ -36,6 +36,16 @@ is NOT dead code and is left untouched.
 
 ## 2. Route inventory — fork `httpapi/server.ts`, 31 routes × 18 modules
 
+> **PORT COMPLETE (2026-08-20)** — all 31 routes serve from the extension-host
+> service (`packages/extension/src/amicode_service/`, PRs #463 #465 #468 #469
+> #470 #471), each family parity-proven by golden fixtures recorded from the
+> vendored fork binary and replayed against the port (74 contract tests; 71
+> golden entries + header parity for the served widget frame). Two documented
+> post-pin divergences (the auth route and the token auth_methods entry — both
+> post-date the v1.18.10-amicode.11 binary; the port follows current source).
+> Remaining M1 work is consumer-facing: extension activation wiring, CSP/origin
+> widening, the `?auth_token=` iframe flow.
+
 All fork Amicode routes mount in one file:
 `packages/opencode/src/server/routes/instance/httpapi/server.ts` (imports at lines 72–82;
 `router.add` calls). Consumers: **ext** = VS Code extension (`packages/extension/src`),
