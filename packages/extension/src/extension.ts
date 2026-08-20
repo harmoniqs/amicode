@@ -38,8 +38,8 @@ import { writeStopFile, savePulseTo, stopPlan, forceStop, runLogMtime } from "./
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } from "./onboarding_panel";
-import { isModelConfigured } from "./onboarding_routing";
+import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled, dismissOnboardingPanel } from "./onboarding_panel";
+import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -856,8 +856,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // Normal path: model configured → open chat directly
         const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         // Post-onboarding: send navigate message to the existing panel to
-        // start a new session with "Begin onboarding" auto-sent.
+        // start a new session with "Begin onboarding" auto-sent. The navigate
+        // message fires event-driven (on app-ready), not on a blind timer.
+        // Also dismiss the onboarding splash panel once the app is ready.
         if (ChatPanel.consumePendingOnboardingGreeting()) {
+          let dismissed = false;
+          const dismiss = () => { if (!dismissed) { dismissed = true; dismissOnboardingPanel(); } };
+          ChatPanel.onAppReady(dismiss);
+          // Safety: force-dismiss after 10s if app-ready never fires.
+          setTimeout(dismiss, 10_000);
           panel.postOnboardingGreeting();
         }
       }

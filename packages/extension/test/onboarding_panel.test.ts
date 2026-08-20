@@ -18,6 +18,7 @@ import {
   writeOnboardingConfig,
   testConnection,
   onOnboardingComplete,
+  dismissOnboardingPanel,
   _resetForTesting,
 } from "../src/onboarding_panel";
 
@@ -458,7 +459,7 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     spy.mockRestore();
   });
 
-  it("confirm-import writes batch config and disposes panel", async () => {
+  it("confirm-import keeps the panel alive as a transition splash (not disposed immediately)", async () => {
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");
     await vscode.commands.executeCommand("amicode.onboarding.open");
     const panel = spy.mock.results[0].value as {
@@ -482,14 +483,62 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     panel.webview._simulateMessage({ type: "scan-credentials" });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Now confirm import (even if scan found nothing in test env, the handler should work)
+    // Now confirm import
     panel.webview._simulateMessage({
       type: "confirm-import",
       payload: { activeProvider: "anthropic" },
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Panel should have been disposed (onboarding complete)
+    // Panel should NOT have been disposed yet — it's showing the transition splash
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    // Instead, the webview should have been told to show the transition state
+    const transitionMsg = postSpy.mock.calls
+      .map((c: unknown[]) => c[0])
+      .find((m: { type: string }) => m.type === "show-transition");
+    expect(transitionMsg).toBeDefined();
+
+    spy.mockRestore();
+  });
+
+  it("dismissOnboardingPanel disposes the transition splash", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: {
+        postMessage: ReturnType<typeof vi.fn>;
+        _simulateMessage: (msg: unknown) => void;
+      };
+      dispose: ReturnType<typeof vi.fn>;
+    };
+
+    const disposeSpy = vi.fn();
+    const origDispose = panel.dispose;
+    panel.dispose = (...args: unknown[]) => {
+      disposeSpy();
+      return (origDispose as Function).apply(panel, args);
+    };
+
+    const postSpy = vi.fn().mockResolvedValue(true);
+    panel.webview.postMessage = postSpy;
+
+    // Trigger scan + confirm to enter transition state
+    panel.webview._simulateMessage({ type: "scan-credentials" });
+    await new Promise((r) => setTimeout(r, 50));
+    panel.webview._simulateMessage({
+      type: "confirm-import",
+      payload: { activeProvider: "anthropic" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Panel still alive
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    // Now dismiss (extension calls this after app-ready)
+    dismissOnboardingPanel();
+
+    // Panel should now be disposed
     expect(disposeSpy).toHaveBeenCalled();
 
     spy.mockRestore();

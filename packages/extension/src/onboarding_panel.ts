@@ -329,6 +329,14 @@ export function _resetForTesting(): void {
   currentPanel = undefined;
 }
 
+/** Dismiss the onboarding panel (dispose it). Called by the extension host
+ *  after the chat panel's app signals ready — ends the transition splash. */
+export function dismissOnboardingPanel(): void {
+  if (currentPanel) {
+    currentPanel.dispose();
+  }
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
 export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
@@ -455,13 +463,19 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             }
             heldCredentials = [];
             testResults.clear();
-            panel.dispose();
+            // Keep the panel alive as a transition splash — tell the webview to
+            // show the "Getting Amico ready..." state instead of disposing now.
+            void panel.webview.postMessage({ type: "show-transition" });
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
+          } else if (msg.type === "transition-complete") {
+            // The extension signals that the chat panel is ready — dispose the
+            // splash now. This is posted by the extension host after app-ready.
+            panel.dispose();
           }
         },
         null,
@@ -502,7 +516,7 @@ function buildWebviewHtml(
 <link rel="stylesheet" href="${uri("media", "layout.css")}" />
 <style nonce="${nonce}">
   html, body { height: 100%; margin: 0; }
-  .animation-container { display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .animation-container { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; }
   .form-container { display: none; }
   .form-container.visible { display: block; height: 100vh; }
   .cancel-btn {
@@ -513,6 +527,7 @@ function buildWebviewHtml(
     opacity: 0.6; transition: opacity 0.15s;
   }
   .cancel-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1)); }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 </style>
 </head><body>
 <button id="cancel-btn" class="cancel-btn" title="Skip onboarding">&times;</button>

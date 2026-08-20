@@ -128,28 +128,34 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     restore = undefined;
     created = [];
     ChatPanel.clearPendingOnboardingGreeting();
+    ChatPanel.clearAppReadyCallbacks();
   });
 
-  it("posts a navigate message with auto-send greeting after onboarding completes", async () => {
+  it("posts the navigate message only AFTER app-ready fires (event-driven, not blind timer)", async () => {
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
 
-    // Open the panel and explicitly post the greeting (extension.ts does this after arming)
     const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
 
-    // Spy on postMessage
     const messages: unknown[] = [];
-    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
     webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
 
-    // Call postOnboardingGreeting (what extension.ts does after armOnboardingSession)
+    // Call postOnboardingGreeting — should NOT post immediately
     panel.postOnboardingGreeting();
 
-    // Give the delayed postMessage time to fire
-    await new Promise((r) => setTimeout(r, 2200));
+    // Wait a tick — no navigate message yet (no blind timer should fire this fast)
+    await new Promise((r) => setTimeout(r, 50));
+    const earlyNavigate = messages.find(
+      (m) => (m as { kind?: string }).kind === "navigate",
+    );
+    expect(earlyNavigate).toBeUndefined();
 
-    // Find the navigate message
+    // Now simulate app-ready — the message should fire
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 50));
+
     const navigateMsg = messages.find(
       (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
     ) as { source: string; kind: string; path: string } | undefined;
@@ -160,24 +166,25 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Begin onboarding"));
   });
 
-  it("does NOT post greeting when postOnboardingGreeting is not called", async () => {
+  it("does NOT post navigate when postOnboardingGreeting was not called (even after app-ready)", async () => {
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
 
-    // Open panel without calling postOnboardingGreeting
+    // Open panel WITHOUT calling postOnboardingGreeting
     ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
 
     const messages: unknown[] = [];
-    const panel = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
-    panel.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
 
-    await new Promise((r) => setTimeout(r, 2200));
+    // Simulate app-ready
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 50));
 
     const navigateMsg = messages.find(
       (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
     );
-
     expect(navigateMsg).toBeUndefined();
   });
 
@@ -185,5 +192,56 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     ChatPanel.setPendingOnboardingGreeting(true);
     expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(true);
     expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(false);
+  });
+
+  it("the relay admits app-ready from the iframe (Lane 1 allowlist)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    // app-ready must be in the Lane 1 allowlist (iframe → extension)
+    expect(html).toContain('"app-ready"');
+  });
+
+  it("fires onAppReady callback when app-ready message arrives from iframe", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    const readyFired: boolean[] = [];
+    ChatPanel.onAppReady(() => readyFired.push(true));
+
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    // Simulate the app-ready message arriving from the iframe
+    const webview = cap.created[0] as unknown as { webview: { _simulateMessage: (msg: unknown) => void } };
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readyFired).toHaveLength(1);
+  });
+
+  it("postOnboardingGreeting falls back to posting after timeout if app-ready never fires", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages: unknown[] = [];
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Call with a short timeout for testing (pass timeout override)
+    panel.postOnboardingGreeting(200);
+
+    // No app-ready — wait for the timeout fallback
+    await new Promise((r) => setTimeout(r, 300));
+
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    );
+    expect(navigateMsg).toBeDefined();
   });
 });

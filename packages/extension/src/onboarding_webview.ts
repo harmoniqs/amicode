@@ -900,6 +900,35 @@ function buildForm(): void {
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
+// Listen for the transition-state signal from the host (after confirm-import).
+// Hides the form, keeps the animation (Amico idle), and shows "Getting Amico ready..."
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+  if (msg?.type === "show-transition") {
+    // Hide the form
+    formEl.classList.remove("visible");
+    formEl.style.display = "none";
+    // Hide the cancel button
+    const cancelEl = document.getElementById("cancel-btn");
+    if (cancelEl) cancelEl.style.display = "none";
+    // Show the animation container (it may already be visible if animation played)
+    animationEl.style.display = "flex";
+    // Add "Getting Amico ready..." text below the animation
+    let transitionText = document.getElementById("transition-text");
+    if (!transitionText) {
+      transitionText = document.createElement("div");
+      transitionText.id = "transition-text";
+      transitionText.style.cssText = `
+        text-align: center; margin-top: 24px; font-size: 14px;
+        color: var(--vscode-descriptionForeground, #999);
+        animation: fadeIn 0.4s ease-out;
+      `;
+      transitionText.textContent = "Getting Amico ready...";
+      animationEl.parentElement!.insertBefore(transitionText, animationEl.nextSibling);
+    }
+  }
+});
+
 // Wire the cancel button
 const cancelBtn = document.getElementById("cancel-btn");
 if (cancelBtn) {
