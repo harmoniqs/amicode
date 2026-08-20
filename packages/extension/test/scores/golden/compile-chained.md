@@ -185,20 +185,10 @@ Per-stage guidance and the `amicode_profile` mapping:
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).
 
-   Then route by the user's intent selections (from Stage 3 — read from the
-   events stream, do NOT re-ask):
-
-   - **Research/experiments** selected (alone or combined) → "Let's set up your
-     first experiment" → continue straight into the **pulse-designer interview**
-     in this same session. Use everything learned (environment, device) to
-     skip questions already answered.
-   - **Research + General coding** → same as above, but acknowledge: "I'm also
-     your general coding companion — you can switch modes any time."
-   - **General coding only** (no Research) → open a normal session: "You're all
-     set — I'll remember your context across sessions. Ask me anything."
-     Highlight memory + vault features briefly.
-   - **Exploring only** → "Welcome aboard — want a quick tour of what I can do,
-     or just dive in?" Offer a brief orientation tour.
+   Then open a normal session for all users: "You're all set — I'll remember
+   your context across sessions. Ask me anything." Briefly highlight that Amico
+   remembers context, adapts over time, and can help with coding or experiments
+   depending on what they selected.
 
    The handoff does NOT re-ask intent — it reads what was recorded and routes.
 
