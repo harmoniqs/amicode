@@ -579,9 +579,9 @@ describe("scanCredentials — batch config writing integration (AC7)", () => {
 
     // Simulate the panel filtering: only passed providers get written
     const allCredentials: DetectedCredential[] = [
-      { provider: "anthropic", key: "sk-ant-pass", source: "env" },
-      { provider: "openai", key: "sk-openai-fail", source: "env" },
-      { provider: "google", key: "AIza-pass", source: "env" },
+      { provider: "anthropic", key: "sk-ant-pass-valid-key", source: "env" },
+      { provider: "openai", key: "sk-openai-fail-valid-key", source: "env" },
+      { provider: "google", key: "AIza-pass-valid-key-123", source: "env" },
     ];
 
     // Simulate testResults: anthropic=true, openai=false, google=true
@@ -599,5 +599,154 @@ describe("scanCredentials — batch config writing integration (AC7)", () => {
     expect(written.provider.anthropic).toBeDefined();
     expect(written.provider.google).toBeDefined();
     expect(written.provider.openai).toBeUndefined();
+  });
+});
+
+// ─── #455: Only write user-selected providers ────────────────────────────────
+
+describe("writeBatchConfig — placeholder key rejection (#455 AC5)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects 'sk-test' placeholder key — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "sk-test", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+
+  it("rejects empty string keys — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+
+  it("rejects keys shorter than 10 characters — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "short", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+});
+
+describe("writeOnboardingConfig — placeholder key rejection (#455 AC5)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects 'sk-test' placeholder key — does not write provider entry", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-test" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider?.anthropic).toBeUndefined();
+  });
+
+  it("rejects keys shorter than 10 characters — does not write provider entry", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "tiny" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider?.anthropic).toBeUndefined();
+  });
+
+  it("allows valid keys (>= 10 chars, not placeholder)", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-ant-valid-key-123456" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeDefined();
+    expect(written.provider.anthropic.options.apiKey).toBe("sk-ant-valid-key-123456");
+  });
+
+  it("allows empty key for OAuth providers like github-copilot", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "github-copilot", model: "github-copilot/claude-sonnet-4-5", apiKey: "" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // OAuth providers write with empty key (no options.apiKey) — that's valid
+    expect(written.provider["github-copilot"]).toBeDefined();
+  });
+});
+
+describe("writeBatchConfig — preserves existing providers via merge (#455 AC6)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("preserves existing amazon-bedrock entry when writing new providers", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+
+    // Pre-populate with existing bedrock config (as if provisioned via cloud_key flow)
+    fs.writeFileSync(configPath, JSON.stringify({
+      provider: { "amazon-bedrock": { options: { apiKey: "ABSK-service-credential-xyz" } } },
+    }));
+
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // Bedrock preserved from existing config via merge
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+    expect(written.provider["amazon-bedrock"].options.apiKey).toBe("ABSK-service-credential-xyz");
+    // User-selected provider also present
+    expect(written.provider.openai).toBeDefined();
   });
 });
