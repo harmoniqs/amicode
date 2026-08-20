@@ -225,6 +225,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Redo Onboarding: reset state and open the onboarding panel (#433/#438).
+  if (msg.kind === "redo-onboarding") {
+    void vscode.commands.executeCommand("amicode.redoOnboarding");
+    return true;
+  }
+
   // Developer Tools settings: validate paths, write VS Code settings, restart
   // server / prompt reload as appropriate. The app posts on blur and on toggle.
   if (msg.kind === "dev-tools-update") {

@@ -71,6 +71,10 @@
     },
     "commands": [
       {
+        "command": "amicode.onboarding.open",
+        "title": "Amicode: Open Onboarding"
+      },
+      {
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
         "icon": "$(comment-discussion)"
@@ -157,6 +161,10 @@
       {
         "command": "amicode.openAmicodeTerminal",
         "title": "Amicode: Open Amicode Terminal (vendored opencode, fleet-aware)"
+      },
+      {
+        "command": "amicode.redoOnboarding",
+        "title": "Amicode: Redo Onboarding"
       }
     ],
     "configuration": {
@@ -301,6 +309,10 @@
           "type": "string",
           "default": "https://bld42qbgsn7gu6y44v4kd6a32e0hprmy.lambda-url.us-east-1.on.aws",
           "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the PRODUCTION corpus. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key. The token MUST be minted in the same AWS account as this endpoint: each account's credentials table is independent, so a token from the other account is rejected on every batch (401) while capture still looks enabled. This default is therefore account-coupled with DEFAULT_CLOUD_URL in cloud_key.ts — change both together or neither."
+        },
+        "amicode.redoOnboarding": {
+          "type": "null",
+          "markdownDescription": "**[Redo Onboarding](command:amicode.redoOnboarding)** — Reset onboarding state and re-run the setup flow. Your model/provider config is preserved."
         }
       }
     },

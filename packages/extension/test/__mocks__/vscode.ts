@@ -17,12 +17,18 @@ export const window = {
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
+    const messageCbs: Array<(msg: unknown) => void> = [];
     return {
       webview: {
         html: "",
         cspSource: "test:",
         asWebviewUri: (u: unknown) => u,
-        onDidReceiveMessage: () => ({ dispose() {} }),
+        onDidReceiveMessage: (cb: (msg: unknown) => void, _thisArg?: unknown, _subs?: unknown) => {
+          messageCbs.push(cb);
+          return { dispose() {} };
+        },
+        postMessage: () => Promise.resolve(true),
+        _simulateMessage(msg: unknown) { for (const cb of messageCbs) cb(msg); },
       },
       revealCount: 0,
       reveal() {
