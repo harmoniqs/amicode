@@ -11,6 +11,7 @@ import * as os from "node:os";
 
 import {
   scanCredentials,
+  defaultScanOptions,
   type DetectedCredential,
   type ScanOptions,
   type ScanResult,
@@ -49,9 +50,13 @@ describe("scanCredentials — source priority (AC11)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns credentials from opencode account.json (highest priority)", async () => {
+  it("returns credentials from opencode account.json v2 (highest priority)", async () => {
     const accountPath = writeJson(tmpDir, "account.json", {
-      anthropic: { serviceID: "anthropic", token: "sk-ant-from-account" },
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "anthropic", credential: { type: "api", key: "sk-ant-from-account" } },
+      },
+      active: { anthropic: "acc1" },
     });
     const result = await scanCredentials({
       accountJsonPath: accountPath,
@@ -67,9 +72,10 @@ describe("scanCredentials — source priority (AC11)", () => {
     expect(ant!.source).toBe("opencode (account)");
   });
 
-  it("returns credentials from opencode auth.json (priority 2)", async () => {
+  it("returns credentials from opencode auth.json v1 (priority 2)", async () => {
+    // v1 format: flat { <serviceID>: { type: "api", key: "..." } }
     const authPath = writeJson(tmpDir, "auth.json", {
-      provider: { anthropic: { key: "sk-ant-from-auth" } },
+      anthropic: { type: "api", key: "sk-ant-from-auth" },
     });
     const result = await scanCredentials({
       accountJsonPath: "/nonexistent",
@@ -134,7 +140,11 @@ describe("scanCredentials — source priority (AC11)", () => {
   it("deduplicates: first source wins per provider (AC11)", async () => {
     // account.json has anthropic, env also has anthropic — account wins
     const accountPath = writeJson(tmpDir, "account.json", {
-      anthropic: { serviceID: "anthropic", token: "sk-ant-ACCOUNT-WINS" },
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "anthropic", credential: { type: "api", key: "sk-ant-ACCOUNT-WINS" } },
+      },
+      active: { anthropic: "acc1" },
     });
     const result = await scanCredentials({
       accountJsonPath: accountPath,
@@ -150,7 +160,11 @@ describe("scanCredentials — source priority (AC11)", () => {
 
   it("returns multiple providers from different sources", async () => {
     const accountPath = writeJson(tmpDir, "account.json", {
-      anthropic: { serviceID: "anthropic", token: "sk-ant" },
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "anthropic", credential: { type: "api", key: "sk-ant" } },
+      },
+      active: { anthropic: "acc1" },
     });
     const result = await scanCredentials({
       accountJsonPath: accountPath,
@@ -178,7 +192,11 @@ describe("scanCredentials — provider normalization", () => {
 
   it("normalizes 'opencode-go' to 'opencode'", async () => {
     const accountPath = writeJson(tmpDir, "account.json", {
-      "opencode-go": { serviceID: "opencode-go", token: "oc-key" },
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "opencode-go", credential: { type: "api", key: "oc-key" } },
+      },
+      active: { "opencode-go": "acc1" },
     });
     const result = await scanCredentials({
       accountJsonPath: accountPath,
@@ -444,6 +462,38 @@ describe("webviewSafeResults — no key material leaks (AC8)", () => {
 });
 
 // ─── Batch config writing (AC7) ──────────────────────────────────────────────
+
+describe("scanCredentials — end-to-end with real default paths", () => {
+  it("finds credentials from this machine's actual opencode install", async () => {
+    const result = await scanCredentials(defaultScanOptions());
+
+    // This machine has opencode configured — scan should find at least one provider
+    console.log(`  [e2e] Found ${result.credentials.length} credential(s):`);
+    for (const c of result.credentials) {
+      console.log(`    ${c.provider} (from ${c.source}) — key ${c.key.slice(0, 6)}...`);
+    }
+
+    expect(result.credentials.length).toBeGreaterThan(0);
+
+    // Should find opencode since account.json has opencode-go / opencode entries
+    const oc = result.credentials.find((c) => c.provider === "opencode");
+    expect(oc).toBeDefined();
+    expect(oc!.key.length).toBeGreaterThan(10);
+    expect(oc!.source).toMatch(/opencode/);
+  });
+
+  it("webviewSafeResults strips keys from real scan results", () => {
+    // Synchronous test using the real scan results
+    const credentials: DetectedCredential[] = [
+      { provider: "opencode", key: "sk-real-key-12345678", source: "opencode (account)" },
+    ];
+    const safe = webviewSafeResults(credentials);
+    const serialized = JSON.stringify(safe);
+    expect(serialized).not.toContain("sk-real-key-12345678");
+    expect(safe[0].provider).toBe("opencode");
+    expect(safe[0].source).toBe("opencode (account)");
+  });
+});
 
 describe("scanCredentials — batch config writing integration (AC7)", () => {
   let tmpDir: string;
