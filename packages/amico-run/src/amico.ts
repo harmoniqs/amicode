@@ -15,6 +15,7 @@ import { launch } from "./launch.js";
 import { SPINE_VERBS } from "./verbs.js";
 import { serve } from "./mcp_serve.js";
 import { pasqalVerb } from "./pasqal_verb.js";
+import { cloudVerb } from "./cloud_verb.js";
 
 function usage(): string {
   const rows: [string, string][] = [
@@ -26,6 +27,10 @@ function usage(): string {
     [
       "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
       "Pasqal device path — list/select + gated submit (#160)",
+    ],
+    [
+      "cloud submit <s.jl> | status | mirror | abort | run",
+      "thin cloud solve client — submit→poll→mirror without the launch path (#460)",
     ],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
@@ -85,6 +90,16 @@ export async function main(argv: string[]): Promise<number> {
     // amico-pasqal launcher. Same {json, code} shape as the spine verbs. ──
     case "pasqal": {
       const { json, code } = await pasqalVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
+    }
+
+    // ── the thin cloud client (#460, amico-run dissolution): submit → poll →
+    // mirror over ~/.amico/cloud.json, callable from any agent shell without the
+    // launch path. Deliberately NOT a SPINE_VERBS entry — that registry
+    // auto-publishes MCP tools, and the memo's working answer is bash CLI only. ──
+    case "cloud": {
+      const { json, code } = await cloudVerb(rest);
       console.log(JSON.stringify(json));
       return code;
     }

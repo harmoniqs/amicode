@@ -4,7 +4,10 @@ import { existsSync, readFileSync, readdirSync, statSync, utimesSync } from "nod
 import { join } from "node:path";
 import { tmpRoot, fakeJulia, readToml } from "./helpers.js";
 import { FakeCloud } from "./fake_cloud.js";
-import { RemoteExecutor, EXIT_INFERRED, type RemoteExecutorOpts } from "../src/remote_executor.js";
+import { RemoteExecutor, type RemoteExecutorOpts } from "../src/remote_executor.js";
+// EXIT_INFERRED moved to cloud_client.ts with the terminal lanes (#460); the
+// assertions below are unchanged.
+import { EXIT_INFERRED } from "../src/cloud_client.js";
 import { validateManifest, validateFinished } from "../src/schemas.js";
 import { ConfigError, type RunEvent } from "../src/types.js";
 
