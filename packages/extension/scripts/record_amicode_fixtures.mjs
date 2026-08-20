@@ -15,13 +15,13 @@
 //
 // Binary resolution: --binary > repo vendored copy > newest installed VSIX.
 import { spawnSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { seedAmicodeSandbox } from "./amicode_fixture_seed.mjs";
 
 const PKG_ROOT = join(import.meta.dirname, "..");
-const FIXTURE_OUT = join(PKG_ROOT, "test", "fixtures", "amicode", "profile.json");
+const FIXTURE_OUT = join(PKG_ROOT, "test", "fixtures", "amicode", "golden.json");
 
 function resolveBinary(flag) {
   if (flag) {
@@ -57,6 +57,63 @@ const REQUESTS = [
   { method: "POST", path: `/amicode/profile?focus=${encodeURIComponent("Rydberg blockade")}`, name: "edit focus" },
   { method: "POST", path: "/amicode/profile?name=", name: "clear name — mounts.toml fallback fires" },
   { method: "GET", path: "/amicode/profile", name: "warm read — post-save state" },
+  // ── vault family (slice 2) ──────────────────────────────────────────────────
+  // The {SANDBOX} placeholder is substituted with the recording sandbox dir at
+  // request time (test bodies embed absolute paths); responses carrying the
+  // sandbox dir are normalized against meta.sandbox in the replay.
+  { method: "GET", path: "/amicode/vaults", name: "vaults — CLI-less scan (mounts, kind order)" },
+  {
+    method: "POST",
+    path: "/amicode/vaults",
+    body: { ref: "{SANDBOX}/attachable-demo" },
+    name: "attach local vault (symlink flavor)",
+  },
+  { method: "GET", path: "/amicode/vaults", name: "vaults — post-attach (cache bust, new mount)" },
+  { method: "GET", path: "/amicode/vault-files?mount=personal-main", name: "browse personal mount (flat listing)" },
+  { method: "GET", path: "/amicode/vault-files?mount=team-shared", name: "browse team mount — fail-closed refusal" },
+  {
+    method: "GET",
+    path: "/amicode/vault-file?mount=personal-main&path=notes%2Fnote.md",
+    name: "read one file in mount",
+  },
+  {
+    method: "GET",
+    path: "/amicode/vault-file?mount=personal-main&path=data%2Fbinary.bin",
+    name: "read non-text file — not_text refusal",
+  },
+  {
+    method: "GET",
+    path: "/amicode/vault-file?mount=personal-main&path=..%2F..%2Fattachable-demo%2Fattached.md",
+    name: "traversal attempt — escape refusal",
+  },
+  { method: "GET", path: "/amicode/warrants", name: "warrants — ledger read (solves_used + corrupt-line tolerance)" },
+  { method: "POST", path: "/amicode/approve", body: { plan_hash: "abc123" }, name: "approve via stub amico (success)" },
+  { method: "POST", path: "/amicode/approve", body: "not json", name: "approve — bad body refusal" },
+  {
+    method: "GET",
+    path: `/amicode/resolve-file?path=${encodeURIComponent("{SANDBOX}/docs/readme.md")}`,
+    name: "resolve absolute path (tier 1)",
+  },
+  {
+    method: "GET",
+    path: `/amicode/resolve-file?path=${encodeURIComponent("personal-main/notes/note.md")}`,
+    name: "resolve mount-prefixed (tier 3)",
+  },
+  {
+    method: "GET",
+    path: `/amicode/resolve-file?path=${encodeURIComponent("docs/readme.md")}`,
+    name: "resolve relative w/ dir part (tier 4 → project dir)",
+  },
+  {
+    method: "GET",
+    path: `/amicode/resolve-file?path=${encodeURIComponent("insight-nothing.md")}`,
+    name: "resolve bare typed-prefix — miss (tier 5)",
+  },
+  {
+    method: "GET",
+    path: `/amicode/resolve-file?path=${encodeURIComponent("https://example.com/x")}`,
+    name: "resolve scheme-ful string — not a file ref",
+  },
 ];
 
 async function main() {
@@ -106,10 +163,36 @@ async function main() {
 
   const entries = [];
   for (const req of REQUESTS) {
-    const r = await fetch(base + req.path, { method: req.method, headers: { Authorization: auth } });
-    const body = await r.text();
-    entries.push({ name: req.name, request: { method: req.method, path: req.path }, status: r.status, body });
-    console.log(`[record] ${req.method} ${req.path} → ${r.status} (${body.length} bytes)`);
+    // {SANDBOX} substitution: request paths/bodies embed the recording sandbox.
+    const path = req.path
+      .replaceAll("{SANDBOX}", sandbox)
+      .replaceAll(encodeURIComponent("{SANDBOX}"), encodeURIComponent(sandbox));
+    const body =
+      req.body === undefined
+        ? undefined
+        : typeof req.body === "string"
+          ? req.body
+          : JSON.stringify(
+              JSON.parse(JSON.stringify(req.body), (_k, v) => (typeof v === "string"
+                ? v.replaceAll("{SANDBOX}", sandbox)
+                : v)),
+            );
+    const r = await fetch(base + path, {
+      method: req.method,
+      headers: { Authorization: auth, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
+      body,
+    });
+    const respBody = await r.text();
+    // Record the request with {SANDBOX} restored so the replay re-substitutes
+    // ITS sandbox; the RESPONSE is stored as-served (normalization happens at
+    // replay, against meta.sandbox below).
+    entries.push({
+      name: req.name,
+      request: { method: req.method, path: req.path, ...(req.body !== undefined ? { body: req.body } : {}) },
+      status: r.status,
+      body: respBody,
+    });
+    console.log(`[record] ${req.method} ${path} → ${r.status} (${respBody.length} bytes)`);
   }
 
   child.kill("SIGTERM");
@@ -119,7 +202,20 @@ async function main() {
   const manifest = JSON.parse(readFileSync(join(PKG_ROOT, "opencode.lock.json"), "utf8"));
   writeFileSync(
     FIXTURE_OUT,
-    JSON.stringify({ recordedAt: new Date().toISOString(), fork: { version, tag: manifest.tag }, entries }, null, 2) + "\n",
+    JSON.stringify(
+      {
+        recordedAt: new Date().toISOString(),
+        fork: { version, tag: manifest.tag },
+        // The recording sandbox dir (and its realpath — responses embed both
+        // forms: unresolved joins and realpathSync'd results). The replay
+        // normalizes these to <SANDBOX> on both sides before comparing.
+        sandbox: sandbox,
+        sandboxReal: realpathSync(sandbox),
+        entries,
+      },
+      null,
+      2,
+    ) + "\n",
   );
   console.log(`[record] wrote ${FIXTURE_OUT} (${entries.length} entries)`);
   rmSync(sandbox, { recursive: true, force: true });

@@ -1,0 +1,198 @@
+{
+  "recordedAt": "2026-08-20T20:31:57.396Z",
+  "fork": {
+    "version": "1.18.10",
+    "tag": "v1.18.10-amicode.11"
+  },
+  "sandbox": "/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj",
+  "sandboxReal": "/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj",
+  "entries": [
+    {
+      "name": "cold read — synthesized identity + stats + remembers",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/profile"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg CZ\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "edit focus",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/profile?focus=Rydberg%20blockade"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "clear name — mounts.toml fallback fires",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/profile?name="
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "warm read — post-save state",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/profile"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "vaults — CLI-less scan (mounts, kind order)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vaults"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"mounts\":[{\"id\":\"personal-main\",\"kind\":\"personal\",\"writable\":true,\"last_sync\":\"unknown\",\"browsable\":true},{\"id\":\"team-shared\",\"kind\":\"team\",\"writable\":false,\"last_sync\":\"unknown\",\"browsable\":false},{\"id\":\"public-open\",\"kind\":\"public\",\"writable\":false,\"last_sync\":\"unknown\",\"browsable\":true}],\"error\":null}"
+    },
+    {
+      "name": "attach local vault (symlink flavor)",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/vaults",
+        "body": {
+          "ref": "{SANDBOX}/attachable-demo"
+        }
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"name\":\"attachable-demo\",\"kind\":\"personal\",\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/vaults/attachable-demo\"}"
+    },
+    {
+      "name": "vaults — post-attach (cache bust, new mount)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vaults"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"mounts\":[{\"id\":\"attached-demo\",\"kind\":\"personal\",\"writable\":true,\"last_sync\":\"unknown\",\"browsable\":true},{\"id\":\"personal-main\",\"kind\":\"personal\",\"writable\":true,\"last_sync\":\"unknown\",\"browsable\":true},{\"id\":\"team-shared\",\"kind\":\"team\",\"writable\":false,\"last_sync\":\"unknown\",\"browsable\":false},{\"id\":\"public-open\",\"kind\":\"public\",\"writable\":false,\"last_sync\":\"unknown\",\"browsable\":true}],\"error\":null}"
+    },
+    {
+      "name": "browse personal mount (flat listing)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vault-files?mount=personal-main"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"mount\":\"personal-main\",\"count\":3,\"truncated\":false,\"files\":[{\"path\":\"data/binary.bin\",\"name\":\"binary.bin\",\"size\":9,\"readable\":false},{\"path\":\"notes/note.md\",\"name\":\"note.md\",\"size\":29,\"readable\":true},{\"path\":\"welcome.md\",\"name\":\"welcome.md\",\"size\":33,\"readable\":true}]}"
+    },
+    {
+      "name": "browse team mount — fail-closed refusal",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vault-files?mount=team-shared"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"error\":\"forbidden: vault \\\"team-shared\\\" is kind \\\"team\\\" — browsing is opt-in for shared vaults (browse = true in its marker)\"}"
+    },
+    {
+      "name": "read one file in mount",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vault-file?mount=personal-main&path=notes%2Fnote.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"mount\":\"personal-main\",\"path\":\"notes/note.md\",\"size\":29,\"content\":\"Note body — deterministic.\\n\"}"
+    },
+    {
+      "name": "read non-text file — not_text refusal",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vault-file?mount=personal-main&path=data%2Fbinary.bin"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"error\":\"not_text: not a renderable text file\"}"
+    },
+    {
+      "name": "traversal attempt — escape refusal",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/vault-file?mount=personal-main&path=..%2F..%2Fattachable-demo%2Fattached.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"error\":\"forbidden: path escapes the vault mount\"}"
+    },
+    {
+      "name": "warrants — ledger read (solves_used + corrupt-line tolerance)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/warrants"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"warrants\":[{\"plan_hash\":\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\",\"bounds\":{\"max_solves\":3,\"tier\":\"free\"},\"expires_at\":\"2026-12-31T00:00:00Z\",\"issued_by\":\"user:cli\",\"solves_used\":2},{\"plan_hash\":\"cafebabecafebabecafebabecafebabecafebabe\",\"bounds\":{},\"expires_at\":\"2026-09-30T00:00:00Z\",\"issued_by\":\"user:ui\",\"solves_used\":0}]}"
+    },
+    {
+      "name": "approve via stub amico (success)",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/approve",
+        "body": {
+          "plan_hash": "abc123"
+        }
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"stdout\":\"stubbed approve ok\"}"
+    },
+    {
+      "name": "approve — bad body refusal",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/approve",
+        "body": "not json"
+      },
+      "status": 200,
+      "body": "{\"ok\":false,\"error\":\"body must be JSON\"}"
+    },
+    {
+      "name": "resolve absolute path (tier 1)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/resolve-file?path=%7BSANDBOX%7D%2Fdocs%2Freadme.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
+    },
+    {
+      "name": "resolve mount-prefixed (tier 3)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/resolve-file?path=personal-main%2Fnotes%2Fnote.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/private/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/vaults/personal-main/notes/note.md\",\"mount\":\"personal-main\",\"kind\":\"file\"}"
+    },
+    {
+      "name": "resolve relative w/ dir part (tier 4 → project dir)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/resolve-file?path=docs%2Freadme.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"found\":true,\"path\":\"/var/folders/vn/fc7_8xkn0b52hmf4pk5wdx280000gn/T/amicode-fixture-6Z8sUj/docs/readme.md\",\"mount\":null,\"kind\":\"file\"}"
+    },
+    {
+      "name": "resolve bare typed-prefix — miss (tier 5)",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/resolve-file?path=insight-nothing.md"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"found\":false}"
+    },
+    {
+      "name": "resolve scheme-ful string — not a file ref",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/resolve-file?path=https%3A%2F%2Fexample.com%2Fx"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"found\":false}"
+    }
+  ]
+}
