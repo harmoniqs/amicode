@@ -185,12 +185,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).
 
-   Then open a normal session for all users: "You're all set — I'll remember
-   your context across sessions. Ask me anything." Briefly highlight that Amico
-   remembers context, adapts over time, and can help with coding or experiments
-   depending on what they selected.
+   Then tell the user onboarding is complete: "You're all set — your About You
+   card on the dashboard is now populated with what you told me. To see it,
+   reload the window (Cmd+Shift+P → 'Reload Window', or Cmd+R). After that,
+   start a new session anytime to explore what Amico can do."
 
-   The handoff does NOT re-ask intent — it reads what was recorded and routes.
+   Do NOT auto-chain into another interview or open a new session. The
+   onboarding ends here. The user is in control of what happens next.
 
 ---
 
