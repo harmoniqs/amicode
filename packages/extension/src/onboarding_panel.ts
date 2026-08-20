@@ -366,6 +366,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             writeOnboardingConfig(payload);
             panel.dispose();
             fireOnboardingComplete();
+            // Restart server so it picks up the new provider config
+            void vscode.commands.executeCommand("amicode.restartServer");
             // Open chat as fallback (in case no completion listener is wired)
             void vscode.commands.executeCommand("amicode.openChat");
           } else if (msg.type === "cancel") {
@@ -446,6 +448,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             testResults.clear();
             panel.dispose();
             fireOnboardingComplete();
+            // Restart server so it picks up the new provider config
+            void vscode.commands.executeCommand("amicode.restartServer");
             // Open chat as fallback (in case no completion listener is wired)
             void vscode.commands.executeCommand("amicode.openChat");
           }
