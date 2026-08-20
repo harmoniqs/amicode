@@ -754,6 +754,36 @@ describe("writeBatchConfig — replaces provider section (redo overwrites)", () 
     // Non-provider settings are still preserved
     expect(written.permission).toEqual({ bash: "allow" });
   });
+
+  it("writeBatchConfig never modifies auth stores (account.json / auth.json)", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+
+    // Set up fake auth stores and record their content
+    const accountPath = path.join(tmpDir, "account.json");
+    const authPath = path.join(tmpDir, "auth.json");
+    const accountContent = JSON.stringify({
+      version: 2,
+      accounts: { acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } } },
+      active: { opencode: "acc1" },
+    });
+    const authContent = JSON.stringify({
+      "opencode-go": { type: "api", key: "sk-old" },
+      "amazon-bedrock": { type: "api", key: "aws-key" },
+    });
+    fs.writeFileSync(accountPath, accountContent);
+    fs.writeFileSync(authPath, authContent);
+
+    // Write batch config (only touches opencode.json)
+    writeBatchConfig(credentials, "openai", configPath);
+
+    // Auth stores must be UNTOUCHED
+    expect(fs.readFileSync(accountPath, "utf8")).toBe(accountContent);
+    expect(fs.readFileSync(authPath, "utf8")).toBe(authContent);
+  });
 });
 
 // ─── disconnectProviders — remove excluded providers from auth stores ────────
