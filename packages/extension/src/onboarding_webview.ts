@@ -10,6 +10,9 @@
 //   webview → host: { type: "config-success", payload: OnboardingConfig }
 
 declare function acquireVsCodeApi(): { postMessage(msg: unknown): void };
+
+export {};
+
 declare global {
   interface Window {
     __PROVIDERS__: Record<string, { id: string; name: string }[]>;
