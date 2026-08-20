@@ -27,6 +27,7 @@ import {
   runSeriesResponse,
   runStatusResponse,
 } from "./problems";
+import { libraryBody, saveLibraryFile } from "./library";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -98,6 +99,14 @@ export function registerProblemRoutes(server: AmicodeServiceServer): AmicodeServ
   return server;
 }
 
+export function registerLibraryRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/library", () => ({ body: libraryBody() }));
+
+  server.add("POST", "/amicode/library", ({ body }) => ({ body: saveLibraryFile(body) }));
+
+  return server;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process. */
 export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
@@ -105,5 +114,6 @@ export function createAmicodeService(opts: { password?: string } = {}): AmicodeS
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);
+  registerLibraryRoutes(server);
   return server;
 }

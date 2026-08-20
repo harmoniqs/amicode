@@ -285,6 +285,18 @@ export function seedAmicodeSandbox(dir) {
     ].join("\n"),
   );
 
+  // --- library (uploaded papers; added_ms = mtime → pinned epochs) -------------
+  const libraryDir = join(amico, "library");
+  mkdirSync(libraryDir, { recursive: true });
+  const paper = (name, content, epoch) => {
+    const p = join(libraryDir, name);
+    writeFileSync(p, content);
+    const t = new Date(epoch);
+    utimesSync(p, t, t);
+  };
+  paper("rydberg-blockade-2024.pdf", "%PDF-1.4 fake rydberg paper\n", "2026-08-02T00:00:00Z");
+  paper("piccolo-trajectory-2023.pdf", "%PDF-1.4 fake piccolo paper\n", "2026-08-06T00:00:00Z");
+
   // --- stub PATH: `amico` exists (fixed output → deterministic approve fixture),
   //     `amico-vault` does NOT (forces the CLI-less scanMounts path on both
   //     sides, so fixtures never depend on a real CLI being installed). ----------
@@ -304,6 +316,7 @@ export function seedAmicodeSandbox(dir) {
   // `amico ledger approve` behave identically regardless of the host machine.
   return {
     dir,
+    seededAt: Date.now(),
     env: {
       AMICODE_PROFILE_FILE: join(amico, "profile.json"),
       AMICODE_MOUNTS_FILE: join(amico, "mounts.toml"),
@@ -313,6 +326,7 @@ export function seedAmicodeSandbox(dir) {
       AMICO_VAULTS_ROOT: vaults,
       AMICO_LEDGER: join(ledger, "runs.jsonl"),
       AMICODE_PROJECT_DIR: dir,
+      AMICODE_LIBRARY_DIR: libraryDir,
       PATH: stubbin,
     },
   };
