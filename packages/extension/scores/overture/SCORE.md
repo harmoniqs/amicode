@@ -15,11 +15,13 @@ stages:
       - id: name
         prompt: "What should I call you?"
         kind: text
-  - id: goals
+  - id: context_seed
+    optional: true
     questions:
-      - id: goals
-        prompt: "What are you hoping to accomplish with Amico?"
-        kind: text
+      - id: seed_optin
+        prompt: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?"
+        choices: ["Yes, scan my configs", "No thanks, skip"]
+        default: "Yes, scan my configs"
   - id: intent
     questions:
       - id: intent
@@ -32,13 +34,11 @@ stages:
           ]
         multiple: true
         default: "Perform (automated) experiments and gain scientific insights"
-  - id: context_seed
-    optional: true
+  - id: goals
     questions:
-      - id: seed_optin
-        prompt: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?"
-        choices: ["Yes, scan my configs", "No thanks, skip"]
-        default: "Yes, scan my configs"
+      - id: goals
+        prompt: "What are you hoping to accomplish with Amico?"
+        kind: text
   - id: research_area
     optional: true
     questions:
@@ -109,27 +109,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    Do NOT ask about experience level. Do NOT branch by expertise. The same
    warm, brief orientation for everyone.
 
-2. **goals** — free-text question via `question` tool with `kind: "text"`:
-   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
-   personal, not inferrable from configs).
-
-   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
-
-3. **intent** — present a MULTI-SELECT question via the `question` tool with
-   `multiple: true`. The question: "What brings you to Amicode?" with exactly
-   three options:
-   - "General coding and software development"
-   - "Perform (automated) experiments and gain scientific insights"
-   - "Exploring"
-
-   The user may select any combination (1, 2, or all 3). Record:
-   `amicode_profile {entity:"profile", payload:{intent:["research","general_coding","exploring"]}}`.
-   Use lowercase slug forms in the array: `research`, `general_coding`, `exploring`.
-
-   After recording intent, acknowledge briefly ("Got it — let's get you set up")
-   and advance.
-
-4. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
+2. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
    existing AI-tool configs (CLAUDE.md, cursor rules, opencode config) to
    bootstrap your workspace — want me to?" via the `question` tool with the
    two choices above.
@@ -163,6 +143,26 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    After seeding (or declining), advance.
 
+3. **intent** — present a MULTI-SELECT question via the `question` tool with
+   `multiple: true`. The question: "What brings you to Amicode?" with exactly
+   three options:
+   - "General coding and software development"
+   - "Perform (automated) experiments and gain scientific insights"
+   - "Exploring"
+
+   The user may select any combination (1, 2, or all 3). Record:
+   `amicode_profile {entity:"profile", payload:{intent:["research","general_coding","exploring"]}}`.
+   Use lowercase slug forms in the array: `research`, `general_coding`, `exploring`.
+
+   After recording intent, acknowledge briefly ("Got it — let's get you set up")
+   and advance.
+
+4. **goals** — free-text question via `question` tool with `kind: "text"`:
+   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
+   personal, not inferrable from configs).
+
+   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
+
 5. **research_area** _(optional — only if user selected the experiments intent)_ —
    ask via the `question` tool with `kind: "text"`: "What research area and what
    kind of experiments?" This is free-form — the user can say anything from
@@ -174,7 +174,7 @@ Per-stage guidance and the `amicode_profile` mapping:
 6. **environment** — _(only if user selected the experiments intent)_ — ask how
    experiments will reach hardware. **Pre-fill from seeds:** call
    `amicode_profile {entity:"status"}` and check if an environment is already
-   recorded from the context-seed (Stage 4). If so, present it as a
+   recorded from the context-seed (Stage 2). If so, present it as a
    confirmation: "I found you use {archetype} — confirm, or change?" via the
    `question` tool. If no seed, ask the standard choice question with the
    options above.
