@@ -314,6 +314,37 @@ export function seedAmicodeSandbox(dir) {
     views: { home: "grid" },
   });
 
+  // --- connections (credentials + status cache + custom registry) -------------
+  // company-compute + slack CONNECTED. validated_at is seeded one minute
+  // before seed-NOW: the 24h staleness clock MUST read fresh, or the fork's
+  // GET kicks a background network revalidation (probe → cache write) whose
+  // landing races the later reads — observed as the CI offline-flag flake.
+  // Credential mtimes pinned to the SAME instant so the 5s edit-slack also
+  // reads fresh. Tokens are inert seed values — no probe runs, no probe is
+  // kicked. The wall-clock validated_at is normalized to <NOW> at replay.
+  const ccValidatedAt = new Date(Date.now() - 60_000);
+  const ccValidatedIso = ccValidatedAt.toISOString();
+  writeJson(join(amico, "cloud.json"), { base_url: "https://solve.example.internal", token: "tok-cc-seed" });
+  writeJson(join(amico, "slack.json"), { token: "xoxb-seed-token" });
+  utimesSync(join(amico, "cloud.json"), ccValidatedAt, ccValidatedAt);
+  utimesSync(join(amico, "slack.json"), ccValidatedAt, ccValidatedAt);
+  writeJson(join(amico, "connections.json"), {
+    "company-compute": {
+      state: "connected",
+      identity: "aaron",
+      entitlements: ["hpc"],
+      validated_at: ccValidatedIso,
+    },
+    slack: { state: "connected", identity: "aaron@example", validated_at: ccValidatedIso },
+  });
+  // one custom connection (the remove-fixture target)
+  writeJson(join(dir, "custom-connections.json"), [
+    { id: "custom-seed1", name: "Lab QPU", token: "tok-qpu", url: "https://qpu.example" },
+  ]);
+
+  // --- projects (defaultParentDir is HOME-based — HOME rides the env overlay) --
+  mkdirSync(join(dir, "AmicodeProjects", "prior-project"), { recursive: true });
+
   // --- stub PATH: `amico` exists (fixed output → deterministic approve fixture),
   //     `amico-vault` does NOT (forces the CLI-less scanMounts path on both
   //     sides, so fixtures never depend on a real CLI being installed). ----------
@@ -346,6 +377,16 @@ export function seedAmicodeSandbox(dir) {
       AMICODE_LIBRARY_DIR: libraryDir,
       AMICODE_WIDGETS_DIR: widgetsDir,
       AMICODE_DASHBOARD_FILE: join(amico, "dashboard.json"),
+      AMICODE_CONNECTIONS_FILE: join(amico, "connections.json"),
+      AMICO_CUSTOM_CONNECTIONS_FILE: join(dir, "custom-connections.json"),
+      AMICO_CLOUD_FILE: join(amico, "cloud.json"),
+      AMICO_SLACK_FILE: join(amico, "slack.json"),
+      AMICO_PASQAL_FILE: join(amico, "pasqal.json"),
+      AMICO_GITHUB_FILE: join(amico, "github.json"),
+      AMICO_LINEAR_FILE: join(amico, "linear.json"),
+      AMICO_GOOGLE_FILE: join(amico, "google.json"),
+      AMICO_GOOGLE_DRIVE_FILE: join(amico, "google-drive.json"),
+      HOME: dir, // the projects default parent + CLI candidate paths are HOME-based
       PATH: stubbin,
     },
   };

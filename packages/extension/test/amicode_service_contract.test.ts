@@ -76,6 +76,32 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       );
       return { ...obj, papers };
     }
+    // connections: validated_at is seeded one minute before this side's now
+    // (fresh on the 24h clock — see the seeder); normalize anything fresher
+    // than five minutes before seed time, covering it and any route-written
+    // revalidation stamps.
+    if (obj && typeof obj === "object" && Array.isArray(obj.connections)) {
+      const fresh = (v: unknown) => typeof v === "string" && Date.parse(v) > seededAt - 5 * 60_000;
+      const connections = obj.connections.map((c: any) =>
+        fresh(c?.validated_at) ? { ...c, validated_at: "<NOW>" } : c,
+      );
+      return { ...obj, connections };
+    }
+    return obj;
+  };
+
+  /** auth_methods gained a "token" entry in fork source AFTER the vendored
+   *  pin (v1.18.10-amicode.11 advertises browser only; the port follows
+   *  current source). Removed from BOTH sides so the comparison is stable
+   *  across the next pin bump — the token-paste flow itself is unit-tested
+   *  in amicode_service_connections.test.ts. */
+  const normalizePostPinDrift = (obj: any): any => {
+    if (obj && typeof obj === "object" && Array.isArray(obj.connections)) {
+      const connections = obj.connections.map((c: any) =>
+        Array.isArray(c?.auth_methods) ? { ...c, auth_methods: c.auth_methods.filter((m: unknown) => m !== "token") } : c,
+      );
+      return { ...obj, connections };
+    }
     return obj;
   };
 
@@ -156,7 +182,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
         // JSON routes: deep-equal on parsed bodies (key order is the port's
         // business; structure and values are the contract).
         const canon = (o: any, seededAt: number) =>
-          normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)));
+          normalizePostPinDrift(normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt))));
         expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
       } else {
         // Non-JSON routes (the served widget frame): byte-exact after sandbox
