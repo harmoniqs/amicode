@@ -122,7 +122,7 @@ export class ChatPanel {
    *  greeting auto-sent. Delays to give a freshly-created iframe time to mount.
    *  The app's AmicodeNavigateBridge handles this. */
   private postOnboardingGreeting(): void {
-    const prompt = encodeURIComponent("Hello");
+    const prompt = encodeURIComponent("Begin onboarding");
     const path = `/new-session?prompt=${prompt}&autoSend=1`;
     const envelope = { source: "amicode", kind: "navigate", path };
     // Delay: iframe needs time to mount its listener
