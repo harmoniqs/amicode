@@ -61,11 +61,6 @@
           "id": "amicode.armonia",
           "name": "Armonia",
           "type": "tree"
-        },
-        {
-          "id": "amicode.catalog",
-          "name": "Catalog",
-          "type": "tree"
         }
       ]
     },
@@ -137,10 +132,6 @@
       {
         "command": "amicode.distillNow",
         "title": "Amicode: Distill now (update my memory)"
-      },
-      {
-        "command": "amicode.catalog.remove",
-        "title": "Remove from Catalog"
       },
       {
         "command": "amicode.fleet.repair",
@@ -310,19 +301,6 @@
           "command": "amicode.openChat",
           "when": "view == amicode.armonia",
           "group": "navigation"
-        }
-      ],
-      "view/item/context": [
-        {
-          "command": "amicode.catalog.remove",
-          "when": "view == amicode.catalog && viewItem == amicodeCatalogEntry",
-          "group": "7_modification"
-        }
-      ],
-      "commandPalette": [
-        {
-          "command": "amicode.catalog.remove",
-          "when": "false"
         }
       ]
     }
