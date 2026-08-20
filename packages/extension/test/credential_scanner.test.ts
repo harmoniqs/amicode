@@ -468,7 +468,6 @@ describe("scanCredentials — end-to-end with real default paths", () => {
   it("finds credentials from this machine's actual opencode install", async () => {
     const result = await scanCredentials(defaultScanOptions());
 
-    // This machine has opencode configured — scan should find at least one provider
     console.log(`  [e2e] Found ${result.credentials.length} credential(s):`);
     for (const c of result.credentials) {
       console.log(`    ${c.provider} (from ${c.source}) — key ${c.key.slice(0, 6)}...`);
