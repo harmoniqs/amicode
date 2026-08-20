@@ -1,0 +1,45 @@
+{
+  "recordedAt": "2026-08-20T18:36:04.826Z",
+  "fork": {
+    "version": "1.18.10",
+    "tag": "v1.18.10-amicode.11"
+  },
+  "entries": [
+    {
+      "name": "cold read — synthesized identity + stats + remembers",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/profile"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg CZ\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "edit focus",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/profile?focus=Rydberg%20blockade"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Ada Lovelace\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "clear name — mounts.toml fallback fires",
+      "request": {
+        "method": "POST",
+        "path": "/amicode/profile?name="
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    },
+    {
+      "name": "warm read — post-save state",
+      "request": {
+        "method": "GET",
+        "path": "/amicode/profile"
+      },
+      "status": 200,
+      "body": "{\"ok\":true,\"you\":{\"name\":\"Test Personal\",\"affiliation\":\"Analytical Engine Lab\",\"scholar\":\"https://scholar.example/ada\",\"affiliation_logo\":null,\"focus\":\"Rydberg blockade\",\"avatar\":null,\"platforms\":[\"transmon\",\"cavity\"],\"stats\":{\"problems\":3,\"runs\":0,\"best_fidelity\":null,\"banked\":0,\"since\":null},\"remembers\":[{\"title\":\"prefers LaTeX-formatted physics answers\",\"detail\":\"prefers LaTeX-formatted physics answers\"},{\"title\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\",\"detail\":\"smooth pulse parameterization reliably hits F>0.9999 on transmon X\"},{\"title\":\"vault sync and slack broadcast automation notes\",\"detail\":\"vault sync and slack broadcast automation notes\"}]},\"error\":null}"
+    }
+  ]
+}
