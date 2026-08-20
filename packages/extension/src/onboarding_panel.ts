@@ -374,7 +374,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
           } else if (msg.type === "config-success") {
             const payload = msg.payload as OnboardingConfig;
             writeOnboardingConfig(payload);
-            panel.dispose();
+            // Keep the panel alive as a transition splash (same as confirm-import)
+            void panel.webview.postMessage({ type: "show-transition" });
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
