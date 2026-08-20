@@ -498,20 +498,20 @@ export class ChatPanel {
         <polygon points="888.52 1864.8 754.93 1864.8 754.93 1727.36 888.55 1727.36 888.55 1864.77 1022.15 1864.77 1022.15 2002.21 888.52 2002.21 888.52 1864.8"/>
         <polygon points="621.31 1589.92 754.9 1589.92 754.9 1452.48 888.52 1452.48 888.52 1589.92 754.93 1589.92 754.93 1727.36 621.31 1727.36 621.31 1589.92"/>
         <polygon points="754.92 1452.48 888.51 1452.48 888.51 1315.04 1022.13 1315.04 1022.13 1452.48 888.54 1452.48 888.54 1589.92 754.92 1589.92 754.92 1452.48"/>
-        <!-- Left happy eye (∩ = top bar + two side bars, shorter) -->
-        <rect x="1139.77" y="1446.71" width="133.62" height="286"/>
-        <rect x="1503.05" y="1446.71" width="133.62" height="286"/>
-        <rect x="1273.58" y="1309.27" width="229.47" height="137.44"/>
+        <!-- Left happy eye (∩ = top bar + two side bars, centered in bracket) -->
+        <rect x="1139.77" y="1647" width="133.62" height="286"/>
+        <rect x="1503.05" y="1647" width="133.62" height="286"/>
+        <rect x="1273.58" y="1510" width="229.47" height="137.44"/>
         <!-- Centre divider | -->
-        <rect x="1778.31" y="1312.43" width="107.11" height="692.38"/>
-        <!-- Right happy eye (∩ = top bar + two side bars, shorter) -->
-        <rect x="2009.75" y="1451.19" width="133.62" height="286"/>
-        <rect x="2373.03" y="1451.19" width="133.62" height="286"/>
-        <rect x="2143.56" y="1313.76" width="229.47" height="137.44"/>
-        <!-- Smile (wider version) -->
-        <rect x="1500" y="2256.8" width="650" height="137.44"/>
-        <rect x="1361" y="2119.73" width="138.82" height="138.82"/>
-        <rect x="2150" y="2117.98" width="138.82" height="138.82"/>
+        <rect x="1778.31" y="1450" width="107.11" height="692.38"/>
+        <!-- Right happy eye (∩ = top bar + two side bars, centered in bracket) -->
+        <rect x="2009.75" y="1647" width="133.62" height="286"/>
+        <rect x="2373.03" y="1647" width="133.62" height="286"/>
+        <rect x="2143.56" y="1510" width="229.47" height="137.44"/>
+        <!-- Smile (same as opening screen) -->
+        <rect x="1648.65" y="2256.8" width="349.19" height="137.44"/>
+        <rect x="1510.91" y="2119.73" width="138.82" height="138.82"/>
+        <rect x="1997.85" y="2117.98" width="138.82" height="138.82"/>
         <!-- Right caret > -->
         <polygon points="2769.41 1463.57 2903.01 1463.57 2903.01 1601.01 2769.39 1601.01 2769.39 1463.6 2635.79 1463.6 2635.79 1326.16 2769.41 1326.16 2769.41 1463.57"/>
         <polygon points="3036.63 1738.45 2903.03 1738.45 2903.03 1875.89 2769.41 1875.89 2769.41 1738.45 2903.01 1738.45 2903.01 1601.01 3036.63 1601.01 3036.63 1738.45"/>
