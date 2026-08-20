@@ -130,6 +130,11 @@ export class ChatPanel {
     setTimeout(() => void this.panel.webview.postMessage(envelope), 4000);
   }
 
+  /** Post an arbitrary message to the webview (relayed to the iframe). */
+  postMessage(msg: unknown): Promise<boolean> {
+    return this.panel.webview.postMessage(msg);
+  }
+
   /** AC5's gate setter — called after each session prep with
    *  bugReportSkillStaged(project.skillPaths). */
   static setBugReportAvailable(available: boolean): void {
