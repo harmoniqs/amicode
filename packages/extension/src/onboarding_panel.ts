@@ -367,9 +367,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             const payload = msg.payload as OnboardingConfig;
             writeOnboardingConfig(payload);
             panel.dispose();
-            fireOnboardingComplete();
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
+            fireOnboardingComplete();
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
@@ -456,9 +456,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             heldCredentials = [];
             testResults.clear();
             panel.dispose();
-            fireOnboardingComplete();
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
+            fireOnboardingComplete();
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
