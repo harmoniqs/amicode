@@ -927,7 +927,6 @@ window.addEventListener("message", (event) => {
       transitionText.style.cssText = `
         text-align: center; margin-top: 24px; font-size: 14px;
         color: var(--vscode-descriptionForeground, #999);
-        animation: fadeIn 0.4s ease-out;
       `;
       transitionText.textContent = "Getting Amico ready...";
       animationEl.parentElement!.insertBefore(transitionText, animationEl.nextSibling);
