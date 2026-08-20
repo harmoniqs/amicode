@@ -3,7 +3,7 @@
 // ONE seeder serves both sides of the parity proof so they can never drift:
 //   - scripts/record_amicode_fixtures.mjs seeds a sandbox, boots the FORK
 //     binary against it, and records golden request/response pairs.
-//   - test/amicode_service_profile.test.ts seeds the SAME sandbox, boots the
+//   - test/amicode_service_contract.test.ts seeds the SAME sandbox, boots the
 //     PORTED service against it, and replays the recorded pairs.
 //
 // Determinism rules (any nondeterminism here = flaky parity forever):
@@ -11,6 +11,11 @@
 //     count-descending sort is total — no reliance on readdir order.
 //   - memory note mtimes are pinned via utimesSync so remembers()' recency
 //     tiebreak is stable across seedings.
+//   - terminal-run file mtimes are PINNED to fixed epochs: FINISHED's mtime
+//     feeds elapsed_ms + finished_at, so both sides compute identical values.
+//   - the solving run's run.log mtime is pinned to seed-time NOW (so it reads
+//     "solving", not "stalled") — its elapsed_ms is therefore wall-clock and
+//     is normalized to <ELAPSED> at replay; same for the stalled run.
 //   - every value (names, dates, fidelities) is fixed data, never Date.now().
 import { chmodSync, mkdirSync, writeFileSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -75,34 +80,164 @@ export function seedAmicodeSandbox(dir) {
     utimesSync(p, t, t);
   }
 
-  // --- problems (platform mix + count) ----------------------------------------
+  // --- problems (platform mix, count, problem-UI state, run refs) --------------
   const problems = join(dir, "problems");
-  const problem = (slug, platform, withEntitySystem) => {
-    const d = join(problems, slug);
-    mkdirSync(d, { recursive: true });
-    writeFileSync(join(d, "problem.json"), JSON.stringify({ slug, platform, status: "solved" }, null, 2) + "\n");
-    if (withEntitySystem) {
-      mkdirSync(join(d, "entities"), { recursive: true });
-      writeFileSync(join(d, "entities", "system.json"), JSON.stringify({ platform }, null, 2) + "\n");
-    }
+  const writeFile = (p, content) => {
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, content);
   };
-  problem("x-gate-transmon", "transmon", true);
-  problem("t-gate-transmon", "transmon", false);
-  problem("cat-state-cavity", "cavity", false);
+  const writeJson = (p, obj) => writeFile(p, JSON.stringify(obj, null, 2) + "\n");
 
-  // --- runs (stats: runs/banked/best_fidelity/since) ---------------------------
-  const runs = join(dir, "runs", "default");
-  const run = (name, files) => {
-    const d = join(runs, name);
-    mkdirSync(d, { recursive: true });
-    for (const [f, content] of Object.entries(files ?? {})) writeFileSync(join(d, f), content);
-  };
-  run("r20260801-0a1b2c", {
-    "result.toml": "fidelity = 0.9982\n",
-    "pulse.jld2": "stub", // presence is all runStats checks
+  // The score manifest at the problems root (score_stages resolution target).
+  writeJson(join(problems, "score_manifest.json"), {
+    manifest: {
+      id: "pulse-designer",
+      stages: [{ name: "platform", emits: ["system"] }, { name: "formulate", emits: ["formulation", "run"] }],
+    },
   });
-  run("r20260810-3d4e5f", {}); // unfinished — no result.toml
-  run("r20260815-6a7b8c", { "result.toml": "fidelity = 0.9999\n" });
+  // The active-problem marker (GET /amicode/problem with no slug).
+  writeFile(join(problems, "active"), "x-gate-transmon\n");
+
+  // x-gate-transmon: score stamped in problem.json; full entity set; events;
+  // runs.json refs every default-lab run (one per terminal state + stalled).
+  const xg = join(problems, "x-gate-transmon");
+  writeJson(join(xg, "problem.json"), {
+    slug: "x-gate-transmon",
+    name: "X Gate (Transmon)",
+    platform: "transmon",
+    status: "solved",
+    score: { id: "pulse-designer" },
+    recorded: "2026-08-15",
+  });
+  // Entities carry BOTH shapes the readers use: platformMix reads
+  // entities/system.json.platform (top level); run-cards reads .params.
+  writeJson(join(xg, "entities", "system.json"), {
+    platform: "transmon",
+    params: { platform: "transmon", gate: "X" },
+  });
+  writeJson(join(xg, "entities", "formulation.json"), { params: { T: 10, N: 50 } });
+  writeFile(
+    join(xg, "events.jsonl"),
+    [
+      JSON.stringify({ seq: 1, entity: "system", action: "recorded", source: { tool: "amicode_pick_system" } }),
+      JSON.stringify({ seq: 2, entity: "formulation", action: "recorded", source: { tool: "amicode_formulate" } }),
+      JSON.stringify({ seq: 3, entity: "run", action: "recorded", source: { tool: "amicode_solve" } }),
+      "",
+    ].join("\n"),
+  );
+  writeJson(join(xg, "runs.json"), {
+    runs: [
+      { run_id: "r20260801-000000Z-0a1b2c", lab: "default" },
+      { run_id: "r20260805-000000Z-9z8y7x", lab: "default" },
+      { run_id: "r20260810-000000Z-3d4e5f", lab: "default" },
+      { run_id: "r20260815-000000Z-6a7b8c", lab: "default" },
+      { run_id: "r20260818-000000Z-4h5i6j", lab: "default" },
+    ],
+  });
+
+  // t-gate-transmon: NO score in problem.json — score_stages must fall back to
+  // interview_state.json's score_id (the guard's durable record).
+  const tg = join(problems, "t-gate-transmon");
+  writeJson(join(tg, "problem.json"), { slug: "t-gate-transmon", name: "T Gate (Transmon)", platform: "transmon", status: "solved" });
+  writeJson(join(tg, "entities", "system.json"), { platform: "transmon", params: { platform: "transmon", gate: "T" } });
+  writeJson(join(tg, "interview_state.json"), { score_id: "pulse-designer", stage: "solve" });
+
+  // cat-state-cavity: designing; its run lives in ANOTHER lab ("other") —
+  // pins run-status/run-cards lab resolution.
+  const cat = join(problems, "cat-state-cavity");
+  writeJson(join(cat, "problem.json"), { slug: "cat-state-cavity", name: "Cat State (Cavity)", platform: "cavity", status: "designing" });
+  writeJson(join(cat, "entities", "system.json"), { platform: "cavity", params: { platform: "cavity" } });
+  writeJson(join(cat, "runs.json"), { runs: [{ run_id: "r20260812-000000Z-5c6d7e", lab: "other" }] });
+
+  // --- runs (one per terminal state + stalled; elapsed pinned via FINISHED
+  //     mtimes = fixed epoch - the run-id-encoded start) ------------------------
+  const runsRoot = join(dir, "runs");
+  const runLog = (iters, extra = []) =>
+    [
+      'AMICODE_PULSE_META drives=2 knots=3 labels="a_1","a_2" bounds=-0.2:0.2,-0.2:0.2',
+      ...iters.map(([i, f]) => `AMICODE_ITER iter=${i} f=${f} inf_pr=1.0e-0${i} inf_du=5.0e-0${i}`),
+      "AMICODE_PULSE iter=" + iters[iters.length - 1][0] + " dt=0.2 a=0.01,0.02,0.03;0.04,0.05,0.06",
+      ...extra,
+      "",
+    ].join("\n");
+  const seedRun = (lab, runId, files, mtimeEpoch) => {
+    const d = join(runsRoot, lab, runId);
+    for (const [f, content] of Object.entries(files ?? {})) writeFile(join(d, f), content);
+    if (mtimeEpoch) {
+      const t = new Date(mtimeEpoch);
+      for (const f of Object.keys(files ?? {})) utimesSync(join(d, f), t, t);
+    }
+    return d;
+  };
+  const fiveIters = [
+    [1, "2.5e-01"],
+    [2, "1.0e-01"],
+    [3, "3.0e-02"],
+    [4, "5.0e-03"],
+    [5, "1.0e-03"],
+  ];
+  // completed: FINISHED + result + pulse; elapsed 120s (00:02:00 - 00:00:00).
+  seedRun("default", "r20260801-000000Z-0a1b2c", {
+    FINISHED: 'status = "completed"\n',
+    "result.toml": "fidelity = 0.9999\niterations = 5\n",
+    "pulse.jld2": "stub",
+    "run.log": runLog(fiveIters, ["DONE fidelity=0.9999"]),
+  }, "2026-08-01T00:02:00Z");
+  // stopped: FINISHED says completed, but the cooperative-stop marker relabels.
+  // Fidelity low so the profile's best_fidelity stays the completed run's.
+  seedRun("default", "r20260805-000000Z-9z8y7x", {
+    FINISHED: 'status = "completed"\n',
+    "result.toml": "fidelity = 0.71\niterations = 2\n",
+    "run.log": runLog([
+      [1, "3.0e-01"],
+      [2, "2.9e-01"],
+    ], ["AMICODE_STOPPED", "DONE fidelity=0.71"]),
+  }, "2026-08-05T00:03:00Z");
+  // solving: no FINISHED; run.log mtime pinned to seed-NOW so it reads
+  // "solving" (not stalled). elapsed_ms is wall-clock → normalized at replay.
+  const solvingDir = seedRun("default", "r20260810-000000Z-3d4e5f", {
+    "run.log": runLog([
+      [1, "4.0e-01"],
+      [2, "3.5e-01"],
+    ]),
+  });
+  {
+    const now = new Date();
+    utimesSync(join(solvingDir, "run.log"), now, now);
+  }
+  // failed: FINISHED says failed (a failed run with a result.toml is NOT
+  // finished — the one-spine rule).
+  seedRun("default", "r20260815-000000Z-6a7b8c", {
+    FINISHED: 'status = "failed"\n',
+    "result.toml": "fidelity = 0.42\niterations = 3\n",
+    "run.log": runLog([
+      [1, "5.0e-01"],
+      [2, "4.8e-01"],
+      [3, "4.7e-01"],
+    ]),
+  }, "2026-08-15T00:01:30Z");
+  // stalled: no FINISHED, run.log mtime 2h before seed-now → "stalled".
+  const stalledDir = seedRun("default", "r20260818-000000Z-4h5i6j", {
+    "run.log": runLog([
+      [1, "6.0e-01"],
+      [2, "5.9e-01"],
+    ]),
+  });
+  {
+    const stale = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(join(stalledDir, "run.log"), stale, stale);
+  }
+  // other-lab completed: the cat-state run; elapsed 45s.
+  seedRun("other", "r20260812-000000Z-5c6d7e", {
+    FINISHED: 'status = "completed"\n',
+    "result.toml": "fidelity = 0.998\niterations = 4\n",
+    "run.log": runLog([
+      [1, "2.0e-01"],
+      [2, "8.0e-02"],
+      [3, "2.0e-02"],
+      [4, "2.0e-03"],
+    ], ["DONE fidelity=0.998"]),
+  }, "2026-08-12T00:00:45Z");
 
   // --- vaults (the vault family: mounts with the marker taxonomy) --------------
   const vaults = join(dir, "vaults");
@@ -110,11 +245,7 @@ export function seedAmicodeSandbox(dir) {
     const d = join(vaults, base);
     mkdirSync(d, { recursive: true });
     writeFileSync(join(d, ".amico-vault.toml"), marker);
-    for (const [f, content] of Object.entries(files ?? {})) {
-      const p = join(d, f);
-      mkdirSync(dirname(p), { recursive: true });
-      writeFileSync(p, content);
-    }
+    for (const [f, content] of Object.entries(files ?? {})) writeFile(join(d, f), content);
   };
   // personal: browsable by default. Sizes are fixed → deterministic listing.
   mount("personal-main", 'kind = "personal"\nname = "personal-main"\n', {
@@ -146,8 +277,8 @@ export function seedAmicodeSandbox(dir) {
     join(ledger, "runs.jsonl"),
     [
       JSON.stringify({ type: "approval", plan_hash: planHash, bounds: { max_solves: 3, tier: "free" }, expires_at: "2026-12-31T00:00:00Z", issued_by: "user:cli" }),
-      JSON.stringify({ type: "solve", plan_hash: planHash, run_id: "r20260801-0a1b2c" }),
-      JSON.stringify({ type: "solve", plan_hash: planHash, run_id: "r20260815-6a7b8c" }),
+      JSON.stringify({ type: "solve", plan_hash: planHash, run_id: "r20260801-000000Z-0a1b2c" }),
+      JSON.stringify({ type: "solve", plan_hash: planHash, run_id: "r20260815-000000Z-6a7b8c" }),
       JSON.stringify({ type: "approval", plan_hash: "cafebabecafebabecafebabecafebabecafebabe", bounds: {}, expires_at: "2026-09-30T00:00:00Z", issued_by: "user:ui" }),
       "this line is not json", // per-line tolerance: one bad line must not blind the card
       "",
@@ -163,8 +294,7 @@ export function seedAmicodeSandbox(dir) {
   chmodSync(join(stubbin, "amico"), 0o755);
 
   // --- project dir (tier-4 relative resolution resolves against it) ------------
-  mkdirSync(join(dir, "docs"), { recursive: true });
-  writeFileSync(join(dir, "docs", "readme.md"), "Project readme.\n");
+  writeFile(join(dir, "docs", "readme.md"), "Project readme.\n");
 
   // --- the env overlay both sides use ------------------------------------------
   // AMICODE_MOUNTS_FILE is the port's test seam (the fork resolves HOME only;
@@ -179,7 +309,7 @@ export function seedAmicodeSandbox(dir) {
       AMICODE_MOUNTS_FILE: join(amico, "mounts.toml"),
       AMICODE_MEMORY_DIR: memory,
       AMICODE_PROBLEMS_DIR: problems,
-      AMICODE_RUNS_DIR: runs,
+      AMICODE_RUNS_DIR: runsRoot,
       AMICO_VAULTS_ROOT: vaults,
       AMICO_LEDGER: join(ledger, "runs.jsonl"),
       AMICODE_PROJECT_DIR: dir,

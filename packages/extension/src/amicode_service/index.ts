@@ -20,6 +20,13 @@ import { attachVault, status as vaultsStatus } from "./vaults";
 import { approveBody, warrantsBody, type ApproveInput } from "./warrants";
 import { vaultFileBody, vaultFilesBody } from "./vault_browser";
 import { resolveFileBody } from "./file_resolve";
+import {
+  problemResponse,
+  problemsResponse,
+  runCardsResponse,
+  runSeriesResponse,
+  runStatusResponse,
+} from "./problems";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -71,11 +78,32 @@ export function registerVaultRoutes(server: AmicodeServiceServer): AmicodeServic
   return server;
 }
 
+export function registerProblemRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/problems", () => ({ body: problemsResponse() }));
+
+  server.add("GET", "/amicode/problem", ({ url }) => ({
+    body: problemResponse(url.searchParams.get("slug") ?? undefined),
+  }));
+
+  server.add("GET", "/amicode/run-status", ({ url }) => ({
+    body: runStatusResponse(url.searchParams.get("slug") ?? undefined),
+  }));
+
+  server.add("GET", "/amicode/run-cards", () => ({ body: runCardsResponse() }));
+
+  server.add("GET", "/amicode/run-series", ({ url }) => ({
+    body: runSeriesResponse(url.searchParams.get("run") ?? undefined, url.searchParams.get("lab") ?? undefined),
+  }));
+
+  return server;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process. */
 export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
   const server = new AmicodeServiceServer(opts);
   registerProfileRoutes(server);
   registerVaultRoutes(server);
+  registerProblemRoutes(server);
   return server;
 }
