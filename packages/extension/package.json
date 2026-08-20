@@ -327,19 +327,44 @@
       ],
       "view/item/context": [
         {
-          "command": "vscode.open",
-          "when": "view == amicode.workspace && viewItem == workspaceFile",
-          "group": "inline"
+          "command": "explorer.newFile",
+          "when": "view == amicode.workspace",
+          "group": "7_modification@1"
         },
         {
-          "command": "vscode.copyFilePath",
+          "command": "explorer.newFolder",
           "when": "view == amicode.workspace",
-          "group": "9_cutcopypaste"
+          "group": "7_modification@2"
+        },
+        {
+          "command": "renameFile",
+          "when": "view == amicode.workspace",
+          "group": "7_modification@3"
+        },
+        {
+          "command": "deleteFile",
+          "when": "view == amicode.workspace",
+          "group": "7_modification@4"
+        },
+        {
+          "command": "copyFilePath",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@1"
+        },
+        {
+          "command": "copyRelativeFilePath",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@2"
         },
         {
           "command": "revealFileInOS",
           "when": "view == amicode.workspace",
-          "group": "9_cutcopypaste"
+          "group": "9_cutcopypaste@3"
+        },
+        {
+          "command": "openInTerminal",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@4"
         }
       ]
     }
