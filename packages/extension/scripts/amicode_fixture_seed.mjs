@@ -315,21 +315,27 @@ export function seedAmicodeSandbox(dir) {
   });
 
   // --- connections (credentials + status cache + custom registry) -------------
-  // company-compute + slack CONNECTED (credential file present, cache entry
-  // fresh); credential mtimes pinned to validated_at so staleness reads false
-  // (the 5s mtime slack). Tokens are inert seed values — no probe runs.
+  // company-compute + slack CONNECTED. validated_at is seeded one minute
+  // before seed-NOW: the 24h staleness clock MUST read fresh, or the fork's
+  // GET kicks a background network revalidation (probe → cache write) whose
+  // landing races the later reads — observed as the CI offline-flag flake.
+  // Credential mtimes pinned to the SAME instant so the 5s edit-slack also
+  // reads fresh. Tokens are inert seed values — no probe runs, no probe is
+  // kicked. The wall-clock validated_at is normalized to <NOW> at replay.
+  const ccValidatedAt = new Date(Date.now() - 60_000);
+  const ccValidatedIso = ccValidatedAt.toISOString();
   writeJson(join(amico, "cloud.json"), { base_url: "https://solve.example.internal", token: "tok-cc-seed" });
   writeJson(join(amico, "slack.json"), { token: "xoxb-seed-token" });
-  utimesSync(join(amico, "cloud.json"), new Date("2026-08-10T00:00:00Z"), new Date("2026-08-10T00:00:00Z"));
-  utimesSync(join(amico, "slack.json"), new Date("2026-08-10T00:00:00Z"), new Date("2026-08-10T00:00:00Z"));
+  utimesSync(join(amico, "cloud.json"), ccValidatedAt, ccValidatedAt);
+  utimesSync(join(amico, "slack.json"), ccValidatedAt, ccValidatedAt);
   writeJson(join(amico, "connections.json"), {
     "company-compute": {
       state: "connected",
       identity: "aaron",
       entitlements: ["hpc"],
-      validated_at: "2026-08-10T00:00:00Z",
+      validated_at: ccValidatedIso,
     },
-    slack: { state: "connected", identity: "aaron@example", validated_at: "2026-08-10T00:00:00Z" },
+    slack: { state: "connected", identity: "aaron@example", validated_at: ccValidatedIso },
   });
   // one custom connection (the remove-fixture target)
   writeJson(join(dir, "custom-connections.json"), [

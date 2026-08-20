@@ -76,6 +76,17 @@ describe("amicode service — golden-fixture parity with the fork", () => {
       );
       return { ...obj, papers };
     }
+    // connections: validated_at is seeded one minute before this side's now
+    // (fresh on the 24h clock — see the seeder); normalize anything fresher
+    // than five minutes before seed time, covering it and any route-written
+    // revalidation stamps.
+    if (obj && typeof obj === "object" && Array.isArray(obj.connections)) {
+      const fresh = (v: unknown) => typeof v === "string" && Date.parse(v) > seededAt - 5 * 60_000;
+      const connections = obj.connections.map((c: any) =>
+        fresh(c?.validated_at) ? { ...c, validated_at: "<NOW>" } : c,
+      );
+      return { ...obj, connections };
+    }
     return obj;
   };
 
