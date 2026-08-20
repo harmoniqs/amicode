@@ -36,21 +36,24 @@ describe("overture SCORE.md — loads and compiles (AC1)", () => {
     expect(ov.manifest.schema_version).toBe(1);
   });
 
-  it("has the new stage structure: orientation, intent, research_area, context_seed, environment, devices, goals, handoff", () => {
+  it("has the new stage structure: orientation, goals, intent, context_seed, research_area, environment, devices, handoff", () => {
     const ov = overture();
     const stageIds = ov.manifest.stages.map((s: { id: string }) => s.id);
     expect(stageIds).toContain("orientation");
+    expect(stageIds).toContain("goals");
     expect(stageIds).toContain("intent");
-    expect(stageIds).toContain("research_area");
     expect(stageIds).toContain("context_seed");
+    expect(stageIds).toContain("research_area");
     expect(stageIds).toContain("environment");
     expect(stageIds).toContain("devices");
-    expect(stageIds).toContain("goals");
     expect(stageIds).toContain("handoff");
     // Old/removed stages are gone
     expect(stageIds).not.toContain("demo");
     expect(stageIds).not.toContain("platforms");
     expect(stageIds).not.toContain("identity");
+    // Verify order: goals before intent, context_seed before research_area
+    expect(stageIds.indexOf("goals")).toBeLessThan(stageIds.indexOf("intent"));
+    expect(stageIds.indexOf("context_seed")).toBeLessThan(stageIds.indexOf("research_area"));
   });
 
   it("compiles to markdown without error (standalone)", () => {

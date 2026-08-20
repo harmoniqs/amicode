@@ -15,6 +15,11 @@ stages:
       - id: name
         prompt: "What should I call you?"
         kind: text
+  - id: goals
+    questions:
+      - id: goals
+        prompt: "What are you hoping to accomplish with Amico?"
+        kind: text
   - id: intent
     questions:
       - id: intent
@@ -27,12 +32,6 @@ stages:
           ]
         multiple: true
         default: "Perform (automated) experiments and gain scientific insights"
-  - id: research_area
-    optional: true
-    questions:
-      - id: research_area
-        prompt: "What research area and what kind of experiments?"
-        kind: text
   - id: context_seed
     optional: true
     questions:
@@ -40,6 +39,12 @@ stages:
         prompt: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?"
         choices: ["Yes, scan my configs", "No thanks, skip"]
         default: "Yes, scan my configs"
+  - id: research_area
+    optional: true
+    questions:
+      - id: research_area
+        prompt: "What research area and what kind of experiments?"
+        kind: text
   - id: environment
     optional: true
     questions:
@@ -59,11 +64,6 @@ stages:
       - id: devices
         prompt: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)"
         default: "skip for now"
-  - id: goals
-    questions:
-      - id: goals
-        prompt: "What are you hoping to accomplish with Amico?"
-        kind: text
   - id: handoff
     questions:
       - id: handoff
@@ -109,7 +109,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    Do NOT ask about experience level. Do NOT branch by expertise. The same
    warm, brief orientation for everyone.
 
-2. **intent** — present a MULTI-SELECT question via the `question` tool with
+2. **goals** — free-text question via `question` tool with `kind: "text"`:
+   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
+   personal, not inferrable from configs).
+
+   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
+
+3. **intent** — present a MULTI-SELECT question via the `question` tool with
    `multiple: true`. The question: "What brings you to Amicode?" with exactly
    three options:
    - "General coding and software development"
@@ -122,14 +128,6 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    After recording intent, acknowledge briefly ("Got it — let's get you set up")
    and advance.
-
-3. **research_area** _(optional — only if user selected the experiments intent)_ —
-   ask via the `question` tool with `kind: "text"`: "What research area and what
-   kind of experiments?" This is free-form — the user can say anything from
-   "quantum optimal control for transmon gates" to "protein folding simulations"
-   to "materials science DFT sweeps." Record whatever they say:
-   `amicode_profile {entity:"profile", payload:{research_area:"..."}}`.
-   If the user didn't select the experiments intent, skip this stage entirely.
 
 4. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
    existing AI-tool configs (CLAUDE.md, cursor rules, opencode config) to
@@ -163,12 +161,20 @@ Per-stage guidance and the `amicode_profile` mapping:
    - If no scannable files are found, say so honestly: "I didn't find any
      AI-tool configs to import — no worries, we'll build your context as we go."
 
-   After seeding (or declining), advance to Stage 5.
+   After seeding (or declining), advance.
 
-5. **environment** — _(only if user selected the experiments intent)_ — ask how
+5. **research_area** _(optional — only if user selected the experiments intent)_ —
+   ask via the `question` tool with `kind: "text"`: "What research area and what
+   kind of experiments?" This is free-form — the user can say anything from
+   "quantum optimal control for transmon gates" to "protein folding simulations"
+   to "materials science DFT sweeps." Record whatever they say:
+   `amicode_profile {entity:"profile", payload:{research_area:"..."}}`.
+   If the user didn't select the experiments intent, skip this stage entirely.
+
+6. **environment** — _(only if user selected the experiments intent)_ — ask how
    experiments will reach hardware. **Pre-fill from seeds:** call
    `amicode_profile {entity:"status"}` and check if an environment is already
-   recorded from the context-seed (Stage 3). If so, present it as a
+   recorded from the context-seed (Stage 4). If so, present it as a
    confirmation: "I found you use {archetype} — confirm, or change?" via the
    `question` tool. If no seed, ask the standard choice question with the
    options above.
@@ -176,7 +182,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
    Follow up on details per archetype if confirmed.
 
-6. **devices** _(optional, only if user selected the experiments intent)_ —
+7. **devices** _(optional, only if user selected the experiments intent)_ —
    same pre-fill pattern: if a device was seeded, confirm it. Otherwise ask:
    "Any specific device(s) you want me to remember?"
    This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
@@ -184,18 +190,19 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-7. **goals** — free-text question via `question` tool with `kind: "text"`:
-   "What are you hoping to accomplish with Amico?" No pre-fill (goals are
-   personal, not inferrable from configs).
+8. **handoff** — the terminal stage. FIRST, **auto-generate a description** from
+   what you've learned (name, goals, research_area, intent, environment) — a
+   concise 1–2 sentence summary of the user written in third person, suitable
+   for the "About you" card. Example: "Aaron is a quantum-control researcher
+   focused on high-fidelity transmon gates, working in simulation." Record:
+   `amicode_profile {entity:"profile", payload:{description:"..."}}`.
 
-   Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
-
-8. **handoff** — the terminal stage. FIRST, record the completion marker:
+   Then record the completion marker:
    `amicode_profile {entity:"onboarding_completed"}` (exactly once — this is
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).
 
-   Then route by the user's intent selections (from Stage 2 — read from the
+   Then route by the user's intent selections (from Stage 3 — read from the
    events stream, do NOT re-ask):
 
    - **Research/experiments** selected (alone or combined) → "Let's set up your
