@@ -311,7 +311,7 @@ function playWelcomeAnimation(): void {
         background: var(--color-accent-fill, #fff676); color: var(--color-on-accent, #000);
         border: var(--border-width, 1px) solid var(--color-on-accent, #000);
         border-radius: var(--border-radius, 4px);
-        cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 1s ease-in, filter 0.16s ease;">
+        cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 2s ease-in, filter 0.16s ease;">
         Get Started
       </button>
     </div>
@@ -339,7 +339,7 @@ function playWelcomeAnimation(): void {
         revealForm();
       }, 400);
     });
-  }, 2000);
+  }, 3000);
 }
 
 // ─── Form ────────────────────────────────────────────────────────────────────
@@ -933,20 +933,12 @@ window.addEventListener("message", (event) => {
       // Find the inner-most animated group to append the mouth
       const enterGroup = svg.querySelector(".mark-enter") || svg.querySelector(".mark-breathe");
       if (enterGroup) {
-        // Add pixelated U-shaped open mouth (gleeful grin)
+        // Add wide grin (single bar, no corners)
         const ns = "http://www.w3.org/2000/svg";
-        const mouthL = document.createElementNS(ns, "rect");
-        mouthL.setAttribute("x", "1430"); mouthL.setAttribute("y", "2080");
-        mouthL.setAttribute("width", "133"); mouthL.setAttribute("height", "280");
-        const mouthR = document.createElementNS(ns, "rect");
-        mouthR.setAttribute("x", "2090"); mouthR.setAttribute("y", "2080");
-        mouthR.setAttribute("width", "133"); mouthR.setAttribute("height", "280");
-        const mouthBottom = document.createElementNS(ns, "rect");
-        mouthBottom.setAttribute("x", "1563"); mouthBottom.setAttribute("y", "2230");
-        mouthBottom.setAttribute("width", "527"); mouthBottom.setAttribute("height", "130");
-        enterGroup.appendChild(mouthL);
-        enterGroup.appendChild(mouthR);
-        enterGroup.appendChild(mouthBottom);
+        const grin = document.createElementNS(ns, "rect");
+        grin.setAttribute("x", "1430"); grin.setAttribute("y", "2150");
+        grin.setAttribute("width", "793"); grin.setAttribute("height", "130");
+        enterGroup.appendChild(grin);
       }
 
       // Switch from idle animations to excited jump
