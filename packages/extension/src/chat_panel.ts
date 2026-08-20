@@ -136,7 +136,7 @@ export class ChatPanel {
    *  must be mounted to handle the navigate). Falls back to a timeout if
    *  app-ready never fires. */
   postOnboardingGreeting(timeoutMs = 10_000): void {
-    const prompt = encodeURIComponent("Begin onboarding");
+    const prompt = encodeURIComponent("Let's begin onboarding.");
     const path = `/new-session?prompt=${prompt}&autoSend=1`;
     const envelope = { source: "amicode", kind: "navigate", path };
     let sent = false;
