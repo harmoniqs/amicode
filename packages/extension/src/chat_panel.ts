@@ -60,8 +60,11 @@ export class ChatPanel {
     opencodeUrl: URL,
     authToken?: string,
     hideProjectDir?: string,
+    withSplash?: boolean,
   ) {
-    this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
+    this.panel.webview.html = withSplash
+      ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
+      : this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     ChatPanel.live.add(this);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // #351: register this panel as an inspector poster — RunsManager / device
@@ -260,6 +263,29 @@ export class ChatPanel {
     return ChatPanel.current;
   }
 
+  /** Adopt an existing WebviewPanel (e.g. the onboarding panel) as the chat
+   *  singleton. Swaps its HTML to the chat iframe with a splash overlay on top,
+   *  wires message relay + bridge, and registers it as the primary ChatPanel.
+   *  No new panel is created — zero tab switching. */
+  static adopt(
+    panel: vscode.WebviewPanel,
+    ctx: vscode.ExtensionContext,
+    opencodeUrl: URL,
+    authToken?: string,
+    hideProjectDir?: string,
+  ): ChatPanel {
+    // If there's already a ChatPanel singleton, dispose it (shouldn't happen in normal flow)
+    if (ChatPanel.current) {
+      ChatPanel.current.dispose();
+    }
+    const title = "Amicode Chat";
+    const instance = new ChatPanel(panel, title, opencodeUrl, authToken, hideProjectDir, true);
+    ChatPanel.current = instance;
+    panel.title = title;
+    panel.iconPath = tabIconPath(ctx);
+    return instance;
+  }
+
   /** Side-by-side sessions: ALWAYS a fresh tab beside the active editor — the
    *  caller pins the tab's session scope via the URL (e.g. the app's
    *  /new-session draft route), so each tab owns its conversation while sharing
@@ -390,6 +416,139 @@ export class ChatPanel {
         } catch (e) { /* reply with dataUrl:null → app falls back to text paste */ }
         var f = document.querySelector("iframe");
         if (f && f.contentWindow) f.contentWindow.postMessage(payload, ${origin});
+      }
+    })();
+  </script>
+</body>
+</html>`;
+  }
+
+  /** Render the chat iframe HTML with a splash overlay on top.
+   *  Used by adopt() — the overlay fades out when app-ready fires, revealing
+   *  the fully-loaded chat underneath. Zero tab switching, pure CSS transition. */
+  private renderTransitionHtml(opencodeUrl: URL, authToken?: string, hideProjectDir?: string): string {
+    const nonce = randomBytes(16).toString("base64");
+    const csp = [
+      "default-src 'none'",
+      "style-src 'unsafe-inline'",
+      `script-src 'nonce-${nonce}'`,
+      `frame-src ${opencodeUrl.origin}`,
+      "connect-src 'self'",
+    ].join("; ");
+    const origin = JSON.stringify(opencodeUrl.origin);
+    const framed = new URL(opencodeUrl.href);
+    framed.searchParams.set("colorScheme", themeKindToScheme(vscode.window.activeColorTheme.kind));
+    if (authToken) framed.searchParams.set("auth_token", authToken);
+    if (hideProjectDir) framed.searchParams.set("amicode_hide_project", hideProjectDir);
+    if (ChatPanel.bugReportAvailable) framed.searchParams.set("amicode_bug_report", "1");
+    return /* html */ `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="${csp}" />
+  <style>
+    html, body, iframe { margin: 0; padding: 0; height: 100%; width: 100%; border: 0; }
+    body { background: var(--vscode-editor-background); overflow: hidden; }
+    iframe { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
+    .splash-overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      z-index: 10; display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: var(--vscode-editor-background);
+      transition: opacity 0.4s ease-out, transform 0.4s ease-out;
+    }
+    .splash-overlay.fade-out {
+      opacity: 0; transform: scale(1.05); pointer-events: none;
+    }
+    .splash-text {
+      margin-top: 24px; font-size: 14px;
+      color: var(--vscode-descriptionForeground, #999);
+      font-family: var(--vscode-font-family, system-ui);
+    }
+    .splash-mark {
+      width: 80px; height: 80px;
+      fill: var(--vscode-foreground, #ccc);
+      animation: breathe 3s ease-in-out infinite;
+    }
+    @keyframes breathe {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.04); }
+    }
+  </style>
+</head>
+<body>
+  <div class="splash-overlay" id="splash">
+    <svg class="splash-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect x="10" y="30" width="30" height="50" rx="4" />
+      <rect x="60" y="30" width="30" height="50" rx="4" />
+      <rect x="20" y="10" width="10" height="15" rx="3" />
+      <rect x="70" y="10" width="10" height="15" rx="3" />
+    </svg>
+    <div class="splash-text">Getting Amico ready...</div>
+  </div>
+  <iframe src="${framed.href}" allow="clipboard-read; clipboard-write" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"></iframe>
+  <script nonce="${nonce}">
+    (function () {
+      var vscode = acquireVsCodeApi();
+      var origin = ${origin};
+      window.addEventListener("message", function (e) {
+        var d = e.data;
+        if (e.origin === origin) {
+          // app-ready: fade the splash overlay and relay to extension
+          if (d && d.source === "amicode" && d.kind === "app-ready") {
+            var splash = document.getElementById("splash");
+            if (splash) {
+              splash.classList.add("fade-out");
+              splash.addEventListener("transitionend", function () { splash.remove(); });
+            }
+            vscode.postMessage(d);
+            return;
+          }
+          if (d && d.source === "amicode" && d.kind === "clipboard-image-request") {
+            replyClipboardImage(d.nonce);
+            return;
+          }
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "app-ready")) {
+            vscode.postMessage(d);
+          }
+          return;
+        }
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
+          var f = document.querySelector("iframe");
+          if (f && f.contentWindow) f.contentWindow.postMessage(d, origin);
+        }
+      });
+      function blobToDataUrl(blob) {
+        return new Promise(function (res) {
+          var r = new FileReader();
+          r.onload = function () { res(typeof r.result === "string" ? r.result : null); };
+          r.onerror = function () { res(null); };
+          r.readAsDataURL(blob);
+        });
+      }
+      async function replyClipboardImage(nonce) {
+        var payload = { source: "amicode", kind: "clipboard-image", nonce: nonce, dataUrl: null, mime: null, filename: null };
+        try {
+          if (navigator.clipboard && navigator.clipboard.read) {
+            var items = await navigator.clipboard.read();
+            for (var i = 0; i < items.length && !payload.dataUrl; i++) {
+              var types = items[i].types || [];
+              for (var j = 0; j < types.length; j++) {
+                if (types[j].indexOf("image/") !== 0) continue;
+                var blob = await items[i].getType(types[j]);
+                var dataUrl = await blobToDataUrl(blob);
+                if (dataUrl) {
+                  payload.dataUrl = dataUrl;
+                  payload.mime = types[j];
+                  payload.filename = "pasted-image." + (types[j].split("/")[1] || "png");
+                }
+                break;
+              }
+            }
+          }
+        } catch (e) { /* reply with dataUrl:null */ }
+        var f = document.querySelector("iframe");
+        if (f && f.contentWindow) f.contentWindow.postMessage(payload, origin);
       }
     })();
   </script>

@@ -39,7 +39,7 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingCancelled, dismissOnboardingPanel } from "./onboarding_panel";
+import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
 import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
@@ -884,18 +884,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
-        const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        // Post-onboarding: send navigate message to the existing panel to
-        // start a new session with "Begin onboarding" auto-sent. The navigate
-        // message fires event-driven (on app-ready), not on a blind timer.
-        // Also dismiss the onboarding splash panel once the app is ready.
+        // Post-onboarding: adopt the onboarding panel as the chat panel (zero
+        // tab switching — the splash overlay fades out revealing the chat).
         if (ChatPanel.consumePendingOnboardingGreeting()) {
-          let dismissed = false;
-          const dismiss = () => { if (!dismissed) { dismissed = true; dismissOnboardingPanel(); } };
-          ChatPanel.onAppReady(dismiss);
-          // Safety: force-dismiss after 10s if app-ready never fires.
-          setTimeout(dismiss, 10_000);
-          panel.postOnboardingGreeting();
+          const onboardPanel = getOnboardingPanel();
+          if (onboardPanel) {
+            releaseOnboardingPanel(); // detach from onboarding lifecycle
+            const panel = ChatPanel.adopt(onboardPanel, ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          } else {
+            // Fallback: no onboarding panel alive (user closed it manually)
+            const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          }
+        } else {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's

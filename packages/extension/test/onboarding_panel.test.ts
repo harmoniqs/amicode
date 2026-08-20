@@ -19,6 +19,8 @@ import {
   testConnection,
   onOnboardingComplete,
   dismissOnboardingPanel,
+  getOnboardingPanel,
+  releaseOnboardingPanel,
   _resetForTesting,
 } from "../src/onboarding_panel";
 
@@ -61,6 +63,20 @@ describe("OnboardingPanel — panel lifecycle (AC1, AC6, AC7)", () => {
     panel.dispose(); // simulate user closing the tab
     await vscode.commands.executeCommand("amicode.onboarding.open");
     expect(spy).toHaveBeenCalledTimes(2); // fresh panel after dispose
+    spy.mockRestore();
+  });
+
+  it("getOnboardingPanel returns the live panel, releaseOnboardingPanel detaches it", async () => {
+    expect(getOnboardingPanel()).toBeUndefined(); // no panel yet
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = getOnboardingPanel();
+    expect(panel).toBeDefined();
+    // Release detaches without disposing
+    releaseOnboardingPanel();
+    expect(getOnboardingPanel()).toBeUndefined();
+    // Panel is still alive (not disposed)
+    expect((panel as any).webview).toBeDefined();
     spy.mockRestore();
   });
 

@@ -337,6 +337,20 @@ export function dismissOnboardingPanel(): void {
   }
 }
 
+/** Return the live onboarding WebviewPanel (if one exists). Used by the
+ *  transition flow: the extension swaps its HTML and adopts it as the chat
+ *  panel — zero tab switching. */
+export function getOnboardingPanel(): vscode.WebviewPanel | undefined {
+  return currentPanel;
+}
+
+/** Detach the onboarding panel from this module's lifecycle tracking WITHOUT
+ *  disposing it. Called when ChatPanel.adopt() takes ownership. After this,
+ *  dismissOnboardingPanel() is a no-op and re-opening creates a fresh panel. */
+export function releaseOnboardingPanel(): void {
+  currentPanel = undefined;
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
 export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
