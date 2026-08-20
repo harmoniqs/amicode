@@ -714,17 +714,17 @@ function buildForm(): void {
       importPreview.style.display = "block";
       importPreview.innerHTML = `
         <div style="margin-bottom: 12px;">
-          <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 4px;">
-            All connected providers will be imported.
-          </p>
-          <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
-            Select which one to use as your default model:
+          <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
+            Choose which providers to import and pick your default:
           </p>
           ${providers
             .map(
               (p, i) => `
             <div class="import-provider-row" id="provider-row-${p.provider}">
-              <label>
+              <label style="flex: 0 0 auto;">
+                <input type="checkbox" name="import-include" value="${p.provider}" checked />
+              </label>
+              <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
                 <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} />
                 <span><strong>${providerNames[p.provider] ?? p.provider}</strong></span>
                 <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">from ${p.source}</span>
@@ -734,6 +734,9 @@ function buildForm(): void {
           `,
             )
             .join("")}
+          <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 8px; opacity: 0.8;">
+            ☑ = import into config &nbsp; ◉ = use as default model
+          </p>
         </div>
         <button id="confirm-import-btn" disabled
           style="width:100%; padding: 10px 16px; cursor: pointer;
@@ -752,6 +755,51 @@ function buildForm(): void {
         </p>
       `;
 
+      // Wire checkbox ↔ radio sync: unchecking a provider disables its radio
+      const allCheckboxes = document.querySelectorAll<HTMLInputElement>('input[name="import-include"]');
+      allCheckboxes.forEach((cb) => {
+        cb.addEventListener("change", () => {
+          const row = document.getElementById(`provider-row-${cb.value}`);
+          const radio = row?.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+          if (!cb.checked) {
+            if (row) row.style.opacity = "0.5";
+            if (radio) {
+              radio.disabled = true;
+              if (radio.checked) {
+                radio.checked = false;
+                // Move default to first still-checked provider
+                const firstIncluded = document.querySelector<HTMLInputElement>(
+                  'input[name="import-include"]:checked',
+                );
+                if (firstIncluded) {
+                  const firstRow = document.getElementById(`provider-row-${firstIncluded.value}`);
+                  const firstRadio = firstRow?.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+                  if (firstRadio) firstRadio.checked = true;
+                }
+              }
+            }
+          } else {
+            if (row) row.style.opacity = "1";
+            if (radio) radio.disabled = false;
+          }
+          updateConfirmState();
+        });
+      });
+
+      function updateConfirmState(): void {
+        const anyIncluded = document.querySelectorAll<HTMLInputElement>(
+          'input[name="import-include"]:checked',
+        ).length > 0;
+        const anyPassed = Array.from(document.querySelectorAll(".import-test-status"))
+          .some((el) => el.textContent === "✓");
+        const confirmBtn = document.getElementById("confirm-import-btn") as HTMLButtonElement | null;
+        if (confirmBtn) {
+          const enabled = anyIncluded && anyPassed;
+          confirmBtn.disabled = !enabled;
+          confirmBtn.style.opacity = enabled ? "1" : "0.5";
+        }
+      }
+
       // Wire confirm button
       const confirmBtn = document.getElementById("confirm-import-btn") as HTMLButtonElement;
       confirmBtn.addEventListener("click", () => {
@@ -760,9 +808,13 @@ function buildForm(): void {
           document.querySelector('input[name="import-default"]:checked') as HTMLInputElement
         )?.value;
         if (!selected) return;
+        // Collect which providers are checked for import
+        const included = Array.from(
+          document.querySelectorAll<HTMLInputElement>('input[name="import-include"]:checked'),
+        ).map((cb) => cb.value);
         vscodeApi.postMessage({
           type: "confirm-import",
-          payload: { activeProvider: selected },
+          payload: { activeProvider: selected, includedProviders: included },
         });
       });
 
@@ -789,30 +841,38 @@ function buildForm(): void {
           statusEl.textContent = "✗";
           statusEl.style.color = "var(--vscode-testing-iconFailed, #f14c4c)";
           statusEl.title = error ?? "Connection failed";
-          // Dim the row and disable the radio for failed providers
+          // Uncheck and dim failed providers
           if (rowEl) {
             rowEl.style.opacity = "0.5";
-            const radio = rowEl.querySelector('input[type="radio"]') as HTMLInputElement | null;
+            const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
+            const radio = rowEl.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+            if (checkbox) checkbox.checked = false;
             if (radio) {
               radio.disabled = true;
-              // If this was selected, move selection to first enabled radio
               if (radio.checked) {
                 radio.checked = false;
-                const firstEnabled = document.querySelector(
-                  'input[name="import-default"]:not(:disabled)',
-                ) as HTMLInputElement | null;
-                if (firstEnabled) firstEnabled.checked = true;
+                const firstIncluded = document.querySelector<HTMLInputElement>(
+                  'input[name="import-include"]:checked',
+                );
+                if (firstIncluded) {
+                  const firstRow = document.getElementById(`provider-row-${firstIncluded.value}`);
+                  const firstRadio = firstRow?.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+                  if (firstRadio) firstRadio.checked = true;
+                }
               }
             }
           }
         }
       }
 
-      // Enable confirm button when at least one provider passed
+      // Enable confirm button when at least one included provider passed
       const allStatuses = document.querySelectorAll(".import-test-status");
       const anyPassed = Array.from(allStatuses).some((el) => el.textContent === "✓");
+      const anyIncluded = document.querySelectorAll<HTMLInputElement>(
+        'input[name="import-include"]:checked',
+      ).length > 0;
       const confirmBtn = document.getElementById("confirm-import-btn") as HTMLButtonElement | null;
-      if (confirmBtn && anyPassed) {
+      if (confirmBtn && anyPassed && anyIncluded) {
         confirmBtn.disabled = false;
         confirmBtn.style.opacity = "1";
       }
