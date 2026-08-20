@@ -133,6 +133,9 @@ const profile: Verb = {
 // `stop`, `re-tier`) ENQUEUE SIGNAL FILES and never touch a record, because at most one
 // writer holds a record at a time (extension while `spooling`, harness after the handoff).
 // `sweep` is the one exception that writes, and only for an orphaned holder pid.
+// `digest` is the fourth RENDERING (unified-fleet spec slice 1): it reads the registry,
+// probes configured machines, and posts the distilled block through the amico-slack
+// contract — a projection, never a second state machine.
 //
 // Deliberate contrast with `ledger` above: the ledger is an append-only immutable JSONL
 // event log; this registry is mutable per-session TOML state. They share record I/O
@@ -140,8 +143,8 @@ const profile: Verb = {
 const fleet: Verb = {
   name: "fleet",
   summary:
-    "fleet registry: list/status read verbs, steer/stop/re-tier as signal enqueuers (never a record write), sweep with a pid-liveness guard",
-  generalizes: "the fleet view + in-chat /fleet + Amico's conversational fleet questions, over ~/.amico/ops/fleet",
+    "fleet registry: list/status read verbs, steer/stop/re-tier as signal enqueuers (never a record write), sweep with a pid-liveness guard, digest as the Slack projection",
+  generalizes: "the fleet view + in-chat /fleet + Amico's conversational fleet questions + the Slack digest, over ~/.amico/ops/fleet",
   slice: "fleet substrate (§9 step 2)",
   run: fleetVerb,
 };

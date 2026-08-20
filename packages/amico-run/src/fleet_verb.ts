@@ -33,6 +33,7 @@
 // `--json` is accepted on every subcommand and is a no-op: these verbs are JSON-out by
 // construction (amico.ts prints `VerbResult.json`), exactly like the other spine verbs.
 import { FRONTIER_MODELS, ladderRungs } from "./ledger_dispatch.js";
+import { fleetDigest } from "./fleet_digest.js";
 import {
   applyEvent,
   enqueueSignal,
@@ -409,7 +410,8 @@ export function fleetSweep(argv: string[]): VerbResult {
 const USAGE =
   "amico fleet list [--state <s>] [--root D]  |  amico fleet status --session <id>  |  " +
   'amico fleet steer --session <id> --message "<instruction>"  |  amico fleet stop --session <id> [--reason "<why>"]  |  ' +
-  "amico fleet re-tier --session <id> --model <provider/id> [--variant <v>]  |  amico fleet sweep [--dry-run]";
+  "amico fleet re-tier --session <id> --model <provider/id> [--variant <v>]  |  amico fleet sweep [--dry-run]  |  " +
+  "amico fleet digest [--post <channel>] [--machines a,b] [--jobs-line \"<t>\"] [--dry-run] [--root D]";
 
 /** The `fleet` verb body: route on the subcommand. Backs BOTH the CLI (amico.ts) and the
  *  MCP facade (mcp_serve.ts) — one impl, two transports. */
@@ -422,6 +424,7 @@ export function fleetVerb(argv: string[]): VerbResult {
   if (sub === "stop") return fleetStop(rest);
   if (sub === "re-tier") return fleetRetier(rest);
   if (sub === "sweep") return fleetSweep(rest);
+  if (sub === "digest") return fleetDigest(rest);
   return {
     json: { verb: "fleet", error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`, usage: USAGE },
     code: 64,
