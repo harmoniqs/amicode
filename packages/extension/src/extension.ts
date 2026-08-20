@@ -854,19 +854,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
-        const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        // Post-onboarding: create a session and arm it with "Begin onboarding"
-        // via the server API (bypasses the UI model gate), then navigate to it.
+        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        // Post-onboarding: open a NEW panel on /new-session and auto-send
+        // "Begin onboarding" via the navigate bridge (same pattern as fleet).
         if (ChatPanel.consumePendingOnboardingGreeting()) {
-          void armOnboardingSession(url, serverAuthHeaders, opencodeProject.projectDir).then((sessionID) => {
-            if (sessionID) {
-              // Navigate the app to the armed session
-              const path = `/session/${sessionID}`;
-              const envelope = { source: "amicode", kind: "navigate", path };
-              setTimeout(() => void panel.postMessage(envelope), 2000);
-              setTimeout(() => void panel.postMessage(envelope), 4000);
-            }
-          });
+          const draftUrl = new URL(url.href);
+          draftUrl.pathname = "/new-session";
+          draftUrl.search = "";
+          const onboardPanel = ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          onboardPanel.postOnboardingGreeting();
         }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
