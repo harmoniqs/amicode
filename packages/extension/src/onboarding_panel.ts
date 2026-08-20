@@ -367,10 +367,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             writeOnboardingConfig(payload);
             panel.dispose();
             fireOnboardingComplete();
-            // Restart server so it picks up the new provider config
+            // Restart server so it picks up the new provider config.
+            // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
-            // Open chat as fallback (in case no completion listener is wired)
-            void vscode.commands.executeCommand("amicode.openChat");
           } else if (msg.type === "cancel") {
             // User cancelled onboarding — close panel, re-open chat
             panel.dispose();
@@ -456,10 +455,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             testResults.clear();
             panel.dispose();
             fireOnboardingComplete();
-            // Restart server so it picks up the new provider config
+            // Restart server so it picks up the new provider config.
+            // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
-            // Open chat as fallback (in case no completion listener is wired)
-            void vscode.commands.executeCommand("amicode.openChat");
           }
         },
         null,

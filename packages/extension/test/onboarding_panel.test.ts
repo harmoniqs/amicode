@@ -494,6 +494,40 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
 
     spy.mockRestore();
   });
+
+  it("confirm-import restarts server but does NOT open chat directly (waits for ready)", async () => {
+    // Clear command execution history
+    (vscode.commands as { executed: string[] }).executed = [];
+
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: {
+        postMessage: ReturnType<typeof vi.fn>;
+        _simulateMessage: (msg: unknown) => void;
+      };
+    };
+
+    const postSpy = vi.fn().mockResolvedValue(true);
+    panel.webview.postMessage = postSpy;
+
+    // Trigger scan then confirm
+    panel.webview._simulateMessage({ type: "scan-credentials" });
+    await new Promise((r) => setTimeout(r, 50));
+    panel.webview._simulateMessage({
+      type: "confirm-import",
+      payload: { activeProvider: "anthropic", includedProviders: ["anthropic"] },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    // Should restart the server
+    expect(executed).toContain("amicode.restartServer");
+    // Should NOT open chat directly (that causes the fetch-failed error)
+    expect(executed).not.toContain("amicode.openChat");
+
+    spy.mockRestore();
+  });
 });
 
 describe("Webview HTML generation (AC2, AC9)", () => {
