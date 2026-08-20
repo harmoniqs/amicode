@@ -385,8 +385,8 @@ function splashHtml(): string {
     88%, 100% { transform: translateY(0) scale(1, 1); }
   }
   .splash-text {
-    margin-top: 24px; font-size: 14px;
-    color: var(--vscode-descriptionForeground, #999);
+    margin-top: 16px; font-size: 1.4rem;
+    color: var(--vscode-foreground, #ccc);
     font-family: var(--vscode-font-family, system-ui);
   }
 </style>
