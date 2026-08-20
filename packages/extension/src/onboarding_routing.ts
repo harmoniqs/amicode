@@ -49,23 +49,33 @@ export function resolveOnboardingAction(flags: OnboardingFlags): OnboardingActio
 // ─── Model-presence check ────────────────────────────────────────────────────
 
 /** Check if the opencode config has a model/provider configured.
- *  Reads the config file at the given path (default: ~/.config/opencode/opencode.json).
+ *  Reads the config file at the given path (default: ~/.config/opencode/opencode.json[c]).
  *  Returns true if there's at least one provider entry. */
 export function isModelConfigured(
-  configPath: string = defaultConfigPath(),
+  configPath?: string,
 ): boolean {
-  try {
-    if (!fs.existsSync(configPath)) return false;
-    const content = fs.readFileSync(configPath, "utf8");
-    // Strip single-line comments for JSONC tolerance
-    const stripped = content.replace(/^\s*\/\/.*$/gm, "");
-    const config = JSON.parse(stripped) as Record<string, unknown>;
-    const provider = config.provider;
-    if (!provider || typeof provider !== "object") return false;
-    return Object.keys(provider as object).length > 0;
-  } catch {
-    return false;
+  const paths = configPath
+    ? [configPath]
+    : [
+        path.join(os.homedir(), ".config", "opencode", "opencode.json"),
+        path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+      ];
+
+  for (const p of paths) {
+    try {
+      if (!fs.existsSync(p)) continue;
+      const content = fs.readFileSync(p, "utf8");
+      // Strip single-line comments for JSONC tolerance
+      const stripped = content.replace(/^\s*\/\/.*$/gm, "");
+      const config = JSON.parse(stripped) as Record<string, unknown>;
+      const provider = config.provider;
+      if (!provider || typeof provider !== "object") continue;
+      if (Object.keys(provider as object).length > 0) return true;
+    } catch {
+      continue;
+    }
   }
+  return false;
 }
 
 /** Also check secondary locations where env-based providers resolve:
@@ -170,6 +180,4 @@ export class OnboardingLauncher {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function defaultConfigPath(): string {
-  return path.join(os.homedir(), ".config", "opencode", "opencode.json");
-}
+// (defaultConfigPath removed — isModelConfigured checks both .json and .jsonc)

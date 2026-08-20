@@ -39,6 +39,8 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
+import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } from "./onboarding_panel";
+import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -345,9 +347,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-  // 1. UI surfaces
+   // 1. UI surfaces
   const trees = registerTrees(ctx);
   registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   ctx.subscriptions.push(
     // #47 session catalog: record the save (workspaceState + tree), then open
     // the card. Both prompts (demo replay, live promote) route through here.
@@ -833,9 +836,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
-      // Open the chat as soon as the server is up (amicode.chat.autoOpen,
-      // default on) — the chat IS the product's front door.
-      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+      // Onboarding gate: if no model is configured, open the Stage 0 webview
+      // instead of chat. The webview will fire onOnboardingComplete when done,
+      // which then opens chat.
+      if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        void vscode.commands.executeCommand("amicode.onboarding.open");
+        // Wire: when onboarding completes, auto-open chat
+        onOnboardingComplete(() => {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        });
+        // Wire: when onboarding is cancelled (X), open chat normally
+        onOnboardingCancelled(() => {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        });
+      } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        // Normal path: model configured → open chat directly
         ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
@@ -1724,6 +1739,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       }
     },
   });
+
+  // Redo Onboarding (developer tool): reset onboarding state and re-open the
+  // Stage 0 webview. For existing users, preserves current model config.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.redoOnboarding", async () => {
+      // Reset onboarding state files
+      const onboardDir = path.join(amicodeOpsDir(), "onboarding");
+      const eventsFile = path.join(onboardDir, "events.jsonl");
+      const stateFile = path.join(amicodeOpsDir(), "onboarding_state.json");
+      try { fs.unlinkSync(eventsFile); } catch { /* may not exist */ }
+      try { fs.unlinkSync(stateFile); } catch { /* may not exist */ }
+      try { fs.unlinkSync(path.join(os.homedir(), ".amico", "profile.json")); } catch { /* may not exist */ }
+      // Close the chat panel so the onboarding panel is visible
+      ChatPanel.disposeCurrent();
+      // Open the onboarding panel
+      void vscode.commands.executeCommand("amicode.onboarding.open");
+    }),
+  );
 
   opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; amicoRunBinDir=${amicoRunBinDir ?? "(none)"}`);
 }
