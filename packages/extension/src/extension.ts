@@ -88,6 +88,9 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
+/** Host-accessible URL for webview contexts — resolved via vscode.env.asExternalUri
+ *  to account for devcontainer port forwarding (container:43117 may forward to host:43118). */
+let opencodeExternalUrl: URL | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
@@ -829,22 +832,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push(sseClient);
 
-    serverManager.onReady((url) => {
+    serverManager.onReady(async (url) => {
       opencodeReadyUrl = url;
+      // Resolve the host-accessible URL for webview contexts: in a devcontainer,
+      // container port 43117 may be forwarded to a different host port. The webview
+      // iframe renders on the HOST, so it needs the forwarded URL.
+      const extUri = await vscode.env.asExternalUri(vscode.Uri.parse(url.toString()));
+      opencodeExternalUrl = new URL(extUri.toString());
+
       statusBar?.setServerReady(true);
-      sseClient?.connect(url);
+      sseClient?.connect(url); // SSE runs in-container — use container-internal URL
       // If the server restarted on a different port (ephemeral mode), the
       // existing panel's iframe is stale — dispose it so openOrReveal creates a
       // fresh one with the correct origin. If same port, push a notification so
       // the web app's SSE loop knows the server restarted (boot-ID detection
       // handles the rest).
-      if (ChatPanel.notifyServerUrlChanged(url)) {
+      if (ChatPanel.notifyServerUrlChanged(opencodeExternalUrl)) {
         ChatPanel.disposeCurrent();
       }
       // Open the chat as soon as the server is up (amicode.chat.autoOpen,
       // default on) — the chat IS the product's front door.
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        ChatPanel.openOrReveal(ctx, opencodeExternalUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
@@ -1329,12 +1338,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       });
       serverManager = freshManager;
       ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
-      freshManager.onReady((url) => {
+      freshManager.onReady(async (url) => {
         opencodeReadyUrl = url;
+        const extUri = await vscode.env.asExternalUri(vscode.Uri.parse(url.toString()));
+        opencodeExternalUrl = new URL(extUri.toString());
+
         statusBar?.setServerReady(true);
-        sseClient?.connect(url);
+        sseClient?.connect(url); // container-internal
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          ChatPanel.openOrReveal(ctx, opencodeExternalUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
         }
       });
       await freshManager.start();
@@ -1412,7 +1424,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // only as the fallback when no ready server exists to host the panel.
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.setCloudKey", () => {
-      const readyUrl = opencodeReadyUrl;
+      const readyUrl = opencodeExternalUrl;
       if (readyUrl) {
         ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir).postComputeConnect();
         return;
@@ -1428,7 +1440,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // opencodeReadyUrl, so a restart racing this handler would otherwise reach
       // openOrReveal as undefined (or reveal a panel bound to a stale server).
       const readyUrl = opencodeReadyUrl;
-      if (!readyUrl) {
+      const externalUrl = opencodeExternalUrl;
+      if (!readyUrl || !externalUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
         );
@@ -1444,7 +1457,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      ChatPanel.openOrReveal(ctx, externalUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     // Side-by-side sessions: ALWAYS a fresh editor tab (ViewColumn.Beside, so
     // it splits next to whatever is focused) pinned to the app's /new-session
@@ -1453,7 +1466,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // than a named warning.
     vscode.commands.registerCommand("amicode.newChat", async () => {
       const readyUrl = opencodeReadyUrl;
-      if (!readyUrl) {
+      const externalUrl = opencodeExternalUrl;
+      if (!readyUrl || !externalUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
         );
@@ -1464,7 +1478,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      const draftUrl = new URL(readyUrl.href);
+      const draftUrl = new URL(externalUrl.href);
       draftUrl.pathname = "/new-session";
       draftUrl.search = "";
       draftUrl.hash = "";
@@ -1475,7 +1489,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // other chat entries. The deck shares the one server with every ChatPanel.
     vscode.commands.registerCommand("amicode.chatDeck", async () => {
       const readyUrl = opencodeReadyUrl;
-      if (!readyUrl) {
+      const externalUrl = opencodeExternalUrl;
+      if (!readyUrl || !externalUrl) {
         vscode.window.showWarningMessage(
           "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
         );
@@ -1486,7 +1501,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      DeckPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      DeckPanel.openOrReveal(ctx, externalUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     // Report a Bug (amicode#250): the palette entry + the composer bug button's
     // bridge command share this one handler — the manager owns create/arm/open,
