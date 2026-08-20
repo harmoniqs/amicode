@@ -207,7 +207,7 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
 
-/** Create a session and arm it with "Begin onboarding" via the server API.
+/** Create a session and arm it with "Let's begin onboarding." via the server API.
  *  Bypasses the UI model gate (the server resolves its own default model).
  *  Returns the session ID on success, undefined on failure. */
 async function armOnboardingSession(
@@ -231,7 +231,7 @@ async function armOnboardingSession(
     const commandRes = await fetch(commandUrl.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ command: "Begin onboarding", arguments: "" }),
+      body: JSON.stringify({ command: "Let's begin onboarding.", arguments: "" }),
     });
     if (!commandRes.ok) return undefined;
     return id;

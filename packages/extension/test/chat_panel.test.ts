@@ -163,7 +163,7 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg).toBeDefined();
     expect(navigateMsg!.path).toContain("/new-session");
     expect(navigateMsg!.path).toContain("autoSend=1");
-    expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Begin onboarding"));
+    expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Let's begin onboarding."));
   });
 
   it("does NOT post navigate when postOnboardingGreeting was not called (even after app-ready)", async () => {
