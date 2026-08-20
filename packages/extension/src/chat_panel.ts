@@ -50,6 +50,8 @@ export class ChatPanel {
    *  to start a new session with the onboarding greeting auto-sent. Cleared
    *  after use. Set by the onboarding panel after config-success/confirm-import. */
   private static pendingOnboardingGreeting = false;
+  /** Callbacks fired when the app signals ready (app-ready message from iframe). */
+  private static appReadyCallbacks: Array<() => void> = [];
   private readonly disposables: vscode.Disposable[] = [];
 
   private constructor(
@@ -84,6 +86,14 @@ export class ChatPanel {
     const serverUrl = opencodeUrl.origin;
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
+        // app-ready: the SolidJS app has mounted and is rendering. Fire
+        // any registered callbacks (one-shot) and clear the list.
+        if (msg && msg.source === "amicode" && msg.kind === "app-ready") {
+          const cbs = ChatPanel.appReadyCallbacks.slice();
+          ChatPanel.appReadyCallbacks = [];
+          for (const cb of cbs) cb();
+          return;
+        }
         // iframe → extension bridge: the outer webview relay (renderHtml)
         // forwards the framed app's envelopes here; the shared handler owns the
         // strict allowlists (chat_bridge.ts, also used by the deck's panes).
@@ -119,15 +129,23 @@ export class ChatPanel {
   }
 
   /** Post a navigate message to open a new session with the onboarding
-   *  prompt auto-sent. Delays to give a freshly-created iframe time to mount.
-   *  The app's AmicodeNavigateBridge handles this. */
-  postOnboardingGreeting(): void {
+   *  prompt auto-sent. Waits for the app-ready signal before posting (the app
+   *  must be mounted to handle the navigate). Falls back to a timeout if
+   *  app-ready never fires. */
+  postOnboardingGreeting(timeoutMs = 10_000): void {
     const prompt = encodeURIComponent("Begin onboarding");
     const path = `/new-session?prompt=${prompt}&autoSend=1`;
     const envelope = { source: "amicode", kind: "navigate", path };
-    // Delay: iframe needs time to mount its listener
-    setTimeout(() => void this.panel.webview.postMessage(envelope), 2000);
-    setTimeout(() => void this.panel.webview.postMessage(envelope), 4000);
+    let sent = false;
+    const send = () => {
+      if (sent) return;
+      sent = true;
+      void this.panel.webview.postMessage(envelope);
+    };
+    ChatPanel.onAppReady(send);
+    // Fallback: if app-ready never fires (server hung, iframe broken),
+    // post after timeout so the user isn't stuck on the splash forever.
+    setTimeout(send, timeoutMs);
   }
 
   /** Post an arbitrary message to the webview (relayed to the iframe). */
@@ -150,6 +168,18 @@ export class ChatPanel {
   /** Clear the pending greeting flag (test cleanup / manual reset). */
   static clearPendingOnboardingGreeting(): void {
     ChatPanel.pendingOnboardingGreeting = false;
+  }
+
+  /** Register a one-shot callback for when the app signals ready.
+   *  All registered callbacks fire once on the first app-ready message,
+   *  then the list is cleared. */
+  static onAppReady(cb: () => void): void {
+    ChatPanel.appReadyCallbacks.push(cb);
+  }
+
+  /** Clear app-ready callbacks (test cleanup). */
+  static clearAppReadyCallbacks(): void {
+    ChatPanel.appReadyCallbacks = [];
   }
 
   /** Consume and clear the pending greeting flag. Returns true if it was set. */
@@ -309,7 +339,7 @@ export class ChatPanel {
             replyClipboardImage(d.nonce);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "app-ready")) {
             vscode.postMessage(d);
           }
           return;
