@@ -351,6 +351,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             writeOnboardingConfig(payload);
             panel.dispose();
             fireOnboardingComplete();
+            // Open chat as fallback (in case no completion listener is wired)
+            void vscode.commands.executeCommand("amicode.openChat");
           } else if (msg.type === "cancel") {
             // User cancelled onboarding — close panel, re-open chat
             panel.dispose();
@@ -429,6 +431,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             testResults.clear();
             panel.dispose();
             fireOnboardingComplete();
+            // Open chat as fallback (in case no completion listener is wired)
+            void vscode.commands.executeCommand("amicode.openChat");
           }
         },
         null,
