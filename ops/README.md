@@ -43,6 +43,38 @@ cd ~/.amico/ops/papers-digest/bin && shasum -a 256 amico.js > amico.js.sha256
 The sha sidecar is what an operator compares against to know what's deployed; the
 digest job never needs a restart (it execs the bundle each run).
 
+## Hunts: `hunt.sh` (#426)
+
+`hunt.sh` is the hardened hunt wrapper — it replaces the retired fire-and-forget
+dispatch (`ssh <host> 'cd … && nohup … > /tmp/<hunt>.log 2>&1 &'`). It bounds the
+command (`timeout -k`), ticks a heartbeat file, logs durably under
+`~/.amico/ops/hunts/<id>/`, and creates a **fleet record** (`hunt-<id>`) at launch
+so the hunt is tracked in the registry — status is `amico fleet list`, never
+ps-grep, and `amico fleet sweep` on the host adopts the record if the wrapper dies
+or the box reboots mid-hunt.
+
+```sh
+# retired:
+ssh erlich 'cd ~/qldpc-challenge && nohup ~/.local/bin/uv run python -u research/candidates/<hunt>.py > /tmp/<hunt>.log 2>&1 &'
+# now (bounded, heartbeated, durable, tracked — record hunt-<id>):
+ssh erlich '~/.amico/ops/hunt.sh --id <hunt> --bg --timeout 12h -- \
+  sh -c "cd ~/qldpc-challenge && ~/.local/bin/uv run python -u research/candidates/<hunt>.py"'
+# status / post-mortem (reads records, not ps):
+ssh erlich 'amico fleet list'          # or: amico fleet status --session hunt-<id>
+ssh erlich 'amico fleet sweep'         # adopts records whose holder pid is gone
+```
+
+Re-running a taken `--id` uniquifies (`<id>-2`, …) — one record per run. The host
+needs the `amico` CLI on PATH (or pass `--amico` / set `AMICO_BIN`). Deploy: on
+the mini `ops/install.sh` covers it; on erlich copy it once:
+
+```sh
+ssh erlich 'mkdir -p ~/.amico/ops' && scp ops/hunt.sh erlich:.amico/ops/hunt.sh
+```
+
+Hunt artifacts (`~/.amico/ops/hunts/<id>/{hunt.log,heartbeat}`) are runtime
+state — never overwritten by deploy, same as the state files below.
+
 ## Deploy
 
 From a checkout of this repo on the mini:
