@@ -17,6 +17,7 @@ import {
   defaultScanOptions,
   webviewSafeResults,
   writeBatchConfig,
+  disconnectProviders,
   isValidApiKey,
   type DetectedCredential,
 } from "./credential_scanner";
@@ -442,6 +443,12 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             );
             if (passedCredentials.length > 0) {
               writeBatchConfig(passedCredentials, payload.activeProvider);
+            }
+            // If user excluded 'opencode', disconnect it from the auth store.
+            // This is the only provider that needs file-level removal (it's a
+            // built-in integration, not in the connections seam).
+            if (!included.has("opencode") && heldCredentials.some((c) => c.provider === "opencode")) {
+              disconnectProviders(["opencode"]);
             }
             heldCredentials = [];
             testResults.clear();

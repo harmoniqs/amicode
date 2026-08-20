@@ -843,4 +843,30 @@ describe("disconnectProviders — removes credentials from opencode auth stores"
       }),
     ).not.toThrow();
   });
+
+  it("only removes the specified provider — others are preserved", () => {
+    const accountPath = writeJson(tmpDir, "account.json", {
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } },
+        acc2: { id: "acc2", serviceID: "opencode-go", credential: { type: "api", key: "sk-oc-go" } },
+        acc3: { id: "acc3", serviceID: "amazon-bedrock", credential: { type: "api", key: "aws-key" } },
+      },
+      active: { opencode: "acc1", "opencode-go": "acc2", "amazon-bedrock": "acc3" },
+    });
+
+    // Only disconnect opencode — bedrock must survive
+    disconnectProviders(["opencode"], { accountJsonPath: accountPath, authJsonPath: "/nonexistent" });
+
+    const result = JSON.parse(fs.readFileSync(accountPath, "utf8"));
+    // opencode AND opencode-go removed (alias)
+    expect(result.accounts.acc1).toBeUndefined();
+    expect(result.accounts.acc2).toBeUndefined();
+    expect(result.active.opencode).toBeUndefined();
+    expect(result.active["opencode-go"]).toBeUndefined();
+    // amazon-bedrock PRESERVED
+    expect(result.accounts.acc3).toBeDefined();
+    expect(result.accounts.acc3.serviceID).toBe("amazon-bedrock");
+    expect(result.active["amazon-bedrock"]).toBe("acc3");
+  });
 });
