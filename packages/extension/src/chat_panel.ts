@@ -119,9 +119,9 @@ export class ChatPanel {
   }
 
   /** Post a navigate message to open a new session with the onboarding
-   *  greeting auto-sent. Delays to give a freshly-created iframe time to mount.
+   *  prompt auto-sent. Delays to give a freshly-created iframe time to mount.
    *  The app's AmicodeNavigateBridge handles this. */
-  private postOnboardingGreeting(): void {
+  postOnboardingGreeting(): void {
     const prompt = encodeURIComponent("Begin onboarding");
     const path = `/new-session?prompt=${prompt}&autoSend=1`;
     const envelope = { source: "amicode", kind: "navigate", path };
@@ -145,6 +145,13 @@ export class ChatPanel {
   /** Clear the pending greeting flag (test cleanup / manual reset). */
   static clearPendingOnboardingGreeting(): void {
     ChatPanel.pendingOnboardingGreeting = false;
+  }
+
+  /** Consume and clear the pending greeting flag. Returns true if it was set. */
+  static consumePendingOnboardingGreeting(): boolean {
+    if (!ChatPanel.pendingOnboardingGreeting) return false;
+    ChatPanel.pendingOnboardingGreeting = false;
+    return true;
   }
 
   /** The primary panel if one is live (never creates) — the down lane's
@@ -212,17 +219,9 @@ export class ChatPanel {
   ): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
-      if (ChatPanel.pendingOnboardingGreeting) {
-        ChatPanel.pendingOnboardingGreeting = false;
-        ChatPanel.current.postOnboardingGreeting();
-      }
       return ChatPanel.current;
     }
     ChatPanel.current = ChatPanel.createPanel(ctx, vscode.ViewColumn.One, opencodeUrl, authToken, hideProjectDir);
-    if (ChatPanel.pendingOnboardingGreeting) {
-      ChatPanel.pendingOnboardingGreeting = false;
-      ChatPanel.current.postOnboardingGreeting();
-    }
     return ChatPanel.current;
   }
 
