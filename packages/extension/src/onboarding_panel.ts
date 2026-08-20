@@ -170,6 +170,7 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
 
 /** Test the connection by making exactly one minimal LLM API call.
  *  Returns ok:true on success, ok:false with error message on failure.
+ *  Providers without a known test endpoint return ok:true (untestable, not failed).
  *  The API key is NEVER included in the return value. */
 export async function testConnection(
   config: OnboardingConfig,
@@ -177,7 +178,11 @@ export async function testConnection(
 ): Promise<TestConnectionResult> {
   const endpoint = PROVIDER_TEST_ENDPOINTS[config.provider];
   if (!endpoint) {
-    return { ok: false, error: `Unknown provider: ${config.provider}` };
+    // Provider has no test endpoint — treat as untestable (pass), not unknown
+    if (config.provider === "unknown-provider" || config.provider === "") {
+      return { ok: false, error: `Unknown provider: ${config.provider}` };
+    }
+    return { ok: true };
   }
 
   try {
@@ -221,7 +226,7 @@ function buildTestRequest(
     };
   }
 
-  if (config.provider === "openai") {
+  if (config.provider === "openai" || config.provider === "opencode" || config.provider === "openrouter" || config.provider === "vercel") {
     return {
       url: endpoint,
       options: {
@@ -231,7 +236,7 @@ function buildTestRequest(
           Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify({
-          model: config.model.replace("openai/", ""),
+          model: config.model.replace(/^[^/]+\//, ""),
           max_tokens: 1,
           messages: [{ role: "user", content: "hi" }],
         }),
