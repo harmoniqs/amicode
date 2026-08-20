@@ -509,11 +509,9 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     // Panel should NOT have been disposed yet — it's showing the transition splash
     expect(disposeSpy).not.toHaveBeenCalled();
 
-    // Instead, the webview should have been told to show the transition state
-    const transitionMsg = postSpy.mock.calls
-      .map((c: unknown[]) => c[0])
-      .find((m: { type: string }) => m.type === "show-transition");
-    expect(transitionMsg).toBeDefined();
+    // Instead, the panel HTML should have been swapped to the splash
+    expect(panel.webview.html).toContain("Getting Amico ready");
+    expect(panel.webview.html).toContain("splash-mark");
 
     spy.mockRestore();
   });

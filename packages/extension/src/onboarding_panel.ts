@@ -351,6 +351,71 @@ export function releaseOnboardingPanel(): void {
   currentPanel = undefined;
 }
 
+/** Static splash HTML — the happy robot + "Getting Amico ready..." on a plain
+ *  background. Used as an immediate visual while the server restarts. The exact
+ *  same SVG + CSS appears in ChatPanel.renderTransitionHtml's overlay, so when
+ *  adopt() fires there's no visible flash (same pixels). */
+function splashHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<style>
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--vscode-editor-background); display: flex; flex-direction: column;
+         align-items: center; justify-content: center; }
+  .splash-mark {
+    width: 176px; height: 157px;
+    fill: var(--color-accent-ink, #fff676);
+    overflow: visible;
+  }
+  body.vscode-light .splash-mark,
+  body.vscode-high-contrast-light .splash-mark {
+    fill: var(--color-accent-ink, var(--vscode-foreground, #424242));
+  }
+  .splash-mark .mark-breathe {
+    transform-box: fill-box; transform-origin: 50% 100%;
+    animation: jump 2.0s ease-in-out infinite;
+  }
+  @keyframes jump {
+    0%, 40% { transform: translateY(0) scale(1, 1); }
+    46% { transform: translateY(0) scale(1.08, 0.92); }
+    58% { transform: translateY(-60px) scale(0.96, 1.05); }
+    70% { transform: translateY(0) scale(1.06, 0.94); }
+    80% { transform: translateY(-20px) scale(0.99, 1.02); }
+    88%, 100% { transform: translateY(0) scale(1, 1); }
+  }
+  .splash-text {
+    margin-top: 24px; font-size: 14px;
+    color: var(--vscode-descriptionForeground, #999);
+    font-family: var(--vscode-font-family, system-ui);
+  }
+</style>
+</head><body>
+  <svg class="splash-mark" viewBox="2 74 3596 3212" xmlns="http://www.w3.org/2000/svg">
+    <g class="mark-breathe">
+      <path fill-rule="evenodd" d="M2279.19,374.09v622.56h-958.38V374.09H202.07v2851.83h1118.74v-520.15h958.38v520.15h1118.74V374.09h-1118.74ZM3165.55,2523.71H478.91v-1338.38h2686.65v1338.38Z"/>
+      <polygon points="888.52 1864.8 754.93 1864.8 754.93 1727.36 888.55 1727.36 888.55 1864.77 1022.15 1864.77 1022.15 2002.21 888.52 2002.21 888.52 1864.8"/>
+      <polygon points="621.31 1589.92 754.9 1589.92 754.9 1452.48 888.52 1452.48 888.52 1589.92 754.93 1589.92 754.93 1727.36 621.31 1727.36 621.31 1589.92"/>
+      <polygon points="754.92 1452.48 888.51 1452.48 888.51 1315.04 1022.13 1315.04 1022.13 1452.48 888.54 1452.48 888.54 1589.92 754.92 1589.92 754.92 1452.48"/>
+      <rect x="1139.77" y="1647" width="133.62" height="286"/>
+      <rect x="1503.05" y="1647" width="133.62" height="286"/>
+      <rect x="1273.58" y="1510" width="229.47" height="137.44"/>
+      <rect x="1778.31" y="1450" width="107.11" height="692.38"/>
+      <rect x="2009.75" y="1647" width="133.62" height="286"/>
+      <rect x="2373.03" y="1647" width="133.62" height="286"/>
+      <rect x="2143.56" y="1510" width="229.47" height="137.44"/>
+      <rect x="1648.65" y="2256.8" width="349.19" height="137.44"/>
+      <rect x="1510.91" y="2119.73" width="138.82" height="138.82"/>
+      <rect x="1997.85" y="2117.98" width="138.82" height="138.82"/>
+      <polygon points="2769.41 1463.57 2903.01 1463.57 2903.01 1601.01 2769.39 1601.01 2769.39 1463.6 2635.79 1463.6 2635.79 1326.16 2769.41 1326.16 2769.41 1463.57"/>
+      <polygon points="3036.63 1738.45 2903.03 1738.45 2903.03 1875.89 2769.41 1875.89 2769.41 1738.45 2903.01 1738.45 2903.01 1601.01 3036.63 1601.01 3036.63 1738.45"/>
+      <polygon points="2903.02 1875.89 2769.43 1875.89 2769.43 2013.33 2635.81 2013.33 2635.81 1875.89 2769.4 1875.89 2769.4 1738.45 2903.02 1738.45 2903.02 1875.89"/>
+    </g>
+  </svg>
+  <div class="splash-text">Getting Amico ready...</div>
+</body></html>`;
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
 export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
@@ -388,8 +453,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
           } else if (msg.type === "config-success") {
             const payload = msg.payload as OnboardingConfig;
             writeOnboardingConfig(payload);
-            // Keep the panel alive as a transition splash (same as confirm-import)
-            void panel.webview.postMessage({ type: "show-transition" });
+            // Swap the panel HTML directly to the splash (same as confirm-import)
+            panel.webview.html = splashHtml();
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
@@ -478,9 +543,10 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             }
             heldCredentials = [];
             testResults.clear();
-            // Keep the panel alive as a transition splash — tell the webview to
-            // show the "Getting Amico ready..." state instead of disposing now.
-            void panel.webview.postMessage({ type: "show-transition" });
+            // Swap the panel HTML directly to the splash — no webview-side
+            // DOM manipulation, so there's no flash when adopt() fires later
+            // (adopt's overlay uses the exact same SVG + CSS).
+            panel.webview.html = splashHtml();
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
