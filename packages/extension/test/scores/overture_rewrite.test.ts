@@ -101,7 +101,7 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
 
   it("AC4: presents exactly three options for multi-select", () => {
     expect(md).toContain("General coding and software development");
-    expect(md).toContain("Research");
+    expect(md).toContain("Perform (automated) experiments and gain scientific insights");
     expect(md).toContain("Exploring");
   });
 
