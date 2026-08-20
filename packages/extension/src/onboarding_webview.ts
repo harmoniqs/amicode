@@ -306,6 +306,14 @@ function playWelcomeAnimation(): void {
       <p class="welcome-text" style="margin-top: 16px; font-size: 1.4rem; color: var(--vscode-foreground, #ccc);">
         Welcome to Amicode
       </p>
+      <button class="welcome-cta" style="margin-top: 40px; padding: 10px 32px;
+        font-family: var(--text-font, inherit); font-size: 14px; font-weight: 500;
+        background: var(--color-accent-fill, #fff676); color: var(--color-on-accent, #000);
+        border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+        border-radius: var(--border-radius, 4px);
+        cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 1s ease-in, filter 0.16s ease;">
+        Get Started
+      </button>
     </div>
   `;
 
@@ -318,19 +326,9 @@ function playWelcomeAnimation(): void {
 
   // Show "Get Started" button after text fades in, user clicks to proceed
   setTimeout(() => {
-    const btn = document.createElement("button");
-    btn.textContent = "Get Started";
-    btn.className = "welcome-cta";
-    btn.style.cssText = `
-      margin-top: 40px; padding: 10px 32px;
-      font-family: var(--text-font, inherit); font-size: 14px; font-weight: 500;
-      background: var(--color-accent-fill, #fff676);
-      color: var(--color-on-accent, #000);
-      border: var(--border-width, 1px) solid var(--color-on-accent, #000);
-      border-radius: var(--border-radius, 4px);
-      cursor: pointer; opacity: 0; transition: opacity 1s ease-in, filter 0.16s ease;
-    `;
-    logo.appendChild(btn);
+    const btn = logo.querySelector(".welcome-cta") as HTMLButtonElement;
+    if (!btn) return;
+    btn.style.visibility = "visible";
     requestAnimationFrame(() => { btn.style.opacity = "1"; });
 
     btn.addEventListener("click", () => {
