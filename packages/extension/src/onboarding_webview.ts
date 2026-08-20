@@ -714,13 +714,16 @@ function buildForm(): void {
       importPreview.style.display = "block";
       importPreview.innerHTML = `
         <div style="margin-bottom: 12px;">
-          <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
-            Select your default provider:
+          <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 4px;">
+            All connected providers will be imported.
+          </p>
+          <p style="font-size: 12px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
+            Select which one to use as your default model:
           </p>
           ${providers
             .map(
               (p, i) => `
-            <div class="import-provider-row">
+            <div class="import-provider-row" id="provider-row-${p.provider}">
               <label>
                 <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} />
                 <span><strong>${providerNames[p.provider] ?? p.provider}</strong></span>
@@ -744,6 +747,9 @@ function buildForm(): void {
           font-size: 13px; color: var(--vscode-textLink-foreground, #3794ff); text-decoration: none;">
           Back to manual setup
         </a>
+        <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 16px; text-align: center; opacity: 0.8;">
+          Only providers with detectable credentials are shown. You can add others manually later in settings or by editing <code>~/.config/opencode/opencode.json</code>.
+        </p>
       `;
 
       // Wire confirm button
@@ -774,6 +780,7 @@ function buildForm(): void {
     if (msg?.type === "test-status-update") {
       const { provider, ok, error } = msg.payload as { provider: string; ok: boolean; error?: string };
       const statusEl = document.getElementById(`test-status-${provider}`);
+      const rowEl = document.getElementById(`provider-row-${provider}`);
       if (statusEl) {
         if (ok) {
           statusEl.textContent = "✓";
@@ -782,10 +789,26 @@ function buildForm(): void {
           statusEl.textContent = "✗";
           statusEl.style.color = "var(--vscode-testing-iconFailed, #f14c4c)";
           statusEl.title = error ?? "Connection failed";
+          // Dim the row and disable the radio for failed providers
+          if (rowEl) {
+            rowEl.style.opacity = "0.5";
+            const radio = rowEl.querySelector('input[type="radio"]') as HTMLInputElement | null;
+            if (radio) {
+              radio.disabled = true;
+              // If this was selected, move selection to first enabled radio
+              if (radio.checked) {
+                radio.checked = false;
+                const firstEnabled = document.querySelector(
+                  'input[name="import-default"]:not(:disabled)',
+                ) as HTMLInputElement | null;
+                if (firstEnabled) firstEnabled.checked = true;
+              }
+            }
+          }
         }
       }
 
-      // Enable confirm button when at least one provider passed (AC12)
+      // Enable confirm button when at least one provider passed
       const allStatuses = document.querySelectorAll(".import-test-status");
       const anyPassed = Array.from(allStatuses).some((el) => el.textContent === "✓");
       const confirmBtn = document.getElementById("confirm-import-btn") as HTMLButtonElement | null;
