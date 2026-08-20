@@ -316,10 +316,9 @@ export function writeBatchConfig(
     // Start fresh if parsing fails
   }
 
-  // Build provider entries
-  const providerEntry: Record<string, unknown> = {
-    ...(existing.provider as Record<string, unknown> ?? {}),
-  };
+  // Build provider entries — replaces the entire provider section
+  // (on redo, user's selection is the canonical set; old entries don't persist)
+  const providerEntry: Record<string, unknown> = {};
 
   for (const cred of credentials) {
     // Skip credentials with invalid/placeholder keys (#455)

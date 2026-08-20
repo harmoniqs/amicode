@@ -718,7 +718,7 @@ describe("writeOnboardingConfig — placeholder key rejection (#455 AC5)", () =>
   });
 });
 
-describe("writeBatchConfig — preserves existing providers via merge (#455 AC6)", () => {
+describe("writeBatchConfig — replaces provider section (redo overwrites)", () => {
   let tmpDir: string;
 
   beforeEach(() => {
@@ -728,25 +728,28 @@ describe("writeBatchConfig — preserves existing providers via merge (#455 AC6)
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("preserves existing amazon-bedrock entry when writing new providers", async () => {
+  it("replaces existing providers with only the selected ones", async () => {
     const { writeBatchConfig } = await import("../src/credential_scanner");
     const credentials: DetectedCredential[] = [
       { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
     ];
     const configPath = path.join(tmpDir, "opencode.json");
 
-    // Pre-populate with existing bedrock config (as if provisioned via cloud_key flow)
+    // Pre-populate with existing bedrock config (as if from a previous onboarding)
     fs.writeFileSync(configPath, JSON.stringify({
       provider: { "amazon-bedrock": { options: { apiKey: "ABSK-service-credential-xyz" } } },
+      permission: { bash: "allow" },
     }));
 
     writeBatchConfig(credentials, "openai", configPath);
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    // Bedrock preserved from existing config via merge
-    expect(written.provider["amazon-bedrock"]).toBeDefined();
-    expect(written.provider["amazon-bedrock"].options.apiKey).toBe("ABSK-service-credential-xyz");
-    // User-selected provider also present
+    // Old provider NOT preserved — user didn't select it this time
+    expect(written.provider["amazon-bedrock"]).toBeUndefined();
+    // Only the user-selected provider is present
     expect(written.provider.openai).toBeDefined();
+    expect(written.provider.openai.options.apiKey).toBe("sk-openai-real-key-12345");
+    // Non-provider settings are still preserved
+    expect(written.permission).toEqual({ bash: "allow" });
   });
 });
