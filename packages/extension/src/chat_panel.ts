@@ -516,10 +516,8 @@ export class ChatPanel {
         <rect x="2009.75" y="1451.19" width="133.62" height="286"/>
         <rect x="2373.03" y="1451.19" width="133.62" height="286"/>
         <rect x="2143.56" y="1313.76" width="229.47" height="137.44"/>
-        <!-- Gleeful open mouth (pixelated U shape) -->
-        <rect x="1430" y="2080" width="133" height="280"/>
-        <rect x="2090" y="2080" width="133" height="280"/>
-        <rect x="1563" y="2230" width="527" height="130"/>
+        <!-- Gleeful open grin (wide bottom bar, no corners) -->
+        <rect x="1430" y="2150" width="793" height="130"/>
         <!-- Right caret > -->
         <polygon points="2769.41 1463.57 2903.01 1463.57 2903.01 1601.01 2769.39 1601.01 2769.39 1463.6 2635.79 1463.6 2635.79 1326.16 2769.41 1326.16 2769.41 1463.57"/>
         <polygon points="3036.63 1738.45 2903.03 1738.45 2903.03 1875.89 2769.41 1875.89 2769.41 1738.45 2903.01 1738.45 2903.01 1601.01 3036.63 1601.01 3036.63 1738.45"/>
