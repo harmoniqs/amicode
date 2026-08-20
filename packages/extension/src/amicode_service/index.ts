@@ -31,6 +31,18 @@ import { libraryBody, saveLibraryFile } from "./library";
 import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry } from "./widgets";
 import { dashboardResponse, saveDashboardResponse } from "./dashboard";
 import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
+import { createProject, listProjects } from "./project";
+import {
+  addCustomConnectionResponse,
+  catalogResponse,
+  chooseProjectResponse,
+  disconnectResponse,
+  revalidateResponse,
+  removeCustomConnectionResponse,
+  startAuthResponse,
+  statusResponse,
+  submitCredentialResponse,
+} from "./connections";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -140,6 +152,48 @@ export function registerWidgetRoutes(server: AmicodeServiceServer): AmicodeServi
   return server;
 }
 
+export function registerProjectRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("POST", "/amicode/project", ({ body }) => ({ body: createProject(body) }));
+
+  server.add("GET", "/amicode/projects", () => ({ body: listProjects() }));
+
+  return server;
+}
+
+export function registerConnectionRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/connections", () => ({ body: statusResponse() }));
+
+  server.add("POST", "/amicode/connections/credential", async ({ body }) => ({
+    body: await submitCredentialResponse(body),
+  }));
+
+  server.add("POST", "/amicode/connections/disconnect", ({ body }) => ({ body: disconnectResponse(body) }));
+
+  server.add("POST", "/amicode/connections/revalidate", async ({ body }) => ({
+    body: await revalidateResponse(body),
+  }));
+
+  server.add("POST", "/amicode/connections/choose-project", async ({ body }) => ({
+    body: await chooseProjectResponse(body),
+  }));
+
+  server.add("POST", "/amicode/connections/auth", async ({ body }) => ({
+    body: await startAuthResponse(body),
+  }));
+
+  server.add("GET", "/amicode/connections/catalog", () => ({ body: catalogResponse() }));
+
+  server.add("POST", "/amicode/connections/add-custom", async ({ body }) => ({
+    body: await addCustomConnectionResponse(body),
+  }));
+
+  server.add("POST", "/amicode/connections/remove", ({ body }) => ({
+    body: removeCustomConnectionResponse(body),
+  }));
+
+  return server;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process. */
 export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
@@ -149,5 +203,7 @@ export function createAmicodeService(opts: { password?: string } = {}): AmicodeS
   registerProblemRoutes(server);
   registerLibraryRoutes(server);
   registerWidgetRoutes(server);
+  registerProjectRoutes(server);
+  registerConnectionRoutes(server);
   return server;
 }

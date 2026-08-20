@@ -314,6 +314,31 @@ export function seedAmicodeSandbox(dir) {
     views: { home: "grid" },
   });
 
+  // --- connections (credentials + status cache + custom registry) -------------
+  // company-compute + slack CONNECTED (credential file present, cache entry
+  // fresh); credential mtimes pinned to validated_at so staleness reads false
+  // (the 5s mtime slack). Tokens are inert seed values — no probe runs.
+  writeJson(join(amico, "cloud.json"), { base_url: "https://solve.example.internal", token: "tok-cc-seed" });
+  writeJson(join(amico, "slack.json"), { token: "xoxb-seed-token" });
+  utimesSync(join(amico, "cloud.json"), new Date("2026-08-10T00:00:00Z"), new Date("2026-08-10T00:00:00Z"));
+  utimesSync(join(amico, "slack.json"), new Date("2026-08-10T00:00:00Z"), new Date("2026-08-10T00:00:00Z"));
+  writeJson(join(amico, "connections.json"), {
+    "company-compute": {
+      state: "connected",
+      identity: "aaron",
+      entitlements: ["hpc"],
+      validated_at: "2026-08-10T00:00:00Z",
+    },
+    slack: { state: "connected", identity: "aaron@example", validated_at: "2026-08-10T00:00:00Z" },
+  });
+  // one custom connection (the remove-fixture target)
+  writeJson(join(dir, "custom-connections.json"), [
+    { id: "custom-seed1", name: "Lab QPU", token: "tok-qpu", url: "https://qpu.example" },
+  ]);
+
+  // --- projects (defaultParentDir is HOME-based — HOME rides the env overlay) --
+  mkdirSync(join(dir, "AmicodeProjects", "prior-project"), { recursive: true });
+
   // --- stub PATH: `amico` exists (fixed output → deterministic approve fixture),
   //     `amico-vault` does NOT (forces the CLI-less scanMounts path on both
   //     sides, so fixtures never depend on a real CLI being installed). ----------
@@ -346,6 +371,16 @@ export function seedAmicodeSandbox(dir) {
       AMICODE_LIBRARY_DIR: libraryDir,
       AMICODE_WIDGETS_DIR: widgetsDir,
       AMICODE_DASHBOARD_FILE: join(amico, "dashboard.json"),
+      AMICODE_CONNECTIONS_FILE: join(amico, "connections.json"),
+      AMICO_CUSTOM_CONNECTIONS_FILE: join(dir, "custom-connections.json"),
+      AMICO_CLOUD_FILE: join(amico, "cloud.json"),
+      AMICO_SLACK_FILE: join(amico, "slack.json"),
+      AMICO_PASQAL_FILE: join(amico, "pasqal.json"),
+      AMICO_GITHUB_FILE: join(amico, "github.json"),
+      AMICO_LINEAR_FILE: join(amico, "linear.json"),
+      AMICO_GOOGLE_FILE: join(amico, "google.json"),
+      AMICO_GOOGLE_DRIVE_FILE: join(amico, "google-drive.json"),
+      HOME: dir, // the projects default parent + CLI candidate paths are HOME-based
       PATH: stubbin,
     },
   };

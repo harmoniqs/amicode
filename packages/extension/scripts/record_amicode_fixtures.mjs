@@ -190,6 +190,97 @@ const REQUESTS = [
     body: { widget: "not-a-list" },
     name: "dashboard save — bad_body refusal",
   },
+  // ── connections + projects (slice 6) — network-free shapes only: status
+  //    reads, fs-only mutations, and pre-probe refusals. Live-provider probes
+  //    (real Slack/GitHub/Google/Linear endpoints) are deliberately NOT
+  //    golden-tested — they're covered by the fork's unit suites with
+  //    injectable fetch, ported with the module.
+  { method: "GET", path: "/amicode/connections", name: "connections — seeded connected + needs-key states" },
+  { method: "GET", path: "/amicode/connections/catalog", name: "connections catalog — configured filtered out" },
+  { method: "POST", path: "/amicode/connections/credential", body: {}, name: "credential submit — empty body refusal" },
+  {
+    method: "POST",
+    path: "/amicode/connections/credential",
+    body: { id: "bogus-connector", token: "x" },
+    name: "credential submit — unknown_connection",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/credential",
+    body: { id: "company-compute", base_url: "ftp://not-http", token: "t" },
+    name: "credential submit — non-http base_url refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/credential",
+    body: { id: "slack", token: "  " },
+    name: "credential submit — empty token refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/disconnect",
+    body: { id: "slack" },
+    name: "disconnect — clears seeded slack credential",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/disconnect",
+    body: { id: "no-such-connector" },
+    name: "disconnect — unknown id refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/revalidate",
+    body: { id: "github" },
+    name: "revalidate — no credential → needs-key (pre-probe)",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/revalidate",
+    body: { id: "githubx" },
+    name: "revalidate — unknown id refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/choose-project",
+    body: { id: "pasqal-cloud", project_id: "p1" },
+    name: "choose-project — no pending selection",
+  },
+  // NOTE — POST /amicode/connections/auth is deliberately NOT golden-tested:
+  // the route exists in the fork's current source but post-dates the vendored
+  // pin (v1.18.10-amicode.11 serves the SPA catch-all for it). The port
+  // implements it from source; its refusal shapes are unit-tested in
+  // amicode_service_connections.test.ts, and it joins the golden arc at the
+  // next pin bump.
+  {
+    method: "POST",
+    path: "/amicode/connections/add-custom",
+    body: { name: "half-filled" },
+    name: "add-custom — missing token refusal",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/remove",
+    body: { id: "custom-seed1" },
+    name: "remove — custom connection removed",
+  },
+  {
+    method: "POST",
+    path: "/amicode/connections/remove",
+    body: { id: "custom-gone" },
+    name: "remove — unknown custom id refusal",
+  },
+  { method: "GET", path: "/amicode/connections", name: "connections — post-disconnect state" },
+  { method: "POST", path: "/amicode/project", body: { name: "My New Project" }, name: "project create — mkdir (git absent, best-effort)" },
+  { method: "POST", path: "/amicode/project", body: { name: "My New Project" }, name: "project create — collision" },
+  { method: "POST", path: "/amicode/project", body: { name: "   " }, name: "project create — empty-name refusal" },
+  {
+    method: "POST",
+    path: "/amicode/project",
+    body: { name: "Ok", parentDir: "relative/path" },
+    name: "project create — non-absolute parent refusal",
+  },
+  { method: "GET", path: "/amicode/projects", name: "projects list — prior + created" },
 ];
 
 async function main() {
