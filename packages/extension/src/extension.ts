@@ -207,6 +207,39 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
 
+/** Create a session and arm it with "Begin onboarding" via the server API.
+ *  Bypasses the UI model gate (the server resolves its own default model).
+ *  Returns the session ID on success, undefined on failure. */
+async function armOnboardingSession(
+  serverUrl: URL,
+  authHeaders: Record<string, string>,
+  projectDir?: string,
+): Promise<string | undefined> {
+  try {
+    const collectionUrl = new URL("/session", serverUrl);
+    if (projectDir) collectionUrl.searchParams.set("directory", projectDir);
+    const createRes = await fetch(collectionUrl.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ title: "Onboarding" }),
+    });
+    if (!createRes.ok) return undefined;
+    const { id } = (await createRes.json()) as { id?: string };
+    if (!id) return undefined;
+
+    const commandUrl = new URL(`/session/${id}/command`, serverUrl);
+    const commandRes = await fetch(commandUrl.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ command: "Begin onboarding", arguments: "" }),
+    });
+    if (!commandRes.ok) return undefined;
+    return id;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -821,7 +854,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
-        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        // Post-onboarding: create a session and arm it with "Begin onboarding"
+        // via the server API (bypasses the UI model gate), then navigate to it.
+        if (ChatPanel.consumePendingOnboardingGreeting()) {
+          void armOnboardingSession(url, serverAuthHeaders, opencodeProject.projectDir).then((sessionID) => {
+            if (sessionID) {
+              // Navigate the app to the armed session
+              panel.postOnboardingGreeting();
+            }
+          }).catch(() => {
+            // Fallback: just navigate with prompt (may hit model gate)
+            panel.postOnboardingGreeting();
+          });
+        }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the

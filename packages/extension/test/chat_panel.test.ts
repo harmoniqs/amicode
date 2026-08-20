@@ -135,16 +135,16 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     restore = cap.restore;
     created = cap.created;
 
-    // Signal that onboarding just completed
-    ChatPanel.setPendingOnboardingGreeting(true);
-
-    // Open the panel (simulates what happens after server restart)
-    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // Open the panel and explicitly post the greeting (extension.ts does this after arming)
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
 
     // Spy on postMessage
     const messages: unknown[] = [];
-    const panel = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
-    panel.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Call postOnboardingGreeting (what extension.ts does after armOnboardingSession)
+    panel.postOnboardingGreeting();
 
     // Give the delayed postMessage time to fire
     await new Promise((r) => setTimeout(r, 2200));
@@ -160,12 +160,12 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Begin onboarding"));
   });
 
-  it("does NOT post greeting when onboarding flag is not set", async () => {
+  it("does NOT post greeting when postOnboardingGreeting is not called", async () => {
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
 
-    // No pending greeting flag
+    // Open panel without calling postOnboardingGreeting
     ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
 
     const messages: unknown[] = [];
@@ -181,37 +181,9 @@ describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
     expect(navigateMsg).toBeUndefined();
   });
 
-  it("clears the greeting flag after posting (one-shot)", async () => {
-    const cap = capturePanel();
-    restore = cap.restore;
-    created = cap.created;
-
+  it("consumePendingOnboardingGreeting returns true once then false", () => {
     ChatPanel.setPendingOnboardingGreeting(true);
-    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
-
-    // Wait for the greeting to fire
-    await new Promise((r) => setTimeout(r, 2200));
-
-    // Dispose and re-create — second panel should NOT get the greeting
-    for (const p of created) p.dispose();
-    created = [];
-
-    const cap2 = capturePanel();
-    restore = cap2.restore;
-    created = cap2.created;
-
-    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
-
-    const messages2: unknown[] = [];
-    const panel2 = cap2.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
-    panel2.webview.postMessage = (m: unknown) => { messages2.push(m); return Promise.resolve(true); };
-
-    await new Promise((r) => setTimeout(r, 2200));
-
-    const navigateMsg2 = messages2.find(
-      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
-    );
-
-    expect(navigateMsg2).toBeUndefined();
+    expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(true);
+    expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(false);
   });
 });
