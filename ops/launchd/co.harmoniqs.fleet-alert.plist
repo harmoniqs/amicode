@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>co.harmoniqs.fleet-alert</string>
+  <key>ProgramArguments</key><array><string>/bin/bash</string><string>/Users/aaron/.amico/ops/fleet-alert.sh</string></array>
+  <key>StartInterval</key><integer>900</integer>
+  <key>StandardOutPath</key><string>/Users/aaron/.amico/ops/fleet-alert.launchd.out</string>
+  <key>StandardErrorPath</key><string>/Users/aaron/.amico/ops/fleet-alert.launchd.err</string>
+</dict></plist>
