@@ -39,7 +39,7 @@ import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runL
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled, dismissOnboardingPanel } from "./onboarding_panel";
+import { registerOnboardingPanel, onOnboardingCancelled, dismissOnboardingPanel } from "./onboarding_panel";
 import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
