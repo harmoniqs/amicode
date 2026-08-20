@@ -96,31 +96,10 @@ function playWelcomeAnimation(): void {
          entrance and snap open at 0.90s. */
       .amico-mark .eye-lid { opacity: 0; }
 
-      /* 0.00s — Amico fades in and drops onto his feet, bouncing twice before
-         he settles. Volume is roughly conserved: he widens as he flattens.
-         Per-keyframe easing does the real work — falls accelerate, rises
-         decelerate; a single curve across the whole thing reads as floaty. */
+      /* 0.00s — Amico fades in at constant size. No drop, no bounce,
+         no scale — just appears. The button fades in after. */
       @keyframes amico-enter {
-        0% {
-          opacity: 0; transform: translateY(-260px) scale(0.92, 1.10);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
-        25% {
-          opacity: 1; transform: translateY(0) scale(1.14, 0.86);
-          animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
-        }
-        45% {
-          transform: translateY(-190px) scale(0.96, 1.06);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
-        65% {
-          transform: translateY(0) scale(1.08, 0.93);
-          animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
-        }
-        82% {
-          transform: translateY(-70px) scale(0.99, 1.02);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
+        0% { opacity: 0; }
         100% { opacity: 1; transform: translateY(0) scale(1, 1); }
       }
 
@@ -237,8 +216,8 @@ function playWelcomeAnimation(): void {
       }
 
       @keyframes amico-rise {
-        from { opacity: 0; transform: translateY(8px); }
-        to   { opacity: 1; transform: translateY(0); }
+        from { opacity: 0; }
+        to   { opacity: 1; }
       }
       @keyframes amico-fade-in {
         from { opacity: 0; }
@@ -349,7 +328,7 @@ function playWelcomeAnimation(): void {
       color: var(--color-on-accent, #000);
       border: var(--border-width, 1px) solid var(--color-on-accent, #000);
       border-radius: var(--border-radius, 4px);
-      cursor: pointer; opacity: 0; transition: opacity 0.5s ease-in, filter 0.16s ease;
+      cursor: pointer; opacity: 0; transition: opacity 1s ease-in, filter 0.16s ease;
     `;
     logo.appendChild(btn);
     requestAnimationFrame(() => { btn.style.opacity = "1"; });
@@ -923,30 +902,53 @@ window.addEventListener("message", (event) => {
     animationEl.style.opacity = "1";
     animationEl.style.transition = "none";
 
-    // Swap the face to happy expression: replace square eyes with ∩ arcs + add grin
+    // Swap the face to happy expression: remove bottom eye bars + add pixelated open grin
     const svg = animationEl.querySelector(".amico-mark");
     if (svg) {
-      // Remove existing eyes
+      // Remove the bottom bar from each eye (makes ∩ shape = happy closed eyes)
       const leftEye = svg.querySelector(".left-eye");
       const rightEye = svg.querySelector(".right-eye");
-      const divider = svg.querySelector(".divider");
-      if (leftEye) leftEye.remove();
-      if (rightEye) rightEye.remove();
+      if (leftEye) {
+        // The 4th rect in eye-ring is the bottom bar (y ≈ 1870)
+        const rects = leftEye.querySelectorAll(".eye-ring rect");
+        if (rects.length >= 4) rects[3].remove();
+        // Remove the lid too (not needed for happy eyes)
+        const lid = leftEye.querySelector(".eye-lid");
+        if (lid) lid.remove();
+      }
+      if (rightEye) {
+        const rects = rightEye.querySelectorAll(".eye-ring rect");
+        if (rects.length >= 4) rects[3].remove();
+        const lid = rightEye.querySelector(".eye-lid");
+        if (lid) lid.remove();
+      }
+      // Stop eye animations (happy eyes don't blink)
+      if (leftEye) {
+        const ring = leftEye.querySelector(".eye-ring") as HTMLElement;
+        if (ring) ring.style.animation = "none";
+      }
+      if (rightEye) {
+        const ring = rightEye.querySelector(".eye-ring") as HTMLElement;
+        if (ring) ring.style.animation = "none";
+      }
 
-      // Find the inner-most animated group to append to
+      // Find the inner-most animated group to append the mouth
       const enterGroup = svg.querySelector(".mark-enter") || svg.querySelector(".mark-breathe");
       if (enterGroup) {
-        // Add happy eyes (∩ shapes) and grin
+        // Add pixelated U-shaped open mouth (gleeful grin)
         const ns = "http://www.w3.org/2000/svg";
-        const leftHappy = document.createElementNS(ns, "path");
-        leftHappy.setAttribute("d", "M1160,1750 C1160,1350 1620,1350 1620,1750 L1490,1750 C1490,1500 1290,1500 1290,1750 Z");
-        const rightHappy = document.createElementNS(ns, "path");
-        rightHappy.setAttribute("d", "M2030,1750 C2030,1350 2490,1350 2490,1750 L2360,1750 C2360,1500 2160,1500 2160,1750 Z");
-        const grin = document.createElementNS(ns, "path");
-        grin.setAttribute("d", "M1350,2100 C1500,2380 2100,2380 2250,2100 L2130,2100 C2020,2280 1580,2280 1470,2100 Z");
-        enterGroup.appendChild(leftHappy);
-        enterGroup.appendChild(rightHappy);
-        enterGroup.appendChild(grin);
+        const mouthL = document.createElementNS(ns, "rect");
+        mouthL.setAttribute("x", "1430"); mouthL.setAttribute("y", "2080");
+        mouthL.setAttribute("width", "133"); mouthL.setAttribute("height", "280");
+        const mouthR = document.createElementNS(ns, "rect");
+        mouthR.setAttribute("x", "2090"); mouthR.setAttribute("y", "2080");
+        mouthR.setAttribute("width", "133"); mouthR.setAttribute("height", "280");
+        const mouthBottom = document.createElementNS(ns, "rect");
+        mouthBottom.setAttribute("x", "1563"); mouthBottom.setAttribute("y", "2230");
+        mouthBottom.setAttribute("width", "527"); mouthBottom.setAttribute("height", "130");
+        enterGroup.appendChild(mouthL);
+        enterGroup.appendChild(mouthR);
+        enterGroup.appendChild(mouthBottom);
       }
 
       // Switch from idle animations to excited jump
