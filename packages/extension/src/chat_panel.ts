@@ -475,12 +475,16 @@ export class ChatPanel {
     }
     .splash-mark {
       width: 120px; height: 107px;
-      fill: var(--vscode-foreground, #ccc);
+      fill: var(--color-accent-ink, #fff676);
       overflow: visible;
+    }
+    body.vscode-light .splash-mark,
+    body.vscode-high-contrast-light .splash-mark {
+      fill: var(--color-accent-ink, var(--vscode-foreground, #424242));
     }
     .splash-mark .mark-breathe {
       transform-box: fill-box; transform-origin: 50% 100%;
-      animation: breathe 4.5s ease-in-out infinite;
+      animation: jump 2.0s ease-in-out infinite;
     }
     .splash-mark .eye-ring {
       transform-box: fill-box; transform-origin: center;
@@ -490,9 +494,13 @@ export class ChatPanel {
       transform-box: fill-box; transform-origin: center;
       opacity: 0;
     }
-    @keyframes breathe {
-      0%, 100% { transform: scale(1, 1); }
-      50% { transform: scale(0.992, 1.014); }
+    @keyframes jump {
+      0%, 40% { transform: translateY(0) scale(1, 1); }
+      46% { transform: translateY(0) scale(1.08, 0.92); }
+      58% { transform: translateY(-60px) scale(0.96, 1.05); }
+      70% { transform: translateY(0) scale(1.06, 0.94); }
+      80% { transform: translateY(-20px) scale(0.99, 1.02); }
+      88%, 100% { transform: translateY(0) scale(1, 1); }
     }
     @keyframes blink {
       0%, 30% { transform: scaleY(1); }
