@@ -44,7 +44,7 @@
 //         §5.1 rule 2 refuses a launch needing a bound the warrant omits — so a
 //         helpfully-filled default would silently widen the warrant.
 import { readFileSync } from "node:fs";
-import { appendRecord, type ApprovalRecord, type LedgerRecord, type WarrantBounds } from "./ledger.js";
+import { appendRecord, gpuTotals, type ApprovalRecord, type LedgerRecord, type WarrantBounds } from "./ledger.js";
 import { bucketN, bucketT, queryDefaults, type QueryKey } from "./ledger_query.js";
 import { dispatchTable, type DispatchKey } from "./ledger_dispatch.js";
 import type { VerbResult } from "./verbs.js";
@@ -68,6 +68,21 @@ function readStanza(argv: string[]): string | undefined {
 }
 
 // ── append ────────────────────────────────────────────────────────────────────
+export function ledgerGpu(_argv: string[]): VerbResult {
+  // #425: GPU spend totals over receipt rows — the warrant fold's view.
+  const t = gpuTotals();
+  const hours = t.gpu_seconds / 3600;
+  const lines = [
+    `receipts      ${t.receipts}`,
+    `gpu_seconds   ${t.gpu_seconds}  (${hours.toFixed(2)} h)`,
+    `cost_usd      ${t.cost_usd}`,
+  ];
+  for (const [sku, b] of Object.entries(t.by_sku))
+    lines.push(`  ${sku}  ${(b.gpu_seconds ?? 0)}s${b.cost_usd !== undefined ? ` · $${b.cost_usd}` : ""}`);
+  for (const [st, n] of Object.entries(t.by_status)) lines.push(`  status ${st}: ${n}`);
+  return { json: { verb: "ledger", subcommand: "gpu", totals: t, table: lines.join("\n") }, code: 0 };
+}
+
 export function ledgerAppend(argv: string[]): VerbResult {
   const fail = (error: string): VerbResult => ({ json: { verb: "ledger", subcommand: "append", error }, code: 64 });
 
@@ -241,6 +256,7 @@ export function ledgerApprove(argv: string[]): VerbResult {
 export function ledgerVerb(argv: string[]): VerbResult {
   const sub = argv[0];
   const rest = argv.slice(1);
+  if (sub === "gpu") return ledgerGpu(rest);
   if (sub === "append") return ledgerAppend(rest);
   if (sub === "query") return ledgerQuery(rest);
   if (sub === "dispatch") return ledgerDispatch(rest);

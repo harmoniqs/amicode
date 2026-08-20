@@ -1,0 +1,8 @@
+# A GPU receipt (#425): remote accounting, never a prior.
+type = "receipt"
+ts = "2026-08-18T12:00:00.000Z"
+task_id = "419a57e6"
+executor = "remote"
+gpu_sku = "H100-80GB"
+gpu_seconds = 1800.0
+cost_usd = 5.4

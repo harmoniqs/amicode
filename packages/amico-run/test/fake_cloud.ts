@@ -16,7 +16,14 @@ export interface FakeIter {
 
 export interface FakeState {
   task_status: "Pending" | "Running";
-  finished?: { status: "completed" | "failed" | "aborted" };
+  /** finished with the runner-contract receipt fields (#424/#425) — the
+   *  client parses defensively; absent fields → no receipt ledger row. */
+  finished?: {
+    status: "completed" | "failed" | "aborted";
+    gpu_sku?: string;
+    gpu_seconds?: number;
+    cost_usd?: number;
+  };
   liveness: "alive" | "gone";
   iters: FakeIter[]; // Δ4 stats: full history each poll (client dedups on high-water)
   frame?: { iter: number; png_base64: string }; // Δ4 frames: newest only
