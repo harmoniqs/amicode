@@ -856,17 +856,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // Normal path: model configured → open chat directly
         const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         // Post-onboarding: create a session and arm it with "Begin onboarding"
-        // via the server API (bypasses the UI model gate), then navigate to it.
+        // via the server API (bypasses the UI model gate). The session appears
+        // in the app's session list automatically via SSE sync.
         if (ChatPanel.consumePendingOnboardingGreeting()) {
-          void armOnboardingSession(url, serverAuthHeaders, opencodeProject.projectDir).then((sessionID) => {
-            if (sessionID) {
-              // Navigate the app to the armed session
-              panel.postOnboardingGreeting();
-            }
-          }).catch(() => {
-            // Fallback: just navigate with prompt (may hit model gate)
-            panel.postOnboardingGreeting();
-          });
+          void armOnboardingSession(url, serverAuthHeaders, opencodeProject.projectDir);
         }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
