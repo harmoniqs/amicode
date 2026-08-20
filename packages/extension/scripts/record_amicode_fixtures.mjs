@@ -151,6 +151,45 @@ const REQUESTS = [
     name: "library upload — missing data_b64 refusal",
   },
   { method: "GET", path: "/amicode/library", name: "library — post-upload state" },
+  // ── widget kernel + dashboard (slice 5) ────────────────────────────────────
+  { method: "GET", path: "/amicode/widgets", name: "widget registry — builtins with content hashes" },
+  { method: "GET", path: "/amicode/widget-frame?id=meet-amico", name: "widget frame — served HTML + its own CSP" },
+  { method: "GET", path: "/amicode/widget-frame?id=not-a-widget", name: "widget frame — unknown id stub" },
+  { method: "GET", path: "/amicode/widget-code?id=about-you", name: "widget code — builtin source + hash" },
+  { method: "GET", path: "/amicode/widget-code?id=no-such", name: "widget code — not_found" },
+  {
+    method: "POST",
+    path: "/amicode/widget-fork",
+    body: { id: "pulse-bank", new_id: "my-pulse-bank", session: "seed-session" },
+    name: "widget fork — builtin forked into user widgets",
+  },
+  {
+    method: "POST",
+    path: "/amicode/widget-fork",
+    body: { id: "pulse-bank", new_id: "my-pulse-bank" },
+    name: "widget fork — exists refusal",
+  },
+  { method: "POST", path: "/amicode/widget-fork", body: { id: "nope" }, name: "widget fork — not_found" },
+  { method: "GET", path: "/amicode/dashboard", name: "dashboard — stored state merge (hidden, passthrough, missing)" },
+  {
+    method: "POST",
+    path: "/amicode/dashboard",
+    body: {
+      version: 1,
+      widget: [
+        { id: "about-you", hidden: false, config: {}, group: "right" },
+        { id: "my-pulse-bank", hidden: true, config: {} },
+      ],
+      views: { home: "grid" },
+    },
+    name: "dashboard save — merge + reserved keys",
+  },
+  {
+    method: "POST",
+    path: "/amicode/dashboard",
+    body: { widget: "not-a-list" },
+    name: "dashboard save — bad_body refusal",
+  },
 ];
 
 async function main() {
@@ -222,11 +261,14 @@ async function main() {
     const respBody = await r.text();
     // Record the request with {SANDBOX} restored so the replay re-substitutes
     // ITS sandbox; the RESPONSE is stored as-served (normalization happens at
-    // replay, against meta.sandbox below).
+    // replay, against meta.sandbox below). Content-type + CSP are recorded
+    // too — the served widget frame's OWN policy is part of its contract.
     entries.push({
       name: req.name,
       request: { method: req.method, path: req.path, ...(req.body !== undefined ? { body: req.body } : {}) },
       status: r.status,
+      contentType: r.headers.get("content-type"),
+      csp: r.headers.get("content-security-policy"),
       body: respBody,
     });
     console.log(`[record] ${req.method} ${path} → ${r.status} (${respBody.length} bytes)`);

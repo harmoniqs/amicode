@@ -28,6 +28,9 @@ import {
   runStatusResponse,
 } from "./problems";
 import { libraryBody, saveLibraryFile } from "./library";
+import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry } from "./widgets";
+import { dashboardResponse, saveDashboardResponse } from "./dashboard";
+import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -107,6 +110,36 @@ export function registerLibraryRoutes(server: AmicodeServiceServer): AmicodeServ
   return server;
 }
 
+export function registerWidgetRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/widgets", () => ({ body: widgetsResponse() }));
+
+  // The frame document is served (not srcdoc) so it carries its OWN CSP
+  // header — srcdoc would inherit the host app's CSP, which forbids the
+  // inline runtime (see widget_frame_html.ts).
+  server.add("GET", "/amicode/widget-frame", ({ url }) => {
+    const r = widgetFrameHtml(url.searchParams.get("id") ?? undefined);
+    return {
+      body: r.html,
+      contentType: "text/html",
+      headers: { "content-security-policy": WIDGET_CSP },
+    };
+  });
+
+  server.add("GET", "/amicode/widget-code", ({ url }) => ({
+    body: widgetCodeResponse(url.searchParams.get("id") ?? undefined),
+  }));
+
+  server.add("POST", "/amicode/widget-fork", ({ body }) => ({ body: forkWidgetResponse(body) }));
+
+  server.add("GET", "/amicode/dashboard", () => ({ body: dashboardResponse(loadRegistry().widgets) }));
+
+  server.add("POST", "/amicode/dashboard", ({ body }) => ({
+    body: saveDashboardResponse(body, loadRegistry().widgets),
+  }));
+
+  return server;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process. */
 export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
@@ -115,5 +148,6 @@ export function createAmicodeService(opts: { password?: string } = {}): AmicodeS
   registerVaultRoutes(server);
   registerProblemRoutes(server);
   registerLibraryRoutes(server);
+  registerWidgetRoutes(server);
   return server;
 }

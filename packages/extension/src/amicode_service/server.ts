@@ -31,6 +31,9 @@ export interface AmicodeHandlerResult {
   status?: number;
   body: string;
   contentType?: string;
+  /** Extra response headers (e.g. the widget frame's CSP — served, not srcdoc,
+   *  precisely so it can carry its own policy). */
+  headers?: Record<string, string>;
 }
 
 export type AmicodeHandler = (ctx: AmicodeRequestCtx) => AmicodeHandlerResult | Promise<AmicodeHandlerResult>;
@@ -102,6 +105,7 @@ export class AmicodeServiceServer {
     const send = (r: AmicodeHandlerResult) => {
       res.statusCode = r.status ?? 200;
       res.setHeader("Content-Type", r.contentType ?? "application/json");
+      for (const [k, v] of Object.entries(r.headers ?? {})) res.setHeader(k, v);
       res.end(r.body);
     };
     try {
