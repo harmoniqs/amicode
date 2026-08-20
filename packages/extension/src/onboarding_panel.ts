@@ -416,10 +416,11 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
               }
             }
           } else if (msg.type === "confirm-import") {
-            // User confirmed the import — write only providers that passed connection test
-            const payload = msg.payload as { activeProvider: string };
+            // User confirmed the import — write only selected providers that passed
+            const payload = msg.payload as { activeProvider: string; includedProviders?: string[] };
+            const included = new Set(payload.includedProviders ?? heldCredentials.map((c) => c.provider));
             const passedCredentials = heldCredentials.filter(
-              (c) => testResults.get(c.provider) !== false,
+              (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
             );
             if (passedCredentials.length > 0) {
               writeBatchConfig(passedCredentials, payload.activeProvider);
