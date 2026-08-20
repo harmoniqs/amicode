@@ -1,0 +1,316 @@
+// Credential Scanner — Auto-Import Credentials (#449)
+//
+// Scans flat-file credential sources in priority order, deduplicates by provider,
+// and returns detected credentials. Keys NEVER leave the extension host process.
+//
+// Source priority (first hit per provider wins):
+//   1. ~/.local/share/opencode/account.json  (v2)
+//   2. ~/.local/share/opencode/auth.json     (v1)
+//   3. process.env
+//   4. Shell RC files (~/.zshrc, ~/.bashrc, ~/.zprofile, ~/.bash_profile)
+//   5. ~/.claude/.credentials.json           (type: "api" only)
+
+import * as fs from "node:fs";
+import * as path from "node:path";
+import * as os from "node:os";
+
+import { PROVIDER_MODELS, writeOnboardingConfig } from "./onboarding_panel";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+export interface DetectedCredential {
+  provider: string;
+  key: string;
+  source: string;
+}
+
+export interface ScanOptions {
+  accountJsonPath: string;
+  authJsonPath: string;
+  env: Record<string, string | undefined>;
+  rcPaths: string[];
+  claudeCredPath: string;
+}
+
+export interface ScanResult {
+  credentials: DetectedCredential[];
+}
+
+/** Webview-safe representation — NO key material. */
+export interface SafeCredential {
+  provider: string;
+  source: string;
+  model: string;
+}
+
+// ─── Env var → provider mapping ──────────────────────────────────────────────
+
+const ENV_TO_PROVIDER: Record<string, string> = {
+  ANTHROPIC_API_KEY: "anthropic",
+  OPENAI_API_KEY: "openai",
+  GOOGLE_API_KEY: "google",
+  OPENROUTER_API_KEY: "openrouter",
+  OPENCODE_API_KEY: "opencode",
+};
+
+/** Env vars to scan in process.env and shell RC files. */
+const SCANNABLE_ENV_VARS = Object.keys(ENV_TO_PROVIDER);
+
+// ─── Provider ID normalization ───────────────────────────────────────────────
+
+const PROVIDER_ALIASES: Record<string, string> = {
+  "opencode-go": "opencode",
+};
+
+function normalizeProviderId(raw: string): string {
+  return PROVIDER_ALIASES[raw] ?? raw;
+}
+
+// ─── Provider → env var (for config writing) ─────────────────────────────────
+
+const PROVIDER_ENV_VAR: Record<string, string> = {
+  anthropic: "ANTHROPIC_API_KEY",
+  openai: "OPENAI_API_KEY",
+  google: "GOOGLE_API_KEY",
+  opencode: "OPENCODE_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+};
+
+// ─── Scanner ─────────────────────────────────────────────────────────────────
+
+/** Default scan options using standard paths. */
+export function defaultScanOptions(): ScanOptions {
+  const home = os.homedir();
+  const dataDir = path.join(home, ".local", "share", "opencode");
+  return {
+    accountJsonPath: path.join(dataDir, "account.json"),
+    authJsonPath: path.join(dataDir, "auth.json"),
+    env: process.env as Record<string, string | undefined>,
+    rcPaths: [
+      path.join(home, ".zshrc"),
+      path.join(home, ".bashrc"),
+      path.join(home, ".zprofile"),
+      path.join(home, ".bash_profile"),
+    ],
+    claudeCredPath: path.join(home, ".claude", ".credentials.json"),
+  };
+}
+
+/**
+ * Scan for existing API credentials across all configured sources.
+ * Sources are checked in priority order; first hit per provider wins.
+ * Unreadable or malformed sources are skipped silently.
+ */
+export async function scanCredentials(options: ScanOptions): Promise<ScanResult> {
+  const seen = new Set<string>();
+  const credentials: DetectedCredential[] = [];
+
+  function add(provider: string, key: string, source: string): void {
+    const normalized = normalizeProviderId(provider);
+    if (seen.has(normalized)) return;
+    if (!key || key.trim() === "") return;
+    seen.add(normalized);
+    credentials.push({ provider: normalized, key: key.trim(), source });
+  }
+
+  // 1. opencode account.json (v2)
+  scanAccountJson(options.accountJsonPath, add);
+
+  // 2. opencode auth.json (v1)
+  scanAuthJson(options.authJsonPath, add);
+
+  // 3. Environment variables
+  scanEnv(options.env, add);
+
+  // 4. Shell RC files
+  for (const rcPath of options.rcPaths) {
+    scanRcFile(rcPath, add);
+  }
+
+  // 5. Claude Code .credentials.json
+  scanClaudeCredentials(options.claudeCredPath, add);
+
+  return { credentials };
+}
+
+// ─── Source scanners ─────────────────────────────────────────────────────────
+
+type AddFn = (provider: string, key: string, source: string) => void;
+
+function scanAccountJson(filePath: string, add: AddFn): void {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw);
+    if (typeof data !== "object" || data === null) return;
+
+    for (const [serviceId, entry] of Object.entries(data)) {
+      if (typeof entry === "object" && entry !== null && "token" in entry) {
+        const token = (entry as { token: unknown }).token;
+        if (typeof token === "string") {
+          add(serviceId, token, "opencode (account)");
+        }
+      }
+    }
+  } catch {
+    // Skip unreadable/malformed files silently
+  }
+}
+
+function scanAuthJson(filePath: string, add: AddFn): void {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw);
+    if (typeof data !== "object" || data === null) return;
+
+    const providers = (data as { provider?: unknown }).provider;
+    if (typeof providers !== "object" || providers === null) return;
+
+    for (const [providerId, entry] of Object.entries(providers)) {
+      if (typeof entry === "object" && entry !== null && "key" in entry) {
+        const key = (entry as { key: unknown }).key;
+        if (typeof key === "string") {
+          add(providerId, key, "opencode (auth)");
+        }
+      }
+    }
+  } catch {
+    // Skip unreadable/malformed files silently
+  }
+}
+
+function scanEnv(env: Record<string, string | undefined>, add: AddFn): void {
+  for (const varName of SCANNABLE_ENV_VARS) {
+    const value = env[varName];
+    if (typeof value === "string" && value.trim() !== "") {
+      add(ENV_TO_PROVIDER[varName], value, "environment");
+    }
+  }
+}
+
+/**
+ * Parse shell RC files using strict regex — NO eval, NO child_process, NO subshell.
+ * Matches: export VAR_NAME="value", export VAR_NAME='value', export VAR_NAME=value
+ * Skips commented lines and lines with subshell expansion $(...) or backticks.
+ */
+function scanRcFile(filePath: string, add: AddFn): void {
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const basename = path.basename(filePath);
+
+    for (const line of content.split("\n")) {
+      const trimmed = line.trim();
+      // Skip comments
+      if (trimmed.startsWith("#")) continue;
+
+      // Strict regex: export VAR=value (with optional quotes)
+      const match = trimmed.match(/^export\s+([\w]+)=["']?([^"'\s]*)["']?/);
+      if (!match) continue;
+
+      const [, varName, value] = match;
+      if (!SCANNABLE_ENV_VARS.includes(varName)) continue;
+      if (!value || value.trim() === "") continue;
+
+      // Skip lines with subshell expansion (security: never execute)
+      if (value.includes("$(") || value.includes("`")) continue;
+
+      add(ENV_TO_PROVIDER[varName], value, basename);
+    }
+  } catch {
+    // Skip unreadable files silently
+  }
+}
+
+function scanClaudeCredentials(filePath: string, add: AddFn): void {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8");
+    const data = JSON.parse(raw);
+    if (!Array.isArray(data)) return;
+
+    for (const entry of data) {
+      if (typeof entry !== "object" || entry === null) continue;
+      // Only import type: "api" entries — NEVER OAuth tokens
+      if (entry.type !== "api") continue;
+      const provider = entry.provider;
+      const key = entry.key;
+      if (typeof provider === "string" && typeof key === "string") {
+        add(provider, key, "Claude Code");
+      }
+    }
+  } catch {
+    // Skip unreadable/malformed files silently
+  }
+}
+
+// ─── Webview-safe output (AC8) ───────────────────────────────────────────────
+
+/**
+ * Convert detected credentials to a webview-safe format.
+ * Keys are STRIPPED — only provider names, sources, and default model IDs are included.
+ */
+export function webviewSafeResults(credentials: DetectedCredential[]): SafeCredential[] {
+  return credentials.map((c) => {
+    const models = PROVIDER_MODELS[c.provider];
+    const defaultModel = models?.[0]?.id ?? `${c.provider}/unknown`;
+    return {
+      provider: c.provider,
+      source: c.source,
+      model: defaultModel,
+    };
+  });
+}
+
+// ─── Batch config writing (AC7) ──────────────────────────────────────────────
+
+/**
+ * Write all detected providers to opencode.json in one pass.
+ * The `activeProvider` becomes the active `model` (using its first model entry).
+ * Uses the same schema as writeOnboardingConfig: provider.<id>.options.apiKey, env as string[].
+ */
+export function writeBatchConfig(
+  credentials: DetectedCredential[],
+  activeProvider: string,
+  configPath?: string,
+): void {
+  const targetPath = configPath ?? path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+  // Read existing config to merge
+  let existing: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(targetPath)) {
+      existing = JSON.parse(fs.readFileSync(targetPath, "utf8"));
+    }
+  } catch {
+    // Start fresh if parsing fails
+  }
+
+  // Build provider entries
+  const providerEntry: Record<string, unknown> = {
+    ...(existing.provider as Record<string, unknown> ?? {}),
+  };
+
+  for (const cred of credentials) {
+    const entry: Record<string, unknown> = {};
+    if (cred.key) {
+      entry.options = { apiKey: cred.key };
+    }
+    const envVar = PROVIDER_ENV_VAR[cred.provider];
+    if (envVar) {
+      entry.env = [envVar];
+    }
+    providerEntry[cred.provider] = entry;
+  }
+
+  // Determine active model
+  const activeModels = PROVIDER_MODELS[activeProvider];
+  const activeModel = activeModels?.[0]?.id ?? `${activeProvider}/unknown`;
+
+  const result = {
+    ...existing,
+    $schema: "https://opencode.ai/config.json",
+    provider: providerEntry,
+    model: activeModel,
+  };
+
+  fs.writeFileSync(targetPath, JSON.stringify(result, null, 2) + "\n");
+}
