@@ -12,6 +12,14 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
 
+import {
+  scanCredentials,
+  defaultScanOptions,
+  webviewSafeResults,
+  writeBatchConfig,
+  type DetectedCredential,
+} from "./credential_scanner";
+
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
 export interface ModelEntry {
@@ -20,26 +28,55 @@ export interface ModelEntry {
 }
 
 /** Data-driven provider→model map. Each provider key is the opencode provider id;
- *  models are the provider/model-id pairs opencode expects in `config.model`. */
+ *  models are the provider/model-id pairs opencode expects in `config.model`.
+ *  "github-copilot" uses OAuth (no key); "custom" uses a base URL + model text. */
 export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
+  "github-copilot": [
+    { id: "github-copilot/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    { id: "github-copilot/gpt-4o", name: "GPT-4o" },
+    { id: "github-copilot/o3-mini", name: "o3-mini" },
+  ],
+  opencode: [
+    { id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6" },
+    { id: "openai/gpt-4.1", name: "GPT-4.1" },
+  ],
   anthropic: [
-    { id: "anthropic/claude-sonnet-4-20250514", name: "Claude Sonnet 4" },
-    { id: "anthropic/claude-opus-4-20250514", name: "Claude Opus 4" },
-    { id: "anthropic/claude-haiku-3-5-20241022", name: "Claude 3.5 Haiku" },
+    { id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6" },
+    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5" },
   ],
   openai: [
-    { id: "openai/gpt-4o", name: "GPT-4o" },
-    { id: "openai/gpt-4o-mini", name: "GPT-4o Mini" },
+    { id: "openai/gpt-4.1", name: "GPT-4.1" },
+    { id: "openai/gpt-4.1-mini", name: "GPT-4.1 Mini" },
     { id: "openai/o3-mini", name: "o3-mini" },
   ],
   google: [
     { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
     { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
   ],
-  "amazon-bedrock": [
-    { id: "amazon-bedrock/us.anthropic.claude-sonnet-4-20250514-v1:0", name: "Claude Sonnet 4 (Bedrock)" },
-    { id: "amazon-bedrock/us.anthropic.claude-opus-4-20250514-v1:0", name: "Claude Opus 4 (Bedrock)" },
+  openrouter: [
+    { id: "openrouter/anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    { id: "openrouter/openai/gpt-4.1", name: "GPT-4.1" },
+    { id: "openrouter/google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
   ],
+  vercel: [
+    { id: "vercel/anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
+    { id: "vercel/openai/gpt-4.1", name: "GPT-4.1" },
+  ],
+  custom: [],
+};
+
+/** Human-readable display names for the provider dropdown. */
+export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
+  "github-copilot": "GitHub Copilot (Free)",
+  opencode: "OpenCode",
+  anthropic: "Anthropic",
+  openai: "OpenAI",
+  google: "Google",
+  openrouter: "OpenRouter",
+  vercel: "Vercel",
+  custom: "Custom (OpenAI-compatible)",
 };
 
 // ─── Config types and writing ────────────────────────────────────────────────
@@ -76,13 +113,20 @@ export function writeOnboardingConfig(
   // Provider-specific key env var name
   const envVarName = providerKeyEnvVar(config.provider);
 
-  // Build the provider entry
+  // Build the provider entry per opencode schema:
+  //   provider.<name>.options.apiKey  (NOT provider.<name>.apiKey)
+  //   provider.<name>.env = string[]  (NOT a bare string)
+  const providerConfig: Record<string, unknown> = {};
+  if (config.apiKey) {
+    providerConfig.options = { apiKey: config.apiKey };
+  }
+  if (envVarName) {
+    providerConfig.env = [envVarName];
+  }
+
   const providerEntry: Record<string, unknown> = {
     ...(existing.provider as Record<string, unknown> ?? {}),
-    [config.provider]: {
-      apiKey: config.apiKey,
-      ...(envVarName ? { env: envVarName } : {}),
-    },
+    [config.provider]: providerConfig,
   };
 
   const result = {
@@ -101,7 +145,8 @@ function providerKeyEnvVar(provider: string): string | undefined {
     anthropic: "ANTHROPIC_API_KEY",
     openai: "OPENAI_API_KEY",
     google: "GOOGLE_API_KEY",
-    "amazon-bedrock": "AWS_ACCESS_KEY_ID",
+    opencode: "OPENCODE_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
   };
   return map[provider];
 }
@@ -118,7 +163,9 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
   anthropic: "https://api.anthropic.com/v1/messages",
   openai: "https://api.openai.com/v1/chat/completions",
   google: "https://generativelanguage.googleapis.com/v1beta/models",
-  "amazon-bedrock": "https://bedrock-runtime.us-east-1.amazonaws.com",
+  opencode: "https://opencode.ai/api/v1/chat/completions",
+  openrouter: "https://openrouter.ai/api/v1/chat/completions",
+  vercel: "https://api.vercel.ai/v1/chat/completions",
 };
 
 /** Test the connection by making exactly one minimal LLM API call.
@@ -206,6 +253,7 @@ function buildTestRequest(
 
 type OnCompleteListener = () => void;
 const completionListeners: OnCompleteListener[] = [];
+const cancelListeners: OnCompleteListener[] = [];
 
 /** Register a listener for when onboarding completes successfully.
  *  Downstream wiring (Slice 2) observes this to auto-open chat. */
@@ -217,8 +265,28 @@ export function onOnboardingComplete(listener: OnCompleteListener): vscode.Dispo
   });
 }
 
+/** Register a listener for when onboarding is cancelled (X button).
+ *  Downstream opens chat normally (skip onboarding). */
+export function onOnboardingCancelled(listener: OnCompleteListener): vscode.Disposable {
+  cancelListeners.push(listener);
+  return new vscode.Disposable(() => {
+    const idx = cancelListeners.indexOf(listener);
+    if (idx >= 0) cancelListeners.splice(idx, 1);
+  });
+}
+
 function fireOnboardingComplete(): void {
   for (const listener of completionListeners) {
+    try {
+      listener();
+    } catch {
+      // Don't let a listener failure crash the flow
+    }
+  }
+}
+
+function fireOnboardingCancelled(): void {
+  for (const listener of cancelListeners) {
     try {
       listener();
     } catch {
@@ -262,15 +330,10 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
       );
       currentPanel = panel;
 
-      panel.onDidDispose(
-        () => {
-          currentPanel = undefined;
-        },
-        null,
-        ctx.subscriptions,
-      );
-
       // Handle messages from the webview
+      let heldCredentials: DetectedCredential[] = [];
+      let scanAborted = false;
+
       panel.webview.onDidReceiveMessage(
         async (msg: { type: string; payload?: unknown }) => {
           if (msg.type === "test-connection") {
@@ -282,7 +345,90 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             writeOnboardingConfig(payload);
             panel.dispose();
             fireOnboardingComplete();
+          } else if (msg.type === "cancel") {
+            // User cancelled onboarding — close panel, re-open chat
+            panel.dispose();
+            fireOnboardingCancelled();
+            // Also directly open chat as fallback (in case no listener is wired)
+            void vscode.commands.executeCommand("amicode.openChat");
+          } else if (msg.type === "scan-credentials") {
+            // Auto-import: scan for existing credentials
+            scanAborted = false;
+            heldCredentials = [];
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "searching" },
+            });
+
+            try {
+              const scanResult = await scanCredentials(defaultScanOptions());
+              if (scanAborted) return; // Panel was closed mid-scan
+              heldCredentials = scanResult.credentials;
+
+              if (heldCredentials.length === 0) {
+                panel.webview.postMessage({
+                  type: "scan-status",
+                  payload: { state: "empty" },
+                });
+              } else {
+                panel.webview.postMessage({
+                  type: "scan-status",
+                  payload: { state: "found", count: heldCredentials.length },
+                });
+                // Send webview-safe results (no key material)
+                panel.webview.postMessage({
+                  type: "scan-results",
+                  payload: { providers: webviewSafeResults(heldCredentials) },
+                });
+
+                // Run connection tests in parallel (AC12)
+                const testPromises = heldCredentials.map(async (cred) => {
+                  const models = PROVIDER_MODELS[cred.provider];
+                  const model = models?.[0]?.id ?? `${cred.provider}/unknown`;
+                  const result = await testConnection({
+                    provider: cred.provider,
+                    model,
+                    apiKey: cred.key,
+                  });
+                  if (!scanAborted) {
+                    panel.webview.postMessage({
+                      type: "test-status-update",
+                      payload: { provider: cred.provider, ok: result.ok, error: result.error },
+                    });
+                  }
+                });
+                // Fire all tests in parallel, don't await sequentially
+                void Promise.allSettled(testPromises);
+              }
+            } catch {
+              if (!scanAborted) {
+                panel.webview.postMessage({
+                  type: "scan-status",
+                  payload: { state: "failed", error: "Scan failed unexpectedly" },
+                });
+              }
+            }
+          } else if (msg.type === "confirm-import") {
+            // User confirmed the import — write batch config
+            const payload = msg.payload as { activeProvider: string };
+            if (heldCredentials.length > 0) {
+              writeBatchConfig(heldCredentials, payload.activeProvider);
+            }
+            heldCredentials = [];
+            panel.dispose();
+            fireOnboardingComplete();
           }
+        },
+        null,
+        ctx.subscriptions,
+      );
+
+      // On panel close, abort scan and drop credentials (AC13, AC14)
+      panel.onDidDispose(
+        () => {
+          scanAborted = true;
+          heldCredentials = [];
+          currentPanel = undefined;
         },
         null,
         ctx.subscriptions,
@@ -310,14 +456,27 @@ function buildWebviewHtml(
 <link rel="stylesheet" href="${uri("media", "brand.css")}" />
 <link rel="stylesheet" href="${uri("media", "layout.css")}" />
 <style nonce="${nonce}">
-  .animation-container { display: flex; align-items: center; justify-content: center; min-height: 200px; }
+  html, body { height: 100%; margin: 0; }
+  .animation-container { display: flex; align-items: center; justify-content: center; height: 100vh; }
   .form-container { display: none; }
-  .form-container.visible { display: block; }
+  .form-container.visible { display: block; height: 100vh; }
+  .cancel-btn {
+    position: fixed; top: 12px; right: 12px; z-index: 100;
+    width: 28px; height: 28px; border: none; border-radius: 4px;
+    background: transparent; color: var(--vscode-foreground, #ccc);
+    font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    opacity: 0.6; transition: opacity 0.15s;
+  }
+  .cancel-btn:hover { opacity: 1; background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1)); }
 </style>
 </head><body>
+<button id="cancel-btn" class="cancel-btn" title="Skip onboarding">&times;</button>
 <div id="animation" class="animation-container"></div>
 <div id="form" class="form-container"></div>
-<script nonce="${nonce}">window.__PROVIDERS__ = ${JSON.stringify(PROVIDER_MODELS)};</script>
+<script nonce="${nonce}">
+window.__PROVIDERS__ = ${JSON.stringify(PROVIDER_MODELS)};
+window.__PROVIDER_NAMES__ = ${JSON.stringify(PROVIDER_DISPLAY_NAMES)};
+</script>
 <script nonce="${nonce}" src="${uri("dist", "onboarding_webview.js")}"></script>
 </body></html>`;
 }
