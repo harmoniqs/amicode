@@ -21,6 +21,7 @@ import {
   isValidApiKey,
   type DetectedCredential,
 } from "./credential_scanner";
+import { ChatPanel } from "./chat_panel";
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -367,6 +368,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             writeOnboardingConfig(payload);
             panel.dispose();
             fireOnboardingComplete();
+            // Signal that the next chat panel open should auto-send the onboarding greeting
+            ChatPanel.setPendingOnboardingGreeting(true);
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
@@ -454,6 +457,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             testResults.clear();
             panel.dispose();
             fireOnboardingComplete();
+            // Signal that the next chat panel open should auto-send the onboarding greeting
+            ChatPanel.setPendingOnboardingGreeting(true);
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");

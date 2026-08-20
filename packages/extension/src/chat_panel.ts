@@ -48,6 +48,10 @@ export class ChatPanel {
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
   private static bugReportAvailable = false;
+  /** One-shot flag: when true, the next openOrReveal posts a navigate message
+   *  to start a new session with the onboarding greeting auto-sent. Cleared
+   *  after use. Set by the onboarding panel after config-success/confirm-import. */
+  private static pendingOnboardingGreeting = false;
   private readonly disposables: vscode.Disposable[] = [];
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
@@ -122,10 +126,33 @@ export class ChatPanel {
     setTimeout(() => void this.panel.webview.postMessage(envelope), 1500);
   }
 
+  /** Post a navigate message to open a new session with the onboarding
+   *  greeting auto-sent. Delays to give a freshly-created iframe time to mount.
+   *  The app's AmicodeNavigateBridge handles this. */
+  private postOnboardingGreeting(): void {
+    const prompt = encodeURIComponent("Hello");
+    const path = `/new-session?prompt=${prompt}&autoSend=1`;
+    const envelope = { source: "amicode", kind: "navigate", path };
+    // Delay: iframe needs time to mount its listener
+    setTimeout(() => void this.panel.webview.postMessage(envelope), 2000);
+    setTimeout(() => void this.panel.webview.postMessage(envelope), 4000);
+  }
+
   /** AC5's gate setter — called after each session prep with
    *  bugReportSkillStaged(project.skillPaths). */
   static setBugReportAvailable(available: boolean): void {
     ChatPanel.bugReportAvailable = available;
+  }
+
+  /** Set by the onboarding panel after config is written — the next
+   *  openOrReveal will post a navigate message to auto-send the greeting. */
+  static setPendingOnboardingGreeting(pending: boolean): void {
+    ChatPanel.pendingOnboardingGreeting = pending;
+  }
+
+  /** Clear the pending greeting flag (test cleanup / manual reset). */
+  static clearPendingOnboardingGreeting(): void {
+    ChatPanel.pendingOnboardingGreeting = false;
   }
 
   /** The primary panel if one is live (never creates) — the down lane's
@@ -193,9 +220,17 @@ export class ChatPanel {
   ): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
+      if (ChatPanel.pendingOnboardingGreeting) {
+        ChatPanel.pendingOnboardingGreeting = false;
+        ChatPanel.current.postOnboardingGreeting();
+      }
       return ChatPanel.current;
     }
     ChatPanel.current = ChatPanel.createPanel(ctx, vscode.ViewColumn.One, opencodeUrl, authToken, hideProjectDir);
+    if (ChatPanel.pendingOnboardingGreeting) {
+      ChatPanel.pendingOnboardingGreeting = false;
+      ChatPanel.current.postOnboardingGreeting();
+    }
     return ChatPanel.current;
   }
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as vscode from "vscode";
 import { ChatPanel } from "../src/chat_panel";
 import { mintServerPassword, serverAuthToken } from "../src/server_auth";
@@ -116,5 +116,102 @@ describe("ChatPanel — the amicode_bug_report boot param (amicode#250 AC5)", ()
     // Lane 2 (extension → app): dock open/close.
     expect(html).toContain('"open-bug-report"');
     expect(html).toContain('"close-bug-report"');
+  });
+});
+
+describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearPendingOnboardingGreeting();
+  });
+
+  it("posts a navigate message with auto-send greeting after onboarding completes", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    // Signal that onboarding just completed
+    ChatPanel.setPendingOnboardingGreeting(true);
+
+    // Open the panel (simulates what happens after server restart)
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    // Spy on postMessage
+    const messages: unknown[] = [];
+    const panel = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
+    panel.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Give the delayed postMessage time to fire
+    await new Promise((r) => setTimeout(r, 2200));
+
+    // Find the navigate message
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    ) as { source: string; kind: string; path: string } | undefined;
+
+    expect(navigateMsg).toBeDefined();
+    expect(navigateMsg!.path).toContain("/new-session");
+    expect(navigateMsg!.path).toContain("autoSend=1");
+    expect(navigateMsg!.path).toContain("prompt=");
+  });
+
+  it("does NOT post greeting when onboarding flag is not set", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    // No pending greeting flag
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages: unknown[] = [];
+    const panel = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
+    panel.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    await new Promise((r) => setTimeout(r, 2200));
+
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    );
+
+    expect(navigateMsg).toBeUndefined();
+  });
+
+  it("clears the greeting flag after posting (one-shot)", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    ChatPanel.setPendingOnboardingGreeting(true);
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    // Wait for the greeting to fire
+    await new Promise((r) => setTimeout(r, 2200));
+
+    // Dispose and re-create — second panel should NOT get the greeting
+    for (const p of created) p.dispose();
+    created = [];
+
+    const cap2 = capturePanel();
+    restore = cap2.restore;
+    created = cap2.created;
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages2: unknown[] = [];
+    const panel2 = cap2.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } };
+    panel2.webview.postMessage = (m: unknown) => { messages2.push(m); return Promise.resolve(true); };
+
+    await new Promise((r) => setTimeout(r, 2200));
+
+    const navigateMsg2 = messages2.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    );
+
+    expect(navigateMsg2).toBeUndefined();
   });
 });
