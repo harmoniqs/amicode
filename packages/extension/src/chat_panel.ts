@@ -498,15 +498,15 @@ export class ChatPanel {
         <polygon points="888.52 1864.8 754.93 1864.8 754.93 1727.36 888.55 1727.36 888.55 1864.77 1022.15 1864.77 1022.15 2002.21 888.52 2002.21 888.52 1864.8"/>
         <polygon points="621.31 1589.92 754.9 1589.92 754.9 1452.48 888.52 1452.48 888.52 1589.92 754.93 1589.92 754.93 1727.36 621.31 1727.36 621.31 1589.92"/>
         <polygon points="754.92 1452.48 888.51 1452.48 888.51 1315.04 1022.13 1315.04 1022.13 1452.48 888.54 1452.48 888.54 1589.92 754.92 1589.92 754.92 1452.48"/>
-        <!-- Left happy eye (∩ = top bar + two side bars, no bottom) -->
-        <rect x="1139.77" y="1446.71" width="133.62" height="423.84"/>
-        <rect x="1503.05" y="1446.71" width="133.62" height="423.84"/>
+        <!-- Left happy eye (∩ = top bar + two side bars, shorter) -->
+        <rect x="1139.77" y="1446.71" width="133.62" height="286"/>
+        <rect x="1503.05" y="1446.71" width="133.62" height="286"/>
         <rect x="1273.58" y="1309.27" width="229.47" height="137.44"/>
         <!-- Centre divider | -->
         <rect x="1778.31" y="1312.43" width="107.11" height="692.38"/>
-        <!-- Right happy eye (∩ = top bar + two side bars, no bottom) -->
-        <rect x="2009.75" y="1451.19" width="133.62" height="423.84"/>
-        <rect x="2373.03" y="1451.19" width="133.62" height="423.84"/>
+        <!-- Right happy eye (∩ = top bar + two side bars, shorter) -->
+        <rect x="2009.75" y="1451.19" width="133.62" height="286"/>
+        <rect x="2373.03" y="1451.19" width="133.62" height="286"/>
         <rect x="2143.56" y="1313.76" width="229.47" height="137.44"/>
         <!-- Gleeful open mouth (pixelated U shape) -->
         <rect x="1430" y="2080" width="133" height="280"/>
