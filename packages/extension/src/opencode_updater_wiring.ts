@@ -109,13 +109,16 @@ export function registerOpencodeUpdater(
   channel: vscode.OutputChannel,
 ): void {
   // Bootstrap: a fresh machine gets its managed install at first activation.
-  // Fire-and-forget — activation must never block on a download.
+  // Fire-and-forget — activation must never block on a download. A FAILED
+  // bootstrap does not mark the check done: an offline machine retries on the
+  // next activation (cheap — the check fails fast) and self-heals the moment
+  // it comes online, instead of waiting out the 24h gate.
   if (!managedBinary()) {
     channel.appendLine("[updater] no managed canonical opencode — bootstrapping (background)");
     void runCycle(channel, { manual: false }).then((msg) => {
       channel.appendLine(`[updater] bootstrap: ${msg}`);
+      if (managedBinary()) markChecked();
     });
-    markChecked();
   } else if (dueForCheck()) {
     void runCycle(channel, { manual: false });
     markChecked();
