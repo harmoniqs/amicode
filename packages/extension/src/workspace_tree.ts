@@ -87,7 +87,8 @@ export class WorkspaceTreeProvider implements vscode.TreeDataProvider<WorkspaceI
         .map(([k]) => k.replace(/\*\*/g, "").replace(/\*/g, ""));
 
       const filtered = entries.filter(([name]) => {
-        if (name.startsWith(".git")) return false;
+        // Hide the .git directory itself, but not .gitignore, .github, etc.
+        if (name === ".git") return false;
         for (const pat of excludePatterns) {
           if (pat && name.includes(pat.replace(/\//g, ""))) return false;
         }
