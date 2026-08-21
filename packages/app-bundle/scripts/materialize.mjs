@@ -10,8 +10,9 @@
 // upstream paths (bucket M) or add new ones (bucket A) — copy is the whole
 // conflict policy for slice (a); the drift report is a separate concern.
 import { createHash } from "node:crypto";
+import { readlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -81,9 +82,10 @@ for (const rel of readdirSync(overlayDir, { recursive: true })) {
   const p = join(overlayDir, rel.toString());
   if (!statSync(p).isFile()) continue;
   const dest = join(outDir, rel.toString());
-  if (existsSync(dest)) overwritten++;
+  if (existsSync(dest) || lstatSync(dest, { throwIfNoEntry: false })) overwritten++;
   mkdirSync(join(dest, ".."), { recursive: true });
-  cpSync(p, dest);
+  // verbatimSymlinks: preserve overlay symlinks AS symlinks (amico.svg → ui asset)
+  cpSync(p, dest, { verbatimSymlinks: true });
   applied++;
 }
 console.log(`[materialize] tree at ${outDir}: upstream ${repo}@${tag} + overlay (${applied} files applied, ${overwritten} overwrote upstream)`);
@@ -104,7 +106,22 @@ const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex")
 let bad = 0;
 for (const [rel, want] of Object.entries(manifest.files)) {
   const p = join(outDir, rel);
-  if (!existsSync(p) || sha256(p) !== want) {
+  const st = lstatSync(p, { throwIfNoEntry: false });
+  if (!st) {
+    console.error(`[materialize] MANIFEST MISMATCH (missing): ${rel}`);
+    bad++;
+    continue;
+  }
+  if (st.isSymbolicLink()) {
+    // symlink identity = the link-target string (see extract_overlay.mjs)
+    const h = createHash("sha256").update(readlinkSync(p)).digest("hex");
+    if (h !== want) {
+      console.error(`[materialize] MANIFEST MISMATCH (symlink): ${rel}`);
+      bad++;
+    }
+    continue;
+  }
+  if (sha256(p) !== want) {
     console.error(`[materialize] MANIFEST MISMATCH: ${rel}`);
     bad++;
   }
