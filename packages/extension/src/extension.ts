@@ -58,6 +58,7 @@ import { probeCommand, formatHealthReport, type HealthResult } from "./healthche
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
+import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -86,6 +87,7 @@ import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspe
 // ============================================================================
 
 let serverManager: ServerManager | undefined;
+let amicodeService: { url: string; authHeader: string } | undefined;
 let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
@@ -730,6 +732,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
 
+    // Amicode service (#451 M1): the extension-host port of the 31 fork
+    // amicode routes, booted in PARALLEL-RUN alongside the fork server (the
+    // chat/widgets still hit the fork until the M3 cutover). Stateless — no
+    // restart coupling with solver-mode switches or config re-preps.
+    const serviceBoot = await startAmicodeService(opencodeChannel);
+    amicodeService = serviceBoot ?? undefined;
+    ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
+
     // Solver-mode switcher (rchari/solver-wire): the app's toggle POSTs
     // {status:"switching"}; we do the REAL switch — grant/revoke the issimo
     // entitlement, re-prep the session project (skills/scores/allowlist follow
@@ -1242,6 +1252,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getConfigContent: () => currentSpawnEnv?.OPENCODE_CONFIG_CONTENT,
     getSpawnEnv: () => currentSpawnEnv,
     channel: opencodeChannel,
+    getAmicodeService: () => amicodeService,
   });
 
   // Fleet mode — "Go Standalone" per CONTEXT.md (#338).
