@@ -5,7 +5,7 @@
 // /amicode/resolve-file.
 //
 // Golden fixtures recorded from the FORK binary (scripts/record_amicode_fixtures.mjs,
-// vendored pin v1.18.10-amicode.11) against the SAME seeded sandbox this test
+// the vendored pin at record time — see the self-tracking pin assertion) against the SAME seeded sandbox this test
 // builds (scripts/amicode_fixture_seed.mjs). Replay each recorded request
 // against the PORTED extension-host service and require deep-equal responses —
 // fork and port serving identical bytes from identical state is the whole
@@ -91,8 +91,8 @@ describe("amicode service — golden-fixture parity with the fork", () => {
   };
 
   /** auth_methods gained a "token" entry in fork source AFTER the vendored
-   *  pin (v1.18.10-amicode.11 advertises browser only; the port follows
-   *  current source). Removed from BOTH sides so the comparison is stable
+   *  pins (.11 AND .14 advertise browser only; the port follows current
+   *  source). Removed from BOTH sides so the comparison is stable
    *  across the next pin bump — the token-paste flow itself is unit-tested
    *  in amicode_service_connections.test.ts. */
   const normalizePostPinDrift = (obj: any): any => {
@@ -148,8 +148,13 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it("fixtures were recorded from the expected fork pin", () => {
-    expect(meta.fork.tag).toBe("v1.18.10-amicode.11");
+  it("fixtures were recorded from the CURRENT fork pin (re-record on pin bumps)", () => {
+    // Self-tracking: the fixtures must be re-recorded whenever the vendored
+    // pin moves (scripts/record_amicode_fixtures.mjs stamps the lock's tag).
+    // A failure here means the lock bumped but the goldens didn't follow —
+    // the recorded parity claim is stale, not broken.
+    const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
+    expect(meta.fork.tag).toBe(lock.tag);
     expect(meta.entries.length).toBeGreaterThan(0);
   });
 
