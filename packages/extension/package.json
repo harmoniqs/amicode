@@ -1,7 +1,7 @@
 {
   "name": "amicode",
   "displayName": "Amicode",
-  "description": "Open autonomous research in VS Code — vaults, fleet, and live solves for quantum control and physical intelligence.",
+  "description": "Open autonomous research in VS Code \u2014 vaults, fleet, and live solves for quantum control and physical intelligence.",
   "version": "0.2.2",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
@@ -116,7 +116,7 @@
       },
       {
         "command": "amicode.selectRun",
-        "title": "Amicode: Select run to inspect…"
+        "title": "Amicode: Select run to inspect\u2026"
       },
       {
         "command": "amicode.restartServer",
@@ -148,11 +148,11 @@
       },
       {
         "command": "amicode.fleet.repair",
-        "title": "Amicode: Fleet — Repair (guard + tunnel)"
+        "title": "Amicode: Fleet \u2014 Repair (guard + tunnel)"
       },
       {
         "command": "amicode.fleet.goStandalone",
-        "title": "Amicode: Fleet — Go Standalone (leave fleet, run locally)"
+        "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
       },
       {
         "command": "amicode.repo.sync",
@@ -165,6 +165,11 @@
       {
         "command": "amicode.redoOnboarding",
         "title": "Amicode: Redo Onboarding"
+      },
+      {
+        "command": "amicode.updateOpencode",
+        "title": "Amicode: Update canonical opencode (check + adopt)",
+        "category": "Amicode"
       }
     ],
     "configuration": {
@@ -208,7 +213,7 @@
         "amicode.cloudUrl": {
           "type": "string",
           "default": "",
-          "description": "Base URL of the Amico cloud Solve Service. \"Amico: Connect Cloud\" submits it with your API key to the local Amico server, which validates and stores both (~/.amico/cloud.json, where RemoteExecutor reads them). Empty = the built-in production endpoint (DEFAULT_CLOUD_URL in cloud_key.ts — the single source)."
+          "description": "Base URL of the Amico cloud Solve Service. \"Amico: Connect Cloud\" submits it with your API key to the local Amico server, which validates and stores both (~/.amico/cloud.json, where RemoteExecutor reads them). Empty = the built-in production endpoint (DEFAULT_CLOUD_URL in cloud_key.ts \u2014 the single source)."
         },
         "amicode.runsRoot": {
           "type": "string",
@@ -258,7 +263,7 @@
             ]
           },
           "default": [],
-          "markdownDescription": "Roots for the central skill library, scanned first-root-wins by directory name. Empty = the defaults: the dev's private plugin checkout (admits `surface: public` **and** `internal`), then the vendored public bundle (admits `public` only). Entries are typed roots `{\"path\": \"...\", \"surfaces\": [\"public\", ...]}` or plain strings. **Back-compat (ADR-0003):** a plain string keeps the pre-typing behavior — it admits `surface: public` only; existing string overrides keep working unchanged. Untagged/malformed skills are dropped from every root with a logged warning."
+          "markdownDescription": "Roots for the central skill library, scanned first-root-wins by directory name. Empty = the defaults: the dev's private plugin checkout (admits `surface: public` **and** `internal`), then the vendored public bundle (admits `public` only). Entries are typed roots `{\"path\": \"...\", \"surfaces\": [\"public\", ...]}` or plain strings. **Back-compat (ADR-0003):** a plain string keeps the pre-typing behavior \u2014 it admits `surface: public` only; existing string overrides keep working unchanged. Untagged/malformed skills are dropped from every root with a logged warning."
         },
         "amicode.vaultDir": {
           "type": "string",
@@ -273,7 +278,7 @@
         "amicode.veloce": {
           "type": "boolean",
           "default": false,
-          "description": "Amico Veloce: start sessions with autonomy on — auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
+          "description": "Amico Veloce: start sessions with autonomy on \u2014 auto-accept high-confidence downstream recommendations without asking. Resource gates (solve launch, hardware) always confirm; any interruption drops veloce. Off by default."
         },
         "amicode.chat.autoOpen": {
           "type": "boolean",
@@ -283,22 +288,22 @@
         "amicode.device.name": {
           "type": "string",
           "default": "",
-          "description": "Device to show in the Device Inspector (Spec A §3). Empty = the Device Inspector stays dormant. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
+          "description": "Device to show in the Device Inspector (Spec A \u00a73). Empty = the Device Inspector stays dormant. Ops state is read from ~/.amico/amicode/devices/<name>/state.json."
         },
         "amicode.device.graph": {
           "type": "string",
           "default": "",
-          "description": "Path to the device's calibration graph.toml (Spec A §4). Empty = the Device Inspector stays dormant."
+          "description": "Path to the device's calibration graph.toml (Spec A \u00a74). Empty = the Device Inspector stays dormant."
         },
         "amicode.device.card": {
           "type": "string",
           "default": "",
-          "description": "Path to the device card markdown (Spec A §3.1) whose frontmatter carries drive_lines + qubits. Empty = qubits are derived from the graph and no drive lines are shown."
+          "description": "Path to the device card markdown (Spec A \u00a73.1) whose frontmatter carries drive_lines + qubits. Empty = qubits are derived from the graph and no drive lines are shown."
         },
         "amicode.device.endpoint": {
           "type": "string",
           "default": "",
-          "description": "Base URL of the QICK job-server (queue/health/config-versioning, Spec A §2). A pointer only, never credentials. Empty = the queue reads idle and drive lines read offline."
+          "description": "Base URL of the QICK job-server (queue/health/config-versioning, Spec A \u00a72). A pointer only, never credentials. Empty = the queue reads idle and drive lines read offline."
         },
         "amicode.telemetry.enabled": {
           "type": "boolean",
@@ -308,11 +313,11 @@
         "amicode.telemetry.endpoint": {
           "type": "string",
           "default": "https://bld42qbgsn7gu6y44v4kd6a32e0hprmy.lambda-url.us-east-1.on.aws",
-          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the PRODUCTION corpus. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") — never a separate ingest key. The token MUST be minted in the same AWS account as this endpoint: each account's credentials table is independent, so a token from the other account is rejected on every batch (401) while capture still looks enabled. This default is therefore account-coupled with DEFAULT_CLOUD_URL in cloud_key.ts — change both together or neither."
+          "description": "Base URL of the run-corpus ingest endpoint (no trailing slash; opencode appends /v1/traces and /v1/logs). Defaults to the PRODUCTION corpus. Empty = capture stays dormant even with consent given. Auth uses your per-user Amico cloud token (~/.amico/cloud.json, set up via \"Amico: Connect Cloud\") \u2014 never a separate ingest key. The token MUST be minted in the same AWS account as this endpoint: each account's credentials table is independent, so a token from the other account is rejected on every batch (401) while capture still looks enabled. This default is therefore account-coupled with DEFAULT_CLOUD_URL in cloud_key.ts \u2014 change both together or neither."
         },
         "amicode.redoOnboarding": {
           "type": "null",
-          "markdownDescription": "**[Redo Onboarding](command:amicode.redoOnboarding)** — Reset onboarding state and re-run the setup flow. Your model/provider config is preserved."
+          "markdownDescription": "**[Redo Onboarding](command:amicode.redoOnboarding)** \u2014 Reset onboarding state and re-run the setup flow. Your model/provider config is preserved."
         }
       }
     },

@@ -23,6 +23,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import { managedPathEntries } from "./opencode_updater_wiring";
 
 export interface AmicodeTerminalDeps {
   extensionPath: string;
@@ -62,8 +63,11 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     const configContent = deps.getConfigContent?.();
     const env: Record<string, string> = { ...process.env } as Record<string, string>;
 
-    // PATH: vendor dir (for `opencode`) + amico-run launcher (for `amico`)
+    // PATH: managed canonical FIRST (#451 D2 — canonical wins), then the fork
+    // shim dir (opencode-amicode), then the vendored fork dir (fallback while
+    // the managed bootstrap is pending), then amico-run, then the user PATH.
     const pathParts: string[] = [];
+    pathParts.push(...managedPathEntries(deps.extensionPath));
     if (hasVendor) pathParts.push(vendorDir);
     if (amicoRunDir) pathParts.push(amicoRunDir);
     if (process.env.PATH) pathParts.push(process.env.PATH);

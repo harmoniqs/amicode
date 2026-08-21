@@ -59,6 +59,7 @@ import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
+import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -1254,6 +1255,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     channel: opencodeChannel,
     getAmicodeService: () => amicodeService,
   });
+
+  // Canonical-opencode runtime updater (#451 M4): managed install under
+  // ~/.amico/opencode/canonical (first-activation bootstrap, daily checks,
+  // adopt gate per the spec). The Amicode terminal's `opencode` resolves to
+  // it (managed-canonical-wins); `opencode-amicode` shims the vendored fork.
+  registerOpencodeUpdater(ctx, opencodeChannel);
 
   // Fleet mode — "Go Standalone" per CONTEXT.md (#338).
   // Config: ~/.amico/ops/fleet/fleet.json (no file = standalone).
