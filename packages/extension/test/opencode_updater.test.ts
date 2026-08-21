@@ -93,10 +93,18 @@ describe("isNewer", () => {
 
 describe("checkForUpdate", () => {
   const latestUrl = "https://api.github.com/repos/anomalyco/opencode/releases/latest";
+  // The asset for THIS runner's platform (the updater filters by
+  // platform-asset mapping — a darwin-only fixture fails on linux CI).
+  const assetForPlatform: Record<string, string> = {
+    "darwin-arm64": "opencode-darwin-arm64.zip",
+    "linux-x64": "opencode-linux-x64.tar.gz",
+    "linux-arm64": "opencode-linux-arm64.tar.gz",
+  };
+  const myAsset = assetForPlatform[`${process.platform}-${process.arch}`] ?? "opencode-darwin-arm64.zip";
   const latestBody = {
     tag_name: "v1.18.20",
     assets: [
-      { name: "opencode-darwin-arm64.zip", digest: `sha256:${"a".repeat(64)}`, size: 1, browser_download_url: "https://example.invalid/oc.zip" },
+      { name: myAsset, digest: `sha256:${"a".repeat(64)}`, size: 1, browser_download_url: "https://example.invalid/oc-asset" },
     ],
   };
 
