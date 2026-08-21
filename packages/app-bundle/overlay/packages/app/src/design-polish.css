@@ -1,0 +1,129 @@
+/* UNLAYERED on purpose: the v2 theme (v2/styles/tailwind.css) is imported
+   unlayered, and unlayered CSS beats every @layer — so this skin must be
+   unlayered too, and imported AFTER the v2 theme in index.css. */
+
+/* ============================================================
+   AMICODE DESIGN SYSTEM  (see .claude/skills/amicode-design-system)
+
+   Division of ownership:
+   - The v2 THEME (`packages/ui/src/theme/themes/oc-2.json`) owns the `--v2-*`
+     palette per scheme — surfaces, text, borders, AND the accent. The accent
+     there is the single brand yellow #fff676 (gold deleted): on DARK it's the
+     foreground+fill hue; on LIGHT the fill (`bg-accent`) is yellow while the
+     text/icon accents are NEUTRAL (yellow is illegible on white — accent
+     foregrounds go neutral on light; yellow lives in fills).
+   - THIS file owns the design-system ADDITIONS: geometry tokens (radius,
+     spacing), the accent role tokens (--accent, --accent-ink, --accent-fill-soft,
+     --accent-edge), type gaps, and a few component skins. It does NOT redefine
+     `--v2-*` tokens (the theme wins) — it only consumes them.
+   ============================================================ */
+
+:root {
+  /* ── the one accent ── */
+  --accent: #fff676;         /* brand hue — chip / CTA / fill, both schemes */
+  --accent-ink: #111214;     /* text/icon ON a yellow fill — always near-black */
+
+  /* ── radius scale ── */
+  --radius-xs: 0.125rem;  /* 2px  — hairline insets */
+  --radius-sm: 0.25rem;   /* 4px  — dense chips, tooltips */
+  --radius-md: 0.5rem;    /* 8px  — controls: buttons, inputs, rail icons, toggles */
+  --radius-lg: 0.75rem;   /* 12px — cards & panels: composer, modals, rail panel */
+  --radius-xl: 1rem;      /* 16px — large / hero surfaces (reserve) */
+  --radius-full: 999px;   /* pills, dots, send button */
+
+  /* ── spacing (4px grid) ── */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  /* ── type ── */
+  --font-size-2xs: 10px; --font-size-xs: 11px; --font-size-sm: 12px; --font-size-md: 13px;
+  --font-size-x-small: var(--font-size-xs);   /* fix dangling ref */
+  --font-weight-emphasis: 600; --font-weight-strong: 650;
+
+  --border-width: 1px;
+}
+
+/* ── accent role tokens — per-scheme OPACITY, same hue ──
+   fill = yellow warmth (both); selected edge = neutral on light (yellow can't
+   define on white), yellow on dark. */
+:root,
+[data-color-scheme="light"] {
+  --accent-fill-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  /* one step past soft — the hover of an already-soft-filled control */
+  --accent-fill-hover: color-mix(in srgb, var(--accent) 26%, transparent);
+  --accent-edge: var(--v2-border-border-strong);
+}
+[data-color-scheme="dark"] {
+  --accent-fill-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-fill-hover: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-edge: color-mix(in srgb, var(--accent) 45%, var(--v2-border-border-base));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="light"]) {
+    --accent-fill-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-fill-hover: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-edge: color-mix(in srgb, var(--accent) 45%, var(--v2-border-border-base));
+  }
+}
+
+/* ── inline code: readable in both schemes ── */
+:not(pre) > code {
+  color: #3d4451;
+  background: rgba(20, 22, 28, 0.06);
+  border-radius: var(--radius-sm);
+  padding: 0.08em 0.35em;
+}
+[data-color-scheme="dark"] :not(pre) > code {
+  color: #c7cad1;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* ── motion: quick, quiet, consistent (honors reduced-motion) ── */
+button, [role="button"], a, input, textarea, [data-slot="card"] {
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   COMPONENT SKINS — high-visibility surfaces, on the tokens above.
+   ============================================================ */
+
+/* the composer — a soft card at the card corner (was a one-off 22px; unified
+   to --radius-lg so it matches every other card/panel) */
+[data-component="session-new-composer"],
+[data-component="session-composer"] {
+  border-radius: var(--radius-lg) !important;
+  border: var(--border-width) solid var(--v2-border-border-base);
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+[data-component="session-new-composer"] { min-height: 88px !important; }
+[data-component="session-new-composer"]:focus-within,
+[data-component="session-composer"]:focus-within {
+  border-color: var(--v2-border-border-strong);
+}
+
+/* send: a control button in the brand accent, near-black ink (yellow-button
+   ink is ALWAYS near-black). Radius = --radius-md, matching the other footer
+   controls (+, pickers) — NOT a circle (Kate 2026-07-23: follow the radius scale). */
+[data-action="prompt-submit"] {
+  border-radius: var(--radius-md) !important;
+  background: var(--accent) !important;
+  color: var(--accent-ink) !important;
+  transition: transform 0.16s ease, filter 0.16s ease;
+}
+[data-action="prompt-submit"] svg { color: var(--accent-ink) !important; }
+[data-action="prompt-submit"]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+
+/* the rail: controls use the control corner */
+[data-component="sidebar-rail"] button,
+[data-component="chat-first-rail"] button { border-radius: var(--radius-md); }
