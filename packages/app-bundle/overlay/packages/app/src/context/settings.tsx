@@ -216,7 +216,7 @@ const defaultSettings: Settings = {
     configDir: "",
   },
   developer: {
-    enabled: true,
+    enabled: false,
     opencodePath: "",
     amicodePath: "",
   },
