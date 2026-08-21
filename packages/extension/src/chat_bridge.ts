@@ -262,6 +262,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
 
+      // Guard: ensure onboarding won't re-trigger after the reinstall.
+      // The uninstall clears VS Code globalState; the filesystem event is what
+      // the routing predicate checks, so writing it here is sufficient.
+      try {
+        const { ensureOnboardingCompleted, onboardingDir } = require("./substrate/vault_store") as typeof import("./substrate/vault_store");
+        ensureOnboardingCompleted(onboardingDir());
+      } catch { /* non-critical — worst case onboarding re-shows */ }
+
       // Reinstall from the marketplace to restore the user's current release.
       // The old backup approach was fragile (went stale on extension updates).
       // Uninstall+install is the only reliable way to restore a clean dist —

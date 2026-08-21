@@ -107,3 +107,14 @@ export function hasOnboardingCompleted(onboardingStreamDir: string): boolean {
   }
   return false;
 }
+
+/** Idempotently ensure the onboarding_completed event exists in the stream.
+ *  Used by the devtools toggle-OFF to prevent onboarding from re-triggering
+ *  after an extension reinstall. */
+export function ensureOnboardingCompleted(onboardingStreamDir: string): void {
+  if (hasOnboardingCompleted(onboardingStreamDir)) return;
+  fs.mkdirSync(onboardingStreamDir, { recursive: true });
+  const eventsPath = path.join(onboardingStreamDir, "events.jsonl");
+  const event = JSON.stringify({ entity: "onboarding_completed", ts: Date.now(), source: "devtools-restore" });
+  fs.appendFileSync(eventsPath, event + "\n");
+}

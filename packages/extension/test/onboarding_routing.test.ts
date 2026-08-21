@@ -19,6 +19,11 @@ import {
   writeWelcomeShown,
 } from "../src/onboarding_routing";
 
+import {
+  hasOnboardingCompleted,
+  ensureOnboardingCompleted,
+} from "../src/substrate/vault_store";
+
 // ─── AC10: Routing predicate (pure function, table-driven) ───────────────────
 
 describe("resolveOnboardingAction — routing predicate (AC10)", () => {
@@ -235,5 +240,37 @@ describe("welcome_shown flag semantics (AC6)", () => {
     const file = path.join(tmpDir, "state.json");
     writeWelcomeShown(file);
     expect(readWelcomeShown(file)).toBe(true);
+  });
+});
+
+// ─── ensureOnboardingCompleted — devtools restore guard ──────────────────────
+
+describe("ensureOnboardingCompleted — devtools restore guard", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-guard-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("writes the onboarding_completed event when events.jsonl does not exist", () => {
+    ensureOnboardingCompleted(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(true);
+  });
+
+  it("writes the event when events.jsonl exists but has no completion marker", () => {
+    fs.writeFileSync(path.join(tmpDir, "events.jsonl"), '{"entity":"profile","ts":1}\n');
+    ensureOnboardingCompleted(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(true);
+  });
+
+  it("is idempotent — does not duplicate the event if already present", () => {
+    ensureOnboardingCompleted(tmpDir);
+    ensureOnboardingCompleted(tmpDir);
+    const content = fs.readFileSync(path.join(tmpDir, "events.jsonl"), "utf8");
+    const completionLines = content.split("\n").filter(l => l.includes("onboarding_completed"));
+    expect(completionLines).toHaveLength(1);
   });
 });
