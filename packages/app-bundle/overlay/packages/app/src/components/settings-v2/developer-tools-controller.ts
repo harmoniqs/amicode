@@ -161,20 +161,14 @@ export function createDeveloperToolsController() {
           settings.developer.setAmicodePath(DEFAULT_AMICODE_PATH)
         }
       }
-      // Don't persist enabled=false — the marketplace build doesn't render
-      // Developer Tools at all, and persisting false prevents the dev build
-      // from showing it after a bash-script bootstrap without toggle interaction.
+      settings.developer.setEnabled(value)
       if (value) {
-        settings.developer.setEnabled(value)
         // Toggle ON: trigger a full rebuild (shows "Rebuilding..." status)
         rebuild("local")
       } else {
-        // Toggle OFF: show switching status, then the extension restores + reloads.
-        // Don't persist false — the reload brings up the marketplace build which
-        // doesn't have this section anyway.
+        // Toggle OFF: restore marketplace build and reload.
         setRebuildState("rebuilding")
         setRebuildError(undefined)
-        // Send enabled=false explicitly (can't rely on the signal since we didn't persist it)
         if (!inAmicode()) return
         setPending(true)
         setStatus(undefined)

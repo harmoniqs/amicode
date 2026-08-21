@@ -19,6 +19,12 @@ import {
   writeWelcomeShown,
 } from "../src/onboarding_routing";
 
+import {
+  hasOnboardingCompleted,
+  writeDevtoolsRestoreMarker,
+  consumeDevtoolsRestoreMarker,
+} from "../src/substrate/vault_store";
+
 // ─── AC10: Routing predicate (pure function, table-driven) ───────────────────
 
 describe("resolveOnboardingAction — routing predicate (AC10)", () => {
@@ -235,5 +241,38 @@ describe("welcome_shown flag semantics (AC6)", () => {
     const file = path.join(tmpDir, "state.json");
     writeWelcomeShown(file);
     expect(readWelcomeShown(file)).toBe(true);
+  });
+});
+
+// ─── devtools restore marker — toggle-OFF guard ─────────────────────────────
+
+describe("devtools restore marker — toggle-OFF guard", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-marker-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("consumeDevtoolsRestoreMarker returns false when no marker exists", () => {
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(false);
+  });
+
+  it("writeDevtoolsRestoreMarker + consumeDevtoolsRestoreMarker returns true and deletes the marker", () => {
+    writeDevtoolsRestoreMarker(tmpDir);
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(true);
+    // Second consume returns false (marker was deleted)
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(false);
+  });
+
+  it("does not interfere with onboarding completion state", () => {
+    // Marker exists but onboarding events.jsonl does not
+    writeDevtoolsRestoreMarker(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(false);
+    // Consuming the marker doesn't create onboarding_completed
+    consumeDevtoolsRestoreMarker(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(false);
   });
 });

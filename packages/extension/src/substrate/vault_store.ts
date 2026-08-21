@@ -107,3 +107,28 @@ export function hasOnboardingCompleted(onboardingStreamDir: string): boolean {
   }
   return false;
 }
+
+// ─── Devtools restore marker ─────────────────────────────────────────────────
+// A temporary file that tells the next activation "this reinstall was triggered
+// by the devtools toggle, not a manual user action — skip onboarding." The
+// marker is consumed (deleted) on read so it only suppresses once.
+
+const DEVTOOLS_RESTORE_MARKER = ".devtools-restore";
+
+/** Write the devtools restore marker. Called by toggle-OFF before uninstall. */
+export function writeDevtoolsRestoreMarker(opsDir: string = amicodeOpsDir()): void {
+  fs.mkdirSync(opsDir, { recursive: true });
+  fs.writeFileSync(path.join(opsDir, DEVTOOLS_RESTORE_MARKER), String(Date.now()));
+}
+
+/** Check and consume the devtools restore marker. Returns true if it existed
+ *  (meaning this activation follows a toggle-OFF reinstall, not a fresh install). */
+export function consumeDevtoolsRestoreMarker(opsDir: string = amicodeOpsDir()): boolean {
+  const markerPath = path.join(opsDir, DEVTOOLS_RESTORE_MARKER);
+  try {
+    fs.unlinkSync(markerPath);
+    return true;
+  } catch {
+    return false;
+  }
+}

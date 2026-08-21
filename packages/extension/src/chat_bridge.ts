@@ -258,34 +258,40 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     };
 
     if (!enabled) {
-      // Toggle OFF: clear overrides, restore marketplace extension, and reload.
+      // Toggle OFF: clear overrides, reinstall the marketplace extension, and reload.
       void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
 
-      // Restore the marketplace extension dist if a backup exists
+      // Guard: write a temporary marker so onboarding won't re-trigger after
+      // the reinstall. The marker is consumed (deleted) on next activation.
+      // A manual uninstall by the user does NOT write this marker, so
+      // onboarding correctly re-triggers for genuine fresh installs.
+      try {
+        const { writeDevtoolsRestoreMarker } = require("./substrate/vault_store") as typeof import("./substrate/vault_store");
+        writeDevtoolsRestoreMarker();
+      } catch { /* non-critical — worst case onboarding re-shows */ }
+
+      // Reinstall from the marketplace to restore the user's current release.
+      // The old backup approach was fragile (went stale on extension updates).
+      // Uninstall+install is the only reliable way to restore a clean dist —
+      // `--force` alone says "already installed" for the same version.
       const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
       if (installedExt) {
-        const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
-        const installedDist = path.join(installedExt.extensionPath, "dist");
-        if (fs.existsSync(backupDist)) {
-          try {
-            const backupFiles = fs.readdirSync(backupDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
-            for (const f of backupFiles) {
-              fs.copyFileSync(path.join(backupDist, f), path.join(installedDist, f));
-            }
-            console.log("[amicode/bridge] restored marketplace dist from backup");
-          } catch (restoreErr) {
-            console.warn("[amicode/bridge] marketplace dist restore failed:", restoreErr);
+        const { exec } = require("child_process") as typeof import("child_process");
+        const extId = "harmoniqs.amicode";
+        exec(`code --uninstall-extension ${extId} && code --install-extension ${extId}`, { timeout: 60_000 }, (err) => {
+          if (err) {
+            console.warn("[amicode/bridge] marketplace reinstall failed:", err.message);
+          } else {
+            console.log("[amicode/bridge] reinstalled marketplace extension");
           }
-        }
+          void vscode.commands.executeCommand("workbench.action.reloadWindow");
+        });
+      } else {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
       }
 
-      // Don't restart server separately — reloading the window does it.
-      // Don't send reloadNeeded — the auto-reload handles it silently.
       io.postToWebview(reply);
-      setTimeout(() => {
-        void vscode.commands.executeCommand("workbench.action.reloadWindow");
-      }, 300);
       return true;
     }
 
