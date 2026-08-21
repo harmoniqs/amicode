@@ -3,6 +3,20 @@ on:
   push: { branches: [main] }
   pull_request:
 jobs:
+  # M2 app-bundle drift gate (#451): the committed overlay + manifest must be
+  # exactly what the extractor produces at the pinned fork tag. On public CI
+  # (no fork clone) this protects the committed state — stray files, hand
+  # edits, manifest/disk divergence. With a fork clone present (dev machines,
+  # future self-hosted runners; the fork is private) it ALSO re-derives the
+  # extraction and requires byte-identical reproduction.
+  app-bundle-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: 20 }
+      - name: drift gate — overlay/manifest sync (committed state; re-derivation when the fork is reachable)
+        run: node packages/app-bundle/scripts/drift_gate.mjs
   fast:
     runs-on: ubuntu-latest
     steps:
