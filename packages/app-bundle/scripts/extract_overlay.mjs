@@ -56,6 +56,10 @@ const flag = (n) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
+// --out: write overlay/ + manifest.json here instead of the package root (the
+// drift gate re-derives without touching committed state).
+const OUT_ROOT = flag("out") ?? PKG_ROOT;
+
 const UPSTREAM_BASE = "v1.18.12";
 const TAG = flag("tag") ?? "v1.18.10-amicode.14";
 const SLICE = flag("slice") ?? "full";
@@ -114,7 +118,7 @@ console.log(
 console.log(`[extract] OVERLAY TOTAL: ${overlayFiles.length} files, ${deletions.length} deletions`);
 
 // ── 4. extract at their upstream-relative paths, AT THE TAG ──────────────────
-const overlayDir = join(PKG_ROOT, "overlay");
+const overlayDir = join(OUT_ROOT, "overlay");
 rmSync(overlayDir, { recursive: true, force: true });
 mkdirSync(overlayDir, { recursive: true });
 if (overlayFiles.length > 0) {
@@ -191,5 +195,5 @@ const manifest = {
   classification,
   files: hashes,
 };
-writeFileSync(join(PKG_ROOT, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
+writeFileSync(join(OUT_ROOT, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
 console.log(`[extract] wrote manifest.json (${overlayFiles.length} entries, ${deletions.length} deletions)`);
