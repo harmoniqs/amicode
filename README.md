@@ -15,6 +15,17 @@ Your vaults, your fleet, your devices, your pulses — composed by conversation.
 
 </div>
 
+> [!WARNING]
+> **Pre-release — this studio is mid-optimization.**
+>
+> Amicode currently exists in a superposition of *polished research tool* and
+> *construction site*; measurement collapses it into whichever state your day
+> needed least. We apply our own discipline to the product: nothing promotes
+> below F = 0.99, and this build is still climbing the curve — improving
+> monotonically, mostly. Hit an unconverged edge and `Amicode: Report a Bug`
+> files it with diagnostics attached; every report is a warm start for the
+> next iteration. You're part of the loop now.
+
 ---
 
 Amicode is an **open autonomous research studio** that lives in your editor — **down to the hardware**.
