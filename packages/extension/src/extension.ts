@@ -43,7 +43,12 @@ import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } 
 import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
-import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
+import {
+  createLocalPersonalVault,
+  sanitizeVaultName,
+  suggestVaultName,
+  ensureVaultEcosystem,
+} from "./substrate/vault_setup";
 import {
   pinnedJuliaMinor,
   hasJuliaup,
@@ -448,6 +453,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const parsed = parseLibraryRootSpecs(raw);
     return parsed.length ? parsed : undefined;
   };
+  // Vault ecosystem — first-run auto-provision (personal + public + mounts.toml).
+  // Idempotent and never throws; runs before the first project prep so the
+  // mount stack is correct on boot. The named `amicode.setupVault` command
+  // remains for manual re-entry.
+  try {
+    const eco = ensureVaultEcosystem();
+    if (eco.personal) opencodeChannel.appendLine(`[vault] auto-provisioned local personal vault: ${eco.personal.path} (git=${eco.personal.gitInit})`);
+    if (eco.publicCloned) opencodeChannel.appendLine(`[vault] public vault cloned: vault-public`);
+    else if (eco.publicPlaceholder) opencodeChannel.appendLine(`[vault] public vault placeholder (offline or no git)`);
+    if (eco.mountsWritten) opencodeChannel.appendLine(`[vault] mounts.toml written`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[vault] ecosystem ensure failed: ${(e as Error).message}`);
+  }
+
   const opencodeProject = prepareOpencodeProject({
     agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
     // MODE-SELECTED vetted template: HP sessions get the Piccolissimo variant
@@ -999,28 +1018,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     void vscode.window.showInformationMessage(`Amicode: personal vault "${created.name}" created and active.`);
   };
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupVault", () => void runVaultSetup(true)));
-  // Personal vault by default. The onboarding wizard (opencode-side) writes the
-  // profile but NOT a vault, and a genuine first-timer has none — so Amico would
-  // have nowhere to remember them (distiller disabled, session unpersonalized).
-  // Silently provision a LOCAL personal vault on first run when none resolves —
-  // no modal, like the Julia project. The `amicode.setupVault` command remains
-  // for naming / re-creating; the wizard finale offers attaching other vaults.
-  // Failure-tolerant: a creation error just leaves the session unpersonalized.
-  const ensureDefaultPersonalVault = async (): Promise<void> => {
-    if (personalMount(resolveMountStack())) return;
-    let created;
-    try {
-      created = createLocalPersonalVault(defaultVaultsRoot(), suggestVaultName());
-    } catch (e) {
-      opencodeChannel.appendLine(`[vault] default personal vault not created: ${(e as Error).message}`);
-      return;
-    }
-    opencodeChannel.appendLine(
-      `[vault] auto-provisioned local personal vault: ${created.path} (git=${created.gitInit})`,
-    );
-    await respawnForVault();
-  };
-  void ensureDefaultPersonalVault();
 
   // Julia setup (#8): amicode manages the Julia toolchain via juliaup — install
   // juliaup if absent, add the channel pinned to the Manifest's MINOR, and

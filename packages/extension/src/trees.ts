@@ -107,9 +107,12 @@ export function registerTrees(ctx: vscode.ExtensionContext): {
   armonia: PlaceholderTree;
 } {
   const catalog = new SessionCatalogTree(ctx);
-  // amicode#204: the single Armonia panel. Its roots are the mounted Vaults;
-  // until ArmoniaService lands, a product empty state names what collects here.
-  const armonia = new PlaceholderTree("Your vaults collect here — run Amicode: Set up a vault");
+  // amicode#204: single Armonia panel. Until ArmoniaService lands, a product
+  // empty state names the canonical location. First-run auto-provisions
+  // personal + vault-public (offline → placeholder) and writes mounts.toml.
+  const armonia = new PlaceholderTree(
+    "Your vaults live in ~/armonia/data/vaults — personal + vault-public after first run",
+  );
 
   ctx.subscriptions.push(
     vscode.window.registerTreeDataProvider("amicode.catalog", catalog),
