@@ -315,10 +315,10 @@ async function main() {
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
     try {
-      const r = await fetch(base + "/", { headers: { Authorization: auth } });
+      const r = await fetch(base + "/", { headers: { Authorization: auth }, signal: AbortSignal.timeout(5_000) });
       if (r.status === 200) up = true;
     } catch {
-      /* not listening yet */
+      /* not listening yet (or wedged — bounded by the abort) */
     }
     if (!up) await new Promise((r) => setTimeout(r, 500));
   }
@@ -348,6 +348,7 @@ async function main() {
       method: req.method,
       headers: { Authorization: auth, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
       body,
+      signal: AbortSignal.timeout(20_000), // one wedged route must not hang the recording
     });
     const respBody = await r.text();
     // Record the request with {SANDBOX} restored so the replay re-substitutes
