@@ -1,0 +1,11 @@
+{
+  "name": "@amicode/app-bundle",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "M2 slice (a): the fork-owned app overlay for canonical opencode — extracted from the opencode fork at a pinned tag, materialized onto a canonical upstream base (#451).",
+  "scripts": {
+    "extract": "node scripts/extract_overlay.mjs",
+    "materialize": "node scripts/materialize.mjs --out .materialized"
+  }
+}

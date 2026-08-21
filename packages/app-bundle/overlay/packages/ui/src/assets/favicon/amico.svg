@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 3600 3600">
+  <!-- Path must stay byte-identical to MARK_PATH in ../../components/logo.tsx
+       (a static SVG can't import a TS module). Reduced bracket mark, not the
+       detailed variant — favicons render at 16-32px, below where the internal
+       accents resolve. Yellow chip + dark mark inset ~10% for padding. -->
+  <rect width="3600" height="3600" rx="700" fill="#FFF676"/>
+  <path transform="translate(360 360) scale(0.8)" fill="#17181A" fill-rule="evenodd" d="M2279.19,374.09v622.56h-958.38V374.09H202.07v2851.83h1118.74v-520.15h958.38v520.15h1118.74V374.09h-1118.74ZM3165.55,2523.71H478.91v-1338.38h2686.65v1338.38Z"/>
+</svg>

@@ -3,19 +3,29 @@
 Program of record: [harmoniqs/amicode#451](https://github.com/harmoniqs/amicode/issues/451) ·
 migration manifest: `docs/migration-canonical-opencode.md`.
 
-Baseline diff: **upstream `v1.18.10` → shipped pin `v1.18.10-amicode.11`** (the vendored
-binary's app surface), packages `app` / `ui` / `session-ui`:
+Baseline diff: **upstream base `v1.18.12~1` (`b0b114923`) → shipped pin
+`v1.18.10-amicode.14`**, packages `app` / `ui` / `session-ui`:
 
-**411 files, +40,526 / −2,249 — 235 added · 172 modified · 4 deleted.**
+**389 files, +41,953 / −1,993 — 244 added · 144 modified · 1 deleted.**
 
-Generated 2026-08-20 (`git diff --name-status v1.18.10 v1.18.10-amicode.11` in
-the fork; upstream tag fetched from `anomalyco/opencode`).
+> **BASE CORRECTION (2026-08-21)** — the first inventory (411 files,
+> +40,526/−2,249 vs `v1.18.10`) overcounted: it folded in upstream's own
+> v1.18.10→v1.18.12 changes. The fork's 2026-08-04 upstream merge landed
+> everything up to `b0b114923` (`v1.18.12~1` — the v1.18.12 tag's final
+> commit only bumps version strings), so the amicode-only delta starts
+> there. The v1.18.12 release tarball is tree-equal to the base for
+> materialization purposes (see packages/app-bundle/README.md).
+
+Generated 2026-08-21 (`git diff --name-status b0b114923 v1.18.10-amicode.14`;
+upstream tags fetched from `anomalyco/opencode`). The `packages/ui` slice
+below is now machine-derived — `packages/app-bundle/manifest.json` carries
+the authoritative per-file classification.
 
 ## Bucket A — added files (235): move as-is
 
 | Where | Count | Notes |
 |---|---|---|
-| `packages/ui/src/amicode/**` | 108 | The pure-additive Amicode component library — the natural first slice |
+| `packages/ui/src/amicode/**` | 108 | The pure-additive Amicode component library (within slice (a)'s 164-file ui overlay: 142A/22M — see `packages/app-bundle/`) |
 | `packages/app/src/components/**` | 27 | App-side components (vault-browser, split-frame, status-popover-body, settings-v2/permissions, …) |
 | `packages/app/src/pages/**` | 18 | Amicode pages + timeline ports |
 | `packages/app/src/utils/**` | 19 | global-clipboard (+tests), amicode utils |
@@ -84,11 +94,14 @@ into the bundle's own locale tables, ending the upstream parity-test coupling.
       status-popover) — the files where compose-vs-fork judgment is needed
    d. i18n tables + deletions + e2e port
 
-## Honest scoping note (2026-08-20, night session)
+## Honest scoping note (updated 2026-08-21)
 
-This inventory is the M2 INPUT, not the extraction. The 411-file move is the
-plan's declared long pole; the slices above are estimable now that the buckets
-are counted. What is NOT done tonight: the bundle itself, its build, the
-consumer flip (deck panes pointing at the service origin), and the CSP/origin
-wiring — all tracked as the remaining M2 scope. M3 (cutover + ≥7-day dogfood
-soak) and M5 (the one-push release) are gated on M2 by design.
+**Slice (a) SHIPPED** — `packages/app-bundle/`: the complete `packages/ui`
+delta (164 files: 142A/22M/0D; 1,623 ui files unchanged from base) as an
+overlay materialized onto canonical v1.18.12. Both proofs green: the
+materialized ui is byte-identical to the fork's at the pin, and the tree
+installs + typecheck-builds cleanly (220 emitted files). Remaining M2: slices
+(b)–(d) (app + session-ui additive, true overlays, i18n/e2e), the bundle's
+CI pin, the consumer flip (deck panes → service origin, CSP/`?auth_token=`
+wiring). M3 (cutover + ≥7-day dogfood soak) and M5 (the one-push release)
+are gated on M2 by design.
