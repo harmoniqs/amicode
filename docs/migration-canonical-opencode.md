@@ -74,6 +74,14 @@ extension-service assets in M1.
 
 ## 3. App-surface extraction inventory (M2)
 
+> **INVENTORY COMPLETE (2026-08-20, night session)** — the full file-level
+> classification lives in `docs/m2-app-extraction-inventory.md`: 411 files
+> (+40,526/−2,249) vs upstream v1.18.10, bucketed 235 added / 172 modified /
+> 4 deleted, with the overlay-architecture decision and the extraction order
+> (ui/src/amicode first, true overlays last). M4 (runtime updater) also
+> COMPLETE — live-drill adopted v1.18.19 in 13.8s incl. the 1.2GB DB-copy
+> probe (PR #479).
+
 - **`packages/ui/src/amicode/*`** in the fork — the complete Amicode UI component set:
   entity-rail, home-cards, connections (+test), widget-grid, widget-frame, widget-preview,
   widget-allowlist (+schema/bridge tests), run-series, run-window, problem, card,
