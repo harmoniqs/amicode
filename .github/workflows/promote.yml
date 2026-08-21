@@ -52,7 +52,7 @@ jobs:
 
           # Do not promote a red build: every check run on the alpha's commit must be green.
           BAD="$(gh api "repos/${{ github.repository }}/commits/$SHA/check-runs" \
-            --jq '[.check_runs[] | select(.conclusion != null and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')"
+            --jq '[.check_runs[] | select(.name != "promote" and .conclusion != null and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral")] | length')"
           [ "$BAD" = "0" ] \
             || { echo "::error::$BAD non-green check run(s) on $SHA ($ALPHA)"; exit 1; }
 
