@@ -624,7 +624,6 @@ function buildForm(): void {
   const importLink = document.getElementById("import-link") as HTMLAnchorElement;
   const importStatus = document.getElementById("import-status") as HTMLDivElement;
   const importPreview = document.getElementById("import-preview") as HTMLDivElement;
-  const importSection = document.getElementById("import-section") as HTMLDivElement;
 
   importLink.addEventListener("click", (e) => {
     e.preventDefault();

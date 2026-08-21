@@ -473,6 +473,14 @@ describe("scanCredentials — end-to-end with real default paths", () => {
       console.log(`    ${c.provider} (from ${c.source}) — key ${c.key.slice(0, 6)}...`);
     }
 
+    // A CI runner has no real opencode install — the e2e assertion only makes
+    // sense on a dev machine with credentials (same skip idiom as the
+    // testConnection case below; #450 shipped this unguarded and CI went red).
+    if (result.credentials.length === 0) {
+      console.log("  [e2e] No credentials on this machine — skipping live assertion");
+      return;
+    }
+
     expect(result.credentials.length).toBeGreaterThan(0);
 
     // Should find opencode since account.json has opencode-go / opencode entries
