@@ -184,16 +184,17 @@ describe("buildOpencodeConfigContent × scores", () => {
 });
 
 describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1–C4, three-state vaultDir)", () => {
-  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory splice (regression guard)', () => {
+  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory content, recovery pointer only', () => {
     const proj = prep({ vaultDir: "" });
     expect(proj.mounts).toEqual([]);
     expect(proj.vaultDir).toBe("");
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).not.toContain("## Mount stack (Armonia");
-    expect(agents).not.toContain("## Memory index");
+    expect(agents).not.toMatch(/^## Mount stack \(Armonia/m); // only prose mentions survive
+    expect(agents).not.toMatch(/^## Memory index/m);
+    expect(agents).toContain("amicode_context plugin"); // live-injection recovery pointer
   });
 
-  it("vaultDir path → single forced personal mount at that path; returns mounts + splices the mount stack", () => {
+  it("vaultDir path → single forced personal mount at that path; returns mounts; sections live-injected, not spliced", () => {
     const vault = fs.mkdtempSync(path.join(os.tmpdir(), "forced-vault-"));
     fs.mkdirSync(path.join(vault, "amicode", "memory"), { recursive: true });
     fs.writeFileSync(
@@ -205,11 +206,14 @@ describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1
     expect(proj.mounts[0]).toMatchObject({ kind: "personal", path: vault, writable: true });
     expect(proj.vaultDir).toBe(vault); // vaultDir === personalMount path
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
-    expect(agents).toContain(`kind=personal · rw · ${vault}`);
-    // memory index reads from the personal mount:
-    expect(agents).toContain("## Memory index");
-    expect(agents).toContain("- [user-role](user_role.md) — Aaron is CEO");
+    // The mount stack + memory index are injected per-prompt by the
+    // amicode_context plugin (their live builders are pinned in
+    // test/stack_state.test.ts) — the prepared file must NOT carry them as
+    // sections (only the recovery pointer's prose mentions may appear).
+    expect(agents).not.toMatch(/^## Mount stack \(Armonia/m);
+    expect(agents).not.toMatch(/^## Memory index/m);
+    expect(agents).not.toContain("- [user-role](user_role.md) — Aaron is CEO");
+    expect(agents).toContain("amicode_context plugin"); // recovery pointer present
   });
 
   it("vaultDir undefined → auto-resolves the full stack from ~/.amico/vaults; vaultDir === personal mount", () => {
@@ -234,9 +238,10 @@ describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1
       expect(proj.mounts.map((m) => m.name)).toEqual(["armonia-me", "armonissima"]); // kind-rank: personal(0) < team(4)
       expect(proj.vaultDir).toBe(personal);
       const agents = fs.readFileSync(proj.agentsPath, "utf8");
-      expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
-      expect(agents).toContain(`- armonia-me · kind=personal · rw · ${personal}`);
-      expect(agents).toContain(`- armonissima · kind=team · ro · ${team}`);
+      // Sections live-injected (see test/stack_state.test.ts), not spliced:
+      expect(agents).not.toMatch(/^## Mount stack \(Armonia/m);
+      expect(agents).not.toContain(`- armonia-me · kind=personal · rw · ${personal}`);
+      expect(agents).toContain("amicode_context plugin"); // recovery pointer present
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;

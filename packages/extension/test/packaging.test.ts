@@ -55,6 +55,8 @@ const REQUIRED = [
   // amicode_* plugin (Bun-transpiled .ts, loaded by absolute path) — every sibling
   // is load-bearing: a dropped file silently reverts the session to vanilla opencode.
   "extension/opencode-plugin/amicode_tools.ts",
+  "extension/opencode-plugin/amicode_context.ts", // live stack-state injection plugin (system.transform hook)
+  "extension/opencode-plugin/stack_state.ts", // its sibling readers/builders (imported by amicode_context)
   "extension/opencode-plugin/entities.ts",
   "extension/opencode-plugin/problems.ts",
   "extension/opencode-plugin/hashes.ts",

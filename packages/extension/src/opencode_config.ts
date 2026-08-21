@@ -21,20 +21,10 @@ import { studioPathsOrLegacy } from "@amicode/schema";
 import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
-  readKnowledgeLines,
-  readDemoLines,
-  readMemoryIndexLines,
   hasOnboardingCompleted,
   onboardingDir,
 } from "./substrate/vault_store";
 import { resolveMountStack, personalMount, type Mount, type MountStack } from "./substrate/mount_store";
-import {
-  buildAboutUserSection,
-  buildRecentProblemsSection,
-  buildReferenceDemosSection,
-  buildMountStackSection,
-  buildMemoryIndexSection,
-} from "./substrate/user_splice";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -373,19 +363,6 @@ export function routingSection(): string {
   return buildRoutingSection(readRoutingContext(readSolverModeState().mode));
 }
 
-/** Recovery pointer for when the amicode_context plugin's
- *  experimental.chat.system.transform hook fails silently (no live block in
- *  the system prompt). Tells the agent where to read solver mode + routing
- *  state directly from disk. */
-function solverModeFallbackPointer(): string {
-  return (
-    "> **Solver mode + routing** are normally injected live into and every session. " +
-    "If you do not see a `## Stack state (live)` block above or a `## Solver mode` section, " +
-    "read `~/.amico/amicode/solver-mode.json` and `~/.amico/connections.json` before " +
-    "authoring a solve — especially before setting `tier` or `executor` in a solvespec.\n"
-  );
-}
-
 /** The model pin to inject into the generated config, or undefined.
  *
  *  We deliberately DO NOT force a fallback model here. `config.model` is the
@@ -687,10 +664,11 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  // Solver mode and routing are injected per-prompt by the amicode_context
-  // plugin (experimental.chat.system.transform hook). The file carries only a
-  // recovery pointer so the agent can self-heal if the hook ever fails silently.
-  fs.writeFileSync(agentsPath, finalContent + "\n\n" + solverModeFallbackPointer(), "utf8");
+  // Solver mode, routing, fleet, and the user-memory sections are injected
+  // per-prompt by the amicode_context plugin (see the recovery pointer the
+  // template carries at its tail). Early safe write in case a later step
+  // throws — the second write below is the authoritative one.
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -711,45 +689,16 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   fs.rmSync(path.join(projectDir, "skills"), { recursive: true, force: true });
   const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
 
-  // User-memory splice (spec-20260705-002847 §6): About-this-user + Your-recent-
-  // problems, appended to the compiled content — own try/catch, personalization
-  // trouble must never brick the boot. `vaultDir` was resolved up front (above).
-  // When we routed to the overture (no profile yet) these read empty and add
-  // nothing — correct: there is no memory to splice on the very first session.
-  if (vaultDir) {
-    try {
-      const about = buildAboutUserSection(readProfileMd(vaultDir));
-      const recent = buildRecentProblemsSection(readKnowledgeLines(vaultDir));
-      const demos = buildReferenceDemosSection(readDemoLines(vaultDir)); // L1 §3
-      for (const section of [about, recent, demos]) {
-        if (section) finalContent = finalContent + "\n\n" + section;
-      }
-    } catch (e) {
-      console.warn(`amicode: user-memory splice failed (session continues unpersonalized): ${e}`);
-    }
-  }
-
-  // Mount-stack + memory-index splice (spec-20260707-002846 C3/C4 read side):
-  // its OWN try/catch — mount-parity trouble must never brick the boot. The
-  // mount-stack section renders whenever the stack has mounts (mounts can exist
-  // without a personal vault — e.g. a team-only stack); the typed-memory index
-  // is read from the personal mount, so it is gated on vaultDir. Empty stack
-  // ("" vaultDir) → both builders return "" → nothing is spliced.
-  try {
-    const mountSection = buildMountStackSection(stack);
-    if (mountSection) finalContent = finalContent + "\n\n" + mountSection;
-    if (vaultDir) {
-      const memorySection = buildMemoryIndexSection(readMemoryIndexLines(vaultDir));
-      if (memorySection) finalContent = finalContent + "\n\n" + memorySection;
-    }
-  } catch (e) {
-    console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
-  }
-
-  // Solver mode and routing are injected per-prompt by the amicode_context
-  // plugin (experimental.chat.system.transform hook). The file carries only a
-  // recovery pointer so the agent can self-heal if the hook ever fails silently.
-  fs.writeFileSync(agentsPath, finalContent + "\n\n" + solverModeFallbackPointer(), "utf8");
+  // Solver mode, routing, fleet, and the user-memory sections (profile,
+  // recent problems, reference demos, mount stack, memory index) are injected
+  // per-prompt by the amicode_context plugin (experimental.chat.system.transform
+  // hook), read LIVE from disk — a distiller write or a solver switch reaches
+  // the next message without a re-prep or restart (the boot-time file splices
+  // these replaced went stale between sessions; spec-20260705-002847 §6 and
+  // spec-20260707-002846 C3/C4 read side moved to the live hook). The
+  // recovery pointer the template carries at its tail tells the agent where
+  // to read the state directly if the hook ever fails silently.
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).
