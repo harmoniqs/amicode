@@ -21,7 +21,8 @@ import {
 
 import {
   hasOnboardingCompleted,
-  ensureOnboardingCompleted,
+  writeDevtoolsRestoreMarker,
+  consumeDevtoolsRestoreMarker,
 } from "../src/substrate/vault_store";
 
 // ─── AC10: Routing predicate (pure function, table-driven) ───────────────────
@@ -243,34 +244,35 @@ describe("welcome_shown flag semantics (AC6)", () => {
   });
 });
 
-// ─── ensureOnboardingCompleted — devtools restore guard ──────────────────────
+// ─── devtools restore marker — toggle-OFF guard ─────────────────────────────
 
-describe("ensureOnboardingCompleted — devtools restore guard", () => {
+describe("devtools restore marker — toggle-OFF guard", () => {
   let tmpDir: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-guard-"));
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-marker-"));
   });
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("writes the onboarding_completed event when events.jsonl does not exist", () => {
-    ensureOnboardingCompleted(tmpDir);
-    expect(hasOnboardingCompleted(tmpDir)).toBe(true);
+  it("consumeDevtoolsRestoreMarker returns false when no marker exists", () => {
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(false);
   });
 
-  it("writes the event when events.jsonl exists but has no completion marker", () => {
-    fs.writeFileSync(path.join(tmpDir, "events.jsonl"), '{"entity":"profile","ts":1}\n');
-    ensureOnboardingCompleted(tmpDir);
-    expect(hasOnboardingCompleted(tmpDir)).toBe(true);
+  it("writeDevtoolsRestoreMarker + consumeDevtoolsRestoreMarker returns true and deletes the marker", () => {
+    writeDevtoolsRestoreMarker(tmpDir);
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(true);
+    // Second consume returns false (marker was deleted)
+    expect(consumeDevtoolsRestoreMarker(tmpDir)).toBe(false);
   });
 
-  it("is idempotent — does not duplicate the event if already present", () => {
-    ensureOnboardingCompleted(tmpDir);
-    ensureOnboardingCompleted(tmpDir);
-    const content = fs.readFileSync(path.join(tmpDir, "events.jsonl"), "utf8");
-    const completionLines = content.split("\n").filter(l => l.includes("onboarding_completed"));
-    expect(completionLines).toHaveLength(1);
+  it("does not interfere with onboarding completion state", () => {
+    // Marker exists but onboarding events.jsonl does not
+    writeDevtoolsRestoreMarker(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(false);
+    // Consuming the marker doesn't create onboarding_completed
+    consumeDevtoolsRestoreMarker(tmpDir);
+    expect(hasOnboardingCompleted(tmpDir)).toBe(false);
   });
 });

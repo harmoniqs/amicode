@@ -26,6 +26,7 @@ import {
   readMemoryIndexLines,
   hasOnboardingCompleted,
   onboardingDir,
+  consumeDevtoolsRestoreMarker,
 } from "./substrate/vault_store";
 import { resolveMountStack, personalMount, type Mount, type MountStack } from "./substrate/mount_store";
 import {
@@ -614,6 +615,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
+      !consumeDevtoolsRestoreMarker() &&
       !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
     if (shouldOnboard && overture && score0) {
       // Chained: ONE compiled section, ONE manifest (id `overture`, stages =

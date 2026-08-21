@@ -262,12 +262,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
 
-      // Guard: ensure onboarding won't re-trigger after the reinstall.
-      // The uninstall clears VS Code globalState; the filesystem event is what
-      // the routing predicate checks, so writing it here is sufficient.
+      // Guard: write a temporary marker so onboarding won't re-trigger after
+      // the reinstall. The marker is consumed (deleted) on next activation.
+      // A manual uninstall by the user does NOT write this marker, so
+      // onboarding correctly re-triggers for genuine fresh installs.
       try {
-        const { ensureOnboardingCompleted, onboardingDir } = require("./substrate/vault_store") as typeof import("./substrate/vault_store");
-        ensureOnboardingCompleted(onboardingDir());
+        const { writeDevtoolsRestoreMarker } = require("./substrate/vault_store") as typeof import("./substrate/vault_store");
+        writeDevtoolsRestoreMarker();
       } catch { /* non-critical — worst case onboarding re-shows */ }
 
       // Reinstall from the marketplace to restore the user's current release.
