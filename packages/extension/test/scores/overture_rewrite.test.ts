@@ -105,6 +105,14 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toContain("Exploring");
   });
 
+  it("AC4: intent options carry domain-neutral descriptions in compiled output", () => {
+    // Descriptions must flow from SCORE.md choice_descriptions into the compiled prompt
+    // so the LLM uses them verbatim instead of inventing quantum-specific ones
+    expect(md).toContain("Run automated experiment loops and extract insights from results");
+    expect(md).toContain("Write code, refactor, debug, and build software");
+    expect(md).toContain("See what Amicode can do");
+  });
+
   it("AC4: specifies multiple: true for multi-select", () => {
     expect(md).toContain("multiple: true");
   });
@@ -114,8 +122,19 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toMatch(/intent.*\[.*research.*general_coding.*exploring.*\]/s);
   });
 
-  it("AC6: asks research area as free-form, does NOT ask platform-specific sub-types", () => {
-    expect(md).toContain("What research area and what kind of experiments?");
+  it("AC6: research_area stage has two back-to-back questions (area + kind)", () => {
+    const ov = overture();
+    const stage = ov.manifest.stages.find((s: { id: string }) => s.id === "research_area");
+    expect(stage).toBeDefined();
+    expect(stage!.questions).toHaveLength(2);
+    expect(stage!.questions![0].prompt).toBe("What research areas?");
+    expect(stage!.questions![1].prompt).toBe("What kind of experiments?");
+  });
+
+  it("AC6: compiled output contains both research prompts, not the old combined one", () => {
+    expect(md).toContain("What research areas?");
+    expect(md).toContain("What kind of experiments?");
+    expect(md).not.toContain("What research area and what kind of experiments?");
     expect(md).not.toContain("Which platform");
     expect(md).not.toContain("qubit platforms");
   });
@@ -161,6 +180,31 @@ describe("overture compiled content — complete flow (AC9)", () => {
     expect(md).toContain("goals");
     expect(md).toContain("handoff");
     expect(md).toContain("onboarding_completed");
+  });
+});
+
+// ─── AC10: handoff presents description for user confirmation/edit ───────────
+
+describe("overture — handoff stage presents description for edit", () => {
+  it("handoff stage has a text question for description confirmation (no choices)", () => {
+    const ov = overture();
+    const handoff = ov.manifest.stages.find((s: { id: string }) => s.id === "handoff");
+    expect(handoff).toBeDefined();
+    const questions = handoff!.questions ?? [];
+    expect(questions).toHaveLength(1);
+    expect(questions[0].id).toBe("description");
+    expect(questions[0].kind).toBe("text");
+    expect(questions[0].choices).toBeUndefined();
+  });
+
+  it("compiled body instructs to pre-fill description with default and let user edit", () => {
+    const md = compileScore(overture());
+    expect(md).toContain("default");
+    expect(md).toContain("Onboarding finished");
+    expect(md).toContain("start a new session");
+    // Should NOT contain the old choices
+    expect(md).not.toContain("Let's dive into my first task");
+    expect(md).not.toContain("Show me around first");
   });
 });
 

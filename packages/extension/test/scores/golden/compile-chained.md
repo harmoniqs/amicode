@@ -17,17 +17,18 @@ gate's checks pass.
 2. **context_seed** (optional)
    - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
 3. **intent**
-   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development | Perform (automated) experiments and gain scientific insights (recommended) | Exploring
+   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development — Write code, refactor, debug, and build software | Perform (automated) experiments and gain scientific insights (recommended) — Run automated experiment loops and extract insights from results | Exploring — See what Amicode can do
 4. **goals**
    - Q `goals`: "What are you hoping to accomplish with Amico?"
 5. **research_area** (optional)
-   - Q `research_area`: "What research area and what kind of experiments?"
+   - Q `research_area`: "What research areas?"
+   - Q `experiment_kind`: "What kind of experiments?"
 6. **environment** (optional)
    - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
 7. **devices** (optional)
    - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
 8. **handoff**
-   - Q `handoff`: "Ready to get started?" — options: Let's dive into my first task (recommended) | Open a normal session | Show me around first
+   - Q `description`: "Here's how I'd describe you — edit if you'd like:"
 9. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
 10. **model**
@@ -147,11 +148,17 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
 
 5. **research_area** _(optional — only if user selected the experiments intent)_ —
-   ask via the `question` tool with `kind: "text"`: "What research area and what
-   kind of experiments?" This is free-form — the user can say anything from
-   "quantum optimal control for transmon gates" to "protein folding simulations"
-   to "materials science DFT sweeps." Record whatever they say:
+   Two back-to-back questions (asked one at a time per the protocol):
+
+   First, ask via the `question` tool with `kind: "text"`: "What research areas?"
+   This is free-form — the user can say anything from "quantum optimal control"
+   to "protein folding" to "materials science." Record:
    `amicode_profile {entity:"profile", payload:{research_area:"..."}}`.
+
+   Then ask via the `question` tool with `kind: "text"`: "What kind of experiments?"
+   Record:
+   `amicode_profile {entity:"profile", payload:{experiment_kind:"..."}}`.
+
    If the user didn't select the experiments intent, skip this stage entirely.
 
 6. **environment** — _(only if user selected the experiments intent)_ — ask how
@@ -173,11 +180,18 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-8. **handoff** — the terminal stage. FIRST, **auto-generate a description** from
-   what you've learned (name, goals, research_area, intent, environment) — a
-   concise 1–2 sentence summary of the user written in third person, suitable
-   for the "About you" card. Example: "Aaron is a quantum-control researcher
-   focused on high-fidelity transmon gates, working in simulation." Record:
+8. **handoff** — the terminal stage.
+
+   FIRST, **auto-generate a description** from what you've learned (name, goals,
+   research_area, intent, environment) — a concise 1–2 sentence summary of the
+   user written in third person, suitable for the "About you" card. Example:
+   "Aaron is a researcher focused on high-fidelity quantum gates, working in
+   simulation."
+
+   Then present it for confirmation/edit via the `question` tool with
+   `kind: "text"` and the `default` field set to your generated description —
+   this pre-fills the text input so the user can accept as-is or edit before
+   submitting. Record whatever they submit:
    `amicode_profile {entity:"profile", payload:{description:"..."}}`.
 
    Then record the completion marker:
@@ -185,10 +199,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).
 
-   Then tell the user onboarding is complete: "You're all set — your About You
-   card on the dashboard is now populated with what you told me. To see it,
-   reload the window (Cmd+Shift+P → 'Reload Window', or Cmd+R). After that,
-   start a new session anytime to explore what Amico can do."
+   Then tell the user: "Onboarding finished! Please start a new session to begin."
 
    Do NOT auto-chain into another interview or open a new session. The
    onboarding ends here. The user is in control of what happens next.

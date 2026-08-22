@@ -34,7 +34,11 @@ function renderStages(stages: Stage[], dir: string, start: number): string[] {
     if (s.template) lines.push(`   - vetted template (absolute): \`${path.join(dir, s.template)}\``);
     for (const q of s.questions ?? []) {
       const choices = q.choices
-        ? ` — options: ${q.choices.map((c) => (c === q.default ? `${c} (recommended)` : c)).join(" | ")}`
+        ? ` — options: ${q.choices.map((c, idx) => {
+            const label = c === q.default ? `${c} (recommended)` : c;
+            const desc = q.choice_descriptions?.[idx];
+            return desc ? `${label} — ${desc}` : label;
+          }).join(" | ")}`
         : q.default
           ? ` — default: ${q.default}`
           : "";

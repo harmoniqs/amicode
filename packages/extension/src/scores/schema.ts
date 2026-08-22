@@ -17,6 +17,7 @@ export interface Question {
   id: string;
   prompt: string;
   choices?: string[];
+  choice_descriptions?: string[];
   default?: string;
   skip_if?: string;
   memory_hooks?: string[];

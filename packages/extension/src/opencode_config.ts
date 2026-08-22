@@ -105,13 +105,13 @@ export function resolveJuliaProject(configValue: string): string {
  *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
  *      pass this explicitly once .vsix packaging of opencode-plugin/ is
  *      verified; the default keeps existing call sites working unchanged.
- *    - `default_agent: "plan"` — plan-first posture: new sessions open on
- *      opencode's built-in read-only plan agent, not straight into execution.
- *      The picker stays plan/build ONLY (roles-not-modes, #368): the interview
- *      content lives in the compiled AGENTS.md score section (visible to every
- *      agent), and the pulse-designer agent entry is RETIRED (#389) — it was
- *      a four-line prompt shell over the config-root permission block, doing
- *      nothing build did not already do.
+ *    - `default_agent: "build"` — build-first posture: new sessions open on
+ *      opencode's build agent so onboarding and the interview can execute tools
+ *      immediately. The picker stays plan/build ONLY (roles-not-modes, #368):
+ *      the interview content lives in the compiled AGENTS.md score section
+ *      (visible to every agent), and the pulse-designer agent entry is RETIRED
+ *      (#389) — it was a four-line prompt shell over the config-root permission
+ *      block, doing nothing build did not already do.
  *    - an `external_directory` grant for the Problem-workspaces root, so the
  *      AGENT's file tools can read back system/formulation/run/event TOML the
  *      plugin wrote (the plugin's own fs writes are host-process calls and need
@@ -444,13 +444,12 @@ export function buildOpencodeConfigContent(
   const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    // Plan-first posture (product default for ALL users): every new Amicode
-    // session opens on opencode's built-in, read-only `plan` agent; execution
-    // (the pulse-designer interview, solves) starts only when the user switches
-    // agents in the composer. Like everything in this blob, it deep-merges OVER
-    // the user's global config — an explicit per-message `agent` (the e2e tests,
-    // the distiller's --agent) is unaffected.
-    default_agent: "plan",
+    // Build-first posture (product default for ALL users): every new Amicode
+    // session opens on opencode's `build` agent so the onboarding interview and
+    // solves can execute tools immediately. Like everything in this blob, it
+    // deep-merges OVER the user's global config — an explicit per-message `agent`
+    // (the e2e tests, the distiller's --agent) is unaffected.
+    default_agent: "build",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     plugin: [pluginPath, ...extraPluginPaths],
