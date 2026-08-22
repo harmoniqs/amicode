@@ -38,7 +38,7 @@
     "onCommand:amicode.openChat",
     "onCommand:amicode.newChat",
     "onCommand:amicode.chatDeck",
-    "onView:amicode.armonia",
+    "onView:amicode.workspace",
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
@@ -58,17 +58,18 @@
     "views": {
       "amicode": [
         {
-          "id": "amicode.armonia",
-          "name": "Armonia",
-          "type": "tree"
-        },
-        {
-          "id": "amicode.catalog",
-          "name": "Catalog",
+          "id": "amicode.workspace",
+          "name": "Workspace",
           "type": "tree"
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "amicode.workspace",
+        "contents": "No folders in this workspace.\n[Add Folder](command:amicode.workspace.addFolder)"
+      }
+    ],
     "commands": [
       {
         "command": "amicode.onboarding.open",
@@ -143,10 +144,6 @@
         "title": "Amicode: Distill now (update my memory)"
       },
       {
-        "command": "amicode.catalog.remove",
-        "title": "Remove from Catalog"
-      },
-      {
         "command": "amicode.fleet.repair",
         "title": "Amicode: Fleet \u2014 Repair (guard + tunnel)"
       },
@@ -170,6 +167,53 @@
         "command": "amicode.updateOpencode",
         "title": "Amicode: Update canonical opencode (check + adopt)",
         "category": "Amicode"
+      },
+      {
+        "command": "amicode.workspace.newFile",
+        "title": "New File",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "amicode.workspace.newFolder",
+        "title": "New Folder",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "amicode.workspace.rename",
+        "title": "Rename"
+      },
+      {
+        "command": "amicode.workspace.delete",
+        "title": "Delete"
+      },
+      {
+        "command": "amicode.workspace.copyPath",
+        "title": "Copy Path"
+      },
+      {
+        "command": "amicode.workspace.copyRelativePath",
+        "title": "Copy Relative Path"
+      },
+      {
+        "command": "amicode.workspace.revealInOS",
+        "title": "Reveal in Finder"
+      },
+      {
+        "command": "amicode.workspace.openInTerminal",
+        "title": "Open in Terminal"
+      },
+      {
+        "command": "amicode.workspace.openToSide",
+        "title": "Open to the Side"
+      },
+      {
+        "command": "amicode.workspace.removeFromWorkspace",
+        "title": "Remove Folder from Workspace"
+      },
+      {
+        "command": "amicode.workspace.addFolder",
+        "title": "Add Folder to Workspace",
+        "icon": "$(root-folder-opened)"
       }
     ],
     "configuration": {
@@ -324,22 +368,71 @@
     "menus": {
       "view/title": [
         {
-          "command": "amicode.openChat",
-          "when": "view == amicode.armonia",
+          "command": "amicode.workspace.newFile",
+          "when": "view == amicode.workspace",
+          "group": "navigation"
+        },
+        {
+          "command": "amicode.workspace.newFolder",
+          "when": "view == amicode.workspace",
+          "group": "navigation"
+        },
+        {
+          "command": "amicode.workspace.addFolder",
+          "when": "view == amicode.workspace",
           "group": "navigation"
         }
       ],
       "view/item/context": [
         {
-          "command": "amicode.catalog.remove",
-          "when": "view == amicode.catalog && viewItem == amicodeCatalogEntry",
-          "group": "7_modification"
-        }
-      ],
-      "commandPalette": [
+          "command": "amicode.workspace.newFile",
+          "when": "view == amicode.workspace",
+          "group": "2_workspace@1"
+        },
         {
-          "command": "amicode.catalog.remove",
-          "when": "false"
+          "command": "amicode.workspace.newFolder",
+          "when": "view == amicode.workspace",
+          "group": "2_workspace@2"
+        },
+        {
+          "command": "amicode.workspace.openToSide",
+          "when": "view == amicode.workspace && viewItem == workspaceFile",
+          "group": "3_open@1"
+        },
+        {
+          "command": "amicode.workspace.rename",
+          "when": "view == amicode.workspace",
+          "group": "7_modification@1"
+        },
+        {
+          "command": "amicode.workspace.delete",
+          "when": "view == amicode.workspace",
+          "group": "7_modification@2"
+        },
+        {
+          "command": "amicode.workspace.copyPath",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@1"
+        },
+        {
+          "command": "amicode.workspace.copyRelativePath",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@2"
+        },
+        {
+          "command": "amicode.workspace.revealInOS",
+          "when": "view == amicode.workspace",
+          "group": "9_cutcopypaste@3"
+        },
+        {
+          "command": "amicode.workspace.openInTerminal",
+          "when": "view == amicode.workspace && viewItem =~ /workspaceFolder|workspaceRoot/",
+          "group": "9_cutcopypaste@4"
+        },
+        {
+          "command": "amicode.workspace.removeFromWorkspace",
+          "when": "view == amicode.workspace && viewItem == workspaceRoot",
+          "group": "10_workspace@1"
         }
       ]
     }

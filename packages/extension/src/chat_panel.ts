@@ -42,11 +42,18 @@ export class ChatPanel {
   private static current?: ChatPanel;
   /** Every live chat tab (primary included) — drives tab-title numbering. */
   private static readonly live = new Set<ChatPanel>();
+  /** Callback fired whenever the number of live chat panels changes. */
+  private static onLiveChangeCallback?: (count: number) => void;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
   private static bugReportAvailable = false;
   private readonly disposables: vscode.Disposable[] = [];
+
+  /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
+  static onLiveChange(cb: (count: number) => void): void {
+    ChatPanel.onLiveChangeCallback = cb;
+  }
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -57,6 +64,7 @@ export class ChatPanel {
   ) {
     this.panel.webview.html = this.renderHtml(opencodeUrl, authToken, hideProjectDir);
     ChatPanel.live.add(this);
+    ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     // #351: register this panel as an inspector poster — RunsManager / device
     // poll fan out run/device envelopes to every live chat webview.
@@ -336,6 +344,7 @@ export class ChatPanel {
     }
     this.disposables.length = 0;
     ChatPanel.live.delete(this);
+    ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     if (ChatPanel.current === this) ChatPanel.current = undefined;
   }
 
