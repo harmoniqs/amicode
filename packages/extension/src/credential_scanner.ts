@@ -335,16 +335,23 @@ export function writeBatchConfig(
     providerEntry[cred.provider] = entry;
   }
 
-  // Determine active model
+  // Determine active model — only set when we have a known default.
+  // Unknown providers (e.g. amazon-bedrock) let the server resolve its own
+  // default from the connected provider's model list.
   const activeModels = PROVIDER_MODELS[activeProvider];
-  const activeModel = activeModels?.[0]?.id ?? `${activeProvider}/unknown`;
+  const activeModel = activeModels?.[0]?.id;
 
-  const result = {
+  const result: Record<string, unknown> = {
     ...existing,
     $schema: "https://opencode.ai/config.json",
     provider: providerEntry,
-    model: activeModel,
   };
+  if (activeModel) {
+    result.model = activeModel;
+  } else {
+    // Remove stale model field if it points to an unknown model
+    delete result.model;
+  }
 
   fs.writeFileSync(targetPath, JSON.stringify(result, null, 2) + "\n");
 }

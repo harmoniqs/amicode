@@ -114,15 +114,18 @@ export function writeOnboardingConfig(
     // If parsing fails, start fresh
   }
 
-  // Reject placeholder/invalid keys (#455) — but allow empty keys (OAuth providers)
+   // Reject placeholder/invalid keys (#455) — but allow empty keys (OAuth providers)
   if (config.apiKey && !isValidApiKey(config.apiKey)) {
     // Key is non-empty but invalid — don't write this provider, just preserve existing config
-    const result = {
+    const result: Record<string, unknown> = {
       ...existing,
       $schema: "https://opencode.ai/config.json",
       provider: existing.provider ?? {},
-      model: config.model,
     };
+    // Only write model if it's a known valid ID (not empty, not "provider/unknown")
+    if (config.model && !config.model.endsWith("/unknown")) {
+      result.model = config.model;
+    }
     fs.writeFileSync(configPath, JSON.stringify(result, null, 2) + "\n");
     return;
   }
@@ -146,12 +149,18 @@ export function writeOnboardingConfig(
     [config.provider]: providerConfig,
   };
 
-  const result = {
+  const result: Record<string, unknown> = {
     ...existing,
     $schema: "https://opencode.ai/config.json",
     provider: providerEntry,
-    model: config.model,
   };
+  // Only write model if it's a known valid ID (not empty, not "provider/unknown")
+  if (config.model && !config.model.endsWith("/unknown")) {
+    result.model = config.model;
+  } else {
+    // Remove stale model field that points to an unknown model
+    delete result.model;
+  }
 
   fs.writeFileSync(configPath, JSON.stringify(result, null, 2) + "\n");
 }
