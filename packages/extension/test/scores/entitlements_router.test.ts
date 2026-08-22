@@ -86,14 +86,15 @@ describe("buildRouterSection", () => {
   it("renders the onset question with fixed options", () => {
     const md = buildRouterSection([pub]);
     expect(md).toContain("What do you want to do today?");
-    expect(md).toContain("Start from a system");
+    expect(md).toContain("Design a new pulse");
     expect(md).toContain("Bring your own problem");
-    expect(md).toContain("Resume where you left off");
+    expect(md).toContain("Resume the active problem");
+    expect(md).toContain("Resume your research campaign");
     expect(md).toContain("Just explore");
   });
   it("pulse-designer is the fixed system option, NOT an entry card", () => {
     const md = buildRouterSection([pub, gated]);
-    const cardBlock = md.slice(md.indexOf("Start from an application"));
+    const cardBlock = md.slice(md.indexOf("application entry cards"));
     expect(cardBlock).toContain("pasqal-mis");
     // score #0 must not be duplicated as an application entry card
     expect(md.indexOf("Name of pulse-designer")).toBe(-1);
@@ -106,7 +107,7 @@ describe("buildRouterSection", () => {
   });
   it("no application scores → no empty entry-card section", () => {
     const md = buildRouterSection([pub]);
-    expect(md).not.toContain("Start from an application");
+    expect(md).not.toContain("application entry cards");
   });
   it("is deterministic", () => {
     expect(buildRouterSection([pub, gated])).toBe(buildRouterSection([pub, gated]));
