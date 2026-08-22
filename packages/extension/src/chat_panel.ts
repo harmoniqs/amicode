@@ -46,9 +46,14 @@ export class ChatPanel {
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
   private static bugReportAvailable = false;
+  /** WI-4: callback fired when the primary panel's health state changes. */
+  private static onHealthChange?: (healthy: boolean) => void;
   private readonly disposables: vscode.Disposable[] = [];
   /** The origin the iframe was built with — used to detect port changes on restart. */
   readonly origin: string;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private pongTimeout?: ReturnType<typeof setTimeout>;
+  private healthy = true;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
@@ -78,6 +83,20 @@ export class ChatPanel {
     );
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
+        // WI-4: health heartbeat pong — handle before the bridge so it never
+        // hits the "unhandled" log line.
+        if (msg && msg.source === "amicode" && msg.kind === "pong") {
+          if (this.pongTimeout) {
+            clearTimeout(this.pongTimeout);
+            this.pongTimeout = undefined;
+          }
+          const wasHealthy = this.healthy;
+          this.healthy = !!msg.healthy;
+          if (this.healthy !== wasHealthy && ChatPanel.onHealthChange && ChatPanel.current === this) {
+            ChatPanel.onHealthChange(this.healthy);
+          }
+          return;
+        }
         // iframe → extension bridge: the outer webview relay (renderHtml)
         // forwards the framed app's envelopes here; the shared handler owns the
         // strict allowlists (chat_bridge.ts, also used by the deck's panes).
@@ -94,6 +113,9 @@ export class ChatPanel {
       null,
       this.disposables,
     );
+    // WI-4: start the health heartbeat (30s interval). Ping the relay; expect
+    // a pong within 5s. If no pong arrives, mark unhealthy.
+    this.startHeartbeat();
   }
 
   /** `authToken` is the per-boot server credential (#163) as the app's
@@ -291,7 +313,7 @@ export class ChatPanel {
             replyClipboardImage(d.nonce);
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "device:refresh")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "pong" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "device:refresh")) {
             vscode.postMessage(d);
           }
           return;
@@ -300,6 +322,14 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
+        // Health heartbeat (WI-4): the extension pings the relay; we respond
+        // with a pong indicating whether the iframe contentWindow is accessible.
+        if (d && d.source === "amicode" && d.kind === "ping") {
+          var iframe = document.querySelector("iframe");
+          var healthy = !!(iframe && iframe.contentWindow);
+          vscode.postMessage({ source: "amicode", kind: "pong", healthy: healthy });
+          return;
+        }
         if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "server-url-changed" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
@@ -349,7 +379,32 @@ export class ChatPanel {
 </html>`;
   }
 
+  /** WI-4: register a callback for primary panel health changes.
+   *  Called with `false` when a heartbeat pong is missed or reports unhealthy,
+   *  `true` when it recovers. */
+  static setHealthChangeCallback(cb: (healthy: boolean) => void): void {
+    ChatPanel.onHealthChange = cb;
+  }
+
+  private startHeartbeat(): void {
+    const HEARTBEAT_INTERVAL_MS = 30_000;
+    const PONG_TIMEOUT_MS = 5_000;
+    this.heartbeatTimer = setInterval(() => {
+      void this.panel.webview.postMessage({ source: "amicode", kind: "ping" });
+      this.pongTimeout = setTimeout(() => {
+        if (this.healthy) {
+          this.healthy = false;
+          if (ChatPanel.onHealthChange && ChatPanel.current === this) {
+            ChatPanel.onHealthChange(false);
+          }
+        }
+      }, PONG_TIMEOUT_MS);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
   dispose(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.pongTimeout) clearTimeout(this.pongTimeout);
     for (const d of this.disposables) {
       try {
         d.dispose();

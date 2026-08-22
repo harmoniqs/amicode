@@ -871,6 +871,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
       opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
     });
+
+    // WI-4: register the webview health heartbeat callback. When the primary
+    // panel's relay stops responding (port forwarding gone, iframe crashed),
+    // notify the user and offer to recreate the panel.
+    let healthNotificationShown = false;
+    ChatPanel.setHealthChangeCallback((healthy) => {
+      if (!healthy && !healthNotificationShown) {
+        healthNotificationShown = true;
+        opencodeChannel.appendLine("[health] webview heartbeat: panel unhealthy — iframe unreachable");
+        void vscode.window
+          .showWarningMessage("Amicode: chat panel can't reach the server.", "Recreate Panel", "Dismiss")
+          .then((choice) => {
+            healthNotificationShown = false;
+            if (choice === "Recreate Panel" && opencodeExternalUrl) {
+              ChatPanel.disposeCurrent();
+              ChatPanel.openOrReveal(ctx, opencodeExternalUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            }
+          });
+      } else if (healthy) {
+        healthNotificationShown = false;
+        opencodeChannel.appendLine("[health] webview heartbeat: panel recovered");
+      }
+    });
   }
 
   // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
