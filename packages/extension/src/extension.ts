@@ -68,7 +68,6 @@ import {
   REPORT_BUG_COMMAND,
 } from "./bug_report";
 import * as os from "node:os";
-import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
