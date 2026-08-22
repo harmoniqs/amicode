@@ -221,13 +221,33 @@ function buildActiveProblemBlock(): string {
   return desc;
 }
 
-/** Compact live-runs block: one-line-per-run with status. */
+/** A run "solving" with no FINISHED marker this many hours after its
+ *  timestamped id started is a ZOMBIE (crashed server, killed process) —
+ *  report it as stale, never as live work. Run ids are rYYYYMMDD-HHMMSSZ-hash. */
+const SOLVING_STALE_HOURS = 12;
+
+/** Age in hours parsed from the run id's timestamp, else undefined. */
+function runAgeHours(runName: string): number | undefined {
+  const m = runName.match(/^r(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})Z-/);
+  if (!m) return undefined;
+  const t = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+  if (Number.isNaN(t)) return undefined;
+  return (Date.now() - t) / 3_600_000;
+}
+
+/** Compact live-runs block: LIVE runs individually (with age), zombies called
+ *  out as stale, and the finished backlog as ONE summary line (count + best
+ *  F + latest). The full history lives in the runs dir — 120 individually
+ *  listed finished runs drowned exactly the signal the greeting needs. */
 function buildLiveRunsBlock(): string {
   const root = runsRoot();
-  const lines: string[] = [];
 
   try {
     if (!fs.existsSync(root)) return "";
+
+    const live: string[] = [];
+    const stale: string[] = [];
+    const done: { name: string; lab: string; fidelity: number | undefined }[] = [];
 
     const labs = fs.readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory());
     for (const lab of labs) {
@@ -235,25 +255,55 @@ function buildLiveRunsBlock(): string {
       const runs = fs.readdirSync(labDir, { withFileTypes: true }).filter((d) => d.isDirectory());
       for (const run of runs) {
         const runDir = path.join(labDir, run.name);
-        const solved = !fs.existsSync(path.join(runDir, "FINISHED"));
-        let fidelity: string | undefined;
+        const finished = fs.existsSync(path.join(runDir, "FINISHED"));
+        let fidelity: number | undefined;
+        let fidelityStr: string | undefined;
         const resultPath = path.join(runDir, "result.toml");
         if (fs.existsSync(resultPath)) {
           try {
             const content = fs.readFileSync(resultPath, "utf8");
             const m = content.match(/fidelity\s*=\s*([\d.eE+-]+)/);
-            if (m) fidelity = parseFloat(m[1]).toFixed(6);
+            if (m) {
+              fidelity = parseFloat(m[1]);
+              fidelityStr = fidelity.toFixed(6);
+            }
           } catch { /* skip */ }
         }
-        const status = solved ? "solving" : fidelity ? `done (F=${fidelity})` : "done";
-        lines.push(`- ${run.name} @ ${lab.name}: ${status}`);
+        if (finished) {
+          done.push({ name: run.name, lab: lab.name, fidelity });
+        } else {
+          const ageH = runAgeHours(run.name);
+          if (ageH !== undefined && ageH > SOLVING_STALE_HOURS) {
+            const since = run.name.slice(1, 9).replace(/^(\d{4})(\d{2})(\d{2})$/, "$1-$2-$3");
+            stale.push(`- ${run.name} @ ${lab.name}: STALE — no FINISHED since ${since} (probably dead, do not present as live)`);
+          } else {
+            const age = ageH !== undefined ? (ageH < 1 ? `${Math.max(1, Math.round(ageH * 60))}m` : `${Math.round(ageH)}h`) : "age unknown";
+            live.push(`- ${run.name} @ ${lab.name}: solving (${age} old)`);
+          }
+        }
       }
     }
+
+    const lines: string[] = [];
+    if (live.length > 0 || stale.length > 0 || done.length > 0) {
+      lines.push("**live runs**");
+      lines.push(...live, ...stale);
+      if (done.length > 0) {
+        const best = done.reduce((acc, d) => (d.fidelity !== undefined && (acc === undefined || d.fidelity > acc) ? d.fidelity : acc), undefined);
+        const withF = done.filter((d) => d.fidelity !== undefined);
+        const latest = done[done.length - 1];
+        const bits = [
+          `${done.length} finished`,
+          best !== undefined ? `best F=${best.toFixed(6)}` : null,
+          withF.length > 0 ? `latest ${latest.name}${latest.fidelity !== undefined ? ` (F=${latest.fidelity.toFixed(6)})` : ""}` : null,
+        ].filter(Boolean);
+        lines.push(`- backlog: ${bits.join(" · ")} — full history in the runs dir`);
+      }
+    }
+    return lines.length > 0 ? lines.join("\n") : "";
   } catch {
     return ""; // optional — silent on error
   }
-
-  return lines.length > 0 ? "**live runs**\n" + lines.join("\n") : "";
 }
 
 // ── Fleet state ──────────────────────────────────────────────────────────────

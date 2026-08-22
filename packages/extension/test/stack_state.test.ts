@@ -300,12 +300,84 @@ describe("caps + composition", () => {
   });
 });
 
+// ── Live-runs block: live/stale/summary ──────────────────────────────────────
+
+describe("buildLiveRunsBlock (live individually, zombies flagged, backlog summarized)", () => {
+  function mkRun(lab: string, name: string, opts: { finished?: boolean; fidelity?: number } = {}): void {
+    const dir = path.join(lab, name);
+    fs.mkdirSync(dir, { recursive: true });
+    if (opts.finished) fs.writeFileSync(path.join(dir, "FINISHED"), "");
+    if (opts.fidelity !== undefined) {
+      fs.writeFileSync(path.join(dir, "result.toml"), `fidelity = ${opts.fidelity}\n`);
+    }
+  }
+  function runsBlockWith(runs: (labDir: string) => void): string {
+    const root = mkTmp("runs-");
+    const lab = path.join(root, "default");
+    fs.mkdirSync(lab, { recursive: true });
+    runs(lab);
+    const stubs = stubAllSeams({ runsDir: root });
+    try {
+      const block = buildStackStateBlock() ?? "";
+      const m = block.match(/\*\*live runs\*\*[\s\S]*?(?=\n\n|$)/);
+      return m ? m[0] : "";
+    } finally {
+      restoreSeams(stubs);
+    }
+  }
+  const now = new Date();
+  const stamp = (hoursAgo: number): string => {
+    const t = new Date(now.getTime() - hoursAgo * 3_600_000);
+    const p = (n: number, w = 2) => String(n).padStart(w, "0");
+    return `r${t.getUTCFullYear()}${p(t.getUTCMonth() + 1)}${p(t.getUTCDate())}-${p(t.getUTCHours())}${p(t.getUTCMinutes())}${p(t.getUTCSeconds())}Z-x`;
+  };
+
+  it("a fresh unfinished run is LIVE with its age; a days-old one is STALE, never 'solving'", () => {
+    const s = runsBlockWith((lab) => {
+      mkRun(lab, stamp(0.2)); // 12 min ago
+      mkRun(lab, stamp(24 * 8)); // 8 days ago — zombie
+    });
+    expect(s).toContain("solving (");
+    expect(s).toMatch(/STALE — no FINISHED since \d{4}-\d{2}-\d{2}/);
+    expect(s).toContain("do not present as live");
+    // the zombie line must NOT read as solving
+    const zombieLine = s.split("\n").find((l) => l.includes("STALE"));
+    expect(zombieLine).not.toContain("solving");
+  });
+  it("finished runs collapse to ONE backlog line: count, best F, latest", () => {
+    const s = runsBlockWith((lab) => {
+      mkRun(lab, stamp(30), { finished: true, fidelity: 0.999 });
+      mkRun(lab, stamp(20), { finished: true, fidelity: 0.999979 });
+      mkRun(lab, stamp(10), { finished: true, fidelity: 0.99 });
+      mkRun(lab, stamp(5), { finished: true }); // finished, no result.toml
+    });
+    const backlog = s.split("\n").filter((l) => l.startsWith("- backlog:"));
+    expect(backlog.length).toBe(1);
+    expect(backlog[0]).toContain("4 finished");
+    expect(backlog[0]).toContain("best F=0.999979");
+    expect(backlog[0]).toContain("full history in the runs dir");
+    // no individually listed done runs
+    expect(s.split("\n").filter((l) => l.startsWith("- ") && /: done/.test(l)).length).toBe(0);
+  });
+  it("no runs at all → no live-runs section", () => {
+    const root = mkTmp("runs-");
+    fs.mkdirSync(path.join(root, "default"), { recursive: true });
+    const stubs = stubAllSeams({ runsDir: root });
+    try {
+      expect(buildStackStateBlock() ?? "").not.toContain("**live runs**");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+});
+
 // ── Env-seam plumbing ────────────────────────────────────────────────────────
 
 interface SeamOpts {
   vaultsRoot?: string;
   fleetConfig?: string;
   fleetStatus?: string;
+  runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
   vault?: "profile" | "knowledge" | "demos" | "memory";
 }
@@ -364,7 +436,7 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
   process.env.AMICODE_OPS_DIR = ops; // no solver-mode.json → piccolo/ready → no section
   process.env.AMICODE_CONNECTIONS_FILE = path.join(conn, "absent.json"); // not connected
   process.env.AMICODE_PROBLEMS_DIR = problems; // no active problem
-  process.env.AMICODE_RUNS_DIR = runs; // no runs
+  process.env.AMICODE_RUNS_DIR = opts.runsDir ?? runs; // no runs unless a fixture is passed
   return saved;
 }
 
