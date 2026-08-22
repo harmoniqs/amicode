@@ -56,6 +56,9 @@ describe("buildOpencodeConfigContent", () => {
     expect(ed["/home/u/.amico/runs/default/**"]).toBe("allow");
     expect(cfg.permission.bash).toBe("allow"); // runs amico-run (compound launch)
     expect(cfg.permission.edit).toBe("allow"); // fills the FILL-IN block
+    // The staged skill set is curated by us — a per-name "ask" on the skill
+    // tool is friction without a boundary, and hangs headless sessions.
+    expect(cfg.permission.skill).toBe("allow");
     expect(cfg.permission.webfetch).toBeUndefined(); // unused by the solve flow — dropped
   });
   it("registers the amicode_* plugin by ABSOLUTE default path — and the file actually exists", () => {
