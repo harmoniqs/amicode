@@ -32,6 +32,12 @@ stages:
             "Perform (automated) experiments and gain scientific insights",
             "Exploring",
           ]
+        choice_descriptions:
+          [
+            "Write code, refactor, debug, and build software",
+            "Run automated experiment loops and extract insights from results",
+            "See what Amicode can do",
+          ]
         multiple: true
         default: "Perform (automated) experiments and gain scientific insights"
   - id: goals
@@ -43,7 +49,10 @@ stages:
     optional: true
     questions:
       - id: research_area
-        prompt: "What research area and what kind of experiments?"
+        prompt: "What research areas?"
+        kind: text
+      - id: experiment_kind
+        prompt: "What kind of experiments?"
         kind: text
   - id: environment
     optional: true
@@ -65,11 +74,6 @@ stages:
         prompt: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)"
         default: "skip for now"
   - id: handoff
-    questions:
-      - id: handoff
-        prompt: "Ready to get started?"
-        choices: ["Let's dive into my first task", "Open a normal session", "Show me around first"]
-        default: "Let's dive into my first task"
 ---
 
 You are running the **overture** — Amico's onboarding interview (session zero).
@@ -164,11 +168,17 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
 
 5. **research_area** _(optional — only if user selected the experiments intent)_ —
-   ask via the `question` tool with `kind: "text"`: "What research area and what
-   kind of experiments?" This is free-form — the user can say anything from
-   "quantum optimal control for transmon gates" to "protein folding simulations"
-   to "materials science DFT sweeps." Record whatever they say:
+   Two back-to-back questions (asked one at a time per the protocol):
+
+   First, ask via the `question` tool with `kind: "text"`: "What research areas?"
+   This is free-form — the user can say anything from "quantum optimal control"
+   to "protein folding" to "materials science." Record:
    `amicode_profile {entity:"profile", payload:{research_area:"..."}}`.
+
+   Then ask via the `question` tool with `kind: "text"`: "What kind of experiments?"
+   Record:
+   `amicode_profile {entity:"profile", payload:{experiment_kind:"..."}}`.
+
    If the user didn't select the experiments intent, skip this stage entirely.
 
 6. **environment** — _(only if user selected the experiments intent)_ — ask how
@@ -190,11 +200,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-8. **handoff** — the terminal stage. FIRST, **auto-generate a description** from
-   what you've learned (name, goals, research_area, intent, environment) — a
-   concise 1–2 sentence summary of the user written in third person, suitable
-   for the "About you" card. Example: "Aaron is a quantum-control researcher
-   focused on high-fidelity transmon gates, working in simulation." Record:
+8. **handoff** — the terminal stage. There is NO question to ask here.
+
+   FIRST, **auto-generate a description** from what you've learned (name, goals,
+   research_area, intent, environment) — a concise 1–2 sentence summary of the
+   user written in third person, suitable for the "About you" card. Example:
+   "Aaron is a researcher focused on high-fidelity quantum gates, working in
+   simulation." Record:
    `amicode_profile {entity:"profile", payload:{description:"..."}}`.
 
    Then record the completion marker:
@@ -202,10 +214,7 @@ Per-stage guidance and the `amicode_profile` mapping:
    what lets Amico remember them next time and triggers the distiller to
    materialize the vault).
 
-   Then tell the user onboarding is complete: "You're all set — your About You
-   card on the dashboard is now populated with what you told me. To see it,
-   reload the window (Cmd+Shift+P → 'Reload Window', or Cmd+R). After that,
-   start a new session anytime to explore what Amico can do."
+   Then tell the user: "Onboarding finished! Please start a new session to begin."
 
    Do NOT auto-chain into another interview or open a new session. The
    onboarding ends here. The user is in control of what happens next.

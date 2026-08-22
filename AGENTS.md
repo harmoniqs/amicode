@@ -86,12 +86,11 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
 - Run artifacts land in `~/.amico/runs/default/<runId>/` (contract: `run.toml`, `AMICODE_ITER`
   lines, `iter_*.png`, `result.toml`, `pulse.jld2`, `FINISHED`). Validate files with
   `packages/schema/launcher/amico-validate <file>`.
-- **New sessions open on opencode's read-only `plan` agent** (plan-first posture for all
-  users): `buildOpencodeConfigContent` injects `default_agent: "plan"`. The composer
-  agent-picker (or an explicit per-message `agent`, as in the e2e tests) switches to
-  build to execute. The picker is plan/build only — the pulse-designer agent shell is
-  retired (#389); the interview content lives in the compiled AGENTS.md score section,
-  visible to every agent.
+- **New sessions open on opencode's `build` agent** (build-first posture for all
+  users): `buildOpencodeConfigContent` injects `default_agent: "build"`. The
+  onboarding interview and solves can execute tools immediately. The picker is
+  plan/build only — the pulse-designer agent shell is retired (#389); the interview
+  content lives in the compiled AGENTS.md score section, visible to every agent.
 - Never commit to `main`; branch + PR.
 
 ## Changing opencode (the vendored fork)
