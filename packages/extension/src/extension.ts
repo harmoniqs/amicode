@@ -349,8 +349,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6) + Run Inspector
-  registerWorkspaceTree(ctx);
+  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6)
+  const workspaceTree = registerWorkspaceTree(ctx);
+  // Mute the "Chat with Amico" button when a chat panel is open
+  ChatPanel.onLiveChange((count) => workspaceTree.setChatActive(count > 0));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
