@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Harmoniqs Community
+    url: https://github.com/harmoniqs/amicode/discussions
+    about: Questions, discussion, and help requests go here.
