@@ -28,6 +28,7 @@ gate's checks pass.
 7. **devices** (optional)
    - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
 8. **handoff**
+   - Q `description`: "Here's how I'd describe you — edit if you'd like:"
 9. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
 10. **model**
@@ -179,13 +180,18 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-8. **handoff** — the terminal stage. There is NO question to ask here.
+8. **handoff** — the terminal stage.
 
    FIRST, **auto-generate a description** from what you've learned (name, goals,
    research_area, intent, environment) — a concise 1–2 sentence summary of the
    user written in third person, suitable for the "About you" card. Example:
    "Aaron is a researcher focused on high-fidelity quantum gates, working in
-   simulation." Record:
+   simulation."
+
+   Then present it for confirmation/edit via the `question` tool with
+   `kind: "text"` and the `default` field set to your generated description —
+   this pre-fills the text input so the user can accept as-is or edit before
+   submitting. Record whatever they submit:
    `amicode_profile {entity:"profile", payload:{description:"..."}}`.
 
    Then record the completion marker:

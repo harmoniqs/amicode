@@ -183,22 +183,23 @@ describe("overture compiled content — complete flow (AC9)", () => {
   });
 });
 
-// ─── AC10: handoff is a terminal message, not a question ─────────────────────
+// ─── AC10: handoff presents description for user confirmation/edit ───────────
 
-describe("overture — handoff stage is terminal (no choices)", () => {
-  it("handoff stage has no choices in the manifest (it is not a question)", () => {
+describe("overture — handoff stage presents description for edit", () => {
+  it("handoff stage has a text question for description confirmation (no choices)", () => {
     const ov = overture();
     const handoff = ov.manifest.stages.find((s: { id: string }) => s.id === "handoff");
     expect(handoff).toBeDefined();
     const questions = handoff!.questions ?? [];
-    // Either no questions at all, or a question with no choices
-    for (const q of questions) {
-      expect(q.choices).toBeUndefined();
-    }
+    expect(questions).toHaveLength(1);
+    expect(questions[0].id).toBe("description");
+    expect(questions[0].kind).toBe("text");
+    expect(questions[0].choices).toBeUndefined();
   });
 
-  it("compiled body instructs to end the session with a terminal message", () => {
+  it("compiled body instructs to pre-fill description with default and let user edit", () => {
     const md = compileScore(overture());
+    expect(md).toContain("default");
     expect(md).toContain("Onboarding finished");
     expect(md).toContain("start a new session");
     // Should NOT contain the old choices
