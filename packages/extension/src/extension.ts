@@ -13,6 +13,7 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  validatedModelPin,
 } from "./opencode_config";
 import { parseLibraryRootSpecs } from "./scores/package_skills";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
@@ -709,7 +710,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // the user's recent selection, else the provider default. A hardcoded
           // fallback here used to override the user's own choice. The in-chat
           // picker still overrides per session.
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          // Validate: don't inject a pin that references an unconnected provider —
+          // it causes 500s when the server tries to resolve it.
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           // Telemetry gate → experimental.openTelemetry (span generation), coupled
           // to the exporter env this same spawnEnv resolves.
           telemetryOpen(),
@@ -777,7 +780,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
               project2.mounts,
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
-              vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+              validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
               // Context plugin: injects live stack state per system-prompt build.
               [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
@@ -936,7 +939,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.skillsStageDir,
           project2.vaultDir,
           project2.mounts,
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           telemetryOpen(), // gate → experimental.openTelemetry (span generation)
         ),
       }),
@@ -1353,7 +1356,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             opencodeProject.skillsStageDir,
             opencodeProject.vaultDir,
             opencodeProject.mounts,
-            vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+            validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
             telemetryOpen(),
           ),
         }),

@@ -462,6 +462,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
           } else if (msg.type === "config-success") {
             const payload = msg.payload as OnboardingConfig;
             writeOnboardingConfig(payload);
+            // Clear stale model pin — the old provider may no longer be connected.
+            // The server will resolve the new provider's default on its own.
+            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
             // Swap the panel HTML directly to the splash (same as confirm-import)
             panel.webview.html = splashHtml();
             // Signal that the next chat panel open should auto-send the onboarding greeting
@@ -552,6 +555,8 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             }
             heldCredentials = [];
             testResults.clear();
+            // Clear stale model pin — the old provider may no longer be connected.
+            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
             // Swap the panel HTML directly to the splash — no webview-side
             // DOM manipulation, so there's no flash when adopt() fires later
             // (adopt's overlay uses the exact same SVG + CSS).

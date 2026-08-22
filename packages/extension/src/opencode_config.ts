@@ -381,6 +381,29 @@ export function resolveModelPin(): string | undefined {
   return undefined;
 }
 
+/** Validate a model pin against the user's configured providers.
+ *  Returns the pin unchanged if its provider is configured, otherwise undefined.
+ *  This prevents injecting a stale pin that references a disconnected provider
+ *  (which causes 500s when the server tries to resolve it). */
+export function validatedModelPin(pin: string | undefined): string | undefined {
+  if (!pin) return undefined;
+  const providerID = pin.split("/")[0];
+  if (!providerID) return undefined;
+  // Read the user's global opencode.json to check configured providers
+  const configPath = path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  try {
+    if (!fs.existsSync(configPath)) return pin; // no config → trust the pin (first boot)
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const providers = Object.keys(raw?.provider ?? {});
+    if (providers.length === 0) return pin; // no providers section → trust the pin
+    // The pin's provider must be in the configured set
+    if (providers.includes(providerID)) return pin;
+    return undefined; // provider not configured — don't inject stale pin
+  } catch {
+    return pin; // can't read config → trust the pin
+  }
+}
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
