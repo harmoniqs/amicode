@@ -75,12 +75,41 @@ ssh erlich 'mkdir -p ~/.amico/ops' && scp ops/hunt.sh erlich:.amico/ops/hunt.sh
 Hunt artifacts (`~/.amico/ops/hunts/<id>/{hunt.log,heartbeat}`) are runtime
 state — never overwritten by deploy, same as the state files below.
 
+## WIP handoff: `wip-sync.sh` (#461)
+
+The code-repo layer of the fleet model. Vaults auto-sync and the chat DB lives on
+the canonical server, but CODE repos get no daemon on purpose — file-syncing a live
+`.git` between machines is the corruption scenario — so only COMMITS cross machines.
+`wip-sync.sh` is the switch ritual:
+
+- **`leave`** — snapshot every dirty repo under `~/armonia/repos` as a `wip: <host> <ts>`
+  commit and push. On `main`/detached the snapshot goes to a `wip/<host>` branch —
+  never WIP-commit main. WIP commits are disposable full-tree snapshots: a chain of
+  them never diverges and never needs merging. When the work firms up, split/squash
+  it into real commits.
+- **`arrive`** — fetch everything, fast-forward clean behind branches, auto-switch to
+  a sole `wip/*` handoff branch, and un-commit the tip wip run (`reset --mixed`) so
+  the other machine's work shows up as local changes again.
+- **`status`** — per-repo report: branch, dirty count, ahead/behind, wip branches.
+
+**v2 remote semantics** (2026-08-20, born of the qldpc-challenge incident — a repo
+whose `origin` is the read-only unitaryfoundation upstream and whose writable remote
+is `fork`): pushes try every remote, `origin` first, first accept wins; a non-FF
+rejection whose incoming commits are all `wip:` snapshots is re-anchored by stacking
+a fresh snapshot on the remote tip (the chain grows, never forks — never force, never
+amend); fetches hit all remotes; and wip-branch discovery scans every remote, so a
+handoff hosted on a fork is visible on the other machine. A remote carrying real
+(non-wip) incoming commits is genuine divergence: warn, leave it to the human.
+
+`wip-sync.sh.bak` on the mini is a deploy-time recovery artifact (the pre-v2
+original) — runtime state, never touched by install.
+
 ## Deploy
 
 From a checkout of this repo on the mini:
 
 ```sh
-ops/install.sh            # copies the three scripts to ~/.amico/ops/ (idempotent)
+ops/install.sh            # copies the scripts to ~/.amico/ops/ (idempotent)
 ```
 
 The install script copies scripts ONLY — no plists (one-time, by hand), no state
