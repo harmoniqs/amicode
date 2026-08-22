@@ -4,12 +4,9 @@
 
 import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import { claimsFile } from "./paths.js";
 
-function claimsFile(): string {
-  return process.env.AMICO_CLAIMS_FILE ?? path.join(homedir(), ".amico", "ledger", "claims.jsonl");
-}
 function appendClaimLine(claim: Claim): void {
   const file = claimsFile();
   mkdirSync(path.dirname(file), { recursive: true });

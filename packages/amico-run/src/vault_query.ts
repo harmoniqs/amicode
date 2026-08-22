@@ -11,8 +11,8 @@
 // of scalar fields the ranker/filters need (type/platform/gate/tags), extracted
 // by regex, not a full YAML engine.
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { teamVaultDir } from "./paths.js";
 
 /** A vault note projected for retrieval. `body` is the markdown after the
  *  frontmatter; `title` is the first `# ` heading (else the filename). `mount` is
@@ -37,7 +37,7 @@ export interface NoteRecord {
 export function vaultDir(): string {
   const env = process.env.AMICO_VAULT_DIR;
   if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "vaults", "armonissima");
+  return teamVaultDir();
 }
 
 /** The note folders the retrieval searches — the knowledge-graph nucleus

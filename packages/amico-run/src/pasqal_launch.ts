@@ -8,9 +8,10 @@
 // child env is built from scratch (never a process.env spread).
 import { spawn } from "node:child_process";
 import { accessSync, constants as fsConstants, existsSync, readFileSync } from "node:fs";
-import { constants as osConstants, homedir } from "node:os";
+import { constants as osConstants } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { ConfigError } from "./types.js";
+import { pasqalConfigFile } from "./paths.js";
 
 export interface PasqalCredentials {
   projectId: string;
@@ -22,7 +23,7 @@ export interface PasqalCredentials {
 export function pasqalCredentialFile(env: NodeJS.ProcessEnv = process.env): string {
   const v = env.AMICO_PASQAL_FILE;
   if (v && v.trim() !== "") return v;
-  return join(homedir(), ".amico", "pasqal.json");
+  return pasqalConfigFile();
 }
 
 /** Read + shape-check the credential file. Distinct, actionable, TOKEN-FREE errors

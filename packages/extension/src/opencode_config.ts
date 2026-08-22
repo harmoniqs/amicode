@@ -161,7 +161,7 @@ export const DEFAULT_PACK_ID = "quantum-control";
  *  at packages/extension/skills/ (moved out of the retired amico-plugin repo —
  *  they are product content, versioned with the extension). Overridable
  *  via settings (Task 6). */
-export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
+export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "armonia", "repos", "packages")];
 /** Library roots scanned (first-root-wins), TYPED by admitted surface set
  *  (ADR-0003, amicode#242; roots re-homed after the amico-plugin dissolution):
  *   1. the in-repo public library (packages/extension/skills/, sibling of

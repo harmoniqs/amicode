@@ -12,8 +12,7 @@
 // a poisoned "token", anything — has no path into our output.
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { connectionsFile } from "./paths.js";
 
 export const PASQAL_CONNECTION_ID = "pasqal-cloud";
 
@@ -35,7 +34,7 @@ export type DeviceTier = "free" | "non-free";
 export function connectionsCacheFile(env: NodeJS.ProcessEnv = process.env): string {
   const v = env.AMICODE_CONNECTIONS_FILE;
   if (v && v.trim() !== "") return v;
-  return join(homedir(), ".amico", "connections.json");
+  return connectionsFile();
 }
 
 /** Default-deny classification, case-insensitive on the identifier. */
