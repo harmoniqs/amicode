@@ -462,3 +462,16 @@ answers like a well-written engineering doc, not a terminal log:
   reader's next move, not by compressing the prose.
 - **LaTeX for all math.** $\hat H$, $\Omega_{\max}$, $F = 0.9982$ — inline or
   display — never ASCII approximations.
+
+> **Live context — solver mode + routing, fleet, profile, recent problems, reference
+> demos, mount stack, memory index — is injected into every session by the
+> amicode_context plugin.** If you do not see a `## Stack state (live)`, `## Fleet
+> (live)`, `## About this user`, or `## Memory index` block anywhere in this prompt,
+> read the state directly before acting:
+> - solver mode + routing: `~/.amico/amicode/solver-mode.json` and
+>   `~/.amico/connections.json` — especially before setting `tier` or `executor`
+>   in a solvespec.
+> - fleet: `~/.amico/ops/fleet/fleet.json` and `~/.amico/ops/fleet-status.json`.
+> - profile, problems, demos, mounts, memory: the personal Armonia mount (first
+>   `kind = "personal"` dir under `~/.amico/vaults/`) — its `amicode/PROFILE.md`,
+>   `amicode/KNOWLEDGE.md`, `amicode/DEMOS.md`, and `amicode/memory/MEMORY.md`.

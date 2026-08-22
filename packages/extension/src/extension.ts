@@ -681,6 +681,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // Telemetry gate → experimental.openTelemetry (span generation), coupled
           // to the exporter env this same spawnEnv resolves.
           telemetryOpen(),
+          // Context plugin: injects live stack state (solver mode, routing,
+          // active problem, live runs) per system-prompt build.
+          [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
         ),
       }),
       channel: opencodeChannel,
@@ -719,6 +722,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           skillRoots: cfgArr("skillRoots"),
           skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
+          projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
         });
         ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
         await serverManager?.stop();
@@ -743,6 +747,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
               vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
+              // Context plugin: injects live stack state per system-prompt build.
+              [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
             ),
           }),
           channel: opencodeChannel,
