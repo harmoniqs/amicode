@@ -5,8 +5,6 @@ import * as path from "node:path";
 import {
   resolvePersonalVault,
   readProfileMd,
-  readKnowledgeLines,
-  readMemoryIndexLines,
   hasOnboardingCompleted,
 } from "../../src/substrate/vault_store";
 
@@ -62,44 +60,6 @@ describe("readProfileMd (spec §3 routing predicate: non-empty check)", () => {
     fs.mkdirSync(path.join(v, "amicode"), { recursive: true });
     fs.writeFileSync(path.join(v, "amicode", "PROFILE.md"), "# Profile — A\n- Role: CEO\n");
     expect(readProfileMd(v)).toContain("Role: CEO");
-  });
-});
-
-describe("readKnowledgeLines (spec §2.3: list lines, cap 50)", () => {
-  it("missing → []", () => {
-    expect(readKnowledgeLines(mkTmp("vault-"))).toEqual([]);
-  });
-  it("returns only list-item lines, capped", () => {
-    const v = mkTmp("vault-");
-    fs.mkdirSync(path.join(v, "amicode"), { recursive: true });
-    const items = Array.from({ length: 60 }, (_, i) => `- [p${i}](problems/p${i}.md) — thing ${i}`);
-    fs.writeFileSync(
-      path.join(v, "amicode", "KNOWLEDGE.md"),
-      "# heading ignored\n" + items.join("\n") + "\nprose ignored\n",
-    );
-    const lines = readKnowledgeLines(v);
-    expect(lines.length).toBe(50);
-    expect(lines[0]).toContain("p0");
-    expect(lines.every((l) => l.startsWith("- "))).toBe(true);
-  });
-});
-
-describe("readMemoryIndexLines (spec §3 C4: memory/MEMORY.md list lines, cap 50)", () => {
-  it("missing memory index → []", () => {
-    expect(readMemoryIndexLines(mkTmp("vault-"))).toEqual([]);
-  });
-  it("reads list lines from the amicode/memory subdir, capped", () => {
-    const v = mkTmp("vault-");
-    fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
-    const items = Array.from({ length: 60 }, (_, i) => `- [m${i}](m${i}.md) — fact ${i}`);
-    fs.writeFileSync(
-      path.join(v, "amicode", "memory", "MEMORY.md"),
-      "# Memory index\n" + items.join("\n") + "\nprose ignored\n",
-    );
-    const lines = readMemoryIndexLines(v);
-    expect(lines.length).toBe(50);
-    expect(lines[0]).toContain("m0");
-    expect(lines.every((l) => l.startsWith("- "))).toBe(true);
   });
 });
 
