@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import * as vscode from "vscode";
 import { ChatPanel } from "../src/chat_panel";
 import { mintServerPassword, serverAuthToken } from "../src/server_auth";
@@ -116,5 +116,215 @@ describe("ChatPanel — the amicode_bug_report boot param (amicode#250 AC5)", ()
     // Lane 2 (extension → app): dock open/close.
     expect(html).toContain('"open-bug-report"');
     expect(html).toContain('"close-bug-report"');
+  });
+});
+
+describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearPendingOnboardingGreeting();
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  it("posts the navigate message only AFTER app-ready fires (event-driven, not blind timer)", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages: unknown[] = [];
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Call postOnboardingGreeting — should NOT post immediately
+    panel.postOnboardingGreeting();
+
+    // Wait a tick — no navigate message yet (no blind timer should fire this fast)
+    await new Promise((r) => setTimeout(r, 50));
+    const earlyNavigate = messages.find(
+      (m) => (m as { kind?: string }).kind === "navigate",
+    );
+    expect(earlyNavigate).toBeUndefined();
+
+    // Now simulate app-ready — the message should fire
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    ) as { source: string; kind: string; path: string } | undefined;
+
+    expect(navigateMsg).toBeDefined();
+    expect(navigateMsg!.path).toContain("/new-session");
+    expect(navigateMsg!.path).toContain("autoSend=1");
+    expect(navigateMsg!.path).toContain("prompt=" + encodeURIComponent("Let's begin onboarding."));
+  });
+
+  it("does NOT post navigate when postOnboardingGreeting was not called (even after app-ready)", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    // Open panel WITHOUT calling postOnboardingGreeting
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages: unknown[] = [];
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Simulate app-ready
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    );
+    expect(navigateMsg).toBeUndefined();
+  });
+
+  it("consumePendingOnboardingGreeting returns true once then false", () => {
+    ChatPanel.setPendingOnboardingGreeting(true);
+    expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(true);
+    expect(ChatPanel.consumePendingOnboardingGreeting()).toBe(false);
+  });
+
+  it("the relay admits app-ready from the iframe (Lane 1 allowlist)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    // app-ready must be in the Lane 1 allowlist (iframe → extension)
+    expect(html).toContain('"app-ready"');
+  });
+
+  it("fires onAppReady callback when app-ready message arrives from iframe", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    const readyFired: boolean[] = [];
+    ChatPanel.onAppReady(() => readyFired.push(true));
+
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    // Simulate the app-ready message arriving from the iframe
+    const webview = cap.created[0] as unknown as { webview: { _simulateMessage: (msg: unknown) => void } };
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readyFired).toHaveLength(1);
+  });
+
+  it("postOnboardingGreeting falls back to posting after timeout if app-ready never fires", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    const panel = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+
+    const messages: unknown[] = [];
+    const webview = cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean>; _simulateMessage: (msg: unknown) => void } };
+    webview.webview.postMessage = (m: unknown) => { messages.push(m); return Promise.resolve(true); };
+
+    // Call with a short timeout for testing (pass timeout override)
+    panel.postOnboardingGreeting(200);
+
+    // No app-ready — wait for the timeout fallback
+    await new Promise((r) => setTimeout(r, 300));
+
+    const navigateMsg = messages.find(
+      (m) => (m as { source?: string; kind?: string }).source === "amicode" && (m as { kind?: string }).kind === "navigate",
+    );
+    expect(navigateMsg).toBeDefined();
+  });
+});
+
+describe("ChatPanel.adopt — transforms an existing panel into the chat singleton", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearPendingOnboardingGreeting();
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  it("adopt wraps an existing WebviewPanel as the ChatPanel singleton (no new panel created)", () => {
+    // Create a panel externally BEFORE installing the capture spy
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    // Now install the spy — any new panel creation will be captured
+    const cap = capturePanel();
+    restore = cap.restore;
+
+    // Adopt it
+    const chatPanel = ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    expect(chatPanel).toBeDefined();
+    // No NEW panel should have been created via createWebviewPanel
+    expect(cap.created).toHaveLength(0);
+    // openOrReveal should now return the adopted panel (it's the singleton)
+    const revealed = ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    expect(revealed).toBe(chatPanel);
+    // Still no new panel
+    expect(cap.created).toHaveLength(0);
+  });
+
+  it("adopt sets the panel HTML to the chat iframe content with splash overlay", () => {
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    // The HTML should contain both the iframe and the splash overlay
+    const html = existingPanel.webview.html;
+    expect(html).toContain("iframe");
+    expect(html).toContain("splash-overlay");
+    expect(html).toContain("127.0.0.1:43117");
+  });
+
+  it("adopt wires app-ready so it fires onAppReady callbacks", async () => {
+    const existingPanel = vscode.window.createWebviewPanel(
+      "amicode.onboarding", "Amicode Setup", vscode.ViewColumn.One, { enableScripts: true },
+    ) as unknown as CapturedPanel;
+    created.push(existingPanel);
+
+    const readyFired: boolean[] = [];
+    ChatPanel.onAppReady(() => readyFired.push(true));
+
+    ChatPanel.adopt(
+      existingPanel as unknown as import("vscode").WebviewPanel,
+      fakeCtx(),
+      new URL("http://127.0.0.1:43117/"),
+    );
+
+    // Simulate app-ready arriving from the iframe
+    const webview = existingPanel as unknown as { webview: { _simulateMessage: (msg: unknown) => void } };
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(readyFired).toHaveLength(1);
   });
 });

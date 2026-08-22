@@ -36,20 +36,24 @@ describe("overture SCORE.md — loads and compiles (AC1)", () => {
     expect(ov.manifest.schema_version).toBe(1);
   });
 
-  it("has the new stage structure: orientation, intent, context_seed, demo, environment, devices, goals, handoff", () => {
+  it("has the new stage structure: orientation, context_seed, intent, goals, research_area, environment, devices, handoff", () => {
     const ov = overture();
     const stageIds = ov.manifest.stages.map((s: { id: string }) => s.id);
     expect(stageIds).toContain("orientation");
-    expect(stageIds).toContain("intent");
     expect(stageIds).toContain("context_seed");
-    expect(stageIds).toContain("demo");
+    expect(stageIds).toContain("intent");
+    expect(stageIds).toContain("goals");
+    expect(stageIds).toContain("research_area");
     expect(stageIds).toContain("environment");
     expect(stageIds).toContain("devices");
-    expect(stageIds).toContain("goals");
     expect(stageIds).toContain("handoff");
-    // Old stage name is gone
+    // Old/removed stages are gone
+    expect(stageIds).not.toContain("demo");
     expect(stageIds).not.toContain("platforms");
     expect(stageIds).not.toContain("identity");
+    // Verify order: context_seed before intent, intent before goals
+    expect(stageIds.indexOf("context_seed")).toBeLessThan(stageIds.indexOf("intent"));
+    expect(stageIds.indexOf("intent")).toBeLessThan(stageIds.indexOf("goals"));
   });
 
   it("compiles to markdown without error (standalone)", () => {
@@ -97,7 +101,7 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
 
   it("AC4: presents exactly three options for multi-select", () => {
     expect(md).toContain("General coding and software development");
-    expect(md).toContain("Research");
+    expect(md).toContain("Perform (automated) experiments and gain scientific insights");
     expect(md).toContain("Exploring");
   });
 
@@ -110,8 +114,8 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toMatch(/intent.*\[.*research.*general_coding.*exploring.*\]/s);
   });
 
-  it("AC6: does NOT ask research sub-type (deferred to pulse-designer)", () => {
-    expect(md).toContain("DO NOT ask research sub-type");
+  it("AC6: asks research area as free-form, does NOT ask platform-specific sub-types", () => {
+    expect(md).toContain("What research area and what kind of experiments?");
     expect(md).not.toContain("Which platform");
     expect(md).not.toContain("qubit platforms");
   });
@@ -148,11 +152,11 @@ describe("overture compiled content — resume (AC8)", () => {
 describe("overture compiled content — complete flow (AC9)", () => {
   const md = compileScore(overture());
 
-  it("the overture score is complete: all 8 stages defined end-to-end", () => {
+  it("the overture score is complete: all stages defined end-to-end", () => {
     expect(md).toContain("orientation");
     expect(md).toContain("intent");
+    expect(md).toContain("research_area");
     expect(md).toContain("context_seed");
-    expect(md).toContain("demo");
     expect(md).toContain("environment");
     expect(md).toContain("goals");
     expect(md).toContain("handoff");

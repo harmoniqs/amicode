@@ -299,16 +299,14 @@ export class BugReportManager {
 
   /** Arm: the report-a-bug slash command as the session's first turn.
    *
-   *  `model` is optional on POST /session/:id/command (a `provider/model`
-   *  string; the route also takes `variant`). We send it only when
-   *  `amicode.defaultModel` is explicitly set — otherwise the field is omitted
-   *  entirely and the server resolves its own default, which is the documented
-   *  behaviour for an unpinned install. */
+   *  The model field is always omitted — the server resolves its own default
+   *  from the first connected provider's best model. Passing a stale
+   *  `amicode.defaultModel` that references an unconnected provider causes a
+   *  500 (the server can't route to a disconnected provider). */
   private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
-    const model = this.deps.defaultModel?.()?.trim();
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "", ...(model ? { model } : {}) },
+      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }

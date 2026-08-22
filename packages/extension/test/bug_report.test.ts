@@ -89,7 +89,7 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     });
     const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug1/command"));
     expect(arm).toHaveLength(1);
-    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "opencode/deepseek-v4-pro" });
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
     expect(posted).toEqual([{ source: "amicode", kind: "open-bug-report", sessionID: "ses_bug1" }]);
   });
 

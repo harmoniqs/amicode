@@ -13,6 +13,7 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  validatedModelPin,
 } from "./opencode_config";
 import { parseLibraryRootSpecs } from "./scores/package_skills";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
@@ -38,8 +39,8 @@ import { writeStopFile, savePulseTo, stopPlan, forceStop, runLogMtime } from "./
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } from "./onboarding_panel";
-import { isModelConfigured } from "./onboarding_routing";
+import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
+import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -206,6 +207,39 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
 /** Run dirs with a cooperative stop in flight (escalation timer armed) — a
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
+
+/** Create a session and arm it with "Let's begin onboarding." via the server API.
+ *  Bypasses the UI model gate (the server resolves its own default model).
+ *  Returns the session ID on success, undefined on failure. */
+async function armOnboardingSession(
+  serverUrl: URL,
+  authHeaders: Record<string, string>,
+  projectDir?: string,
+): Promise<string | undefined> {
+  try {
+    const collectionUrl = new URL("/session", serverUrl);
+    if (projectDir) collectionUrl.searchParams.set("directory", projectDir);
+    const createRes = await fetch(collectionUrl.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ title: "Onboarding" }),
+    });
+    if (!createRes.ok) return undefined;
+    const { id } = (await createRes.json()) as { id?: string };
+    if (!id) return undefined;
+
+    const commandUrl = new URL(`/session/${id}/command`, serverUrl);
+    const commandRes = await fetch(commandUrl.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders },
+      body: JSON.stringify({ command: "Let's begin onboarding.", arguments: "" }),
+    });
+    if (!commandRes.ok) return undefined;
+    return id;
+  } catch {
+    return undefined;
+  }
+}
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -676,7 +710,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // the user's recent selection, else the provider default. A hardcoded
           // fallback here used to override the user's own choice. The in-chat
           // picker still overrides per session.
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          // Validate: don't inject a pin that references an unconnected provider —
+          // it causes 500s when the server tries to resolve it.
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           // Telemetry gate → experimental.openTelemetry (span generation), coupled
           // to the exporter env this same spawnEnv resolves.
           telemetryOpen(),
@@ -744,7 +780,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
               project2.mounts,
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
-              vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+              validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
               // Context plugin: injects live stack state per system-prompt build.
               [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
@@ -811,17 +847,32 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // which then opens chat.
       if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         void vscode.commands.executeCommand("amicode.onboarding.open");
-        // Wire: when onboarding completes, auto-open chat
-        onOnboardingComplete(() => {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        });
+        // Wire: when onboarding completes, the server restarts and the
+        // onReady handler (else-if branch below) opens the chat panel.
+        // We do NOT open chat here — that would race the server restart
+        // and show behind the transition splash.
         // Wire: when onboarding is cancelled (X), open chat normally
         onOnboardingCancelled(() => {
           ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
-        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        // Post-onboarding: adopt the onboarding panel as the chat panel (zero
+        // tab switching — the splash overlay fades out revealing the chat).
+        if (ChatPanel.consumePendingOnboardingGreeting()) {
+          const onboardPanel = getOnboardingPanel();
+          if (onboardPanel) {
+            releaseOnboardingPanel(); // detach from onboarding lifecycle
+            const panel = ChatPanel.adopt(onboardPanel, ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          } else {
+            // Fallback: no onboarding panel alive (user closed it manually)
+            const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          }
+        } else {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
@@ -888,7 +939,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.skillsStageDir,
           project2.vaultDir,
           project2.mounts,
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           telemetryOpen(), // gate → experimental.openTelemetry (span generation)
         ),
       }),
@@ -1305,7 +1356,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             opencodeProject.skillsStageDir,
             opencodeProject.vaultDir,
             opencodeProject.mounts,
-            vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+            validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
             telemetryOpen(),
           ),
         }),

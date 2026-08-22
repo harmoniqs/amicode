@@ -82,7 +82,7 @@ describe("compileChainedScore (real overture → pulse-designer)", () => {
     expect(md).not.toContain("plain text");
   });
   it("keeps the overture's choice questions as option cards, default first (amicode#245 AC6 regression)", () => {
-    expect(md).toContain("Research (recommended)");
+    expect(md).toContain("Perform (automated) experiments and gain scientific insights (recommended)");
     expect(md).toContain("General coding and software development");
   });
 });

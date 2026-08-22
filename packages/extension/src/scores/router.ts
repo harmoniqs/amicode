@@ -15,7 +15,12 @@ export function buildRouterSection(visible: Score[]): string {
   const lines: string[] = [
     "## Onset router",
     "",
-    "When a session opens without a specific request (a greeting, \"who are",
+    'When a session opens with an explicit onboarding request ("Let\'s begin',
+    'onboarding", "begin onboarding", "start onboarding", or similar), **skip this',
+    "router entirely** and go straight into the overture (Stage 1 below) — the user",
+    "has already chosen.",
+    "",
+    "Otherwise, when a session opens without a specific request (a greeting, \"who are",
     "you?\", \"what is this?\"), do NOT default to the pulse-designer interview —",
     "build the moment from the live state. After your one-line Amico intro (name from",
     "the profile when one is recorded), ask exactly ONE question —",

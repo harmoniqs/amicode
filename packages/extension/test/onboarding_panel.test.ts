@@ -18,6 +18,9 @@ import {
   writeOnboardingConfig,
   testConnection,
   onOnboardingComplete,
+  dismissOnboardingPanel,
+  getOnboardingPanel,
+  releaseOnboardingPanel,
   _resetForTesting,
 } from "../src/onboarding_panel";
 
@@ -60,6 +63,20 @@ describe("OnboardingPanel — panel lifecycle (AC1, AC6, AC7)", () => {
     panel.dispose(); // simulate user closing the tab
     await vscode.commands.executeCommand("amicode.onboarding.open");
     expect(spy).toHaveBeenCalledTimes(2); // fresh panel after dispose
+    spy.mockRestore();
+  });
+
+  it("getOnboardingPanel returns the live panel, releaseOnboardingPanel detaches it", async () => {
+    expect(getOnboardingPanel()).toBeUndefined(); // no panel yet
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = getOnboardingPanel();
+    expect(panel).toBeDefined();
+    // Release detaches without disposing
+    releaseOnboardingPanel();
+    expect(getOnboardingPanel()).toBeUndefined();
+    // Panel is still alive (not disposed)
+    expect((panel as any).webview).toBeDefined();
     spy.mockRestore();
   });
 
@@ -197,7 +214,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     fs.writeFileSync(configPath, JSON.stringify({ permission: { bash: "allow" } }));
 
     writeOnboardingConfig(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-x" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-ant-valid-key-123456" },
       configPath,
     );
 
@@ -458,7 +475,7 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     spy.mockRestore();
   });
 
-  it("confirm-import writes batch config and disposes panel", async () => {
+  it("confirm-import keeps the panel alive as a transition splash (not disposed immediately)", async () => {
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");
     await vscode.commands.executeCommand("amicode.onboarding.open");
     const panel = spy.mock.results[0].value as {
@@ -482,15 +499,95 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     panel.webview._simulateMessage({ type: "scan-credentials" });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Now confirm import (even if scan found nothing in test env, the handler should work)
+    // Now confirm import
     panel.webview._simulateMessage({
       type: "confirm-import",
       payload: { activeProvider: "anthropic" },
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Panel should have been disposed (onboarding complete)
+    // Panel should NOT have been disposed yet — it's showing the transition splash
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    // Instead, the panel HTML should have been swapped to the splash
+    expect(panel.webview.html).toContain("Getting Amico ready");
+    expect(panel.webview.html).toContain("splash-mark");
+
+    spy.mockRestore();
+  });
+
+  it("dismissOnboardingPanel disposes the transition splash", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: {
+        postMessage: ReturnType<typeof vi.fn>;
+        _simulateMessage: (msg: unknown) => void;
+      };
+      dispose: ReturnType<typeof vi.fn>;
+    };
+
+    const disposeSpy = vi.fn();
+    const origDispose = panel.dispose;
+    panel.dispose = (...args: unknown[]) => {
+      disposeSpy();
+      return (origDispose as Function).apply(panel, args);
+    };
+
+    const postSpy = vi.fn().mockResolvedValue(true);
+    panel.webview.postMessage = postSpy;
+
+    // Trigger scan + confirm to enter transition state
+    panel.webview._simulateMessage({ type: "scan-credentials" });
+    await new Promise((r) => setTimeout(r, 50));
+    panel.webview._simulateMessage({
+      type: "confirm-import",
+      payload: { activeProvider: "anthropic" },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Panel still alive
+    expect(disposeSpy).not.toHaveBeenCalled();
+
+    // Now dismiss (extension calls this after app-ready)
+    dismissOnboardingPanel();
+
+    // Panel should now be disposed
     expect(disposeSpy).toHaveBeenCalled();
+
+    spy.mockRestore();
+  });
+
+  it("confirm-import restarts server but does NOT open chat directly (waits for ready)", async () => {
+    // Clear command execution history
+    (vscode.commands as { executed: string[] }).executed = [];
+
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: {
+        postMessage: ReturnType<typeof vi.fn>;
+        _simulateMessage: (msg: unknown) => void;
+      };
+    };
+
+    const postSpy = vi.fn().mockResolvedValue(true);
+    panel.webview.postMessage = postSpy;
+
+    // Trigger scan then confirm
+    panel.webview._simulateMessage({ type: "scan-credentials" });
+    await new Promise((r) => setTimeout(r, 50));
+    panel.webview._simulateMessage({
+      type: "confirm-import",
+      payload: { activeProvider: "anthropic", includedProviders: ["anthropic"] },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    // Should restart the server
+    expect(executed).toContain("amicode.restartServer");
+    // Should NOT open chat directly (that causes the fetch-failed error)
+    expect(executed).not.toContain("amicode.openChat");
 
     spy.mockRestore();
   });

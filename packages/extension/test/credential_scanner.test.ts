@@ -12,6 +12,7 @@ import * as os from "node:os";
 import {
   scanCredentials,
   defaultScanOptions,
+  disconnectProviders,
   type DetectedCredential,
   type ScanOptions,
   type ScanResult,
@@ -467,7 +468,6 @@ describe("scanCredentials — end-to-end with real default paths", () => {
   it("finds credentials from this machine's actual opencode install", async () => {
     const result = await scanCredentials(defaultScanOptions());
 
-    // This machine has opencode configured — scan should find at least one provider
     console.log(`  [e2e] Found ${result.credentials.length} credential(s):`);
     for (const c of result.credentials) {
       console.log(`    ${c.provider} (from ${c.source}) — key ${c.key.slice(0, 6)}...`);
@@ -590,9 +590,9 @@ describe("scanCredentials — batch config writing integration (AC7)", () => {
 
     // Simulate the panel filtering: only passed providers get written
     const allCredentials: DetectedCredential[] = [
-      { provider: "anthropic", key: "sk-ant-pass", source: "env" },
-      { provider: "openai", key: "sk-openai-fail", source: "env" },
-      { provider: "google", key: "AIza-pass", source: "env" },
+      { provider: "anthropic", key: "sk-ant-pass-valid-key", source: "env" },
+      { provider: "openai", key: "sk-openai-fail-valid-key", source: "env" },
+      { provider: "google", key: "AIza-pass-valid-key-123", source: "env" },
     ];
 
     // Simulate testResults: anthropic=true, openai=false, google=true
@@ -610,5 +610,272 @@ describe("scanCredentials — batch config writing integration (AC7)", () => {
     expect(written.provider.anthropic).toBeDefined();
     expect(written.provider.google).toBeDefined();
     expect(written.provider.openai).toBeUndefined();
+  });
+});
+
+// ─── #455: Only write user-selected providers ────────────────────────────────
+
+describe("writeBatchConfig — placeholder key rejection (#455 AC5)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects 'sk-test' placeholder key — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "sk-test", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+
+  it("rejects empty string keys — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+
+  it("rejects keys shorter than 10 characters — does not write provider", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "short", source: "env" },
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeDefined();
+  });
+});
+
+describe("writeOnboardingConfig — placeholder key rejection (#455 AC5)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("rejects 'sk-test' placeholder key — does not write provider entry", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-test" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider?.anthropic).toBeUndefined();
+  });
+
+  it("rejects keys shorter than 10 characters — does not write provider entry", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "tiny" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider?.anthropic).toBeUndefined();
+  });
+
+  it("allows valid keys (>= 10 chars, not placeholder)", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-ant-valid-key-123456" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeDefined();
+    expect(written.provider.anthropic.options.apiKey).toBe("sk-ant-valid-key-123456");
+  });
+
+  it("allows empty key for OAuth providers like github-copilot", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "github-copilot", model: "github-copilot/claude-sonnet-4-5", apiKey: "" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // OAuth providers write with empty key (no options.apiKey) — that's valid
+    expect(written.provider["github-copilot"]).toBeDefined();
+  });
+});
+
+describe("writeBatchConfig — replaces provider section (redo overwrites)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("replaces existing providers with only the selected ones", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+
+    // Pre-populate with existing bedrock config (as if from a previous onboarding)
+    fs.writeFileSync(configPath, JSON.stringify({
+      provider: { "amazon-bedrock": { options: { apiKey: "ABSK-service-credential-xyz" } } },
+      permission: { bash: "allow" },
+    }));
+
+    writeBatchConfig(credentials, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // Old provider NOT preserved — user didn't select it this time
+    expect(written.provider["amazon-bedrock"]).toBeUndefined();
+    // Only the user-selected provider is present
+    expect(written.provider.openai).toBeDefined();
+    expect(written.provider.openai.options.apiKey).toBe("sk-openai-real-key-12345");
+    // Non-provider settings are still preserved
+    expect(written.permission).toEqual({ bash: "allow" });
+  });
+
+  it("writeBatchConfig never modifies auth stores (account.json / auth.json)", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+
+    // Set up fake auth stores and record their content
+    const accountPath = path.join(tmpDir, "account.json");
+    const authPath = path.join(tmpDir, "auth.json");
+    const accountContent = JSON.stringify({
+      version: 2,
+      accounts: { acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } } },
+      active: { opencode: "acc1" },
+    });
+    const authContent = JSON.stringify({
+      "opencode-go": { type: "api", key: "sk-old" },
+      "amazon-bedrock": { type: "api", key: "aws-key" },
+    });
+    fs.writeFileSync(accountPath, accountContent);
+    fs.writeFileSync(authPath, authContent);
+
+    // Write batch config (only touches opencode.json)
+    writeBatchConfig(credentials, "openai", configPath);
+
+    // Auth stores must be UNTOUCHED
+    expect(fs.readFileSync(accountPath, "utf8")).toBe(accountContent);
+    expect(fs.readFileSync(authPath, "utf8")).toBe(authContent);
+  });
+});
+
+// ─── disconnectProviders — remove excluded providers from auth stores ────────
+
+describe("disconnectProviders — removes credentials from opencode auth stores", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("removes excluded provider from account.json v2", () => {
+    const accountPath = writeJson(tmpDir, "account.json", {
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } },
+        acc2: { id: "acc2", serviceID: "amazon-bedrock", credential: { type: "api", key: "aws-key" } },
+      },
+      active: { opencode: "acc1", "amazon-bedrock": "acc2" },
+    });
+
+    disconnectProviders(["opencode"], { accountJsonPath: accountPath, authJsonPath: "/nonexistent" });
+
+    const result = JSON.parse(fs.readFileSync(accountPath, "utf8"));
+    // opencode removed
+    expect(result.accounts.acc1).toBeUndefined();
+    expect(result.active.opencode).toBeUndefined();
+    // amazon-bedrock preserved
+    expect(result.accounts.acc2).toBeDefined();
+    expect(result.active["amazon-bedrock"]).toBe("acc2");
+  });
+
+  it("removes excluded provider from auth.json v1", () => {
+    const authPath = writeJson(tmpDir, "auth.json", {
+      "opencode-go": { type: "api", key: "sk-oc" },
+      "amazon-bedrock": { type: "api", key: "aws-key" },
+    });
+
+    disconnectProviders(["opencode"], { accountJsonPath: "/nonexistent", authJsonPath: authPath });
+
+    const result = JSON.parse(fs.readFileSync(authPath, "utf8"));
+    // opencode-go removed (alias of opencode)
+    expect(result["opencode-go"]).toBeUndefined();
+    // amazon-bedrock preserved
+    expect(result["amazon-bedrock"]).toBeDefined();
+  });
+
+  it("handles missing files gracefully", () => {
+    // Should not throw
+    expect(() =>
+      disconnectProviders(["opencode"], {
+        accountJsonPath: "/nonexistent/account.json",
+        authJsonPath: "/nonexistent/auth.json",
+      }),
+    ).not.toThrow();
+  });
+
+  it("only removes the specified provider — others are preserved", () => {
+    const accountPath = writeJson(tmpDir, "account.json", {
+      version: 2,
+      accounts: {
+        acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } },
+        acc2: { id: "acc2", serviceID: "opencode-go", credential: { type: "api", key: "sk-oc-go" } },
+        acc3: { id: "acc3", serviceID: "amazon-bedrock", credential: { type: "api", key: "aws-key" } },
+      },
+      active: { opencode: "acc1", "opencode-go": "acc2", "amazon-bedrock": "acc3" },
+    });
+
+    // Only disconnect opencode — bedrock must survive
+    disconnectProviders(["opencode"], { accountJsonPath: accountPath, authJsonPath: "/nonexistent" });
+
+    const result = JSON.parse(fs.readFileSync(accountPath, "utf8"));
+    // opencode AND opencode-go removed (alias)
+    expect(result.accounts.acc1).toBeUndefined();
+    expect(result.accounts.acc2).toBeUndefined();
+    expect(result.active.opencode).toBeUndefined();
+    expect(result.active["opencode-go"]).toBeUndefined();
+    // amazon-bedrock PRESERVED
+    expect(result.accounts.acc3).toBeDefined();
+    expect(result.accounts.acc3.serviceID).toBe("amazon-bedrock");
+    expect(result.active["amazon-bedrock"]).toBe("acc3");
   });
 });
