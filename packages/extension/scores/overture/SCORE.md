@@ -105,10 +105,21 @@ This tells you what (if anything) is already recorded.
 
 **Redo gate:** If the status shows a COMPLETE profile (name, intent, and goals
 are all present — i.e. this is a redo, not a first run), do NOT skip ahead.
-Instead, greet the user by name and ask ONE question via the `question` tool
-with these options (choice question, NOT kind: "text"):
-- label: "Keep my current profile", description: "Your profile is already set up — no changes needed"
-- label: "Start fresh — redo onboarding", description: "Clear everything and answer all questions again"
+Instead, greet the user by name and ask ONE choice question via the `question`
+tool. The question MUST have an `options` array (it is NOT a text question):
+
+```json
+{
+  "questions": [{
+    "question": "You already have a profile on file. What would you like to do?",
+    "header": "Profile exists",
+    "options": [
+      {"label": "Keep my current profile", "description": "Your profile is already set up — no changes needed"},
+      {"label": "Start fresh — redo onboarding", "description": "Clear everything and answer all questions again"}
+    ]
+  }]
+}
+```
 
 If they choose **keep**, say "All good — your profile is unchanged" and
 immediately record `amicode_profile {entity:"onboarding_completed"}` to close
