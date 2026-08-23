@@ -5,7 +5,7 @@
 // mcp-serve facade. Run: `pnpm --filter @amicode/amico-run test`.
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot, buildDoctorWorld, cleanupTracked } from "./helpers.js";
@@ -71,7 +71,7 @@ describe("amico router — help + unknown verb", () => {
   it("--help lists the full verb surface, exit 0", () => {
     const r = run(["--help"]);
     expect(r.code).toBe(0);
-    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "mcp-serve"]) {
+    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "doctor", "upgrade", "mcp-serve"]) {
       expect(r.stdout).toContain(`amico ${v}`);
     }
   });
@@ -313,5 +313,37 @@ describe("amico router — doctor v2 (surface inventory, #525)", () => {
     expect(r.stdout).toMatch(/^surfaces:$/m); // v2 section gained
     expect(r.stdout).toMatch(/server-binary/);
     cleanupTracked();
+  });
+});
+
+describe("amico router — upgrade verbs (#526)", () => {
+  it("upgrade dispatches through the bundle: a current surface is a no-op with a receipt on stdout", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "upgrade", "skills",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+    ]);
+    expect(r.code).toBe(0);
+    const receipt = JSON.parse(r.stdout) as { verb: string; outcome: string; verification: boolean };
+    expect(receipt.verb).toBe("skills");
+    expect(receipt.outcome).toBe("no-op");
+    expect(receipt.verification).toBe(true);
+    // the JSONL store landed under the (injected) root-server's receipts dir
+    const receipts = readFileSync(join(w.server, "upgrade-receipts", "upgrade-receipts.jsonl"), "utf8");
+    expect(receipts.trim().split("\n").length).toBe(1);
+    expect(receipts).toContain('"outcome":"no-op"');
+    cleanupTracked();
+  });
+
+  it("upgrade with an unknown surface → usage error, exit 64", () => {
+    const r = run(["upgrade", "sidecar-bin"]);
+    expect(r.code).toBe(64);
+    expect(r.stderr + r.stdout).toMatch(/unknown surface/);
+    expect(r.stderr + r.stdout).toContain("sidecar-bin");
   });
 });

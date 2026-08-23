@@ -253,6 +253,17 @@ export function bumpExtensionOnRemote(bare: string, version: string): void {
   });
 }
 
+/** Move the fork remote's local/amicode tip forward one commit — the
+ *  checkout learns of it ONLY through a fetch (clean-but-behind fixtures,
+ *  #526's fast-forward branch). */
+export function bumpForkHead(bare: string): void {
+  withBareClone(bare, "local/amicode", (clone) => {
+    writeFileSync(join(clone, "fork-update.txt"), "fork head moves forward\n");
+    fixtureGit(clone, ["add", "-A"]);
+    fixtureGit(clone, ["commit", "-m", "fork head moves forward"]);
+  });
+}
+
 export function addReleaseTagOnRemote(bare: string, tag: string): void {
   withBareClone(bare, "local/amicode", (clone) => {
     fixtureGit(clone, ["tag", tag]);

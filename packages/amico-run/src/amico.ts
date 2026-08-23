@@ -25,6 +25,10 @@ function usage(): string {
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
     ["doctor [--json] [--root-…]", "studio binding + fleet surface inventory — six records, verdicts (#402, #525)"],
     [
+      "upgrade <server-binary|extension|agents|skills> [--root-…]",
+      "receipt-emitting idempotent upgrade runbooks — pre-flight gate, lock, JSONL receipts (#526)",
+    ],
+    [
       "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
       "Pasqal device path — list/select + gated submit (#160)",
     ],
@@ -87,6 +91,18 @@ export async function main(argv: string[]): Promise<number> {
       if (report.json !== null) console.log(report.json);
       else console.log(report.rendered);
       return report.exit;
+    }
+
+    // ── the upgrade verbs (#526, spec D2): the four upgrade chains as
+    // receipt-emitting runbooks. Pre-flight composes the SAME doctor v2
+    // probes (current → no-op; unknown → abort; stale/integrity → proceed);
+    // single-operator lock; append-only JSONL receipts; the server-binary
+    // restore path. Same {json, code} shape as the spine verbs. ──
+    case "upgrade": {
+      const { upgradeVerb } = await import("./upgrade.js");
+      const { json, code } = await upgradeVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
     }
 
     // ── the Pasqal device path (#160): device selection + gated submission,
