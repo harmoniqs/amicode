@@ -84,12 +84,11 @@ function entitledDir(): string {
 }
 
 describe("prepareOpencodeProject × scores (spec §6)", () => {
-  it("splices router + compiled score #0 over the hardcoded interview section", () => {
+  it("splices router + on-demand stub over the hardcoded interview section", () => {
     const proj = prep();
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Onset router");
-    expect(agents).toMatch(/Compiled from score `pulse-designer` v\d+/); // version-agnostic: content bumps must not red this suite
-    expect(agents).toContain("## Pulse-designer interview"); // heading preserved for the agent prompt
+    expect(agents).toContain("general-purpose autoresearch copilot"); // stub injected
     expect(agents).not.toContain("Stages, in order:"); // hardcoded body replaced
     expect(agents).toContain("## Identity"); // engine sections intact
     expect(agents).toContain("AMICODE_ITER"); // run-dir contract intact
@@ -101,9 +100,6 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
     expect(manifest.manifest.version).toBeGreaterThanOrEqual(1); // tracks SCORE.md frontmatter
-    // the compiled banner and the manifest must agree on the version (no drift)
-    const agentsForVersion = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agentsForVersion).toContain(`Compiled from score \`pulse-designer\` v${manifest.manifest.version}`);
     expect(manifest.project_dir).toBe(proj.projectDir);
     expect(manifest.score_dir).toBe(path.join(DEFAULT_SCORES_ROOT, "pulse-designer"));
     // the copy the Bun-side guard actually reads as its manifestDir (problems root)
@@ -269,7 +265,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Skill index");
-    expect(agents).toMatch(/free-phase CZ path/i); // author-first routing from SCORE.md compiled in (§5)
+    // Pulse-designer content no longer compiled into session — verify skill index works independently
     expect(proj.skillPaths.some((p) => p.endsWith("/atoms/SKILL.md"))).toBe(true);
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
@@ -401,13 +397,12 @@ PACKDRIVEN-BODY-MARKER.
     return root;
   }
 
-  it("the default pack's manifest drives the compiled interview + manifest transport", () => {
+  it("the default pack's manifest drives the manifest transport", () => {
     const packsRoot = fixturePacksRoot();
     const proj = prep({ packsRoot });
     const md = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(md).toContain("**only**");
-    expect(md).toContain("PACKDRIVEN-BODY-MARKER.");
-    expect(md).toContain("custom-interview"); // compiled-from attribution line
+    expect(md).toContain("## Onset router"); // router is always spliced
+    expect(md).toContain("general-purpose autoresearch copilot"); // stub present
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("custom-interview");
     expect(manifest.score_dir).toBe(path.join(packsRoot, "quantum-control", "scores", "custom"));
@@ -416,9 +411,9 @@ PACKDRIVEN-BODY-MARKER.
   it("missing packs root falls back to the bundled scores repertoire exactly as today", () => {
     const proj = prep({ packsRoot: "/nonexistent/packs" });
     const md = fs.readFileSync(proj.agentsPath, "utf8");
-    // today's pulse-designer compilation, unchanged (AC4)
-    expect(md).toContain("## Pulse-designer interview");
-    expect(md).toContain("> Compiled from score `pulse-designer`");
+    // Today: on-demand stub, no compiled score content
+    expect(md).toContain("## Onset router");
+    expect(md).toContain("general-purpose autoresearch copilot");
   });
 });
 
