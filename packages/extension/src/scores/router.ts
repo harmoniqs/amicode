@@ -17,7 +17,7 @@ export function buildRouterSection(visible: Score[]): string {
     "present (onboarding already completed), tell the user their profile is already",
     "set up and offer a choice: **keep current profile** or **start fresh** (which",
     'deletes `~/.amico/amicode/onboarding/completed` and `~/.amico/profile.json`,',
-    "then asks the user to reload the window so the overture compiles in). Do NOT",
+    "then re-runs the overture from Stage 1). Do NOT",
     "improvise an interview, invoke skills, or chain into any other workflow.",
     "",
     "Otherwise, when a session opens without a specific request (a greeting, \"who are",
