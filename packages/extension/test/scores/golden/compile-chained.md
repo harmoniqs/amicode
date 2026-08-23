@@ -27,31 +27,35 @@ gate's checks pass.
    - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
 7. **devices** (optional)
    - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
-8. **handoff**
+8. **links** (optional)
+   - Q `scholar`: "Google Scholar profile URL (or skip)"
+   - Q `github`: "GitHub profile URL (or skip)"
+   - Q `custom_link`: "Any other link you'd like on your profile card? (personal site, lab page, etc. — or skip)"
+9. **handoff**
    - Q `description`: "Here's how I'd describe you — edit if you'd like:"
-9. **platform**
+10. **platform**
    - Q `platform`: "What kind of system are you working with?" — options: transmon (recommended) | neutral-atom Rydberg | cavity / bosonic | other
-10. **model**
+11. **model**
    - emits: system — record via the matching `amicode_*` tool
    - Q `levels`: "How many levels should the model keep? (I'll recommend based on your system — see guidance)" — default: platform-dependent (transmon 3–4; a cavity/bosonic mode wants a Fock cutoff)
    - Q `drives`: "Drive parameterization and amplitude bound (drive_max)?" — default: two quadratures, drive_max = 0.2 GHz
-11. **mode**
+12. **mode**
    - Q `mode`: "Simulate first, or go straight to solve?" — options: solve (recommended) | simulate
    - Q `warm_start`: "Warm start from a previous pulse (pulse.jld2) — including one from your pulse bank — or cold start?" — options: cold start (recommended) | warm start
      - skip if: mode == simulate
-12. **problem**
+13. **problem**
    - Q `target`: "What is the target — a gate, or a state to prepare?" — default: a single-qubit gate
-13. **formulate**
+14. **formulate**
    - emits: formulation — record via the matching `amicode_*` tool
    - Q `formulation`: "The problem shape — trajectory type (gate / state-prep / open-system), fixed-time vs min-time, and any robustness or free-phase? (the infidelity objective is DERIVED from the type; constraints default to the amplitude bound)" — default: a fixed-time gate, free-phase on for entangling gates
      - [Why?] hooks: free-phase-objective-only, pin-globals-first-solve (read `scores/memory/<hook>.md` on request)
-14. **solve**
+15. **solve**
    - emits: run, pulse — record via the matching `amicode_*` tool
    - executor: `local`
    - vetted template (absolute): `<workspace>/extension/scores/pulse-designer/templates/solve.jl`
    - Q `solve_params`: "Pulse duration T (ns), timesteps N, and max_iter?" — default: T = 10 ns, N = 50, max_iter = 60
-15. **inspect**
-16. **hardware** (optional)
+16. **inspect**
+17. **hardware** (optional)
    - emits: device_session — record via the matching `amicode_*` tool
 
 ---
@@ -180,7 +184,27 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-8. **handoff** — the terminal stage.
+8. **links** _(optional)_ — ask for profile links that appear on the profile
+   card as icon pills. Three questions, one at a time per the protocol — each
+   skippable ("skip" or empty = no link recorded):
+
+   First: "Google Scholar profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{scholar:"https://..."}}`.
+
+   Second: "GitHub profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{github:"https://..."}}`.
+
+   Third: "Any other link you'd like on your profile card? (personal site, lab
+   page, etc. — or skip)" via `question` with `kind: "text"`. If the user
+   provides a URL, ask a brief follow-up for a label ("What should I call it?"
+   with `kind: "text"` and `default: "Website"`). Record:
+   `amicode_profile {entity:"profile", payload:{custom_link_url:"https://...", custom_link_label:"Lab page"}}`.
+
+   If all three are skipped, that's fine — advance without recording.
+
+9. **handoff** — the terminal stage.
 
    FIRST, **auto-generate a description** from what you've learned (name, goals,
    research_area, intent, environment) — a concise 1–2 sentence summary of the

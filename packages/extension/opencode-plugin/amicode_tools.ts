@@ -1097,12 +1097,14 @@ export const AmicodeTools = async (_input: unknown) => ({
     amicode_profile: {
       description:
         "Record onboarding entities during the overture interview (session zero), and read them " +
-        "back to resume. Entities: `profile` {name, role, org, platforms[], goals}; " +
+        "back to resume. Entities: `profile` {name, role, org, platforms[], goals, intent, " +
+        "description, research_area, experiment_kind, scholar, github, custom_link_url, custom_link_label}; " +
         "`environment` {slug, archetype: qick-lab|cloud-pasqal|local-sim|other, control_stack, " +
         "integration, emulator, endpoints[] — POINTERS ONLY, never credentials}; " +
         "`device` {name, platform, environment, qubits, params, status}; and " +
         "`onboarding_completed` {} — record it EXACTLY ONCE, at the handoff stage (it is what " +
-        "lets the background distiller materialize the user's profile). " +
+        "lets the background distiller materialize the user's profile and bridges data to the " +
+        "profile dropdown). " +
         "Pass `status` as the entity to read back everything recorded so far — call that FIRST " +
         "when the overture starts, and resume from it (ask only what's missing).",
       args: {

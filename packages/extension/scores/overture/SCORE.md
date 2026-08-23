@@ -73,6 +73,18 @@ stages:
       - id: devices
         prompt: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)"
         default: "skip for now"
+  - id: links
+    optional: true
+    questions:
+      - id: scholar
+        prompt: "Google Scholar profile URL (or skip)"
+        kind: text
+      - id: github
+        prompt: "GitHub profile URL (or skip)"
+        kind: text
+      - id: custom_link
+        prompt: "Any other link you'd like on your profile card? (personal site, lab page, etc. — or skip)"
+        kind: text
   - id: handoff
     questions:
       - id: description
@@ -204,7 +216,27 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
 
-8. **handoff** — the terminal stage.
+8. **links** _(optional)_ — ask for profile links that appear on the profile
+   card as icon pills. Three questions, one at a time per the protocol — each
+   skippable ("skip" or empty = no link recorded):
+
+   First: "Google Scholar profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{scholar:"https://..."}}`.
+
+   Second: "GitHub profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{github:"https://..."}}`.
+
+   Third: "Any other link you'd like on your profile card? (personal site, lab
+   page, etc. — or skip)" via `question` with `kind: "text"`. If the user
+   provides a URL, ask a brief follow-up for a label ("What should I call it?"
+   with `kind: "text"` and `default: "Website"`). Record:
+   `amicode_profile {entity:"profile", payload:{custom_link_url:"https://...", custom_link_label:"Lab page"}}`.
+
+   If all three are skipped, that's fine — advance without recording.
+
+9. **handoff** — the terminal stage.
 
    FIRST, **auto-generate a description** from what you've learned (name, goals,
    research_area, intent, environment) — a concise 1–2 sentence summary of the
