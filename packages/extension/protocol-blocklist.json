@@ -1,0 +1,13 @@
+{
+  "proprietary_strings": [
+    "telaio",
+    "Piccolissimo",
+    "Altissimo",
+    "harmoniqs",
+    "spartito"
+  ],
+  "banned_names": [
+    "conductor",
+    "autobuild"
+  ]
+}

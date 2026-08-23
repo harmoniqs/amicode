@@ -56,6 +56,28 @@ _Avoid_: Armonia (the whole stack), workspace, folder
 The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
+**Director**:
+The role that leads any autonomous loop — one canonical protocol (ledger discipline, dispatch through gates, analyze, record) that every campaign runs under, whichever mode it is bound to. Research and development differ in their gate packs, never in their director.
+_Avoid_: conductor (standing decision)
+
+**Autoresearch**:
+The research mode: hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
+
+**Autodev**:
+The development mode: issue DAG → TDD slices → CI/review → landed delta — the second autonomous mode, binding the dev gate pack. The loop is issue → PR → merge; automating the walk never weakens the dev gate or the never-merge-non-green rule.
+_Avoid_: autobuild ("build" already means CI to everyone)
+
+**Campaign**:
+One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the pulse/catalog banks.
+_Avoid_: session (a copilot session is never a campaign)
+
+**Gate pack**:
+The typed set of gates + phase templates an autonomous mode binds — the entire mode-specific part of the loop, held as committed data rather than prose, so the same director core runs any pack.
+
+**Mode**:
+One of the three director postures — copilot (the zeroth: default, interactive, packless), autoresearch, autodev. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
+_Avoid_: surface, rail (they render and switch modes; a mode is a posture, not a surface)
+
 ### Fleet & serving
 
 **Server mode**:
