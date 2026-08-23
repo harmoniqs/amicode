@@ -231,8 +231,8 @@ Present a MULTI-SELECT question via the `question` tool with `multiple: true`:
 - "Exploring" (description: "See what Amicode can do")
 
 Record: write `focus` to `~/.amico/profile.json` as a short summary of their
-intent (e.g. "automated experiments and scientific insights" or "general
-coding"). This populates the subtitle in the profile card.
+intent (e.g. "automated experiments" or "general coding"). If Stage 5 runs
+(research users), it overwrites this with their actual research area.
 
 Acknowledge briefly ("Got it") and advance.
 
@@ -247,7 +247,8 @@ No profile.json field for this — it informs Stage 6's description only.
 If the user selected "Perform (automated) experiments" in Stage 3, ask:
 
 **Q5.1** — "What's your research area?" via `question` with `kind: "text"`,
-`options: []`. No profile.json field — informs Stage 6's description.
+`options: []`. Record: write `focus` to `~/.amico/profile.json` (this is the
+"Research area" field in the profile card — overwrites the Stage 3 summary).
 
 **Q5.2** — "What kind of experiments do you run?" via `question` with
 `kind: "text"`, `options: []`. No profile.json field — informs Stage 6's description.
