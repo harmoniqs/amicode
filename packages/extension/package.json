@@ -78,7 +78,10 @@
       {
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
-        "icon": "$(comment-discussion)"
+        "icon": {
+          "light": "media/amico-tab-light.svg",
+          "dark": "media/amico-tab-dark.svg"
+        }
       },
       {
         "command": "amicode.newChat",
@@ -366,6 +369,12 @@
       }
     },
     "menus": {
+      "editor/title": [
+        {
+          "command": "amicode.openChat",
+          "group": "navigation"
+        }
+      ],
       "view/title": [
         {
           "command": "amicode.workspace.newFile",
