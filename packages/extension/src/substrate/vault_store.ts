@@ -55,8 +55,12 @@ export function readProfileMd(vaultDir: string): string {
 }
 
 /** Second disjunct of the routing predicate (§3): completed marker in the
- *  onboarding stream. Malformed lines are skipped. */
+ *  onboarding stream. Checks both the legacy events.jsonl marker AND the new
+ *  file-based marker (a `completed` file in the onboarding dir). */
 export function hasOnboardingCompleted(onboardingStreamDir: string): boolean {
+  // New marker: the agent writes an empty `completed` file directly.
+  if (fs.existsSync(path.join(onboardingStreamDir, "completed"))) return true;
+  // Legacy marker: amicode_profile tool appends to events.jsonl.
   let text: string;
   try {
     text = fs.readFileSync(path.join(onboardingStreamDir, "events.jsonl"), "utf8");

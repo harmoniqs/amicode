@@ -23,7 +23,7 @@ export const SECRET_RE = /api[_-]?key|token|secret|password|Bearer |AKIA[0-9A-Z]
 export type OnboardingEntity = "profile" | "environment" | "device" | "onboarding_completed";
 
 const ENTITY_FIELDS: Record<OnboardingEntity, string[]> = {
-  profile: ["name", "role", "org", "platforms", "goals", "intent"],
+  profile: ["name", "role", "org", "platforms", "goals", "intent", "description", "research_area", "experiment_kind", "scholar", "github", "custom_link_url", "custom_link_label"],
   environment: ["slug", "archetype", "control_stack", "integration", "emulator", "endpoints"],
   device: ["name", "platform", "environment", "qubits", "params", "status"],
   onboarding_completed: [],
@@ -144,5 +144,62 @@ export function triggerOnboardingDistill(ops: string = opsDir()): boolean {
   const cfg = readDistillerConfig(ops);
   const defaults = (cfg && (cfg as { job_defaults?: Record<string, unknown> }).job_defaults) ?? {};
   void enqueueAndDrain(ops, { kind: "onboarding", ops, ...defaults }, defaultClock()).catch(() => {});
+  // Eagerly bridge onboarding state → profile.json so the profile dropdown
+  // is populated immediately (the distiller still materializes the richer
+  // vault PROFILE.md in the background).
+  materializeProfileJson(ops);
   return cfg !== null;
+}
+
+/** Write the collected identity fields to ~/.amico/profile.json (the serving
+ *  layer the profile dropdown reads from). Reads from the onboarding events
+ *  stream first; if that's empty/missing, uses the inline profile payload
+ *  (passed when the caller already has the data). Additive merge: never
+ *  clobbers fields already set by the inline editor. */
+export function materializeProfileJson(ops: string = opsDir(), inlineProfile?: Record<string, unknown>): void {
+  const dir = onboardingStreamDir(ops);
+  const state = readOnboardingState(dir);
+  const profile = state.profile ?? inlineProfile;
+  if (!profile) return;
+
+  const profilePath = path.join(os.homedir(), ".amico", "profile.json");
+  let current: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(profilePath)) {
+      const raw = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) current = raw;
+    }
+  } catch { /* start fresh */ }
+
+  // Field mapping: onboarding field → profile.json field
+  const mapping: Record<string, string> = {
+    name: "name",
+    role: "role",
+    org: "affiliation",
+    research_area: "focus",
+    description: "description",
+    scholar: "scholar",
+    github: "github",
+  };
+
+  for (const [srcKey, dstKey] of Object.entries(mapping)) {
+    const value = profile[srcKey];
+    // Additive: only write if the target field is empty/unset
+    if (typeof value === "string" && value.trim() && !current[dstKey]) {
+      current[dstKey] = value.trim();
+    }
+  }
+
+  // custom_link is compound: url + label
+  const linkUrl = profile.custom_link_url;
+  const linkLabel = profile.custom_link_label;
+  if (typeof linkUrl === "string" && linkUrl.trim() && !current.custom_link) {
+    current.custom_link = {
+      url: linkUrl.trim(),
+      label: typeof linkLabel === "string" ? linkLabel.trim() : "",
+    };
+  }
+
+  fs.mkdirSync(path.dirname(profilePath), { recursive: true });
+  fs.writeFileSync(profilePath, JSON.stringify(current, null, 2) + "\n");
 }

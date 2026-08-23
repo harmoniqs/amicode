@@ -6,7 +6,7 @@ import { loadRepertoire } from "./scores/loader";
 import { loadPacks } from "./scores/packs";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
-import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
+import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
@@ -471,8 +471,8 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
         [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
-        [`${path.join(os.homedir(), ".amico", "library")}/**`]: "allow", // uploaded papers ("read my latest paper" — home Library card)
-        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
+        [`${path.join(os.homedir(), ".amico")}/**`]: "allow", // the whole amicode state tree: profile, problems, runs, library, onboarding
+        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces (may be overridden outside ~/.amico)
         [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
         // Armonia mount stack (spec-20260707-002846 C1): a READ grant per mount
@@ -620,27 +620,26 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const visible = filterRepertoire(repertoire, ents.entitlements);
     const score0 = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.primary ?? "pulse-designer"));
     const overture = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.head ?? "overture"));
-    // Routing predicate (spec §3): onboard (chain overture → pulse-designer)
-    // ONLY when there is a vault to remember into AND the user has neither a
-    // materialized profile NOR a completion marker (the second disjunct closes
-    // the ~2-min materialization window; an empty/whitespace PROFILE.md counts
-    // as absent via readProfileMd). No vault ⇒ never onboard (nowhere to
-    // materialize) — just run pulse-designer.
+    // Routing predicate (spec §3): onboard (standalone overture) ONLY when
+    // there is a vault to remember into AND the user has neither a materialized
+    // profile NOR a completion marker. The overture is NEVER chained into
+    // pulse-designer — domain interviews start in subsequent sessions via the
+    // onset router.
     const shouldOnboard =
       !!overture &&
-      !!score0 &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
       !consumeDevtoolsRestoreMarker() &&
       !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
-    if (shouldOnboard && overture && score0) {
-      // Chained: ONE compiled section, ONE manifest (id `overture`, stages =
-      // overture ++ pulse-designer) so the score guard sees the whole flow.
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileChainedScore(overture, score0));
+    if (shouldOnboard && overture) {
+      // Standalone overture: the onboarding interview runs alone, no domain
+      // score chained after it. The pulse-designer (or any domain interview)
+      // starts in the NEXT session via the onset router.
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(overture));
       const manifestJson =
         JSON.stringify(
-          { manifest: chainManifest(overture, score0), score_dir: overture.dir, project_dir: projectDir },
+          { manifest: overture.manifest, score_dir: overture.dir, project_dir: projectDir },
           null,
           2,
         ) + "\n";
@@ -648,7 +647,19 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       fs.mkdirSync(problemsRoot(), { recursive: true });
       fs.writeFileSync(path.join(problemsRoot(), "score_manifest.json"), manifestJson);
     } else if (score0) {
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
+      // Post-onboarding: inject only the onset router. The pulse-designer
+      // interview protocol is NOT compiled into every session — domain-specific
+      // workflows (pulse design, autoresearch, etc.) load on-demand via the
+      // skill system when the user asks for them.
+      const stub = [
+        "<!-- AMICODE_SCORE_SECTION -->",
+        "",
+        "You are a general-purpose autoresearch copilot. Do NOT proactively start",
+        "any domain-specific interview (pulse design, calibration, etc.) unless the",
+        "user explicitly asks for it. When they do, invoke the relevant skill from",
+        "the Skill index and follow the workflow in the ## Workflow section above.",
+      ].join("\n");
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), stub);
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
       // reads score_manifest.json from the problems ROOT — that is the guard's
       // session-scoped manifestDir (per-problem interview state lives in each

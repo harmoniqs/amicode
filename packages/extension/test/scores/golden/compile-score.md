@@ -1,3 +1,4 @@
+<!-- AMICODE_SCORE_SECTION -->
 ## Pulse-designer interview
 
 > Compiled from score `pulse-designer` v3 — `SCORE.md` is the source of truth; do not edit this section by hand.

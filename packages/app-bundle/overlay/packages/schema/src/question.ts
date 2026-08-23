@@ -36,6 +36,9 @@ const base = {
   options: Schema.Array(Option).annotate({ description: "Available choices" }),
   multiple: Schema.Boolean.pipe(optional).annotate({ description: "Allow selecting multiple choices" }),
   kind: Kind.pipe(optional),
+  default: Schema.String.pipe(optional).annotate({
+    description: "Pre-filled value for text-kind questions (user can edit before submitting)",
+  }),
 }
 
 export const Info = Schema.Struct({

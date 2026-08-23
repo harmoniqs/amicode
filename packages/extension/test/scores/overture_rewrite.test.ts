@@ -36,23 +36,23 @@ describe("overture SCORE.md — loads and compiles (AC1)", () => {
     expect(ov.manifest.schema_version).toBe(1);
   });
 
-  it("has the new stage structure: orientation, context_seed, intent, goals, research_area, environment, devices, handoff", () => {
+  it("has the new stage structure: orientation, links, intent, goals, research_area, handoff", () => {
     const ov = overture();
     const stageIds = ov.manifest.stages.map((s: { id: string }) => s.id);
     expect(stageIds).toContain("orientation");
-    expect(stageIds).toContain("context_seed");
+    expect(stageIds).toContain("links");
     expect(stageIds).toContain("intent");
     expect(stageIds).toContain("goals");
     expect(stageIds).toContain("research_area");
-    expect(stageIds).toContain("environment");
-    expect(stageIds).toContain("devices");
     expect(stageIds).toContain("handoff");
     // Old/removed stages are gone
     expect(stageIds).not.toContain("demo");
     expect(stageIds).not.toContain("platforms");
     expect(stageIds).not.toContain("identity");
-    // Verify order: context_seed before intent, intent before goals
-    expect(stageIds.indexOf("context_seed")).toBeLessThan(stageIds.indexOf("intent"));
+    expect(stageIds).not.toContain("context_seed");
+    expect(stageIds).not.toContain("environment");
+    expect(stageIds).not.toContain("devices");
+    // Verify order: intent before goals
     expect(stageIds.indexOf("intent")).toBeLessThan(stageIds.indexOf("goals"));
   });
 
@@ -117,9 +117,10 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toContain("multiple: true");
   });
 
-  it("AC5: records intent as array of slugs on the profile entity", () => {
+  it("AC5: records intent as focus field on profile.json", () => {
     expect(md).toContain("intent");
-    expect(md).toMatch(/intent.*\[.*research.*general_coding.*exploring.*\]/s);
+    expect(md).toContain("focus");
+    expect(md).toContain("profile.json");
   });
 
   it("AC6: research_area stage has two back-to-back questions (area + kind)", () => {
@@ -127,13 +128,13 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     const stage = ov.manifest.stages.find((s: { id: string }) => s.id === "research_area");
     expect(stage).toBeDefined();
     expect(stage!.questions).toHaveLength(2);
-    expect(stage!.questions![0].prompt).toBe("What research areas?");
-    expect(stage!.questions![1].prompt).toBe("What kind of experiments?");
+    expect(stage!.questions![0].prompt).toBe("What's your research area?");
+    expect(stage!.questions![1].prompt).toBe("What kind of experiments do you run?");
   });
 
   it("AC6: compiled output contains both research prompts, not the old combined one", () => {
-    expect(md).toContain("What research areas?");
-    expect(md).toContain("What kind of experiments?");
+    expect(md).toContain("What's your research area?");
+    expect(md).toContain("What kind of experiments do you run?");
     expect(md).not.toContain("What research area and what kind of experiments?");
     expect(md).not.toContain("Which platform");
     expect(md).not.toContain("qubit platforms");
@@ -159,10 +160,9 @@ describe("overture compiled content — protocol (AC7)", () => {
 describe("overture compiled content — resume (AC8)", () => {
   const md = compileScore(overture());
 
-  it("instructs to check status first and skip already-answered stages", () => {
-    expect(md).toContain("amicode_profile");
-    expect(md).toContain("status");
-    expect(md).toContain("already recorded");
+  it("instructs to read profile.json first and skip already-answered stages", () => {
+    expect(md).toContain("profile.json");
+    expect(md).toContain("already");
   });
 });
 
@@ -175,11 +175,9 @@ describe("overture compiled content — complete flow (AC9)", () => {
     expect(md).toContain("orientation");
     expect(md).toContain("intent");
     expect(md).toContain("research_area");
-    expect(md).toContain("context_seed");
-    expect(md).toContain("environment");
     expect(md).toContain("goals");
     expect(md).toContain("handoff");
-    expect(md).toContain("onboarding_completed");
+    expect(md).toContain("completion marker");
   });
 });
 
@@ -200,8 +198,8 @@ describe("overture — handoff stage presents description for edit", () => {
   it("compiled body instructs to pre-fill description with default and let user edit", () => {
     const md = compileScore(overture());
     expect(md).toContain("default");
-    expect(md).toContain("Onboarding finished");
-    expect(md).toContain("start a new session");
+    expect(md).toContain("All set");
+    expect(md).toContain("new session");
     // Should NOT contain the old choices
     expect(md).not.toContain("Let's dive into my first task");
     expect(md).not.toContain("Show me around first");
