@@ -1,6 +1,6 @@
 # Amicode
 
-The VSCode extension + CLI that lets researchers author, run, and inspect quantum optimal-control solves — locally, on company compute, or against real hardware.
+The VSCode extension + CLI autoresearch studio — researchers propose, run, verify, and record experiments through a structured loop. Quantum optimal control is the primary Domain Pack; the product is the loop, not the domain.
 
 ## Language
 
@@ -68,7 +68,7 @@ The development mode: issue DAG → TDD slices → CI/review → landed delta �
 _Avoid_: autobuild ("build" already means CI to everyone)
 
 **Campaign**:
-One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the pulse/catalog banks.
+One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the artifact banks.
 _Avoid_: session (a copilot session is never a campaign)
 
 **Gate pack**:
@@ -109,6 +109,18 @@ The self-healing SSH local-forward a `client` uses to reach the Canonical Server
 _Avoid_: port forward (as a concept name), launchd tunnel
 
 ### Orthogonal axes
+
+**Domain Pack**:
+A deeply integrated capability set covering one research domain — its skills, Substrate, tools, solver modes, interview flows, and result semantics. Quantum control is the first and primary Domain Pack; it ships active by default. A pack is not a plugin: it is tightly integrated code that is identifiably domain-specific rather than scattered across generic infrastructure. Code that belongs to a Domain Pack is visibly gated behind pack activation (even when the gate is always true today).
+_Avoid_: Plugin, add-on, module (as the concept name)
+
+**Substrate**:
+The runtime environment a Domain Pack requires — language, packages, precompilation. For the quantum-control pack: Julia + Piccolo. Substrate setup is gated behind pack activation, not hardcoded into core extension activation.
+_Avoid_: Runtime, toolchain (as concept names)
+
+**Run**:
+One execution of an experiment script, producing a result artifact and an iteration log. Domain-agnostic at the protocol level (iteration count, objective value, status); domain-specific at the rendering level (e.g. fidelity display, pulse visualization for quantum control). The generic run protocol is `AMICODE_ITER` (iteration, objective, constraints); domain extensions (e.g. `AMICODE_PULSE`) layer on top.
+_Avoid_: Solve (as the generic concept — "solve" is quantum-control vocabulary for a Run)
 
 **Entitlement**:
 A grant of capability, in two linked senses. Locally: a license code granting access to a set of Julia packages (e.g. `issimo` unlocks Piccolissimo) — holdable with no Connection at all. Service-side: the authorization set a Credential carries on its service record. The Company Compute Connection bridges them: establishing it grants the local code.
