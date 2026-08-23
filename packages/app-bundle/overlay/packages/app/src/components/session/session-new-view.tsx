@@ -78,10 +78,10 @@ export function NewSessionView(props: NewSessionViewProps) {
       <div class="flex-1 px-6 pb-30 flex items-center justify-center text-center">
         <div class="w-full max-w-200 flex flex-col items-center text-center gap-4">
           <div class="flex flex-col items-center gap-6">
-            <MarkDetailed class="w-28" />
-            {/* amicode: brand wordmark in the brand typeface (Racing Sans One — restored per review);
-                MarkDetailed is the redesign's detailed mark (kept from trunk) */}
-            <Logo class="w-56 max-w-full" />
+            {/* amicode: mark only — the AMICODE wordmark beneath it was dropped
+                as redundant. Accent via icon-icon-accent: yellow on dark,
+                neutral ink on light. */}
+            <MarkDetailed class="w-28" style={{ color: "var(--v2-icon-icon-accent)" }} />
           </div>
           {/* amicode: getting-started block (tagline + how-it-works + starter chips) */}
           <AmicodeGettingStarted

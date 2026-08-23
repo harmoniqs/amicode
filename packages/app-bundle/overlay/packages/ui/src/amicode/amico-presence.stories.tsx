@@ -71,7 +71,7 @@ function MockFlow(props: { state: PresenceState }) {
   return (
     <div style={{ padding: "14px", display: "flex", "flex-direction": "column", gap: "10px", "font-size": "13px", color: "var(--v2-text-text-base)" }}>
       {/* user (right) */}
-      <div style={{ "align-self": "flex-end", background: "var(--v2-surface-surface-raised, rgba(127,127,127,0.12))", padding: "6px 10px", "border-radius": "8px", "max-width": "80%" }}>
+      <div style={{ "align-self": "flex-end", background: "var(--v2-surface-surface-raised, rgba(127,127,127,0.12))", padding: "6px 10px", "border-radius": "var(--radius-md)", "max-width": "80%" }}>
         optimize an X gate on my transmon — use what you know from my history
       </div>
       {/* normal chat prose (full width) */}
@@ -108,7 +108,7 @@ function MockFlow(props: { state: PresenceState }) {
 
 function Stage(props: { state: PresenceState; label?: string }) {
   return (
-    <div style={{ "max-width": "720px", border: "1px solid var(--v2-border-border-base)", "border-radius": "10px", overflow: "hidden", "font-family": "var(--text-font, system-ui)" }}>
+    <div style={{ "max-width": "720px", border: "1px solid var(--v2-border-border-base)", "border-radius": "var(--radius-md)", overflow: "hidden", "font-family": "var(--text-font, system-ui)" }}>
       <Show when={props.label}>
         <div style={{ padding: "4px 12px", "font-size": "11px", "letter-spacing": "0.08em", color: "var(--v2-text-text-faint)", "text-transform": "uppercase" }}>{props.label}</div>
       </Show>

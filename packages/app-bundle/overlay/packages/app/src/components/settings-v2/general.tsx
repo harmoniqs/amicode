@@ -9,7 +9,6 @@ import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
 import { useUpdaterAction } from "../updater-action"
 import { useSettings } from "@/context/settings"
-import { ExternalLink } from "../external-link"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
 import { LayoutRetirementNotice, LayoutTransitionToggle } from "./interface-transition"
@@ -144,30 +143,6 @@ const AppearanceSection: Component<{ controller: AppearanceSettingsController }>
               return language.t("theme.scheme.dark")
             }}
             onSelect={(option) => option && props.controller.scheme.select(option)}
-          />
-        </SettingsRowV2>
-
-        <SettingsRowV2
-          title={language.t("settings.general.row.theme.title")}
-          description={
-            <>
-              {language.t("settings.general.row.theme.description")}{" "}
-              <ExternalLink class="settings-v2-link" href="https://opencode.ai/docs/themes/">
-                {language.t("common.learnMore")}
-              </ExternalLink>
-            </>
-          }
-        >
-          <SelectV2
-            appearance="inline"
-            data-action="settings-theme"
-            options={props.controller.theme.options()}
-            current={props.controller.theme.current()}
-            placement="bottom-end"
-            gutter={6}
-            value={(option) => option.id}
-            label={(option) => option.name}
-            onSelect={props.controller.theme.select}
           />
         </SettingsRowV2>
 

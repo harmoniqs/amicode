@@ -675,7 +675,14 @@ function ChannelIndicator(props: { debugTools?: { visible: boolean; toggle: () =
     return (
       <button
         type="button"
-        class="bg-icon-interactive-base text-[#FFF] font-medium px-2 rounded-sm uppercase font-mono cursor-pointer"
+        class="font-medium px-2 rounded-sm uppercase font-mono cursor-pointer"
+        style={{
+          // brand chip: yellow fill, ink text, ink edge. Yellow cannot define its
+          // own edge on a light ground, so the border is not optional.
+          background: "var(--accent)",
+          color: "var(--accent-ink)",
+          border: "var(--border-width) solid var(--accent-edge-ink)",
+        }}
         onClick={props.debugTools.toggle}
         aria-label="Toggle debug tools"
         aria-pressed={props.debugTools.visible}

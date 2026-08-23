@@ -258,7 +258,7 @@ export function GlobalConnectionsPopover(props: { onManageVaults: () => void }) 
             "align-items": "center",
             gap: "6px",
             border: "1px solid var(--v2-border-border-base)",
-            "border-radius": "7px",
+            "border-radius": "var(--radius-sm)",
             background: "var(--v2-background-bg-layer-01)",
             color: "var(--v2-text-text-base)",
             padding: "4px 10px",

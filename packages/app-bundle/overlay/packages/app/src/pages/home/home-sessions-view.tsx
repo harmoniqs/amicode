@@ -185,7 +185,7 @@ function HomeSessionLeading(props: {
           aria-hidden="true"
           class={`
             pointer-events-none absolute top-1/2 h-3 w-0.5 -translate-y-1/2
-            rounded-[2px] bg-v2-background-bg-layer-04
+            rounded-xs bg-v2-background-bg-layer-04
           `}
           style={{ right: "calc(100% + 4px)" }}
         />
@@ -209,7 +209,7 @@ function HomeSessionSearch(props: HomeSessionsViewProps) {
           <div
             data-component="home-session-search-panel"
             class={`
-              absolute flex flex-col overflow-hidden rounded-[12px]
+              absolute flex flex-col overflow-hidden rounded-lg
               bg-v2-background-bg-base shadow-[var(--v2-elevation-floating)]
             `}
             style={{ top: "-6px", left: "-6px", width: "calc(100% + 12px)" }}
@@ -268,7 +268,7 @@ function HomeSessionSearch(props: HomeSessionsViewProps) {
         </Show>
         <label
           class={`
-            relative z-20 flex h-9 w-full items-center gap-2 rounded-[6px] py-1 pl-3 pr-2
+            relative z-20 flex h-9 w-full items-center gap-2 rounded-sm py-1 pl-3 pr-2
             bg-v2-background-bg-layer-02/60 text-v2-icon-icon-muted transition-[background-color,box-shadow]
             duration-[120ms] ease-in-out hover:bg-v2-background-bg-layer-02 focus-within:bg-v2-background-bg-layer-02
           `}
@@ -420,14 +420,14 @@ function HomeSessionRow(props: HomeSessionsViewProps & { record: HomeSessionReco
 
   return (
     <div
-      class="group/session relative flex h-10 min-w-0 items-center rounded-[6px]"
+      class="group/session relative flex h-10 min-w-0 items-center rounded-sm"
       classList={{ group: !!showProjectName() }}
     >
       <button
         type="button"
         data-component="home-session-row"
         class={`
-          flex h-10 min-w-0 w-full flex-1 shrink-0 cursor-default items-center gap-2 rounded-[6px] border-0
+          flex h-10 min-w-0 w-full flex-1 shrink-0 cursor-default items-center gap-2 rounded-sm border-0
           bg-transparent py-3 pl-3 pr-10 text-left text-v2-text-text-muted [font-weight:530]
           transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out
           hover:bg-v2-overlay-simple-overlay-hover focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:outline-none
@@ -543,7 +543,7 @@ function HomeSessionSkeleton(props: { label: string }) {
         <div class={HOME_SECTION_LABEL}>{props.label}</div>
       </div>
       <div class="flex min-w-0 flex-col gap-px" aria-hidden="true">
-        <For each={[0, 1, 2, 3]}>{() => <div class="h-10 rounded-[6px] bg-v2-background-bg-deep opacity-70" />}</For>
+        <For each={[0, 1, 2, 3]}>{() => <div class="h-10 rounded-sm bg-v2-background-bg-deep opacity-70" />}</For>
       </div>
     </div>
   )

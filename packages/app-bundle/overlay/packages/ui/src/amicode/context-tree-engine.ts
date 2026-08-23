@@ -17,7 +17,7 @@
    markdown/source. Camera: auto-fit until the user pans/zooms; wheel
    zooms about the cursor, drag pans, double-click refits.
 
-   Shared laws with the brain: circles only; #fff676 belongs to the live
+   Shared laws with the brain: circles only; #FFE614 belongs to the live
    position alone; both palettes carried in-module so a theme flip is a
    repaint, never a reload; DPR re-checked when the device-pixel-ratio
    itself changes (webview zoom), not only on box resize.
@@ -125,10 +125,10 @@ const PALETTES: Record<ContextTreeScheme, Palette> = {
     recall: "rgba(255, 255, 255, 0.10)",
     nodeFill: "#242423",
     nodeBorder: "rgba(255, 255, 255, 0.24)",
-    thought: "#fff676",
+    thought: "#FFE614",
     labelHalo: "rgba(19, 19, 18, 0.72)",
     kind: {
-      root: "#fff676",
+      root: "#FFE614",
       turn: "#d6d6d2",
       note: "#3794ff",
       source: "#4d9e51",

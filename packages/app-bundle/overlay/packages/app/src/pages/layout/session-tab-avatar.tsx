@@ -1,9 +1,7 @@
 import type { LocalProject } from "@/context/layout"
 import type { ServerConnection } from "@/context/server"
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
-import { Mark } from "@opencode-ai/ui/logo"
-import { AmicoMark } from "@opencode-ai/ui/amico-spinner"
-import { Show } from "solid-js"
+import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
 
 export function SessionTabAvatar(props: {
   project?: LocalProject
@@ -24,6 +22,8 @@ export function SessionTabAvatar(props: {
       revealProjectOnHover={props.revealProjectOnHover}
       unread={state.unread()}
       loading={state.loading()}
+      needsAttention={state.needsAttention()}
+      hasError={state.hasError()}
     />
   )
 }
@@ -34,28 +34,20 @@ export function SessionTabAvatarView(props: {
   revealProjectOnHover?: boolean
   unread: boolean
   loading: boolean
+  needsAttention?: boolean
+  hasError?: boolean
 }) {
+  // The Amico mark used to sit here on every tab — identical on all of them, so
+  // it occupied the slot without saying anything. A status dot uses the same
+  // space to report what the session is actually doing.
   return (
-    <Show
-      when={props.loading}
-      fallback={
-        <span class="relative inline-flex size-4 shrink-0 items-center justify-center">
-          <Mark class="size-4" />
-          <Show when={props.unread}>
-            <span
-              aria-hidden="true"
-              class="absolute -top-0.5 -right-0.5 size-1.5 rounded-full"
-              style={{ background: "var(--v2-icon-icon-accent)" }}
-            />
-          </Show>
-        </span>
-      }
-    >
-      <span class="relative block size-4 shrink-0">
-        <span class="absolute inset-0 flex items-center justify-center tab-mark-running">
-          <AmicoMark running />
-        </span>
-      </span>
-    </Show>
+    <SessionTabStatusDot
+      status={sessionTabStatus({
+        loading: props.loading,
+        needsAttention: props.needsAttention ?? false,
+        hasError: props.hasError ?? false,
+        unread: props.unread,
+      })}
+    />
   )
 }

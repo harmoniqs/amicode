@@ -7,6 +7,7 @@ export {
   hpClickAction,
   hpAfterConnect,
   modeAfterDisconnect,
+  releaseRequestForPick,
   type SolverMode,
   type SolverConnectionDot,
   type HpClickAction,

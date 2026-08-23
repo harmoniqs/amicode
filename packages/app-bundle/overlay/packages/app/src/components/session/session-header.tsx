@@ -22,6 +22,8 @@ import { useLayout } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
 import { useServer, ServerConnection } from "@/context/server"
 import { useSettings } from "@/context/settings"
+import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
+import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { useSync } from "@/context/sync"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
 import { useTerminal } from "@/context/terminal"
@@ -622,7 +624,7 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 // (amicode#273) inside the session header: tabbed Active/Archived, search,
 // open-tab indicators, archive/unarchive actions, and cursor-based pagination.
 const SESSION_DROPDOWN_ROW =
-  "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-[6px] bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
+  "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
 
 function SessionChatsDropdown() {
   const tabs = useTabs()
@@ -894,7 +896,7 @@ function SessionChatsDropdown() {
         ref={triggerRef}
         type="button"
         data-action="session-chats-toggle-flyout"
-        class="flex shrink-0 items-center justify-center rounded-[6px] border-none bg-transparent p-1.5 cursor-pointer text-v2-icon-icon-muted hover:text-v2-icon-icon-base hover:bg-v2-overlay-simple-overlay-hover transition-colors"
+        class="flex shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-1.5 cursor-pointer text-v2-icon-icon-muted hover:text-v2-icon-icon-base hover:bg-v2-overlay-simple-overlay-hover transition-colors"
         aria-label="Sessions"
         onClick={() => setOpen(!open())}
       >
@@ -919,7 +921,7 @@ function SessionChatsDropdown() {
               gap: "12px",
               overflow: "hidden auto",
               border: "1px solid var(--v2-border-border-base)",
-              "border-radius": "10px",
+              "border-radius": "var(--radius-md)",
               background: "var(--v2-background-bg-base)",
               "box-shadow": "0 14px 40px -18px rgba(0, 0, 0, 0.55)",
               padding: "14px",
@@ -928,7 +930,7 @@ function SessionChatsDropdown() {
           <section class="isolate min-h-0 min-w-0 flex flex-col" aria-label={language.t("sidebar.project.recentSessions")}>
             {/* Search */}
             <label
-              class="relative z-20 flex h-9 w-full items-center gap-2 rounded-[6px] py-1 pl-3 pr-2 text-v2-icon-icon-muted bg-v2-background-bg-deep focus-within:bg-v2-background-bg-base focus-within:shadow-[0_0_0_0.5px_var(--v2-border-border-focus),var(--v2-elevation-raised)] transition-[background-color,box-shadow] duration-[120ms] ease-in-out"
+              class="relative z-20 flex h-9 w-full items-center gap-2 rounded-sm py-1 pl-3 pr-2 text-v2-icon-icon-muted bg-v2-background-bg-deep focus-within:bg-v2-background-bg-base focus-within:shadow-[0_0_0_0.5px_var(--v2-border-border-focus),var(--v2-elevation-raised)] transition-[background-color,box-shadow] duration-[120ms] ease-in-out"
             >
               <IconV2 name="magnifying-glass" />
               <input
@@ -1075,27 +1077,32 @@ function SessionDropdownRow(props: {
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  // The dot used to mean "this session is an open tab" and was therefore always
+  // the same green. It now reports the SAME status the tab strip shows, computed
+  // from the same hook, so a session reads identically in both places.
+  const rowServer = useServer()
+  const status = useSessionTabAvatarState(
+    () => rowServer.key,
+    () => props.session.directory,
+    () => props.session.id,
+  )
 
   return (
-    <div class="group/session relative flex h-7 min-w-0 items-center rounded-[6px]">
+    <div class="group/session relative flex h-7 min-w-0 items-center rounded-sm">
       <button
         type="button"
         data-component="session-dropdown-row"
         class={SESSION_DROPDOWN_ROW}
         onClick={() => props.onOpen(props.session)}
       >
-        <Show when={props.isOpenTab}>
-          <TooltipV2 placement="top" value="Open" class="flex shrink-0 items-center">
-            <span
-              class="shrink-0 size-[6px] rounded-full"
-              style={{
-                background: "#34d399",
-                "box-shadow": "0 0 3px #34d39980",
-                animation: "session-open-glow 2.4s ease-in-out infinite",
-              }}
-            />
-          </TooltipV2>
-        </Show>
+        <SessionTabStatusDot
+          status={sessionTabStatus({
+            loading: status.loading(),
+            needsAttention: status.needsAttention(),
+            hasError: status.hasError(),
+            unread: status.unread(),
+          })}
+        />
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
@@ -1129,7 +1136,7 @@ function ArchivedSessionDropdownRow(props: {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
 
   return (
-    <div class="group/archived relative flex h-7 min-w-0 items-center rounded-[6px]">
+    <div class="group/archived relative flex h-7 min-w-0 items-center rounded-sm">
       <button
         type="button"
         data-component="archived-session-dropdown-row"

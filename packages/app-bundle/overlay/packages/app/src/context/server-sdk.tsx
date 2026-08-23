@@ -163,6 +163,24 @@ export function resumeStreamAfterPageShow(_event: PageTransitionEvent, start: ()
   start()
 }
 
+/** What an SSE stream error must do, extracted so the ABORT — the part that
+ *  reads as redundant and is easy to delete — is covered by a test.
+ *
+ *  The v1 event stream reports failures through its `onSseError` callback and
+ *  then simply stops yielding: the async iterator neither throws nor completes.
+ *  The reconnect loop only comes round when that iterator ends, so without the
+ *  abort it parks inside `for await` forever and the client stays disconnected
+ *  from a server that is already back — opencode#132's stuck banner, and every
+ *  solver switch since #221, which restarts the server by design.
+ *
+ *  Returns whether this was a real failure, so the caller keeps its log latch. */
+export function applySseError(input: { closed: boolean; disconnect: () => void; abort: () => void }): boolean {
+  if (input.closed) return false
+  input.disconnect()
+  input.abort()
+  return true
+}
+
 type ServerEventEmitter = ReturnType<typeof createGlobalEmitter<{ [key: string]: ServerEvent }>>
 type ServerSDKBase = {
   server: ServerConnection.Any
@@ -282,8 +300,12 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
         try {
           const kind = await protocol
           const onSseError = (error: unknown) => {
-            if (isStreamClosed(error, attempt?.signal)) return
-            setStreamStatus("disconnected")
+            const real = applySseError({
+              closed: isStreamClosed(error, attempt?.signal),
+              disconnect: () => setStreamStatus("disconnected"),
+              abort: () => attempt?.abort(),
+            })
+            if (!real) return
             if (streamErrorLogged) return
             streamErrorLogged = true
             console.error("[global-sdk] event stream error", {

@@ -1,0 +1,37 @@
+[data-component="tag"] {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 16px;
+  padding: 0 4px;
+  user-select: none;
+
+  border-radius: 2px;
+  border: 0.5px solid var(--v2-border-border-base);
+  background: var(--v2-background-bg-layer-02);
+
+  font-style: normal;
+  font-weight: 530;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.05px;
+  color: var(--v2-text-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-component="tag"][data-high-contrast] {
+  border-color: var(--v2-border-border-strong);
+}
+
+[data-component="tag"][data-variant="accent"] {
+  /* Was `border: 0`, which stripped the base rule's edge and left a bare yellow
+     chip at 1.07:1 against cream — the outline was not perceivable at all.
+     Every yellow fill carries an ink edge, and its label is ink, never contrast
+     (which is a light colour and unreadable on yellow). */
+  border: 1px solid var(--accent-edge-ink, #000);
+  background: var(--v2-background-bg-accent);
+  color: var(--accent-ink, #000);
+}

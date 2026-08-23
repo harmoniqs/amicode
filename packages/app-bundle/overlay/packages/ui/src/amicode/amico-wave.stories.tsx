@@ -90,7 +90,7 @@ function SchemePane(props: { scheme: "light" | "dark"; children: unknown }) {
         background: "var(--v2-background-bg-base)",
         color: "var(--v2-text-text-base)",
         padding: "20px",
-        "border-radius": "10px",
+        "border-radius": "var(--radius-md)",
         border: "1px solid var(--v2-border-border-base)",
       }}
     >
@@ -189,7 +189,7 @@ function ContrastSwatch(props: { scheme: "light" | "dark" }) {
         "align-items": "center",
         gap: "14px",
         padding: "28px",
-        "border-radius": "10px",
+        "border-radius": "var(--radius-md)",
         border: "1px solid var(--v2-border-border-base)",
         "min-width": "170px",
       }}

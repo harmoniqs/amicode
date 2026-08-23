@@ -1,6 +1,17 @@
 ;(function () {
   var key = "opencode-theme-id"
-  var themeId = localStorage.getItem(key) || "oc-2"
+  // amicode: the app HARD-PINS the brand theme (lockThemeId in app.tsx), so the
+  // pin is authoritative here too. Reading localStorage instead would let a
+  // stale id from a previous build stamp the pre-paint frame with the old
+  // theme, which then persists visibly until hydration corrects it.
+  // MUST match lockThemeId in packages/app/src/app.tsx.
+  var PINNED_THEME_ID = "harmoniqs"
+  var themeId = PINNED_THEME_ID
+  if (localStorage.getItem(key) !== themeId) {
+    localStorage.setItem(key, themeId)
+    localStorage.removeItem("opencode-theme-css-light")
+    localStorage.removeItem("opencode-theme-css-dark")
+  }
 
   if (themeId === "oc-1") {
     themeId = "oc-2"
@@ -26,13 +37,16 @@
 
   document.documentElement.dataset.theme = themeId
   document.documentElement.dataset.colorScheme = mode
-  document.documentElement.style.backgroundColor = isDark ? "#080808" : "#fafafa"
+  // Brand ground, tracking harmoniqs.json palette.neutral (dark #000, light #fff).
+  // This paints before any stylesheet, so a stock literal here shows through as
+  // the old brand for the first frame.
+  document.documentElement.style.backgroundColor = isDark ? "#0F0F0D" : "#ffffff"
 
   // Update theme-color meta tag to match app color scheme
   var metas = document.querySelectorAll("meta[name='theme-color']")
-  if (metas.length > 0) metas[0].setAttribute("content", isDark ? "#080808" : "#fafafa")
+  if (metas.length > 0) metas[0].setAttribute("content", isDark ? "#0F0F0D" : "#ffffff")
 
-  if (themeId === "oc-2") return
+  if (themeId === "oc-2") return // stock theme needs no cached CSS
 
   var css = localStorage.getItem("opencode-theme-css-" + mode)
   if (css) {

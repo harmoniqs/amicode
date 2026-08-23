@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { adaptServerEvent, coalesceServerEvents, enqueueServerEvent, resumeStreamAfterPageShow } from "./server-sdk"
+import {
+  adaptServerEvent,
+  applySseError,
+  coalesceServerEvents,
+  enqueueServerEvent,
+  resumeStreamAfterPageShow,
+} from "./server-sdk"
 import type { OpenCodeEvent } from "@opencode-ai/client/promise"
 import type { Event } from "@opencode-ai/sdk/v2/client"
 
@@ -23,6 +29,40 @@ describe("resumeStreamAfterPageShow", () => {
     resumeStreamAfterPageShow({ persisted: false } as PageTransitionEvent, start)
 
     expect(starts).toBe(3)
+  })
+})
+
+describe("applySseError", () => {
+  const spy = () => {
+    const calls = { disconnect: 0, abort: 0 }
+    return {
+      calls,
+      disconnect: () => calls.disconnect++,
+      abort: () => calls.abort++,
+    }
+  }
+
+  test("a real stream failure ABORTS the attempt, not just marks it disconnected", () => {
+    // The regression: the v1 stream's iterator never throws or completes on
+    // failure, so the reconnect loop only comes round if the attempt is
+    // aborted. Marking disconnected without aborting leaves the client dead on
+    // a server that is already back.
+    const s = spy()
+    expect(applySseError({ closed: false, ...s })).toBe(true)
+    expect(s.calls).toEqual({ disconnect: 1, abort: 1 })
+  })
+
+  test("an already-closed stream is left alone — that is our own abort coming back", () => {
+    const s = spy()
+    expect(applySseError({ closed: true, ...s })).toBe(false)
+    expect(s.calls).toEqual({ disconnect: 0, abort: 0 })
+  })
+
+  test("repeated failures keep aborting — recovery must not depend on a first-error latch", () => {
+    const s = spy()
+    applySseError({ closed: false, ...s })
+    applySseError({ closed: false, ...s })
+    expect(s.calls.abort).toBe(2)
   })
 })
 

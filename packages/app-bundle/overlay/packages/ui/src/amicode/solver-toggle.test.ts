@@ -71,3 +71,20 @@ describe("connect flips HP only on a landed connection (#200 AC2/AC7)", () => {
     expect(modeAfterDisconnect()).toBe("piccolo")
   })
 })
+
+// ── opencode#78: the toggle's picks reach the server ────────────────────────
+import { releaseRequestForPick } from "./solver-toggle"
+
+describe("which picks travel to the server (opencode#78)", () => {
+  test("piccolo releases the tier; hp NEVER requests a flip from the client", () => {
+    // selecting piccolo is the only durable write the toggle may ask for
+    expect(releaseRequestForPick("piccolo")).toBe("piccolo")
+    // hp follows a validated Company Compute credential — a client-side hp
+    // writer would be the duplicate flip ADR 0001 forbids
+    expect(releaseRequestForPick("hp")).toBeUndefined()
+  })
+
+  test("the disconnect invariant routes through the same release", () => {
+    expect(releaseRequestForPick(modeAfterDisconnect())).toBe("piccolo")
+  })
+})

@@ -67,7 +67,6 @@ import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
 import { Spinner } from "@opencode-ai/ui/spinner"
-import { TextShimmer } from "@opencode-ai/ui/text-shimmer"
 import { AnimatedCountList } from "./tool-count-summary"
 import { ToolStatusTitle } from "./tool-status-title"
 import { patchFiles } from "./apply-patch-file"
@@ -1294,7 +1293,7 @@ export function ContextToolGroup(props: {
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
                             <span data-slot="basic-tool-tool-title">
-                              <TextShimmer text={trigger().title} active={running()} />
+                              <span data-pending={running() ? "true" : "false"}>{trigger().title}</span>
                             </span>
                             <Show when={!running() && trigger().subtitle}>
                               <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
@@ -1388,7 +1387,7 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
                             <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <TextShimmer text={cmd()} active={running()} />
+                              <span data-pending={running() ? "true" : "false"}>{cmd()}</span>
                             </span>
                             <Show when={errored()}>
                               <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
@@ -1500,7 +1499,7 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
                             <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <TextShimmer text={label()} active={running()} />
+                              <span data-pending={running() ? "true" : "false"}>{label()}</span>
                             </span>
                             <Show when={!running() && diff()}>{(d) => <DiffChanges changes={d()} />}</Show>
                             <Show when={errored()}>
@@ -2363,7 +2362,7 @@ ToolRegistry.register({
           <div data-slot="basic-tool-tool-info-structured">
             <div data-slot="basic-tool-tool-info-main">
               <span data-slot="basic-tool-tool-title">
-                <TextShimmer text={i18n.t("ui.tool.webfetch")} active={pending()} />
+                <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.tool.webfetch")}</span>
               </span>
               <Show when={!pending() && url()}>
                 <a
@@ -2556,7 +2555,7 @@ ToolRegistry.register({
           <div data-slot="basic-tool-tool-info-structured">
             <div data-slot="basic-tool-tool-info-main">
               <span data-slot="basic-tool-tool-title">
-                <TextShimmer text={i18n.t("ui.tool.shell")} active={pending()} />
+                <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.tool.shell")}</span>
               </span>
               <Show when={!open() && props.input.command}>
                 <ShellSubmessage text={props.input.command} animate={sawPending} />
@@ -2654,7 +2653,7 @@ ToolRegistry.register({
               <div data-slot="message-part-title-area">
                 <div data-slot="message-part-title">
                   <span data-slot="message-part-title-text">
-                    <TextShimmer text={i18n.t("ui.messagePart.title.edit")} active={pending()} />
+                    <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.messagePart.title.edit")}</span>
                   </span>
                   <Show when={!pending()}>
                     <OpenableFilename filename={filename()} path={path()} />
@@ -2721,7 +2720,7 @@ ToolRegistry.register({
               <div data-slot="message-part-title-area">
                 <div data-slot="message-part-title">
                   <span data-slot="message-part-title-text">
-                    <TextShimmer text={i18n.t("ui.messagePart.title.write")} active={pending()} />
+                    <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.messagePart.title.write")}</span>
                   </span>
                   <Show when={!pending()}>
                     <OpenableFilename filename={filename()} path={path()} />
@@ -2903,7 +2902,7 @@ ToolRegistry.register({
                 <div data-slot="message-part-title-area">
                   <div data-slot="message-part-title">
                     <span data-slot="message-part-title-text">
-                      <TextShimmer text={i18n.t("ui.tool.patch")} active={pending()} />
+                      <span data-pending={pending() ? "true" : "false"}>{i18n.t("ui.tool.patch")}</span>
                     </span>
                     <Show when={!pending()}>
                       <span data-slot="message-part-title-filename">{getFilename(single()!.relativePath)}</span>

@@ -3,11 +3,11 @@
 }
 
 [data-popper-positioner]:has([data-component="tooltip-v2"]) {
-  z-index: 10000;
+  z-index: var(--z-tooltip);
 }
 
 [data-component="tooltip-v2"] {
-  z-index: 10000;
+  z-index: var(--z-tooltip);
   box-sizing: border-box;
   display: inline-flex;
   flex-direction: row;

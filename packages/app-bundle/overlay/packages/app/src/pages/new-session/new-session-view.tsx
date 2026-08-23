@@ -2,7 +2,6 @@ import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
-import { WordmarkV2 } from "@opencode-ai/ui/v2/wordmark-v2"
 import { MarkDetailed } from "@opencode-ai/ui/logo"
 import { Show, createMemo, createSignal, type Accessor } from "solid-js"
 import { createStore } from "solid-js/store"
@@ -15,6 +14,7 @@ import {
   PromptProjectSelector,
   type PromptProjectController,
 } from "@/components/prompt-project-selector"
+import { inAmicode } from "@/pages/session/use-amicode-commands"
 import { StatusPopoverV2 } from "@/components/status-popover"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
@@ -38,7 +38,7 @@ export function NewSessionView(props: {
     <div class="@container relative flex flex-col min-h-0 h-full flex-1">
       <div
         data-component="session-new-design"
-        class="relative flex-1 min-h-0 overflow-hidden rounded-[10px] bg-v2-background-bg-deep"
+        class="relative flex-1 min-h-0 overflow-hidden rounded-md bg-v2-background-bg-deep"
       >
         <div class="absolute inset-x-0 top-[25.375%] flex justify-center px-6">
           <div class={NEW_SESSION_CONTENT_WIDTH}>
@@ -46,11 +46,12 @@ export function NewSessionView(props: {
                 H-robot over the AMICODE wordmark, Kate's Kimi-clean ordering;
                 upstream's giant full-width WordmarkV2 replaced the fork's
                 mark+logo hero in the 1.18.10 merge) */}
+            {/* amicode: the mark alone carries the brand here — the AMICODE
+                wordmark under it was redundant beside it and is gone. The mark
+                takes the accent via icon-icon-accent, which is yellow on dark
+                and neutral ink on light (yellow is 1.27:1 on white). */}
             <div class="flex justify-center">
-              <MarkDetailed class="w-24 h-auto mb-4" style={{ color: "var(--icon-base)" }} />
-            </div>
-            <div class="flex justify-center">
-              <WordmarkV2 class="h-auto w-52 max-w-full text-v2-background-bg-inverse" />
+              <MarkDetailed class="w-24 h-auto" style={{ color: "var(--v2-icon-icon-accent)" }} />
             </div>
             <div class="mt-8 flex flex-col gap-8">
               {/* amicode/opencode#117: the bug-report dock rides the draft
@@ -66,7 +67,11 @@ export function NewSessionView(props: {
               <Show when={props.project.empty()}>
                 <PromptProjectAddButton controller={props.project} />
               </Show>
-              <Show when={props.project.selected()}>
+              {/* amicode#326: hide the breadcrumb bar (project selector +
+                  workspace selector + git status) inside the Amicode webview —
+                  sessions already scope to all workspace folders via the
+                  multi-directory engine (opencode#215). */}
+              <Show when={!inAmicode() && props.project.selected()}>
                 <div class="flex min-h-7 min-w-0 flex-col items-center justify-center gap-0 text-v2-text-text-faint sm:flex-row">
                   <PromptProjectSelector controller={props.project} placement="bottom" />
                   <Show
@@ -153,7 +158,7 @@ function ProviderTip() {
         >
           <button
             type="button"
-            class="flex h-6 min-w-0 items-center rounded-[4px] pl-1.5 text-[13px] leading-none tracking-[-0.04px] text-v2-text-text-faint transition-[background-color,color] duration-150 ease-in-out hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-muted focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-muted focus-visible:outline-none"
+            class="flex h-6 min-w-0 items-center rounded-sm pl-1.5 text-[13px] leading-none tracking-[-0.04px] text-v2-text-text-faint transition-[background-color,color] duration-150 ease-in-out hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-muted focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-muted focus-visible:outline-none"
             onClick={openProviders}
           >
             <span class="truncate">{language.t("home.providerTip")}</span>
@@ -169,7 +174,7 @@ function ProviderTip() {
           >
             <button
               type="button"
-              class="flex size-6 items-center justify-center rounded-[4px] text-v2-icon-icon-muted transition-[background-color,color] duration-150 ease-in-out hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-icon-icon-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-icon-icon-base focus-visible:outline-none"
+              class="flex size-6 items-center justify-center rounded-sm text-v2-icon-icon-muted transition-[background-color,color] duration-150 ease-in-out hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-icon-icon-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-icon-icon-base focus-visible:outline-none"
               aria-label={language.t("common.dismiss")}
               onClick={() => setPersistedState("dismissedAt", Date.now())}
             >
