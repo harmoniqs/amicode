@@ -18,7 +18,10 @@ function compiledAgents(): string {
   return spliceIntoAgentsMd(AGENTS, buildRouterSection(pack.scores), compileScore(primary));
 }
 
-describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
+// ADR 0008: quantum-control workflow content moved from AGENTS.md to the solve
+// skill. These tests asserted content that is now skill-loaded on demand, not
+// in the base agent prompt. The solve skill carries the authoritative reference.
+describe.skip("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   it("teaches the tiered resolve → author → --spec launch (spec C), not a single bundled template", () => {
     expect(AGENTS).toMatch(/amico-run resolve/); // tier resolution step
     expect(AGENTS).toMatch(/amico-run --spec/); // the gated invocation it teaches
@@ -87,7 +90,8 @@ describe("AGENTS.md teaches the D9/D10 script-authoring workflow", () => {
   });
 });
 
-describe("AGENTS.md teaches the Δ10 (#63) routing UX", () => {
+// ADR 0008: routing UX content moved from AGENTS.md to the solve skill.
+describe.skip("AGENTS.md teaches the Δ10 (#63) routing UX", () => {
   it("runs amico-run estimate at solve-assembly and surfaces the estimate at the decision point", () => {
     expect(AGENTS).toMatch(/amico-run estimate/);
     expect(AGENTS).toMatch(/sizeClass/);
@@ -121,7 +125,10 @@ describe("AGENTS.md teaches the Δ10 (#63) routing UX", () => {
   });
 });
 
-describe("AGENTS.md pulse-designer interview (Layer 0)", () => {
+// ADR 0008: the pulse-designer interview content is no longer in the AGENTS.md
+// source file — it lives in scores/pulse-designer/SCORE.md and is compiled in
+// at runtime. Tests that pin compiled interview content belong in scores/ tests.
+describe.skip("AGENTS.md pulse-designer interview (Layer 0)", () => {
   it("scopes the interview to the pulse-designer persona and never forces it on a specific ask", () => {
     expect(AGENTS).toMatch(/pulse-designer/);
     expect(AGENTS).toMatch(/skip straight to\s+the\s+workflow/i);

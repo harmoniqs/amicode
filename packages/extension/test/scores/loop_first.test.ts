@@ -30,9 +30,10 @@ function packScore() {
 describe("loop-first instruction template (WS2)", () => {
   it("the template opens with the domain-general loop, before any interview content", () => {
     const loop = TEMPLATE.indexOf("## The error-corrected research loop");
-    const interview = TEMPLATE.indexOf("## Pulse-designer interview");
+    const splicePoint = TEMPLATE.indexOf("<!-- AMICODE_SCORE_SECTION -->");
     expect(loop).toBeGreaterThan(-1);
-    expect(loop).toBeLessThan(interview);
+    expect(splicePoint).toBeGreaterThan(-1);
+    expect(loop).toBeLessThan(splicePoint);
   });
 
   it("pulse authoring sections are NOT in the static template — the template is domain-general", () => {
@@ -53,10 +54,11 @@ describe("loop-first instruction template (WS2)", () => {
     expect(compiled).toContain("Golden reference skeletons for the canonical cases");
   });
 
-  it("harness-level sections stay TOP-LEVEL in the template (run contract, warm-start, style)", () => {
-    expect(TEMPLATE).toContain("## The run-dir contract your script MUST emit");
-    expect(TEMPLATE).toContain("## Warm-start idiom");
+  it("harness-level sections stay TOP-LEVEL in the template (style; run contract + warm-start moved to solve skill per ADR 0008)", () => {
     expect(TEMPLATE).toContain("## Style & formatting");
+    // ADR 0008: run-dir contract and warm-start moved to the solve skill
+    expect(TEMPLATE).not.toContain("## The run-dir contract your script MUST emit");
+    expect(TEMPLATE).not.toContain("## Warm-start idiom");
   });
 
   it("the pack loads clean through the whole surgery", () => {
