@@ -160,13 +160,13 @@ const REQUESTS = [
   {
     method: "POST",
     path: "/amicode/widget-fork",
-    body: { id: "pulse-bank", new_id: "my-pulse-bank", session: "seed-session" },
+    body: { id: "showcase", new_id: "my-showcase", session: "seed-session" },
     name: "widget fork — builtin forked into user widgets",
   },
   {
     method: "POST",
     path: "/amicode/widget-fork",
-    body: { id: "pulse-bank", new_id: "my-pulse-bank" },
+    body: { id: "showcase", new_id: "my-showcase" },
     name: "widget fork — exists refusal",
   },
   { method: "POST", path: "/amicode/widget-fork", body: { id: "nope" }, name: "widget fork — not_found" },
@@ -178,7 +178,7 @@ const REQUESTS = [
       version: 1,
       widget: [
         { id: "about-you", hidden: false, config: {}, group: "right" },
-        { id: "my-pulse-bank", hidden: true, config: {} },
+        { id: "my-showcase", hidden: true, config: {} },
       ],
       views: { home: "grid" },
     },
