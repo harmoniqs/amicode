@@ -61,7 +61,7 @@ export function ConnectionBanner() {
           transform: "translateX(-50%)",
           "z-index": 40,
           padding: "6px 14px",
-          "border-radius": "999px",
+          "border-radius": "var(--radius-full)",
           "font-size": "12px",
           "font-weight": 600,
           border: "1px solid var(--v2-border-border-base, #3c3c3c)",

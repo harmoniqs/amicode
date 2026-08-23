@@ -22,7 +22,7 @@
    Mechanics:    integrate-and-fire — arrival is not firing; scouts charge
                  nodes that may leak back to dark; refractory periods gate
                  re-firing; warm-start edges conduct saltatory.
-   Brand law:    circles only; #fff676 belongs to live thought alone; the
+   Brand law:    circles only; #FFE614 belongs to live thought alone; the
                  embed is monochrome + brand yellow; glow budget: pulse +
                  active node only.
    ================================================================ */
@@ -114,10 +114,10 @@ const PALETTES: Record<BrainScheme, Palette> = {
     edgeRest: "rgba(255, 255, 255, 0.13)",
     nodeFill: "#242423",
     nodeBorder: "rgba(255, 255, 255, 0.24)",
-    thought: "#fff676",
+    thought: "#FFE614",
     ember: "rgba(232, 230, 218, 1)",
     labelHalo: "rgba(19, 19, 18, 0.72)",
-    accent: "#fff676",
+    accent: "#FFE614",
     cat: {
       knowledge: "#3794ff",
       results: "#c17800",
@@ -134,7 +134,7 @@ const PALETTES: Record<BrainScheme, Palette> = {
     thought: "#8f8000",
     ember: "rgba(64, 62, 50, 1)",
     labelHalo: "rgba(250, 249, 246, 0.78)",
-    accent: "#fff676",
+    accent: "#FFE614",
     cat: {
       knowledge: "#1866c9",
       results: "#8f5800",

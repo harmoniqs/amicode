@@ -73,15 +73,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const total = createMemo(() => questions().length)
 
   const cached = cache.get(cacheKey)
-  // Seed text inputs from each question's `default` field when no cache exists.
-  const initCustom = cached?.custom ?? questions().map((q) => q.default ?? "")
-  const initAnswers = cached?.answers ?? questions().map((q) => (q.default ? [q.default] : []))
-  const initCustomOn = cached?.customOn ?? questions().map((q) => !!q.default)
+  const defaults = props.request.questions.map((q) => q.default ?? "")
   const [store, setStore] = createStore({
     tab: cached?.tab ?? 0,
-    answers: initAnswers as QuestionAnswer[],
-    custom: initCustom as string[],
-    customOn: initCustomOn as boolean[],
+    answers: cached?.answers ?? ([] as QuestionAnswer[]),
+    custom: cached?.custom ?? defaults,
+    customOn: cached?.customOn ?? ([] as boolean[]),
     editing: false,
     focus: 0,
     minimized: false,

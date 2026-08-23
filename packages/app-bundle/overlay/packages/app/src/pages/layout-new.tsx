@@ -2,6 +2,7 @@ import { createEffect, Suspense, type ParentProps } from "solid-js"
 import { createStore } from "solid-js/store"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
+import { SolverSwitchBanner } from "@/components/solver-switch-banner"
 import { VaultPanel } from "@/components/vault-panel"
 import { usePlatform } from "@/context/platform"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
@@ -46,6 +47,10 @@ export default function NewLayout(props: ParentProps) {
           into layout.tsx's LegacyLayout branch, which newLayoutDesigns never
           reaches (VaultPanel was invisible here). */}
       <VaultPanel />
+      {/* opencode#78 follow-up: a solver switch restarts the opencode server
+          under the webview. Speaks only for switches the app requested — unlike
+          the removed ConnectionBanner, silence is still the default. */}
+      <SolverSwitchBanner />
       {/* DebugBar removed with the fork's debug-bar deletion (kept during the
           upstream merge) — the debugTools toggle state stays for the titlebar's
           channel indicator. */}

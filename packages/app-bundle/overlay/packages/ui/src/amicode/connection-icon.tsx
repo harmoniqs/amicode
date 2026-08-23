@@ -32,11 +32,11 @@ export function ConnectionIcon(props: { conn: ConnectionView }) {
   return (
     <div class="relative shrink-0" style={{ width: "18px", height: "18px" }}>
       <div
-        class="w-[18px] h-[18px] rounded-[4px] flex items-center justify-center overflow-hidden border border-border-weak-base"
+        class="w-[18px] h-[18px] rounded-sm flex items-center justify-center overflow-hidden border border-border-weak-base"
         style={{ "font-size": "10px", "font-weight": "600", "background": isSvg() ? "transparent" : "var(--v2-background-bg-raised)" }}
       >
         <Show when={isSvg()} fallback={<span class="text-text-base">{letter()}</span>}>
-          <span class="w-[18px] h-[18px] flex items-center justify-center [&>svg]:w-[18px] [&>svg]:h-[18px] [&>svg]:rounded-[4px]" innerHTML={props.conn.icon ?? ""} />
+          <span class="w-[18px] h-[18px] flex items-center justify-center [&>svg]:w-[18px] [&>svg]:h-[18px] [&>svg]:rounded-sm" innerHTML={props.conn.icon ?? ""} />
         </Show>
       </div>
       <div class={`absolute -bottom-0.5 -right-0.5 size-[6px] rounded-full border border-surface-base ${dotClass()}`} />

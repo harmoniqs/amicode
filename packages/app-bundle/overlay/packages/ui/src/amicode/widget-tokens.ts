@@ -25,8 +25,11 @@ export function densityForViewport(widthPx: number, heightPx: number): Density {
   return DENSITY_RANK[byWidth] >= DENSITY_RANK[byHeight] ? byWidth : byHeight
 }
 
-const SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
-const MONO = "ui-monospace, SFMono-Regular, Menlo, monospace"
+// Last-resort stacks only. The real faces come through SOURCES below, from the
+// host's --font-family-* tokens, so widgets render in the brand faces (DM Sans /
+// JuliaMono) rather than the system default.
+const SANS = "'DM Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif"
+const MONO = "JuliaMono, ui-monospace, SFMono-Regular, Menlo, monospace"
 
 /** --v2-* source per token, with a dark-theme literal fallback for vars that
  *  resolve empty (run-card palette). */
@@ -41,15 +44,27 @@ const SOURCES: [amc: string, v2: string, fallback: string][] = [
   // Accent FOREGROUND (links, chevrons, borders, glyphs): neutral on light /
   // yellow on dark, tracking the host's icon-accent. Yellow is illegible as a
   // foreground on white, so this is neutral there — see the design-system skill.
-  ["--amc-accent", "--v2-icon-icon-accent", "#FFF676"],
-  // Accent solid FILL (CTA / chip background): the brand hue #fff676 in BOTH
+  ["--amc-accent", "--v2-icon-icon-accent", "#FFE614"],
+  // Accent solid FILL (CTA / chip background): the brand hue #FFE614 in BOTH
   // schemes, sourced from design-polish's --accent. Pair only with --amc-accent-ink.
-  ["--amc-accent-fill", "--accent", "#FFF676"],
+  ["--amc-accent-fill", "--accent", "#FFE614"],
   // Ink ON a yellow fill: always near-black, never --amc-bg (which is white on light).
-  ["--amc-accent-ink", "--accent-ink", "#111214"],
+  ["--amc-accent-ink", "--accent-ink", "#000000"],
+  // Widgets render in an iframe, so the ink-edge rule ("every yellow fill takes a
+  // 1px ink border") could not be expressed inside them at all — the CTA improvised
+  // a 14%-ink edge that composited to 1.46:1 on the light card ground.
+  ["--amc-accent-edge", "--accent-edge-ink", "#000000"],
   ["--amc-success", "--v2-state-fg-success", "#5BC873"],
   ["--amc-warning", "--v2-state-fg-warning", "#E5B454"],
   ["--amc-danger", "--v2-state-fg-danger", "#E56A6A"],
+  // Geometry crosses the seam too — widgets are vanilla DOM and cannot read
+  // --radius-* directly, so a literal here would pin the dashboard to the old
+  // corner radius no matter what the brand sheet says.
+  ["--amc-radius", "--radius-lg", "4px"],
+  ["--amc-radius-sm", "--radius-md", "4px"],
+  // Faces, likewise — otherwise the dashboard renders in the system sans.
+  ["--amc-font-sans", "--font-family-text", SANS],
+  ["--amc-font-mono", "--font-family-mono", MONO],
 ]
 
 const PADDING: Record<Density, { pad: string; padTile: string }> = {
@@ -66,8 +81,6 @@ export function resolveTokens(getVar: (name: string) => string, density: Density
     const v = getVar(v2).trim()
     out[amc] = v !== "" ? v : fallback
   }
-  out["--amc-font-sans"] = SANS
-  out["--amc-font-mono"] = MONO
   out["--amc-pad"] = PADDING[density].pad
   out["--amc-pad-tile"] = PADDING[density].padTile
   return out

@@ -6,11 +6,13 @@ import {
   hpAfterConnect,
   hpClickAction,
   loadSolverMode,
+  releaseRequestForPick,
   modeAfterDisconnect,
   saveSolverMode,
   solverConnectionDot,
   type SolverMode,
 } from "@opencode-ai/ui/amicode-solver-toggle"
+import { beginSolverSwitch } from "@/components/solver-switch-banner"
 import {
   ConnectionCard,
   type ConnectionActionView,
@@ -46,6 +48,9 @@ export type AmicodeComputeControl = {
   onSubmit: (payload: CredentialSubmitPayload) => Promise<ConnectionActionView>
   onDisconnect: (id: string) => void
   onRevalidate: (id: string) => void
+  /** opencode#78: request the durable release of the HP tier. Optional so bare
+   *  mounts (storybook) keep the localStorage-only legacy behavior. */
+  onSelectPiccolo?: () => void
   refetch: () => void
 }
 
@@ -74,6 +79,11 @@ export function AmicodeDefaultsCapsule(props: { compute?: AmicodeComputeControl 
   const pick = (m: SolverMode) => {
     setMode(m)
     saveSolverMode(m)
+    // opencode#78: localStorage is the DISPLAY state; the durable half lives in
+    // the ops dir and only the server may write it. Releasing the tier is the
+    // one direction the client requests — hp arrives with a validated
+    // credential (submitCredential), never from a button.
+    if (releaseRequestForPick(m)) props.compute?.onSelectPiccolo?.()
   }
 
   const dot = createMemo(() => solverConnectionDot(props.compute?.view()))
@@ -103,7 +113,12 @@ export function AmicodeDefaultsCapsule(props: { compute?: AmicodeComputeControl 
   }
   const submitCredential = async (payload: CredentialSubmitPayload) => {
     const result = await props.compute!.onSubmit(payload)
-    if (hpAfterConnect(result)) pick("hp")
+    if (hpAfterConnect(result)) {
+      // #167 writes {mode:"hp",status:"switching"} on this same valid outcome,
+      // so the restart starts here — narrate it (opencode#78 follow-up).
+      beginSolverSwitch("hp")
+      pick("hp")
+    }
     return result
   }
   const disconnectCompute = (id: string) => {

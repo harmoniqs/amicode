@@ -165,4 +165,30 @@ describe("QuestionTool", () => {
       expect(Exit.isFailure(exit)).toBe(true)
     }),
   )
+
+  it.effect("passes a default field through on text-kind questions for pre-filling", () =>
+    Effect.gen(function* () {
+      assertions.length = 0
+      captured = undefined
+      reject = false
+      deny = false
+      const registry = yield* ToolRegistry.Service
+      const questions = [
+        {
+          question: "Edit your description",
+          header: "Description",
+          kind: "text" as const,
+          options: [],
+          default: "JJ is a researcher focused on quantum control.",
+        },
+      ]
+
+      yield* settleTool(registry, {
+        sessionID,
+        ...toolIdentity,
+        call: { type: "tool-call", id: "call-question-default", name: "question", input: { questions } },
+      })
+      expect(capturedInput()?.questions[0].default).toBe("JJ is a researcher focused on quantum control.")
+    }),
+  )
 })

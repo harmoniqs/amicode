@@ -1305,7 +1305,7 @@ export function MessageTimeline(props: {
                     {(comment) => (
                       <div
                         classList={{
-                          "shrink-0 max-w-[260px] rounded-[6px] border-border-weak-base bg-background-stronger px-2.5 py-2": true,
+                          "shrink-0 max-w-[260px] rounded-sm border-border-weak-base bg-background-stronger px-2.5 py-2": true,
                           "border-[0.5px]": settings.general.newLayoutDesigns(),
                           border: !settings.general.newLayoutDesigns(),
                         }}
@@ -1542,7 +1542,7 @@ export function MessageTimeline(props: {
               onClick={props.onResumeScroll}
             >
               <div
-                class="flex items-center justify-center w-8 h-6 rounded-[6px] border border-border-weaker-base bg-[color-mix(in_srgb,var(--surface-raised-stronger-non-alpha)_80%,transparent)] backdrop-blur-[0.75px] transition-colors group-hover:border-[var(--border-weak-base)] group-hover:[--icon-base:var(--icon-hover)]"
+                class="flex items-center justify-center w-8 h-6 rounded-sm border border-border-weaker-base bg-[color-mix(in_srgb,var(--surface-raised-stronger-non-alpha)_80%,transparent)] backdrop-blur-[0.75px] transition-colors group-hover:border-[var(--border-weak-base)] group-hover:[--icon-base:var(--icon-hover)]"
                 style={{
                   "box-shadow":
                     "0 51px 60px 0 rgba(0,0,0,0.10), 0 15px 18px 0 rgba(0,0,0,0.12), 0 6.386px 7.513px 0 rgba(0,0,0,0.12), 0 2.31px 2.717px 0 rgba(0,0,0,0.20)",
@@ -1641,7 +1641,7 @@ export function MessageTimeline(props: {
                           data-slot="session-title-child"
                           classList={{
                             "truncate text-[13px] font-[530] leading-4 tracking-[-0.04px] text-v2-text-text-base": true,
-                            "w-fit rounded-[6px] px-2 py-1 hover:bg-v2-overlay-simple-overlay-hover":
+                            "w-fit rounded-sm px-2 py-1 hover:bg-v2-overlay-simple-overlay-hover":
                               settings.general.newLayoutDesigns(),
                             "grow-1 min-w-0": !settings.general.newLayoutDesigns(),
                           }}
@@ -1660,8 +1660,8 @@ export function MessageTimeline(props: {
                         disabled={titleMutation.isPending}
                         classList={{
                           "block text-[13px] font-[530] leading-4 tracking-[-0.04px] text-v2-text-text-base": true,
-                          "w-full flex-1 grow-1 min-w-0 pl-1 -ml-1 rounded-[6px]": !settings.general.newLayoutDesigns(),
-                          "field-sizing-content self-start rounded-[6px] px-2 py-1 ":
+                          "w-full flex-1 grow-1 min-w-0 pl-1 -ml-1 rounded-sm": !settings.general.newLayoutDesigns(),
+                          "field-sizing-content self-start rounded-sm px-2 py-1 ":
                             settings.general.newLayoutDesigns(),
                         }}
                         style={{
@@ -1897,7 +1897,7 @@ export function MessageTimeline(props: {
                           <KobaltePopover.Content
                             data-component="popover-content"
                             classList={{
-                              "flex w-80 max-w-none flex-col items-start gap-3 rounded-[10px] border-0 bg-v2-background-bg-layer-01 p-3 shadow-[var(--v2-elevation-floating)]":
+                              "flex w-80 max-w-none flex-col items-start gap-3 rounded-md border-0 bg-v2-background-bg-layer-01 p-3 shadow-[var(--v2-elevation-floating)]":
                                 settings.general.newLayoutDesigns(),
                             }}
                             style={{ "min-width": "320px" }}
@@ -2013,7 +2013,7 @@ export function MessageTimeline(props: {
                                 >
                                   <div class="flex flex-col gap-2">
                                     <div
-                                      class="flex h-8 w-full items-center gap-1.5 rounded-[6px] py-1 pl-2.5 pr-1.5 shadow-[var(--v2-elevation-button-neutral)]"
+                                      class="flex h-8 w-full items-center gap-1.5 rounded-sm py-1 pl-2.5 pr-1.5 shadow-[var(--v2-elevation-button-neutral)]"
                                       style={{
                                         background:
                                           "linear-gradient(180deg, var(--v2-alpha-light-2) 0%, var(--v2-alpha-light-0) 100%), var(--v2-background-bg-button-neutral)",

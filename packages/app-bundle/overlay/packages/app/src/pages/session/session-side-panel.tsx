@@ -77,33 +77,39 @@ function PulseInspectorContent() {
   return (
     <div class="relative pt-2 flex-1 min-h-0 overflow-hidden flex flex-col gap-3 p-3">
       {/* Stage segmented control */}
-      <div class="flex items-center gap-0.5 rounded-md border border-border-weaker-base p-0.5 bg-background-stronger min-w-0">
+      {/* The active tab used to be distinguished by fill (bg-background-base on a
+          bg-background-stronger track). Under the brand's one-background rule those
+          two resolve to the SAME cream, so the control measured 1.00:1 and stopped
+          saying anything. Selection is carried by a border now, which is how this
+          palette separates surfaces everywhere else. */}
+      <div class="flex items-center gap-0.5 rounded-md border border-border-weak-base p-0.5 min-w-0">
         <button
-          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium transition-colors truncate"
+          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium transition-colors truncate border"
           classList={{
-            "bg-background-base shadow-sm text-text-base": stage() === "optimization",
-            "text-text-weak hover:text-text-base": stage() !== "optimization",
+            "border-v2-border-border-strong text-text-base font-[600]": stage() === "optimization",
+            "border-transparent text-text-weak hover:text-text-base": stage() !== "optimization",
           }}
           onClick={() => setStage("optimization")}
         >
           <Show when={hasActiveRun()}>
-            <span class="shrink-0 inline-block w-[6px] h-[6px] rounded-full bg-green-500" />
+            {/* the live dot is a semantic state, not a raw palette green */}
+            <span class="shrink-0 inline-block w-[6px] h-[6px] rounded-full bg-v2-state-fg-success" />
           </Show>
           <span class="truncate">Optimization</span>
         </button>
         <button
-          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium opacity-50 cursor-default truncate"
+          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium cursor-default truncate border border-transparent text-text-weak"
           disabled
         >
           <span class="truncate">Calibration</span>
-          <span class="shrink-0 text-[9px] uppercase tracking-wide bg-border-weaker-base text-text-faint rounded px-1 py-0.5">Soon</span>
+          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">Soon</span>
         </button>
         <button
-          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium opacity-50 cursor-default truncate"
+          class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium cursor-default truncate border border-transparent text-text-weak"
           disabled
         >
           <span class="truncate">Compilation</span>
-          <span class="shrink-0 text-[9px] uppercase tracking-wide bg-border-weaker-base text-text-faint rounded px-1 py-0.5">Soon</span>
+          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">Soon</span>
         </button>
       </div>
 
@@ -407,7 +413,7 @@ export function SessionSidePanel(props: {
           "pointer-events-none": !open(),
           "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
             !props.size.active(),
-          "rounded-[10px] shadow-[var(--v2-elevation-raised)] overflow-hidden": settings.general.newLayoutDesigns(),
+          "rounded-md shadow-[var(--v2-elevation-raised)] overflow-hidden": settings.general.newLayoutDesigns(),
         }}
         style={{ width: panelWidth() }}
       >

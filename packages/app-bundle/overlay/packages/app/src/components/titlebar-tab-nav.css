@@ -55,7 +55,7 @@
   left: -3.75px;
   width: 1.5px;
   height: 12px;
-  border-radius: 9999px;
+  border-radius: var(--radius-full);
   background: var(--tab-separator);
 }
 

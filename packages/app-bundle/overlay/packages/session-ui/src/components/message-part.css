@@ -51,7 +51,7 @@
     align-items: center;
     justify-content: center;
     min-width: 0;
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     overflow: hidden;
     background: var(--v2-background-bg-layer-02);
     border: 0.5px solid var(--v2-border-border-base);
@@ -378,7 +378,7 @@
 [data-component="bash-output"] {
   width: 100%;
   border: 0.5px solid var(--v2-border-border-base);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: transparent;
   position: relative;
   overflow: hidden;
@@ -908,7 +908,7 @@
     padding: 0;
     border: 0;
     background: transparent;
-    border-radius: 999px;
+    border-radius: var(--radius-full);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -919,7 +919,7 @@
       content: "";
       width: 16px;
       height: 2px;
-      border-radius: 999px;
+      border-radius: var(--radius-full);
       background-color: var(--v2-icon-icon-muted);
       transition: background-color 0.2s ease;
     }
@@ -992,7 +992,7 @@
     padding: 8px 8px 8px 10px;
     background-color: var(--v2-background-bg-layer-01);
     border: 0.5px solid var(--v2-border-border-base);
-    border-radius: 6px;
+    border-radius: var(--radius-sm);
     box-shadow: none;
     text-align: left;
     width: 100%;
@@ -1052,13 +1052,13 @@
     }
 
     &[data-type="radio"] {
-      border-radius: 999px;
+      border-radius: var(--radius-full);
     }
 
     [data-slot="question-option-radio-dot"] {
       width: 6px;
       height: 6px;
-      border-radius: 999px;
+      border-radius: var(--radius-full);
       background-color: var(--v2-background-bg-layer-01);
       opacity: 0;
     }
@@ -1203,7 +1203,7 @@
 [data-component="dock-prompt"][data-kind="question"] {
   background-color: var(--v2-background-bg-layer-02);
   box-shadow: 0 0 0 1px var(--border-weak-base);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   overflow: clip;
 }
 [data-component="dock-prompt"][data-kind="question"] [data-dock-surface="shell"] {
@@ -1512,7 +1512,7 @@ body:not([data-new-layout]) {
     [data-slot="user-message-text"] {
       background: var(--surface-base);
       border: 1px solid var(--border-weak-base);
-      border-radius: 6px;
+      border-radius: var(--radius-sm);
     }
 
     .text-text-strong {

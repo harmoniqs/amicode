@@ -179,7 +179,7 @@ export function AmicodeOnboardingWizard(props: {
       disabled={p.disabled}
       onClick={() => p.onClick()}
       style={{
-        background: "var(--accent, #fff676)",
+        background: "var(--accent, #FFE614)",
         color: "var(--accent-ink, #111214)",
         border: "none",
         "border-radius": "var(--radius-lg)",
@@ -316,7 +316,7 @@ export function AmicodeOnboardingWizard(props: {
                       "object-fit": "contain",
                       "border-radius": "var(--radius-sm)",
                       flex: "none",
-                      background: "#FFF",
+                      background: "var(--v2-background-bg-layer-01)",
                       padding: "2px",
                     }}
                     onError={(e) => (e.currentTarget.style.display = "none")}
@@ -522,7 +522,7 @@ export function AmicodeOnboardingWizard(props: {
                     width: "40px",
                     height: "40px",
                     "border-radius": "var(--radius-md)",
-                    background: "#FFF",
+                    background: "var(--v2-background-bg-layer-01)",
                     padding: "4px",
                   }}
                 >

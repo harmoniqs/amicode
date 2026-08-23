@@ -30,11 +30,29 @@ describe("resolveTokens", () => {
     const tokens = resolveTokens((name) => (name === "--v2-text-text-base" ? " #fff " : ""), "normal")
     expect(tokens["--amc-text"]).toBe("#fff")
     expect(tokens["--amc-bg"]).toBe("#0B0E15") // fallback
-    expect(tokens["--amc-accent"]).toBe("#FFF676")
-    expect(tokens["--amc-accent-fill"]).toBe("#FFF676")
-    expect(tokens["--amc-accent-ink"]).toBe("#111214")
+    expect(tokens["--amc-accent"]).toBe("#FFE614")
+    expect(tokens["--amc-accent-fill"]).toBe("#FFE614")
+    expect(tokens["--amc-accent-ink"]).toBe("#000000")
     expect(tokens["--amc-font-mono"]).toContain("monospace")
-    expect(Object.keys(tokens)).toHaveLength(17) // 13 colors + 2 fonts + 2 pads
+    // Geometry and faces cross the seam too — without these the dashboard keeps
+    // the old corner radius and renders in the system sans, whatever the brand
+    // sheet says. Widgets are vanilla DOM and cannot read --radius-*/--font-*.
+    expect(tokens["--amc-radius"]).toBe("4px") // fallback; resolves from --radius-lg
+    expect(tokens["--amc-radius-sm"]).toBe("4px") // fallback; resolves from --radius-md
+    expect(tokens["--amc-font-sans"]).toContain("DM Sans")
+    expect(tokens["--amc-font-mono"]).toContain("JuliaMono")
+    // the ink edge crosses the seam too — without it the iframe cannot express
+    // "every yellow fill takes a 1px ink border" at all
+    expect(tokens["--amc-accent-edge"]).toBe("#000000")
+    expect(Object.keys(tokens)).toHaveLength(20) // 14 colors + 2 radii + 2 fonts + 2 pads
+  })
+  test("geometry and faces resolve from the host when set", () => {
+    const tokens = resolveTokens(
+      (name) => (name === "--radius-lg" ? "12px" : name === "--font-family-text" ? "Whatever, sans-serif" : ""),
+      "normal",
+    )
+    expect(tokens["--amc-radius"]).toBe("12px")
+    expect(tokens["--amc-font-sans"]).toBe("Whatever, sans-serif")
   })
   test("padding tokens follow density", () => {
     expect(resolveTokens(() => "", "normal")["--amc-pad"]).toBe("14px 16px")

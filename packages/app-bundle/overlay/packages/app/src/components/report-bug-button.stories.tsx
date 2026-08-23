@@ -134,7 +134,7 @@ export const Schemes = {
               display: "grid",
               gap: "12px",
               padding: "16px",
-              "border-radius": "12px",
+              "border-radius": "var(--radius-lg)",
               background: "var(--v2-background-bg-base)",
               border: "1px solid var(--v2-border-border-base)",
             }}

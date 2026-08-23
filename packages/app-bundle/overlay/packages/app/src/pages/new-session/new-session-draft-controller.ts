@@ -4,6 +4,7 @@ import { usePromptInputV2Controller } from "@/components/prompt-input-v2"
 import { useComments } from "@/context/comments"
 import { useLocal } from "@/context/local"
 import { usePrompt } from "@/context/prompt"
+import { useSDK } from "@/context/sdk"
 import { useServerSync } from "@/context/server-sync"
 import { createPromptInputController, createPromptProjectControls } from "@/pages/session/composer"
 import { createPromptModelSelection } from "@/pages/session/composer/prompt-model-selection"
@@ -18,6 +19,7 @@ export { setPendingAutoSend }
 export function createNewSessionDraftController(workspace: { worktree: () => string; resetWorktree: () => void }) {
   const prompt = usePrompt()
   const serverSync = useServerSync()
+  const sdk = useSDK()
   const comments = useComments()
   const local = useLocal()
   const route = useSessionKey()
@@ -63,13 +65,26 @@ export function createNewSessionDraftController(workspace: { worktree: () => str
     if (!prompt.ready()) return
     setPendingAutoSend(false)
     // Retry until model selection is ready and the prompt has content.
+    // After onboarding the server just restarted — the provider query can take
+    // 10-20s to verify credentials. Only give up once providers have loaded
+    // (provider_ready) and model.current() is still undefined (genuine failure),
+    // or after 60s hard cap.
+    const dir = sdk().directory
+    const childStore = dir ? serverSync().child(dir)[0] : undefined
     const trySubmit = (attempts = 0) => {
-      if (attempts > 20) return // give up after ~10s
+      if (attempts > 120) return // hard cap ~60s
       const parts = prompt.current()
       const hasContent = Array.isArray(parts) && parts.some((p: any) => p.content && p.content.length > 0)
       if (model.ready() && model.current() && hasContent) {
         input.view.submit.onSubmit()
       } else {
+        // Check if providers have finished loading — if so and still no model,
+        // give up early (no connected providers = real failure, not timing).
+        const providerReady = childStore?.provider_ready ?? false
+        if (providerReady && model.ready() && !model.current() && attempts > 10) {
+          // Providers loaded but no model resolved — genuine failure
+          return
+        }
         setTimeout(() => trySubmit(attempts + 1), 500)
       }
     }

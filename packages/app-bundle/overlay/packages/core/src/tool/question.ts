@@ -21,7 +21,8 @@ Usage notes:
 - Every question is a card: a choice question (default) lists options; a free-form question — one expecting an open-ended typed answer, like a name or a number — uses kind: "text" and renders a bare text input with submit, so give it no options
 - When \`custom\` is enabled (default), a "Type your own answer" option is added automatically; don't include "Other" or catch-all options
 - Answers are returned as arrays of labels; set \`multiple: true\` to allow selecting more than one
-- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label`
+- If you recommend a specific option, make that the first option in the list and add "(Recommended)" at the end of the label
+- For text-kind questions, set \`default\` to pre-fill the input with a value the user can edit before submitting`
 
 export const Input = Schema.Struct({
   questions: Schema.Array(QuestionV2.Prompt).annotate({ description: "Questions to ask" }),

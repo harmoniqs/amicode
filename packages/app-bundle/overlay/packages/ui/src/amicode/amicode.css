@@ -1465,9 +1465,13 @@
    marker reads as part of the Amico identity. The amber scale has no
    theme-switched alias, so both schemes are spelled out: step 11 is the
    readable text step on each ground, step 9 tints the pill. */
+/* Gold is dead in this palette and the amber pill measured 3.99:1 besides. The
+   BETA pill is now the brand chip: yellow fill, ink label, ink edge — the same
+   grammar as DEV, so the two channels read as one family. */
 [data-slot="amicode-beta-tag"] {
-  color: var(--amber-light-11);
-  background: color-mix(in srgb, var(--amber-light-9) 16%, transparent);
+  color: var(--accent-ink, #000);
+  background: var(--accent);
+  border: var(--border-width, 1px) solid var(--accent-edge-ink, #000);
 }
 [data-color-scheme="dark"] [data-slot="amicode-beta-tag"] {
   color: var(--amber-dark-11);
@@ -1542,7 +1546,7 @@
   gap: 8px;
   padding: 12px 14px;
   border: 1px solid var(--amc-rule, rgba(0, 0, 0, 0.1));
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--amc-card-bg, transparent);
 }
 [data-component="amicode-approval-card"] .amc-ap-head {

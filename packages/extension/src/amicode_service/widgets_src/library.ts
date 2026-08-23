@@ -25,14 +25,14 @@ export default {
     var render = function () {
       var lib = (amico.context && amico.context.library) || { count: 0 }
       el.innerHTML =
-        '<div style="display:flex;flex-direction:column;gap:6px;min-width:0;height:100vh;border:1px solid var(--amc-border);border-radius:12px;background:var(--amc-layer);padding:var(--amc-pad-tile)">' +
+        '<div style="display:flex;flex-direction:column;gap:6px;min-width:0;height:100vh;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-layer);padding:var(--amc-pad-tile)">' +
         '<div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--amc-text-faint)">Library</div>' +
         '<div style="font-size:13px;font-weight:600;color:var(--amc-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Make Amico smarter</div>' +
         '<div style="font-size:11px;color:var(--amc-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
         (lib.count > 0 ? lib.count + ' paper' + (lib.count === 1 ? '' : 's') + ' \\u00b7 latest: ' + esc(lib.latestName || '') : 'upload papers \\u2014 Amico learns your work') +
         '</div>' +
         '<div style="display:flex;flex-direction:column;gap:6px;margin-top:auto;align-items:flex-start">' +
-        '<button type="button" data-upload ' + (busy ? 'disabled' : '') + ' style="font-size:11px;padding:3px 10px;border:1px solid var(--amc-border);border-radius:8px;background:var(--amc-layer2);color:var(--amc-text);cursor:pointer">' + (busy ? 'Uploading\\u2026' : 'Upload PDF') + '</button>' +
+        '<button type="button" data-upload ' + (busy ? 'disabled' : '') + ' style="font-size:11px;padding:3px 10px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:var(--amc-layer2);color:var(--amc-text);cursor:pointer">' + (busy ? 'Uploading\\u2026' : 'Upload PDF') + '</button>' +
         (lib.latestPath ? '<span data-discuss style="font-size:11px;color:var(--amc-accent);cursor:pointer">Discuss latest &#8594;</span>' : '') +
         '</div>' +
         '<input data-file type="file" accept=".pdf,application/pdf" style="display:none">' +

@@ -48,6 +48,7 @@ import { startPrompt } from "@/utils/start-prompt"
 import { authTokenFromCredentials } from "@/utils/server"
 import { GLOBAL_STATUS_DEFAULT_TAB } from "./status-popover-model"
 import { useServerProtocol } from "@/context/server-sdk"
+import { beginSolverSwitch } from "@/components/solver-switch-banner"
 
 const pluginEmptyMessage = (value: string, file: string): JSXElement => {
   const parts = value.split(file)
@@ -682,6 +683,31 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
   const onChooseProject = (payload: ChooseProjectPayload) =>
     void runConnectionAction(payload.id, "/amicode/connections/choose-project", payload)
   const onCancelAuth = (id: string) => void runConnectionAction(id, "/amicode/connections/disconnect", { id })
+  // opencode#78: releasing the HP tier. Deliberately NOT runConnectionAction —
+  // that helper keys its overlay on a connection id and reads a `connection`
+  // out of the response; this route answers {ok, mode, error} about the solver,
+  // not about a connection, so routing it through there would render the
+  // release as a failed credential mutation. Fire-and-forget with a refetch:
+  // the server restart the switch triggers makes any awaited status stale
+  // anyway.
+  const onSelectPiccolo = () => {
+    const conn = server.current
+    if (!conn) return
+    beginSolverSwitch("piccolo") // narrate the restart this is about to trigger
+    void (async () => {
+      try {
+        await fetch(new URL("/amicode/solver-mode", conn.http.url), {
+          method: "POST",
+          headers: { ...amicodeHeaders(conn), "content-type": "application/json" },
+          body: JSON.stringify({ mode: "piccolo" }),
+        })
+      } catch {
+        /* the extension watcher is the durable half; a lost request is retried
+           by the next pick rather than surfaced as a connection error */
+      }
+      refetchConnections()
+    })()
+  }
   // Google browser OAuth: POST to the server's auth start route; the server opens the
   // system browser via McpBrowser (which now respects BROWSER in VS Code remote).
   // Fallback to window.open when the server does not return a URL (e.g. token-based
@@ -753,6 +779,7 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
     onSubmitCredential,
     onDisconnectConnection,
     onRevalidateConnection,
+    onSelectPiccolo,
     onChooseProject,
     onCancelAuth,
     onStartAuth,

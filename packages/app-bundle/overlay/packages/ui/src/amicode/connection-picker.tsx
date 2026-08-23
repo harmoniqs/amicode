@@ -85,7 +85,7 @@ export function ConnectionPicker(props: {
             data-slot="amicode-picker-custom"
             onClick={() => setPicked("custom")}
           >
-            <div class="w-[18px] h-[18px] rounded-[4px] bg-accent-fill-soft flex items-center justify-center text-10-regular">+</div>
+            <div class="w-[18px] h-[18px] rounded-sm bg-accent-fill-soft flex items-center justify-center text-10-regular">+</div>
             <span class="text-12-regular text-text-base">Custom connection</span>
           </button>
           <For each={props.catalog}>

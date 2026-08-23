@@ -21,6 +21,20 @@
   font-display: swap;
 }
 
+/* amicode: the text/UI face, matching harmoniqs.ai. The site loads DM Sans via
+   next/font with the opsz axis and aliases --font-display to it, so one face
+   carries both display and body there; we do the same here. Variable (opsz +
+   wght), OFL, self-hosted — no CDN, so it works offline in the desktop app.
+   NOTE: this is a latin subset (222 glyphs); Inter stays bundled below as the
+   fallback so non-latin UI locales still render. */
+@font-face {
+  font-family: "DM Sans";
+  src: url("/assets/DMSans-Variable.woff2") format("woff2-variations");
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: "Inter";
   src: url("/assets/Inter.ttf") format("truetype");
@@ -186,7 +200,7 @@
     margin: 1px;
     width: 12px;
     height: 12px;
-    border-radius: 9999px;
+    border-radius: var(--radius-full);
     border: 2px solid color-mix(in srgb, var(--v2-icon-icon-accent) 30%, transparent);
     border-top-color: var(--v2-icon-icon-accent);
     animation: titlebar-update-loader-spin 0.67s linear infinite;
@@ -362,21 +376,3 @@
   }
 }
 
-/* amicode#274: soft breathing glow for the "open session" indicator dot in the
-   chats flyout — matches the tab-mark-glow cadence (2.4s ease-in-out). */
-@keyframes session-open-glow {
-  0%, 100% {
-    opacity: 1;
-    box-shadow: 0 0 2px #34d39960;
-  }
-  50% {
-    opacity: 0.7;
-    box-shadow: 0 0 5px #34d399a0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  @keyframes session-open-glow {
-    0%, 100% { opacity: 1; box-shadow: 0 0 2px #34d39960; }
-  }
-}
