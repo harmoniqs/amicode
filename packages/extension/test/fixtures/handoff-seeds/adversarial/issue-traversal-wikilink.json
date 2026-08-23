@@ -1,0 +1,10 @@
+{
+  "kind": "issue",
+  "title": "Evidence pointers wrapped in wiki-link brackets slip traversal past naive path joins",
+  "motivation": "A seed emitter naively wraps whatever the researcher typed in [[...]] brackets; an upstream pointer like a path to the machine's password file must not become citable evidence just because the validator strips the brackets before resolving.",
+  "evidence": [
+    "[[../../etc/passwd]]"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "chore"
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "hypothesis",
+  "observation": "Duplicate evidence pointers inflate a seed's apparent evidence breadth without adding a citation",
+  "evidence": [
+    "experiments/experiment-20260822-193053-rwa-breakdown.md",
+    "experiments/experiment-20260822-193053-rwa-breakdown.md"
+  ],
+  "suggested_experiment": "Assert the evidence list behaves as a citation set: the same artifact twice is one refusal at /evidence, not two resolved pointers."
+}

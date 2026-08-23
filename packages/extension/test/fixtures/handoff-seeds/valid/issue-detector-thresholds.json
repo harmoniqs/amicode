@@ -1,0 +1,11 @@
+{
+  "kind": "issue",
+  "title": "Stagnation detector fires on un-normalized thresholds — calibrate per detector, per run",
+  "motivation": "The stagnation cascade dispatched multistarts on runs that were still improving: the plateau threshold sits below the run's noise floor and one calibration is shared across detectors that each want their own.",
+  "evidence": [
+    "insights/insight-20260822-063401-drift-detector-threshold.md",
+    "insights/insight-20260822-063402-noise-normalized-detectors.md"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "standard"
+}

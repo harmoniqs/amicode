@@ -1,0 +1,8 @@
+{
+  "kind": "issue",
+  "observation": "Warm-starting from prior pulses failed consistently across the July batch",
+  "evidence": [
+    "experiments/experiment-20260821-120000-blockade-sector-rank.md"
+  ],
+  "suggested_experiment": "Retry the warm-start batch with the trajectory loader from the newer package pin and compare first-iteration objective values."
+}
