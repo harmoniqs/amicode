@@ -209,6 +209,14 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
 
+// Domain-pack activation gate (ADR 0008): quantum-control is the first and
+// only domain pack, always active today. This gate exists so domain-specific
+// infrastructure (Julia substrate, domain tools) is visibly gated rather than
+// implicitly unconditional. A second domain pack would make this configurable.
+function isQuantumControlPackActive(): boolean {
+  return true;
+}
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -1065,7 +1073,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
   // Auto-offer on first run when the toolchain isn't ready (juliaup/channel/
   // project missing) and the user hasn't dismissed. Command bypasses the gate.
+  // Gated: Julia substrate belongs to the quantum-control domain pack (ADR 0008).
   if (
+    isQuantumControlPackActive() &&
     shouldOfferJuliaSetup({
       juliaupPresent: hasJuliaup(),
       channelPresent: (() => {

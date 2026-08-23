@@ -115,6 +115,13 @@ import {
 // serve log, which is where the load line is grepped for.
 console.error("[amicode-tools] loaded — amicode_* tool pack v1 (problems → " + problemsDir() + ")");
 
+// Domain-pack gate (ADR 0008): quantum-control-specific tools (amicode_pick_system,
+// amicode_set_model, amicode_formulate, amicode_solve, amicode_to_hardware,
+// amicode_calibrate) are registered only when the quantum-control pack is active.
+// Always true today; the seam exists for future domain packs that would register
+// their own entity tools without the quantum-control ones.
+const QUANTUM_CONTROL_PACK_ACTIVE = true;
+
 // One-shot legacy _entities → problem-workspace migration. Skipped when either
 // env override is set (test harnesses point them at temp dirs). stderr-only.
 if (!process.env.AMICODE_ENTITIES_DIR && !process.env.AMICODE_PROBLEMS_DIR) {
@@ -406,6 +413,12 @@ export const AmicodeTools = async (_input: unknown) => ({
         return `Unknown action "${a.action}".`;
       },
     },
+
+    // ── Quantum-control domain tools (gated by QUANTUM_CONTROL_PACK_ACTIVE) ──
+    // These tools record quantum-control-specific entities (System, Formulation,
+    // Run, DeviceSession, Calibration). When a second domain pack arrives, its
+    // entity tools would register here conditionally alongside these.
+    ...(QUANTUM_CONTROL_PACK_ACTIVE ? {
 
     amicode_pick_system: {
       description:
@@ -1091,6 +1104,7 @@ export const AmicodeTools = async (_input: unknown) => ({
         );
       },
     },
+    } : {}), // end quantum-control domain tools gate
     // ── Onboarding (spec-20260705-002847 §3) — NOT a problem stage: UNGATED
     // (no guardAndRecordStage), writes the ops-side onboarding stream, never the
     // vault. The distiller materializes the cards on the completion marker.
