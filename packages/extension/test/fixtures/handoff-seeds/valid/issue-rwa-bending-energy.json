@@ -1,0 +1,11 @@
+{
+  "kind": "issue",
+  "title": "Bending energy, not knot count, predicts RWA breakdown — add a pre-solve spline lint",
+  "motivation": "Cat-state solves leak into the |α|-band exactly when pulse bending energy crosses a threshold, and the wasted solves are hours long; a pre-solve lint on bending energy would refuse under-resolved splines before the burn.",
+  "evidence": [
+    "experiments/experiment-20260822-193053-rwa-breakdown.md",
+    "insights/insight-20260822-063403-bending-energy-rwa.md"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "PRD"
+}

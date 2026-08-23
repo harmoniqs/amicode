@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "amicode:handoff-seeds/issue-seed.schema.json",
+  "title": "Issue handoff seed (research closes → dev picks up)",
+  "description": "Typed cross-campaign currency for a research finding that needs code. Rendered to the write-an-issue decision surface by the committed issue-seed template; filed by the receiving side through the normal issue flow. Evidence pointers are vault-relative paths that must resolve at validation time. String fields are single-line so the template render is total.",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "const": "issue",
+      "description": "Fixed discriminator; bound mechanically to this field set (the masquerade test)."
+    },
+    "title": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]*$" },
+    "motivation": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]*$" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]*$" }
+    },
+    "suggested_repo": { "type": "string", "minLength": 1, "pattern": "^[^\\n\\r]*$" },
+    "suggested_tier": { "enum": ["chore", "standard", "PRD"] }
+  },
+  "required": ["kind", "title", "motivation", "evidence", "suggested_repo", "suggested_tier"],
+  "additionalProperties": false
+}

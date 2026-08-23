@@ -1,0 +1,9 @@
+{
+  "kind": "hypothesis",
+  "observation": "Adding the fourth transmon level (implicit DRAG) removes the |α|-band leakage that bending energy predicts",
+  "evidence": [
+    "experiments/experiment-20260822-193053-rwa-breakdown.md",
+    "insights/insight-20260822-063403-bending-energy-rwa.md"
+  ],
+  "suggested_experiment": "Re-solve the same leaking cat-state splines at levels=4 and diff the leakage spectrum against the levels=3 baseline."
+}

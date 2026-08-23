@@ -1,0 +1,8 @@
+{
+  "kind": "hypothesis",
+  "observation": "Finite blockade inflates the low-rank-Hessian sector count above 3n, still polynomially",
+  "evidence": [
+    "experiments/experiment-20260821-120000-blockade-sector-rank.md"
+  ],
+  "suggested_experiment": "Sweep V_nn/Omega from deep toward moderate blockade on the symmetric blockaded C_kZ family and extract the rank growth exponent versus n at each setting."
+}

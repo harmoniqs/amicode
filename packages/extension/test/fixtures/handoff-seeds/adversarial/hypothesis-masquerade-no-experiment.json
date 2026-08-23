@@ -1,0 +1,10 @@
+{
+  "kind": "hypothesis",
+  "title": "Two-qubit gates need a from-scratch coupled model, not a stretched template",
+  "motivation": "Every failed two-qubit attempt reused a single-qubit template's shape; none built the coupling terms explicitly, so the failures say nothing about two-qubit feasibility.",
+  "evidence": [
+    "insights/insight-20260822-063402-noise-normalized-detectors.md"
+  ],
+  "suggested_repo": "armonia",
+  "suggested_tier": "standard"
+}
