@@ -24,7 +24,7 @@ describe("compileScore (score #0)", () => {
   const md = compileScore(score0());
 
   it("keeps the heading the agent prompt references", () => {
-    expect(md.startsWith("## Pulse-designer interview")).toBe(true);
+    expect(md).toContain("## Pulse-designer interview");
   });
   it("emits every stage id in manifest order", () => {
     const ids = ["platform", "model", "mode", "problem", "formulate", "solve", "inspect", "hardware"];

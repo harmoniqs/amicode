@@ -1,3 +1,4 @@
+<!-- AMICODE_SCORE_SECTION -->
 ## Pulse-designer interview
 
 > Compiled from score `overture` v2 chained into `pulse-designer` v3 — first onboard the user (session zero), then continue straight into pulse design in the SAME session. Sources of truth are the two `SCORE.md` files; do not edit this section by hand.
