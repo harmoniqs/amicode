@@ -151,13 +151,16 @@ export function triggerOnboardingDistill(ops: string = opsDir()): boolean {
   return cfg !== null;
 }
 
-/** Replay the onboarding events stream and write the collected identity fields
- *  to ~/.amico/profile.json (the serving layer the profile dropdown reads from).
- *  Additive merge: never clobbers fields already set by the inline editor. */
-export function materializeProfileJson(ops: string = opsDir()): void {
+/** Write the collected identity fields to ~/.amico/profile.json (the serving
+ *  layer the profile dropdown reads from). Reads from the onboarding events
+ *  stream first; if that's empty/missing, uses the inline profile payload
+ *  (passed when the caller already has the data). Additive merge: never
+ *  clobbers fields already set by the inline editor. */
+export function materializeProfileJson(ops: string = opsDir(), inlineProfile?: Record<string, unknown>): void {
   const dir = onboardingStreamDir(ops);
   const state = readOnboardingState(dir);
-  if (!state.profile) return;
+  const profile = state.profile ?? inlineProfile;
+  if (!profile) return;
 
   const profilePath = path.join(os.homedir(), ".amico", "profile.json");
   let current: Record<string, unknown> = {};
@@ -180,7 +183,7 @@ export function materializeProfileJson(ops: string = opsDir()): void {
   };
 
   for (const [srcKey, dstKey] of Object.entries(mapping)) {
-    const value = state.profile[srcKey];
+    const value = profile[srcKey];
     // Additive: only write if the target field is empty/unset
     if (typeof value === "string" && value.trim() && !current[dstKey]) {
       current[dstKey] = value.trim();
@@ -188,8 +191,8 @@ export function materializeProfileJson(ops: string = opsDir()): void {
   }
 
   // custom_link is compound: url + label
-  const linkUrl = state.profile.custom_link_url;
-  const linkLabel = state.profile.custom_link_label;
+  const linkUrl = profile.custom_link_url;
+  const linkLabel = profile.custom_link_label;
   if (typeof linkUrl === "string" && linkUrl.trim() && !current.custom_link) {
     current.custom_link = {
       url: linkUrl.trim(),
