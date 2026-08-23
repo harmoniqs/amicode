@@ -76,8 +76,8 @@ export default {
       var fresh = !stats.problems && !stats.runs && !stats.banked
 
       var avatar = you.avatar
-        ? '<img src="' + esc(you.avatar) + '" alt="" onerror="this.style.display=\\'none\\'" style="width:44px;height:44px;border-radius:12px;object-fit:cover;flex-shrink:0">'
-        : '<div style="width:44px;height:44px;flex-shrink:0;border-radius:12px;background:var(--amc-layer2);color:var(--amc-text-muted);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600">' + esc(initials(you.name)) + '</div>'
+        ? '<img src="' + esc(you.avatar) + '" alt="" onerror="this.style.display=\\'none\\'" style="width:44px;height:44px;border-radius:var(--amc-radius);object-fit:cover;flex-shrink:0">'
+        : '<div style="width:44px;height:44px;flex-shrink:0;border-radius:var(--amc-radius);background:var(--amc-layer2);color:var(--amc-text-muted);display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600">' + esc(initials(you.name)) + '</div>'
 
       var platforms = (you.platforms || []).slice(0, 3).map(function (p) {
         return '&#9671; ' + esc(p)
@@ -85,21 +85,21 @@ export default {
 
       var editForm =
         '<div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">' +
-        '<input data-f-name placeholder="name" value="' + esc(draft.name) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:8px;background:var(--amc-bg);color:var(--amc-text)">' +
+        '<input data-f-name placeholder="name" value="' + esc(draft.name) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:var(--amc-bg);color:var(--amc-text)">' +
         '<div style="position:relative">' +
-        '<input data-f-affiliation placeholder="affiliation" value="' + esc(draft.affiliation) + '" autocomplete="off" style="width:100%;box-sizing:border-box;font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:8px;background:var(--amc-bg);color:var(--amc-text)">' +
+        '<input data-f-affiliation placeholder="affiliation" value="' + esc(draft.affiliation) + '" autocomplete="off" style="width:100%;box-sizing:border-box;font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:var(--amc-bg);color:var(--amc-text)">' +
         (suggestions.length
-          ? '<div style="position:absolute;left:0;right:0;top:100%;z-index:5;background:var(--amc-layer2);border:1px solid var(--amc-border);border-radius:8px;overflow:hidden">' +
+          ? '<div style="position:absolute;left:0;right:0;top:100%;z-index:5;background:var(--amc-layer2);border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);overflow:hidden">' +
             suggestions.map(function (s, i) {
               return '<div data-sugg="' + i + '" style="padding:5px 8px;font-size:12px;color:var(--amc-text);cursor:pointer">' + esc(s.name) + ' <span style="color:var(--amc-text-faint)">' + esc(s.domain || '') + '</span></div>'
             }).join('') + '</div>'
           : '') +
         '</div>' +
-        '<input data-f-focus placeholder="focus (e.g. transmon pulse design)" value="' + esc(draft.focus) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:8px;background:var(--amc-bg);color:var(--amc-text)">' +
-        '<input data-f-scholar placeholder="Google Scholar URL" value="' + esc(draft.scholar) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:8px;background:var(--amc-bg);color:var(--amc-text)">' +
+        '<input data-f-focus placeholder="research area (e.g. optimal control, ML, materials science)" value="' + esc(draft.focus) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:var(--amc-bg);color:var(--amc-text)">' +
+        '<input data-f-scholar placeholder="Google Scholar URL" value="' + esc(draft.scholar) + '" style="font-size:12px;padding:4px 8px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:var(--amc-bg);color:var(--amc-text)">' +
         '<div style="display:flex;gap:8px">' +
-        '<button type="button" data-save ' + (saving ? 'disabled' : '') + ' style="font-size:12px;padding:4px 12px;border:1px solid var(--amc-accent);border-radius:8px;background:var(--amc-layer2);color:var(--amc-text);cursor:pointer">' + (saving ? 'Saving\\u2026' : 'Save') + '</button>' +
-        '<button type="button" data-cancel style="font-size:12px;padding:4px 12px;border:1px solid var(--amc-border);border-radius:8px;background:transparent;color:var(--amc-text-muted);cursor:pointer">Cancel</button>' +
+        '<button type="button" data-save ' + (saving ? 'disabled' : '') + ' style="font-size:12px;padding:4px 12px;border:1px solid var(--amc-accent);border-radius:var(--amc-radius-sm);background:var(--amc-layer2);color:var(--amc-text);cursor:pointer">' + (saving ? 'Saving\\u2026' : 'Save') + '</button>' +
+        '<button type="button" data-cancel style="font-size:12px;padding:4px 12px;border:1px solid var(--amc-border);border-radius:var(--amc-radius-sm);background:transparent;color:var(--amc-text-muted);cursor:pointer">Cancel</button>' +
         '</div></div>'
 
       var identity =
@@ -114,6 +114,7 @@ export default {
           ? editForm
           : '<div style="font-size:12px;line-height:16px;color:var(--amc-text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
             esc(you.focus || you.affiliation || 'tell Amico about your work') + '</div>' +
+            (you.description ? '<div style="font-size:11px;line-height:15px;color:var(--amc-text-muted);margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + esc(you.description) + '</div>' : '') +
             (platforms ? '<div style="font-size:11px;color:var(--amc-text-faint);margin-top:1px">' + platforms + '</div>' : '')) +
         '</div></div>'
 
@@ -121,8 +122,8 @@ export default {
       if (fresh && !editing) {
         body =
           '<div style="height:1px;background:var(--amc-border);margin:12px 0"></div>' +
-          '<div style="font-size:12px;color:var(--amc-text-muted);margin-bottom:8px">No solves yet \\u2014 tell Amico what you&#39;re working on and it&#39;ll start remembering.</div>' +
-          '<button type="button" data-firstrun style="align-self:flex-start;border:1px solid var(--amc-accent);border-radius:8px;background:var(--amc-layer2);color:var(--amc-text);padding:5px 12px;font-size:12px;cursor:pointer">Get started &#8594;</button>'
+          '<div style="font-size:12px;color:var(--amc-text-muted);margin-bottom:8px">No experiments yet \\u2014 tell Amico what you&#39;re working on and it&#39;ll start remembering.</div>' +
+          '<button type="button" data-firstrun style="align-self:flex-start;border:1px solid var(--amc-accent);border-radius:var(--amc-radius-sm);background:var(--amc-layer2);color:var(--amc-text);padding:5px 12px;font-size:12px;cursor:pointer">Get started &#8594;</button>'
       } else if (!editing) {
         var cells = chosen.map(function (k) {
           return statBlock(String(stats[k] == null ? 0 : stats[k]), k)
@@ -147,7 +148,7 @@ export default {
       }
 
       el.innerHTML =
-        '<div style="display:flex;flex-direction:column;min-width:0;height:100vh;overflow-y:auto;border:1px solid var(--amc-border);border-radius:12px;background:var(--amc-layer);padding:var(--amc-pad)">' +
+        '<div style="display:flex;flex-direction:column;min-width:0;height:100vh;overflow-y:auto;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-layer);padding:var(--amc-pad)">' +
         '<div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--amc-text-faint)">About you</div>' +
         identity + body + '</div>'
 
@@ -169,7 +170,7 @@ export default {
         amico.action('open-external', { url: you.scholar })
       })
       on('[data-firstrun]', 'click', function () {
-        amico.prompt('help me set up my first pulse-design problem')
+        amico.prompt('help me get started with my first project')
       })
       on('[data-cancel]', 'click', function () {
         editing = false
@@ -249,7 +250,7 @@ export default {
     }).catch(function (e) {
       // a hero card must never fail invisibly — show the reason
       el.innerHTML =
-        '<div style="border:1px solid var(--amc-border);border-radius:12px;background:var(--amc-layer);padding:var(--amc-pad);font-size:11px;color:var(--amc-text-muted)">' +
+        '<div style="border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-layer);padding:var(--amc-pad);font-size:11px;color:var(--amc-text-muted)">' +
         'About you: profile unavailable (' + String(e && e.message ? e.message : e) + ')</div>'
     })
     amico.onConfig(function () { render() })

@@ -38,7 +38,7 @@ export default {
       )
     }).join('')
     el.innerHTML =
-      '<div data-card style="display:flex;flex-direction:column;min-width:0;height:100vh;border:1px solid var(--amc-border);border-radius:12px;background:var(--amc-layer);padding:var(--amc-pad);cursor:pointer">' +
+      '<div data-card style="display:flex;flex-direction:column;min-width:0;height:100vh;border:1px solid var(--amc-border);border-radius:var(--amc-radius);background:var(--amc-layer);padding:var(--amc-pad);cursor:pointer">' +
       '<div style="font-size:10px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--amc-text-faint)">Meet Amico</div>' +
       '<div style="display:flex;gap:12px;align-items:center;margin-top:10px">' +
       FACE +
@@ -50,7 +50,7 @@ export default {
       '<div style="height:1px;background:var(--amc-border);margin:12px 0"></div>' +
       '<div style="font-size:11px;color:var(--amc-text-muted);margin-bottom:6px">I can help you</div>' +
       '<div style="display:flex;flex-direction:column;gap:3px;margin-bottom:12px">' + bullets + '</div>' +
-      '<button type="button" data-cta style="align-self:flex-start;display:inline-flex;align-items:center;gap:10px;margin-top:auto;padding:12px 20px;border:1px solid color-mix(in srgb, var(--amc-accent-ink) 14%, transparent);border-radius:8px;cursor:pointer;background:var(--amc-accent-fill);color:var(--amc-accent-ink);font-size:15px;font-weight:650">Open chat <span aria-hidden="true" style="font-size:16px;line-height:1">&#8594;</span></button>' +
+      '<button type="button" data-cta style="align-self:flex-start;display:inline-flex;align-items:center;gap:10px;margin-top:auto;padding:12px 20px;border:1px solid var(--amc-accent-edge);border-radius:var(--amc-radius-sm);cursor:pointer;background:var(--amc-accent-fill);color:var(--amc-accent-ink);font-size:15px;font-weight:650">Open chat <span aria-hidden="true" style="font-size:16px;line-height:1">&#8594;</span></button>' +
       '</div>'
     on('[data-cta]', function (e) {
       e.stopPropagation()
