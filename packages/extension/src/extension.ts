@@ -40,6 +40,7 @@ import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from ".
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
+import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
@@ -354,6 +355,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Mute the "Chat with Amico" button when a chat panel is open
   ChatPanel.onLiveChange((count) => workspaceTree.setChatActive(count > 0));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
+  registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 

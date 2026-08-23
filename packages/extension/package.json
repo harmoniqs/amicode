@@ -151,6 +151,10 @@
         "title": "Amicode: Fleet \u2014 Repair (guard + tunnel)"
       },
       {
+        "command": "amicode.fleet.versions",
+        "title": "Amicode: Fleet & Versions (doctor's surface report)"
+      },
+      {
         "command": "amicode.fleet.goStandalone",
         "title": "Amicode: Fleet \u2014 Go Standalone (leave fleet, run locally)"
       },
