@@ -128,15 +128,14 @@ function countProblems(root: string): number {
 
 const RUN_RE = /^r(\d{4})(\d{2})(\d{2})-/;
 
-/** Walk every lab under runsRoot; count runs, banked pulses (pulse.jld2),
- *  best finished fidelity, and the earliest run date ("since"). One pass. */
+/** Walk every lab under runsRoot; count runs, best finished fidelity,
+ *  and the earliest run date ("since"). One pass. */
 function runStats(root: string): {
   runs: number;
-  banked: number;
   best_fidelity: number | null;
   since: string | null;
 } {
-  const out = { runs: 0, banked: 0, best_fidelity: null as number | null, since: null as string | null };
+  const out = { runs: 0, best_fidelity: null as number | null, since: null as string | null };
   if (!existsSync(root)) return out;
   for (const lab of readdirSync(root, { withFileTypes: true })) {
     if (!lab.isDirectory()) continue;
@@ -154,7 +153,6 @@ function runStats(root: string): {
       if (!m) continue;
       out.runs++;
       const dir = path.join(labDir, name);
-      if (existsSync(path.join(dir, "pulse.jld2"))) out.banked++;
       const date = `${m[1]}-${m[2]}-${m[3]}`;
       if (out.since === null || date < out.since) out.since = date;
       try {
@@ -323,7 +321,6 @@ export function profileBody(input: {
       problems: countProblems(input.problemsRoot),
       runs: stats.runs,
       best_fidelity: stats.best_fidelity,
-      banked: stats.banked,
       since: stats.since,
     },
     remembers: remembers(input.memoryDirs, 3),
