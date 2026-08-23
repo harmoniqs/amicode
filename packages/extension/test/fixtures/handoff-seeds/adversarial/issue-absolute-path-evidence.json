@@ -1,0 +1,11 @@
+{
+  "kind": "issue",
+  "title": "Absolute-path and bare-traversal evidence pointers must not resolve against the vault root",
+  "motivation": "A seed whose evidence cites machine-absolute paths or pointers that walk out of the vault is claiming artifacts it does not have; both must be refused at the pointer's index, not quietly re-rooted.",
+  "evidence": [
+    "/etc/hosts",
+    "../outside-vault/experiment-20260822-193053-rwa-breakdown.md"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "standard"
+}

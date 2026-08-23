@@ -10,8 +10,9 @@
 //      bound: a fixture whose kind and field set disagree is refused (the
 //      masquerade test).
 //   2. EVIDENCE — pointers are vault-relative paths that must RESOLVE at
-//      validation time against a root; a seed citing a nonexistent artifact is
-//      refused, not warned.
+//      validation time against a root; a seed citing a nonexistent artifact —
+//      or a directory, or the validation root itself, or the same artifact
+//      twice — is refused, not warned.
 //   3. ROUND-TRIP — seed → committed-template render → re-extract →
 //      field-equal over the full declared field set. Rendering is template
 //      substitution (single pass, no re-scanning), so inserted values are
@@ -20,7 +21,7 @@
 // Filing agency stays with the receiving side (protocol discipline): nothing
 // here auto-files an issue or writes a card.
 
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { resolve as resolvePath, sep } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
@@ -87,6 +88,7 @@ export const ISSUE_SEED_SCHEMA: JsonSchema = {
     evidence: {
       type: "array",
       minItems: 1,
+      uniqueItems: true,
       items: { type: "string", minLength: 1, pattern: SINGLE_LINE },
     },
     suggested_repo: { type: "string", minLength: 1, pattern: SINGLE_LINE },
@@ -113,6 +115,7 @@ export const HYPOTHESIS_SEED_SCHEMA: JsonSchema = {
     evidence: {
       type: "array",
       minItems: 1,
+      uniqueItems: true,
       items: { type: "string", minLength: 1, pattern: SINGLE_LINE },
     },
     suggested_experiment: { type: "string", minLength: 1, pattern: SINGLE_LINE },
@@ -155,7 +158,7 @@ function describeType(value: unknown): string {
 }
 
 /** Validate `value` against a JSON Schema (subset: type, const, enum,
- *  minLength, pattern, minItems, items, properties, required,
+ *  minLength, pattern, minItems, uniqueItems, items, properties, required,
  *  additionalProperties). Returns every violation with its JSON-Pointer path. */
 export function validateAgainstSchema(
   value: unknown,
@@ -195,6 +198,16 @@ export function validateAgainstSchema(
     const minItems = schema.minItems;
     if (typeof minItems === "number" && value.length < minItems) {
       issues.push({ path: here, message: `fewer than minItems ${minItems}` });
+    }
+    if (schema.uniqueItems === true) {
+      // SameValueZero over the items — our schemas only use uniqueItems on
+      // arrays of scalars, where reference identity never comes into play.
+      if (new Set(value).size !== value.length) {
+        issues.push({
+          path: here,
+          message: "array items are not unique (uniqueItems); evidence pointers are a citation set",
+        });
+      }
     }
     const items = schema.items;
     if (isPlainObject(items)) {
@@ -238,15 +251,17 @@ export function validateAgainstSchema(
 
 // ─── Validation (schema + evidence-pointer resolution) ───────────────────────
 
-/** A pointer resolves iff it names an existing path under `root` (wiki-link
- *  brackets tolerated, traversal and absolute paths refused). */
+/** A pointer resolves iff it names an existing REGULAR FILE under `root`
+ *  (wiki-link brackets tolerated; traversal, absolute paths, directories —
+ *  including the validation root itself — refused). Evidence cites artifacts,
+ *  never containers. */
 function pointerResolves(root: string, pointer: string): boolean {
   const bare =
     pointer.startsWith("[[") && pointer.endsWith("]]") ? pointer.slice(2, -2) : pointer;
   const resolved = resolvePath(root, bare);
   const rootAbs = resolvePath(root);
   if (resolved !== rootAbs && !resolved.startsWith(rootAbs + sep)) return false;
-  return existsSync(resolved);
+  return statSync(resolved, { throwIfNoEntry: false })?.isFile() === true;
 }
 
 function checkEvidencePointers(

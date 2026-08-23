@@ -7,7 +7,9 @@
 // — seed → committed-template render → re-extract → field-equal over the full
 // declared field set. Adversarial fixtures are REFUSED, never warned, with the
 // violated schema path named: dead evidence pointers, the kind/field-set
-// masquerade, missing required fields.
+// masquerade, missing required fields, and (reviewer pass) traversal and
+// absolute pointers, directory/root pointers, duplicate citations,
+// cross-kind contamination on an otherwise-complete seed, and empty fields.
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
@@ -128,6 +130,44 @@ describe("handoff seeds (#499): adversarial refusals name the violated path", ()
 
   it("missing required field is refused, naming the field", () => {
     expect(pathsOf("hypothesis-missing-evidence.json")).toContain("/evidence");
+  });
+
+  // ── reviewer pass 2026-08-23: adversarial variants born from live probing ──
+
+  it("wiki-link traversal escaping the root is refused at the pointer's index", () => {
+    expect(pathsOf("issue-traversal-wikilink.json")).toContain("/evidence/0");
+  });
+
+  it("absolute-path and bare-traversal evidence pointers are refused, each at its index", () => {
+    const paths = pathsOf("issue-absolute-path-evidence.json");
+    expect(paths).toContain("/evidence/0");
+    expect(paths).toContain("/evidence/1");
+  });
+
+  it("an empty string field is refused, naming the field (not just missing ones)", () => {
+    expect(pathsOf("hypothesis-empty-experiment.json")).toContain("/suggested_experiment");
+  });
+
+  it("an otherwise-COMPLETE issue seed carrying a foreign hypothesis field is refused (cross-kind contamination)", () => {
+    // unlike the masquerade fixtures, every issue-required field is present
+    // here — the ONLY tell is the foreign field, so this pins
+    // additionalProperties as an independent refusal reason.
+    expect(pathsOf("issue-foreign-field.json")).toContain("/suggested_experiment");
+  });
+
+  it("evidence pointers naming directories are refused — evidence cites artifacts, not containers", () => {
+    // both spellings: wiki-link bracketed and trailing-slash
+    const paths = pathsOf("hypothesis-directory-evidence.json");
+    expect(paths).toContain("/evidence/0");
+    expect(paths).toContain("/evidence/1");
+  });
+
+  it("an evidence pointer naming the validation root itself is refused", () => {
+    expect(pathsOf("issue-root-self-evidence.json")).toContain("/evidence/0");
+  });
+
+  it("duplicate evidence pointers are refused at /evidence (the list is a citation set)", () => {
+    expect(pathsOf("hypothesis-duplicate-evidence.json")).toContain("/evidence");
   });
 
   it("a seed whose kind is neither issue nor hypothesis is refused at /kind", () => {

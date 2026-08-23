@@ -1,0 +1,11 @@
+{
+  "kind": "issue",
+  "title": "An otherwise-complete issue seed carrying one foreign hypothesis field is a cross-kind contamination",
+  "motivation": "Every issue-required field is present and every evidence pointer resolves, so a field-set check that only looks for MISSING fields would wave this through; the foreign suggested_experiment is the tell that the emitter mixed two seed kinds into one payload.",
+  "evidence": [
+    "insights/insight-20260822-063401-drift-detector-threshold.md"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "standard",
+  "suggested_experiment": "Re-run the July warm-start batch with the newer loader and diff first-iteration objectives."
+}
