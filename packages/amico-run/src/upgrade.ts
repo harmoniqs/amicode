@@ -51,6 +51,7 @@ import {
   newestExtensionDir,
   dirDigest,
   fileSha,
+  versionPrefix,
   type SurfaceContext,
   type SurfaceRecord,
   type SurfaceName,
@@ -557,6 +558,181 @@ function firstLine(s: string): string {
   return s.split("\n").map((l) => l.trim()).filter(Boolean).join(" ").slice(0, 300);
 }
 
+// ── extension: git discipline → package → install → version-sorted cleanup ──
+
+const extensionVerb = (argv: string[]): Promise<VerbResult> =>
+  runVerb("extension", argv, ["extension"], async (ctx) => {
+    const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
+    const rootVscext = ctx.roots.rootVscext!;
+    const packageCommand = ctx.args.flags["--package-command"] ?? "pnpm run package";
+    const installCommand =
+      ctx.args.flags["--install-command"] ?? "code --install-extension {vsix}";
+    const usingPackageStub = ctx.args.flags["--package-command"] !== undefined;
+    const usingInstallStub = ctx.args.flags["--install-command"] !== undefined;
+
+    // (1) git discipline: fetch, clean tree, HEAD ancestor of origin/main.
+    // Divergence or dirt → aborted-diverged (never reset, never merge — the
+    // human resolves). Clean-but-behind → ff-only pull FIRST (a fast-forward
+    // of a clean tree is not a merge); ff failure → aborted-diverged.
+    const fetch = await runGit(rootRepoAmicode, ["fetch", "origin"]);
+    if (fetch.code !== 0) {
+      ctx.log(`amicode fetch failed: ${firstLine(fetch.stderr)}`);
+      return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: {} };
+    }
+    const headBefore = (await runGit(rootRepoAmicode, ["rev-parse", "HEAD"])).stdout.trim();
+    const status = await runGit(rootRepoAmicode, ["status", "--porcelain"]);
+    if (status.code !== 0 || status.stdout.trim().length > 0) {
+      ctx.log(
+        status.code !== 0
+          ? `git status failed: ${firstLine(status.stderr)}`
+          : `working tree dirty (never reset, never merge — the human resolves):\n${status.stdout.trim()}`,
+      );
+      return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: {} };
+    }
+    const originMain = (await runGit(rootRepoAmicode, ["rev-parse", "--verify", "origin/main"])).stdout.trim();
+    if (!originMain) {
+      ctx.log("origin/main not found after fetch");
+      return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: {} };
+    }
+    const ancestor = await runGit(rootRepoAmicode, ["merge-base", "--is-ancestor", "HEAD", "origin/main"]);
+    if (ancestor.code !== 0) {
+      ctx.log(`HEAD ${headBefore.slice(0, 12)} is NOT an ancestor of origin/main ${originMain.slice(0, 12)} — diverged; the human resolves`);
+      return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: {} };
+    }
+    const headAt = (await runGit(rootRepoAmicode, ["rev-parse", "HEAD"])).stdout.trim();
+    if (headAt !== originMain) {
+      ctx.log(`clean-but-behind: fast-forwarding ${headAt.slice(0, 12)} → ${originMain.slice(0, 12)} (ff-only)`);
+      const ff = await runGit(rootRepoAmicode, ["merge", "--ff-only", "origin/main"]);
+      if (ff.code !== 0) {
+        ctx.log(`ff-only fast-forward failed: ${firstLine(ff.stderr)}`);
+        return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: {} };
+      }
+    }
+
+    // the FETCHED version — the verification target (never the built one: a
+    // drifted checkout must not self-verify)
+    const pkgRaw = await runGit(rootRepoAmicode, ["show", "origin/main:packages/extension/package.json"]);
+    let fetchedVersion: string | null = null;
+    if (pkgRaw.code === 0) {
+      try {
+        fetchedVersion = (JSON.parse(pkgRaw.stdout) as { version?: string }).version ?? null;
+      } catch {
+        fetchedVersion = null;
+      }
+    }
+    if (fetchedVersion === null) {
+      ctx.log("origin/main packages/extension/package.json unreadable or has no version");
+      return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: {} };
+    }
+    ctx.log(`target: extension ${fetchedVersion} (origin/main ${originMain.slice(0, 12)})`);
+
+    // (2) environment: the live toolchain only matters on the live path —
+    // stub commands are the hermetic seam
+    if (!usingPackageStub) {
+      const pnpm = await runShell("pnpm --version");
+      if (pnpm.code !== 0) {
+        ctx.log("pnpm not available on PATH (the live package step needs it)");
+        return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: {} };
+      }
+    }
+    if (!usingInstallStub) {
+      const code = await runShell("code --version");
+      if (code.code !== 0) {
+        ctx.log("VS Code CLI (`code`) not available on PATH (the live install step needs it)");
+        return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: {} };
+      }
+    }
+
+    const extDir = join(rootRepoAmicode, "packages", "extension");
+    const vsix = join(extDir, "amicode.vsix");
+
+    // (3) package
+    ctx.log(`packaging: ${packageCommand} (cwd ${extDir})`);
+    const pkg = await runShell(packageCommand, {
+      cwd: extDir,
+      env: stubEnv({ repo: rootRepoAmicode, version: fetchedVersion }),
+    });
+    if (pkg.code !== 0) {
+      ctx.log(`package step failed (exit ${pkg.code}): ${firstLine(pkg.stderr || pkg.stdout)}`);
+      return { outcome: "aborted-package", verification: null, post: null, sourceDigests: { fetched_version: fetchedVersion } };
+    }
+    if (!usingInstallStub) {
+      try {
+        await stat(vsix);
+      } catch {
+        ctx.log(`package step produced no vsix at ${vsix}`);
+        return { outcome: "aborted-package", verification: null, post: null, sourceDigests: { fetched_version: fetchedVersion } };
+      }
+    }
+
+    // (4) install (the VS Code CLI live path / --install-command stub)
+    ctx.log(`installing: ${installCommand}`);
+    const inst = await runShell(installCommand, {
+      cwd: rootRepoAmicode,
+      env: stubEnv({
+        repo: rootRepoAmicode,
+        version: fetchedVersion,
+        vscext: rootVscext,
+        vsix,
+      }),
+    });
+    if (inst.code !== 0) {
+      ctx.log(`install step failed (exit ${inst.code}): ${firstLine(inst.stderr || inst.stdout)}`);
+      return { outcome: "aborted-install", verification: null, post: null, sourceDigests: { fetched_version: fetchedVersion } };
+    }
+
+    // (5) stale-dir removal — VERSION-sorted, never mtime: keep exactly the
+    // fetched version's dir(s); every other harmoniqs.amicode-* dir is stale
+    // (older leftovers AND any ahead-of-source dir — the source of truth is
+    // origin/main, and the verb converges the installed set to it)
+    const entries = await readdir(rootVscext, { withFileTypes: true });
+    const extDirs = entries.filter((e) => e.isDirectory() && /^harmoniqs\.amicode-/.test(e.name)).map((e) => e.name);
+    const keep = extDirs.filter((d) => versionPrefix(d.replace(/^harmoniqs\.amicode-/, "")) === fetchedVersion);
+    const stale = extDirs.filter((d) => !keep.includes(d));
+    for (const d of stale) {
+      ctx.log(`removing stale extension dir (version-sorted): ${d}`);
+      await rm(join(rootVscext, d), { recursive: true, force: true });
+    }
+
+    // (6) verify: the installed newest version equals the FETCHED version —
+    // judged through a fresh doctor probe
+    const post = await postRecords(ctx, ["extension"]);
+    const record = post[0];
+    const installedVersion = record.version ? versionPrefix(record.version) : null;
+    const verification = installedVersion === fetchedVersion;
+    ctx.log(
+      verification
+        ? `verified: installed ${installedVersion} = fetched origin/main ${fetchedVersion}`
+        : `verification FAILED: installed ${record.version} ≠ fetched ${fetchedVersion}`,
+    );
+    return {
+      outcome: "upgraded",
+      verification,
+      post,
+      sourceDigests: {
+        amicode_head_before: headBefore,
+        amicode_head_after: originMain,
+        fetched_version: fetchedVersion,
+        installed_dir: record.version,
+      },
+    };
+  });
+
+/** The stub/live command env contract (see the module header). */
+function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?: string; frozen?: string; running?: string; prev?: string; server?: string; phase?: string }): Record<string, string> {
+  const env: Record<string, string> = {};
+  if (vars.repo !== undefined) env.AMICO_UPGRADE_REPO_AMICODE = vars.repo;
+  if (vars.version !== undefined) env.AMICO_UPGRADE_TARGET_VERSION = vars.version;
+  if (vars.vscext !== undefined) env.AMICO_UPGRADE_ROOT_VSCEXT = vars.vscext;
+  if (vars.vsix !== undefined) env.AMICO_UPGRADE_VSIX = vars.vsix;
+  if (vars.frozen !== undefined) env.AMICO_UPGRADE_FROZEN_BIN = vars.frozen;
+  if (vars.running !== undefined) env.AMICO_UPGRADE_RUNNING_BIN = vars.running;
+  if (vars.prev !== undefined) env.AMICO_UPGRADE_PREV_BIN = vars.prev;
+  if (vars.server !== undefined) env.AMICO_UPGRADE_ROOT_SERVER = vars.server;
+  if (vars.phase !== undefined) env.AMICO_UPGRADE_PHASE = vars.phase;
+  return env;
+}
+
 // ── the remaining verbs land in their own cycles; the router rejects them
 // honestly until then (never a silent no-op) ─────────────────────────────────
 
@@ -566,7 +742,6 @@ const notYetImplemented = (surface: UpgradeSurface) => (argv: string[]): Promise
   });
 
 const serverBinaryVerb = notYetImplemented("server-binary");
-const extensionVerb = notYetImplemented("extension");
 
 // ── the entry ────────────────────────────────────────────────────────────────
 
