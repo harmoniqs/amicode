@@ -130,7 +130,9 @@ async function readFileSafe(p: string): Promise<string | null> {
   }
 }
 
-async function fileSha(p: string): Promise<string | null> {
+/** sha256 (hex) of a file's bytes, or null when unreadable. Exported for the
+ *  upgrade verbs (#526) — they digest the same evidence doctor reads. */
+export async function fileSha(p: string): Promise<string | null> {
   try {
     return sha256hex(await readFile(p));
   } catch {
@@ -182,8 +184,9 @@ export function parseBuildDate(version: string): Date | null {
 }
 
 /** Deterministic content digest of a directory: sha256 over the sorted
- *  relative-path + file-bytes pairs. mtime-free by construction. */
-async function dirDigest(dir: string): Promise<string | null> {
+ *  relative-path + file-bytes pairs. mtime-free by construction. Exported for
+ *  the upgrade verbs + their idempotence harness (#526). */
+export async function dirDigest(dir: string): Promise<string | null> {
   const files: string[] = [];
   const walk = async (rel: string) => {
     let entries: import("node:fs").Dirent[];
