@@ -1,0 +1,68 @@
+{
+  "surfaces": [
+    {
+      "surface": "server-binary",
+      "version": "0.0.0-local/amicode-209901010000",
+      "source_version": "2026-08-01T12:00:00Z",
+      "verdict": "current",
+      "evidence": [
+        "frozen 0.0.0-local/amicode-209901010000 sha256 5d41402abc4b2a76b9719d911017c592 = sidecar",
+        "running /Users/aaron/.amico/server/bin/opencode sha256 = frozen sha256",
+        "build date 2099-01-01T00:00:00.000Z ≥ HEAD commit date 2026-08-01T12:00:00.000Z (origin/local/amicode a1b2c3d)"
+      ]
+    },
+    {
+      "surface": "extension",
+      "version": "0.2.4-darwin-arm64",
+      "source_version": "0.2.6",
+      "verdict": "stale",
+      "evidence": [
+        "installed 0.2.4-darwin-arm64 — version-sorted newest under /Users/aaron/.vscode/extensions",
+        "installed 0.2.4 behind origin/main 0.2.6"
+      ]
+    },
+    {
+      "surface": "vendored-binary",
+      "version": "1.18.10",
+      "source_version": "1.18.10",
+      "verdict": "current",
+      "evidence": [
+        "vendored /Users/aaron/armonia/repos/amicode/packages/extension/vendor/opencode/darwin-arm64/opencode --version 1.18.10",
+        "latest fork release tag v1.18.10-amicode.16 (base 1.18.10)",
+        "version = release tag base"
+      ]
+    },
+    {
+      "surface": "staged-skills",
+      "version": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "source_version": "sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+      "verdict": "current",
+      "evidence": [
+        "all 31 staged skills byte-match the VSIX 0.2.6-darwin-arm64 skills set",
+        "set digest sha256:2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      ]
+    },
+    {
+      "surface": "agent-cards-global",
+      "version": "sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20",
+      "source_version": "sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20",
+      "verdict": "current",
+      "evidence": [
+        "all 3 cards byte-match sources (/Users/aaron/.config/opencode/agents)",
+        "deploy receipt source digests match current sources",
+        "set digest sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20"
+      ]
+    },
+    {
+      "surface": "agent-cards-staging",
+      "version": "sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20",
+      "source_version": "sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20",
+      "verdict": "current",
+      "evidence": [
+        "all 3 cards byte-match sources (/Users/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents)",
+        "deploy receipt source digests match current sources",
+        "set digest sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20"
+      ]
+    }
+  ]
+}
