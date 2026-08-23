@@ -150,26 +150,34 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Save bridge (run-card PNG export): downloads are dead inside the framed
-  // app — the extension shows a save dialog and writes the file. PNG-only,
-  // basename-only, bounded size: the payload is untrusted.
+  // Save bridge (run-card PNG + session markdown export): downloads are dead
+  // inside the framed app — the extension shows a save dialog and writes the
+  // file. Bounded size, basename-only: the payload is untrusted.
   if (
     msg.kind === "save-file" &&
     typeof (msg as { filename?: unknown }).filename === "string" &&
     typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
   ) {
     const raw = msg as unknown as { filename: string; dataUrl: string };
-    const prefix = "data:image/png;base64,";
-    const base64 = raw.dataUrl.startsWith(prefix) ? raw.dataUrl.slice(prefix.length) : undefined;
     const name = path.basename(raw.filename).replace(/[^\w.-]+/g, "-");
-    if (!base64 || base64.length > 24_000_000 || !name.endsWith(".png")) return true;
+    if (!name || !/\.(png|md|markdown|txt)$/i.test(name)) return true;
+    let base64: string | undefined;
+    if (raw.dataUrl.startsWith("data:image/png;base64,")) base64 = raw.dataUrl.slice("data:image/png;base64,".length);
+    else if (raw.dataUrl.startsWith("data:text/markdown;base64,")) base64 = raw.dataUrl.slice("data:text/markdown;base64,".length);
+    else if (raw.dataUrl.startsWith("data:text/plain;base64,")) base64 = raw.dataUrl.slice("data:text/plain;base64,".length);
+    else {
+      const m = raw.dataUrl.match(/^data:[^;]+;base64,(.+)$/s);
+      if (m) base64 = m[1];
+    }
+    if (!base64 || base64.length > 24_000_000) return true;
+    const isPng = name.toLowerCase().endsWith(".png");
     void (async () => {
       const target = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", name)),
-        filters: { Images: ["png"] },
+        filters: isPng ? { Images: ["png"] } : { Markdown: ["md", "txt", "markdown"] },
       });
       if (!target) return;
-      await vscode.workspace.fs.writeFile(target, Buffer.from(base64, "base64"));
+      await vscode.workspace.fs.writeFile(target, Buffer.from(base64!, "base64"));
       const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
       if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
     })();
