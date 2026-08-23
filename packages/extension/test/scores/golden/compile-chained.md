@@ -14,23 +14,25 @@ gate's checks pass.
 
 1. **orientation**
    - Q `name`: "What should I call you?"
-2. **context_seed** (optional)
-   - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
-3. **intent**
-   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development — Write code, refactor, debug, and build software | Perform (automated) experiments and gain scientific insights (recommended) — Run automated experiment loops and extract insights from results | Exploring — See what Amicode can do
-4. **goals**
-   - Q `goals`: "What are you hoping to accomplish with Amico?"
-5. **research_area** (optional)
-   - Q `research_area`: "What research areas?"
-   - Q `experiment_kind`: "What kind of experiments?"
-6. **environment** (optional)
-   - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
-7. **devices** (optional)
-   - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
-8. **links** (optional)
+   - Q `role`: "What's your role? (e.g. PhD Student, Postdoc, Head of Research)"
+   - Q `affiliation`: "Where do you work? (institution or company)"
+2. **links** (optional)
    - Q `scholar`: "Google Scholar profile URL (or skip)"
    - Q `github`: "GitHub profile URL (or skip)"
    - Q `custom_link`: "Any other link you'd like on your profile card? (personal site, lab page, etc. — or skip)"
+3. **context_seed** (optional)
+   - Q `seed_optin`: "I can scan your existing AI-tool configs to bootstrap your workspace — want me to?" — options: Yes, scan my configs (recommended) | No thanks, skip
+4. **intent**
+   - Q `intent`: "What brings you to Amicode?" — options: General coding and software development — Write code, refactor, debug, and build software | Perform (automated) experiments and gain scientific insights (recommended) — Run automated experiment loops and extract insights from results | Exploring — See what Amicode can do
+5. **goals**
+   - Q `goals`: "What are you hoping to accomplish with Amico?"
+6. **research_area** (optional)
+   - Q `research_area`: "What research areas?"
+   - Q `experiment_kind`: "What kind of experiments?"
+7. **environment** (optional)
+   - Q `environment`: "How will your experiments reach hardware?" — options: Lab hardware (on-prem control system) | Cloud platform with emulator | Simulation only for now (recommended) | Something else
+8. **devices** (optional)
+   - Q `devices`: "Any specific device(s) you want me to remember? (name, platform, specs — or skip)" — default: skip for now
 9. **handoff**
    - Q `description`: "Here's how I'd describe you — edit if you'd like:"
 10. **platform**
@@ -113,8 +115,16 @@ Per-stage guidance and the `amicode_profile` mapping:
 
 1. **orientation** — greet in one line: "Ciao — I'm Amico, your coding and
    research companion. I'll remember your setup so we can move fast." Then ask
-   for their name using the `question` tool with `kind: "text"`. Record:
+   three questions, one at a time:
+
+   First: name via `question` with `kind: "text"`. Record:
    `amicode_profile {entity:"profile", payload:{name}}`.
+
+   Second: role via `question` with `kind: "text"`: "What's your role?"
+   Record: `amicode_profile {entity:"profile", payload:{role:"..."}}`.
+
+   Third: affiliation via `question` with `kind: "text"`: "Where do you work?"
+   Record: `amicode_profile {entity:"profile", payload:{org:"..."}}`.
 
    **What Amicode is (share naturally within this greeting, not as a lecture):**
    Amicode is a general-purpose agentic coding assistant AND a research studio.
@@ -125,7 +135,27 @@ Per-stage guidance and the `amicode_profile` mapping:
    Do NOT ask about experience level. Do NOT branch by expertise. The same
    warm, brief orientation for everyone.
 
-2. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
+2. **links** _(optional)_ — ask for profile links that appear on the profile
+   card as icon pills. Three questions, one at a time per the protocol — each
+   skippable ("skip" or empty = no link recorded):
+
+   First: "Google Scholar profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{scholar:"https://..."}}`.
+
+   Second: "GitHub profile URL (or skip)" via `question` with `kind: "text"`.
+   Record (if non-empty):
+   `amicode_profile {entity:"profile", payload:{github:"https://..."}}`.
+
+   Third: "Any other link you'd like on your profile card? (personal site, lab
+   page, etc. — or skip)" via `question` with `kind: "text"`. If the user
+   provides a URL, ask a brief follow-up for a label ("What should I call it?"
+   with `kind: "text"` and `default: "Website"`). Record:
+   `amicode_profile {entity:"profile", payload:{custom_link_url:"https://...", custom_link_label:"Lab page"}}`.
+
+   If all three are skipped, that's fine — advance without recording.
+
+3. **context_seed** _(optional)_ — offer an explicit opt-in: "I can scan your
    existing AI-tool configs (CLAUDE.md, cursor rules, opencode config) to
    bootstrap your workspace — want me to?" via the `question` tool with the
    two choices above.
@@ -159,7 +189,7 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    After seeding (or declining), advance.
 
-3. **intent** — present a MULTI-SELECT question via the `question` tool with
+4. **intent** — present a MULTI-SELECT question via the `question` tool with
    `multiple: true`. The question: "What brings you to Amicode?" with exactly
    three options:
    - "General coding and software development"
@@ -173,13 +203,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    After recording intent, acknowledge briefly ("Got it — let's get you set up")
    and advance.
 
-4. **goals** — free-text question via `question` tool with `kind: "text"`:
+5. **goals** — free-text question via `question` tool with `kind: "text"`:
    "What are you hoping to accomplish with Amico?" No pre-fill (goals are
    personal, not inferrable from configs).
 
    Record: `amicode_profile {entity:"profile", payload:{goals:"..."}}`.
 
-5. **research_area** _(optional — only if user selected the experiments intent)_ —
+6. **research_area** _(optional — only if user selected the experiments intent)_ —
    Two back-to-back questions (asked one at a time per the protocol):
 
    First, ask via the `question` tool with `kind: "text"`: "What research areas?"
@@ -193,10 +223,10 @@ Per-stage guidance and the `amicode_profile` mapping:
 
    If the user didn't select the experiments intent, skip this stage entirely.
 
-6. **environment** — _(only if user selected the experiments intent)_ — ask how
+7. **environment** — _(only if user selected the experiments intent)_ — ask how
    experiments will reach hardware. **Pre-fill from seeds:** call
    `amicode_profile {entity:"status"}` and check if an environment is already
-   recorded from the context-seed (Stage 2). If so, present it as a
+   recorded from the context-seed (Stage 3). If so, present it as a
    confirmation: "I found you use {archetype} — confirm, or change?" via the
    `question` tool. If no seed, ask the standard choice question with the
    options above.
@@ -204,33 +234,13 @@ Per-stage guidance and the `amicode_profile` mapping:
    Record: `amicode_profile {entity:"environment", payload:{slug, archetype}}`.
    Follow up on details per archetype if confirmed.
 
-7. **devices** _(optional, only if user selected the experiments intent)_ —
+8. **devices** _(optional, only if user selected the experiments intent)_ —
    same pre-fill pattern: if a device was seeded, confirm it. Otherwise ask:
    "Any specific device(s) you want me to remember?"
    This stage is ALWAYS skippable — "none" or "skip" is a valid answer.
 
    Record: `amicode_profile {entity:"device", payload:{name, platform, specs}}`.
    If skipped, move on without recording.
-
-8. **links** _(optional)_ — ask for profile links that appear on the profile
-   card as icon pills. Three questions, one at a time per the protocol — each
-   skippable ("skip" or empty = no link recorded):
-
-   First: "Google Scholar profile URL (or skip)" via `question` with `kind: "text"`.
-   Record (if non-empty):
-   `amicode_profile {entity:"profile", payload:{scholar:"https://..."}}`.
-
-   Second: "GitHub profile URL (or skip)" via `question` with `kind: "text"`.
-   Record (if non-empty):
-   `amicode_profile {entity:"profile", payload:{github:"https://..."}}`.
-
-   Third: "Any other link you'd like on your profile card? (personal site, lab
-   page, etc. — or skip)" via `question` with `kind: "text"`. If the user
-   provides a URL, ask a brief follow-up for a label ("What should I call it?"
-   with `kind: "text"` and `default: "Website"`). Record:
-   `amicode_profile {entity:"profile", payload:{custom_link_url:"https://...", custom_link_label:"Lab page"}}`.
-
-   If all three are skipped, that's fine — advance without recording.
 
 9. **handoff** — the terminal stage.
 
