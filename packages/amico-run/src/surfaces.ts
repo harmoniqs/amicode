@@ -81,7 +81,7 @@ export interface SurfaceContext {
 
 const GIT_TIMEOUT_MS = 30_000;
 
-const realExec: Exec = (file, args) =>
+export const realExec: Exec = (file, args) =>
   new Promise((resolve) => {
     execFile(file, args, { timeout: GIT_TIMEOUT_MS }, (err, stdout, stderr) => {
       const code = err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
