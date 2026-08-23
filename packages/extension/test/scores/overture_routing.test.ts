@@ -40,17 +40,17 @@ function prep(vaultDir: string, opsDir: string) {
 process.env.AMICO_PROFILE_FILE = path.join(os.tmpdir(), "amicode-tests-no-profile", "profile.json");
 
 describe("overture routing predicate (spec §3)", () => {
-  it("no PROFILE.md + no marker → chained overture→pulse-designer session", () => {
+  it("no PROFILE.md + no marker → standalone overture session (no pulse-designer chain)", () => {
     const proj = prep(mkVault(), fs.mkdtempSync(path.join(os.tmpdir(), "ops-")));
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("overture");
-    expect(agents).toContain("After onboarding — continue into pulse design");
+    // The overture is standalone — no pulse-designer stages chained after it
+    expect(agents).not.toContain("After onboarding — continue into pulse design");
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("overture");
-    // chained manifest carries BOTH stage sets → the guard sees the whole flow
     const ids = manifest.manifest.stages.map((s: { id: string }) => s.id);
-    expect(ids).toContain("orientation"); // overture
-    expect(ids).toContain("solve"); // pulse-designer
+    expect(ids).toContain("orientation"); // overture stage
+    expect(ids).not.toContain("solve"); // pulse-designer stage should NOT be present
   });
   it("non-empty PROFILE.md → pulse-designer only (no overture)", () => {
     const proj = prep(withProfile(mkVault()), fs.mkdtempSync(path.join(os.tmpdir(), "ops-")));

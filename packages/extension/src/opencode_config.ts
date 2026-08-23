@@ -6,7 +6,7 @@ import { loadRepertoire } from "./scores/loader";
 import { loadPacks } from "./scores/packs";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
-import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
+import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
@@ -620,27 +620,26 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const visible = filterRepertoire(repertoire, ents.entitlements);
     const score0 = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.primary ?? "pulse-designer"));
     const overture = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.head ?? "overture"));
-    // Routing predicate (spec §3): onboard (chain overture → pulse-designer)
-    // ONLY when there is a vault to remember into AND the user has neither a
-    // materialized profile NOR a completion marker (the second disjunct closes
-    // the ~2-min materialization window; an empty/whitespace PROFILE.md counts
-    // as absent via readProfileMd). No vault ⇒ never onboard (nowhere to
-    // materialize) — just run pulse-designer.
+    // Routing predicate (spec §3): onboard (standalone overture) ONLY when
+    // there is a vault to remember into AND the user has neither a materialized
+    // profile NOR a completion marker. The overture is NEVER chained into
+    // pulse-designer — domain interviews start in subsequent sessions via the
+    // onset router.
     const shouldOnboard =
       !!overture &&
-      !!score0 &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
       !consumeDevtoolsRestoreMarker() &&
       !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
-    if (shouldOnboard && overture && score0) {
-      // Chained: ONE compiled section, ONE manifest (id `overture`, stages =
-      // overture ++ pulse-designer) so the score guard sees the whole flow.
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileChainedScore(overture, score0));
+    if (shouldOnboard && overture) {
+      // Standalone overture: the onboarding interview runs alone, no domain
+      // score chained after it. The pulse-designer (or any domain interview)
+      // starts in the NEXT session via the onset router.
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(overture));
       const manifestJson =
         JSON.stringify(
-          { manifest: chainManifest(overture, score0), score_dir: overture.dir, project_dir: projectDir },
+          { manifest: overture.manifest, score_dir: overture.dir, project_dir: projectDir },
           null,
           2,
         ) + "\n";
