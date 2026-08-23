@@ -43,7 +43,7 @@
 // on the mini, and what the receipt must show, live in
 // docs/upgrade-live-dispatch.md (this slice does NOT run the live upgrade).
 import { execFile } from "node:child_process";
-import { mkdir, open, readFile, rm, copyFile, readdir, stat } from "node:fs/promises";
+import { mkdir, open, readFile, rm, copyFile, readdir, stat, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -52,6 +52,7 @@ import {
   dirDigest,
   fileSha,
   versionPrefix,
+  defaultSurfaceContext,
   type SurfaceContext,
   type SurfaceRecord,
   type SurfaceName,
@@ -733,15 +734,249 @@ function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?
   return env;
 }
 
-// ── the remaining verbs land in their own cycles; the router rejects them
-// honestly until then (never a silent no-op) ─────────────────────────────────
+// ── server-binary: the 9-step chain (build → freeze → sidecar → kick) ───────
 
-const notYetImplemented = (surface: UpgradeSurface) => (argv: string[]): Promise<VerbResult> =>
-  runVerb(surface, argv, [], async () => {
-    throw new Error(`${surface} verb body not yet implemented`);
+const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
+  runVerb("server-binary", argv, ["server-binary"], async (ctx) => {
+    const rootServer = ctx.roots.rootServer!;
+    const rootRepoFork = ctx.roots.rootRepoFork!;
+    const ref = ctx.args.flags["--ref"] ?? "origin/local/amicode";
+    const skipBuild = ctx.args.flags["--skip-build"];
+    const noKick = ctx.args.bools.has("--no-kick");
+    const kickCommand =
+      ctx.args.flags["--kick-command"] ?? "launchctl kickstart -k gui/$(id -u)/co.harmoniqs.amicode-server";
+    const healthCommand =
+      ctx.args.flags["--health-command"] ?? 'curl -fsS "http://127.0.0.1:4096/session?limit=1"';
+    const timeoutMs = Number(ctx.args.flags["--verify-timeout-ms"] ?? HEALTH_TIMEOUT_DEFAULT_MS);
+    const runningPath = ctx.args.runningBinary;
+
+    const binDir = join(rootServer, "bin");
+    const frozen = join(binDir, "opencode");
+    const sidecar = `${frozen}.sha256`;
+    const prevBin = `${frozen}.prev`;
+    const digests: Record<string, string | null> = {};
+
+    // (1) environment preflight — bun + node present, fork checkout exists.
+    // The bun check is the BUILD path's requirement; --skip-build freezes an
+    // existing artifact and never needs it.
+    try {
+      await stat(rootRepoFork);
+    } catch {
+      ctx.log(`fork checkout not found: ${rootRepoFork}`);
+      return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: digests };
+    }
+    ctx.log(`environment: node ${process.versions.node}, fork ${rootRepoFork}`);
+    if (!skipBuild) {
+      const bun = await runShell("bun --version");
+      if (bun.code !== 0) {
+        ctx.log("bun not available on PATH (the build step needs it — or pass --skip-build <path>)");
+        return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: digests };
+      }
+      ctx.log(`environment: bun ${bun.stdout.trim()}`);
+    }
+
+    // (2) fork state: fetch, clean tree, HEAD ancestor of the ref. Dirt or
+    // divergence → aborted-diverged (never reset, never merge — the human
+    // resolves). Clean-but-behind → ff-only to the ref (a fast-forward of a
+    // clean tree is not a merge).
+    const fetch = await runGit(rootRepoFork, ["fetch", "origin"]);
+    if (fetch.code !== 0) {
+      ctx.log(`fork fetch failed: ${firstLine(fetch.stderr)}`);
+      return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: digests };
+    }
+    const headBefore = (await runGit(rootRepoFork, ["rev-parse", "HEAD"])).stdout.trim();
+    digests.fork_head_before = headBefore;
+    const status = await runGit(rootRepoFork, ["status", "--porcelain"]);
+    if (status.code !== 0 || status.stdout.trim().length > 0) {
+      ctx.log(
+        status.code !== 0
+          ? `git status failed: ${firstLine(status.stderr)}`
+          : `fork tree dirty (never reset, never merge — the human resolves):\n${status.stdout.trim()}`,
+      );
+      return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
+    }
+    const refSha = (await runGit(rootRepoFork, ["rev-parse", "--verify", ref])).stdout.trim();
+    if (!refSha) {
+      ctx.log(`ref ${ref} not found in the fork after fetch`);
+      return { outcome: "aborted-unknown", verification: null, post: null, sourceDigests: digests };
+    }
+    digests.fork_head_at_ref = refSha;
+    const ancestor = await runGit(rootRepoFork, ["merge-base", "--is-ancestor", "HEAD", ref]);
+    if (ancestor.code !== 0) {
+      ctx.log(`fork HEAD ${headBefore.slice(0, 12)} is NOT an ancestor of ${ref} ${refSha.slice(0, 12)} — diverged; the human resolves`);
+      return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
+    }
+    if (headBefore !== refSha) {
+      ctx.log(`fork clean-but-behind: fast-forwarding ${headBefore.slice(0, 12)} → ${refSha.slice(0, 12)} (ff-only)`);
+      const ff = await runGit(rootRepoFork, ["merge", "--ff-only", ref]);
+      if (ff.code !== 0) {
+        ctx.log(`ff-only fast-forward failed: ${firstLine(ff.stderr)}`);
+        return { outcome: "aborted-diverged", verification: null, post: null, sourceDigests: digests };
+      }
+    }
+    const headAfter = (await runGit(rootRepoFork, ["rev-parse", "HEAD"])).stdout.trim();
+    digests.fork_head_after = headAfter;
+    digests.ref = ref;
+
+    // (3+4) bun install + build --single (the LIVE path; --skip-build freezes
+    // an existing artifact — the fixture path)
+    let artifact: string;
+    if (skipBuild !== undefined) {
+      artifact = skipBuild;
+      try {
+        await stat(artifact);
+      } catch {
+        ctx.log(`--skip-build artifact not found: ${artifact}`);
+        return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: digests };
+      }
+    } else {
+      const inst = await runShell("bun install", { cwd: rootRepoFork, timeoutMs: 600_000 });
+      if (inst.code !== 0) {
+        ctx.log(`bun install failed (exit ${inst.code}): ${firstLine(inst.stderr || inst.stdout)}`);
+        return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
+      }
+      const pkgDir = join(rootRepoFork, "packages", "opencode");
+      const build = await runShell("bun run build --single", { cwd: pkgDir, timeoutMs: 1_800_000 });
+      if (build.code !== 0) {
+        ctx.log(`build --single failed (exit ${build.code}): ${firstLine(build.stderr || build.stdout)}`);
+        return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
+      }
+      artifact = join(pkgDir, "dist", `opencode-${process.platform}-${process.arch}`, "bin", "opencode");
+      try {
+        await stat(artifact);
+      } catch {
+        ctx.log(`build produced no binary at ${artifact}`);
+        return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
+      }
+    }
+
+    // (5) smoke-test the artifact BEFORE touching the surface
+    const smoke = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(artifact, ["--version"], { timeout: 60_000 }, (err, stdout, stderr) => {
+        const code = err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
+        resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+      });
+    });
+    if (smoke.code !== 0) {
+      ctx.log(`artifact --version smoke test failed (exit ${smoke.code}): ${firstLine(smoke.stderr)}`);
+      return { outcome: "aborted-build", verification: null, post: null, sourceDigests: digests };
+    }
+    const artifactVersion = smoke.stdout.trim().split("\n").pop() ?? "";
+    digests.artifact_sha256 = await fileSha(artifact);
+    digests.artifact_version = artifactVersion;
+    ctx.log(`smoke ok: ${artifact} --version → ${artifactVersion}`);
+
+    // (6) freeze: preserve the current binary as opencode.prev, copy the new
+    // one, write the sidecar — never a live-path swap under a running server
+    await mkdir(binDir, { recursive: true });
+    let prevSha: string | null = null;
+    try {
+      prevSha = await fileSha(frozen);
+      await copyFile(frozen, prevBin);
+      ctx.log(`preserved current binary as opencode.prev (sha ${prevSha.slice(0, 12)})`);
+    } catch {
+      ctx.log("no current frozen binary — first freeze (no opencode.prev)");
+    }
+    await copyFile(artifact, frozen);
+    await chmod(frozen, 0o755);
+    let frozenSha = await fileSha(frozen);
+    await writeFile(sidecar, `${frozenSha}  opencode\n`);
+    digests.frozen_sha256 = frozenSha;
+    digests.prev_sha256 = prevSha;
+    ctx.log(`froze ${frozen} (sha ${frozenSha.slice(0, 12)}), sidecar written`);
+
+    const kickEnv = (phase: string): Record<string, string> =>
+      stubEnv({ frozen, running: runningPath ?? undefined, prev: prevBin, server: rootServer, phase });
+
+    // (7) kick — launchctl kickstart is the durable mechanism (the /tmp kick
+    // script was a session hack, never the verb's path)
+    const kick = async (phase: string): Promise<void> => {
+      ctx.log(`kick (${phase}): ${kickCommand}`);
+      const r = await runShell(kickCommand, { env: kickEnv(phase) });
+      if (r.code !== 0) ctx.log(`kick exited ${r.code}: ${firstLine(r.stderr || r.stdout)}`);
+    };
+
+    // (8) verify: poll health AND the running process's binary sha == the
+    // frozen sha (both must hold); timeout; ONE re-kick retry, then restore.
+    const healthyAgainst = async (targetSha: string, phase: string): Promise<boolean> => {
+      const h = await runShell(healthCommand, { env: kickEnv(phase), timeoutMs: 10_000 });
+      if (h.code !== 0) return false;
+      const running = runningPath ?? (await defaultSurfaceContext().discoverRunning());
+      if (!running) {
+        ctx.log("health ok but no running opencode serve process found (server-down)");
+        return false;
+      }
+      const runningSha = await fileSha(running);
+      digests.running_sha256 = runningSha;
+      return runningSha === targetSha;
+    };
+    const poll = async (targetSha: string, phase: string, budgetMs: number): Promise<boolean> => {
+      const deadline = Date.now() + budgetMs;
+      const interval = budgetMs <= 5_000 ? 100 : 2_000;
+      for (;;) {
+        if (await healthyAgainst(targetSha, phase)) return true;
+        if (Date.now() >= deadline) return false;
+        await new Promise((res) => setTimeout(res, Math.min(interval, Math.max(1, deadline - Date.now()))));
+      }
+    };
+
+    if (noKick) {
+      ctx.log("--no-kick: freeze only — verification deferred; opencode.prev retained until a later verify passes");
+      const post = await postRecords(ctx, ["server-binary"]);
+      return { outcome: "upgraded", verification: "deferred", post, sourceDigests: digests };
+    }
+
+    await kick("kick");
+    let verified = await poll(frozenSha, "verify", timeoutMs);
+    if (!verified) {
+      ctx.log(`verify: unhealthy after ${timeoutMs}ms — one re-kick retry`);
+      await kick("verify-retry");
+      verified = await poll(frozenSha, "verify-retry", timeoutMs);
+    }
+
+    if (verified) {
+      // (9) success — delete opencode.prev (its verification passed)
+      ctx.log("verified: healthy + running sha == sidecar");
+      await rm(prevBin, { force: true });
+      ctx.log("deleted opencode.prev (verification passed)");
+      const post = await postRecords(ctx, ["server-binary"]);
+      return { outcome: "upgraded", verification: true, post, sourceDigests: digests };
+    }
+
+    // restore: prev back over the frozen binary, sidecar REWRITTEN to prev's
+    // sha (else the surface would read integrity-failed forever), kick, and
+    // re-verify health + running sha == prev's sha. A VERIFIED restore
+    // deletes prev (its verification passed — the restore's own); a failed
+    // restore retains it and records restore-failed (the receipt records it;
+    // delivery is the watchdog's drift digest and the morning brief — never
+    // silence).
+    ctx.log("verification FAILED — restoring opencode.prev");
+    if (prevSha === null) {
+      ctx.log("no opencode.prev to restore (first-ever freeze) — server left on the new, unverified binary");
+      const post = await postRecords(ctx, ["server-binary"]);
+      return { outcome: "restore-failed", verification: false, post, sourceDigests: digests };
+    }
+    await copyFile(prevBin, frozen);
+    await chmod(frozen, 0o755);
+    const restoredSha = await fileSha(frozen);
+    await writeFile(sidecar, `${restoredSha}  opencode\n`); // the sidecar REWRITE
+    digests.restored_sha256 = restoredSha;
+    ctx.log(`restored prev (sha ${restoredSha.slice(0, 12)}) — sidecar rewritten to match`);
+    await kick("restore-kick");
+    const restoreVerified = await poll(restoredSha, "restore", timeoutMs);
+    if (restoreVerified) {
+      await rm(prevBin, { force: true });
+      ctx.log("restore verified (healthy + running sha == prev's sha) — prev deleted");
+      const post = await postRecords(ctx, ["server-binary"]);
+      return { outcome: "restored", verification: false, post, sourceDigests: digests };
+    }
+    ctx.log("restore verification FAILED — server down; opencode.prev retained; the watchdog/morning-brief is the delivery path");
+    const post = await postRecords(ctx, ["server-binary"]);
+    return { outcome: "restore-failed", verification: false, post, sourceDigests: digests };
   });
 
-const serverBinaryVerb = notYetImplemented("server-binary");
+// ── the remaining verbs land in their own cycles; the router rejects them
+// honestly until then (never a silent no-op) ─────────────────────────────────
 
 // ── the entry ────────────────────────────────────────────────────────────────
 
