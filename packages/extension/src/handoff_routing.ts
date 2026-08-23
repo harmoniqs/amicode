@@ -8,10 +8,10 @@
 export type IntentSlug = "research" | "general_coding" | "exploring";
 
 export type HandoffAction =
-  | "pulse-designer"     // Research selected → guided pulse-designer interview
+  | "research-session"   // Research selected → guided research interview (domain-specific)
   | "normal-session"     // General coding only → open session, highlight memory + vault
   | "tour-session"       // Exploring only → open session with brief tour offer
-  | "pulse-designer-plus"; // Research + General coding → pulse-designer with broader studio mention
+  | "research-session-plus"; // Research + General coding → research interview with broader studio mention
 
 // ─── Routing table (pure, testable) ──────────────────────────────────────────
 
@@ -22,10 +22,10 @@ export function resolveHandoffAction(intents: IntentSlug[]): HandoffAction {
   const hasGeneral = intents.includes("general_coding");
   const hasExploring = intents.includes("exploring");
 
-  // Research always routes to pulse-designer (possibly with broader mention)
-  if (hasResearch && hasGeneral) return "pulse-designer-plus";
-  if (hasResearch && hasExploring) return "pulse-designer";
-  if (hasResearch) return "pulse-designer";
+  // Research always routes to the research session (domain-specific interview)
+  if (hasResearch && hasGeneral) return "research-session-plus";
+  if (hasResearch && hasExploring) return "research-session";
+  if (hasResearch) return "research-session";
 
   // General coding only
   if (hasGeneral && hasExploring) return "normal-session";
