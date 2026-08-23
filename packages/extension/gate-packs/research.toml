@@ -1,0 +1,76 @@
+# Research gate pack — the contract of record for the research mode's phase
+# graph, gates, roles, and handoffs, extracted from the live director
+# research protocol (session-ledger discipline, the cast pattern, verdicts
+# derived from commands, human-only promotion).
+
+closing_artifact = "experiment note + ledger delta"
+
+[[phases]]
+name = "hypothesize"
+roles = ["hypothesizer"]
+
+  [[phases.gates]]
+  name = "ledger-currency"
+  kind = "derived"
+  owner = "director"
+  procedure = "Re-read the session ledger from disk before trusting the hypothesis queue; a ledger whose in-flight section is older than the last edit on disk is stale and must be refreshed before any hypothesis is picked."
+
+[[phases]]
+name = "deliberate"
+
+  [[phases.gates]]
+  name = "spec-review"
+  kind = "mechanical"
+  owner = "director"
+  procedure = "File the spec card and run the spec review command; resolve every blocking finding and re-run within a round budget of 3 — the unreviewed escape hatch is forbidden for launch-shaped work that spends compute."
+
+[[phases]]
+name = "experiment"
+roles = ["experimenter"]
+
+  [[phases.gates]]
+  name = "probe-boundary"
+  kind = "mechanical"
+  owner = "director"
+  procedure = "Classify work by the mechanical boundary before it runs: read-only probes and bounded side-effect-free one-liners need no spec, while anything that writes a durable file, launches a solve, or runs a test suite is an experiment and requires a reviewed spec."
+
+  [[phases.gates]]
+  name = "checkout-claim"
+  kind = "derived"
+  owner = "director"
+  procedure = "Claim the environment row in the fleet checkout registry before casting the experimenter, and dispatch parallel experimenters only where the registry says their files are disjoint."
+
+[[phases]]
+name = "gate"
+
+  [[phases.gates]]
+  name = "run-gates"
+  kind = "mechanical"
+  owner = "director"
+  procedure = "Run the gates yourself through the shell — test suites and compiled-plan status — and derive every verdict from command output; verdicts are never self-reported and no language model judges a fidelity claim."
+
+[[phases]]
+name = "analyze"
+roles = ["analyzer"]
+
+  [[phases.gates]]
+  name = "advisory-closure"
+  kind = "derived"
+  owner = "director"
+  procedure = "Close every advisory from the spec review as fixed, waived-with-reason, or obsolete, and record each closure in the ledger before the loop ends."
+
+  [[phases.gates]]
+  name = "ledger-commit"
+  kind = "derived"
+  owner = "director"
+  procedure = "Commit the ledger update at the loop boundary as sole writer — hypothesis-verdict row, loop-log row, in-flight state, and next queue — so the ledger never lies about what is in the air."
+
+  [[phases.gates]]
+  name = "catalog-promotion"
+  kind = "human"
+  owner = "human"
+  procedure = "Promote any result to the pulse catalog or a status record only through a human decision; promotion is human-only, always, and never an agent action."
+
+[[handoffs]]
+kind = "issue_seed"
+target = "autodev"
