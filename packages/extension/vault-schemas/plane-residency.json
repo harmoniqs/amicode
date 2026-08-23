@@ -1,0 +1,63 @@
+{
+  "device": {
+    "plane": "knowledge"
+  },
+  "experiment": {
+    "note": "resides as a record (minimal frontmatter)",
+    "plane": "evidence"
+  },
+  "feedback": {
+    "plane": "knowledge"
+  },
+  "hypothesis": {
+    "plane": "knowledge"
+  },
+  "insight": {
+    "plane": "knowledge"
+  },
+  "meeting": {
+    "note": "resides as a record",
+    "plane": "evidence"
+  },
+  "method": {
+    "plane": "knowledge"
+  },
+  "org": {
+    "plane": "knowledge"
+  },
+  "paper": {
+    "note": "resides as a record",
+    "plane": "evidence"
+  },
+  "person": {
+    "plane": "knowledge"
+  },
+  "plan": {
+    "note": "scaffolding — archives on landing via lifecycle_complete",
+    "plane": "work"
+  },
+  "project": {
+    "plane": "knowledge"
+  },
+  "reference": {
+    "plane": "knowledge"
+  },
+  "retrospective": {
+    "note": "resides as a record",
+    "plane": "evidence"
+  },
+  "spec": {
+    "note": "approved specs; drafts live in work/",
+    "plane": "knowledge"
+  },
+  "tension": {
+    "plane": "knowledge"
+  },
+  "tombstone": {
+    "note": "written at the archived card's origin plane",
+    "plane": "knowledge"
+  },
+  "user": {
+    "plane": "knowledge"
+  }
+}

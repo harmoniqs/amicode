@@ -1,0 +1,10 @@
+{
+  "applicability": "short-time gates, drive-limited regimes",
+  "date": "2026-08-01",
+  "name": "bang-bang parameterization",
+  "source": "literature",
+  "tags": [
+    "parameterization"
+  ],
+  "type": "method"
+}

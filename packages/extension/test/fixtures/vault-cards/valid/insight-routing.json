@@ -1,0 +1,13 @@
+{
+  "confidence": "high",
+  "date": "2026-08-20",
+  "evidence": [
+    "experiments/e4.md"
+  ],
+  "source": "session",
+  "subject": "model-routing",
+  "tags": [
+    "routing"
+  ],
+  "type": "insight"
+}

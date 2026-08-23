@@ -1,0 +1,19 @@
+{
+  "date": "2026-08-16",
+  "duration_us": 20,
+  "fidelity": 0.9995,
+  "gate": "X",
+  "platform": "fluxonium",
+  "provenance": [
+    "experiments/exp-fluxonium.md"
+  ],
+  "review_by": "2026-11-16",
+  "session_id": "s4",
+  "status": "solved",
+  "subject": "fluxonium-x",
+  "tags": [
+    "fluxonium"
+  ],
+  "task_type": "experiment-sim",
+  "type": "experiment"
+}

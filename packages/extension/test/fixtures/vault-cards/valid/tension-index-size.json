@@ -1,0 +1,14 @@
+{
+  "a_cards": [
+    "knowledge/insight-index-budget.md"
+  ],
+  "b_cards": [
+    "knowledge/insight-index-freshness.md"
+  ],
+  "date": "2026-08-22",
+  "subject": "index-size",
+  "tags": [
+    "indexes"
+  ],
+  "type": "tension"
+}

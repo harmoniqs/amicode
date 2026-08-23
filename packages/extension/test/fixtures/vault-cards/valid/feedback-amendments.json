@@ -1,0 +1,15 @@
+{
+  "date": "2026-08-22",
+  "description": "spec amendments get the same adversarial review budget as originals",
+  "name": "amendment-review-budget",
+  "provenance": [
+    "insights/i-amend.md"
+  ],
+  "review_by": "2026-11-22",
+  "status": "active",
+  "tags": [
+    "memory",
+    "specs"
+  ],
+  "type": "feedback"
+}

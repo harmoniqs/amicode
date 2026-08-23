@@ -1,0 +1,11 @@
+{
+  "date": "2026-08-21",
+  "platform": "transmon",
+  "priority": "p1",
+  "review_by": "2027-08-21",
+  "status": "approved",
+  "tags": [
+    "context"
+  ],
+  "type": "spec"
+}

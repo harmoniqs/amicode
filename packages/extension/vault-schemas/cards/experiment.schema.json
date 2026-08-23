@@ -1,0 +1,112 @@
+{
+  "$id": "https://schemas.amicode.dev/vault/cards/experiment.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provenance_unrecoverable": {
+            "const": true
+          }
+        },
+        "required": [
+          "provenance_unrecoverable"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "reviewed_after"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "date": {
+      "format": "date",
+      "type": "string"
+    },
+    "duration_us": {
+      "type": "number"
+    },
+    "fidelity": {
+      "type": "number"
+    },
+    "gate": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "platform": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "provenance": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "provenance_unrecoverable": {
+      "type": "boolean"
+    },
+    "review_by": {
+      "format": "date",
+      "type": "string"
+    },
+    "reviewed_after": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "session_id": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "subject": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "task_type": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "experiment"
+    }
+  },
+  "required": [
+    "type",
+    "task_type",
+    "date",
+    "session_id",
+    "platform",
+    "gate",
+    "fidelity",
+    "duration_us",
+    "status",
+    "tags"
+  ],
+  "title": "experiment card",
+  "type": "object"
+}

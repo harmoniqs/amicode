@@ -1,0 +1,17 @@
+{
+  "confidence": "high",
+  "date": "2026-08-18",
+  "evidence": [
+    "experiments/e2.md"
+  ],
+  "provenance": [
+    "experiments/e2.md"
+  ],
+  "review_by": "2026-11-18",
+  "source": "session",
+  "subject": "warm-starts",
+  "tags": [
+    "warm-starts"
+  ],
+  "type": "insight"
+}

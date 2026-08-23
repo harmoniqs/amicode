@@ -1,0 +1,14 @@
+{
+  "date": "2026-08-12",
+  "duration_us": 42,
+  "fidelity": 0.9999998,
+  "gate": "CZ",
+  "platform": "rydberg",
+  "session_id": "s2",
+  "status": "solved",
+  "tags": [
+    "cz"
+  ],
+  "task_type": "experiment-sim",
+  "type": "experiment"
+}

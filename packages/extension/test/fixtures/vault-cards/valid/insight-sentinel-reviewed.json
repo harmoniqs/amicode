@@ -1,0 +1,15 @@
+{
+  "confidence": "low",
+  "date": "2026-08-18",
+  "evidence": [
+    "experiments/e3.md"
+  ],
+  "provenance": [],
+  "provenance_unrecoverable": true,
+  "reviewed_after": "journal/pass-1.md",
+  "source": "session",
+  "tags": [
+    "legacy"
+  ],
+  "type": "insight"
+}

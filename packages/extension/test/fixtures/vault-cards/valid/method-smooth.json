@@ -1,0 +1,13 @@
+{
+  "applicability": "transmon single-qubit gates",
+  "date": "2026-08-02",
+  "name": "smooth parameterization",
+  "provenance": [
+    "experiments/e7.md"
+  ],
+  "source": "demo",
+  "tags": [
+    "parameterization"
+  ],
+  "type": "method"
+}

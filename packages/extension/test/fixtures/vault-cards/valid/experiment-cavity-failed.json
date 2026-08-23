@@ -1,0 +1,14 @@
+{
+  "date": "2026-08-14",
+  "duration_us": 30,
+  "fidelity": 0.71,
+  "gate": "Fock2",
+  "platform": "cavity",
+  "session_id": "s3",
+  "status": "failed",
+  "tags": [
+    "fock"
+  ],
+  "task_type": "experiment-sim",
+  "type": "experiment"
+}

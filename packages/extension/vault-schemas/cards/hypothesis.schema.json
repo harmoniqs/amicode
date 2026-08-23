@@ -1,0 +1,96 @@
+{
+  "$id": "https://schemas.amicode.dev/vault/cards/hypothesis.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provenance_unrecoverable": {
+            "const": true
+          }
+        },
+        "required": [
+          "provenance_unrecoverable"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "reviewed_after"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "date": {
+      "format": "date",
+      "type": "string"
+    },
+    "evidence": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "provenance": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "provenance_unrecoverable": {
+      "type": "boolean"
+    },
+    "review_by": {
+      "format": "date",
+      "type": "string"
+    },
+    "reviewed_after": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "source": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "status": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "subject": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "type": {
+      "const": "hypothesis"
+    }
+  },
+  "required": [
+    "type",
+    "date",
+    "source",
+    "status",
+    "evidence",
+    "tags"
+  ],
+  "title": "hypothesis card",
+  "type": "object"
+}

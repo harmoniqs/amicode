@@ -1,0 +1,12 @@
+{
+  "confidence": "medium",
+  "date": "2026-08-18",
+  "evidence": [
+    "experiments/e1.md"
+  ],
+  "source": "session",
+  "tags": [
+    "warm-starts"
+  ],
+  "type": "insight"
+}
