@@ -165,17 +165,30 @@ interface ShellOpts {
   timeoutMs?: number;
 }
 
+/** token → env-var aliases for the {token} substitution in stub/live commands */
+const TOKEN_ENV: Record<string, string> = {
+  frozen: "AMICO_UPGRADE_FROZEN_BIN",
+  running: "AMICO_UPGRADE_RUNNING_BIN",
+  prev: "AMICO_UPGRADE_PREV_BIN",
+  server: "AMICO_UPGRADE_ROOT_SERVER",
+  version: "AMICO_UPGRADE_TARGET_VERSION",
+  vscext: "AMICO_UPGRADE_ROOT_VSCEXT",
+  vsix: "AMICO_UPGRADE_VSIX",
+  repo: "AMICO_UPGRADE_REPO_AMICODE",
+};
+
 async function runShell(cmd: string, opts: ShellOpts = {}): Promise<{ code: number; stdout: string; stderr: string }> {
+  const env = opts.env ?? {};
   const script = cmd.replace(/\{(\w+)\}/g, (m, tok: string) =>
-    Object.prototype.hasOwnProperty.call(opts.env ?? {}, `AMICO_UPGRADE_${tok.toUpperCase()}`)
-      ? (opts.env![`AMICO_UPGRADE_${tok.toUpperCase()}`] as string)
+    Object.prototype.hasOwnProperty.call(env, TOKEN_ENV[tok] ?? `AMICO_UPGRADE_${tok.toUpperCase()}`)
+      ? (env[TOKEN_ENV[tok] ?? `AMICO_UPGRADE_${tok.toUpperCase()}`] as string)
       : m,
   );
   return new Promise((resolve) => {
     execFile(
       "sh",
       ["-c", script],
-      { timeout: opts.timeoutMs ?? 300_000, cwd: opts.cwd, env: { ...process.env, ...opts.env } },
+      { timeout: opts.timeoutMs ?? 300_000, cwd: opts.cwd, env: { ...process.env, ...env } },
       (err, stdout, stderr) => {
         const code = err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
         resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
@@ -307,11 +320,10 @@ function probe(ctx: VerbCtx): Promise<{ surfaces: SurfaceRecord[] }> {
 }
 
 /** Pre-flight gate shared by every verb: current → no-op; any unknown → abort;
- *  stale/integrity-failure → proceed. Returns the gate decision + records. */
+ *  stale/integrity-failure → proceed (integrity-failure IS the fix case). */
 function gatePreflight(records: SurfaceRecord[]): { decision: "proceed" } | { decision: "no-op" } | { decision: "abort"; reason: string } {
   if (records.some((r) => r.verdict === "unknown")) {
-    const unk = records.find((r) => r.verdict === "unknown")!;
-    return { decision: "abort", reason: `aborted-unknown` };
+    return { decision: "abort", reason: "aborted-unknown" };
   }
   if (records.every((r) => r.verdict === "current")) return { decision: "no-op" };
   return { decision: "proceed" };
@@ -400,7 +412,7 @@ async function runVerb(
 // ── skills: the staging re-stage (the server script's re-stage step, as a verb)
 
 const skillsVerb = (argv: string[]): Promise<VerbResult> =>
-  runVerb("skills", argv, ["staged-skills"], async (ctx) => {
+  runVerb("skills", argv, ["staged-skills"], async (ctx): Promise<VerbBodyResult> => {
     const { rootVscext, rootStaging } = {
       rootVscext: ctx.roots.rootVscext!,
       rootStaging: ctx.roots.rootStaging!,
@@ -488,7 +500,7 @@ async function copyTree(src: string, dst: string): Promise<void> {
 // ── agents: wraps deploy-agents.mjs — ONE invocation, BOTH receipt stores ────
 
 const agentsVerb = (argv: string[]): Promise<VerbResult> =>
-  runVerb("agents", argv, ["agent-cards-global", "agent-cards-staging"], async (ctx) => {
+  runVerb("agents", argv, ["agent-cards-global", "agent-cards-staging"], async (ctx): Promise<VerbBodyResult> => {
     const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
     const rootConfig = ctx.roots.rootConfig!;
     const rootStaging = ctx.roots.rootStaging!;
@@ -562,7 +574,7 @@ function firstLine(s: string): string {
 // ── extension: git discipline → package → install → version-sorted cleanup ──
 
 const extensionVerb = (argv: string[]): Promise<VerbResult> =>
-  runVerb("extension", argv, ["extension"], async (ctx) => {
+  runVerb("extension", argv, ["extension"], async (ctx): Promise<VerbBodyResult> => {
     const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
     const rootVscext = ctx.roots.rootVscext!;
     const packageCommand = ctx.args.flags["--package-command"] ?? "pnpm run package";
@@ -737,7 +749,7 @@ function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?
 // ── server-binary: the 9-step chain (build → freeze → sidecar → kick) ───────
 
 const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
-  runVerb("server-binary", argv, ["server-binary"], async (ctx) => {
+  runVerb("server-binary", argv, ["server-binary"], async (ctx): Promise<VerbBodyResult> => {
     const rootServer = ctx.roots.rootServer!;
     const rootRepoFork = ctx.roots.rootRepoFork!;
     const ref = ctx.args.flags["--ref"] ?? "origin/local/amicode";
@@ -872,14 +884,20 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
     let prevSha: string | null = null;
     try {
       prevSha = await fileSha(frozen);
+      if (prevSha === null) throw new Error(`unreadable frozen binary: ${frozen}`);
       await copyFile(frozen, prevBin);
       ctx.log(`preserved current binary as opencode.prev (sha ${prevSha.slice(0, 12)})`);
-    } catch {
-      ctx.log("no current frozen binary — first freeze (no opencode.prev)");
+    } catch (e) {
+      ctx.log(`no usable current frozen binary (${e instanceof Error ? e.message : String(e)}) — first freeze (no opencode.prev)`);
+      prevSha = null;
     }
     await copyFile(artifact, frozen);
     await chmod(frozen, 0o755);
-    let frozenSha = await fileSha(frozen);
+    const frozenSha = await fileSha(frozen);
+    if (frozenSha === null) {
+      ctx.log(`frozen binary unreadable after freeze: ${frozen} — aborting before kick`);
+      return { outcome: "aborted-error", verification: null, post: null, sourceDigests: digests };
+    }
     await writeFile(sidecar, `${frozenSha}  opencode\n`);
     digests.frozen_sha256 = frozenSha;
     digests.prev_sha256 = prevSha;
@@ -959,6 +977,11 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
     await copyFile(prevBin, frozen);
     await chmod(frozen, 0o755);
     const restoredSha = await fileSha(frozen);
+    if (restoredSha === null) {
+      ctx.log(`restored binary unreadable: ${frozen} — prev retained; the watchdog/morning-brief is the delivery path`);
+      const post = await postRecords(ctx, ["server-binary"]);
+      return { outcome: "restore-failed", verification: false, post, sourceDigests: digests };
+    }
     await writeFile(sidecar, `${restoredSha}  opencode\n`); // the sidecar REWRITE
     digests.restored_sha256 = restoredSha;
     ctx.log(`restored prev (sha ${restoredSha.slice(0, 12)}) — sidecar rewritten to match`);
