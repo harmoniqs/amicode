@@ -143,9 +143,11 @@ status already answers.
 **Protocol: ONE question at a time.** Ask, wait, record, advance — never batch.
 Every question is a card via the native `question` tool: choice questions list
 options in order, default first with "(recommended)"; free-form questions use
-`kind: "text"` — a bare text input with no option list. After each answer,
-record it immediately with `amicode_profile` (see the mapping below). Recording
-is bookkeeping, not a gate — it never blocks the conversation.
+`kind: "text"` for a bare text input with no option list — but you MUST still
+include `"options": []` (an empty array) in the tool call because the schema
+requires the key. After each answer, record it immediately with
+`amicode_profile` (see the mapping below). Recording is bookkeeping, not a
+gate — it never blocks the conversation.
 
 **HARD RULE — recording path:** You MUST call `amicode_profile` for every
 answer collected. NEVER write profile data directly to vault files, markdown
