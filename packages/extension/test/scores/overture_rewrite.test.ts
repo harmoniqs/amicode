@@ -117,9 +117,10 @@ describe("overture compiled content — Stage 2 intent (AC4, AC5, AC6)", () => {
     expect(md).toContain("multiple: true");
   });
 
-  it("AC5: records intent as array of slugs on the profile entity", () => {
+  it("AC5: records intent as focus field on profile.json", () => {
     expect(md).toContain("intent");
-    expect(md).toMatch(/intent.*\[.*research.*general_coding.*exploring.*\]/s);
+    expect(md).toContain("focus");
+    expect(md).toContain("profile.json");
   });
 
   it("AC6: research_area stage has two back-to-back questions (area + kind)", () => {
@@ -159,10 +160,9 @@ describe("overture compiled content — protocol (AC7)", () => {
 describe("overture compiled content — resume (AC8)", () => {
   const md = compileScore(overture());
 
-  it("instructs to check status first and skip already-answered stages", () => {
-    expect(md).toContain("amicode_profile");
-    expect(md).toContain("status");
-    expect(md).toContain("already recorded");
+  it("instructs to read profile.json first and skip already-answered stages", () => {
+    expect(md).toContain("profile.json");
+    expect(md).toContain("already");
   });
 });
 
@@ -177,7 +177,7 @@ describe("overture compiled content — complete flow (AC9)", () => {
     expect(md).toContain("research_area");
     expect(md).toContain("goals");
     expect(md).toContain("handoff");
-    expect(md).toContain("onboarding_completed");
+    expect(md).toContain("completion marker");
   });
 });
 

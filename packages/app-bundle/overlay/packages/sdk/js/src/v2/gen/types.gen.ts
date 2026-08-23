@@ -738,6 +738,10 @@ export type QuestionInfo = {
    * Question shape: "choice" (default, an option list) or "text" (a free-form text card, no options)
    */
   kind?: "choice" | "text"
+  /**
+   * Pre-filled value for text-kind questions (user can edit before submitting)
+   */
+  default?: string
   custom?: boolean
 }
 
@@ -3197,6 +3201,10 @@ export type QuestionV2Info = {
    * Question shape: "choice" (default, an option list) or "text" (a free-form text card, no options)
    */
   kind?: "choice" | "text"
+  /**
+   * Pre-filled value for text-kind questions (user can edit before submitting)
+   */
+  default?: string
   custom?: boolean
 }
 
