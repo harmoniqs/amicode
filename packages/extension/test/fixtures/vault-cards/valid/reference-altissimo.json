@@ -1,0 +1,10 @@
+{
+  "date": "2026-08-10",
+  "description": "Altissimo is CPU-native; GPU is an optional lift",
+  "name": "altissimo-cpu",
+  "status": "active",
+  "tags": [
+    "memory"
+  ],
+  "type": "reference"
+}

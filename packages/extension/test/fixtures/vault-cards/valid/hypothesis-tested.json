@@ -1,0 +1,12 @@
+{
+  "date": "2026-08-19",
+  "evidence": [
+    "experiments/e5.md"
+  ],
+  "source": "session",
+  "status": "tested",
+  "tags": [
+    "bilinear"
+  ],
+  "type": "hypothesis"
+}

@@ -1,0 +1,10 @@
+{
+  "date": "2026-08-01",
+  "description": "warm-starting from prior pulses failed consistently (Jul 12 batch)",
+  "name": "warm-starts",
+  "status": "active",
+  "tags": [
+    "memory"
+  ],
+  "type": "feedback"
+}

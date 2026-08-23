@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/vault-card/v1",
+  "title": "amico vault card (distillation-pass contract)",
+  "description": "The card frontmatter contract for knowledge-plane vault residents (#496, spec-20260821-090401 'Card Families' + amendments 1–2). Eighteen card types: the 12 schema-check types (extended with OPTIONAL provenance/confidence/review_by/subject fields — a legacy card with none of them validates unchanged; the census stamps them later), the 4 memory families (feedback/project/reference/user — the amicode/memory/ filename-typed cards, typed), plus tension and tombstone. Plane residency (amendment 2): knowledge/ residents are CARDS (this schema); evidence/ residents are RECORDS (vault-record.schema.json — type/date/origin only); work/ residents are working documents outside card machinery. The RESIDENCY table is exported from src/vault-card.ts (PLANE_RESIDENCY) and documented in test/fixtures/vault-cards/README.md. Discriminated on `type` via oneOf — external tools may validate with any JSON Schema implementation; amicode's validateVaultCard() dispatches on `type` for field-precise errors.",
+  "type": "object",
+  "oneOf": [{ "$ref": "#/$defs/cards/insight" }],
+  "$defs": {
+    "cards": {
+      "insight": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["type", "date", "source", "evidence", "confidence", "tags"],
+        "properties": {
+          "type": { "const": "insight" },
+          "date": { "$ref": "#/$defs/date" },
+          "source": { "type": "string", "minLength": 1 },
+          "evidence": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "confidence": { "$ref": "#/$defs/confidence" },
+          "tags": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 full-date (YYYY-MM-DD)"
+    },
+    "confidence": {
+      "enum": ["low", "medium", "high"],
+      "description": "the census default is medium; the extension field reuses the same vocabulary the insight base type already carries"
+    }
+  }
+}

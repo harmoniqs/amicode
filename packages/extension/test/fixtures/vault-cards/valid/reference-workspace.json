@@ -1,0 +1,10 @@
+{
+  "date": "2026-08-01",
+  "description": "Julia workspace at ~/.amico/julia",
+  "name": "workspace-ref",
+  "status": "active",
+  "tags": [
+    "memory"
+  ],
+  "type": "reference"
+}

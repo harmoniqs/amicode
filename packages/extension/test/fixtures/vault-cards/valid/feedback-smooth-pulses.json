@@ -1,0 +1,11 @@
+{
+  "date": "2026-08-01",
+  "description": "smooth parameterization reliably achieves F>0.9999 for transmon X",
+  "name": "smooth-pulses",
+  "status": "active",
+  "tags": [
+    "memory",
+    "parameterization"
+  ],
+  "type": "feedback"
+}

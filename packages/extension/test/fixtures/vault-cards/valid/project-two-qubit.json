@@ -1,0 +1,10 @@
+{
+  "date": "2026-08-01",
+  "description": "two-qubit gates are significantly harder than single-qubit",
+  "name": "two-qubit-challenge",
+  "status": "active",
+  "tags": [
+    "memory"
+  ],
+  "type": "project"
+}

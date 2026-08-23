@@ -1,0 +1,191 @@
+{
+  "$id": "https://schemas.amicode.dev/vault/cards/tombstone.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "provenance_unrecoverable": {
+            "const": true
+          }
+        },
+        "required": [
+          "provenance_unrecoverable"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "maxItems": 0
+          }
+        },
+        "required": [
+          "reviewed_after"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "justification": {
+            "const": "superseded_by"
+          }
+        },
+        "required": [
+          "justification"
+        ]
+      },
+      "then": {
+        "required": [
+          "pointer"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "justification": {
+            "const": "redundant_with"
+          }
+        },
+        "required": [
+          "justification"
+        ]
+      },
+      "then": {
+        "required": [
+          "pointer"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "justification": {
+            "const": "filed_to"
+          }
+        },
+        "required": [
+          "justification"
+        ]
+      },
+      "then": {
+        "required": [
+          "pointer"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "justification": {
+            "const": "expired_ttl"
+          }
+        },
+        "required": [
+          "justification"
+        ]
+      },
+      "then": {
+        "required": [
+          "original_review_by"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "justification": {
+            "const": "provenance_unrecoverable"
+          }
+        },
+        "required": [
+          "justification"
+        ]
+      },
+      "then": {
+        "required": [
+          "review_pointer"
+        ]
+      }
+    }
+  ],
+  "properties": {
+    "confidence": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ]
+    },
+    "date": {
+      "format": "date",
+      "type": "string"
+    },
+    "justification": {
+      "enum": [
+        "superseded_by",
+        "expired_ttl",
+        "provenance_unrecoverable",
+        "redundant_with",
+        "filed_to",
+        "lifecycle_complete"
+      ]
+    },
+    "original_review_by": {
+      "format": "date",
+      "type": "string"
+    },
+    "pointer": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "provenance": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "provenance_unrecoverable": {
+      "type": "boolean"
+    },
+    "review_by": {
+      "format": "date",
+      "type": "string"
+    },
+    "review_pointer": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "reviewed_after": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "subject": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tombstone_of": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "const": "tombstone"
+    }
+  },
+  "required": [
+    "type",
+    "date",
+    "justification",
+    "tombstone_of"
+  ],
+  "title": "tombstone card",
+  "type": "object"
+}
