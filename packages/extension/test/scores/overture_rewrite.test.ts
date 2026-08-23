@@ -200,8 +200,8 @@ describe("overture — handoff stage presents description for edit", () => {
   it("compiled body instructs to pre-fill description with default and let user edit", () => {
     const md = compileScore(overture());
     expect(md).toContain("default");
-    expect(md).toContain("Onboarding finished");
-    expect(md).toContain("start a new session");
+    expect(md).toContain("All set");
+    expect(md).toContain("new session");
     // Should NOT contain the old choices
     expect(md).not.toContain("Let's dive into my first task");
     expect(md).not.toContain("Show me around first");
