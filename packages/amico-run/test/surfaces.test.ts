@@ -14,7 +14,7 @@
 // Authorship (the house split): implementer authored these cells; the reviewer
 // adds adversarial variants — recorded in test/fixtures/surfaces/README.md.
 import { describe, test, expect } from "vitest";
-import { writeFileSync, rmSync, readFileSync } from "node:fs";
+import { writeFileSync, rmSync, readFileSync, chmodSync, mkdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { dirname, join as joinPath } from "node:path";
@@ -27,6 +27,10 @@ import {
   fixtureGit,
   bumpExtensionOnRemote,
   addReleaseTagOnRemote,
+  fakeBin,
+  sha256File,
+  LIVE_PLATFORM,
+  GIT_COMMIT_DATE,
   FUTURE_BUILD,
   PAST_BUILD,
   type DoctorWorld,
@@ -270,6 +274,180 @@ describe("doctor v2 surface inventory — unknown cells (every surface degrades 
     // the report still returns all six records — never a failed report
     expect(report.surfaces.every((r) => r.verdict === "unknown")).toBe(true);
     expect(report.surfaces.every((r) => r.evidence.length > 0)).toBe(true);
+    cleanup();
+  });
+});
+
+// ── reviewer adversarial variants (pass 2026-08-23) ──────────────────────────
+// Born from the reviewer's scratch-probe pass against the real predicates
+// (authorship gate, #525). Two probes found real gaps — the digest loops ran
+// source→deployed only, so EXTRA staged/deployed content was judged current —
+// fixed in src/surfaces.ts and pinned here (reverse-direction drift). The rest
+// pin correct handling of adversarial inputs the implementer matrix never
+// exercised. Full record: test/fixtures/surfaces/README.md.
+describe("doctor v2 surface inventory — reviewer adversarial variants (2026-08-23)", () => {
+  test("staged-skills stale: extra staged skill absent from the VSIX set (reverse-direction drift)", async () => {
+    const w = buildDoctorWorld();
+    mkdirSync(join(w.staging, "skills", "ghost"), { recursive: true });
+    writeFileSync(join(w.staging, "skills", "ghost", "SKILL.md"), "# ghost\nleftover from an older deployment\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sk = bySurface(report, "staged-skills");
+    expect(sk.verdict).toBe("stale");
+    expect(sk.evidence.join(" ")).toMatch(/skill ghost extra in staged set/);
+    expect(sk.evidence.join(" ")).not.toMatch(/skill (alpha|beta) /); // shared skills still byte-match
+    expect(sk.version).not.toBe(sk.source_version); // deployed set identity includes the extra
+    cleanup();
+  });
+
+  test("agent-cards-global stale: extra deployed card absent from sources (reverse-direction drift)", async () => {
+    const w = buildDoctorWorld();
+    writeFileSync(join(w.config, "agents", "ghost.md"), "---\nmode: ghost\n---\n# ghost\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    expect(g.evidence.join(" ")).toMatch(/card ghost\.md extra in deployed set/);
+    expect(g.version).not.toBe(g.source_version);
+    expect(bySurface(report, "agent-cards-staging").verdict).toBe("current"); // the other deployment is unaffected
+    cleanup();
+  });
+
+  test("server-binary current: uppercase-hex sidecar digest is normalized", async () => {
+    const w = buildDoctorWorld();
+    writeFileSync(`${w.frozenBin}.sha256`, `${sha256File(w.frozenBin).toUpperCase()}  opencode\n`);
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sb = bySurface(report, "server-binary");
+    expect(sb.verdict).toBe("current");
+    expect(sb.evidence.join(" ")).toMatch(/sha256 .* = sidecar/);
+    cleanup();
+  });
+
+  test("server-binary current: build date exactly equal to HEAD commit date (boundary — equal is current)", async () => {
+    // stamp derived from the pinned commit date, not duplicated: equal minutes
+    const equalStamp = GIT_COMMIT_DATE.slice(0, 16).replace(/[-T:]/g, "");
+    const w = buildDoctorWorld({ frozenVersion: `0.0.0-local/amicode-${equalStamp}` });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sb = bySurface(report, "server-binary");
+    expect(sb.verdict).toBe("current"); // staleness is strict <, so equal passes
+    expect(sb.evidence.join(" ")).toMatch(/build date .* ≥ HEAD commit date/);
+    cleanup();
+  });
+
+  test("extension current: numeric version sort — 0.2.10 is newer than 0.2.9 (lexicographic would flip)", async () => {
+    const w = buildDoctorWorld();
+    const skillSrc = join(w.vscext, "harmoniqs.amicode-0.2.6", "skills");
+    for (const v of ["0.2.9", "0.2.10"]) {
+      cpSync(skillSrc, join(w.vscext, `harmoniqs.amicode-${v}`, "skills"), { recursive: true });
+    }
+    rmSync(join(w.vscext, "harmoniqs.amicode-0.2.6"), { recursive: true, force: true });
+    rmSync(join(w.vscext, "harmoniqs.amicode-0.2.4-darwin-arm64"), { recursive: true, force: true });
+    bumpExtensionOnRemote(w.remoteAmicode, "0.2.10");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const ext = bySurface(report, "extension");
+    expect(ext.verdict).toBe("current");
+    expect(ext.version).toBe("0.2.10");
+    expect(bySurface(report, "staged-skills").verdict).toBe("current"); // compared against the 0.2.10 set
+    cleanup();
+  });
+
+  test("vendored-binary unknown: reachable fork remote with NO release tags", async () => {
+    const w = buildDoctorWorld();
+    fixtureGit(w.repoFork, ["tag", "-d", "v1.18.10-amicode.15"]);
+    fixtureGit(w.repoFork, ["push", "origin", ":refs/tags/v1.18.10-amicode.15"]);
+    const report = await surfaceInventory(ctxForWorld(w));
+    const vb = bySurface(report, "vendored-binary");
+    expect(vb.verdict).toBe("unknown");
+    expect(vb.evidence.join(" ")).toMatch(/no fork release tags/);
+    // the remote is REACHABLE — only the tagless surface degrades
+    expect(bySurface(report, "server-binary").verdict).toBe("current");
+    cleanup();
+  });
+
+  test("vendored-binary current: release-tag sort is numeric (v1.18.10-amicode.2 > v1.18.9-amicode.15)", async () => {
+    const w = buildDoctorWorld();
+    fixtureGit(w.repoFork, ["tag", "-d", "v1.18.10-amicode.15"]);
+    fixtureGit(w.repoFork, ["push", "origin", ":refs/tags/v1.18.10-amicode.15"]);
+    addReleaseTagOnRemote(w.remoteFork, "v1.18.9-amicode.15");
+    addReleaseTagOnRemote(w.remoteFork, "v1.18.10-amicode.2");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const vb = bySurface(report, "vendored-binary");
+    expect(vb.verdict).toBe("current");
+    expect(vb.source_version).toBe("1.18.10"); // string sort would crown v1.18.9-amicode.15 → stale "ahead"
+    expect(vb.evidence.join(" ")).toMatch(/latest fork release tag v1\.18\.10-amicode\.2/);
+    cleanup();
+  });
+
+  test("server-binary integrity-failure: unexecutable frozen binary (--version fails)", async () => {
+    const w = buildDoctorWorld();
+    chmodSync(w.frozenBin, 0o644); // bytes unchanged: sidecar still matches — the exec is what breaks
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sb = bySurface(report, "server-binary");
+    expect(sb.verdict).toBe("integrity-failure");
+    expect(sb.evidence.join(" ")).toMatch(/--version failed/);
+    cleanup();
+  });
+
+  test("extension stale: installed AHEAD of origin/main (source repo behind)", async () => {
+    const w = buildDoctorWorld();
+    cpSync(join(w.vscext, "harmoniqs.amicode-0.2.6", "skills"), join(w.vscext, "harmoniqs.amicode-0.2.8", "skills"), { recursive: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const ext = bySurface(report, "extension");
+    expect(ext.verdict).toBe("stale");
+    expect(ext.version).toBe("0.2.8");
+    expect(ext.source_version).toBe("0.2.6");
+    expect(ext.evidence.join(" ")).toMatch(/ahead of origin\/main/);
+    cleanup();
+  });
+
+  test("vendored-binary current: --version output with trailing whitespace is trimmed", async () => {
+    const w = buildDoctorWorld();
+    fakeBin(join(w.repoAmicode, "packages", "extension", "vendor", "opencode", LIVE_PLATFORM), "opencode", "1.18.10   ");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const vb = bySurface(report, "vendored-binary");
+    expect(vb.verdict).toBe("current");
+    expect(vb.version).toBe("1.18.10"); // untrimmed it would compare unequal to the tag base
+    cleanup();
+  });
+
+  test("server-binary stale: frozen binary missing (absent surface is the repairable state)", async () => {
+    const w = buildDoctorWorld();
+    rmSync(w.frozenBin, { force: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sb = bySurface(report, "server-binary");
+    expect(sb.verdict).toBe("stale");
+    expect(sb.evidence.join(" ")).toMatch(/frozen binary missing/);
+    cleanup();
+  });
+
+  test("server-binary integrity-failure: sidecar missing while binary present", async () => {
+    const w = buildDoctorWorld();
+    rmSync(`${w.frozenBin}.sha256`, { force: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sb = bySurface(report, "server-binary");
+    expect(sb.verdict).toBe("integrity-failure");
+    expect(sb.evidence.join(" ")).toMatch(/sidecar missing/);
+    cleanup();
+  });
+
+  test("staged-skills stale: staged dir entirely missing", async () => {
+    const w = buildDoctorWorld();
+    rmSync(join(w.staging, "skills"), { recursive: true, force: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const sk = bySurface(report, "staged-skills");
+    expect(sk.verdict).toBe("stale");
+    expect(sk.evidence.join(" ")).toMatch(/staged skills dir missing or empty/);
+    cleanup();
+  });
+
+  test("agent-cards stale: unparseable deploy receipt (bytes match — the receipt is the staleness)", async () => {
+    const w = buildDoctorWorld();
+    writeFileSync(join(w.repoAmicode, "packages", "extension", "agents", ".deploy-receipt.json"), "{not json");
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      expect(r.verdict).toBe("stale");
+      expect(r.evidence.join(" ")).toMatch(/receipt unparseable/);
+      expect(r.evidence.join(" ")).toMatch(/byte-match/);
+    }
     cleanup();
   });
 });

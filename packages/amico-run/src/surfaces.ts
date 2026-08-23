@@ -481,6 +481,15 @@ async function probeStagedSkills(ctx: SurfaceContext): Promise<SurfaceRecord> {
       if (dst !== src) diffs.push(`skill ${skill} changed (staged ${dst.slice(0, 12)} ≠ VSIX ${src.slice(0, 12)})`);
     }
   }
+  // reverse direction (reviewer pass 2026-08-23): a skill staged but absent
+  // from the VSIX set is drift too — a leftover an older deployment dropped.
+  // Extras count toward the staged set digest, so version ≠ source when drifted.
+  for (const skill of stagedSkills) {
+    if (sourceSkills.includes(skill)) continue;
+    const dst = await dirDigest(join(stagedDir, skill));
+    if (dst !== null) stagedDigests.set(skill, dst);
+    diffs.push(`skill ${skill} extra in staged set (absent from VSIX source set)`);
+  }
   const sourceSet = setDigest(sourceDigests);
   const stagedSet = setDigest(stagedDigests);
   if (diffs.length > 0) {
@@ -525,6 +534,15 @@ async function probeAgentCards(
       deployedDigests.set(card, dstSha);
       if (dstSha !== srcSha) diffs.push(`card ${card} changed (deployed ${dstSha.slice(0, 12)} ≠ source ${srcSha.slice(0, 12)})`);
     }
+  }
+  // reverse direction (reviewer pass 2026-08-23): a deployed card absent from
+  // the sources is drift — a leftover the next deploy would never refresh.
+  // Extras count toward the deployed set digest, so version ≠ source when drifted.
+  for (const card of deployedCards) {
+    if (sourceCards.includes(card)) continue;
+    const dstSha = await fileSha(join(deployedDir, card));
+    if (dstSha !== null) deployedDigests.set(card, dstSha);
+    diffs.push(`card ${card} extra in deployed set (absent from sources)`);
   }
   const deployedSet = setDigest(deployedDigests);
 
