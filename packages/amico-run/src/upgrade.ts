@@ -363,9 +363,14 @@ async function runVerb(
     detail.push(line);
     console.error(`amico upgrade ${surface}: ${line}`); // progress → stderr; stdout is the receipt
   };
-  const rootServer = (parsed.args.roots.rootServer as string | undefined) ?? defaultRootServer();
+  // live defaults fill every root the caller didn't inject (fixtures inject
+  // all of them; the live CLI passes none — the missing-merge was the live-
+  // dispatch bug: ctx.roots.rootRepoFork! crashed on undefined)
+  const defaults = defaultSurfaceContext();
+  const roots = { ...defaults, ...parsed.args.roots } as SurfaceContext;
+  const rootServer = roots.rootServer;
   const receiptsDir = parsed.args.rootReceipts ?? join(rootServer, "upgrade-receipts");
-  const ctx: VerbCtx = { args: parsed.args, roots: parsed.args.roots, receiptsDir, detail, log };
+  const ctx: VerbCtx = { args: parsed.args, roots, receiptsDir, detail, log };
 
   const receipt = baseReceipt(surface, detail);
 

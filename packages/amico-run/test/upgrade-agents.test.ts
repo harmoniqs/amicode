@@ -177,7 +177,7 @@ describe("upgrade agents — pre-flight gates + aborts", () => {
 
 test("doctor record names agent-cards-global / agent-cards-staging alias the agents verb", async () => {
   const w = buildDoctorWorld();
-  const cleanup = () => cleanupTracked(w);
+  const cleanup = () => cleanupTracked();
   try {
     // stage drift so the aliased run has something to do
     writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
