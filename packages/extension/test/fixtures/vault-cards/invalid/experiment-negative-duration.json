@@ -1,0 +1,12 @@
+{
+  "date": "2026-08-22",
+  "duration_us": -5,
+  "fidelity": 0.9,
+  "gate": "X",
+  "platform": "transmon",
+  "session_id": "s",
+  "status": "solved",
+  "tags": [],
+  "task_type": "experiment-sim",
+  "type": "experiment"
+}

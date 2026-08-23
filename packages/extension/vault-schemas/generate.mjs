@@ -13,6 +13,8 @@
 // - Tombstone conditionals: the closed justification vocabulary plus
 //   justification-specific required fields (pointer / original_review_by /
 //   review_pointer), per D2 + Amendments 1-2.
+// - Physical quantities are bounded (reviewer pass #517): fidelity ∈ [0, 1],
+//   duration_us >= 0 — the engine enforces minimum/maximum.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -57,8 +59,8 @@ const LEGACY = {
       session_id: str,
       platform: str,
       gate: str,
-      fidelity: num,
-      duration_us: num,
+      fidelity: { type: "number", minimum: 0, maximum: 1 },
+      duration_us: { type: "number", minimum: 0 },
       status: str,
       tags: stringArray,
     },

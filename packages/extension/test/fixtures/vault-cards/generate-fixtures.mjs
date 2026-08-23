@@ -4,6 +4,8 @@
 // Deterministic + canonical JSON. Run: node test/fixtures/vault-cards/generate-fixtures.mjs
 // Authorship note (PR gate): this corpus is implementer-generated; the
 // reviewer spot-check refusals and adds adversarial variants in PR review.
+// Reviewer pass 2026-08-23 discharged the gate (see README) — the fixtures
+// under "reviewer adversarial variants" below are reviewer-authored.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -131,6 +133,34 @@ I("review-by-wrong-type.json", { type: "insight", date: "2026-08-22", source: "s
 I("experiment-missing-fidelity.json", { type: "experiment", task_type: "experiment-sim", date: "2026-08-22", session_id: "s", platform: "transmon", gate: "X", duration_us: 10, status: "solved", tags: [] });
 I("tension-missing-subject.json", { type: "tension", date: "2026-08-22", a_cards: ["knowledge/a.md"], b_cards: ["knowledge/b.md"], tags: [] });
 I("memory-card-missing-description.json", { type: "feedback", name: "no-desc" });
+
+// ------------------------------------ reviewer adversarial variants (2026-08-23) ----
+// Born from independent reviewer probing (PR #517). Each isolates one violated
+// path on an otherwise-valid card. Fixtures 6-10 pin the three validation gaps
+// the probing found (tension side overlap, unbounded fidelity/duration,
+// calendar-invalid dates) — fixed in the validator/schemas by the same pass.
+
+// 1. pointer present but empty (vs absent — tombstone-superseded-no-pointer)
+I("tombstone-empty-pointer.json", { type: "tombstone", date: "2026-08-22", justification: "superseded_by", tombstone_of: "knowledge/insight-old.md", pointer: "", tags: [] });
+// 2. empty tombstone_of path
+I("tombstone-empty-tombstone-of.json", { type: "tombstone", date: "2026-08-22", justification: "lifecycle_complete", tombstone_of: "", tags: [] });
+// 3. provenance with the wrong shape (string, not array)
+I("provenance-not-array.json", { type: "insight", date: "2026-08-22", source: "s", evidence: [], confidence: "medium", tags: [], provenance: "not-an-array" });
+// 4. sentinel satisfied by a present-but-empty review pointer
+I("sentinel-empty-reviewed-after.json", { type: "insight", date: "2026-08-22", source: "s", evidence: [], confidence: "medium", tags: [], provenance: [], provenance_unrecoverable: true, reviewed_after: "" });
+// 5. justification provenance_unrecoverable without its review_pointer
+I("tombstone-unrecoverable-no-review-pointer.json", { type: "tombstone", date: "2026-08-22", justification: "provenance_unrecoverable", tombstone_of: "knowledge/insight-orphan.md", tags: [] });
+// 6. tension citing the same card on both sides (gap fix: disjointness check)
+I("tension-self-tension.json", { type: "tension", date: "2026-08-22", subject: "self-tension", a_cards: ["knowledge/insight-magnus.md"], b_cards: ["knowledge/insight-magnus.md"], tags: [] });
+// 7. fidelity above 1 (gap fix: minimum/maximum bounds)
+I("experiment-fidelity-out-of-range.json", { type: "experiment", task_type: "experiment-sim", date: "2026-08-22", session_id: "s", platform: "transmon", gate: "X", fidelity: 1.5, duration_us: 10, status: "solved", tags: [] });
+// 8. fidelity below 0
+I("experiment-fidelity-negative.json", { type: "experiment", task_type: "experiment-sim", date: "2026-08-22", session_id: "s", platform: "transmon", gate: "X", fidelity: -0.2, duration_us: 10, status: "solved", tags: [] });
+// 9. negative duration
+I("experiment-negative-duration.json", { type: "experiment", task_type: "experiment-sim", date: "2026-08-22", session_id: "s", platform: "transmon", gate: "X", fidelity: 0.9, duration_us: -5, status: "solved", tags: [] });
+// 10. calendar-invalid date that satisfies the YYYY-MM-DD regex (gap fix:
+// round-trip date check — Feb 30 does not exist)
+I("review-by-calendar-invalid.json", { type: "insight", date: "2026-08-22", source: "s", evidence: [], confidence: "medium", tags: [], review_by: "2026-02-30" });
 
 // ----------------------------------------------------------------- write ----
 for (const [sub, corpus] of [

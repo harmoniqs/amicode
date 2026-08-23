@@ -39,9 +39,12 @@
       "type": "string"
     },
     "duration_us": {
+      "minimum": 0,
       "type": "number"
     },
     "fidelity": {
+      "maximum": 1,
+      "minimum": 0,
       "type": "number"
     },
     "gate": {

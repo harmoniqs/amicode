@@ -116,6 +116,17 @@ describe("invalid fixture corpus (refusals with named schema paths)", () => {
     "experiment-missing-fidelity.json": "$.fidelity",
     "tension-missing-subject.json": "$.subject",
     "memory-card-missing-description.json": "$.description",
+    // reviewer adversarial variants (2026-08-23, PR #517)
+    "tombstone-empty-pointer.json": "$.pointer",
+    "tombstone-empty-tombstone-of.json": "$.tombstone_of",
+    "provenance-not-array.json": "$.provenance",
+    "sentinel-empty-reviewed-after.json": "$.reviewed_after",
+    "tombstone-unrecoverable-no-review-pointer.json": "$.review_pointer",
+    "tension-self-tension.json": "$.a_cards",
+    "experiment-fidelity-out-of-range.json": "$.fidelity",
+    "experiment-fidelity-negative.json": "$.fidelity",
+    "experiment-negative-duration.json": "$.duration_us",
+    "review-by-calendar-invalid.json": "$.review_by",
   };
 
   it("meets the corpus floor (>= 15 adversarial fixtures)", () => {
@@ -191,6 +202,48 @@ describe("sentinel semantics", () => {
       reviewed_after: "journal/pass-1.md",
     };
     expect(validateCard(good, schemas).ok).toBe(true);
+  });
+});
+
+describe("reviewer adversarial semantics (2026-08-23 pass, #517)", () => {
+  it("accepts fidelity at the [0, 1] boundaries", () => {
+    const base = {
+      type: "experiment",
+      task_type: "experiment-sim",
+      date: "2026-08-22",
+      session_id: "s",
+      platform: "transmon",
+      gate: "X",
+      duration_us: 10,
+      status: "solved",
+      tags: [],
+    };
+    for (const fidelity of [0, 1]) {
+      const res = validateCard({ ...base, fidelity }, schemas);
+      expect(res.errors, JSON.stringify(res.errors)).toEqual([]);
+    }
+  });
+
+  it("accepts a real leap day but refuses a non-leap Feb 29", () => {
+    const base = { type: "insight", date: "2026-08-22", source: "s", evidence: [], confidence: "medium", tags: [] };
+    expect(validateCard({ ...base, review_by: "2024-02-29" }, schemas).ok).toBe(true);
+    expect(validateCard({ ...base, review_by: "2027-02-29" }, schemas).ok).toBe(false);
+  });
+
+  it("refuses a tension whose sides partially overlap", () => {
+    const res = validateCard(
+      {
+        type: "tension",
+        date: "2026-08-22",
+        subject: "partial-overlap",
+        a_cards: ["knowledge/x.md", "knowledge/y.md"],
+        b_cards: ["knowledge/y.md", "knowledge/z.md"],
+        tags: [],
+      },
+      schemas,
+    );
+    expect(res.ok).toBe(false);
+    expect(res.errors.map((e) => e.path).join("|")).toContain("$.a_cards");
   });
 });
 

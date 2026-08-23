@@ -2,10 +2,10 @@
 // pass's schema slice (harmoniqs/amicode#496, spec-20260821-090401).
 //
 // Design constraints: zero new dependencies (the `yaml` dep already exists for
-// frontmatter parsing); a minimal JSON-Schema subset engine covering exactly the
+// frontmatter parsing); a minimal JSON-Schema-subset engine covering exactly the
 // keywords the vault schemas use (type, required, properties, enum, const,
-// format:"date", minItems/maxItems, items, minLength, allOf, if/then); errors
-// always name the violated schema path (e.g. `$.confidence`).
+// format:"date", minItems/maxItems, items, minLength, minimum/maximum, allOf,
+// if/then); errors always name the violated schema path (e.g. `$.confidence`).
 
 import fs from "node:fs";
 import path from "node:path";
@@ -96,7 +96,17 @@ function checkType(value: unknown, type: string): boolean {
 
 function isWellFormedDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  return !Number.isNaN(Date.parse(value));
+  const t = Date.parse(value);
+  if (Number.isNaN(t)) return false;
+  // Date.parse rolls calendar-invalid dates over (V8: 2026-02-30 → Mar 2),
+  // so the regex+parse pair alone accepts non-existent dates. Require the
+  // parsed instant to round-trip to the same calendar day (reviewer pass #517).
+  const d = new Date(t);
+  return (
+    d.getUTCFullYear() === Number(value.slice(0, 4)) &&
+    d.getUTCMonth() === Number(value.slice(5, 7)) - 1 &&
+    d.getUTCDate() === Number(value.slice(8, 10))
+  );
 }
 
 export function validate(value: unknown, schema: JsonSchema, at = "$"): ValidationError[] {
@@ -128,6 +138,15 @@ export function validate(value: unknown, schema: JsonSchema, at = "$"): Validati
     }
     if (schema.pattern !== undefined && !new RegExp(schema.pattern).test(value)) {
       push(at, `must match ${schema.pattern}`);
+    }
+  }
+
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      push(at, `must be >= ${schema.minimum}`);
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      push(at, `must be <= ${schema.maximum}`);
     }
   }
 
@@ -205,6 +224,25 @@ export function validateCard(obj: unknown, schemas: Map<string, JsonSchema>): Va
     };
   }
   const errors = validate(obj, schemas.get(type)!);
+  // Cross-field semantic check the JSON-Schema subset cannot express: a
+  // tension card's two sides must be disjoint — a card cited on both sides
+  // of its own tension is self-referential noise (reviewer pass #517).
+  if (type === "tension") {
+    const a = (obj as Record<string, unknown>).a_cards;
+    const b = (obj as Record<string, unknown>).b_cards;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      const bSet = new Set(b);
+      const shared = a.filter((x) => bSet.has(x));
+      if (shared.length > 0) {
+        errors.push({
+          path: "$.a_cards",
+          message: `a_cards and b_cards must be disjoint (shared: ${shared
+            .map((s) => JSON.stringify(s))
+            .join(", ")})`,
+        });
+      }
+    }
+  }
   return { ok: errors.length === 0, errors, type };
 }
 
