@@ -172,3 +172,23 @@ describe("upgrade agents — pre-flight gates + aborts", () => {
     cleanup();
   });
 });
+
+// ── the record-name alias (spec D3: the panel passes doctor's record names verbatim) ──
+
+test("doctor record names agent-cards-global / agent-cards-staging alias the agents verb", async () => {
+  const w = buildDoctorWorld();
+  const cleanup = () => cleanupTracked(w);
+  try {
+    // stage drift so the aliased run has something to do
+    writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
+    for (const alias of ["agent-cards-global", "agent-cards-staging"]) {
+      const argv = [...verbArgs(w), "--root-receipts", receiptsDir(w)];
+      argv[0] = alias; // the panel sends the doctor record name as the surface
+      const r = await upgradeVerb(argv);
+      expect(r.code, `alias ${alias} must route to the agents verb, not "unknown surface"`).not.toBe(64);
+      expect((r.json as Record<string, unknown>).verb).toBe("agents");
+    }
+  } finally {
+    cleanup();
+  }
+});

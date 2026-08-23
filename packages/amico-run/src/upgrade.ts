@@ -229,9 +229,12 @@ interface ParsedVerbArgs {
 export function parseUpgradeArgs(argv: string[]): { ok: true; args: ParsedVerbArgs } | { ok: false; message: string } {
   const surface = argv[0];
   if (!surface || surface.startsWith("--")) return { ok: false, message: `usage: ${USAGE}` };
-  if (!SURFACES.includes(surface as UpgradeSurface)) {
+  const canonical = RECORD_ALIASES[surface] ?? surface;
+  if (!SURFACES.includes(canonical as UpgradeSurface)) {
     return { ok: false, message: `unknown surface "${surface}" — ${USAGE}` };
   }
+  // normalize argv[0] to the canonical verb so downstream sees one vocabulary
+  argv = [canonical, ...argv.slice(1)];
   const VALUE_FLAGS = new Set([
     "--skip-build",
     "--ref",
@@ -275,7 +278,7 @@ export function parseUpgradeArgs(argv: string[]): { ok: true; args: ParsedVerbAr
     }
   }
   if (runningBinary !== null) roots.runningBinary = runningBinary;
-  return { ok: true, args: { surface: surface as UpgradeSurface, roots, runningBinary, rootReceipts, flags, bools } };
+  return { ok: true, args: { surface: canonical as UpgradeSurface, roots, runningBinary, rootReceipts, flags, bools } };
 }
 
 // ── shared verb scaffolding ──────────────────────────────────────────────────
@@ -1006,7 +1009,11 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
 export async function upgradeVerb(argv: string[]): Promise<VerbResult> {
   const head = argv[0];
   if (!head || head.startsWith("--")) return { json: { verb: "upgrade", ok: false, errors: [`usage: ${USAGE}`] }, code: 64 };
-  switch (head) {
+  // Doctor record names alias their owning verb (spec D3: the panel passes
+  // the record name verbatim — "a fact the panel shows that doctor didn't
+  // say is a bug"; the aliasing belongs HERE, CLI-side).
+  const surface = RECORD_ALIASES[head] ?? head;
+  switch (surface) {
     case "server-binary":
       return serverBinaryVerb(argv);
     case "extension":
@@ -1019,6 +1026,12 @@ export async function upgradeVerb(argv: string[]): Promise<VerbResult> {
       return { json: { verb: "upgrade", ok: false, errors: [`unknown surface "${head}" — ${USAGE}`] }, code: 64 };
   }
 }
+
+/** doctor record name → owning verb (agent-cards has two records, one verb) */
+const RECORD_ALIASES: Record<string, string> = {
+  "agent-cards-global": "agents",
+  "agent-cards-staging": "agents",
+};
 
 // re-export for the router's usage line + tests
 export const UPGRADE_USAGE = USAGE;
