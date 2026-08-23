@@ -647,11 +647,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       fs.mkdirSync(problemsRoot(), { recursive: true });
       fs.writeFileSync(path.join(problemsRoot(), "score_manifest.json"), manifestJson);
     } else if (score0) {
-      // Post-onboarding: inject only the onset router. The pulse-designer
-      // interview protocol is NOT compiled into every session — domain-specific
-      // workflows (pulse design, autoresearch, etc.) load on-demand via the
-      // skill system when the user asks for them.
-      const stub = [
+      // Post-onboarding: the model does NOT proactively start any interview,
+      // but the overture content IS compiled in so "begin onboarding" works
+      // without a window reload. The onset router gates when it runs.
+      const preamble = [
         "<!-- AMICODE_SCORE_SECTION -->",
         "",
         "You are a general-purpose autoresearch copilot. Do NOT proactively start",
@@ -659,7 +658,8 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
         "user explicitly asks for it. When they do, invoke the relevant skill from",
         "the Skill index and follow the workflow in the ## Workflow section above.",
       ].join("\n");
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), stub);
+      const overtureBlock = overture ? `\n\n${compileScore(overture)}` : "";
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), preamble + overtureBlock);
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
       // reads score_manifest.json from the problems ROOT — that is the guard's
       // session-scoped manifestDir (per-problem interview state lives in each
