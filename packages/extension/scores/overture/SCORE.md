@@ -147,6 +147,14 @@ options in order, default first with "(recommended)"; free-form questions use
 record it immediately with `amicode_profile` (see the mapping below). Recording
 is bookkeeping, not a gate — it never blocks the conversation.
 
+**HARD RULE — recording path:** You MUST call `amicode_profile` for every
+answer collected. NEVER write profile data directly to vault files, markdown
+notes, or any other location. The `amicode_profile` tool is the ONLY permitted
+way to record onboarding answers — it writes to the events pipeline which
+feeds both `profile.json` (the UI) and the vault (via the distiller). If you
+bypass `amicode_profile`, the profile dropdown will be empty and the user's
+data is lost. There are NO exceptions to this rule.
+
 Per-stage guidance and the `amicode_profile` mapping:
 
 1. **orientation** — greet in one line: "Ciao — I'm Amico, your coding and
