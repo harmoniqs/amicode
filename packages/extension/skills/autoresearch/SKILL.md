@@ -18,8 +18,12 @@ vault_contract:
 > is the `autoresearch` primary agent card).
 
 **Entry points:** the `autoresearch` primary agent (Tab-switch into research mode —
-its prompt embeds this spine), direct invocation of this skill, or the standing line in
-the user's autoresearch kickoff prompts. All three lead here; this file is the protocol.
+its first action invokes the `director-core` skill, the canonical loop protocol),
+direct invocation of this skill, or the standing line in the user's autoresearch
+kickoff prompts. All three lead here; this skill is the research-mode instantiation —
+it carries what director-core deliberately does not (the spec-gate review budget, the
+checkout registry, the probe/experiment boundary). Where this file and director-core
+appear to conflict, director-core wins; report the conflict, never resolve it by edit.
 
 The operating principle: **the context window is a cache; the vault is the database.**
 Every piece of load-bearing state lives in a vault note; the context window holds only the
