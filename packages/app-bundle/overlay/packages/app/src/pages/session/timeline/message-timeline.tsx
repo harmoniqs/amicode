@@ -89,6 +89,7 @@ import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
+import { serializeSession } from "@/utils/serialize-session"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { createTimelineProjection } from "./projection"
@@ -905,6 +906,56 @@ export function MessageTimeline(props: {
           description: errorMessage(err),
         }),
       )
+  }
+  const downloadSession = () => {
+    const id = sessionID()
+    if (!id) return
+    const messages = sync().data.message[id] ?? []
+    const text = serializeSession(messages, (msgId) => sync().data.part[msgId] ?? [])
+    if (!text.trim()) {
+      showToast({
+        title: language.t("session.download.empty.title") ?? "Nothing to export",
+        description: language.t("session.download.empty.description") ?? "This session has no text to download.",
+        variant: "error",
+      })
+      return
+    }
+    const rawTitle = sessionTitle(sync().session.get(id)?.title) ?? childTitle() ?? "session"
+    const safe = rawTitle.replace(/[^\w.-]+/g, "-").slice(0, 64) || "session"
+    const filename = `${safe}-${id.slice(0, 8)}.md`
+    // VS Code webview (iframe): route through the extension's save-file bridge
+    // so the host writes the file with a save dialog. Plain browser: blob download.
+    if (window.parent !== window) {
+      try {
+        const dataUrl = `data:text/markdown;base64,${btoa(unescape(encodeURIComponent(text)))}`
+        window.parent.postMessage(
+          { source: "amicode", kind: "save-file", filename, dataUrl, mime: "text/markdown" },
+          "*",
+        )
+        showToast({
+          variant: "success",
+          title: language.t("session.download.success.title") ?? "Download started",
+          description: filename,
+        })
+        return
+      } catch {
+        // fall through to blob
+      }
+    }
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    showToast({
+      variant: "success",
+      title: language.t("session.download.success.title") ?? "Download started",
+      description: filename,
+    })
   }
   const selectShareUrlText: JSX.EventHandler<HTMLDivElement, MouseEvent> = (event) => {
     const selection = window.getSelection()
@@ -1770,6 +1821,16 @@ export function MessageTimeline(props: {
                                 >
                                   <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
+                                <DropdownMenu.Item
+                                  onSelect={() => {
+                                    setTitle("menuOpen", false)
+                                    downloadSession()
+                                  }}
+                                >
+                                  <DropdownMenu.ItemLabel>
+                                    {language.t("session.download.action") ?? "Download"}
+                                  </DropdownMenu.ItemLabel>
+                                </DropdownMenu.Item>
                                 <Show when={shareEnabled()}>
                                   <DropdownMenu.Item
                                     onSelect={() => {
@@ -1777,7 +1838,7 @@ export function MessageTimeline(props: {
                                     }}
                                   >
                                     <DropdownMenu.ItemLabel>
-                                      {language.t("session.share.action.share")}
+                                      {language.t("session.share.action.publish") ?? "Publish…"}
                                     </DropdownMenu.ItemLabel>
                                   </DropdownMenu.Item>
                                 </Show>
@@ -1852,13 +1913,21 @@ export function MessageTimeline(props: {
                               >
                                 {language.t("common.rename")}
                               </MenuV2.Item>
+                              <MenuV2.Item
+                                onSelect={() => {
+                                  setTitle("menuOpen", false)
+                                  downloadSession()
+                                }}
+                              >
+                                {language.t("session.download.action") ?? "Download"}...
+                              </MenuV2.Item>
                               <Show when={shareEnabled()}>
                                 <MenuV2.Item
                                   onSelect={() => {
                                     setTitle({ pendingShare: true, menuOpen: false })
                                   }}
                                 >
-                                  {language.t("session.share.action.share")}...
+                                  {language.t("session.share.action.publish") ?? "Publish"}...
                                 </MenuV2.Item>
                               </Show>
                               <Show

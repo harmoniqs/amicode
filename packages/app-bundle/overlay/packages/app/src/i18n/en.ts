@@ -835,6 +835,11 @@ export const dict = {
   "session.share.copy.copied": "Copied",
   "session.share.copy.copyLink": "Copy link",
 
+  "session.download.action": "Download",
+  "session.download.success.title": "Download started",
+  "session.download.empty.title": "Nothing to export",
+  "session.download.empty.description": "This session has no text to download.",
+
   "lsp.tooltip.none": "No LSP servers",
   "lsp.label.connected": "{{count}} LSP",
 
