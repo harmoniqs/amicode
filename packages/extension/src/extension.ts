@@ -40,7 +40,7 @@ import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from ".
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
-import { isModelConfigured, writeWelcomeShown } from "./onboarding_routing";
+import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
@@ -207,39 +207,6 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
 /** Run dirs with a cooperative stop in flight (escalation timer armed) — a
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
-
-/** Create a session and arm it with "Let's begin onboarding." via the server API.
- *  Bypasses the UI model gate (the server resolves its own default model).
- *  Returns the session ID on success, undefined on failure. */
-async function armOnboardingSession(
-  serverUrl: URL,
-  authHeaders: Record<string, string>,
-  projectDir?: string,
-): Promise<string | undefined> {
-  try {
-    const collectionUrl = new URL("/session", serverUrl);
-    if (projectDir) collectionUrl.searchParams.set("directory", projectDir);
-    const createRes = await fetch(collectionUrl.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ title: "Onboarding" }),
-    });
-    if (!createRes.ok) return undefined;
-    const { id } = (await createRes.json()) as { id?: string };
-    if (!id) return undefined;
-
-    const commandUrl = new URL(`/session/${id}/command`, serverUrl);
-    const commandRes = await fetch(commandUrl.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders },
-      body: JSON.stringify({ command: "Let's begin onboarding.", arguments: "" }),
-    });
-    if (!commandRes.ok) return undefined;
-    return id;
-  } catch {
-    return undefined;
-  }
-}
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");

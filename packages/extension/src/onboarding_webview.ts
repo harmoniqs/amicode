@@ -929,9 +929,6 @@ window.addEventListener("message", (event) => {
         if (ring) ring.style.animation = "none";
       }
 
-      // Find the inner-most animated group to switch animation
-      const enterGroup = svg.querySelector(".mark-enter") || svg.querySelector(".mark-breathe");
-
       // Switch from idle animations to excited jump
       const breatheGroup = svg.querySelector(".mark-breathe") as HTMLElement;
       if (breatheGroup) {
