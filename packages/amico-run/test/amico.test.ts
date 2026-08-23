@@ -8,7 +8,8 @@ import { execFile, execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
+import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot, buildDoctorWorld, cleanupTracked } from "./helpers.js";
+import { validateDoctorReport } from "../src/doctor_schema.js";
 import { FakeCloud } from "./fake_cloud.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico.js");
@@ -267,5 +268,50 @@ describe("amico router — mcp-serve facade", () => {
     const out = JSON.parse(r.stdout);
     expect(out.stub).toBe(true);
     expect(out.tools).toEqual(expect.arrayContaining(["amico_catalog"]));
+  });
+});
+
+describe("amico router — doctor v2 (surface inventory, #525)", () => {
+  it("doctor --json with injected roots emits the canonical machine contract", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "doctor",
+      "--json",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+      "--running-binary", w.running,
+    ]);
+    // exit reflects the v1 studio binding only (machine-dependent); the
+    // surfaces contract is asserted on stdout, which must be JSON-only
+    const report = JSON.parse(r.stdout);
+    expect(report.surfaces).toHaveLength(6);
+    expect(report.surfaces.every((s: { verdict: string }) => s.verdict === "current")).toBe(true);
+    expect(validateDoctorReport(report).ok).toBe(true);
+    // canonical form: 2-space indent + trailing newline
+    expect(r.stdout.endsWith("\n")).toBe(true);
+    expect(r.stdout.split("\n")[1]).toBe('  "surfaces": [');
+    cleanupTracked();
+  });
+
+  it("doctor (human) prints the v1 binding table plus the surfaces section", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "doctor",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+      "--running-binary", w.running,
+    ]);
+    expect(r.stdout).toMatch(/studio binding/); // v1 section intact
+    expect(r.stdout).toMatch(/^surfaces:$/m); // v2 section gained
+    expect(r.stdout).toMatch(/server-binary/);
+    cleanupTracked();
   });
 });
