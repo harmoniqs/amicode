@@ -43,13 +43,14 @@
 // on the mini, and what the receipt must show, live in
 // docs/upgrade-live-dispatch.md (this slice does NOT run the live upgrade).
 import { execFile } from "node:child_process";
-import { mkdir, open, readFile, rm, copyFile, readdir } from "node:fs/promises";
+import { mkdir, open, readFile, rm, copyFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   surfaceInventory,
   newestExtensionDir,
   dirDigest,
+  fileSha,
   type SurfaceContext,
   type SurfaceRecord,
   type SurfaceName,
@@ -325,8 +326,8 @@ async function finish(ctx: VerbCtx, receipt: UpgradeReceipt): Promise<VerbResult
 
 interface VerbBodyResult {
   outcome: UpgradeOutcome;
-  verification: boolean | "deferred";
-  post: SurfaceRecord[];
+  verification: boolean | "deferred" | null;
+  post: SurfaceRecord[] | null;
   sourceDigests: Record<string, string | null>;
 }
 
@@ -482,6 +483,80 @@ async function copyTree(src: string, dst: string): Promise<void> {
   }
 }
 
+// ── agents: wraps deploy-agents.mjs — ONE invocation, BOTH receipt stores ────
+
+const agentsVerb = (argv: string[]): Promise<VerbResult> =>
+  runVerb("agents", argv, ["agent-cards-global", "agent-cards-staging"], async (ctx) => {
+    const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
+    const rootConfig = ctx.roots.rootConfig!;
+    const rootStaging = ctx.roots.rootStaging!;
+
+    // the script ships IN the amicode checkout (that is the live contract);
+    // a checkout without it is an environment problem, never a fallback to
+    // some sibling copy — the script's SOURCE_DIR must resolve inside the
+    // checkout the doctor probes read.
+    const script = join(rootRepoAmicode, "scripts", "deploy-agents.mjs");
+    try {
+      await stat(script);
+    } catch {
+      ctx.log(`deploy-agents.mjs not found in the amicode checkout: ${script}`);
+      return { outcome: "aborted-environment", verification: null, post: null, sourceDigests: {} };
+    }
+
+    const globalDir = join(rootConfig, "agents");
+    const stagingDir = join(rootStaging, ".opencode", "agents");
+    ctx.log(`deploying agent cards: ${script} --global ${globalDir} --staging ${stagingDir}`);
+    const deployed = await new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      execFile(
+        process.execPath,
+        [script, "--global", globalDir, "--staging", stagingDir],
+        { timeout: 120_000, cwd: rootRepoAmicode },
+        (err, stdout, stderr) => {
+          const code = err && typeof (err as { code?: number }).code === "number" ? (err as { code: number }).code : err ? 1 : 0;
+          resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+        },
+      );
+    });
+    if (deployed.code !== 0) {
+      ctx.log(`deploy-agents.mjs exited ${deployed.code}: ${firstLine(deployed.stderr || deployed.stdout)}`);
+      return {
+        outcome: "aborted-deploy",
+        verification: false,
+        post: await postRecords(ctx, ["agent-cards-global", "agent-cards-staging"]),
+        sourceDigests: {},
+      };
+    }
+    ctx.log(firstLine(deployed.stdout) || "deploy-agents.mjs completed");
+
+    // BOTH receipt stores are now written (the script wrote the contract-path
+    // .deploy-receipt.json; runVerb appends the JSONL). Verify through a
+    // FRESH doctor probe: both records current — the digest diff AND the
+    // contract receipt's freshness, judged by the same engine doctor uses.
+    const post = await postRecords(ctx, ["agent-cards-global", "agent-cards-staging"]);
+    const verification = post.every((r) => r.verdict === "current");
+    if (!verification) {
+      ctx.log(`verification FAILED: ${post.map((r) => `${r.surface}=${r.verdict}`).join(", ")}`);
+    } else {
+      ctx.log("verified: both agent-card deployments byte-match sources with a fresh receipt");
+    }
+    const contractReceipt = join(rootRepoAmicode, "packages", "extension", "agents", ".deploy-receipt.json");
+    return {
+      outcome: "upgraded",
+      verification,
+      post,
+      sourceDigests: { deploy_receipt: await fileSha(contractReceipt) },
+    };
+  });
+
+async function postRecords(ctx: VerbCtx, names: SurfaceName[]): Promise<SurfaceRecord[]> {
+  const post = await probe(ctx);
+  return names.map((n) => post.surfaces.find((r) => r.surface === n)!);
+}
+
+function firstLine(s: string): string {
+  return s.split("\n").map((l) => l.trim()).filter(Boolean).join(" ").slice(0, 300);
+}
+
 // ── the remaining verbs land in their own cycles; the router rejects them
 // honestly until then (never a silent no-op) ─────────────────────────────────
 
@@ -492,7 +567,6 @@ const notYetImplemented = (surface: UpgradeSurface) => (argv: string[]): Promise
 
 const serverBinaryVerb = notYetImplemented("server-binary");
 const extensionVerb = notYetImplemented("extension");
-const agentsVerb = notYetImplemented("agents");
 
 // ── the entry ────────────────────────────────────────────────────────────────
 
