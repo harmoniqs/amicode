@@ -42,8 +42,12 @@ import {
   type Density,
   type WidgetHostCallbacks,
 } from "@opencode-ai/ui/amicode-widget-grid"
+import { useNavigate, useParams } from "@solidjs/router"
 import { useServer } from "@/context/server"
+import { useServerSync } from "@/context/server-sync"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { sortedRootSessions } from "@/pages/layout/helpers"
+import { base64Encode } from "@opencode-ai/core/util/encode"
 
 const reviewTabID = "session-side-panel-review-tab"
 const reviewTabPanelID = "session-side-panel-review-tabpanel"
@@ -137,6 +141,42 @@ function PulseInspectorContent() {
 
 function HomeTabContent() {
   const server = useServer()
+  const sync = useServerSync()
+  const sdk = useSDK()
+  const params = useParams()
+  const navigate = useNavigate()
+
+  // Compute the most recent non-empty session that isn't the current one
+  const resumeSession = createMemo(() => {
+    const directory = sdk().directory
+    const store = sync().child(directory, { bootstrap: false })[0]
+    const sorted = sortedRootSessions(store, Date.now())
+    const currentId = params.id
+    // Find the first session that isn't the current one and has a title (non-empty)
+    return sorted.find((s) => s.id !== currentId && s.title) ?? undefined
+  })
+
+  const widgetContext = createMemo(() => {
+    const session = resumeSession()
+    return {
+      preview: false,
+      resume: session ? { name: session.title, meta: undefined } : undefined,
+    }
+  })
+
+  const widgetCallbacks: WidgetHostCallbacks = {
+    fetch: (path) => amicodeGet(server.current, path),
+    action: async (verb) => {
+      if (verb === "resume-session") {
+        const session = resumeSession()
+        if (session) navigate(`/${base64Encode(session.directory)}/session/${session.id}`)
+      }
+      return { ok: true }
+    },
+    prompt: () => {},
+    open: () => {},
+  }
+
   const [widgetsRaw, { refetch: refetchWidgets }] = createResource(
     () => server.current,
     () => amicodeGet(server.current, "/amicode/widgets").catch(() => undefined),
@@ -183,15 +223,6 @@ function HomeTabContent() {
     mq.addEventListener("change", update)
     onCleanup(() => mq.removeEventListener("change", update))
   })
-
-  const widgetContext = createMemo(() => ({ preview: false }))
-
-  const widgetCallbacks: WidgetHostCallbacks = {
-    fetch: (path) => amicodeGet(server.current, path),
-    action: async () => ({ ok: true }),
-    prompt: () => {},
-    open: () => {},
-  }
 
   const saveDashboard = (next: DashboardState) => {
     setSavedDashboard(next)
