@@ -108,6 +108,16 @@ _Avoid_: API key, password
 The self-healing SSH local-forward a `client` uses to reach the Canonical Server — one component with two launchers. The extension spawns and supervises it for interactive panels (reconnect with backoff, address candidates probed LAN-before-overlay, health surfaced in the status bar); a headless launcher (`amico fleet tunnel`) serves panel-less consumers such as scheduled jobs. Failures are always visible to its consumer — never an invisible external service.
 _Avoid_: port forward (as a concept name), launchd tunnel
 
+### Surfaces
+
+**Home**:
+The always-present first tab in the Work Column that renders the user's widget grid — profile cards, run status, problem summaries, and custom agent-authored widgets. The single canonical surface for widgets; replaces the standalone home page. Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
+_Avoid_: Dashboard (as the surface name), widget panel
+
+**Widget**:
+A sandboxed ES-module card rendered in an iframe within Home. Authored by the agent (`amicode_author_widget` tool) or shipped as a builtin. Communicates with the host via the bridge protocol (postMessage). Two size classes: hero (full panel width) and tile (half-width, 2-across). Each has a TOML manifest, a JS module, and optional config fields.
+_Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
+
 ### Orthogonal axes
 
 **Domain Pack**:

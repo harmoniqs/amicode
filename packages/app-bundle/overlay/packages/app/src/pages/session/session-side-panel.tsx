@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createSignal, on, onCleanup, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { DragDropProvider as DndKitProvider, PointerSensor } from "@dnd-kit/solid"
@@ -32,6 +32,22 @@ import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { RunInspector } from "@/amicode/inspector/run-inspector"
 import { useInspectorBridge } from "@/amicode/inspector/inspector-context"
+import {
+  WidgetGrid,
+  parseWidgetsResponse,
+  parseDashboardResponse,
+  resolveTokens,
+  densityForViewport,
+  type DashboardState,
+  type Density,
+  type WidgetHostCallbacks,
+} from "@opencode-ai/ui/amicode-widget-grid"
+import { useNavigate, useParams } from "@solidjs/router"
+import { useServer } from "@/context/server"
+import { useServerSync } from "@/context/server-sync"
+import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
+import { sortedRootSessions } from "@/pages/layout/helpers"
+import { base64Encode } from "@opencode-ai/core/util/encode"
 
 const reviewTabID = "session-side-panel-review-tab"
 const reviewTabPanelID = "session-side-panel-review-tabpanel"
@@ -118,6 +134,130 @@ function PulseInspectorContent() {
         <div class="flex-1 min-h-0 overflow-y-auto">
           <RunInspector bridge={bridge} />
         </div>
+      </Show>
+    </div>
+  )
+}
+
+function HomeTabContent() {
+  const server = useServer()
+  const sync = useServerSync()
+  const sdk = useSDK()
+  const params = useParams()
+  const navigate = useNavigate()
+
+  // Compute the most recent non-empty session that isn't the current one
+  const resumeSession = createMemo(() => {
+    const directory = sdk().directory
+    const store = sync().child(directory, { bootstrap: false })[0]
+    const sorted = sortedRootSessions(store, Date.now())
+    const currentId = params.id
+    // Find the first session that isn't the current one and has a title (non-empty)
+    return sorted.find((s) => s.id !== currentId && s.title) ?? undefined
+  })
+
+  const widgetContext = createMemo(() => {
+    const session = resumeSession()
+    return {
+      preview: false,
+      resume: session ? { name: session.title, meta: undefined } : undefined,
+    }
+  })
+
+  const widgetCallbacks: WidgetHostCallbacks = {
+    fetch: (path) => amicodeGet(server.current, path),
+    action: async (verb) => {
+      if (verb === "resume-session") {
+        const session = resumeSession()
+        if (session) navigate(`/${base64Encode(session.directory)}/session/${session.id}`)
+      }
+      return { ok: true }
+    },
+    prompt: () => {},
+    open: () => {},
+  }
+
+  const [widgetsRaw, { refetch: refetchWidgets }] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, "/amicode/widgets").catch(() => undefined),
+  )
+  const widgetInfos = createMemo(() => {
+    const raw = widgetsRaw()
+    return raw === undefined ? [] : parseWidgetsResponse(raw)
+  })
+
+  const [dashboardRaw] = createResource(
+    () => server.current,
+    () => amicodeGet(server.current, "/amicode/dashboard").catch(() => undefined),
+  )
+  const [savedDashboard, setSavedDashboard] = createSignal<DashboardState | undefined>(undefined)
+  const dashboard = createMemo<DashboardState | undefined>(() => {
+    const local = savedDashboard()
+    if (local) return local
+    const raw = dashboardRaw()
+    return raw === undefined ? undefined : parseDashboardResponse(raw)
+  })
+
+  const widgetFrameSrcs = createMemo(() => {
+    const conn = server.current
+    if (!conn) return {}
+    const out: Record<string, string> = {}
+    for (const w of widgetInfos())
+      out[w.id] = new URL(
+        `/amicode/widget-frame?id=${encodeURIComponent(w.id)}&h=${w.hash}`,
+        conn.http.url,
+      ).toString()
+    return out
+  })
+
+  const readTokens = () => {
+    const style = getComputedStyle(document.documentElement)
+    const density: Density = densityForViewport(window.innerWidth, window.innerHeight)
+    return { tokens: resolveTokens((name) => style.getPropertyValue(name), density), density }
+  }
+  const [themeState, setThemeState] = createSignal(readTokens())
+
+  createEffect(() => {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const update = () => setThemeState(readTokens())
+    mq.addEventListener("change", update)
+    onCleanup(() => mq.removeEventListener("change", update))
+  })
+
+  const saveDashboard = (next: DashboardState) => {
+    setSavedDashboard(next)
+    void amicodePost(server.current, "/amicode/dashboard", next)
+      .then((res) => {
+        const merged = parseDashboardResponse(res)
+        if (merged) setSavedDashboard(merged)
+      })
+      .catch(() => {})
+  }
+
+  return (
+    <div class="relative flex-1 min-h-0 overflow-y-auto p-3">
+      <Show
+        when={widgetInfos().length > 0 && dashboard()}
+        fallback={
+          <div class="h-full flex items-center justify-center text-center">
+            <div class="text-12-regular text-text-weak max-w-48">
+              No widgets yet. Ask Amico to create one for you.
+            </div>
+          </div>
+        }
+      >
+        {(dash) => (
+          <WidgetGrid
+            widgets={widgetInfos()}
+            dashboard={dash()}
+            frameSrcs={widgetFrameSrcs()}
+            tokens={themeState().tokens}
+            density={themeState().density}
+            context={widgetContext()}
+            callbacks={widgetCallbacks}
+            onSave={saveDashboard}
+          />
+        )}
       </Show>
     </div>
   )
@@ -257,6 +397,7 @@ export function SessionSidePanel(props: {
   })
   const contextOpen = tabState.contextOpen
   const previewOpen = tabState.previewOpen
+  const pulseInspectorOpen = tabState.pulseInspectorOpen
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs
@@ -308,7 +449,7 @@ export function SessionSidePanel(props: {
   })
   const fileBrowserVisible = createMemo(() => {
     const active = activeTab()
-    return active !== "review" && active !== "context" && active !== "empty" && active !== SESSION_PREVIEW_TAB
+    return active !== "review" && active !== "context" && active !== "home" && active !== "empty" && active !== SESSION_PREVIEW_TAB
   })
 
   // Markdown files for the Preview tab — check both git diffs and tool-edit history
@@ -325,7 +466,7 @@ export function SessionSidePanel(props: {
     {
       id: "context",
       label: "Context",
-      icon: "brain",
+      icon: "context-ring",
       available: () => true,
       active: contextOpen,
     },
@@ -474,6 +615,12 @@ export function SessionSidePanel(props: {
                                 onCleanup(stop)
                               }}
                             >
+                              <Tabs.Trigger value="home">
+                                <div class="flex items-center gap-1.5">
+                                  <Icon name="home" size="small" />
+                                  <div>Home</div>
+                                </div>
+                              </Tabs.Trigger>
                               <Show when={reviewTab() && props.canReview()}>
                                 <Tabs.Trigger
                                   value="review"
@@ -481,6 +628,7 @@ export function SessionSidePanel(props: {
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                 >
                                   <div class="flex items-center gap-1.5">
+                                    <Icon name="review" size="small" />
                                     <div>{language.t("session.tab.review")}</div>
                                     <Show when={props.hasReview()}>
                                       <div>{props.reviewCount()}</div>
@@ -521,32 +669,34 @@ export function SessionSidePanel(props: {
                                   </div>
                                 </Tabs.Trigger>
                               </div>
-                              <Tabs.Trigger
-                                value="pulseInspector"
-                                closeButton={
-                                  <TooltipKeybind
-                                    title={language.t("common.closeTab")}
-                                    keybind={command.keybind("tab.close")}
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close("pulseInspector")}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipKeybind>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close("pulseInspector")}
-                              >
-                                 <div class="flex items-center gap-1.5">
-                                   <Icon name="pulse" size="small" />
-                                   <div>Pulse Inspector</div>
-                                 </div>
-                               </Tabs.Trigger>
+                              <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
+                                <Tabs.Trigger
+                                  value="pulseInspector"
+                                  closeButton={
+                                    <TooltipKeybind
+                                      title={language.t("common.closeTab")}
+                                      keybind={command.keybind("tab.close")}
+                                      placement="bottom"
+                                      gutter={10}
+                                    >
+                                      <IconButton
+                                        icon="close-small"
+                                        variant="ghost"
+                                        class="h-5 w-5"
+                                        onClick={() => tabs().close("pulseInspector")}
+                                        aria-label={language.t("common.closeTab")}
+                                      />
+                                    </TooltipKeybind>
+                                  }
+                                  hideCloseButton
+                                  onMiddleClick={() => tabs().close("pulseInspector")}
+                                >
+                                   <div class="flex items-center gap-1.5">
+                                     <Icon name="pulse" size="small" />
+                                     <div>Pulse Inspector</div>
+                                   </div>
+                                 </Tabs.Trigger>
+                              </div>
                               <div style={{ display: previewOpen() ? undefined : "none" }}>
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
@@ -607,6 +757,12 @@ export function SessionSidePanel(props: {
                             >
                               {props.reviewPanel()}
                             </div>
+                          </Show>
+
+                          <Show when={activeTab() === "home"}>
+                            <Tabs.Content value="home" class="flex flex-col h-full overflow-hidden contain-strict">
+                              <HomeTabContent />
+                            </Tabs.Content>
                           </Show>
 
                           <Show when={activeTab() === "empty"}>
@@ -706,15 +862,29 @@ export function SessionSidePanel(props: {
                                 </div>
                               )}
                             </Show>
+                            <Tabs.Trigger value="home">
+                              <div class="flex items-center gap-1.5">
+                                <Icon name="home" size="small" />
+                                <div>Home</div>
+                              </div>
+                            </Tabs.Trigger>
                             <Show when={reviewTab() && props.canReview()}>
                               <Tabs.Trigger
                                 value="review"
                                 id={reviewTabID}
                                 aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                               >
-                                {props.hasReview()
-                                   ? "Files Changed"
-                                   : language.t("session.tab.review")}
+                                <div class="flex items-center gap-1.5">
+                                  <Icon name="review" size="small" />
+                                  <div>
+                                    {props.hasReview()
+                                       ? "Files Changed"
+                                       : language.t("session.tab.review")}
+                                  </div>
+                                  <Show when={props.hasReview()}>
+                                    <div>{props.reviewCount()}</div>
+                                  </Show>
+                                </div>
                               </Tabs.Trigger>
                             </Show>
                             <div style={{ display: contextOpen() ? undefined : "none" }}>
@@ -751,6 +921,7 @@ export function SessionSidePanel(props: {
                                 </div>
                               </Tabs.Trigger>
                             </div>
+                            <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
                             <Tabs.Trigger
                               value="pulseInspector"
                               closeButton={
@@ -783,6 +954,7 @@ export function SessionSidePanel(props: {
                                  <div>Pulse Inspector</div>
                                </div>
                              </Tabs.Trigger>
+                            </div>
                             <div style={{ display: previewOpen() ? undefined : "none" }}>
                               <Tabs.Trigger
                                 value={SESSION_PREVIEW_TAB}
@@ -856,6 +1028,12 @@ export function SessionSidePanel(props: {
                           >
                             {props.reviewPanel()}
                           </div>
+                        </Show>
+
+                        <Show when={activeTab() === "home"}>
+                          <Tabs.Content value="home" class="flex flex-col h-full overflow-hidden contain-strict">
+                            <HomeTabContent />
+                          </Tabs.Content>
                         </Show>
 
                         <Show when={activeTab() === "empty"}>

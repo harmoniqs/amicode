@@ -153,9 +153,9 @@ const REQUESTS = [
   { method: "GET", path: "/amicode/library", name: "library — post-upload state" },
   // ── widget kernel + dashboard (slice 5) ────────────────────────────────────
   { method: "GET", path: "/amicode/widgets", name: "widget registry — builtins with content hashes" },
-  { method: "GET", path: "/amicode/widget-frame?id=meet-amico", name: "widget frame — served HTML + its own CSP" },
+  { method: "GET", path: "/amicode/widget-frame?id=jump-back-in", name: "widget frame — served HTML + its own CSP" },
   { method: "GET", path: "/amicode/widget-frame?id=not-a-widget", name: "widget frame — unknown id stub" },
-  { method: "GET", path: "/amicode/widget-code?id=about-you", name: "widget code — builtin source + hash" },
+  { method: "GET", path: "/amicode/widget-code?id=jump-back-in", name: "widget code — builtin source + hash" },
   { method: "GET", path: "/amicode/widget-code?id=no-such", name: "widget code — not_found" },
   {
     method: "POST",
@@ -177,7 +177,6 @@ const REQUESTS = [
     body: {
       version: 1,
       widget: [
-        { id: "about-you", hidden: false, config: {}, group: "right" },
         { id: "my-showcase", hidden: true, config: {} },
       ],
       views: { home: "grid" },
