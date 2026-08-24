@@ -14,8 +14,8 @@ height = 250
 
 [config.stats]
 type = "multi-select"
-options = ["problems", "runs", "banked"]
-default = ["problems", "runs", "banked"]
+options = ["problems", "runs"]
+default = ["problems", "runs"]
 `
 
 export const widgetJs = `
@@ -72,8 +72,8 @@ export default {
       }
       var you = profile.you
       var stats = you.stats || {}
-      var chosen = (amico.config && amico.config.stats) || ['problems', 'runs', 'banked']
-      var fresh = !stats.problems && !stats.runs && !stats.banked
+      var chosen = (amico.config && amico.config.stats) || ['problems', 'runs']
+      var fresh = !stats.problems && !stats.runs
 
       var avatar = you.avatar
         ? '<img src="' + esc(you.avatar) + '" alt="" onerror="this.style.display=\\'none\\'" style="width:44px;height:44px;border-radius:var(--amc-radius);object-fit:cover;flex-shrink:0">'

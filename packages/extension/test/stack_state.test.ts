@@ -190,8 +190,7 @@ describe("user-memory section text (parity oracle vs the retired user_splice.ts)
           "- [p1](problems/p1.md) — thing one",
           "",
           "Before recommending parameters, check whether the user's target matches one",
-          "of these cards (read the card file on demand for details). If a pulse exists",
-          "in the bank, offer a warm start from its `pulse.jld2` path. If a prior",
+          "of these cards (read the card file on demand for details). If a prior",
           "attempt failed, surface its lesson before re-authoring.",
         ].join("\n"),
       );

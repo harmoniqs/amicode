@@ -18,13 +18,13 @@ import {
 
 describe("resolveHandoffAction — intent-based routing (AC6)", () => {
   const cases: Array<{ intents: IntentSlug[]; expected: HandoffAction; name: string }> = [
-    { intents: ["research"], expected: "pulse-designer", name: "research only → pulse-designer" },
+    { intents: ["research"], expected: "research-session", name: "research only → research-session" },
     { intents: ["general_coding"], expected: "normal-session", name: "general coding only → normal-session" },
     { intents: ["exploring"], expected: "tour-session", name: "exploring only → tour-session" },
-    { intents: ["research", "general_coding"], expected: "pulse-designer-plus", name: "research + general → pulse-designer-plus" },
-    { intents: ["research", "exploring"], expected: "pulse-designer", name: "research + exploring → pulse-designer" },
+    { intents: ["research", "general_coding"], expected: "research-session-plus", name: "research + general → research-session-plus" },
+    { intents: ["research", "exploring"], expected: "research-session", name: "research + exploring → research-session" },
     { intents: ["general_coding", "exploring"], expected: "normal-session", name: "general + exploring → normal-session" },
-    { intents: ["research", "general_coding", "exploring"], expected: "pulse-designer-plus", name: "all three → pulse-designer-plus" },
+    { intents: ["research", "general_coding", "exploring"], expected: "research-session-plus", name: "all three → research-session-plus" },
   ];
 
   for (const { intents, expected, name } of cases) {

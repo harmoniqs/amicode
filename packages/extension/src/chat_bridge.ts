@@ -20,7 +20,6 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.restartServer",
   "amicode.distillNow",
   "amicode.stopRun",
-  "amicode.savePulse",
   "amicode.openRunDir",
   "amicode.openInspector",
   // The composer's report-a-bug button (fork #116) posts this over the command

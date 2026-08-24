@@ -91,7 +91,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     expect(agents).toContain("general-purpose autoresearch copilot"); // stub injected
     expect(agents).not.toContain("Stages, in order:"); // hardcoded body replaced
     expect(agents).toContain("## Identity"); // engine sections intact
-    expect(agents).toContain("AMICODE_ITER"); // run-dir contract intact
+    expect(agents).toContain("## Style & formatting"); // harness sections intact (ADR 0008: run-dir contract moved to solve skill)
     expect(agents).not.toMatch(/\{\{[A-Z_]+\}\}/); // substitution complete, incl. compiled content
   });
 
@@ -119,14 +119,14 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
 
     const proj = prep({ scoresRoot: badRoot, packsRoot: "/nonexistent/packs" });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("Stages, in order:"); // hardcoded interview kept as fallback
+    expect(agents).toContain("## The error-corrected research loop"); // generic loop kept as fallback (ADR 0008)
     expect(agents).not.toContain("## Onset router");
     expect(fs.existsSync(path.join(proj.projectDir, "score_manifest.json"))).toBe(false);
   });
 
   it("missing scores root behaves like fallback (no throw)", () => {
     const proj = prep({ scoresRoot: "/nonexistent/scores", packsRoot: "/nonexistent/packs" });
-    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("Stages, in order:");
+    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## The error-corrected research loop"); // generic fallback (ADR 0008)
   });
 
   it("writes authoring.json (spec C) — public allowlist, support set, existing bundled asset paths, tolerance", () => {
@@ -306,7 +306,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("Stages, in order:"); // score compile failed → fallback interview
+    expect(agents).toContain("## The error-corrected research loop"); // score compile failed → generic fallback (ADR 0008)
     expect(agents).toContain("## Skill index"); // yet the skill index is STILL present
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");

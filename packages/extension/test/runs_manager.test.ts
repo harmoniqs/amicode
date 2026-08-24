@@ -173,7 +173,8 @@ describe("RunsManager multi-run (#57 / #58 fan-out)", () => {
     tick(m);
     expect(bridge.postRunCompletion).toHaveBeenCalledWith("rA", 0.9995, expect.any(Number), "completed");
     expect(m.runs().find((r) => r.runId === "rA")).toMatchObject({ phase: "finished", fidelity: 0.9995 });
-    expect(promote).toHaveBeenCalledTimes(1);
+    // ADR 0008: convergence popup removed (save flow handled by agent/skill)
+    expect(promote).toHaveBeenCalledTimes(0);
 
     writeFileSync(join(b, "FINISHED"), 'status = "failed"\nexit_code = 3\n');
     tick(m);

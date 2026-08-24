@@ -9,7 +9,7 @@ import {
   stageOpencodeSkills,
   parseLibraryRootSpecs,
 } from "../../src/scores/package_skills";
-import { DEFAULT_LIBRARY_ROOTS, DEFAULT_PLATFORM_SKILLS } from "../../src/opencode_config";
+import { DEFAULT_LIBRARY_ROOTS, QUANTUM_CONTROL_SKILLS } from "../../src/opencode_config";
 
 function mkRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "amicode-skillroot-"));
@@ -215,26 +215,26 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
   });
 
   // Real-library-root assertions. The in-repo root always exists (it ships), so these run
-  // everywhere. DEFAULT_PLATFORM_SKILLS is retained as a documentation anchor of the
-  // physics/opt subset but is NOT the selection input — discovery is by tag, and the
-  // in-repo root admits {public} only (ADR-0003): internal skills resolve only from the
-  // armonissima vault root, where mount presence is the eligibility proof.
+  // everywhere. QUANTUM_CONTROL_SKILLS moved to armonissima (surface: internal, ADR 0008)
+  // so the public set no longer contains them — they resolve only from the vault root.
   it("discovers every public-tagged skill from the real in-repo library", () => {
     const root = inRepoLibraryRoot();
     if (!root) return;
     const expected = countTaggedSkills(root, /public/); // tag-derived, same tolerance as the resolver
+    // Resolve from the PUBLIC root only to verify quantum-control skills aren't there
+    const publicOnly = resolveLibrarySkills([DEFAULT_LIBRARY_ROOTS[0]]).map((e) => e.name).sort();
+    // quantum-control skills are internal → NOT in the public root (ADR 0008)
+    for (const p of QUANTUM_CONTROL_SKILLS) expect(publicOnly).not.toContain(p);
+    // the public set is exactly the in-repo public tags
+    expect(publicOnly).toHaveLength(expected);
+    expect(expected).toBeGreaterThan(0);
+    // Full resolution (public + vault) includes internal skills when armonissima is mounted
     const names = resolveLibrarySkills(DEFAULT_LIBRARY_ROOTS).map((e) => e.name).sort();
-    // every physics/opt anchor is public → present in the discovered set (superset check)
-    for (const p of DEFAULT_PLATFORM_SKILLS) expect(names).toContain(p);
-    // the public set is exactly the in-repo public tags, PLUS anything the vault root
-    // contributes on team machines — so assert containment, not equality, when the
-    // vault is mounted; exact equality otherwise.
     if (vaultInternalRoot()) {
-      expect(names.length).toBeGreaterThanOrEqual(expected);
+      expect(names.length).toBeGreaterThan(publicOnly.length);
     } else {
       expect(names).toHaveLength(expected);
     }
-    expect(expected).toBeGreaterThan(0);
   });
   it("internal skills resolve from the armonissima mount when it is present (team machines only)", () => {
     const vault = vaultInternalRoot();

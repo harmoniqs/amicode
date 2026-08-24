@@ -549,8 +549,7 @@ function buildRecentProblemsSection(knowledgeLines: string[]): string {
     ...knowledgeLines,
     "",
     "Before recommending parameters, check whether the user's target matches one",
-    "of these cards (read the card file on demand for details). If a pulse exists",
-    "in the bank, offer a warm start from its `pulse.jld2` path. If a prior",
+    "of these cards (read the card file on demand for details). If a prior",
     "attempt failed, surface its lesson before re-authoring.",
   ].join("\n");
 }

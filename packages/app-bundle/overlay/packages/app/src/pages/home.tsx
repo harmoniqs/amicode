@@ -774,7 +774,7 @@ function HomeDesign() {
           setGalleryOpen(true)
           return { ok: true }
         case "warm-start":
-          startWithPrompt("warm-start a new solve from my pulse bank")
+          startWithPrompt("warm-start a new solve from my previous results")
           return { ok: true }
         default:
           throw new Error(`unknown action: ${verb}`)
@@ -1374,7 +1374,7 @@ function HomeDesign() {
                   const name = resumeProblem()?.name
                   if (name) startWithPrompt(`Open the problem "${name}" and continue where we left off`)
                 }}
-                onWarmStart={() => startWithPrompt("warm-start a new solve from my pulse bank")}
+                onWarmStart={() => startWithPrompt("warm-start a new solve from my previous results")}
                 onOpenGallery={() => setGalleryOpen(true)}
                 liveRun={liveRun()}
                 onOpenLiveRun={() => {

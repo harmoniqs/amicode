@@ -13,9 +13,9 @@ height = 250
 
 export const widgetJs = `
 var CAN = [
-  'design pulses from a conversation',
-  'optimize for fidelity, speed, or robustness',
-  'warm-start from your pulse bank',
+  'run automated experiments from a conversation',
+  'verify results independently before trusting them',
+  'remember your work and build on prior results',
   'tune & calibrate on real hardware',
 ]
 
@@ -44,8 +44,8 @@ export default {
       FACE +
       '<div style="min-width:0">' +
       '<div style="font-size:18px;font-weight:600;color:var(--amc-text)">Amico</div>' +
-      '<div style="font-size:12px;line-height:16px;color:var(--amc-text-muted)">Your friendly Quantum Computing Agent</div>' +
-      '<div data-engine style="font-size:11px;line-height:16px;color:var(--amc-text-faint)">powered by the Piccolo engine</div>' +
+      '<div style="font-size:12px;line-height:16px;color:var(--amc-text-muted)">Your autoresearch copilot</div>' +
+      '<div data-engine style="font-size:11px;line-height:16px;color:var(--amc-text-faint)">powered by the autoresearch loop</div>' +
       '</div></div>' +
       '<div style="height:1px;background:var(--amc-border);margin:12px 0"></div>' +
       '<div style="font-size:11px;color:var(--amc-text-muted);margin-bottom:6px">I can help you</div>' +

@@ -35,7 +35,7 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, stopPlan, forceStop, runLogMtime } from "./run_controls";
+import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
@@ -208,6 +208,14 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
 /** Run dirs with a cooperative stop in flight (escalation timer armed) — a
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
+
+// Domain-pack activation gate (ADR 0008): quantum-control is the first and
+// only domain pack, always active today. This gate exists so domain-specific
+// infrastructure (Julia substrate, domain tools) is visibly gated rather than
+// implicitly unconditional. A second domain pack would make this configurable.
+function isQuantumControlPackActive(): boolean {
+  return true;
+}
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -948,7 +956,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (!fromCommand && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true) return;
     if (!fromCommand) {
       const choice = await vscode.window.showInformationMessage(
-        "Set up a personal vault? Amico will remember your systems, pulses, and problems across sessions — stored locally under ~/.amico/vaults.",
+        "Set up a personal vault? Amico will remember your systems, results, and problems across sessions — stored locally under ~/.amico/vaults.",
         "Create vault",
         "Not now",
         "Don't ask again",
@@ -1065,7 +1073,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
   // Auto-offer on first run when the toolchain isn't ready (juliaup/channel/
   // project missing) and the user hasn't dismissed. Command bypasses the gate.
+  // Gated: Julia substrate belongs to the quantum-control domain pack (ADR 0008).
   if (
+    isQuantumControlPackActive() &&
     shouldOfferJuliaSetup({
       juliaupPresent: hasJuliaup(),
       channelPresent: (() => {
@@ -1611,25 +1621,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         await vscode.env.openExternal(vscode.Uri.file(dir));
       }
     }),
-    vscode.commands.registerCommand("amicode.savePulse", async () => {
-      const dir = runsManager?.getActiveRunDir();
-      if (!dir) {
-        vscode.window.showWarningMessage("Amicode: no active run.");
-        return;
-      }
-      try {
-        const uri = await vscode.window.showSaveDialog({
-          filters: { JLD2: ["jld2"] },
-          defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
-        });
-        if (uri) {
-          savePulseTo(dir, uri.fsPath);
-          vscode.window.showInformationMessage("Amicode: pulse saved.");
-        }
-      } catch (e) {
-        vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
-      }
-    }),
+    // Save-pulse command retired (ADR 0008): the save/promote flow is now
+    // handled by the agent via the design-a-pulse skill, not a VS Code command.
     // Distill trigger 3 (manual): coarse idempotent sweep — safe to mash.
     vscode.commands.registerCommand("amicode.distillNow", () => {
       if (!distillerSetup) {
