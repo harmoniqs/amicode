@@ -170,13 +170,13 @@ export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
   { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public"] },
   { path: path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills"), surfaces: ["internal"] },
 ];
-/** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
- *  a documentation/reference anchor, NOT a selection input (selection is purely by
- *  frontmatter `surface: public`, see resolveLibrarySkills). The discovery test uses it
- *  as a superset check: each of these must appear in the discovered public set. */
-export const DEFAULT_PLATFORM_SKILLS = [
+/** The quantum-control skill subset — now internal (surface: internal, lives in
+ *  armonissima per ADR 0008). Retained here ONLY as a documentation anchor
+ *  listing which skills moved; the discovery test no longer checks these against
+ *  the public set. Selection is purely by frontmatter `surface` + root admission. */
+export const QUANTUM_CONTROL_SKILLS = [
   "atoms",
-  "pasqal", // the neutral-atom DEVICE path (solve -> Pulser -> emulator/QPU)
+  "pasqal",
   "bosonic",
   "fluxonium",
   "ions",
@@ -186,6 +186,14 @@ export const DEFAULT_PLATFORM_SKILLS = [
   "plot",
   "objectives",
   "demo",
+  "compose",
+  "constraints",
+  "design-a-pulse",
+  "multistart",
+  "problem-types",
+  "simulate",
+  "structural-analysis",
+  "warm-start",
 ];
 
 /** Bundled spec-C authoring assets (absolute), resolved relative to this module.
