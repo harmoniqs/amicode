@@ -43,6 +43,7 @@ import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, rel
 import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
+import { stageModCards } from "./mode_cards";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
@@ -237,6 +238,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[pasqal] connector staged: ${pasqal.dir} (${pasqal.staged.join(", ")})`);
   } catch (e) {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
+  }
+
+  // #533: stage mode cards (autodev, autoresearch) into the global opencode
+  // agents directory so they appear in the agent picker. Same always-copy
+  // semantics as Pasqal staging: extension-owned, overwrite-on-activate,
+  // never blocks activation.
+  try {
+    const modes = stageModCards(ctx.extensionPath);
+    opencodeChannel.appendLine(`[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[modes] mode-card staging failed: ${(e as Error).message}`);
   }
 
   // Provision the Pasqal validator's interpreter (the fresh-install fix): a
