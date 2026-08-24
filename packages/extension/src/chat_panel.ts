@@ -340,6 +340,11 @@ export class ChatPanel {
     // staged skill set includes report-a-bug. The dock iframe (pane bug-dock)
     // never carries this — it is the main app surface's gate alone.
     if (ChatPanel.bugReportAvailable) framed.searchParams.set("amicode_bug_report", "1");
+    // Developer mode: when devAssetRoot is configured, signal the app to
+    // enable its developer badge/settings. Without this, the setting is lost
+    // on every reload because ephemeral ports rotate the localStorage origin.
+    const devAssetRoot = (vscode.workspace.getConfiguration("amicode").get<string>("devAssetRoot", "") ?? "").trim();
+    if (devAssetRoot) framed.searchParams.set("amicode_developer", "1");
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -449,6 +454,8 @@ export class ChatPanel {
     if (authToken) framed.searchParams.set("auth_token", authToken);
     if (hideProjectDir) framed.searchParams.set("amicode_hide_project", hideProjectDir);
     if (ChatPanel.bugReportAvailable) framed.searchParams.set("amicode_bug_report", "1");
+    const devAssetRootTransition = (vscode.workspace.getConfiguration("amicode").get<string>("devAssetRoot", "") ?? "").trim();
+    if (devAssetRootTransition) framed.searchParams.set("amicode_developer", "1");
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
