@@ -1046,6 +1046,9 @@ export const dict = {
   "settings.general.row.dataStorage.configDir.description":
     "Override the opencode configuration directory. Leave empty to use the default location.",
   "settings.general.row.dataStorage.configDir.error.invalidPath": "Directory does not exist",
+  "settings.general.row.dataStorage.recapWindow.title": "Session recap window",
+  "settings.general.row.dataStorage.recapWindow.description":
+    "How many days of recent sessions to include in the context prompt. Requires a server restart to take effect.",
 
   "settings.general.row.releaseNotes.title": "Release notes",
   "settings.general.row.releaseNotes.description": "Show What's New popups after updates",

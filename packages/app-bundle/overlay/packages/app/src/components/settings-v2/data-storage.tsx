@@ -79,6 +79,27 @@ const DataStorageContent: Component<{ controller: DataStorageController }> = (pr
           />
         </div>
       </SettingsRowV2>
+
+      <SettingsRowV2
+        title={language.t("settings.general.row.dataStorage.recapWindow.title")}
+        description={language.t("settings.general.row.dataStorage.recapWindow.description")}
+      >
+        <div class="w-full sm:w-[100px]">
+          <TextInputV2
+            data-action="settings-data-storage-recap-window"
+            type="number"
+            appearance="base"
+            value={String(props.controller.recapWindowDays())}
+            onInput={(event) => {
+              const v = Number(event.currentTarget.value)
+              if (Number.isFinite(v) && v >= 1) props.controller.setRecapWindowDays(v)
+            }}
+            onBlur={() => props.controller.commitRecapWindowDays()}
+            placeholder={String(props.controller.defaults()?.recapWindowDays ?? 7)}
+            aria-label={language.t("settings.general.row.dataStorage.recapWindow.title")}
+          />
+        </div>
+      </SettingsRowV2>
     </SettingsListV2>
   )
 }
