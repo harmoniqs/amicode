@@ -466,7 +466,7 @@ export function SessionSidePanel(props: {
     {
       id: "context",
       label: "Context",
-      icon: "brain",
+      icon: "target",
       available: () => true,
       active: contextOpen,
     },
