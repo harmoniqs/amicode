@@ -9,8 +9,8 @@ import type { WidgetPreview } from "./widget-preview"
 // result as a LIVE preview of the just-authored widget, inside the chat. Reuses
 // the exact frame kernel the home grid uses (server-served sandboxed frame +
 // bridge), reading the server context (frame src base, host callbacks, pin
-// verb) off the ui-bridge — same idiom as the RunWindow. "Pin to dashboard"
-// adds it to home. Re-authoring the same id emits a new hash → a fresh preview
+// verb) off the ui-bridge — same idiom as the RunWindow. "Pin to Home"
+// adds it to the Home tab. Re-authoring the same id emits a new hash → a fresh preview
 // with the updated code (hot-reload). No host registered (e.g. TUI) → a plain
 // note, never a crash.
 
@@ -48,7 +48,7 @@ export function WidgetPreviewCard(props: { preview: WidgetPreview }) {
       .catch(() => setPinState("error"))
   }
   const pinLabel = () =>
-    ({ idle: "Pin to dashboard", pinning: "Pinning…", pinned: "Pinned to dashboard ✓", error: "Couldn’t pin — retry" })[
+    ({ idle: "Pin to Home", pinning: "Pinning…", pinned: "Pinned to Home ✓", error: "Couldn't pin — retry" })[
       pinState()
     ]
 
