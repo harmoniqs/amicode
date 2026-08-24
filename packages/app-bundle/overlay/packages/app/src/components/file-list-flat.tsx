@@ -19,11 +19,6 @@ export function FileListFlat(props: FileListFlatProps) {
   const items = createMemo(() => disambiguateFilenames(sorted()))
   const commonAncestor = createMemo(() => getCommonAncestor(props.files()))
 
-  const handleFileClick = (path: string) => {
-    setClickedFile(path)
-    setPopoverOpen(true)
-  }
-
   const handleTreeFileClick = (path: string) => {
     setPopoverOpen(false)
     props.onFileClick(path)
@@ -41,7 +36,12 @@ export function FileListFlat(props: FileListFlatProps) {
               <Popover
                 open={popoverOpen() && clickedFile() === item.path}
                 onOpenChange={(open) => {
-                  if (!open) setPopoverOpen(false)
+                  if (open) {
+                    setClickedFile(item.path)
+                    setPopoverOpen(true)
+                  } else {
+                    setPopoverOpen(false)
+                  }
                 }}
                 placement="bottom-start"
                 trigger={
@@ -51,7 +51,6 @@ export function FileListFlat(props: FileListFlatProps) {
                       "bg-background-base text-text-base": isActive(),
                       "text-text-weak": !isActive(),
                     }}
-                    onClick={() => handleFileClick(item.path)}
                     data-file-path={item.path}
                     data-testid="file-list-flat-item"
                   >
