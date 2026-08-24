@@ -307,8 +307,6 @@ export function seedAmicodeSandbox(dir) {
   writeJson(join(amico, "dashboard.json"), {
     version: 1,
     widget: [
-      { id: "meet-amico", hidden: true, config: {} },
-      { id: "about-you", config: {}, group: "left", view: "expanded" },
       { id: "ghost-widget", config: { any: "values" } },
     ],
     views: { home: "grid" },

@@ -71,7 +71,7 @@ export default {
       if (discuss)
         discuss.onclick = function () {
           var lib2 = (amico.context && amico.context.library) || {}
-          amico.prompt('read my latest paper at ' + (lib2.latestPath || '') + ' and discuss how it should inform my research')
+          amico.prompt('read my latest paper at ' + (lib2.latestPath || '') + ' and discuss how it should inform my pulse-design work')
         }
     }
     render()
