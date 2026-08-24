@@ -10,9 +10,23 @@ export interface PanelMenuItem {
   icon: string
   available: () => boolean
   active?: () => boolean
+  group?: string
 }
 
 // ─── Component ──────────────────────────────────────────────────────────────
+
+function partitionByGroup(items: PanelMenuItem[]) {
+  const available = items.filter((item) => item.available())
+  const ungrouped = available.filter((item) => !item.group)
+  const groups = new Map<string, PanelMenuItem[]>()
+  for (const item of available) {
+    if (!item.group) continue
+    const list = groups.get(item.group)
+    if (list) list.push(item)
+    else groups.set(item.group, [item])
+  }
+  return { ungrouped, groups }
+}
 
 export function PanelMenu(props: {
   items: PanelMenuItem[]
@@ -31,23 +45,56 @@ export function PanelMenu(props: {
         <DropdownMenu.Content
           class="z-50 min-w-[160px] overflow-hidden rounded-lg border border-border-base bg-background-base p-1 shadow-md"
         >
-          <For each={props.items.filter((item) => item.available())}>
-            {(item) => (
-              <DropdownMenu.Item
-                class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-12-regular text-text-base cursor-pointer outline-none hover:bg-background-stronger focus:bg-background-stronger transition-colors"
-                classList={{
-                  "opacity-60": item.active?.() ?? false,
-                }}
-                onSelect={() => props.onSelect(item.id)}
-              >
-                <Icon name={item.icon as any} size="small" class="text-text-weak" />
-                <span>{item.label}</span>
-                <Show when={item.active?.()}>
-                  <Icon name="check-small" size="small" class="ml-auto text-text-weak" />
-                </Show>
-              </DropdownMenu.Item>
-            )}
-          </For>
+          {(() => {
+            const { ungrouped, groups } = partitionByGroup(props.items)
+            return (
+              <>
+                <For each={ungrouped}>
+                  {(item) => (
+                    <DropdownMenu.Item
+                      class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-12-regular text-text-base cursor-pointer outline-none hover:bg-background-stronger focus:bg-background-stronger transition-colors"
+                      classList={{
+                        "opacity-60": item.active?.() ?? false,
+                      }}
+                      onSelect={() => props.onSelect(item.id)}
+                    >
+                      <Icon name={item.icon as any} size="small" class="text-text-weak" />
+                      <span>{item.label}</span>
+                      <Show when={item.active?.()}>
+                        <Icon name="check-small" size="small" class="ml-auto text-text-weak" />
+                      </Show>
+                    </DropdownMenu.Item>
+                  )}
+                </For>
+                <For each={[...groups.entries()]}>
+                  {([groupName, groupItems]) => (
+                    <>
+                      <div class="px-2.5 pt-2 pb-1 text-11-regular text-text-muted select-none">
+                        {groupName}
+                      </div>
+                      <For each={groupItems}>
+                        {(item) => (
+                          <DropdownMenu.Item
+                            class="flex items-center gap-2 px-2.5 py-1.5 rounded-md text-12-regular text-text-base cursor-pointer outline-none hover:bg-background-stronger focus:bg-background-stronger transition-colors"
+                            classList={{
+                              "opacity-60": item.active?.() ?? false,
+                            }}
+                            onSelect={() => props.onSelect(item.id)}
+                          >
+                            <Icon name={item.icon as any} size="small" class="text-text-weak" />
+                            <span>{item.label}</span>
+                            <Show when={item.active?.()}>
+                              <Icon name="check-small" size="small" class="ml-auto text-text-weak" />
+                            </Show>
+                          </DropdownMenu.Item>
+                        )}
+                      </For>
+                    </>
+                  )}
+                </For>
+              </>
+            )
+          })()}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu>

@@ -320,7 +320,7 @@ export function SessionSidePanel(props: {
   })
 
   // Panel menu items — Files Changed lives as the "review" trigger, Context and
-  // Preview are the secondary tabs, and Run Inspector is the third requested tab.
+  // Preview are the secondary tabs, and Pulse Inspector is the third requested tab.
   const panelMenuItems = createMemo((): PanelMenuItem[] => [
     {
       id: "context",
@@ -331,10 +331,11 @@ export function SessionSidePanel(props: {
     },
     {
       id: "pulseInspector",
-      label: "Run Inspector",
+      label: "Pulse Inspector",
       icon: "pulse",
       available: () => true,
       active: () => activeTab() === "pulseInspector",
+      group: "Quantum",
     },
     {
       id: SESSION_PREVIEW_TAB,
@@ -543,7 +544,7 @@ export function SessionSidePanel(props: {
                               >
                                  <div class="flex items-center gap-1.5">
                                    <Icon name="pulse" size="small" />
-                                   <div>Run Inspector</div>
+                                   <div>Pulse Inspector</div>
                                  </div>
                                </Tabs.Trigger>
                               <div style={{ display: previewOpen() ? undefined : "none" }}>
@@ -779,7 +780,7 @@ export function SessionSidePanel(props: {
                             >
                                <div class="flex items-center gap-1.5">
                                  <Icon name="pulse" size="small" />
-                                 <div>Run Inspector</div>
+                                 <div>Pulse Inspector</div>
                                </div>
                              </Tabs.Trigger>
                             <div style={{ display: previewOpen() ? undefined : "none" }}>
