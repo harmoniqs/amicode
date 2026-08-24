@@ -11,10 +11,6 @@
 // fork and port serving identical bytes from identical state is the whole
 // parity claim.
 //
-// DELIBERATELY SKIPPED (#532): the pulse-bank widget was removed from the
-// extension (ADR 0008) but the fork binary hasn't been updated yet. Re-enable
-// once the fork is updated and goldens are re-recorded.
-//
 // Absolute paths differ between the recording sandbox and this test's sandbox;
 // both sides are normalized to <SANDBOX> (meta.sandbox vs this sandbox, plus
 // their realpath forms) before comparison. Everything else must match exactly.
@@ -32,7 +28,7 @@ const FIXTURE = fileURLToPath(new URL("./fixtures/amicode/golden.json", import.m
 const META: { fork: { tag: string }; sandbox: string; sandboxReal: string; seededAt: number; entries: any[] } =
   JSON.parse(readFileSync(FIXTURE, "utf8"));
 
-describe.skip("amicode service — golden-fixture parity with the fork", () => {
+describe("amicode service — golden-fixture parity with the fork", () => {
   let sandbox: string;
   let savedEnv: Record<string, string | undefined>;
   let service: ReturnType<typeof createAmicodeService>;

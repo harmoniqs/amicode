@@ -35,7 +35,7 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, stopPlan, forceStop, runLogMtime } from "./run_controls";
+import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
@@ -1621,25 +1621,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         await vscode.env.openExternal(vscode.Uri.file(dir));
       }
     }),
-    vscode.commands.registerCommand("amicode.savePulse", async () => {
-      const dir = runsManager?.getActiveRunDir();
-      if (!dir) {
-        vscode.window.showWarningMessage("Amicode: no active run.");
-        return;
-      }
-      try {
-        const uri = await vscode.window.showSaveDialog({
-          filters: { JLD2: ["jld2"] },
-          defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
-        });
-        if (uri) {
-          savePulseTo(dir, uri.fsPath);
-          vscode.window.showInformationMessage("Amicode: result artifact saved.");
-        }
-      } catch (e) {
-        vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
-      }
-    }),
+    // Save-pulse command retired (ADR 0008): the save/promote flow is now
+    // handled by the agent via the design-a-pulse skill, not a VS Code command.
     // Distill trigger 3 (manual): coarse idempotent sweep — safe to mash.
     vscode.commands.registerCommand("amicode.distillNow", () => {
       if (!distillerSetup) {
