@@ -397,6 +397,7 @@ export function SessionSidePanel(props: {
   })
   const contextOpen = tabState.contextOpen
   const previewOpen = tabState.previewOpen
+  const pulseInspectorOpen = tabState.pulseInspectorOpen
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs
@@ -616,7 +617,7 @@ export function SessionSidePanel(props: {
                             >
                               <Tabs.Trigger value="home">
                                 <div class="flex items-center gap-1.5">
-                                  <Icon name="dot-grid" size="small" />
+                                  <Icon name="home" size="small" />
                                   <div>Home</div>
                                 </div>
                               </Tabs.Trigger>
@@ -625,8 +626,27 @@ export function SessionSidePanel(props: {
                                   value="review"
                                   id={reviewTabID}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                  closeButton={
+                                    <TooltipKeybind
+                                      title={language.t("common.closeTab")}
+                                      keybind={command.keybind("tab.close")}
+                                      placement="bottom"
+                                      gutter={10}
+                                    >
+                                      <IconButton
+                                        icon="close-small"
+                                        variant="ghost"
+                                        class="h-5 w-5"
+                                        onClick={() => tabs().close("review")}
+                                        aria-label={language.t("common.closeTab")}
+                                      />
+                                    </TooltipKeybind>
+                                  }
+                                  hideCloseButton
+                                  onMiddleClick={() => tabs().close("review")}
                                 >
                                   <div class="flex items-center gap-1.5">
+                                    <Icon name="review" size="small" />
                                     <div>{language.t("session.tab.review")}</div>
                                     <Show when={props.hasReview()}>
                                       <div>{props.reviewCount()}</div>
@@ -667,32 +687,34 @@ export function SessionSidePanel(props: {
                                   </div>
                                 </Tabs.Trigger>
                               </div>
-                              <Tabs.Trigger
-                                value="pulseInspector"
-                                closeButton={
-                                  <TooltipKeybind
-                                    title={language.t("common.closeTab")}
-                                    keybind={command.keybind("tab.close")}
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close("pulseInspector")}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipKeybind>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close("pulseInspector")}
-                              >
-                                 <div class="flex items-center gap-1.5">
-                                   <Icon name="pulse" size="small" />
-                                   <div>Pulse Inspector</div>
-                                 </div>
-                               </Tabs.Trigger>
+                              <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
+                                <Tabs.Trigger
+                                  value="pulseInspector"
+                                  closeButton={
+                                    <TooltipKeybind
+                                      title={language.t("common.closeTab")}
+                                      keybind={command.keybind("tab.close")}
+                                      placement="bottom"
+                                      gutter={10}
+                                    >
+                                      <IconButton
+                                        icon="close-small"
+                                        variant="ghost"
+                                        class="h-5 w-5"
+                                        onClick={() => tabs().close("pulseInspector")}
+                                        aria-label={language.t("common.closeTab")}
+                                      />
+                                    </TooltipKeybind>
+                                  }
+                                  hideCloseButton
+                                  onMiddleClick={() => tabs().close("pulseInspector")}
+                                >
+                                   <div class="flex items-center gap-1.5">
+                                     <Icon name="pulse" size="small" />
+                                     <div>Pulse Inspector</div>
+                                   </div>
+                                 </Tabs.Trigger>
+                              </div>
                               <div style={{ display: previewOpen() ? undefined : "none" }}>
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
@@ -860,7 +882,7 @@ export function SessionSidePanel(props: {
                             </Show>
                             <Tabs.Trigger value="home">
                               <div class="flex items-center gap-1.5">
-                                <Icon name="dot-grid" size="small" />
+                                <Icon name="home" size="small" />
                                 <div>Home</div>
                               </div>
                             </Tabs.Trigger>
@@ -869,10 +891,42 @@ export function SessionSidePanel(props: {
                                 value="review"
                                 id={reviewTabID}
                                 aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                closeButton={
+                                  <TooltipV2
+                                    value={
+                                      <>
+                                        {language.t("common.closeTab")}
+                                        <Show when={closeTabKeybind().length > 0}>
+                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                        </Show>
+                                      </>
+                                    }
+                                    placement="bottom"
+                                    gutter={10}
+                                  >
+                                    <IconButton
+                                      icon="close-small"
+                                      variant="ghost"
+                                      class="h-5 w-5"
+                                      onClick={() => tabs().close("review")}
+                                      aria-label={language.t("common.closeTab")}
+                                    />
+                                  </TooltipV2>
+                                }
+                                hideCloseButton
+                                onMiddleClick={() => tabs().close("review")}
                               >
-                                {props.hasReview()
-                                   ? "Files Changed"
-                                   : language.t("session.tab.review")}
+                                <div class="flex items-center gap-1.5">
+                                  <Icon name="review" size="small" />
+                                  <div>
+                                    {props.hasReview()
+                                       ? "Files Changed"
+                                       : language.t("session.tab.review")}
+                                  </div>
+                                  <Show when={props.hasReview()}>
+                                    <div>{props.reviewCount()}</div>
+                                  </Show>
+                                </div>
                               </Tabs.Trigger>
                             </Show>
                             <div style={{ display: contextOpen() ? undefined : "none" }}>
@@ -909,6 +963,7 @@ export function SessionSidePanel(props: {
                                 </div>
                               </Tabs.Trigger>
                             </div>
+                            <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
                             <Tabs.Trigger
                               value="pulseInspector"
                               closeButton={
@@ -941,6 +996,7 @@ export function SessionSidePanel(props: {
                                  <div>Pulse Inspector</div>
                                </div>
                              </Tabs.Trigger>
+                            </div>
                             <div style={{ display: previewOpen() ? undefined : "none" }}>
                               <Tabs.Trigger
                                 value={SESSION_PREVIEW_TAB}
