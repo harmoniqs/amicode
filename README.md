@@ -193,3 +193,7 @@ sets up.
 <div align="center">
 <sub>Built by <a href="https://harmoniqs.co">Harmoniqs</a> · quantum control, composed.</sub>
 </div>
+
+---
+
+<sub>Trademark notice: Amicode is built by Harmoniqs and uses the open-source <a href="https://github.com/anomalyco/opencode">OpenCode</a> chat harness. Amicode and Harmoniqs are not affiliated with, endorsed by, or sponsored by the OpenCode team (SST / anomalyco).</sub>
