@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
 import { registerInspectorPoster } from "./inspector_bridge";
 import { getBugReport } from "./bug_report";
@@ -58,6 +58,7 @@ export class ChatPanel {
   private constructor(
     private readonly panel: vscode.WebviewPanel,
     private readonly tabTitle: string,
+    private readonly paneId: string,
     opencodeUrl: URL,
     authToken?: string,
     hideProjectDir?: string,
@@ -208,6 +209,7 @@ export class ChatPanel {
     hideProjectDir?: string,
   ): ChatPanel {
     const title = ChatPanel.nextTitle();
+    const paneId = randomUUID();
     const panel = vscode.window.createWebviewPanel("amicode.chat", title, column, {
       enableScripts: true,
       retainContextWhenHidden: true,
@@ -217,7 +219,7 @@ export class ChatPanel {
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
     panel.iconPath = tabIconPath(ctx);
-    return new ChatPanel(panel, title, opencodeUrl, authToken, hideProjectDir);
+    return new ChatPanel(panel, title, paneId, opencodeUrl, authToken, hideProjectDir);
   }
 
   static openOrReveal(
@@ -264,6 +266,7 @@ export class ChatPanel {
     // storage, so the chat opens in the EDITOR's theme (prefers-color-scheme
     // inside the webview iframe reports the OS, not VS Code).
     const framed = new URL(opencodeUrl.href);
+    framed.searchParams.set("amicode_pane", this.paneId);
     framed.searchParams.set("colorScheme", themeKindToScheme(vscode.window.activeColorTheme.kind));
     // Per-boot server credential (#163): ride the app's own ?auth_token=
     // bootstrap — its entry adopts it for every authenticated fetch and strips
