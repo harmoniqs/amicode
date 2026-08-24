@@ -992,7 +992,7 @@
     "packages/app/src/pages/session/composer/report-bug.test.ts": "d4dc012309c2171298852501a14a077c6fe8cdf5d25538dc84ddd1f8195d3a8c",
     "packages/app/src/pages/session/composer/report-bug.ts": "bdc3b3dec38b11c7bfa5b867a246db2717e60e1d50692d6bddb3983c9e95e02b",
     "packages/app/src/pages/session/composer/session-bug-dock.stories.tsx": "a5730bb3699751d63629134924ce8dea021b264722c40f5f6bb98236dc15eda7",
-    "packages/app/src/pages/session/composer/session-bug-dock.tsx": "e7fed3c5ab80527d69a106440833f795bbbafc5deeba3883902ede9fba612605",
+    "packages/app/src/pages/session/composer/session-bug-dock.tsx": "4b56c464270ee1218eb40ddce1930f03845540c9e3cae8a89f98d73645de8e2d",
     "packages/app/src/pages/session/composer/session-composer-controls.ts": "b6942cd192eef5fb67343d54be35c986b735ca1e2185a20b29e226dd67f70e05",
     "packages/app/src/pages/session/composer/session-composer-region-controller.ts": "3209b9a8981cbaa7f0cd7bd09412b681c1dde108ba917ab54555f9144b6a443f",
     "packages/app/src/pages/session/composer/session-composer-region.tsx": "93adca76d576fd0af6281f872067339106f591aa0827252ac76b8c1baa7ed7e6",
