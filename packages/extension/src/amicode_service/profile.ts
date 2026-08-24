@@ -316,6 +316,13 @@ export function profileBody(input: {
     affiliation_logo: typeof profile.affiliation_logo === "string" ? profile.affiliation_logo : null,
     focus: typeof profile.focus === "string" ? profile.focus : null,
     avatar: typeof profile.avatar === "string" ? profile.avatar : null,
+    role: typeof profile.role === "string" ? profile.role : null,
+    description: typeof profile.description === "string" ? profile.description : null,
+    github: typeof profile.github === "string" ? profile.github : null,
+    custom_link:
+      profile.custom_link != null && typeof profile.custom_link === "object" && !Array.isArray(profile.custom_link)
+        ? profile.custom_link
+        : null,
     platforms: mix.map((p) => p.key),
     stats: {
       problems: countProblems(input.problemsRoot),
