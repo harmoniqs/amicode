@@ -251,6 +251,12 @@
           "default": "",
           "description": "Override the session database path. The value is injected as OPENCODE_DB into the spawned server process. Empty = opencode uses its XDG default (~/.local/share/opencode/opencode.db)."
         },
+        "amicode.sessionRecapWindowDays": {
+          "type": "number",
+          "default": 7,
+          "minimum": 1,
+          "description": "How many days of recent sessions to show in the context prompt. Injected as AMICODE_SESSION_RECAP_WINDOW_DAYS."
+        },
         "amicode.configDir": {
           "type": "string",
           "default": "",

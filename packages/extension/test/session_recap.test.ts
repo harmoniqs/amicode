@@ -19,6 +19,8 @@ import {
   readCachedRecap,
   writeCachedRecap,
   buildRecentSessionsBlock,
+  resolveWindowDays,
+  RECAP_WINDOW_DAYS,
   NOISE_TITLE_PREFIXES,
   MIN_ASSISTANT_MESSAGES,
   MAX_RECAPS,
@@ -167,7 +169,7 @@ describe("composeRecapText — recap string composition", () => {
 // ── composeMarkdown ──────────────────────────────────────────────────────────
 
 describe("composeMarkdown — final prompt section composition", () => {
-  it("starts with the heading", () => {
+  it("starts with the heading (default window)", () => {
     const recaps: SessionRecap[] = [{
       session_id: "ses_1",
       title: "Test",
@@ -177,6 +179,18 @@ describe("composeMarkdown — final prompt section composition", () => {
     }];
     const md = composeMarkdown(recaps);
     expect(md.startsWith("## Recent sessions (last 7 days)")).toBe(true);
+  });
+
+  it("heading reflects custom windowDays parameter", () => {
+    const recaps: SessionRecap[] = [{
+      session_id: "ses_1",
+      title: "Test",
+      created: "2026-08-23T10:30:00.000Z",
+      recap: "Did some stuff",
+      summarized_at: "2026-08-23T14:00:00.000Z",
+    }];
+    const md = composeMarkdown(recaps, 14);
+    expect(md.startsWith("## Recent sessions (last 14 days)")).toBe(true);
   });
 
   it("renders date and time for each entry", () => {
@@ -275,6 +289,62 @@ describe("cache — read/write SessionRecap to disk", () => {
     const files = fs.readdirSync(tmpDir);
     expect(files.some(f => f.endsWith(".tmp"))).toBe(false);
     expect(files).toContain("ses_atomic.json");
+  });
+});
+
+// ── resolveWindowDays — env-configurable window ──────────────────────────────
+
+describe("resolveWindowDays — environment override of RECAP_WINDOW_DAYS", () => {
+  const origEnv = process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS;
+
+  afterEach(() => {
+    if (origEnv === undefined) delete process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS;
+    else process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = origEnv;
+  });
+
+  it("returns default (7) when env is unset", () => {
+    delete process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS;
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("returns default when env is empty string", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("returns default when env is whitespace", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "   ";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("parses a valid integer", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "14";
+    expect(resolveWindowDays()).toBe(14);
+  });
+
+  it("parses a valid float (fractional days)", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "3.5";
+    expect(resolveWindowDays()).toBe(3.5);
+  });
+
+  it("returns default for zero", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "0";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("returns default for negative values", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "-5";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("returns default for NaN strings", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "abc";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
+  });
+
+  it("returns default for Infinity", () => {
+    process.env.AMICODE_SESSION_RECAP_WINDOW_DAYS = "Infinity";
+    expect(resolveWindowDays()).toBe(RECAP_WINDOW_DAYS);
   });
 });
 

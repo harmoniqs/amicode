@@ -316,8 +316,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const cfg = vscode.workspace.getConfiguration("amicode");
     const sessionDb = cfg.get<string>("sessionDatabase", "");
     const configDirOverride = cfg.get<string>("configDir", "");
+    const recapWindow = cfg.get<number>("sessionRecapWindowDays", 0);
     if (sessionDb) env.OPENCODE_DB = sessionDb;
     if (configDirOverride) env.OPENCODE_CONFIG_DIR = configDirOverride;
+    if (recapWindow > 0) env.AMICODE_SESSION_RECAP_WINDOW_DAYS = String(recapWindow);
     return (currentSpawnEnv = env);
   };
 
