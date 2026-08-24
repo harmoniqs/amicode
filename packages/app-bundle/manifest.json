@@ -9,7 +9,7 @@
   "extracted_at": "2026-08-23T15:32:52.432Z",
   "per_package": {
     "packages/app": {
-      "A": 99,
+      "A": 100,
       "M": 134,
       "D": 1
     },
@@ -808,7 +808,8 @@
     "packages/ui/src/v2/components/toast-v2.css": "M",
     "packages/ui/src/v2/components/tooltip-v2.css": "M",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "M",
-    "packages/ui/src/v2/styles/theme.css": "M"
+    "packages/ui/src/v2/styles/theme.css": "M",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "A"
   },
   "files": {
     "packages/app/CONTEXT.md": "87b15a82a89ea1c82e0d647c169a259a1ef5193893854f2cfed54526762898ca",
@@ -1312,6 +1313,7 @@
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
-    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc"
+    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814"
   }
 }
