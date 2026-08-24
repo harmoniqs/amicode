@@ -832,7 +832,7 @@
     "packages/app/e2e/utils/waits.ts": "53959eeae1e6562a2e6c578b261140c74fe9fc30e1e4c46295d3252b6d274a74",
     "packages/app/index.html": "fa38026be3b7e7ec38958a558d7b4d059140b2aff998c3ac862601543702584d",
     "packages/app/playwright.config.ts": "b7dae0b39248b4ddf7cba829af96ac7fe3cc919add9711ecb5292d9bd52e1805",
-    "packages/app/public/amico.svg": "7c64b145bdd063bacd53318336a423f0654ec702de2b4e0c4a4a384694052804",
+    "packages/app/public/amico.svg": "a14b9d543d895bcdf0758f7b9ef5908ee0acaac794446494af059b159247db8f",
     "packages/app/public/assets/Aero-Regular.ttf": "0ebf14f80d05c3a82c766124ab31196c310014744333d397425ac82a1e3537c4",
     "packages/app/public/assets/DMSans-Variable.woff2": "aa530716b0d351866af7dbfa3eee4120fb36f2d071baff8c234185141865c7ff",
     "packages/app/public/assets/JuliaMono-Regular.woff2": "43f5dfca02a03035f89799da5af150f28d5c4aff729753076094c687fc61b063",
