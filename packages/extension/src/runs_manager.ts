@@ -387,7 +387,7 @@ export class RunsManager implements vscode.Disposable {
     if (this.promotedRuns.has(info.runId)) return;
     this.promotedRuns.add(info.runId);
     void vscode.window.showInformationMessage(
-      `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Use Amicode: Save pulse to save the pulse to a file.`,
+      `Amicode: run converged (F=${info.fidelity.toFixed(4)}). Result artifact saved to the run directory.`,
     );
   }
 }

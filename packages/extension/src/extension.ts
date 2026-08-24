@@ -956,7 +956,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (!fromCommand && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true) return;
     if (!fromCommand) {
       const choice = await vscode.window.showInformationMessage(
-        "Set up a personal vault? Amico will remember your systems, pulses, and problems across sessions — stored locally under ~/.amico/vaults.",
+        "Set up a personal vault? Amico will remember your systems, results, and problems across sessions — stored locally under ~/.amico/vaults.",
         "Create vault",
         "Not now",
         "Don't ask again",
@@ -1634,7 +1634,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         });
         if (uri) {
           savePulseTo(dir, uri.fsPath);
-          vscode.window.showInformationMessage("Amicode: pulse saved.");
+          vscode.window.showInformationMessage("Amicode: result artifact saved.");
         }
       } catch (e) {
         vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
