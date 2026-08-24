@@ -28,7 +28,6 @@ import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import { ConstrainDragYAxis, getDraggableId } from "@/utils/solid-dnd"
 
 import FileTree from "@/components/file-tree"
-import { FileListFlat } from "@/components/file-list-flat"
 import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { RunInspector } from "@/amicode/inspector/run-inspector"
@@ -1154,11 +1153,14 @@ export function SessionSidePanel(props: {
                                 </div>
                               }
                             >
-                              <FileListFlat
-                                files={diffFiles}
-                                kinds={kinds}
+                              <FileTree
+                                path=""
+                                class="pt-3"
+                                allowed={diffFiles()}
+                                kinds={kinds()}
+                                draggable={false}
                                 active={props.activeDiff}
-                                onFileClick={(path) => props.focusReviewDiff(path)}
+                                onFileClick={(node) => props.focusReviewDiff(node.path)}
                               />
                             </Show>
                           </Match>

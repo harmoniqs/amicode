@@ -532,3 +532,124 @@
   letter-spacing: -0.04px;
   color: var(--v2-text-text-muted);
 }
+
+/* File picker trigger — the clickable filename in the file header */
+.session-review-v2-file-picker-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.session-review-v2-file-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+  margin: -2px -6px;
+  border: none;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.session-review-v2-file-picker-trigger:hover {
+  background: var(--v2-background-bg-hover, color-mix(in oklch, var(--v2-text-text-base) 6%, transparent));
+}
+
+.session-review-v2-file-picker-trigger [data-slot="session-review-v2-file-name"][data-clickable] {
+}
+
+/* File picker dropdown (positioned below the trigger) */
+.session-review-v2-file-picker-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: var(--z-overlay, 100);
+  padding: 4px;
+  max-height: 320px;
+  min-width: 240px;
+  max-width: 400px;
+  overflow-y: auto;
+  border-radius: var(--radius-md, 8px);
+  background-color: var(--surface-raised-stronger-non-alpha, var(--v2-background-bg-layer-01));
+  border: 1px solid color-mix(in oklch, var(--border-base, var(--v2-border-border-base)) 50%, transparent);
+  box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.15));
+}
+
+/* File picker popover content (legacy, kept for compat) */
+.session-review-v2-file-picker-content {
+  padding: 4px !important;
+  max-height: 320px;
+  min-width: 240px;
+  max-width: 400px;
+  overflow-y: auto;
+}
+
+[data-slot="session-review-v2-file-picker-list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+[data-slot="session-review-v2-file-picker-root"] {
+  padding: 4px 8px 2px;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--v2-text-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid color-mix(in oklch, var(--border-base, var(--v2-border-border-weak)) 30%, transparent);
+  margin-bottom: 2px;
+}
+
+[data-slot="session-review-v2-file-picker-item"] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--radius-xs, 4px);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+[data-slot="session-review-v2-file-picker-item"]:hover {
+  background: var(--v2-background-bg-hover, color-mix(in oklch, var(--v2-text-text-base) 6%, transparent));
+}
+
+[data-slot="session-review-v2-file-picker-item"][data-active] {
+  background: var(--v2-background-bg-selected, color-mix(in oklch, var(--v2-text-text-base) 8%, transparent));
+}
+
+[data-slot="session-review-v2-file-picker-item-name"] {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--v2-text-text-base);
+  white-space: nowrap;
+}
+
+[data-slot="session-review-v2-file-picker-item-dir"] {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--v2-text-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

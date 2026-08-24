@@ -10,7 +10,7 @@ import { cloneSelectedLineRange, previewSelectedLines } from "../../pierre/selec
 import { copyTextToClipboard } from "../../util/clipboard"
 import type { FileContent, SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, Show, untrack } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { normalize, text, type ViewDiff } from "../../components/session-diff"
@@ -38,6 +38,8 @@ export type SessionReviewFilePreviewV2Props = {
   diffStyle: SessionReviewDiffStyle
   expandMode?: SessionReviewExpandMode
   readFile?: (path: string) => Promise<FileContent | undefined>
+  files?: string[]
+  onSelectFile?: (file: string) => void
   onLineComment?: (comment: SessionReviewLineComment) => void
   onLineCommentUpdate?: (comment: SessionReviewCommentUpdate) => void
   onLineCommentDelete?: (comment: SessionReviewCommentDelete) => void
@@ -262,14 +264,11 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               {statusLabel(view().status)}
             </div>
             <FileIcon node={{ path: props.file, type: "file" }} />
-            <TooltipV2 value={props.file}>
-              <span data-slot="session-review-v2-file-name">{getFilename(props.file)}</span>
-            </TooltipV2>
-            <Show when={props.file.includes("/")}>
-              <TooltipV2 value={props.file}>
-                <span data-slot="session-review-v2-file-path">{getDirectory(props.file)}</span>
-              </TooltipV2>
-            </Show>
+            <FileNameWithPicker
+              file={props.file}
+              files={props.files}
+              onSelectFile={props.onSelectFile}
+            />
           </MenuV2.Context.Trigger>
           <MenuV2.Context.Portal>
             <MenuV2.Context.Content>
@@ -300,5 +299,149 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         </Show>
       </div>
     </>
+  )
+}
+
+/** Renders the filename + directory path. When a file list is provided, clicking
+ *  the name opens a dropdown file picker to jump between changed files. */
+function FileNameWithPicker(props: {
+  file: string
+  files?: string[]
+  onSelectFile?: (file: string) => void
+}) {
+  const [open, setOpen] = createSignal(false)
+  let triggerRef: HTMLButtonElement | undefined
+  const hasMultipleFiles = () => (props.files?.length ?? 0) > 1 && !!props.onSelectFile
+
+  const commonRoot = createMemo(() => {
+    const files = props.files
+    if (!files || files.length === 0) return ""
+    const split = files.map((f) => f.split("/").slice(0, -1))
+    const minLen = Math.min(...split.map((s) => s.length))
+    const common: string[] = []
+    for (let i = 0; i < minLen; i++) {
+      const seg = split[0][i]
+      if (split.every((s) => s[i] === seg)) common.push(seg)
+      else break
+    }
+    return common.join("/")
+  })
+
+  /** For each file, compute a short display label (filename + minimal
+   *  disambiguating directory suffix when names collide). */
+  const labels = createMemo(() => {
+    const files = props.files ?? []
+    const byName = new Map<string, string[]>()
+    for (const f of files) {
+      const name = getFilename(f)
+      const group = byName.get(name) ?? []
+      group.push(f)
+      byName.set(name, group)
+    }
+    return files.map((f) => {
+      const name = getFilename(f)
+      const group = byName.get(name)!
+      if (group.length === 1) return { path: f, label: name, disambiguator: undefined }
+      // Find minimum trailing dir segments to disambiguate
+      const segments = f.split("/").slice(0, -1)
+      const others = group.filter((o) => o !== f)
+      for (let depth = 1; depth <= segments.length; depth++) {
+        const candidate = segments.slice(segments.length - depth).join("/")
+        const unique = others.every((o) => {
+          const oSeg = o.split("/").slice(0, -1)
+          return oSeg.slice(oSeg.length - depth).join("/") !== candidate
+        })
+        if (unique) return { path: f, label: name, disambiguator: candidate }
+      }
+      return { path: f, label: name, disambiguator: segments.join("/") }
+    })
+  })
+
+  const select = (file: string) => {
+    setOpen(false)
+    props.onSelectFile?.(file)
+  }
+
+  const toggle = (e: MouseEvent) => {
+    e.stopPropagation()
+    setOpen(!open())
+  }
+
+  // Close on outside click
+  createEffect(() => {
+    if (!open()) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (triggerRef?.contains(e.target as Node)) return
+      const list = document.querySelector("[data-slot='session-review-v2-file-picker-list']")
+      if (list?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true))
+  })
+
+  return (
+    <Show
+      when={hasMultipleFiles()}
+      fallback={
+        <>
+          <TooltipV2 value={props.file}>
+            <span data-slot="session-review-v2-file-name">{getFilename(props.file)}</span>
+          </TooltipV2>
+          <Show when={props.file.includes("/")}>
+            <TooltipV2 value={props.file}>
+              <span data-slot="session-review-v2-file-path">{getDirectory(props.file)}</span>
+            </TooltipV2>
+          </Show>
+        </>
+      }
+    >
+      <div class="session-review-v2-file-picker-wrapper">
+        <button
+          ref={triggerRef}
+          type="button"
+          class="session-review-v2-file-picker-trigger"
+          onClick={toggle}
+        >
+          <span data-slot="session-review-v2-file-name" data-clickable="">
+            {getFilename(props.file)}
+          </span>
+        </button>
+        <Show when={props.file.includes("/")}>
+          <TooltipV2 value={props.file}>
+            <span data-slot="session-review-v2-file-path">
+              {getDirectory(props.file)}
+            </span>
+          </TooltipV2>
+        </Show>
+        <Show when={open()}>
+          <div data-slot="session-review-v2-file-picker-list" class="session-review-v2-file-picker-dropdown">
+            <Show when={commonRoot()}>
+              <div data-slot="session-review-v2-file-picker-root">{commonRoot()}/</div>
+            </Show>
+            <For each={labels()}>
+              {(item) => (
+                <button
+                  type="button"
+                  data-slot="session-review-v2-file-picker-item"
+                  data-active={item.path === props.file ? "" : undefined}
+                  onClick={() => select(item.path)}
+                >
+                  <FileIcon node={{ path: item.path, type: "file" }} />
+                  <span data-slot="session-review-v2-file-picker-item-name">
+                    {item.label}
+                  </span>
+                  <Show when={item.disambiguator}>
+                    <span data-slot="session-review-v2-file-picker-item-dir">
+                      {item.disambiguator}
+                    </span>
+                  </Show>
+                </button>
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    </Show>
   )
 }
