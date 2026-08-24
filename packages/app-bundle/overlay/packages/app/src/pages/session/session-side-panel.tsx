@@ -585,7 +585,7 @@ export function SessionSidePanel(props: {
                             >
                               <Tabs.Trigger value="home">
                                 <div class="flex items-center gap-1.5">
-                                  <Icon name="home" size="small" />
+                                  <Icon name="dot-grid" size="small" />
                                   <div>Home</div>
                                 </div>
                               </Tabs.Trigger>
@@ -829,7 +829,7 @@ export function SessionSidePanel(props: {
                             </Show>
                             <Tabs.Trigger value="home">
                               <div class="flex items-center gap-1.5">
-                                <Icon name="home" size="small" />
+                                <Icon name="dot-grid" size="small" />
                                 <div>Home</div>
                               </div>
                             </Tabs.Trigger>
