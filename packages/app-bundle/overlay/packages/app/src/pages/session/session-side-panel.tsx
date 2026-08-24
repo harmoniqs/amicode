@@ -626,24 +626,6 @@ export function SessionSidePanel(props: {
                                   value="review"
                                   id={reviewTabID}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
-                                  closeButton={
-                                    <TooltipKeybind
-                                      title={language.t("common.closeTab")}
-                                      keybind={command.keybind("tab.close")}
-                                      placement="bottom"
-                                      gutter={10}
-                                    >
-                                      <IconButton
-                                        icon="close-small"
-                                        variant="ghost"
-                                        class="h-5 w-5"
-                                        onClick={() => tabs().close("review")}
-                                        aria-label={language.t("common.closeTab")}
-                                      />
-                                    </TooltipKeybind>
-                                  }
-                                  hideCloseButton
-                                  onMiddleClick={() => tabs().close("review")}
                                 >
                                   <div class="flex items-center gap-1.5">
                                     <Icon name="review" size="small" />
@@ -891,30 +873,6 @@ export function SessionSidePanel(props: {
                                 value="review"
                                 id={reviewTabID}
                                 aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
-                                closeButton={
-                                  <TooltipV2
-                                    value={
-                                      <>
-                                        {language.t("common.closeTab")}
-                                        <Show when={closeTabKeybind().length > 0}>
-                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                        </Show>
-                                      </>
-                                    }
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close("review")}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipV2>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close("review")}
                               >
                                 <div class="flex items-center gap-1.5">
                                   <Icon name="review" size="small" />
