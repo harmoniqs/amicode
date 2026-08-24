@@ -507,6 +507,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           }
         }
 
+        // ── Install opencode dependencies ──
+        const installOc = await run("bun install", opencodePath);
+        if (!installOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `opencode install failed: ${installOc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
         // ── Build opencode ──
         const ocBuildDir = path.join(opencodePath, "packages", "opencode");
         const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir);
@@ -514,6 +524,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
             state: "failed", error: `opencode build failed: ${buildOc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
+        // ── Install amicode dependencies ──
+        const installAc = await run("pnpm install", amicodePath);
+        if (!installAc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `amicode install failed: ${installAc.error?.slice(0, 150)}`,
           });
           return;
         }
