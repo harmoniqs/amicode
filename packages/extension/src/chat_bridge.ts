@@ -627,7 +627,22 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
               console.warn(`[amicode/bridge] ${f} sync failed:`, syncErr);
             }
           }
-          console.log("[amicode/bridge] synced content dirs + markdown to installed extension");
+          // Sync package.json — VS Code reads view/command contributions from
+          // the installed extension's package.json at activation time. Without
+          // this, a rebuilt extension.js that references renamed or new views
+          // (e.g. amicode.workspace vs the old amicode.armonia) fails with
+          // "No view is registered with id: ..." because the stale manifest
+          // doesn't declare them.
+          try {
+            const src = path.join(amicodePath, "packages", "extension", "package.json");
+            const dest = path.join(installedExt.extensionPath, "package.json");
+            if (fs.existsSync(src)) {
+              fs.copyFileSync(src, dest);
+            }
+          } catch (syncErr) {
+            console.warn("[amicode/bridge] package.json sync failed:", syncErr);
+          }
+          console.log("[amicode/bridge] synced content dirs + markdown + package.json to installed extension");
         }
 
         // ── Apply VS Code settings ──
