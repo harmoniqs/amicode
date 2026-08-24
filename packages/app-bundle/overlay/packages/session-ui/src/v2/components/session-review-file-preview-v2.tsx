@@ -10,7 +10,7 @@ import { cloneSelectedLineRange, previewSelectedLines } from "../../pierre/selec
 import { copyTextToClipboard } from "../../util/clipboard"
 import type { FileContent, SnapshotFileDiff, VcsFileDiff } from "@opencode-ai/sdk/v2"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
-import { createEffect, createMemo, onCleanup, Show, untrack } from "solid-js"
+import { createEffect, createMemo, createSignal, onCleanup, Show, untrack, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { normalize, text, type ViewDiff } from "../../components/session-diff"
@@ -38,6 +38,8 @@ export type SessionReviewFilePreviewV2Props = {
   diffStyle: SessionReviewDiffStyle
   expandMode?: SessionReviewExpandMode
   readFile?: (path: string) => Promise<FileContent | undefined>
+  filePicker?: (pickerProps: { onSelect: (path: string) => void }) => JSX.Element
+  onSelectFile?: (file: string) => void
   onLineComment?: (comment: SessionReviewLineComment) => void
   onLineCommentUpdate?: (comment: SessionReviewCommentUpdate) => void
   onLineCommentDelete?: (comment: SessionReviewCommentDelete) => void
@@ -262,14 +264,11 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               {statusLabel(view().status)}
             </div>
             <FileIcon node={{ path: props.file, type: "file" }} />
-            <TooltipV2 value={props.file}>
-              <span data-slot="session-review-v2-file-name">{getFilename(props.file)}</span>
-            </TooltipV2>
-            <Show when={props.file.includes("/")}>
-              <TooltipV2 value={props.file}>
-                <span data-slot="session-review-v2-file-path">{getDirectory(props.file)}</span>
-              </TooltipV2>
-            </Show>
+            <FileNameWithPicker
+              file={props.file}
+              filePicker={props.filePicker}
+              onSelectFile={props.onSelectFile}
+            />
           </MenuV2.Context.Trigger>
           <MenuV2.Context.Portal>
             <MenuV2.Context.Content>
@@ -300,5 +299,83 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         </Show>
       </div>
     </>
+  )
+}
+
+/** Renders the filename + directory path. When a filePicker render prop is
+ *  provided, clicking the name opens a dropdown with the picker content. */
+function FileNameWithPicker(props: {
+  file: string
+  filePicker?: (pickerProps: { onSelect: (path: string) => void }) => JSX.Element
+  onSelectFile?: (file: string) => void
+}) {
+  const [open, setOpen] = createSignal(false)
+  let triggerRef: HTMLButtonElement | undefined
+  const hasFilePicker = () => !!props.filePicker && !!props.onSelectFile
+
+  const onSelect = (file: string) => {
+    setOpen(false)
+    props.onSelectFile?.(file)
+  }
+
+  const toggle = (e: MouseEvent) => {
+    e.stopPropagation()
+    setOpen(!open())
+  }
+
+  // Close on outside click
+  createEffect(() => {
+    if (!open()) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (triggerRef?.contains(e.target as Node)) return
+      const dropdown = document.querySelector(".session-review-v2-file-picker-dropdown")
+      if (dropdown?.contains(e.target as Node)) return
+      setOpen(false)
+    }
+    document.addEventListener("pointerdown", onPointerDown, true)
+    onCleanup(() => document.removeEventListener("pointerdown", onPointerDown, true))
+  })
+
+  return (
+    <Show
+      when={hasFilePicker()}
+      fallback={
+        <>
+          <TooltipV2 value={props.file}>
+            <span data-slot="session-review-v2-file-name">{getFilename(props.file)}</span>
+          </TooltipV2>
+          <Show when={props.file.includes("/")}>
+            <TooltipV2 value={props.file}>
+              <span data-slot="session-review-v2-file-path">{getDirectory(props.file)}</span>
+            </TooltipV2>
+          </Show>
+        </>
+      }
+    >
+      <div class="session-review-v2-file-picker-wrapper">
+        <button
+          ref={triggerRef}
+          type="button"
+          class="session-review-v2-file-picker-trigger"
+          onClick={toggle}
+        >
+          <span data-slot="session-review-v2-file-name" data-clickable="">
+            {getFilename(props.file)}
+          </span>
+        </button>
+        <Show when={props.file.includes("/")}>
+          <TooltipV2 value={props.file}>
+            <span data-slot="session-review-v2-file-path">
+              {getDirectory(props.file)}
+            </span>
+          </TooltipV2>
+        </Show>
+        <Show when={open()}>
+          <div class="session-review-v2-file-picker-dropdown">
+            {props.filePicker!({ onSelect })}
+          </div>
+        </Show>
+      </div>
+    </Show>
   )
 }

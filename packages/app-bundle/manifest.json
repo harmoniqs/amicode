@@ -9,7 +9,7 @@
   "extracted_at": "2026-08-23T15:32:52.432Z",
   "per_package": {
     "packages/app": {
-      "A": 99,
+      "A": 100,
       "M": 134,
       "D": 1
     },
@@ -808,7 +808,8 @@
     "packages/ui/src/v2/components/toast-v2.css": "M",
     "packages/ui/src/v2/components/tooltip-v2.css": "M",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "M",
-    "packages/ui/src/v2/styles/theme.css": "M"
+    "packages/ui/src/v2/styles/theme.css": "M",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "A"
   },
   "files": {
     "packages/app/CONTEXT.md": "87b15a82a89ea1c82e0d647c169a259a1ef5193893854f2cfed54526762898ca",
@@ -1004,11 +1005,11 @@
     "packages/app/src/pages/session/composer/session-revert-dock.tsx": "3f2d030126a4c673731bac65406fd48797464ddc515444b891e39b0eb538e002",
     "packages/app/src/pages/session/composer/todo-panel-motion.stories.tsx": "70a8267c725af320d78d266b85fd0ff005d067c4d09a21bef824126602e831e7",
     "packages/app/src/pages/session/helpers.test.ts": "d9e2ba5625a2cdee7610d2f70b31da4972fd77e989db824d3f76b474691d9beb",
-    "packages/app/src/pages/session/helpers.ts": "ac1ee7592c8aa77b3b5026950638c07e1404531d2cb92c64e622d92dca6ee18b",
+    "packages/app/src/pages/session/helpers.ts": "9af337e12c669a590dc31db782d2d809b61d9035412e5c9b2b4790c719969dba",
     "packages/app/src/pages/session/session-panel-width.test.ts": "2b9daf379be0b54142dd791bed6bae6d215b2574176b3b3e4b1273db3baf433c",
     "packages/app/src/pages/session/session-panel-width.ts": "8723cb2f980972ea9bf182240fdf154d131bf40e22fe563fd538a7005cff9192",
     "packages/app/src/pages/session/session-side-panel-structure.test.ts": "c138fe905498c8326f459dccba61b146af6dfb12b78480303723b5a85046931a",
-    "packages/app/src/pages/session/session-side-panel.tsx": "a17c9fe70fc7eb56b15b39eb03917f1941b613d47b0cf681b367561b85b43eeb",
+    "packages/app/src/pages/session/session-side-panel.tsx": "31ab5f03a2a07347492b5b3a50ca71be8a7f2324d2a7140f4cc4c994384a6743",
     "packages/app/src/pages/session/terminal-panel-v2.tsx": "68dad9307f1d2abf3ff9248e451bd08005acf01ddc46b30a6d01b58f4a90dce0",
     "packages/app/src/pages/session/timeline/last-prompt-bubble.test.ts": "83753b3ec7227570523c2e0b9e82401fae7a20f3a23980bb40deaeb13304327b",
     "packages/app/src/pages/session/timeline/message-timeline.tsx": "ac44f4903e4a8c4fdf7a11d8a4eb7c5c13d2b082dd878fdb64ec9f25b07ecb19",
@@ -1118,8 +1119,8 @@
     "packages/session-ui/src/v2/components/basic-tool-v2.tsx": "ece46d761f7d51a7a0925b3df00a5c289d891e9a514ee721016eb723d87fb406",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "1f2f52954c53bb764408ae477969328a7c826d0fedd4913ba05e040912296b77",
-    "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "2aa16fef06bf6de8d5294a85ebd5fbbdfff3879f00f75e900d8049e33605593a",
-    "packages/session-ui/src/v2/components/session-review-v2.css": "12a2465355aa0fb8096a625d2d566a201b4c22720f5f4f556fc6cbace58109d4",
+    "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "2f4c68264d48b6cd8cf7223b044ca4e319ecac6c3fdc37d82038469abd9204f9",
+    "packages/session-ui/src/v2/components/session-review-v2.css": "42a531def38524d00bc45daab9b30dfdf81762009224c327adbe2d2b41983f4e",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "a683eb509c3ee927a7ed04ceffef3fd65129f812ac55f5b04c7e628bf0611831",
     "packages/session-ui/src/v2/components/tool-error-card-v2.css": "9eb0bf8b583a18159f3855465118ff6a853d0193ea783037d5c90a868fdb3ff1",
     "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
@@ -1226,7 +1227,7 @@
     "packages/ui/src/amicode/widget-config-form.tsx": "b62f99deed3abebf14e17788218e9583d277e759f01721d9c7ec9b1377b3c04d",
     "packages/ui/src/amicode/widget-frame.tsx": "f4082458ecc50a43d48dc558d16dae5b4b14bf7c19500fc5807e4488ca564753",
     "packages/ui/src/amicode/widget-grid.tsx": "075005dae4f54f45598a4aabe9e1cde1aa4f767a574dde3ce7e82a524f61fb7f",
-    "packages/ui/src/amicode/widget-preview-card.tsx": "2251c16a19252a882ac39fbea9abfb6d6aa368834ef99c3a7fccf6c20ea8f3b5",
+    "packages/ui/src/amicode/widget-preview-card.tsx": "ed022fda6f0e4838d8d8e98680ac6b77979fa8e0987becac1c0d8ad35bf22ecd",
     "packages/ui/src/amicode/widget-preview.test.ts": "3ba95ada8fa9ce742a3246c52e1b1f5b4df1a9e0d8ad453f41e4468fec3b7e54",
     "packages/ui/src/amicode/widget-preview.ts": "21fa605139b96f45675b11a73fa0e8e974be3444feed0f024b8003e96e44927b",
     "packages/ui/src/amicode/widget-schema.test.ts": "b24049aeeda3fd2a922b5ce6601d99df9c8d3aa44b3e69dc8510a13120c7353a",
@@ -1312,6 +1313,7 @@
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
-    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc"
+    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814"
   }
 }
