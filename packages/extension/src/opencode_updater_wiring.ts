@@ -15,6 +15,7 @@ import {
   managedRoot,
 } from "./opencode_updater";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
+import { opencodeDataDir } from "./opencode_xdg";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -43,10 +44,10 @@ function markChecked(): void {
 
 /** The live chat DB the gate's compat probe boots a copy against: the user's
  *  Data & Storage override if set, else opencode's default data-dir DB. */
-function resolveLiveDb(): string | undefined {
+export function resolveLiveDb(): string | undefined {
   const cfg = vscode.workspace.getConfiguration("amicode").get<string>("sessionDatabase", "").trim();
   if (cfg) return fs.existsSync(cfg) ? cfg : undefined;
-  const def = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+  const def = path.join(opencodeDataDir(), "opencode.db");
   return fs.existsSync(def) ? def : undefined;
 }
 

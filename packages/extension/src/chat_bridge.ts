@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 
 // ============================================================================
 // The amicode iframe⇄extension command bridge, shared by ChatPanel (one
@@ -12,6 +13,15 @@ import * as fs from "node:fs";
 // route the answer back to the asking pane. Single-iframe panels leave `tab`
 // undefined and their relay simply forwards to the one iframe.
 // ============================================================================
+
+
+// Resolve the directory containing the session DB for backup purposes (#563).
+// When sessionDatabase setting is a non-empty path, use its parent directory;
+// otherwise fall back to opencode's XDG data directory.
+export function resolveDbBackupDir(sessionDatabase: string): string {
+  if (sessionDatabase) return path.dirname(sessionDatabase);
+  return opencodeDataDir();
+}
 
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
 // the iframe→parent→extension postMessage bridge. STRICT allowlist: the framed
@@ -497,7 +507,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
       try {
         // ── Session DB backup ──
-        const dbDir = path.join(os.homedir(), ".local", "share", "opencode");
+        const sessionDbSetting = vscode.workspace.getConfiguration("amicode").get<string>("sessionDatabase", "").trim();
+        const dbDir = resolveDbBackupDir(sessionDbSetting);
         const backupDir = path.join(dbDir, `.backup-${new Date().toISOString().replace(/[:.]/g, "-")}`);
         try {
           const files = fs.readdirSync(dbDir).filter(f => f.startsWith("opencode") && f.endsWith(".db"));
@@ -898,10 +909,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "data-storage-query") {
     // Resolve the XDG defaults that opencode would use if no override is set.
     // Display with ~/ prefix for readability (consistent with Developer Tools).
-    const xdgData = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-    const defaultDbPath = path.join(xdgData, "opencode", "opencode.db");
-    const defaultConfigDir = path.join(xdgConfig, "opencode");
+    const defaultDbPath = path.join(opencodeDataDir(), "opencode.db");
+    const defaultConfigDir = opencodeConfigDir();
     const home = os.homedir();
     const shorten = (p: string) => p.startsWith(home) ? "~" + p.slice(home.length) : p;
     io.postToWebview({
