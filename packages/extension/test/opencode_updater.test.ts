@@ -18,6 +18,7 @@ import {
   type FetchLike,
   type ReleaseCandidate,
 } from "../src/opencode_updater";
+import { resolveLiveDb } from "../src/opencode_updater_wiring";
 
 const sha256 = (b: Buffer) => createHash("sha256").update(b).digest("hex");
 
@@ -303,5 +304,33 @@ describe("consistentDbCopy", () => {
     expect(copy).toBeDefined();
     const read = spawnSync("sqlite3", [copy!, "select x from t;"], { encoding: "utf8" });
     expect(read.stdout.trim()).toBe("42");
+  });
+});
+
+describe("resolveLiveDb — XDG_DATA_HOME override (#563)", () => {
+  let origXdg: string | undefined;
+  beforeEach(() => { origXdg = process.env.XDG_DATA_HOME; });
+  afterEach(() => {
+    if (origXdg === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = origXdg;
+  });
+
+  it("uses XDG_DATA_HOME when set and the DB file exists there", () => {
+    const xdgDir = join(work, "custom-data");
+    const ocDir = join(xdgDir, "opencode");
+    mkdirSync(ocDir, { recursive: true });
+    writeFileSync(join(ocDir, "opencode.db"), "");
+    process.env.XDG_DATA_HOME = xdgDir;
+    const resolved = resolveLiveDb();
+    expect(resolved).toBe(join(xdgDir, "opencode", "opencode.db"));
+  });
+
+  it("falls back to ~/.local/share/opencode when XDG_DATA_HOME is unset", () => {
+    delete process.env.XDG_DATA_HOME;
+    const resolved = resolveLiveDb();
+    if (resolved !== undefined) {
+      const os = require("node:os");
+      expect(resolved).toBe(join(os.homedir(), ".local", "share", "opencode", "opencode.db"));
+    }
   });
 });
