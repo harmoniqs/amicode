@@ -503,7 +503,6 @@ export function SessionHeader() {
                           class="group/review-toggle titlebar-icon w-8 h-6 p-0 box-border"
                           onClick={() => view().reviewPanel.toggle()}
                           aria-label={language.t("command.review.toggle")}
-                          aria-expanded={view().reviewPanel.opened()}
                           aria-controls="review-panel"
                         >
                           <Icon size="small" name={view().reviewPanel.opened() ? "review-active" : "review"} />
@@ -585,9 +584,9 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
       {/* amicode#274: Session Chats Dropdown — chat navigation from within a session */}
       <SessionChatsDropdown />
       <Show when={!AMICODE_HIDE_STATUS_POPOVER}>
-        <Tooltip placement="bottom" value={props.state.statusLabel}>
+        <TooltipV2 placement="bottom" value={props.state.statusLabel} class="shrink-0">
           <StatusPopoverV2 healthDot={props.state.statusDotVisible} />
-        </Tooltip>
+        </TooltipV2>
       </Show>
       <Show when={props.state.reviewVisible}>
         <TooltipV2
@@ -610,7 +609,6 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
             state={props.state.reviewOpened ? "pressed" : undefined}
             onClick={props.state.onReviewToggle}
             aria-label={props.state.reviewLabel}
-            aria-expanded={props.state.reviewOpened}
             aria-controls="review-panel"
             icon={<IconV2 name="sidebar-right" />}
           />
@@ -892,16 +890,18 @@ function SessionChatsDropdown() {
 
   return (
     <>
-      <button
-        ref={triggerRef}
-        type="button"
-        data-action="session-chats-toggle-flyout"
-        class="flex shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-1.5 cursor-pointer text-v2-icon-icon-muted hover:text-v2-icon-icon-base hover:bg-v2-overlay-simple-overlay-hover transition-colors"
-        aria-label="Sessions"
-        onClick={() => setOpen(!open())}
-      >
-        <IconV2 name="menu" />
-      </button>
+      <TooltipV2 placement="bottom" value="Sessions" class="shrink-0">
+        <button
+          ref={triggerRef}
+          type="button"
+          data-action="session-chats-toggle-flyout"
+          class="flex shrink-0 items-center justify-center rounded-sm border-none bg-transparent p-1.5 cursor-pointer text-v2-icon-icon-muted hover:text-v2-icon-icon-base hover:bg-v2-overlay-simple-overlay-hover transition-colors"
+          aria-label="Sessions"
+          onClick={() => setOpen(!open())}
+        >
+          <IconV2 name="menu" />
+        </button>
+      </TooltipV2>
       <Show when={open()}>
         <Portal>
           <div
