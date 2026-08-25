@@ -62,6 +62,7 @@ import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLega
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
+import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -250,6 +251,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   } catch (e) {
     opencodeChannel.appendLine(`[modes] mode-card staging failed: ${(e as Error).message}`);
   }
+
+  // #561: stage ~/.local/bin/opencode symlink → best available binary
+  // (managed canonical > vendored bootstrap > skip). Idempotent, never throws.
+  stageOpencodeCliLink(ctx.extensionPath);
 
   // Provision the Pasqal validator's interpreter (the fresh-install fix): a
   // venv from the STAGED requirements.txt, handed to the server spawn as
