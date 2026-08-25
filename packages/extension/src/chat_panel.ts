@@ -370,12 +370,13 @@ export class ChatPanel {
         // Lane 1 — iframe → extension (commands): MUST come from the opencode
         // origin; the extension side additionally allowlists commands.
         if (e.origin === ${origin}) {
-          // Image paste: the outer webview CAN read clipboard images
-          // (navigator.clipboard.read is granted here); the sandboxed iframe
-          // can't, and vscode.env.clipboard is text-only. So we answer this one
-          // client-side instead of forwarding it to the host.
+          // Image paste: forward to the extension host which reads the clipboard
+          // image natively (osascript/xclip/powershell). The browser Clipboard API
+          // in the outer webview requires user activation from a keystroke on THIS
+          // document, but the keystroke fires inside the iframe — so the async API
+          // throws. The extension host has no such constraint.
           if (d && d.source === "amicode" && d.kind === "clipboard-image-request") {
-            replyClipboardImage(d.nonce);
+            vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
           if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "app-ready")) {
@@ -392,44 +393,6 @@ export class ChatPanel {
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
       });
-
-      // Answer a clipboard-image-request from the framed app: read the first
-      // image/* item off the OS clipboard (client-side; clipboard-read is
-      // granted to this webview) and post it into the frame as a data URL. On
-      // any failure we still reply with dataUrl:null so the app falls back to
-      // text paste rather than hanging on its timeout.
-      function blobToDataUrl(blob) {
-        return new Promise(function (res) {
-          var r = new FileReader();
-          r.onload = function () { res(typeof r.result === "string" ? r.result : null); };
-          r.onerror = function () { res(null); };
-          r.readAsDataURL(blob);
-        });
-      }
-      async function replyClipboardImage(nonce) {
-        var payload = { source: "amicode", kind: "clipboard-image", nonce: nonce, dataUrl: null, mime: null, filename: null };
-        try {
-          if (navigator.clipboard && navigator.clipboard.read) {
-            var items = await navigator.clipboard.read();
-            for (var i = 0; i < items.length && !payload.dataUrl; i++) {
-              var types = items[i].types || [];
-              for (var j = 0; j < types.length; j++) {
-                if (types[j].indexOf("image/") !== 0) continue;
-                var blob = await items[i].getType(types[j]);
-                var dataUrl = await blobToDataUrl(blob);
-                if (dataUrl) {
-                  payload.dataUrl = dataUrl;
-                  payload.mime = types[j];
-                  payload.filename = "pasted-image." + (types[j].split("/")[1] || "png");
-                }
-                break;
-              }
-            }
-          }
-        } catch (e) { /* reply with dataUrl:null → app falls back to text paste */ }
-        var f = document.querySelector("iframe");
-        if (f && f.contentWindow) f.contentWindow.postMessage(payload, ${origin});
-      }
     })();
   </script>
 </body>
@@ -564,7 +527,7 @@ export class ChatPanel {
             return;
           }
           if (d && d.source === "amicode" && d.kind === "clipboard-image-request") {
-            replyClipboardImage(d.nonce);
+            vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
           if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "app-ready")) {
@@ -577,38 +540,6 @@ export class ChatPanel {
           if (f && f.contentWindow) f.contentWindow.postMessage(d, origin);
         }
       });
-      function blobToDataUrl(blob) {
-        return new Promise(function (res) {
-          var r = new FileReader();
-          r.onload = function () { res(typeof r.result === "string" ? r.result : null); };
-          r.onerror = function () { res(null); };
-          r.readAsDataURL(blob);
-        });
-      }
-      async function replyClipboardImage(nonce) {
-        var payload = { source: "amicode", kind: "clipboard-image", nonce: nonce, dataUrl: null, mime: null, filename: null };
-        try {
-          if (navigator.clipboard && navigator.clipboard.read) {
-            var items = await navigator.clipboard.read();
-            for (var i = 0; i < items.length && !payload.dataUrl; i++) {
-              var types = items[i].types || [];
-              for (var j = 0; j < types.length; j++) {
-                if (types[j].indexOf("image/") !== 0) continue;
-                var blob = await items[i].getType(types[j]);
-                var dataUrl = await blobToDataUrl(blob);
-                if (dataUrl) {
-                  payload.dataUrl = dataUrl;
-                  payload.mime = types[j];
-                  payload.filename = "pasted-image." + (types[j].split("/")[1] || "png");
-                }
-                break;
-              }
-            }
-          }
-        } catch (e) { /* reply with dataUrl:null */ }
-        var f = document.querySelector("iframe");
-        if (f && f.contentWindow) f.contentWindow.postMessage(payload, origin);
-      }
     })();
   </script>
 </body>

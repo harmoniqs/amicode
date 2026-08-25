@@ -232,3 +232,44 @@ describe("extractReportBugModel — the command's optional model payload (amicod
     expect(extractReportBugModel({ model: { providerID: "p" } })).toBeUndefined();
   });
 });
+
+describe("amicode bridge — clipboard-image-read", () => {
+  it("reads a clipboard image via native tools and replies with a data URL", async () => {
+    const host = io();
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "clipboard-image-read", nonce: "img-1", tab: "pane-2" },
+      host,
+    );
+    expect(handled).toBe(true);
+    // The handler is async (spawns a native process); wait for it to complete.
+    // Multiple ticks needed: dynamic import + process spawn + result processing.
+    for (let i = 0; i < 60 && host.posted.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(host.posted).toHaveLength(1);
+    const reply = host.posted[0] as Record<string, unknown>;
+    expect(reply.source).toBe("amicode");
+    expect(reply.kind).toBe("clipboard-image");
+    expect(reply.nonce).toBe("img-1");
+    expect(reply.tab).toBe("pane-2");
+    // dataUrl is either null (no image) or a valid data URL with image content
+    if (reply.dataUrl !== null) {
+      expect(typeof reply.dataUrl).toBe("string");
+      expect((reply.dataUrl as string).startsWith("data:image/")).toBe(true);
+      expect(typeof reply.mime).toBe("string");
+      expect((reply.mime as string).startsWith("image/")).toBe(true);
+      expect(typeof reply.filename).toBe("string");
+    }
+  });
+
+  it("a hidden panel never answers clipboard-image-read", async () => {
+    const host = io(false);
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "clipboard-image-read", nonce: "img-2" },
+      host,
+    );
+    expect(handled).toBe(true);
+    await flush();
+    expect(host.posted).toHaveLength(0);
+  });
+});
