@@ -29,6 +29,12 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   // the fork forwards it here so the editor's Command Palette (where every
   // Amicode: command lives) opens as users expect.
   "workbench.action.showCommands",
+  // Zoom V2 (harmoniqs/amicode#322): the app captures Cmd/Ctrl+=/-/0 inside the
+  // iframe and forwards the intent here; the extension executes the workbench
+  // zoom command so the ENTIRE window zooms, not just the webview content.
+  "workbench.action.zoomIn",
+  "workbench.action.zoomOut",
+  "workbench.action.zoomReset",
 ]);
 
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
