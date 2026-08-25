@@ -155,6 +155,30 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Clipboard image bridge: the outer webview's navigator.clipboard.read()
+  // requires user activation (a keystroke on that document), but the user typed
+  // inside the sandboxed iframe — so the async Clipboard API throws in newer
+  // Chromium/Electron. Route through the extension host instead: we spawn a
+  // platform-native tool to read the clipboard image as PNG and reply with a
+  // base64 data URL. Same visibility gate as text reads.
+  if (msg.kind === "clipboard-image-read") {
+    if (!io.visible()) return true;
+    const nonce = (msg as { nonce?: string }).nonce;
+    const tab = (msg as { tab?: string }).tab;
+    void readClipboardImageNative().then((result) => {
+      io.postToWebview({
+        source: "amicode",
+        kind: "clipboard-image",
+        nonce,
+        tab,
+        dataUrl: result?.dataUrl ?? null,
+        mime: result?.mime ?? null,
+        filename: result?.filename ?? null,
+      });
+    });
+    return true;
+  }
+
   // Save bridge (run-card PNG + session markdown export): downloads are dead
   // inside the framed app — the extension shows a save dialog and writes the
   // file. Bounded size, basename-only: the payload is untrusted.
@@ -974,4 +998,236 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Native clipboard image reader
+// ---------------------------------------------------------------------------
+// Reads the system clipboard image using platform-native tools. Returns a
+// base64 data URL on success, null if the clipboard holds no image or the
+// platform isn't supported. This sidesteps the Chromium user-activation
+// requirement that blocks navigator.clipboard.read() in the webview.
+
+interface ClipboardImageResult {
+  dataUrl: string;
+  mime: string;
+  filename: string;
+}
+
+async function readClipboardImageNative(): Promise<ClipboardImageResult | null> {
+  const platform = process.platform;
+  try {
+    if (platform === "darwin") {
+      return await readClipboardImageMac();
+    } else if (platform === "linux") {
+      return await readClipboardImageLinux();
+    } else if (platform === "win32") {
+      return await readClipboardImageWindows();
+    }
+  } catch {
+    // Any failure → no image
+  }
+  return null;
+}
+
+function execPromise(
+  cmd: string,
+  args: string[],
+  options?: { encoding?: "buffer" | BufferEncoding; timeout?: number },
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    import("node:child_process").then(({ execFile }) => {
+      execFile(cmd, args, { timeout: options?.timeout ?? 3000, maxBuffer: 20 * 1024 * 1024, encoding: "buffer" }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout as unknown as Buffer);
+      });
+    });
+  });
+}
+
+async function readClipboardImageMac(): Promise<ClipboardImageResult | null> {
+  // Priority 1: If the clipboard has a file URL pointing to an image, read the
+  // file directly. Finder file copies put the file icon as image data and the
+  // file path as public.file-url — we want the actual file contents.
+  try {
+    const fileUrlScript = [
+      'use framework "AppKit"',
+      "set pb to current application's NSPasteboard's generalPasteboard()",
+      'set furlType to "public.file-url"',
+      "set urlStr to (pb's stringForType:furlType) as text",
+      "if urlStr is missing value or urlStr is \"\" then",
+      '  error "no file url"',
+      "end if",
+      "return urlStr",
+    ].join("\n");
+    const urlOut = await execPromise("osascript", ["-l", "AppleScript", "-e", fileUrlScript]);
+    const fileUrl = urlOut.toString("utf8").trim();
+    if (fileUrl) {
+      const { readFileSync, existsSync } = await import("node:fs");
+      const { basename } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      // Resolve macOS .file ID URLs via osascript
+      let filePath: string;
+      if (fileUrl.startsWith("file:///.file/id=")) {
+        const resolveScript = `POSIX path of ("${fileUrl}" as POSIX file)`;
+        const resolved = await execPromise("osascript", ["-e", resolveScript]);
+        filePath = resolved.toString("utf8").trim();
+      } else {
+        filePath = fileURLToPath(fileUrl);
+      }
+      const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+      if (filePath && imageExts.test(filePath) && existsSync(filePath)) {
+        const buf = readFileSync(filePath);
+        const ext = filePath.match(imageExts)![1].toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+        return {
+          dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+          mime,
+          filename: basename(filePath),
+        };
+      }
+    }
+  } catch {
+    // No file URL or not an image file — fall through to pasteboard image
+  }
+
+  // Priority 2: Read clipboard image via osascript + NSPasteboard. Try PNG first
+  // (covers screenshots, browser copies), then fall back to TIFF (some apps only
+  // put TIFF on the pasteboard). The TIFF path writes to a temp file and uses
+  // `sips` to convert rather than fighting AppleScript-ObjC's syntax for
+  // NSBitmapImageRep.
+  const pngScript = [
+    'use framework "AppKit"',
+    "set pb to current application's NSPasteboard's generalPasteboard()",
+    "set pngType to current application's NSPasteboardTypePNG",
+    "set imgData to pb's dataForType:pngType",
+    "if imgData is missing value then",
+    '  error "no image"',
+    "end if",
+    "set rawBytes to (imgData's base64EncodedStringWithOptions:0) as text",
+    "return rawBytes",
+  ].join("\n");
+
+  try {
+    const stdout = await execPromise("osascript", ["-l", "AppleScript", "-e", pngScript]);
+    const base64 = stdout.toString("utf8").trim();
+    if (base64) {
+      return { dataUrl: `data:image/png;base64,${base64}`, mime: "image/png", filename: "pasted-image.png" };
+    }
+  } catch {
+    // PNG not on clipboard — try TIFF path
+  }
+
+  // TIFF fallback: write raw TIFF to a temp file, convert with sips
+  const tiffScript = [
+    'use framework "AppKit"',
+    'use framework "Foundation"',
+    "set pb to current application's NSPasteboard's generalPasteboard()",
+    "set tiffType to current application's NSPasteboardTypeTIFF",
+    "set imgData to pb's dataForType:tiffType",
+    "if imgData is missing value then",
+    '  error "no image"',
+    "end if",
+    "set rawBytes to (imgData's base64EncodedStringWithOptions:0) as text",
+    "return rawBytes",
+  ].join("\n");
+
+  try {
+    const { writeFileSync, readFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const stdout = await execPromise("osascript", ["-l", "AppleScript", "-e", tiffScript]);
+    const tiffBase64 = stdout.toString("utf8").trim();
+    if (!tiffBase64) return null;
+
+    // Write TIFF, convert to PNG with sips
+    const tiffPath = join(tmpdir(), `amicode-paste-${Date.now()}.tiff`);
+    const pngPath = tiffPath.replace(".tiff", ".png");
+    writeFileSync(tiffPath, Buffer.from(tiffBase64, "base64"));
+    await execPromise("sips", ["-s", "format", "png", tiffPath, "--out", pngPath]);
+    const pngBuf = readFileSync(pngPath);
+    unlinkSync(tiffPath);
+    unlinkSync(pngPath);
+
+    return { dataUrl: `data:image/png;base64,${pngBuf.toString("base64")}`, mime: "image/png", filename: "pasted-image.png" };
+  } catch {
+    return null;
+  }
+}
+
+async function readClipboardImageLinux(): Promise<ClipboardImageResult | null> {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { basename } = await import("node:path");
+
+  // Priority 1: file URI list (Nautilus/Dolphin file copy)
+  try {
+    const uriOut = await execPromise("xclip", ["-selection", "clipboard", "-t", "text/uri-list", "-o"]);
+    const uri = uriOut.toString("utf8").trim().split("\n")[0];
+    if (uri && uri.startsWith("file://")) {
+      const filePath = decodeURIComponent(uri.replace("file://", ""));
+      const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+      if (imageExts.test(filePath) && existsSync(filePath)) {
+        const buf = readFileSync(filePath);
+        const ext = filePath.match(imageExts)![1].toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+        return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, mime, filename: basename(filePath) };
+      }
+    }
+  } catch {
+    // No URI list — fall through to image data
+  }
+
+  // Priority 2: raw image data
+  const stdout = await execPromise("xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]);
+  if (!stdout.length) return null;
+  const base64 = stdout.toString("base64");
+  return {
+    dataUrl: `data:image/png;base64,${base64}`,
+    mime: "image/png",
+    filename: "pasted-image.png",
+  };
+}
+
+async function readClipboardImageWindows(): Promise<ClipboardImageResult | null> {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { basename } = await import("node:path");
+
+  // Priority 1: file drop list (Explorer file copy)
+  try {
+    const fileScript = `
+Add-Type -AssemblyName System.Windows.Forms
+$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+if ($files.Count -gt 0) { $files[0] } else { exit 1 }
+`;
+    const fileOut = await execPromise("powershell", ["-NoProfile", "-Command", fileScript]);
+    const filePath = fileOut.toString("utf8").trim();
+    const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+    if (filePath && imageExts.test(filePath) && existsSync(filePath)) {
+      const buf = readFileSync(filePath);
+      const ext = filePath.match(imageExts)![1].toLowerCase();
+      const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+      return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, mime, filename: basename(filePath) };
+    }
+  } catch {
+    // No file drop list — fall through to image data
+  }
+
+  // Priority 2: clipboard image data
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($img -eq $null) { exit 1 }
+$ms = New-Object System.IO.MemoryStream
+$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+[Convert]::ToBase64String($ms.ToArray())
+`;
+  const stdout = await execPromise("powershell", ["-NoProfile", "-Command", script]);
+  const base64 = stdout.toString("utf8").trim();
+  if (!base64) return null;
+  return {
+    dataUrl: `data:image/png;base64,${base64}`,
+    mime: "image/png",
+    filename: "pasted-image.png",
+  };
 }

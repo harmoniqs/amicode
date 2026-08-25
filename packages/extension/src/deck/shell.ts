@@ -461,34 +461,13 @@ window.addEventListener("message", (e) => {
     return;
   }
 
-  // clipboard-image-request is answered shell-side (the shell webview has
-  // clipboard-read; the sandboxed iframe doesn't) — reply to the ASKING pane.
+  // clipboard-image-request: forward to the extension host which reads the
+  // clipboard image natively. The shell webview's navigator.clipboard.read()
+  // requires user activation from a keystroke on THIS document, but the
+  // keystroke fires inside the sandboxed iframe — so the async Clipboard API
+  // throws in newer Chromium. The extension host has no such constraint.
   if (d.kind === "clipboard-image-request") {
-    void (async () => {
-      const payload = { source: "amicode", kind: "clipboard-image", nonce: d.nonce, dataUrl: null as string | null, mime: null as string | null, filename: null as string | null };
-      try {
-        const items = await navigator.clipboard.read();
-        for (const item of items) {
-          const type = item.types.find((t) => t.startsWith("image/"));
-          if (!type) continue;
-          const blob = await item.getType(type);
-          payload.dataUrl = await new Promise<string | null>((res) => {
-            const r = new FileReader();
-            r.onload = () => res(typeof r.result === "string" ? r.result : null);
-            r.onerror = () => res(null);
-            r.readAsDataURL(blob);
-          });
-          if (payload.dataUrl) {
-            payload.mime = type;
-            payload.filename = `pasted-image.${type.split("/")[1] ?? "png"}`;
-          }
-          break;
-        }
-      } catch {
-        /* dataUrl:null → app falls back to text paste */
-      }
-      (e.source as Window | null)?.postMessage(payload, boot.origin);
-    })();
+    vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce, tab: tabId });
     return;
   }
 

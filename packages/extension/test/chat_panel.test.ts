@@ -328,3 +328,27 @@ describe("ChatPanel.adopt — transforms an existing panel into the chat singlet
     expect(readyFired).toHaveLength(1);
   });
 });
+
+describe("ChatPanel — clipboard-image-request routes through extension host", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+  });
+
+  it("the relay forwards clipboard-image-request to the extension host (not navigator.clipboard.read)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    // The outer webview relay should forward clipboard-image-request to the
+    // extension via vscode.postMessage — NOT handle it with navigator.clipboard.read
+    expect(html).toContain('"clipboard-image-read"');
+    // The old client-side replyClipboardImage with navigator.clipboard.read should be gone
+    expect(html).not.toContain("navigator.clipboard.read");
+  });
+});
