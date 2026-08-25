@@ -710,7 +710,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       const { exec } = await import("child_process");
       const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string; stdout?: string }> =>
         new Promise((resolve) => {
-          exec(cmd, { cwd, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=4096" } },
+          exec(cmd, { cwd, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS ?? "--max-old-space-size=4096", AMICODE_OPENCODE_SRC: opencodePath } },
             (err, stdout, stderr) => {
               if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
               else resolve({ ok: true, stdout: stdout?.trim() });
