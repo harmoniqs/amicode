@@ -680,6 +680,116 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Devcontainer VSIX build: builds both repos using the pnpm-based workflow
+  // and emits a .vsix to the configured output path for manual installation.
+  if (msg.kind === "dev-tools-build-vsix") {
+    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
+      : "";
+    const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
+      : "";
+    const outputPath = typeof (msg as { outputPath?: unknown }).outputPath === "string"
+      ? (msg as unknown as { outputPath: string }).outputPath.trim().replace(/^~/, os.homedir())
+      : "";
+
+    if (!opencodePath || !amicodePath || !outputPath) {
+      io.postToWebview({
+        source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+        state: "failed", error: "All three paths (opencode, amicode, output) must be set",
+      });
+      return true;
+    }
+
+    io.postToWebview({
+      source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+      state: "building",
+    });
+
+    void (async () => {
+      const { exec } = await import("child_process");
+      const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string; stdout?: string }> =>
+        new Promise((resolve) => {
+          exec(cmd, { cwd, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=4096" } },
+            (err, stdout, stderr) => {
+              if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
+              else resolve({ ok: true, stdout: stdout?.trim() });
+            });
+        });
+
+      try {
+        // ── Step 1: Install opencode deps (bun-based repo) ──
+        const installOc = await run("bun install", opencodePath);
+        if (!installOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `bun install (opencode) failed: ${installOc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 2: Install amicode deps (pnpm-based repo) ──
+        const installAc = await run("pnpm install", amicodePath);
+        if (!installAc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `pnpm install (amicode) failed: ${installAc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 3: Build extension bundle (esbuild) ──
+        const buildExt = await run("pnpm --filter amicode build", amicodePath);
+        if (!buildExt.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `pnpm build failed: ${buildExt.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 4: Build opencode binary + vendor it ──
+        const buildOc = await run("pnpm --filter amicode opencode:build", amicodePath);
+        if (!buildOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `opencode:build failed: ${buildOc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 5: Package vsix ──
+        const extDir = path.join(amicodePath, "packages", "extension");
+        const vsixName = `amicode-${Date.now()}.vsix`;
+        const vsixDest = path.join(outputPath, vsixName);
+
+        fs.mkdirSync(outputPath, { recursive: true });
+
+        const packageCmd = `pnpm exec vsce package --no-dependencies --allow-missing-repository -o "${vsixDest}"`;
+        const packResult = await run(packageCmd, extDir);
+        if (!packResult.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `vsce package failed: ${packResult.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+          state: "done", vsixPath: vsixDest,
+        });
+      } catch (e: unknown) {
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+          state: "failed", error: e instanceof Error ? e.message : "Unknown error",
+        });
+      }
+    })();
+
+    return true;
+  }
+
   // #351 reverse: Work Column Device Inspector → extension refresh
   if (msg.kind === "device:refresh" && typeof (msg as { device?: unknown }).device === "string") {
     void vscode.commands.executeCommand("amicode.device.refresh");
