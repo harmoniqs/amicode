@@ -389,7 +389,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
       // Build + reload is async; fire-and-forget from the sync handler.
       void (async () => {
-        const { exec } = await import("child_process");
+      const { exec, execFile } = await import("child_process");
         const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
           exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
             if (err) {
@@ -765,8 +765,15 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
         fs.mkdirSync(outputPath, { recursive: true });
 
-        const packageCmd = `pnpm exec vsce package --no-dependencies --allow-missing-repository -o "${vsixDest}"`;
-        const packResult = await run(packageCmd, extDir);
+        // Use execFile (no shell) to avoid command injection via outputPath
+        const packResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          execFile("pnpm", ["exec", "vsce", "package", "--no-dependencies", "--allow-missing-repository", "-o", vsixDest],
+            { cwd: extDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS ?? "--max-old-space-size=4096", AMICODE_OPENCODE_SRC: opencodePath } },
+            (err, _stdout, stderr) => {
+              if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
+              else resolve({ ok: true });
+            });
+        });
         if (!packResult.ok) {
           io.postToWebview({
             source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
