@@ -15,6 +15,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 import { PROVIDER_MODELS } from "./onboarding_panel";
+import { opencodeConfigDir, opencodeDataDir } from "./opencode_xdg";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ const PROVIDER_ENV_VAR: Record<string, string> = {
 /** Default scan options using standard paths. */
 export function defaultScanOptions(): ScanOptions {
   const home = os.homedir();
-  const dataDir = path.join(home, ".local", "share", "opencode");
+  const dataDir = opencodeDataDir();
   return {
     accountJsonPath: path.join(dataDir, "account.json"),
     authJsonPath: path.join(dataDir, "auth.json"),
@@ -303,7 +304,7 @@ export function writeBatchConfig(
   activeProvider: string,
   configPath?: string,
 ): void {
-  const targetPath = configPath ?? path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  const targetPath = configPath ?? path.join(opencodeConfigDir(), "opencode.json");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
   // Read existing config to merge
@@ -366,8 +367,7 @@ export function disconnectProviders(
   providers: string[],
   options?: { accountJsonPath?: string; authJsonPath?: string },
 ): void {
-  const home = os.homedir();
-  const dataDir = path.join(home, ".local", "share", "opencode");
+  const dataDir = opencodeDataDir();
   const accountPath = options?.accountJsonPath ?? path.join(dataDir, "account.json");
   const authPath = options?.authJsonPath ?? path.join(dataDir, "auth.json");
 

@@ -13,6 +13,7 @@ import {
   scanCredentials,
   defaultScanOptions,
   disconnectProviders,
+  writeBatchConfig,
   type DetectedCredential,
   type ScanOptions,
   type ScanResult,
@@ -877,5 +878,107 @@ describe("disconnectProviders — removes credentials from opencode auth stores"
     expect(result.accounts.acc3).toBeDefined();
     expect(result.accounts.acc3.serviceID).toBe("amazon-bedrock");
     expect(result.active["amazon-bedrock"]).toBe("acc3");
+  });
+});
+
+// ─── XDG path resolution (#562) ─────────────────────────────────────────────
+
+describe("defaultScanOptions — respects XDG_DATA_HOME (#562)", () => {
+  it("uses XDG_DATA_HOME when set", () => {
+    const prev = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = "/custom/data";
+    try {
+      const opts = defaultScanOptions();
+      expect(opts.accountJsonPath).toBe("/custom/data/opencode/account.json");
+      expect(opts.authJsonPath).toBe("/custom/data/opencode/auth.json");
+    } finally {
+      if (prev === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prev;
+    }
+  });
+
+  it("falls back to ~/.local/share/opencode when XDG_DATA_HOME is unset", () => {
+    const prev = process.env.XDG_DATA_HOME;
+    delete process.env.XDG_DATA_HOME;
+    try {
+      const opts = defaultScanOptions();
+      const expected = path.join(os.homedir(), ".local", "share", "opencode");
+      expect(opts.accountJsonPath).toBe(path.join(expected, "account.json"));
+      expect(opts.authJsonPath).toBe(path.join(expected, "auth.json"));
+    } finally {
+      if (prev === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prev;
+    }
+  });
+});
+
+describe("disconnectProviders — respects XDG_DATA_HOME (#562)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cred-xdg-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("resolves default paths from XDG_DATA_HOME when no options override", () => {
+    // Set up data at a custom XDG path
+    const xdgData = path.join(tmpDir, "xdg-data");
+    fs.mkdirSync(path.join(xdgData, "opencode"), { recursive: true });
+    fs.writeFileSync(
+      path.join(xdgData, "opencode", "account.json"),
+      JSON.stringify({
+        version: 2,
+        accounts: {
+          acc1: { id: "acc1", serviceID: "opencode", credential: { type: "api", key: "sk-oc" } },
+        },
+        active: { opencode: "acc1" },
+      }),
+    );
+
+    const prev = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = xdgData;
+    try {
+      // Call without options — should use XDG_DATA_HOME
+      disconnectProviders(["opencode"]);
+      const result = JSON.parse(fs.readFileSync(path.join(xdgData, "opencode", "account.json"), "utf8"));
+      expect(result.accounts.acc1).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prev;
+    }
+  });
+});
+
+describe("writeBatchConfig — respects XDG_CONFIG_HOME (#562)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "cred-xdg-"));
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("uses XDG_CONFIG_HOME for the default config path when no configPath override", () => {
+    const xdgConfig = path.join(tmpDir, "xdg-config");
+    fs.mkdirSync(path.join(xdgConfig, "opencode"), { recursive: true });
+
+    const prev = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgConfig;
+    try {
+      const credentials: DetectedCredential[] = [
+        { provider: "anthropic", key: "sk-ant-valid-key-12345", source: "env" },
+      ];
+      writeBatchConfig(credentials, "anthropic");
+      const written = JSON.parse(
+        fs.readFileSync(path.join(xdgConfig, "opencode", "opencode.json"), "utf8"),
+      );
+      expect(written.provider.anthropic).toBeDefined();
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prev;
+    }
   });
 });
