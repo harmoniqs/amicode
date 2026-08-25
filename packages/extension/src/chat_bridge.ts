@@ -389,7 +389,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
       // Build + reload is async; fire-and-forget from the sync handler.
       void (async () => {
-      const { exec, execFile } = await import("child_process");
+      const { exec } = await import("child_process");
         const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
           exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
             if (err) {
@@ -707,7 +707,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     });
 
     void (async () => {
-      const { exec } = await import("child_process");
+      const { exec, execFile } = await import("child_process");
       const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string; stdout?: string }> =>
         new Promise((resolve) => {
           exec(cmd, { cwd, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS ?? "--max-old-space-size=4096", AMICODE_OPENCODE_SRC: opencodePath } },
