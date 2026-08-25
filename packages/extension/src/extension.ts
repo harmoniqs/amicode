@@ -56,7 +56,7 @@ import {
   resolveJuliaupCommands,
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
-import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
+import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
@@ -1161,6 +1161,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? `up at ${opencodeReadyUrl.toString()}`
             : 'down — try "Amicode: Restart opencode server"',
         });
+
+        // opencode TUI (#565): verify ~/.local/bin/opencode symlink is healthy.
+        results.push(probeOpencodeTui());
 
         // LLM provider (opencode's own resolution).
         if (opencodeReadyUrl) {
