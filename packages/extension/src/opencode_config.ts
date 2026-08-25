@@ -18,6 +18,7 @@ import {
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
 import { studioPathsOrLegacy } from "@amicode/schema";
+import { opencodeConfigDir } from "./opencode_xdg";
 import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
@@ -392,13 +393,17 @@ export function resolveModelPin(): string | undefined {
 /** Validate a model pin against the user's configured providers.
  *  Returns the pin unchanged if its provider is configured, otherwise undefined.
  *  This prevents injecting a stale pin that references a disconnected provider
- *  (which causes 500s when the server tries to resolve it). */
-export function validatedModelPin(pin: string | undefined): string | undefined {
+ *  (which causes 500s when the server tries to resolve it).
+ *  @param configDir Optional override directory (from amicode.configDir setting).
+ *    Priority: configDir > XDG_CONFIG_HOME > default. */
+export function validatedModelPin(pin: string | undefined, configDir?: string): string | undefined {
   if (!pin) return undefined;
   const providerID = pin.split("/")[0];
   if (!providerID) return undefined;
   // Read the user's global opencode.json to check configured providers
-  const configPath = path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  const configPath = configDir
+    ? path.join(configDir, "opencode.json")
+    : path.join(opencodeConfigDir(), "opencode.json");
   try {
     if (!fs.existsSync(configPath)) return pin; // no config → trust the pin (first boot)
     const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
