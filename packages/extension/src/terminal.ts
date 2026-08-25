@@ -82,6 +82,15 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
       env.AMICODE_SERVICE_URL = svc.url;
       env.AMICODE_SERVICE_AUTH = svc.authHeader;
     }
+    // Data & Storage overrides (#564): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
+    // from the user's VS Code settings so the terminal opencode sees the same
+    // DB and config paths as the chat panel.
+    const amicodeConfig = vscode.workspace.getConfiguration("amicode");
+    const sessionDb = amicodeConfig.get<string>("sessionDatabase", "").trim();
+    const configDirOverride = amicodeConfig.get<string>("configDir", "").trim();
+    if (sessionDb) env.OPENCODE_DB = sessionDb;
+    if (configDirOverride) env.OPENCODE_CONFIG_DIR = configDirOverride;
+
     // Carry fleet standalone hint as env for shell scripts that check it
     try {
       const fleetJson = path.join(os.homedir(), ".amico", "ops", "fleet", "fleet.json");
