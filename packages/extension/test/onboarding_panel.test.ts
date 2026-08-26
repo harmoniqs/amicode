@@ -361,7 +361,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
   it("works for google provider", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     const result = await testConnection(
-      { provider: "google", model: "google/gemini-3.1-pro", apiKey: "AIza-key" },
+      { provider: "google", model: "google/gemini-3.1-pro-preview", apiKey: "AIza-key" },
       fetchMock,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);

@@ -45,9 +45,9 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
     { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
   ],
   anthropic: [
-    { id: "anthropic/claude-fable-5", name: "Claude Fable 5" },
-    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
     { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5" },
     { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8" },
   ],
   openai: [
@@ -56,13 +56,13 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
     { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
   google: [
-    { id: "google/gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+    { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
     { id: "google/gemini-3.7-flash", name: "Gemini 3.7 Flash" },
   ],
   openrouter: [
     { id: "openrouter/anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
     { id: "openrouter/openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
-    { id: "openrouter/google/gemini-3.1-pro", name: "Gemini 3.1 Pro" },
+    { id: "openrouter/google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
   ],
   vercel: [
     { id: "vercel/anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
@@ -179,6 +179,7 @@ function providerKeyEnvVar(provider: string): string | undefined {
     google: "GOOGLE_API_KEY",
     opencode: "OPENCODE_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
+    "amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
   };
   return map[provider];
 }
