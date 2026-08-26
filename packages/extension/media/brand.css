@@ -11,6 +11,17 @@
   font-display: swap;
 }
 
+/* DM Sans — the brand text face, the same variable file the app and
+ * harmoniqs.ai use. Without it the webviews fell back to the editor's UI font,
+ * so onboarding read in a different typeface from the rest of the product. */
+@font-face {
+  font-family: "DM Sans";
+  src: url("ui/atoms/DMSans-Variable.woff2") format("woff2-variations");
+  font-weight: 100 1000;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   /* color — the brand yellow, split into three honest roles. brand_accent.ts
    * overrides fill/edge/ink at :root per the live theme; these are the DARK
@@ -18,11 +29,16 @@
    * yellow is a FILL, never an ink. On light surfaces the lemon can't define
    * its own edge (1.1:1 vs white), so the edge comes from a dark hairline; on
    * dark it separates itself (14.8:1), so the edge is transparent. */
-  --brand-yellow: #fff676;
-  --color-accent-fill: var(--brand-yellow); /* the swatch — true lemon, both themes */
-  --color-on-accent: #000000; /* dark ink on the swatch — 18.7:1, never yellow text */
-  --color-accent-edge: transparent; /* dark default; light → dark hairline (theme fg) */
-  --color-accent-ink: var(--brand-yellow); /* thin lines that can't be fills; light → neutral fg */
+  /* The site's --brand-yellow, matching harmoniqs-ai/app/globals.css and the
+   * app's own --accent. #fff676 was an earlier misread of a different repo and
+   * was never the site's colour; the two surfaces must not disagree. */
+  --brand-yellow: #FFE614;
+  --brand-yellow-hover: #F0D600; /* the site's --brand-yellow-hover; matches the app */
+  --color-accent-fill: var(--brand-yellow); /* the swatch — same hue both themes */
+  --color-accent-hover: var(--brand-yellow-hover); /* hover of a yellow fill */
+  --color-on-accent: #000000; /* ink on the swatch — never yellow text */
+  --color-accent-edge: #000000; /* every yellow fill takes an ink edge, light and dark */
+  --color-accent-ink: var(--brand-yellow); /* dark default; light overridden below */
   --color-accent: var(--color-accent-ink); /* back-compat alias — strokes get legible ink, never gold */
   --color-ok: var(--vscode-testing-iconPassed);
   --color-fail: var(--vscode-errorForeground);
@@ -30,7 +46,7 @@
   --color-dim: var(--vscode-descriptionForeground);
 
   /* text */
-  --text-font: var(--vscode-font-family);
+  --text-font: "DM Sans", var(--vscode-font-family);
   --text-mono: "JuliaMono", var(--vscode-editor-font-family, monospace);
   --text-body: var(--vscode-font-size, 12px);
   --text-label: 0.72em;
@@ -73,4 +89,15 @@
   --series-6: var(--vscode-charts-red, #cc5a5a);
   --plot-grid: var(--vscode-charts-lines, color-mix(in srgb, var(--vscode-foreground, #ccc) 18%, transparent));
   --plot-band: color-mix(in srgb, var(--vscode-foreground, #ccc) 6%, transparent);
+}
+
+/* LIGHT: the ink role goes black. #FFE614 is ~1.3:1 on white, so a yellow
+ * GLYPH (the Amico mark, strokes, thin lines) is invisible there — on light the
+ * ink carries it and yellow stays in fills only. This lives in CSS rather than
+ * brand_accent.ts because not every webview runs that resolver: the onboarding
+ * panel does not, and it was rendering a pale-yellow Amico on white. */
+body.vscode-light,
+body.vscode-high-contrast-light {
+  --color-accent-ink: #000000;
+  --color-accent: #000000;
 }

@@ -2,7 +2,7 @@
 type: score
 schema_version: 1
 id: overture
-version: 2
+version: 3
 derived_from: null
 name: "Welcome — let's set up your studio"
 outcome: "A profile Amico remembers: who you are and what you want to do"
@@ -70,6 +70,40 @@ stages:
       - id: description
         prompt: "Here's how I'd describe you — edit if you'd like:"
         kind: text
+  - id: tour
+    optional: true
+    questions:
+      # Reading order of the window: top bar left→right, then the row below,
+      # then the composer. The highlight walks the screen; it never hops back.
+      - id: tour_tabs
+        prompt: "Session tabs — every chat is a tab"
+        choices: ["Next"]
+      - id: tour_new_chat
+        prompt: "The + button — start a fresh chat"
+        choices: ["Next"]
+      - id: tour_sessions
+        prompt: "Sessions — every chat you've had"
+        choices: ["Next"]
+      - id: tour_status
+        prompt: "Status — how things are running"
+        choices: ["Next"]
+      # One stop, not three: the Pulse Inspector and Preview live behind this
+      # same button, so separate stops re-lit the identical element.
+      - id: tour_side_panel
+        prompt: "The side panel — the Pulse Inspector, Preview and your files"
+        choices: ["Next"]
+      - id: tour_profile
+        prompt: "Your profile — the card we just built"
+        choices: ["Next"]
+      - id: tour_settings
+        prompt: "Settings — models, themes, and preferences"
+        choices: ["Next"]
+      - id: tour_context
+        prompt: "The Context panel — what Amico is holding in mind"
+        choices: ["Next"]
+      - id: tour_composer
+        prompt: "The composer — where you talk to Amico"
+        choices: ["Finish tour"]
 ---
 
 You are running the **overture** — Amico's onboarding interview (session zero).
@@ -136,14 +170,23 @@ nothing were recorded — ask every question, overwrite the answers.
 they have one, skip stages already answered, and continue from the first
 unanswered stage. Never re-ask a question the profile already answers.
 
-**Protocol: ONE question at a time.** Ask, wait, record, advance — never batch.
-Every question is a card via the native `question` tool: choice questions list
-options in order, default first with "(recommended)"; free-form questions use
-`kind: "text"` for a bare text input with no option list — but you MUST still
-include `"options": []` (an empty array) in the tool call because the schema
-requires the key. After each answer, record it immediately (see recording
-rules below). Recording is bookkeeping, not a gate — it never blocks the
-conversation.
+**Protocol: ONE CARD PER STAGE, not one card per question.** This interview is
+scripted — every question below is fixed text, so making the user wait on a
+model turn between them is dead time. The `question` tool takes an ARRAY of
+questions: send a whole stage in one call and the card steps through them
+locally, instantly, with its own progress dots and Back/Next. Send each stage
+as a single card, wait for the one reply, record, then move to the next stage.
+
+Each entry in the array is a question: choice questions list options in order,
+default first with "(recommended)"; free-form questions use `kind: "text"` for
+a bare text input with no option list — but you MUST still include
+`"options": []` (an empty array) because the schema requires the key. The reply
+comes back as an array of answers in the same order you asked.
+
+Record ONCE PER CARD, after its reply lands (see recording rules below) —
+never after each individual question. Recording is bookkeeping, not a gate; it
+never blocks the conversation. The user can leave mid-interview and keep
+whatever stages already landed.
 
 **Recording rules (internal — never explain to user):**
 You persist answers by writing `~/.amico/profile.json` directly using your
@@ -182,81 +225,67 @@ Follow these stages mechanically. Do NOT improvise additional questions.
 Do NOT skip ahead. Do NOT ask follow-up questions beyond what is specified.
 After Stage 6, the interview is OVER.
 
-### Stage 1: orientation
+### Stage 1: orientation — ONE card, three questions
 
 Greet in one line: "Ciao — I'm Amico. Let me get to know you a little so I
-can be actually useful from the start." Then ask three questions, one at a time:
+can be actually useful from the start." Then send ONE `question` call whose
+`questions` array is exactly these three, all `kind: "text"` with `options: []`:
 
-**Q1.1** — name via `question` with `kind: "text"`, `options: []`.
-Record: write `name` to `~/.amico/profile.json`.
+1. "What should I call you?"
+2. "What's your role?"
+3. "Where do you work?"
 
-**Q1.2** — role via `question` with `kind: "text"`, `options: []`:
-"What's your role?"
-Record: write `role` to `~/.amico/profile.json`.
-
-**Q1.3** — affiliation via `question` with `kind: "text"`, `options: []`:
-"Where do you work?"
-Record: write `affiliation` to `~/.amico/profile.json`.
+Record once, when the reply lands: write `name`, `role` and `affiliation` to
+`~/.amico/profile.json`.
 
 Do NOT ask about experience level. Do NOT branch by expertise.
 
-### Stage 2: links (optional — offer but don't push)
+### Stage 2: links — ONE card, three questions (optional; offer, don't push)
 
-Ask for profile links. Three questions, one at a time — each skippable
-("skip" or empty = no link recorded). Pre-fill with "skip" so the user can
-just hit Submit to skip:
+Send ONE `question` call with these three, all `kind: "text"`, `options: []`,
+and `default: "skip"` so the reader can step straight through:
 
-**Q2.1** — "Google Scholar profile URL (or skip)" via `question` with
-`kind: "text"`, `options: []`, `default: "skip"`.
-Record (if not "skip" and non-empty): write `scholar` to `~/.amico/profile.json`.
+1. "Google Scholar profile URL (or skip)"
+2. "GitHub profile URL (or skip)"
+3. "Any other link for your profile card? (personal site, lab page — or skip)"
 
-**Q2.2** — "GitHub profile URL (or skip)" via `question` with
-`kind: "text"`, `options: []`, `default: "skip"`.
-Record (if not "skip" and non-empty): write `github` to `~/.amico/profile.json`.
+Record once: write `scholar` and `github` for any answer that is neither
+"skip" nor empty. If the third is a real URL, ask ONE follow-up card for its
+label ("What should I call it?", `kind: "text"`, `options: []`,
+`default: "Website"`) and write `custom_link: {url, label}`. If all three are
+skipped, write nothing and advance.
 
-**Q2.3** — "Any other link for your profile card? (personal site, lab page — or skip)"
-via `question` with `kind: "text"`, `options: []`, `default: "skip"`.
-If the user provides a URL (not "skip"), ask ONE follow-up for a label ("What should I
-call it?" with `kind: "text"`, `options: []`, `default: "Website"`).
-Record: write `custom_link: {url, label}` to `~/.amico/profile.json`.
-If all three are skipped, that's fine — advance.
+### Stage 3: intent and goals — ONE card, two questions
 
-### Stage 3: intent
+Send ONE `question` call with:
 
-Present a MULTI-SELECT question via the `question` tool with `multiple: true`:
+1. "What brings you to Amicode?" — `multiple: true`, with exactly these options:
+   - "General coding and software development" (description: "Write code, refactor, debug, and build software")
+   - "Perform (automated) experiments and gain scientific insights" (description: "Run automated experiment loops and extract insights")
+   - "Exploring" (description: "See what Amicode can do")
+2. "What are you hoping to accomplish with Amico?" — `kind: "text"`, `options: []`.
 
-"What brings you to Amicode?" with exactly these three options:
-- "General coding and software development" (description: "Write code, refactor, debug, and build software")
-- "Perform (automated) experiments and gain scientific insights" (description: "Run automated experiment loops and extract insights")
-- "Exploring" (description: "See what Amicode can do")
+Record once: write `focus` as a short summary of their intent (e.g. "automated
+experiments" or "general coding"). Stage 4, if it runs, overwrites it with the
+real research area. The goals answer has no profile field — it informs Stage 5's
+description.
 
-Record: write `focus` to `~/.amico/profile.json` as a short summary of their
-intent (e.g. "automated experiments" or "general coding"). If Stage 5 runs
-(research users), it overwrites this with their actual research area.
+### Stage 4: research area — ONE card, two questions (ONLY if intent includes experiments)
 
-Acknowledge briefly ("Got it") and advance.
+If the user selected "Perform (automated) experiments" in Stage 3, send ONE
+`question` call with both, `kind: "text"`, `options: []`:
 
-### Stage 4: goals
+1. "What's your research area?"
+2. "What kind of experiments do you run?"
 
-**Q4.1** — "What are you hoping to accomplish with Amico?" via `question`
-with `kind: "text"`, `options: []`. No pre-fill.
-No profile.json field for this — it informs Stage 6's description only.
+Record once: write `focus` from the first answer (this is the "Research area"
+field on the profile card — it overwrites the Stage 3 summary). The second has
+no profile field; it informs Stage 5's description.
 
-### Stage 5: research area (ask ONLY if intent includes "research")
+If they did NOT select the experiments intent, skip this stage entirely and go
+straight to Stage 5.
 
-If the user selected "Perform (automated) experiments" in Stage 3, ask:
-
-**Q5.1** — "What's your research area?" via `question` with `kind: "text"`,
-`options: []`. Record: write `focus` to `~/.amico/profile.json` (this is the
-"Research area" field in the profile card — overwrites the Stage 3 summary).
-
-**Q5.2** — "What kind of experiments do you run?" via `question` with
-`kind: "text"`, `options: []`. No profile.json field — informs Stage 6's description.
-
-If the user did NOT select the experiments intent, skip this stage entirely.
-Go directly to Stage 6.
-
-### Stage 6: handoff (FINAL — nothing comes after this)
+### Stage 5: handoff (profile complete)
 
 Auto-generate a description from what you've learned (name, role, goals,
 research_area) — a concise 1–2 sentence summary in third person. Example:
@@ -268,10 +297,62 @@ Present it via `question` with `kind: "text"`, `options: []`, and the
 Record: write `description` to `~/.amico/profile.json`.
 
 Then write the completion marker: create `~/.amico/amicode/onboarding/completed`
-(mkdir -p the directory, touch the file — an empty file is sufficient).
+(mkdir -p the directory, touch the file — an empty file is sufficient). The
+profile is COMPLETE at this point — Stage 6 is a bonus lap, and a user who
+leaves mid-tour loses nothing.
 
-Then say: "All set — I'll remember all of this. Start a new session whenever
-you're ready and we'll hit the ground running."
+Then say: "Perfect — I'll remember all of this. One last thing: let me show
+you around the studio." and go to Stage 6.
+
+### Stage 6: tour (the studio walkthrough — FINAL)
+
+Now show the reader around the window. **This is ONE `question` call whose
+`questions` array holds all NINE stops below, in this exact order.** Sending
+them as one card is what makes the walkthrough feel instant: the card steps
+from stop to stop locally, with no waiting on me between them. Do NOT send
+nine separate cards.
+
+**Each entry's `header` MUST be set VERBATIM to the string given below — the
+app watches these exact headers to light up the matching part of the window as
+the reader steps onto that stop. Do not translate, reword, re-punctuate, or
+omit a header.** The interface names (Composer, Tabs, Sessions, Context, side
+panel, Pulse Inspector, Preview, Status, Profile, Settings) are UI surface
+names — fine to say; the language rules still ban infrastructure terms.
+
+Every entry: exactly ONE option, `"Next"` (`"Finish tour"` on the last), so a
+click moves straight on. The reader can leave the whole tour at any point with
+the card's own Dismiss control — if they do, go straight to the closing line.
+The `question` text is the narration: ONE warm, concrete sentence saying what
+the thing is and where it sits. No prose between stops — the card IS the tour.
+
+The 9 stops, in this exact order. **The order is the reading order of the
+window itself — the top bar left to right, then the row beneath it, then the
+composer at the bottom.** The highlight should walk the screen, never hop back
+and forth across it, so do not reorder these.
+
+1. header `Tour · Tabs` — "Every conversation lives in a tab up here — your
+   chats stay open side by side, like a browser."
+2. header `Tour · New chat` — "The + next to the tabs starts a fresh chat
+   whenever you want a clean slate."
+3. header `Tour · Sessions` — "Over on the right, this opens every chat
+   you've had, so you can pick an old one back up whenever you need it."
+4. header `Tour · Status` — "Next to it, this readout tells you how things
+   are running — green means everything is healthy."
+5. header `Tour · Side panel` — "This opens the side panel, where your work
+   sits beside the conversation — the Pulse Inspector streaming your
+   optimization runs, Preview for markdown and files, and what's changed."
+6. header `Tour · Profile` — "That's you, at the end of the row — the profile
+   card we just built together lives there."
+7. header `Tour · Settings` — "And the gear is Settings — models, themes, and
+   everything you'd want to tweak later."
+8. header `Tour · Context` — "One row down, that ring opens Context — a live
+   map of what I'm holding in mind for this session."
+9. header `Tour · Composer` — "And down here is where we talk — type anything
+   from a question to 'optimize a CZ gate' and I'll take it from there."
+
+After the card comes back (or if they dismissed it), say: "All set — I'll
+remember all of this. Start a new session whenever you're ready and we'll hit
+the ground running."
 
 **STOP. The interview is now OVER. Do NOT:**
 - Ask any more questions

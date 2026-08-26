@@ -275,6 +275,11 @@ export class ChatPanel {
    *  singleton. Swaps its HTML to the chat iframe with a splash overlay on top,
    *  wires message relay + bridge, and registers it as the primary ChatPanel.
    *  No new panel is created — zero tab switching. */
+  /** The brand face, as a webview URI. The transition overlay must render
+   *  IDENTICALLY to the onboarding splash it replaces — same mark colour, same
+   *  typeface — or adopt() shows a visible flash mid-animation. */
+  private static fontUri?: string;
+
   static adopt(
     panel: vscode.WebviewPanel,
     ctx: vscode.ExtensionContext,
@@ -282,6 +287,9 @@ export class ChatPanel {
     authToken?: string,
     hideProjectDir?: string,
   ): ChatPanel {
+    ChatPanel.fontUri = panel.webview
+      .asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2"))
+      .toString();
     // If there's already a ChatPanel singleton, dispose it (shouldn't happen in normal flow)
     if (ChatPanel.current) {
       ChatPanel.current.dispose();
@@ -410,7 +418,13 @@ export class ChatPanel {
       `script-src 'nonce-${nonce}'`,
       `frame-src ${opencodeUrl.origin}`,
       "connect-src 'self'",
+      // the overlay's face has to load, or it renders in a different typeface
+      // from the splash it is replacing
+      `font-src ${this.panel.webview.cspSource}`,
     ].join("; ");
+    const fontFace = ChatPanel.fontUri
+      ? `@font-face { font-family: "DM Sans"; src: url("${ChatPanel.fontUri}") format("woff2-variations"); font-weight: 100 1000; font-display: swap; }`
+      : "";
     const origin = JSON.stringify(opencodeUrl.origin);
     const framed = new URL(opencodeUrl.href);
     framed.searchParams.set("colorScheme", themeKindToScheme(vscode.window.activeColorTheme.kind));
@@ -425,6 +439,7 @@ export class ChatPanel {
   <meta charset="UTF-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />
   <style>
+    ${fontFace}
     html, body, iframe { margin: 0; padding: 0; height: 100%; width: 100%; border: 0; }
     body { background: var(--vscode-editor-background); overflow: hidden; }
     iframe { display: block; position: absolute; top: 0; left: 0; z-index: 1; }
@@ -438,19 +453,22 @@ export class ChatPanel {
     .splash-overlay.fade-out {
       opacity: 0; transform: scale(1.05); pointer-events: none;
     }
+    /* These three MUST stay byte-identical to splashHtml() in
+       onboarding_panel.ts — adopt() swaps one for the other mid-animation, so
+       any divergence in colour or face shows up as a flash. */
     .splash-text {
       margin-top: 16px; font-size: 1.4rem;
       color: var(--vscode-foreground, #ccc);
-      font-family: var(--vscode-font-family, system-ui);
+      font-family: "DM Sans", var(--vscode-font-family, system-ui);
     }
     .splash-mark {
       width: 176px; height: 157px;
-      fill: var(--color-accent-ink, #fff676);
+      fill: var(--color-accent-ink, #FFE614);
       overflow: visible;
     }
     body.vscode-light .splash-mark,
     body.vscode-high-contrast-light .splash-mark {
-      fill: var(--color-accent-ink, var(--vscode-foreground, #424242));
+      fill: #000000;
     }
     .splash-mark .mark-breathe {
       transform-box: fill-box; transform-origin: 50% 100%;

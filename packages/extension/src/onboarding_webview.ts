@@ -66,14 +66,42 @@ function playWelcomeAnimation(): void {
          the wordmark are all #CCCCCC on dark, #424242 on light, never lemon on a
          light ground. The lemon FILL role stays where it belongs: the CTA below. */
       .amico-mark {
-        fill: var(--color-accent-ink, #fff676);
+        fill: var(--color-accent-ink, #FFE614);
         overflow: visible;
       }
-      /* Fallback for when brand_accent.ts has not resolved the theme. #424242 is
-         the value the shipped light-theme marks use. */
+      /* The CTA takes whichever role the MARK leaves free, so the two never
+         compete for the eye in the same column:
+           dark  — the mark is the yellow, so the button is a neutral surface
+                   lifted just off the ground.
+           light — the mark is ink, so yellow is free to carry the button. */
+      .welcome-cta {
+        background: color-mix(in srgb, var(--vscode-foreground, #ccc) 9%, var(--vscode-editor-background, #1f1f1f));
+        color: var(--vscode-foreground, #ccc);
+        border-color: var(--vscode-widget-border, transparent);
+      }
+      .welcome-cta:hover {
+        background: color-mix(in srgb, var(--vscode-foreground, #ccc) 16%, var(--vscode-editor-background, #1f1f1f));
+      }
+      body.vscode-light .welcome-cta,
+      body.vscode-high-contrast-light .welcome-cta {
+        background: var(--color-accent-fill, #FFE614);
+        color: var(--color-on-accent, #000);
+        border-color: var(--color-accent-edge, #000);
+      }
+      body.vscode-light .welcome-cta:hover,
+      body.vscode-high-contrast-light .welcome-cta:hover {
+        background: var(--color-accent-hover, #F0D600);
+      }
+      .welcome-cta:focus-visible {
+        outline: 2px solid var(--vscode-focusBorder, currentColor);
+        outline-offset: 2px;
+      }
+      /* On light the mark is INK. brand.css resolves --color-accent-ink to
+         black for light themes, and the literal here is the same value so the
+         mark is never a pale yellow glyph on white even before CSS loads. */
       body.vscode-light .amico-mark,
       body.vscode-high-contrast-light .amico-mark {
-        fill: var(--color-accent-ink, var(--vscode-foreground, #424242));
+        fill: #000000;
       }
 
       /* Squash and stretch pivots on the feet, so Amico compresses onto the
@@ -303,15 +331,20 @@ function playWelcomeAnimation(): void {
           </g>
         </g></g></g></g>
       </svg>
-      <p class="welcome-text" style="margin-top: 16px; font-size: 1.4rem; color: var(--vscode-foreground, #ccc);">
+      <!-- 16px here reads as ~32 on screen: the mark's viewBox is cropped with
+           room for its tilt and bob, so the svg box sits below the glyph. The
+           two gaps are tuned to MEASURE equal, not to match on paper. -->
+      <p class="welcome-text" style="margin: 16px 0 0; font-size: 1.4rem; color: var(--vscode-foreground, #ccc);">
         Welcome to Amicode
       </p>
-      <button class="welcome-cta" style="margin-top: 40px; padding: 10px 32px;
+      <!-- Colour is theme-dependent and lives in the stylesheet above; only
+           layout is inline, so the CSS rules are free to win. -->
+      <button class="welcome-cta" style="margin-top: 32px; padding: 10px 32px;
         font-family: var(--text-font, inherit); font-size: 14px; font-weight: 500;
-        background: var(--color-accent-fill, #fff676); color: var(--color-on-accent, #000);
-        border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+        border-width: var(--border-width, 1px); border-style: solid;
         border-radius: var(--border-radius, 4px);
-        cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 2s ease-in, filter 0.16s ease;">
+        cursor: pointer; opacity: 0; visibility: hidden;
+        transition: opacity 2s ease-in, background-color 0.16s ease, border-color 0.16s ease;">
         Get Started
       </button>
     </div>
@@ -361,12 +394,12 @@ function buildForm(): void {
   formEl.innerHTML = `
     <div class="onboarding-form" style="max-width: 480px; margin: 0 auto; padding: 24px;
       display: flex; flex-direction: column; justify-content: center; min-height: 100vh;">
-      <h2 style="margin-bottom: 8px;">Configure your model</h2>
+      <h2 style="margin: 0 0 8px; font-size: 1.35em; font-weight: 650; letter-spacing: -0.01em;">Configure your model</h2>
       <p style="color: var(--vscode-descriptionForeground); margin-bottom: 24px;">
         Choose a provider and enter your API key to get started.
       </p>
 
-      <label for="provider-select" style="display:block; margin-bottom: 4px; font-weight: 500;">Provider</label>
+      <label for="provider-select" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">Provider</label>
       <select id="provider-select" style="${inputStyle}">
         <option value="">Select a provider…</option>
         ${providerOptions}
@@ -376,41 +409,42 @@ function buildForm(): void {
         color: var(--vscode-descriptionForeground); display: none;"></div>
 
       <div id="api-key-row">
-        <label for="api-key-input" style="display:block; margin-bottom: 4px; font-weight: 500;">API Key</label>
+        <label for="api-key-input" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">API Key</label>
         <input id="api-key-input" type="password" placeholder="Enter your API key"
           style="${inputStyle}" />
       </div>
 
       <div id="base-url-row" style="display: none;">
-        <label for="base-url-input" style="display:block; margin-bottom: 4px; font-weight: 500;">Base URL</label>
+        <label for="base-url-input" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">Base URL</label>
         <input id="base-url-input" type="text" placeholder="https://api.example.com/v1"
           style="${inputStyle}" />
       </div>
 
       <div id="model-select-row">
-        <label for="model-select" style="display:block; margin-bottom: 4px; font-weight: 500;">Model</label>
+        <label for="model-select" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">Model</label>
         <select id="model-select" disabled style="${inputStyle} margin-bottom: 24px;">
           <option value="">Select a provider first…</option>
         </select>
       </div>
 
       <div id="model-input-row" style="display: none;">
-        <label for="model-input" style="display:block; margin-bottom: 4px; font-weight: 500;">Model ID</label>
+        <label for="model-input" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">Model ID</label>
         <input id="model-input" type="text" placeholder="e.g. llama3.3, deepseek-chat, mistral-large-latest"
           style="${inputStyle} margin-bottom: 24px;" />
       </div>
 
       <button id="test-btn" disabled
         style="width:100%; padding: 10px 16px; cursor: pointer;
-        background: #fff676; color: #111;
-        border: none; border-radius: 6px; font-size: 14px; font-weight: 500;">
+        background: var(--color-accent-fill); color: var(--color-on-accent);
+        border: 1px solid var(--color-accent-edge); border-radius: var(--radius-brand, 4px);
+        font-family: var(--text-font); font-size: 14px; font-weight: 500;">
         Test Connection
       </button>
 
       <div id="status-msg" style="margin-top: 12px; min-height: 20px; font-size: 13px;"></div>
 
       <div id="import-section" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--vscode-input-border, #3c3c3c); text-align: center;">
-        <a id="import-link" href="#" style="font-size: 13px; color: var(--vscode-textLink-foreground, #3794ff); text-decoration: none;">
+        <a id="import-link" href="#" style="font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
           Import existing credentials
         </a>
         <div id="import-status" style="display: none; margin-top: 12px;"></div>
@@ -719,14 +753,14 @@ function buildForm(): void {
         </div>
         <button id="confirm-import-btn" disabled
           style="width:100%; padding: 10px 16px; cursor: pointer;
-          background: var(--color-accent-fill, #fff676); color: var(--color-on-accent, #111);
+          background: var(--color-accent-fill, #FFE614); color: var(--color-on-accent, #111);
           border: var(--border-width, 1px) solid var(--color-on-accent, #000);
           border-radius: var(--border-radius, 4px); font-size: 14px; font-weight: 500;
           opacity: 0.5;">
           Confirm & Save
         </button>
         <a id="import-back-link" href="#" style="display: block; text-align: center; margin-top: 12px;
-          font-size: 13px; color: var(--vscode-textLink-foreground, #3794ff); text-decoration: none;">
+          font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
           Back to manual setup
         </a>
         <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 16px; text-align: center; opacity: 0.8;">
