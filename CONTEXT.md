@@ -118,6 +118,16 @@ _Avoid_: Dashboard (as the surface name), widget panel
 A sandboxed ES-module card rendered in an iframe within Home. Authored by the agent (`amicode_author_widget` tool) or shipped as a builtin. Communicates with the host via the bridge protocol (postMessage). Two size classes: hero (full panel width) and tile (half-width, 2-across). Each has a TOML manifest, a JS module, and optional config fields.
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
+### Skills
+
+**Skill**:
+A named instruction set (a directory containing `SKILL.md`) that the agent loads on demand when a task matches its description. Skills are domain-specific (platform physics, workflow protocols) or user-authored (lab protocols, personal automation). They live in the Skill Index and are invoked by name. A Skill belongs to at most one Domain Pack; user-authored Skills belong to none.
+_Avoid_: Plugin, extension, tool (as the concept name)
+
+**Skill Provider**:
+A directory (local or URL-hosted) containing one or more Skills, registered in the Skills settings. Providers are typed: *shipped* (bundled with Amicode), *workspace* (auto-loaded from `.opencode/skills/`), or *custom* (user-added via the Settings UI). Resolution precedence: custom > workspace > shipped; first match by name wins. Persisted in `~/.amico/amicode/skill-providers.json`.
+_Avoid_: Skill root (internal implementation term), skill library (ambiguous)
+
 ### Orthogonal axes
 
 **Domain Pack**:
