@@ -516,7 +516,7 @@ describe("scanCredentials — end-to-end with real default paths", () => {
     }
 
     const { PROVIDER_MODELS } = await import("../src/onboarding_panel");
-    const model = PROVIDER_MODELS["opencode"]?.[0]?.id ?? "anthropic/claude-sonnet-4-5";
+    const model = PROVIDER_MODELS["opencode"]?.[0]?.id ?? "anthropic/claude-opus-5";
 
     const testResult = await testConnection({
       provider: "opencode",

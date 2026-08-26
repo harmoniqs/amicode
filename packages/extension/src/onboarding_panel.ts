@@ -35,37 +35,42 @@ export interface ModelEntry {
  *  "github-copilot" uses OAuth (no key); "custom" uses a base URL + model text. */
 export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
   "github-copilot": [
-    { id: "github-copilot/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "github-copilot/gpt-4o", name: "GPT-4o" },
-    { id: "github-copilot/o3-mini", name: "o3-mini" },
+    { id: "github-copilot/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
+    { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
   opencode: [
-    { id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "openai/gpt-4.1", name: "GPT-4.1" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
   ],
   anthropic: [
-    { id: "anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "anthropic/claude-opus-4-6", name: "Claude Opus 4.6" },
-    { id: "anthropic/claude-haiku-4-5", name: "Claude Haiku 4.5" },
+    { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
+    { id: "anthropic/claude-fable-5", name: "Claude Fable 5" },
+    { id: "anthropic/claude-opus-4-8", name: "Claude Opus 4.8" },
   ],
   openai: [
-    { id: "openai/gpt-4.1", name: "GPT-4.1" },
-    { id: "openai/gpt-4.1-mini", name: "GPT-4.1 Mini" },
-    { id: "openai/o3-mini", name: "o3-mini" },
+    { id: "openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { id: "openai/gpt-5.6-terra", name: "GPT-5.6 Terra" },
+    { id: "openai/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
   google: [
-    { id: "google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
-    { id: "google/gemini-2.5-flash", name: "Gemini 2.5 Flash" },
+    { id: "google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
+    { id: "google/gemini-3.7-flash", name: "Gemini 3.7 Flash" },
   ],
   openrouter: [
-    { id: "openrouter/anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "openrouter/openai/gpt-4.1", name: "GPT-4.1" },
-    { id: "openrouter/google/gemini-2.5-pro", name: "Gemini 2.5 Pro" },
+    { id: "openrouter/anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "openrouter/openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+    { id: "openrouter/google/gemini-3.1-pro-preview", name: "Gemini 3.1 Pro" },
   ],
   vercel: [
-    { id: "vercel/anthropic/claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
-    { id: "vercel/openai/gpt-4.1", name: "GPT-4.1" },
+    { id: "vercel/anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
+    { id: "vercel/openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
+  ],
+  "amazon-bedrock": [
+    { id: "amazon-bedrock/anthropic.claude-opus-5", name: "Claude Opus 5 (Bedrock)" },
+    { id: "amazon-bedrock/anthropic.claude-sonnet-5", name: "Claude Sonnet 5 (Bedrock)" },
   ],
   custom: [],
 };
@@ -79,6 +84,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   google: "Google",
   openrouter: "OpenRouter",
   vercel: "Vercel",
+  "amazon-bedrock": "Amazon Bedrock",
   custom: "Custom (OpenAI-compatible)",
 };
 
@@ -173,6 +179,7 @@ function providerKeyEnvVar(provider: string): string | undefined {
     google: "GOOGLE_API_KEY",
     opencode: "OPENCODE_API_KEY",
     openrouter: "OPENROUTER_API_KEY",
+    "amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
   };
   return map[provider];
 }

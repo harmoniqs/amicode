@@ -124,6 +124,7 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
       "google",
       "openrouter",
       "vercel",
+      "amazon-bedrock",
       "custom",
     ]);
   });
@@ -164,7 +165,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
   it("AC5: writes valid opencode config with provider and model", () => {
     const config: OnboardingConfig = {
       provider: "anthropic",
-      model: "anthropic/claude-sonnet-4-5",
+      model: "anthropic/claude-sonnet-5",
       apiKey: "sk-test-key-123",
     };
     const configPath = path.join(tmpDir, "opencode.json");
@@ -178,13 +179,13 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     expect(written.provider.anthropic.options.apiKey).toBe("sk-test-key-123");
     // env is an array
     expect(written.provider.anthropic.env).toEqual(["ANTHROPIC_API_KEY"]);
-    expect(written.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(written.model).toBe("anthropic/claude-sonnet-5");
   });
 
   it("AC5: API key is stored in provider.options.apiKey (not top-level)", () => {
     const config: OnboardingConfig = {
       provider: "anthropic",
-      model: "anthropic/claude-sonnet-4-5",
+      model: "anthropic/claude-sonnet-5",
       apiKey: "sk-test-key-123",
     };
     const configPath = path.join(tmpDir, "opencode.json");
@@ -200,7 +201,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
   it("creates parent directories if they don't exist", () => {
     const config: OnboardingConfig = {
       provider: "openai",
-      model: "openai/gpt-4.1",
+      model: "openai/gpt-5.6-sol",
       apiKey: "sk-test-openai",
     };
     const nested = path.join(tmpDir, "nested", "deep", "opencode.json");
@@ -214,7 +215,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     fs.writeFileSync(configPath, JSON.stringify({ permission: { bash: "allow" } }));
 
     writeOnboardingConfig(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-ant-valid-key-123456" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-ant-valid-key-123456" },
       configPath,
     );
 
@@ -226,7 +227,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
   it("writes config for github-copilot with empty apiKey (OAuth-based)", () => {
     const config: OnboardingConfig = {
       provider: "github-copilot",
-      model: "github-copilot/claude-sonnet-4-5",
+      model: "github-copilot/claude-sonnet-5",
       apiKey: "",
     };
     const configPath = path.join(tmpDir, "opencode.json");
@@ -234,7 +235,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
     expect(written.provider["github-copilot"]).toBeDefined();
-    expect(written.model).toBe("github-copilot/claude-sonnet-4-5");
+    expect(written.model).toBe("github-copilot/claude-sonnet-5");
     // No options.apiKey when key is empty
     expect(written.provider["github-copilot"].options).toBeUndefined();
   });
@@ -242,7 +243,7 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
   it("writes config for opencode provider", () => {
     const config: OnboardingConfig = {
       provider: "opencode",
-      model: "anthropic/claude-sonnet-4-5",
+      model: "anthropic/claude-sonnet-5",
       apiKey: "oc-test-key",
     };
     const configPath = path.join(tmpDir, "opencode.json");
@@ -252,13 +253,13 @@ describe("writeOnboardingConfig — config file writing (AC5)", () => {
     expect(written.provider.opencode).toBeDefined();
     expect(written.provider.opencode.options.apiKey).toBe("oc-test-key");
     expect(written.provider.opencode.env).toEqual(["OPENCODE_API_KEY"]);
-    expect(written.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(written.model).toBe("anthropic/claude-sonnet-5");
   });
 
   it("env field is always an array, never a bare string", () => {
     const config: OnboardingConfig = {
       provider: "openai",
-      model: "openai/gpt-4.1",
+      model: "openai/gpt-5.6-sol",
       apiKey: "sk-openai-key",
     };
     const configPath = path.join(tmpDir, "opencode.json");
@@ -277,7 +278,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
       json: () => Promise.resolve({ choices: [{ message: { content: "hi" } }] }),
     });
     const result = await testConnection(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-test" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-test" },
       fetchMock,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -291,7 +292,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
       statusText: "Unauthorized",
     });
     const result = await testConnection(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-bad" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-bad" },
       fetchMock,
     );
     expect(result.ok).toBe(false);
@@ -301,7 +302,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
   it("AC4: returns failure on network error", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
     const result = await testConnection(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-test" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-test" },
       fetchMock,
     );
     expect(result.ok).toBe(false);
@@ -314,7 +315,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
       json: () => Promise.resolve({ choices: [{ message: { content: "hi" } }] }),
     });
     const result = await testConnection(
-      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-secret-value" },
+      { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-secret-value" },
       fetchMock,
     );
     const serialized = JSON.stringify(result);
@@ -348,7 +349,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
   it("works for openai provider", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     const result = await testConnection(
-      { provider: "openai", model: "openai/gpt-4.1", apiKey: "sk-openai" },
+      { provider: "openai", model: "openai/gpt-5.6-sol", apiKey: "sk-openai" },
       fetchMock,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -360,7 +361,7 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
   it("works for google provider", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true });
     const result = await testConnection(
-      { provider: "google", model: "google/gemini-2.5-pro", apiKey: "AIza-key" },
+      { provider: "google", model: "google/gemini-3.1-pro-preview", apiKey: "AIza-key" },
       fetchMock,
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
