@@ -1,7 +1,8 @@
-import { createMemo, For, Show, type Component } from "solid-js"
+import { createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { Icon } from "@opencode-ai/ui/icon"
+import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { useLanguage } from "@/context/language"
 import { SettingsListV2 } from "./parts/list"
 import { SettingsRowV2 } from "./parts/row"
@@ -13,6 +14,26 @@ export const SettingsSkillsV2: Component = () => {
   const ctrl = createSkillProvidersController()
 
   const hasProviders = createMemo(() => ctrl.providers().length > 0)
+  const [editingId, setEditingId] = createSignal<string | null>(null)
+  const [editValue, setEditValue] = createSignal("")
+
+  const startEditing = (id: string) => {
+    setEditingId(id)
+    setEditValue(id)
+  }
+
+  const commitRename = () => {
+    const oldId = editingId()
+    const newId = editValue().trim()
+    if (oldId && newId && newId !== oldId) {
+      ctrl.renameProvider(oldId, newId)
+    }
+    setEditingId(null)
+  }
+
+  const cancelEditing = () => {
+    setEditingId(null)
+  }
 
   return (
     <div class="settings-v2-tab">
@@ -53,14 +74,39 @@ export const SettingsSkillsV2: Component = () => {
                 {(provider) => (
                   <SettingsRowV2
                     title={
-                      <span style="display:flex;align-items:center;gap:8px;">
-                        {provider.id}
-                        <Tag variant="neutral">
-                          {provider.type === "directory"
-                            ? language.t("settings.skills.provider.type.directory")
-                            : language.t("settings.skills.provider.type.url")}
-                        </Tag>
-                      </span>
+                      <Show
+                        when={editingId() === provider.id}
+                        fallback={
+                          <span
+                            style="display:flex;align-items:center;gap:8px;cursor:default;"
+                            onDblClick={() => startEditing(provider.id)}
+                            title="Double-click to rename"
+                          >
+                            {provider.id}
+                            <Tag variant="neutral">
+                              {provider.type === "directory"
+                                ? language.t("settings.skills.provider.type.directory")
+                                : language.t("settings.skills.provider.type.url")}
+                            </Tag>
+                          </span>
+                        }
+                      >
+                        <div style="display:flex;align-items:center;gap:8px;width:220px;">
+                          <TextInputV2
+                            type="text"
+                            appearance="base"
+                            value={editValue()}
+                            onInput={(e) => setEditValue(e.currentTarget.value)}
+                            onBlur={() => commitRename()}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") commitRename()
+                              if (e.key === "Escape") cancelEditing()
+                            }}
+                            autofocus
+                            aria-label="Rename provider"
+                          />
+                        </div>
+                      </Show>
                     }
                     description={provider.path ?? provider.url ?? ""}
                   >

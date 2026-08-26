@@ -11,6 +11,7 @@ import {
   readSkillProviders,
   addSkillProvider,
   removeSkillProvider,
+  renameSkillProvider,
   friendlyProviderName,
   type SkillProvider,
   type SkillProvidersConfig,
@@ -496,6 +497,19 @@ describe("skill-providers.json CRUD (issue #573 — persistence for the Settings
   it("readSkillProviders returns empty config when file is missing", () => {
     const config = readSkillProviders("/nonexistent/skill-providers.json");
     expect(config).toEqual({ version: 1, providers: [] });
+  });
+
+  it("renameSkillProvider updates the id of a provider by old id", () => {
+    const configDir = mkRoot();
+    const p = path.join(configDir, "skill-providers.json");
+    addSkillProvider(p, { id: "skills", type: "directory", path: "/a", added: "2026-01-01T00:00:00Z" });
+    addSkillProvider(p, { id: "other", type: "directory", path: "/b", added: "2026-01-02T00:00:00Z" });
+
+    renameSkillProvider(p, "skills", "Claude Skills");
+
+    const after = readSkillProviders(p);
+    expect(after.providers[0].id).toBe("Claude Skills");
+    expect(after.providers[1].id).toBe("other"); // untouched
   });
 });
 

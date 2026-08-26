@@ -207,6 +207,17 @@ export function removeSkillProvider(providersPath: string, id: string): void {
   fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));
 }
 
+/** Rename a provider (update its id). No-op if old id not found. */
+export function renameSkillProvider(providersPath: string, oldId: string, newId: string): void {
+  const config = readSkillProviders(providersPath);
+  const provider = config.providers.find((p) => p.id === oldId);
+  if (provider) {
+    provider.id = newId;
+    fs.mkdirSync(path.dirname(providersPath), { recursive: true });
+    fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));
+  }
+}
+
 // --- Friendly naming ---
 
 /** Known path patterns → friendly display names. Matches the trailing

@@ -71,6 +71,11 @@ export function createSkillProvidersController() {
     window.parent.postMessage({ source: "amicode", kind: "skill-providers-remove", id }, "*")
   }
 
+  const renameProvider = (oldId: string, newId: string) => {
+    if (!inAmicode()) return
+    window.parent.postMessage({ source: "amicode", kind: "skill-providers-rename", oldId, newId }, "*")
+  }
+
   const autodiscover = () => {
     if (!inAmicode()) return
     window.parent.postMessage({ source: "amicode", kind: "skill-providers-autodiscover" }, "*")
@@ -83,6 +88,7 @@ export function createSkillProvidersController() {
     addDirectory,
     addProvider,
     removeProvider,
+    renameProvider,
     autodiscover,
   }
 }

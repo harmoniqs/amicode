@@ -7,6 +7,7 @@ import {
   readSkillProviders,
   addSkillProvider,
   removeSkillProvider,
+  renameSkillProvider,
   discoverExternalSkillPaths,
   friendlyProviderName,
   type SkillProvider,
@@ -1046,6 +1047,21 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const id = (msg as { id?: string }).id;
     if (typeof id === "string") {
       removeSkillProvider(skillProvidersPath, id);
+      io.postToWebview({
+        source: "amicode",
+        kind: "skill-providers-data",
+        providers: readSkillProviders(skillProvidersPath).providers,
+        tab: msg.tab,
+      });
+    }
+    return true;
+  }
+
+  if (msg.kind === "skill-providers-rename") {
+    const oldId = (msg as { oldId?: string }).oldId;
+    const newId = (msg as { newId?: string }).newId;
+    if (typeof oldId === "string" && typeof newId === "string" && newId.trim()) {
+      renameSkillProvider(skillProvidersPath, oldId, newId.trim());
       io.postToWebview({
         source: "amicode",
         kind: "skill-providers-data",
