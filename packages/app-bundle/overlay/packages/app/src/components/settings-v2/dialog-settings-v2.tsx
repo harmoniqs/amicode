@@ -113,7 +113,7 @@ export const DialogSettings: Component<{
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
                     <TabsV2.Trigger value="skills">
-                      <Icon name="puzzle" />
+                      <Icon name="brain" />
                       {language.t("settings.skills.title")}
                     </TabsV2.Trigger>
                     <TabsV2.Trigger value="permissions">
