@@ -133,10 +133,24 @@ function resolveBun() {
 function defaultBuild(cloneDir, version) {
   // Apply the app-bundle overlay before building: copy amicode's UI patches
   // (Settings Skills tab, i18n, dialog changes) into the fork's source tree.
-  // The overlay is the source of truth; these copies are ephemeral build inputs.
+  // The overlay mirrors the fork's directory structure — each file overwrites
+  // or adds to the corresponding path. The overlay is the source of truth;
+  // these copies are ephemeral build inputs.
   const overlayDir = join(PKG_ROOT, "..", "app-bundle", "overlay");
   if (existsSync(overlayDir)) {
-    cpSync(overlayDir, cloneDir, { recursive: true, force: true });
+    const applyOverlay = (src, dest) => {
+      for (const entry of readdirSync(src, { withFileTypes: true })) {
+        const s = join(src, entry.name);
+        const d = join(dest, entry.name);
+        if (entry.isDirectory()) {
+          mkdirSync(d, { recursive: true });
+          applyOverlay(s, d);
+        } else {
+          cpSync(s, d, { force: true });
+        }
+      }
+    };
+    applyOverlay(overlayDir, cloneDir);
   }
   const bun = resolveBun();
   execFileSync(bun, ["run", "script/build.ts", "--single", "--skip-install"], {
