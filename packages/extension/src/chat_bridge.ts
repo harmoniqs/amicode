@@ -568,22 +568,22 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Build opencode ──
-        // Apply the app-bundle overlay first (Skills tab, i18n, dialog patches)
+        // Apply new overlay files (files that don't exist in the fork yet)
         const overlayDir = path.join(amicodePath, "packages", "app-bundle", "overlay");
         if (fs.existsSync(overlayDir)) {
-          const applyOverlay = (src: string, dest: string) => {
+          const applyNewFiles = (src: string, dest: string) => {
             for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
               const s = path.join(src, entry.name);
               const d = path.join(dest, entry.name);
               if (entry.isDirectory()) {
-                fs.mkdirSync(d, { recursive: true });
-                applyOverlay(s, d);
-              } else {
-                fs.cpSync(s, d, { force: true });
+                applyNewFiles(s, d);
+              } else if (!fs.existsSync(d)) {
+                fs.mkdirSync(dest, { recursive: true });
+                fs.cpSync(s, d);
               }
             }
           };
-          applyOverlay(overlayDir, opencodePath);
+          applyNewFiles(overlayDir, opencodePath);
         }
         const ocBuildDir = path.join(opencodePath, "packages", "opencode");
         const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir);
