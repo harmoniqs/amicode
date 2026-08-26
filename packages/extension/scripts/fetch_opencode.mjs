@@ -11,10 +11,12 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -129,6 +131,13 @@ function resolveBun() {
  *  cards, v2 titlebar, draft flow) at runtime even though the code is compiled
  *  in. Any other channel maps to "dev" → new-layout default ON. */
 function defaultBuild(cloneDir, version) {
+  // Apply the app-bundle overlay before building: copy amicode's UI patches
+  // (Settings Skills tab, i18n, dialog changes) into the fork's source tree.
+  // The overlay is the source of truth; these copies are ephemeral build inputs.
+  const overlayDir = join(PKG_ROOT, "..", "app-bundle", "overlay");
+  if (existsSync(overlayDir)) {
+    cpSync(overlayDir, cloneDir, { recursive: true, force: true });
+  }
   const bun = resolveBun();
   execFileSync(bun, ["run", "script/build.ts", "--single", "--skip-install"], {
     cwd: join(cloneDir, "packages", "opencode"),
