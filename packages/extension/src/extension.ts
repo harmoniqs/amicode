@@ -1690,6 +1690,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
+    // Issue #573: skill provider changes take effect on next session start.
+    // Live hot-reload (rewriting AGENTS.md while the server reads it) was
+    // causing crashes — deferred until the engine supports atomic reload.
+    vscode.commands.registerCommand("amicode.reprepSkills", () => {
+      // no-op placeholder; providers.json is read at next session prep
+    }),
     // On-site fallback (β.6): stage the bundled pre-baked solve into the runs
     // root. Under the multi-run RunsManager (#57) a run that is FINISHED at
     // discovery registers quietly (no auto-display), so the demo is shown by

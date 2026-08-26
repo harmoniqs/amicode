@@ -258,6 +258,10 @@ export function buildServerSpawnEnv(opts: {
     // tool the server spawns.
     MPLBACKEND: "Agg",
     GKSwstype: "nul",
+    // Engine auto-discovery suppression (issue #573): the extension takes full
+    // ownership of skill loading. Skills not registered through the Skills tab
+    // / prepareOpencodeProject must never auto-load from ~/.claude/skills/ etc.
+    OPENCODE_DISABLE_EXTERNAL_SKILLS: "true",
     ...(opts.amicoPython ? { AMICO_PYTHON: opts.amicoPython } : {}),
     // Gated OTLP env (contract). {} unless enabled + consent + endpoint all hold.
     ...buildTelemetryEnv(opts.telemetry),

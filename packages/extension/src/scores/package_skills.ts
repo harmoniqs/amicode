@@ -16,7 +16,7 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
-  source: "library" | "package"; // platform library (public) vs co-located package skill (gated)
+  source: "library" | "package" | "custom" | "workspace"; // platform | co-located | user-added | workspace .opencode/skills/
   package?: string; // absent for library entries (spec §3)
   name: string;
   description: string;
@@ -207,15 +207,14 @@ export function stageOpencodeSkills(stageRoot: string, entries: SkillIndexEntry[
 }
 
 /** Splice one merged index into the prompt — platform entries FIRST (spec §3),
- *  then package entries. Empty index → empty string (no section at all).
- *  The skills are registered as opencode-native skills (stageOpencodeSkills +
- *  config `skills.paths`), so the agent INVOKES them by name — it must not try to
- *  read a file path (observed 2026-07-04: the agent guessed `atoms` as a skill;
- *  now it IS one). The index adds the usage guidance opencode's auto-listing
- *  lacks (physics-reference framing + the §6 verification contract). */
+ *  then custom, workspace, then package entries. Empty index → empty string
+ *  (no section at all). Supports `overridesShipped` flag from mergeSkillEntries
+ *  for labeling shadows. */
 export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return ""; // no section at all (spec §3)
   const platform = entries.filter((e) => e.source === "library");
+  const custom = entries.filter((e) => e.source === "custom");
+  const workspace = entries.filter((e) => e.source === "workspace");
   const pkg = entries.filter((e) => e.source === "package");
   const lines = [
     "## Skill index", // registered opencode skills (platform + package)
@@ -230,6 +229,14 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
       (e) =>
         `- **${e.name}** (platform reference) — ${e.description}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
     ),
+    ...custom.map((e) => {
+      const label = (e as any).overridesShipped ? "(custom, overrides platform)" : "(custom)";
+      return `- **${e.name}** ${label} — ${e.description}`;
+    }),
+    ...workspace.map((e) => {
+      const label = (e as any).overridesShipped ? "(workspace, overrides platform)" : "(workspace)";
+      return `- **${e.name}** ${label} — ${e.description}`;
+    }),
     ...pkg.map((e) => `- **${e.name}** (package: ${e.package}) — ${e.description}`),
     "",
   ];
