@@ -35,9 +35,20 @@ export const SettingsSkillsV2: Component = () => {
           </ButtonV2>
         </div>
 
-        <Show when={!ctrl.loading()}>
-          <Show when={hasProviders()}>
-            <SettingsListV2>
+        <SettingsListV2>
+          <Show when={!ctrl.loading()} fallback={
+            <div style="padding:20px;text-align:center;color:var(--v2-text-text-muted);font-size:13px;">
+              Loading...
+            </div>
+          }>
+            <Show
+              when={hasProviders()}
+              fallback={
+                <div style="padding:20px;text-align:center;color:var(--v2-text-text-muted);font-size:13px;">
+                  {language.t("settings.skills.empty")}
+                </div>
+              }
+            >
               <For each={ctrl.providers()}>
                 {(provider) => (
                   <SettingsRowV2
@@ -64,15 +75,9 @@ export const SettingsSkillsV2: Component = () => {
                   </SettingsRowV2>
                 )}
               </For>
-            </SettingsListV2>
+            </Show>
           </Show>
-
-          <Show when={!hasProviders()}>
-            <div style="padding:24px;text-align:center;color:var(--v2-text-text-muted);font-size:13px;border:1px dashed var(--v2-border-border-base);border-radius:var(--radius-md);">
-              {language.t("settings.skills.empty")}
-            </div>
-          </Show>
-        </Show>
+        </SettingsListV2>
 
         {/* Autodiscover results */}
         <Show when={ctrl.discoveredPaths().length > 0}>
