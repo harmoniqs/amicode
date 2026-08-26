@@ -880,7 +880,7 @@
     "packages/app/src/components/session/panel-menu.tsx": "e3846ff425d7e6bcbd21930bf8beecad669549fbd54b2467c32584b1ed56534a",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
-    "packages/app/src/components/session/session-header.tsx": "7f5174ee8bf2e78125904a12d58599d0c413a8aa65db079ed212c27c9171d03e",
+    "packages/app/src/components/session/session-header.tsx": "af94ac489912e7be7ca3249c6c6bffa5110e0c392a853f67e9e2a7189acfe9ea",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "b6b4b8fe6f751499e0d3005e1f12224351df4f28f221bba10fc2f91c0f09e777",
     "packages/app/src/components/session/session-sortable-terminal-tab-v2.tsx": "08db0e378c3e07d243121f40c77e153bafe897e5e2ececd48a3e00786793032b",
