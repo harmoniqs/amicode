@@ -40,7 +40,14 @@ export function createSkillProvidersController() {
     }
 
     if (d.kind === "skill-providers-discovered") {
-      setDiscoveredPaths(Array.isArray(d.paths) ? d.paths : [])
+      const raw = Array.isArray(d.paths) ? d.paths : []
+      // Normalize: bridge sends {path, name} objects; handle legacy string[] gracefully
+      const normalized: DiscoveredPath[] = raw.map((item: unknown) =>
+        typeof item === "string"
+          ? { path: item, name: item.split("/").pop() ?? "skills" }
+          : (item as DiscoveredPath),
+      )
+      setDiscoveredPaths(normalized)
     }
   }
 
