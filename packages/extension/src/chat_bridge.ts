@@ -1039,6 +1039,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         providers: readSkillProviders(skillProvidersPath).providers,
         tab: msg.tab,
       });
+      void vscode.commands.executeCommand("amicode.reprepSkills");
     }
     return true;
   }
@@ -1053,6 +1054,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         providers: readSkillProviders(skillProvidersPath).providers,
         tab: msg.tab,
       });
+      void vscode.commands.executeCommand("amicode.reprepSkills");
     }
     return true;
   }
@@ -1068,6 +1070,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         providers: readSkillProviders(skillProvidersPath).providers,
         tab: msg.tab,
       });
+      // Rename doesn't change the skill set — no re-prep needed
     }
     return true;
   }
@@ -1105,6 +1108,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             providers: readSkillProviders(skillProvidersPath).providers,
             tab: msg.tab,
           });
+          void vscode.commands.executeCommand("amicode.reprepSkills");
         }
       });
     return true;
