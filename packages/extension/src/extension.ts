@@ -1730,8 +1730,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             project2.skillsStageDir,
             project2.vaultDir,
             project2.mounts,
+            validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
+            telemetryOpen(),
+            [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
           ),
         }),
+        channel: opencodeChannel,
+      });
+      serverManager.onReady((url) => {
+        opencodeReadyUrl = url;
+        statusBar?.setServerReady(true);
+        sseClient?.connect(url);
       });
       try {
         await serverManager.start();
