@@ -191,9 +191,13 @@ export function readSkillProviders(providersPath: string): SkillProvidersConfig 
   }
 }
 
-/** Add a provider to skill-providers.json. Creates the file and parent dirs if missing. */
+/** Add a provider to skill-providers.json. Creates the file and parent dirs if missing.
+ *  Skips silently if a provider with the same path (or url) already exists. */
 export function addSkillProvider(providersPath: string, provider: SkillProvider): void {
   const config = readSkillProviders(providersPath);
+  // Deduplicate by path/url — the same directory can't be added twice
+  const key = provider.path ?? provider.url ?? "";
+  if (key && config.providers.some((p) => (p.path ?? p.url ?? "") === key)) return;
   config.providers.push(provider);
   fs.mkdirSync(path.dirname(providersPath), { recursive: true });
   fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));

@@ -91,17 +91,19 @@ export const SettingsSkillsV2: Component = () => {
                           </span>
                         }
                       >
-                        <div style="display:flex;align-items:center;gap:8px;width:220px;">
+                        <div
+                          style="display:flex;align-items:center;gap:8px;width:220px;"
+                          on:keydown={(e: KeyboardEvent) => {
+                            if (e.key === "Enter") { e.preventDefault(); commitRename() }
+                            if (e.key === "Escape") { e.preventDefault(); cancelEditing() }
+                          }}
+                        >
                           <TextInputV2
                             type="text"
                             appearance="base"
                             value={editValue()}
                             onInput={(e) => setEditValue(e.currentTarget.value)}
                             onBlur={() => commitRename()}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") commitRename()
-                              if (e.key === "Escape") cancelEditing()
-                            }}
                             autofocus
                             aria-label="Rename provider"
                           />

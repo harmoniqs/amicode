@@ -511,6 +511,16 @@ describe("skill-providers.json CRUD (issue #573 — persistence for the Settings
     expect(after.providers[0].id).toBe("Claude Skills");
     expect(after.providers[1].id).toBe("other"); // untouched
   });
+
+  it("addSkillProvider does not create duplicates when the same path already exists", () => {
+    const configDir = mkRoot();
+    const p = path.join(configDir, "skill-providers.json");
+    addSkillProvider(p, { id: "Claude Skills", type: "directory", path: "/Users/jj/.claude/skills", added: "2026-01-01T00:00:00Z" });
+    addSkillProvider(p, { id: "Claude Skills", type: "directory", path: "/Users/jj/.claude/skills", added: "2026-01-02T00:00:00Z" });
+
+    const after = readSkillProviders(p);
+    expect(after.providers).toHaveLength(1);
+  });
 });
 
 describe("friendlyProviderName (issue #573 — auto-name known paths)", () => {
