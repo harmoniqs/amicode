@@ -1,0 +1,68 @@
+{
+  "$id": "https://harmoniqs.github.io/amicode/schemas/doctor-report.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "description": "The `amico doctor --json` machine contract (doctor v2, #525): the surface inventory the settings panel and watchdog consume. Canonical form: deep-sorted keys, 2-space indent, trailing newline.",
+  "properties": {
+    "surfaces": {
+      "additionalProperties": false,
+      "items": {
+        "additionalProperties": true,
+        "properties": {
+          "evidence": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "source_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "surface": {
+            "enum": [
+              "server-binary",
+              "extension",
+              "vendored-binary",
+              "staged-skills",
+              "agent-cards-global",
+              "agent-cards-staging"
+            ]
+          },
+          "verdict": {
+            "enum": [
+              "current",
+              "stale",
+              "integrity-failure",
+              "unknown"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "surface",
+          "version",
+          "verdict",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "minItems": 6,
+      "type": "array"
+    }
+  },
+  "required": [
+    "surfaces"
+  ],
+  "title": "doctor --json report",
+  "type": "object"
+}

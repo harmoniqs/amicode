@@ -1,0 +1,43 @@
+[data-dock-surface="shell"] {
+  /* amicode chat-redesign (Kate): the composer must contrast with the page.
+     bg-layer-02 inverts per theme — grey-300 in light (slightly DARKER than the
+     grey-100 base) and grey-800 in dark (slightly LIGHTER than the grey-1000
+     base) — so one token lifts the card off the background in both themes. */
+  background-color: var(--v2-background-bg-layer-02);
+  /* FLAT in all themes — a 1px hairline ring only; --shadow-xs-border's soft
+     drop-shadows read as a glow in dark. */
+  box-shadow: 0 0 0 1px var(--border-weak-base);
+  position: relative;
+  z-index: 10;
+  border-radius: 10px;
+  overflow: clip;
+}
+
+[data-dock-border-underlay] {
+  /* Later shadows paint underneath, so this solid ring masks overlapping surfaces without changing border geometry. */
+  box-shadow:
+    var(--dock-shell-visual-shadow, var(--shadow-xs-border)),
+    0 0 0 var(--dock-shell-border-underlay-width, 1px)
+      var(--dock-shell-border-underlay-background, var(--surface-raised-stronger-non-alpha));
+}
+
+[data-dock-border-underlay="v2"] {
+  --dock-shell-visual-shadow: var(--v2-elevation-raised);
+  --dock-shell-border-underlay-width: 0.5px;
+  --dock-shell-border-underlay-background: var(--v2-background-bg-base);
+}
+
+[data-dock-surface="tray"] {
+  background-color: var(--background-base);
+  border: 1px solid var(--border-weak-base);
+  position: relative;
+  z-index: 0;
+  border-radius: 10px;
+  overflow: clip;
+}
+
+[data-dock-surface="tray"][data-dock-attach="top"] {
+  margin-top: -0.875rem;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}

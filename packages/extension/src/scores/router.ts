@@ -1,43 +1,61 @@
 import { Score } from "./loader";
 
 // The onset router — a meta question-tree over the visible repertoire (spec §5).
-// Pure: the caller filters by entitlement first. Score #0 (pulse-designer) renders
-// as the fixed "Start from a system" option, never as an application entry card.
-const SYSTEM_FIRST_SCORE = "pulse-designer";
+// Pure: the caller filters by entitlement first. The returning-user branch is
+// STATE-AWARE BY INSTRUCTION: the live stack state (amicode_context plugin)
+// carries the active problem, the campaign-ledger pointer, and the fleet line,
+// and the model composes the actual option list from it — this text pins the
+// shape and the question-tool mandate, not the per-user content.
 
 export function buildRouterSection(visible: Score[]): string {
-  const cards = visible.filter((s) => s.manifest.id !== SYSTEM_FIRST_SCORE);
   const lines: string[] = [
     "## Onset router",
     "",
-    "When a session opens without a specific request, after your one-line Amico",
-    'intro ask exactly one question — "What do you want to do today?" — via the',
-    "native `question` tool, with these options:",
+    'When a session opens with an explicit onboarding request ("Let\'s begin',
+    'onboarding", "begin onboarding", "start onboarding", or similar):',
+    "if the overture interview section is present below, run it. If it is NOT",
+    "present (onboarding already completed), tell the user their profile is already",
+    "set up and offer a choice: **keep current profile** or **start fresh** (which",
+    'deletes `~/.amico/amicode/onboarding/completed` and `~/.amico/profile.json`,',
+    "then re-runs the overture from Stage 1). Do NOT",
+    "improvise an interview, invoke skills, or chain into any other workflow.",
+    "",
+    "Otherwise, when a session opens without a specific request (a greeting, \"who are",
+    "you?\", \"what is this?\"), do NOT default to any interview — build the moment",
+    "from the live state. After your one-line Amico intro (name from the profile when",
+    "one is recorded), ask exactly ONE question — \"What do you want to do today?\" —",
+    "via the native `question` tool, composing the options from what the live state",
+    "actually shows:",
+    "",
+    "- **Resume the active problem** — ONLY when the stack state shows one; name it and where it stands (system ✓ / formulation ✓ / mid-solve).",
+    "- **Resume your research campaign** — ONLY when a session ledger exists under the personal vault's `sessions/`; the autoresearch director re-reads the latest ledger and continues the loop.",
+    "- **Fleet & studio ops** — ONLY when fleet state is present; status digest, sync rituals, healthcheck.",
+    "- **Bring your own problem** — papers, notes, or a graph file; extract candidate entities, confirm each one before recording, then join the best-matching workflow.",
+    "- **Just explore** — free-form; no rail.",
     "",
   ];
-  if (cards.length > 0) {
-    lines.push("**Start from an application** — offer these entry cards:", "");
-    for (const s of cards) {
-      const m = s.manifest;
-      const badge = m.device ? (m.device.qpu_runnable ? "QPU-runnable" : "emulator-only") : "";
-      const bits = [m.outcome, m.duration_estimate, badge].filter(Boolean).join(" · ");
-      lines.push(`- \`${m.id}\` — **${m.name}**: ${bits}`);
+  if (visible.length > 0) {
+    const cards = visible.filter((s) => s.manifest.id !== "pulse-designer" && s.manifest.id !== "overture");
+    if (cards.length > 0) {
+      lines.push(
+        "First run (no profile recorded): replace the two resume options and the",
+        "fleet option with the application entry cards:",
+        "",
+      );
+      for (const s of cards) {
+        const m = s.manifest;
+        const badge = m.device ? (m.device.qpu_runnable ? "QPU-runnable" : "emulator-only") : "";
+        const bits = [m.outcome, m.duration_estimate, badge].filter(Boolean).join(" · ");
+        lines.push(`- \`${m.id}\` — **${m.name}**: ${bits}`);
+      }
+      lines.push("");
     }
-    lines.push("");
   }
   lines.push(
-    `**Start from a system** — run the pack's \`${SYSTEM_FIRST_SCORE}\` onboarding interview (the platform-first interview below); it is one path among these, not the spine.`,
-    "",
-    "**Bring your own problem** — the user has papers, notes, or a graph file;",
-    "extract candidate entities, confirm each one before recording, then join the",
-    "best-matching score mid-path. If nothing usable is found, say so and offer",
-    "the other options — never a dead end. If candidates match multiple scores",
-    "equally, ask; never route by silent heuristic.",
-    "",
-    "**Resume where you left off** — read the session's interview state and",
-    "continue from its stage cursor.",
-    "",
-    "**Just explore** — free-form; no interview rail.",
+    "Never a dead end: if nothing usable is found for an option, say so and offer",
+    "the others. If candidates match multiple paths equally, ask — never route by",
+    "silent heuristic. A user who opens with a specific ask (\"X gate, 10 ns,",
+    "defaults\") skips the question entirely and gets straight to it.",
   );
   return lines.join("\n");
 }

@@ -82,5 +82,29 @@ fi
 # 4. Starter lab.toml
 if [ ! -f "$LAB_TOML" ]; then cp "$EXT_ROOT/scripts/lab.toml.example" "$LAB_TOML"; say "wrote starter $LAB_TOML"; fi
 
-# 5. Next steps
+# 5. Symlink ~/.local/bin/opencode → best available binary (managed > vendored > skip)
+MANAGED_BIN="$HOME/.amico/opencode/canonical/current/opencode"
+VENDORED_BIN="$EXT_ROOT/vendor/opencode/$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed 's/aarch64/arm64/;s/x86_64/x64/')/opencode"
+SYMLINK_PATH="$HOME/.local/bin/opencode"
+
+cli_target=""
+if [ -x "$MANAGED_BIN" ]; then
+  cli_target="$MANAGED_BIN"
+elif [ -x "$VENDORED_BIN" ]; then
+  cli_target="$VENDORED_BIN"
+fi
+
+if [ -n "$cli_target" ]; then
+  mkdir -p "$(dirname "$SYMLINK_PATH")"
+  if [ -L "$SYMLINK_PATH" ] && [ "$(readlink "$SYMLINK_PATH")" = "$cli_target" ]; then
+    say "opencode CLI symlink already correct: $SYMLINK_PATH → $cli_target"
+  else
+    ln -sf "$cli_target" "$SYMLINK_PATH"
+    say "opencode CLI symlink: $SYMLINK_PATH → $cli_target"
+  fi
+else
+  say "no opencode binary found — skipping ~/.local/bin/opencode symlink"
+fi
+
+# 6. Next steps
 say "done. Next: (a) configure an LLM provider for opencode + select a matching model (RUNBOOK.md step 4), (b) run: node $EXT_ROOT/scripts/healthcheck.mjs"

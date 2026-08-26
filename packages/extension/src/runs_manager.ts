@@ -383,18 +383,11 @@ export class RunsManager implements vscode.Disposable {
     return readTerminalState(runDir, (why) => this.opts.channel.appendLine(`[runs] ${why}`));
   }
 
+  // Convergence is logged to the output channel but no longer shown as a popup.
+  // The save/promote flow is handled by the agent via the design-a-pulse skill.
   private promptPromote(info: PromoteInfo): void {
     if (this.promotedRuns.has(info.runId)) return;
     this.promotedRuns.add(info.runId);
-    void (async () => {
-      const choice = await vscode.window.showInformationMessage(
-        `Amicode: solve converged (F=${info.fidelity.toFixed(4)}). Promote pulse to catalog?`,
-        "Yes — promote",
-        "No — keep local only",
-      );
-      if (choice === "Yes — promote") {
-        await vscode.commands.executeCommand("amicode.catalog.save", info.runDir).then(undefined, () => undefined);
-      }
-    })();
+    this.opts.channel.appendLine(`[runs] converged: ${info.runId} F=${info.fidelity.toFixed(4)}`);
   }
 }

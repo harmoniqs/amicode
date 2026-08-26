@@ -1,21 +1,21 @@
 {
   "version": "1.18.10",
   "repo": "harmoniqs/opencode",
-  "tag": "v1.18.10-amicode.11",
+  "tag": "v1.18.10-amicode.17",
   "source": "release",
-  "ref": "4c28e8bdebfc9c556df40c5eb755cb406dda8f95",
+  "ref": "9c7c8783c59abfe0fbf46c9d3ebaba3a579191e0",
   "platforms": {
     "darwin-arm64": {
       "asset": "opencode-darwin-arm64.zip",
-      "sha256": "dc200bc7a7918a35a01b8e0ab02e00bafc03a3ae440b4ea808ddd1a4624ff9a2"
+      "sha256": "31739a7fa0c5c23dbc91ea2ebb983c97e2e1560e4182cb2e46507d8fd5469853"
     },
     "linux-arm64": {
       "asset": "opencode-linux-arm64.tar.gz",
-      "sha256": "0f1f718a4453f6d9cc836699e0d3ec1a9042acc5fe1126748892daddefb4cee0"
+      "sha256": "856537d5c1b032571734ca9d088791af734c14c9c3d72f4f97689a647de4ba6b"
     },
     "linux-x64": {
       "asset": "opencode-linux-x64.tar.gz",
-      "sha256": "ad1524496f10e1a86f6f6dd0cbba80a0d7244b48f1d7416235d765cade8a92ef"
+      "sha256": "3530547ac22697c8c6b2187ac719e0fbb36ca27931a258eaf7c339de118a526d"
     }
   }
 }

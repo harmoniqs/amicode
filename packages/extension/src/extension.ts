@@ -6,14 +6,14 @@ import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerCatalogCard } from "./catalog_card_shell";
-import { registerTrees } from "./trees";
+import { registerWorkspaceTree } from "./workspace_tree";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  validatedModelPin,
 } from "./opencode_config";
 import { parseLibraryRootSpecs } from "./scores/package_skills";
 import { resolveAmicoRunBinDir, resolveRunsRoot } from "./opencode_paths";
@@ -35,13 +35,15 @@ import { resolveLabTomlPath, checkLabToml } from "./lab_config";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
-import { writeStopFile, savePulseTo, catalogPulsesDir, stopPlan, forceStop, runLogMtime } from "./run_controls";
+import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingComplete, onOnboardingCancelled } from "./onboarding_panel";
+import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
+import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
+import { stageModCards } from "./mode_cards";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
@@ -54,12 +56,13 @@ import {
   resolveJuliaupCommands,
   juliaProjectFingerprint,
 } from "./substrate/julia_setup";
-import { probeCommand, formatHealthReport, type HealthResult } from "./healthcheck";
+import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
+import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
 import { initDistillerTransport, triggerRunDistill, triggerSweep, type DistillerSetup } from "./substrate/distiller";
 import {
@@ -69,7 +72,6 @@ import {
   REPORT_BUG_COMMAND,
 } from "./bug_report";
 import * as os from "node:os";
-import { readTomlSafe } from "./run_dir_reader";
 import { parse as parseYaml } from "yaml";
 import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
@@ -209,6 +211,14 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
 
+// Domain-pack activation gate (ADR 0008): quantum-control is the first and
+// only domain pack, always active today. This gate exists so domain-specific
+// infrastructure (Julia substrate, domain tools) is visibly gated rather than
+// implicitly unconditional. A second domain pack would make this configurable.
+function isQuantumControlPackActive(): boolean {
+  return true;
+}
+
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
   const runsChannel = vscode.window.createOutputChannel("Amicode — runs");
@@ -230,6 +240,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   } catch (e) {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
   }
+
+  // #533: stage mode cards (autodev, autoresearch) into the global opencode
+  // agents directory so they appear in the agent picker. Same always-copy
+  // semantics as Pasqal staging: extension-owned, overwrite-on-activate,
+  // never blocks activation.
+  try {
+    const modes = stageModCards(ctx.extensionPath);
+    opencodeChannel.appendLine(`[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})`);
+  } catch (e) {
+    opencodeChannel.appendLine(`[modes] mode-card staging failed: ${(e as Error).message}`);
+  }
+
+  // #561: stage ~/.local/bin/opencode symlink → best available binary
+  // (managed canonical > vendored bootstrap > skip). Idempotent, never throws.
+  stageOpencodeCliLink(ctx.extensionPath);
 
   // Provision the Pasqal validator's interpreter (the fresh-install fix): a
   // venv from the STAGED requirements.txt, handed to the server spawn as
@@ -350,56 +375,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-   // 1. UI surfaces
-  const trees = registerTrees(ctx);
-  registerCatalogCard(ctx); // #47 dev scaffold — card opens via the save-to-catalog flow
+  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6)
+  const workspaceTree = registerWorkspaceTree(ctx);
+  // Mute the "Chat with Amico" button when a chat panel is open
+  ChatPanel.onLiveChange((count) => workspaceTree.setChatActive(count > 0));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
-  ctx.subscriptions.push(
-    // #47 session catalog: record the save (workspaceState + tree), then open
-    // the card. Both prompts (demo replay, live promote) route through here.
-    vscode.commands.registerCommand("amicode.catalog.save", async (runDir: string) => {
-      const manifest = readTomlSafe(path.join(runDir, "run.toml")) ?? {};
-      const result = readTomlSafe(path.join(runDir, "result.toml")) ?? {};
-      const params = (result.params ?? {}) as Record<string, unknown>;
-      const family = typeof params.system === "string" ? params.system : undefined;
-      // System identity is USER-NAMED (researchers think in named devices —
-      // "Emerald-Q3" — not families); the family prefills as the default and
-      // level counts stay in the card's params rows. Esc keeps the family.
-      const name = await vscode.window.showInputBox({
-        prompt: "Name this system (shown on the catalog entry)",
-        value: family ?? "",
-        placeHolder: "e.g. Emerald-Q3",
-      });
-      const system = name?.trim() ? name.trim() : family;
-      // Tags: the quick-digest handles for hyperparameter sweeps ("high-R",
-      // "T=8", "fast-ansatz") — optional, comma-separated.
-      const tagsRaw = await vscode.window.showInputBox({
-        prompt: "Tags (comma-separated, optional)",
-        placeHolder: "e.g. high-R, T=8, fast",
-      });
-      const tags =
-        tagsRaw
-          ?.split(",")
-          .map((t) => t.trim())
-          .filter(Boolean) ?? [];
-      await trees.catalog.save({
-        run_id: String(manifest.run_id ?? path.basename(runDir)),
-        runDir,
-        lab_id: String(manifest.lab_id ?? "default"),
-        gate: typeof params.gate === "string" ? params.gate : undefined,
-        system,
-        tags,
-        fidelity: Number(result.fidelity ?? 0),
-        saved_at: new Date().toISOString(),
-      });
-      await vscode.commands.executeCommand("amicode.catalogCard.open", runDir, system, tags);
-    }),
-    vscode.commands.registerCommand("amicode.catalog.refresh", () => trees.catalog.refresh()),
-    // Context-menu removal: unsave the pointer; run artifacts stay on disk.
-    vscode.commands.registerCommand("amicode.catalog.remove", async (entry?: { run_id?: string }) => {
-      if (entry?.run_id) await trees.catalog.remove(entry.run_id);
-    }),
-  );
+  registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });
 
@@ -723,10 +704,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // the user's recent selection, else the provider default. A hardcoded
           // fallback here used to override the user's own choice. The in-chat
           // picker still overrides per session.
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          // Validate: don't inject a pin that references an unconnected provider —
+          // it causes 500s when the server tries to resolve it.
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           // Telemetry gate → experimental.openTelemetry (span generation), coupled
           // to the exporter env this same spawnEnv resolves.
           telemetryOpen(),
+          // Context plugin: injects live stack state (solver mode, routing,
+          // active problem, live runs) per system-prompt build.
+          [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
         ),
       }),
       channel: opencodeChannel,
@@ -765,6 +751,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           skillRoots: cfgArr("skillRoots"),
           skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
+          projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
         });
         ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
         await serverManager?.stop();
@@ -787,8 +774,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
               project2.mounts,
               // Same pin rule as boot: only an explicit amicode.defaultModel pins.
-              vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+              validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
+              // Context plugin: injects live stack state per system-prompt build.
+              [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
             ),
           }),
           channel: opencodeChannel,
@@ -852,17 +841,32 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // which then opens chat.
       if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         void vscode.commands.executeCommand("amicode.onboarding.open");
-        // Wire: when onboarding completes, auto-open chat
-        onOnboardingComplete(() => {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        });
+        // Wire: when onboarding completes, the server restarts and the
+        // onReady handler (else-if branch below) opens the chat panel.
+        // We do NOT open chat here — that would race the server restart
+        // and show behind the transition splash.
         // Wire: when onboarding is cancelled (X), open chat normally
         onOnboardingCancelled(() => {
           ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
-        ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        // Post-onboarding: adopt the onboarding panel as the chat panel (zero
+        // tab switching — the splash overlay fades out revealing the chat).
+        if (ChatPanel.consumePendingOnboardingGreeting()) {
+          const onboardPanel = getOnboardingPanel();
+          if (onboardPanel) {
+            releaseOnboardingPanel(); // detach from onboarding lifecycle
+            const panel = ChatPanel.adopt(onboardPanel, ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          } else {
+            // Fallback: no onboarding panel alive (user closed it manually)
+            const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            panel.postOnboardingGreeting();
+          }
+        } else {
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+        }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
       // OWN resolution (its live /config/providers) — not a silent hang at the
@@ -929,7 +933,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           project2.skillsStageDir,
           project2.vaultDir,
           project2.mounts,
-          vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
           telemetryOpen(), // gate → experimental.openTelemetry (span generation)
         ),
       }),
@@ -969,7 +973,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (!fromCommand && ctx.globalState.get<boolean>("amicode.vaultSetup.dismissed") === true) return;
     if (!fromCommand) {
       const choice = await vscode.window.showInformationMessage(
-        "Set up a personal vault? Amico will remember your systems, pulses, and problems across sessions — stored locally under ~/.amico/vaults.",
+        "Set up a personal vault? Amico will remember your systems, results, and problems across sessions — stored locally under ~/.amico/vaults.",
         "Create vault",
         "Not now",
         "Don't ask again",
@@ -1086,7 +1090,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
   // Auto-offer on first run when the toolchain isn't ready (juliaup/channel/
   // project missing) and the user hasn't dismissed. Command bypasses the gate.
+  // Gated: Julia substrate belongs to the quantum-control domain pack (ADR 0008).
   if (
+    isQuantumControlPackActive() &&
     shouldOfferJuliaSetup({
       juliaupPresent: hasJuliaup(),
       channelPresent: (() => {
@@ -1155,6 +1161,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? `up at ${opencodeReadyUrl.toString()}`
             : 'down — try "Amicode: Restart opencode server"',
         });
+
+        // opencode TUI (#565): verify ~/.local/bin/opencode symlink is healthy.
+        results.push(probeOpencodeTui());
 
         // LLM provider (opencode's own resolution).
         if (opencodeReadyUrl) {
@@ -1346,7 +1355,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             opencodeProject.skillsStageDir,
             opencodeProject.vaultDir,
             opencodeProject.mounts,
-            vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin(),
+            validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
             telemetryOpen(),
           ),
         }),
@@ -1632,35 +1641,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         await vscode.env.openExternal(vscode.Uri.file(dir));
       }
     }),
-    vscode.commands.registerCommand("amicode.savePulse", async () => {
-      const dir = runsManager?.getActiveRunDir();
-      if (!dir) {
-        vscode.window.showWarningMessage("Amicode: no active run.");
-        return;
-      }
-      const catalog = catalogPulsesDir();
-      const picks = [catalog ? "Save to catalog" : undefined, "Save to file…"].filter(Boolean) as string[];
-      const choice = await vscode.window.showQuickPick(picks, { title: "Save pulse" });
-      if (!choice) return;
-      try {
-        if (choice === "Save to catalog" && catalog) {
-          const name = `${path.basename(dir)}.jld2`;
-          savePulseTo(dir, path.join(catalog, name));
-          vscode.window.showInformationMessage(`Amicode: saved pulse to catalog (${name}).`);
-        } else {
-          const uri = await vscode.window.showSaveDialog({
-            filters: { JLD2: ["jld2"] },
-            defaultUri: vscode.Uri.file(path.join(dir, "pulse.jld2")),
-          });
-          if (uri) {
-            savePulseTo(dir, uri.fsPath);
-            vscode.window.showInformationMessage("Amicode: pulse saved.");
-          }
-        }
-      } catch (e) {
-        vscode.window.showErrorMessage(`Amicode: ${(e as Error).message}`);
-      }
-    }),
+    // Save-pulse command retired (ADR 0008): the save/promote flow is now
+    // handled by the agent via the design-a-pulse skill, not a VS Code command.
     // Distill trigger 3 (manual): coarse idempotent sweep — safe to mash.
     vscode.commands.registerCommand("amicode.distillNow", () => {
       if (!distillerSetup) {
@@ -1725,15 +1707,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         runsManager?.pokeDiscovery();
         runsManager?.selectRun(path.basename(runDir));
         runsChannel.appendLine(`[demo] replayed → ${runDir}`);
-        const fid = Number((readTomlSafe(path.join(runDir, "result.toml")) ?? {}).fidelity ?? NaN);
-        if (fid >= 0.99) {
-          const choice = await vscode.window.showInformationMessage(
-            `Amicode: demo solve converged (F=${fid.toFixed(4)}). Save to catalog?`,
-            "Save to catalog",
-            "Not now",
-          );
-          if (choice === "Save to catalog") await vscode.commands.executeCommand("amicode.catalog.save", runDir);
-        }
       } catch (e) {
         void vscode.window.showErrorMessage(`Amicode: replay failed — ${(e as Error).message}`);
       }

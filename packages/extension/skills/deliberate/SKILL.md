@@ -149,6 +149,29 @@ reporting either as "reviewed" is the specific dishonesty this vocabulary exists
 Round budget is **3**. If you are still blocking at round 3, the spec is not the problem —
 the understanding is.
 
+### Amendments to approved specs are first-class specs
+
+An amendment gets the same review budget as the original: three lenses, round
+budget 3, before it lands in the spec's record. The documented failure mode
+(two same-day incidents, 2026-08-22) is the **cheap-talk amendment** — drafted
+as summary prose from conversation momentum, it contradicted the frozen
+contracts it amended (enumerated lists, tier memberships, invariants,
+criteria preconditions, cross-spec pointers) six and nine times respectively,
+caught only by post-hoc review.
+
+Rules:
+
+- Before drafting: re-read the parent spec's frontmatter invariants, every
+  D-decision, the Measurement Protocol, and all prior amendments — line by
+  line. Draft from the spec text, not from the conversation.
+- An amendment that edits any enumerated list, tier membership, invariant,
+  criterion precondition, or cross-spec obligation must be checked against
+  the exact text it edits, and against every sibling amendment for
+  cross-conflicts.
+- Run this skill's Step 2 loop on the amendment itself before recording it.
+- A same-day revision note records that a review happened; it is not a
+  substitute for the review.
+
 ### Step 3 — compile the plan
 
 ```bash

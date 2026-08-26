@@ -1,18 +1,34 @@
 // Minimal `vscode` stub for unit tests (aliased in vitest.config.ts). Provides
 // only the runtime members our node-side modules touch; types are erased at
 // compile time so they need no runtime shape.
+export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
 export const window = {
   showInformationMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
   showWarningMessage: () => Promise.resolve(undefined),
   showInputBox: () => Promise.resolve(undefined),
   showSaveDialog: () => Promise.resolve(undefined),
+  showOpenDialog: () => Promise.resolve(undefined),
   createOutputChannel: () => ({
     appendLine() {},
     append() {},
     dispose() {},
   }),
   registerWebviewViewProvider: () => ({ dispose() {} }),
+  registerFileDecorationProvider: () => ({ dispose() {} }),
+  createTreeView: (_id: string, _opts?: unknown) => ({
+    dispose() {},
+    onDidChangeSelection: () => ({ dispose() {} }),
+    onDidChangeVisibility: () => ({ dispose() {} }),
+    onDidExpandElement: () => ({ dispose() {} }),
+    onDidCollapseElement: () => ({ dispose() {} }),
+  }),
+  createTerminal: (_opts?: unknown) => ({
+    show() {},
+    sendText() {},
+    dispose() {},
+    _opts,
+  }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
@@ -90,7 +106,26 @@ export const workspace = {
       return Promise.resolve();
     },
   }),
-  fs: { writeFile: (_u: unknown, _b: unknown) => Promise.resolve() },
+  getWorkspaceFolder: (uri: { fsPath: string }) => {
+    return workspace.workspaceFolders.find(
+      (f: any) => uri.fsPath.startsWith(f.uri.fsPath)
+    ) ?? undefined;
+  },
+  createFileSystemWatcher: () => ({
+    onDidCreate: () => ({ dispose() {} }),
+    onDidChange: () => ({ dispose() {} }),
+    onDidDelete: () => ({ dispose() {} }),
+    dispose() {},
+  }),
+  updateWorkspaceFolders: (_start: number, _deleteCount: number | null, ..._adds: unknown[]) => true,
+  onDidChangeWorkspaceFolders: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
+  fs: {
+    writeFile: (_u: unknown, _b: unknown) => Promise.resolve(),
+    readDirectory: (_u: unknown): Promise<Array<[string, number]>> => Promise.resolve([]),
+    createDirectory: (_u: unknown) => Promise.resolve(),
+    delete: (_u: unknown, _opts?: unknown) => Promise.resolve(),
+    rename: (_old: unknown, _new: unknown) => Promise.resolve(),
+  },
 };
 export const Uri = {
   file: (p: string) => ({ fsPath: p, toString: () => p }),
@@ -113,9 +148,18 @@ export class TreeItem {
   description?: string;
   tooltip?: string;
   command?: unknown;
+  resourceUri?: unknown;
+  contextValue?: string;
+  iconPath?: unknown;
   constructor(
     public label: string,
     public collapsibleState?: number,
   ) {}
 }
 export const TreeItemCollapsibleState = { None: 0, Collapsed: 1, Expanded: 2 };
+export class ThemeIcon {
+  constructor(public id: string, public color?: unknown) {}
+}
+export class ThemeColor {
+  constructor(public id: string) {}
+}

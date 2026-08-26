@@ -1,6 +1,6 @@
 # Amicode
 
-The VSCode extension + CLI that lets researchers author, run, and inspect quantum optimal-control solves — locally, on company compute, or against real hardware.
+The VSCode extension + CLI autoresearch studio — researchers propose, run, verify, and record experiments through a structured loop. Quantum optimal control is the primary Domain Pack; the product is the loop, not the domain.
 
 ## Language
 
@@ -56,6 +56,28 @@ _Avoid_: Armonia (the whole stack), workspace, folder
 The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
+**Director**:
+The role that leads any autonomous loop — one canonical protocol (ledger discipline, dispatch through gates, analyze, record) that every campaign runs under, whichever mode it is bound to. Research and development differ in their gate packs, never in their director.
+_Avoid_: conductor (standing decision)
+
+**Autoresearch**:
+The research mode: hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
+
+**Autodev**:
+The development mode: issue DAG → TDD slices → CI/review → landed delta — the second autonomous mode, binding the dev gate pack. The loop is issue → PR → merge; automating the walk never weakens the dev gate or the never-merge-non-green rule.
+_Avoid_: autobuild ("build" already means CI to everyone)
+
+**Campaign**:
+One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the artifact banks.
+_Avoid_: session (a copilot session is never a campaign)
+
+**Gate pack**:
+The typed set of gates + phase templates an autonomous mode binds — the entire mode-specific part of the loop, held as committed data rather than prose, so the same director core runs any pack.
+
+**Mode**:
+One of the three director postures — copilot (the zeroth: default, interactive, packless), autoresearch, autodev. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
+_Avoid_: surface, rail (they render and switch modes; a mode is a posture, not a surface)
+
 ### Fleet & serving
 
 **Server mode**:
@@ -86,7 +108,29 @@ _Avoid_: API key, password
 The self-healing SSH local-forward a `client` uses to reach the Canonical Server — one component with two launchers. The extension spawns and supervises it for interactive panels (reconnect with backoff, address candidates probed LAN-before-overlay, health surfaced in the status bar); a headless launcher (`amico fleet tunnel`) serves panel-less consumers such as scheduled jobs. Failures are always visible to its consumer — never an invisible external service.
 _Avoid_: port forward (as a concept name), launchd tunnel
 
+### Surfaces
+
+**Home**:
+The always-present first tab in the Work Column that renders the user's widget grid — profile cards, run status, problem summaries, and custom agent-authored widgets. The single canonical surface for widgets; replaces the standalone home page. Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
+_Avoid_: Dashboard (as the surface name), widget panel
+
+**Widget**:
+A sandboxed ES-module card rendered in an iframe within Home. Authored by the agent (`amicode_author_widget` tool) or shipped as a builtin. Communicates with the host via the bridge protocol (postMessage). Two size classes: hero (full panel width) and tile (half-width, 2-across). Each has a TOML manifest, a JS module, and optional config fields.
+_Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
+
 ### Orthogonal axes
+
+**Domain Pack**:
+A deeply integrated capability set covering one research domain — its skills, Substrate, tools, solver modes, interview flows, and result semantics. Quantum control is the first and primary Domain Pack; it ships active by default. A pack is not a plugin: it is tightly integrated code that is identifiably domain-specific rather than scattered across generic infrastructure. Code that belongs to a Domain Pack is visibly gated behind pack activation (even when the gate is always true today).
+_Avoid_: Plugin, add-on, module (as the concept name)
+
+**Substrate**:
+The runtime environment a Domain Pack requires — language, packages, precompilation. For the quantum-control pack: Julia + Piccolo. Substrate setup is gated behind pack activation, not hardcoded into core extension activation.
+_Avoid_: Runtime, toolchain (as concept names)
+
+**Run**:
+One execution of an experiment script, producing a result artifact and an iteration log. Domain-agnostic at the protocol level (iteration count, objective value, status); domain-specific at the rendering level (e.g. fidelity display, pulse visualization for quantum control). The generic run protocol is `AMICODE_ITER` (iteration, objective, constraints); domain extensions (e.g. `AMICODE_PULSE`) layer on top.
+_Avoid_: Solve (as the generic concept — "solve" is quantum-control vocabulary for a Run)
 
 **Entitlement**:
 A grant of capability, in two linked senses. Locally: a license code granting access to a set of Julia packages (e.g. `issimo` unlocks Piccolissimo) — holdable with no Connection at all. Service-side: the authorization set a Credential carries on its service record. The Company Compute Connection bridges them: establishing it grants the local code.

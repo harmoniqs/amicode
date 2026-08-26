@@ -6,7 +6,7 @@ import { describe, test, expect } from "vitest";
 import { mkdtemp, rm, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { diagnoseStudio } from "../src/doctor.js";
+import { diagnoseStudio, parseDoctorArgs } from "../src/doctor.js";
 import type { StudioPaths } from "@amicode/schema";
 import { legacyStudioPaths } from "@amicode/schema";
 
@@ -105,6 +105,49 @@ describe("diagnoseStudio", () => {
     const p = paths({ source: "manifest", ledger: "/elsewhere/ledger", studioRoot: "/studio" });
     const r = await diagnoseStudio(p, () => Promise.resolve(true));
     expect(r.warnings.some((w) => /ledger.*outside/.test(w))).toBe(true);
+  });
+});
+
+// ── v2 (#525): flag parsing + the composed report ────────────────────────────
+describe("parseDoctorArgs", () => {
+  test("no args = v1 behavior (no roots, human output)", () => {
+    const r = parseDoctorArgs([]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.args.json).toBe(false);
+    expect(r.args.roots).toEqual({});
+    expect(r.args.runningBinary).toBe(null);
+  });
+
+  test("every injectable root flag maps to its SurfaceContext key", () => {
+    const r = parseDoctorArgs([
+      "--json",
+      "--root-vscext", "/v",
+      "--root-config", "/c",
+      "--root-server", "/s",
+      "--root-repo-amicode", "/a",
+      "--root-repo-fork", "/f",
+      "--root-staging", "/st",
+      "--running-binary", "/r/opencode",
+    ]);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.args.json).toBe(true);
+    expect(r.args.roots).toEqual({
+      rootVscext: "/v",
+      rootConfig: "/c",
+      rootServer: "/s",
+      rootRepoAmicode: "/a",
+      rootRepoFork: "/f",
+      rootStaging: "/st",
+      runningBinary: "/r/opencode",
+    });
+  });
+
+  test("unknown flag / missing value is a usage error", () => {
+    expect(parseDoctorArgs(["--nope"])).toMatchObject({ ok: false, message: /unknown doctor flag/ });
+    expect(parseDoctorArgs(["--root-server"])).toMatchObject({ ok: false, message: /requires a path/ });
+    expect(parseDoctorArgs(["--running-binary"])).toMatchObject({ ok: false, message: /requires a path/ });
   });
 });
 

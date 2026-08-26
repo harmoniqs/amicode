@@ -24,7 +24,7 @@ describe("compileScore (score #0)", () => {
   const md = compileScore(score0());
 
   it("keeps the heading the agent prompt references", () => {
-    expect(md.startsWith("## Pulse-designer interview")).toBe(true);
+    expect(md).toContain("## Pulse-designer interview");
   });
   it("emits every stage id in manifest order", () => {
     const ids = ["platform", "model", "mode", "problem", "formulate", "solve", "inspect", "hardware"];
@@ -82,7 +82,7 @@ describe("compileChainedScore (real overture → pulse-designer)", () => {
     expect(md).not.toContain("plain text");
   });
   it("keeps the overture's choice questions as option cards, default first (amicode#245 AC6 regression)", () => {
-    expect(md).toContain("Research (recommended)");
+    expect(md).toContain("Perform (automated) experiments and gain scientific insights (recommended)");
     expect(md).toContain("General coding and software development");
   });
 });
@@ -95,7 +95,7 @@ describe("spliceIntoAgentsMd", () => {
     expect(out).toContain("## Onset router");
     expect(out).toContain("COMPILED");
     expect(out).toContain("## Identity"); // section before, untouched
-    expect(out).toContain("## The run-dir contract your script MUST emit"); // section after, untouched (WS2: the maps moved into the pack's score content)
+    expect(out).toContain("## Style & formatting"); // section after splice point, untouched (ADR 0008: run-dir contract moved to solve skill)
     // the hardcoded interview body is gone from the spliced output
     expect(out).not.toContain("Stages, in order:");
     // exactly one interview heading remains

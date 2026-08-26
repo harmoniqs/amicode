@@ -1,15 +1,14 @@
-/** Vault resolution + user-memory readers (spec-20260705-002847 §2, §3 routing).
- *
- *  The personal vault is the first mount under the vaults root whose
- *  `.amico-vault.toml` marker declares `kind = "personal"`. Everything here is
- *  read-only and failure-tolerant: a missing vault, file, or stream simply
+/** Vault resolution + onboarding-stream readers (spec-20260705-002847 §2, §3
+ *  routing). The user-memory section BUILDERS + index readers (KNOWLEDGE /
+ *  DEMOS / memory index) moved to the amicode_context plugin's live
+ *  stack_state.ts (injected per-prompt); what remains here is what prep-time
+ *  code still needs — the personal-vault resolver, PROFILE.md presence (the
+ *  onboarding routing predicate), and the onboarding-stream marker. Everything
+ *  is read-only and failure-tolerant: a missing vault, file, or stream simply
  *  yields the empty value and the session proceeds unpersonalized. */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-
-export const KNOWLEDGE_LINE_CAP = 50;
-export const MEMORY_INDEX_LINE_CAP = 50;
 
 export function defaultVaultsRoot(): string {
   return path.join(os.homedir(), ".amico", "vaults");
@@ -55,42 +54,13 @@ export function readProfileMd(vaultDir: string): string {
   }
 }
 
-/** List-item lines from an amicode index file, capped. */
-function readIndexLines(vaultDir: string, file: string, cap: number): string[] {
-  let text: string;
-  try {
-    text = fs.readFileSync(path.join(vaultDir, "amicode", file), "utf8");
-  } catch {
-    return [];
-  }
-  return text
-    .split("\n")
-    .filter((l) => l.startsWith("- "))
-    .slice(0, cap);
-}
-
-/** KNOWLEDGE.md list-item lines, capped (§2.3). */
-export function readKnowledgeLines(vaultDir: string, cap: number = KNOWLEDGE_LINE_CAP): string[] {
-  return readIndexLines(vaultDir, "KNOWLEDGE.md", cap);
-}
-
-/** DEMOS.md list-item lines (L1 §3) — separate index so reference demos never
- *  age against KNOWLEDGE.md's problem cap. Capped tighter (splice budget ≤~2KB). */
-export function readDemoLines(vaultDir: string, cap = 30): string[] {
-  return readIndexLines(vaultDir, "DEMOS.md", cap);
-}
-
-/** Typed-memory index list lines (spec-20260707-002846 C4). The distiller writes
- *  durable facts as typed cards under `<vault>/amicode/memory/` and maintains a
- *  one-line index at `memory/MEMORY.md`; only that index is spliced (the cards
- *  load on demand). Subdir-capable reuse of the readIndexLines pattern. */
-export function readMemoryIndexLines(vaultDir: string, cap: number = MEMORY_INDEX_LINE_CAP): string[] {
-  return readIndexLines(vaultDir, path.join("memory", "MEMORY.md"), cap);
-}
-
 /** Second disjunct of the routing predicate (§3): completed marker in the
- *  onboarding stream. Malformed lines are skipped. */
+ *  onboarding stream. Checks both the legacy events.jsonl marker AND the new
+ *  file-based marker (a `completed` file in the onboarding dir). */
 export function hasOnboardingCompleted(onboardingStreamDir: string): boolean {
+  // New marker: the agent writes an empty `completed` file directly.
+  if (fs.existsSync(path.join(onboardingStreamDir, "completed"))) return true;
+  // Legacy marker: amicode_profile tool appends to events.jsonl.
   let text: string;
   try {
     text = fs.readFileSync(path.join(onboardingStreamDir, "events.jsonl"), "utf8");
@@ -106,4 +76,29 @@ export function hasOnboardingCompleted(onboardingStreamDir: string): boolean {
     }
   }
   return false;
+}
+
+// ─── Devtools restore marker ─────────────────────────────────────────────────
+// A temporary file that tells the next activation "this reinstall was triggered
+// by the devtools toggle, not a manual user action — skip onboarding." The
+// marker is consumed (deleted) on read so it only suppresses once.
+
+const DEVTOOLS_RESTORE_MARKER = ".devtools-restore";
+
+/** Write the devtools restore marker. Called by toggle-OFF before uninstall. */
+export function writeDevtoolsRestoreMarker(opsDir: string = amicodeOpsDir()): void {
+  fs.mkdirSync(opsDir, { recursive: true });
+  fs.writeFileSync(path.join(opsDir, DEVTOOLS_RESTORE_MARKER), String(Date.now()));
+}
+
+/** Check and consume the devtools restore marker. Returns true if it existed
+ *  (meaning this activation follows a toggle-OFF reinstall, not a fresh install). */
+export function consumeDevtoolsRestoreMarker(opsDir: string = amicodeOpsDir()): boolean {
+  const markerPath = path.join(opsDir, DEVTOOLS_RESTORE_MARKER);
+  try {
+    fs.unlinkSync(markerPath);
+    return true;
+  } catch {
+    return false;
+  }
 }

@@ -1,0 +1,303 @@
+/* UNLAYERED on purpose: the v2 theme (v2/styles/tailwind.css) is imported
+   unlayered, and unlayered CSS beats every @layer — so this skin must be
+   unlayered too, and imported AFTER the v2 theme in index.css. */
+
+/* ============================================================
+   AMICODE BRAND SHEET — THE SINGLE SOURCE OF TRUTH
+   (see .claude/skills/amicode-design-system)
+
+   THE RULE: every colour, radius, and face in the app resolves from a token
+   defined here or in the active theme. Components consume tokens; they never
+   carry literals. `script/check-design-tokens.mjs` enforces this — run it with
+   `npm run check:design`, and it fails the moment a raw literal reappears.
+
+   Division of ownership:
+   - The active THEME (`packages/ui/src/theme/themes/*.json`, currently
+     `harmoniqs.json`, pinned in app.tsx) owns the `--v2-*` palette per scheme —
+     surfaces, text, borders, AND the accent. Those values are generated from
+     harmoniqs.ai's `app/globals.css`, so the site is the upstream reference:
+     brand yellow #FFE614, ink #000, deep #000. LIGHT USES WHITE, not the site's
+     cream: on a mid-tone ground nothing separates by fill (every surface pair
+     measured 1.00-1.20:1), which broke the ~83 components that distinguish a
+     raised surface from its track by fill. The ink and the yellow rule carry
+     the brand on light; the ground does not.
+     On DARK the accent is both foreground and fill; on LIGHT the fill
+     (`bg-accent`) is yellow while text/icon accents go NEUTRAL — #FFE614 is
+     1.27:1 on white, so yellow lives in fills and never in light foregrounds.
+   - THIS file owns everything else brand-bearing: geometry tokens (radius,
+     spacing), the accent role tokens (--accent, --accent-hover, --accent-ink,
+     --accent-edge-ink, --accent-fill-soft, --accent-edge), the type faces and
+     scale, and a few component skins. It does NOT redefine `--v2-*` tokens
+     (the theme wins) — it only consumes them.
+
+   The ONLY sanctioned literals in the codebase, all deliberate:
+   - `amicode/connections.ts`   third-party provider logos (Slack, GitHub,
+                                Google, Linear, Pasqal) — other companies' marks.
+   - `amicode/run-card.tsx`     the shareable export poster, intentionally
+                                theme-independent so it renders identically
+                                wherever it's shared.
+   - `amicode/brain-engine.ts`, `amicode/context-tree-engine.ts`
+                                data visualisation — exempt from the single-hue
+                                rule, may use a categorical palette.
+   - `app/src/components/terminal.tsx`
+                                last-resort defaults used only when no theme is
+                                resolvable; kept in brand (deep/cream).
+   - `index.css` @font-face     face declarations, by definition.
+   ============================================================ */
+
+:root {
+  /* ── the one accent ── */
+  /* Brand yellow, from harmoniqs-ai/app/globals.css (--brand-yellow). The
+     website is the reference; an earlier pass read a different repo and landed
+     on #fff676, which was never the site's colour. */
+  --accent: #FFE614;         /* brand hue — chip / CTA / fill, both schemes */
+  --accent-hover: #F0D600;   /* --brand-yellow-hover */
+  --accent-ink: #000000;     /* text/icon ON a yellow fill — always ink */
+  --accent-edge-ink: #000000;/* --brand-yellow-border: every yellow fill takes an ink edge */
+
+  /* ── radius ──
+     The site sets ONE radius for everything — buttons, cards, chips, inputs,
+     the nav pill (--radius-brand: 4px); only decorative dots stay circular.
+     The scale names are kept so the ~140 call sites don't churn, and so a
+     future hierarchy change stays a one-file edit. */
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
+  --radius-xl: 4px;
+  --radius-full: 999px;   /* dots and round pills only */
+
+  /* ── spacing (4px grid) ── */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+
+  /* ── type ──
+     Faces mirror harmoniqs.ai: DM Sans carries display AND body (the site
+     aliases --font-display to --font-body), JuliaMono carries data, code and
+     labels. FBS Machro is retired — the site's copy gate blocks its return. */
+  --font-body: var(--font-family-text);
+  --font-display: var(--font-body);
+  --font-mono: "JuliaMono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-julia: "JuliaMono", monospace;
+
+  --font-size-2xs: 10px; --font-size-xs: 11px; --font-size-sm: 12px; --font-size-md: 13px;
+  --font-size-x-small: var(--font-size-xs);   /* fix dangling ref */
+  --font-weight-emphasis: 600; --font-weight-strong: 650;
+
+  /* Content sitting on a FIXED dark scrim (media overlays, poster art) does not
+     flip with the scheme — the ground under it is always dark. Mirrors the
+     site's --fg-on-dark. Cream rather than pure white keeps it in the family. */
+  --fg-on-dark: #EFEDCD;
+  --fg-on-dark-muted: #C9C7A6;
+
+  --border-width: 1px;
+
+  /* ── elevation ── the one float shadow, for transient overlays that sit above
+     the app ground (toasts, the solver-switch banner). Named so it stops being
+     re-invented as a scattered rgba() literal. */
+  --elev-float: 0 8px 24px rgb(0 0 0 / 0.35);
+}
+
+/* ── session status dots ──
+   SEMANTIC, not brand: a status dot's job is to say what state a session is in,
+   so it sits outside the yellow system. Brand yellow was tried for "running" and
+   is unusable here — 1.27:1 on white, invisible without a crutch. No rings
+   either: each tone clears >=3:1 against its own ground unaided, and an edge
+   would only mute the hue that carries the meaning.
+
+   Chosen by simulating deuteranopia, protanopia and tritanopia (Vienot 1999)
+   over a candidate search. Two constraints beyond contrast:
+
+   1. worst pairwise CIELAB separation is maximised across all three CVD types;
+   2. idle and done must differ in LIGHTNESS, not just chroma. An earlier set had
+      them at L* 48 vs 44 — same lightness, separated only by saturation, which
+      is precisely what reads as "a slightly green grey". They now sit ~23 L*
+      apart in both schemes.
+
+   Colour is never the only signal: each dot carries role="img" plus an
+   aria-label and title naming the state.
+
+   light: worst CVD dE 13.7 · idle/done dE 73.9 (dL* 24) · min contrast 3.19:1
+   dark:  worst CVD dE 31.3 · idle/done dE 72.3 (dL* 22) · min contrast 3.71:1 */
+:root,
+[data-color-scheme="light"] {
+  --status-idle: #52525b;        /* L* 35 · 7.73:1 — neutral, no hue, so it stays quiet */
+  --status-running: #1d4ed8;     /* L* 39 · 6.70:1 — blue reads as in-progress */
+  --status-attention: #d97706;   /* L* 60 · 3.19:1 — amber, needs you */
+  --status-error: #ef4444;       /* L* 55 · 3.76:1 */
+  --status-done: #16a34a;        /* L* 59 · 3.30:1 — vivid, and 24 L* clear of idle */
+}
+[data-color-scheme="dark"] {
+  --status-idle: #8a8a8a;        /* L* 57 ·  5.56:1 */
+  --status-running: #2563eb;     /* L* 46 ·  3.71:1 */
+  --status-attention: #fbbf24;   /* L* 81 · 11.49:1 */
+  --status-error: #dc2626;       /* L* 48 ·  3.97:1 */
+  --status-done: #4ade80;        /* L* 79 · 11.01:1 */
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="light"]) {
+    --status-idle: #8a8a8a;
+    --status-running: #2563eb;
+    --status-attention: #fbbf24;
+    --status-error: #dc2626;
+    --status-done: #4ade80;
+  }
+}
+
+/* ── accent role tokens — per-scheme OPACITY, same hue ──
+   fill = yellow warmth (both); selected edge = neutral on light (yellow can't
+   define on white), yellow on dark. */
+:root,
+[data-color-scheme="light"] {
+  --accent-fill-soft: color-mix(in srgb, var(--accent) 18%, transparent);
+  /* one step past soft — the hover of an already-soft-filled control */
+  --accent-fill-hover: color-mix(in srgb, var(--accent) 26%, transparent);
+  /* INK, not a neutral. #FFE614 is 1.27:1 on white — it cannot define its own
+     edge on a light ground, so every yellow surface takes an ink border. This
+     is the site's --brand-yellow-border rule, and it holds on white too. */
+  --accent-edge: var(--accent-edge-ink);
+}
+[data-color-scheme="dark"] {
+  --accent-fill-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-fill-hover: color-mix(in srgb, var(--accent) 16%, transparent);
+  --accent-edge: color-mix(in srgb, var(--accent) 45%, var(--v2-border-border-base));
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="light"]) {
+    --accent-fill-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+    --accent-fill-hover: color-mix(in srgb, var(--accent) 16%, transparent);
+    --accent-edge: color-mix(in srgb, var(--accent) 45%, var(--v2-border-border-base));
+  }
+}
+
+/* ── inline code: readable in both schemes ── */
+:not(pre) > code {
+  color: #3d4451;
+  background: rgba(20, 22, 28, 0.06);
+  border-radius: var(--radius-sm);
+  padding: 0.08em 0.35em;
+}
+[data-color-scheme="dark"] :not(pre) > code {
+  color: #c7cad1;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* ── motion: quick, quiet, consistent (honors reduced-motion) ── */
+button, [role="button"], a, input, textarea, [data-slot="card"] {
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   COMPONENT SKINS — high-visibility surfaces, on the tokens above.
+   ============================================================ */
+
+/* the composer — a soft card at the card corner (was a one-off 22px; unified
+   to --radius-lg so it matches every other card/panel) */
+[data-component="session-new-composer"],
+[data-component="session-composer"],
+[data-component="prompt-input-v2"] {
+  border-radius: var(--radius-lg) !important;
+  border: var(--border-width) solid var(--v2-border-border-base);
+  /* One even edge. --v2-elevation-raised carries BOTH a 0.5px ring and a
+     -0.5px top highlight, which stacked on this border and made the top read
+     visibly thicker than the sides. The site differentiates with borders, not
+     bevels, so the composer takes the border alone. */
+  box-shadow: none !important;
+  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+}
+[data-component="session-new-composer"] { min-height: 88px !important; }
+[data-component="session-new-composer"]:focus-within,
+[data-component="session-composer"]:focus-within,
+[data-component="prompt-input-v2"]:focus-within {
+  border-color: var(--v2-border-border-strong);
+}
+
+/* send: a control button in the brand accent, near-black ink (yellow-button
+   ink is ALWAYS near-black). Radius = --radius-md, matching the other footer
+   controls (+, pickers) — NOT a circle (Kate 2026-07-23: follow the radius scale). */
+[data-action="prompt-submit"] {
+  border-radius: var(--radius-md) !important;
+  background: var(--accent) !important;
+  color: var(--accent-ink) !important;
+  transition: transform 0.16s ease, filter 0.16s ease;
+}
+[data-action="prompt-submit"] svg { color: var(--accent-ink) !important; }
+[data-action="prompt-submit"]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+
+/* accent tag (badge-v2 `variant="accent"`): the shared primitive paints
+   --v2-text-text-contrast over bg-accent, which on dark is LIGHT text on
+   yellow — the one pairing the accent law forbids. Ink on a yellow fill is
+   always near-black, both schemes. Chips never wrap: the label is a single
+   line or it isn't a chip. The element selector is deliberate: badge-v2.css
+   is injected when the component lazy-loads (AFTER this file), so an
+   equal-specificity rule here would lose the cascade. */
+span[data-component="tag"][data-variant="accent"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* the rail: controls use the control corner */
+[data-component="sidebar-rail"] button,
+[data-component="chat-first-rail"] button { border-radius: var(--radius-md); }
+
+
+/* solver-switch banner (opencode#78 follow-up) — narrates the server restart a
+   solver switch triggers. Progress reads NEUTRAL (yellow may never be a
+   foreground on light); completion is the brand chip: --accent fill with
+   near-black --accent-ink, identical in both schemes. */
+[data-component="amicode-solver-switch"] {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  border: var(--border-width) solid var(--v2-border-border-base);
+  background: var(--v2-background-bg-layer-01);
+  color: var(--v2-text-text-base);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-emphasis);
+  box-shadow: var(--elev-float);
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+[data-component="amicode-solver-switch"][data-phase="ready"] {
+  background: var(--accent);
+  /* INK, not the accent. A yellow edge on a yellow fill is no edge at all, and
+     against white it measures 1.27:1 — the ready chip had no boundary on light. */
+  border-color: var(--accent-edge-ink);
+  color: var(--accent-ink);
+}
+/* currentColor, so the dot is neutral ink while switching and near-black on the
+   yellow chip — never a yellow glyph on a light ground. */
+[data-component="amicode-solver-switch"] > i {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: currentColor;
+  animation: amc-solver-switch-pulse 1.2s ease-in-out infinite;
+}
+[data-component="amicode-solver-switch"][data-phase="ready"] > i {
+  animation: none;
+}
+/* the global prefers-reduced-motion reset above collapses this duration. */
+@keyframes amc-solver-switch-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}

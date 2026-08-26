@@ -1,0 +1,9 @@
+{
+  "kind": "hypothesis",
+  "observation": "Evidence pointers naming a directory — bracketed or trailing-slash — cite a container, not an artifact",
+  "evidence": [
+    "[[experiments]]",
+    "insights/"
+  ],
+  "suggested_experiment": "Confirm the validator refuses directory pointers in both spellings before any consumer counts a whole folder as one citation."
+}

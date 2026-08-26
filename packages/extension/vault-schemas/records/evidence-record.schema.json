@@ -1,0 +1,30 @@
+{
+  "$id": "https://schemas.amicode.dev/vault/records/evidence-record.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": true,
+  "properties": {
+    "date": {
+      "format": "date",
+      "type": "string"
+    },
+    "origin": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "type": {
+      "enum": [
+        "experiment",
+        "meeting",
+        "retrospective",
+        "paper"
+      ]
+    }
+  },
+  "required": [
+    "type",
+    "date",
+    "origin"
+  ],
+  "title": "evidence record",
+  "type": "object"
+}

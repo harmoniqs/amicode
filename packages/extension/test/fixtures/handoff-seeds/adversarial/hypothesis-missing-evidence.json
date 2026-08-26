@@ -1,0 +1,5 @@
+{
+  "kind": "hypothesis",
+  "observation": "Rydberg single-qubit gates saturate near 10 ns under global drive",
+  "suggested_experiment": "Min-time sweep the banked global-drive X pulse from 12 ns down to 8 ns and locate the fidelity wall."
+}

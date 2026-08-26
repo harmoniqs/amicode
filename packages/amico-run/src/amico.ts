@@ -23,7 +23,11 @@ function usage(): string {
     ["resolve --platform <p> --kind <k> --size <n>", "tier resolution → JSON (amico-run subcommand)"],
     ["sandbox <workspace-dir> --packages A,B,…", "generate a per-problem Julia env (amico-run subcommand)"],
     ["estimate <script.jl> | --spec <s.json>", "v0 size estimate → JSON suggestion signal, never a route (Δ10 #34)"],
-    ["doctor", "validate the studio binding — paths, mounts, drift (#402)"],
+    ["doctor [--json] [--root-…]", "studio binding + fleet surface inventory — six records, verdicts (#402, #525)"],
+    [
+      "upgrade <server-binary|extension|agents|skills> [--root-…]",
+      "receipt-emitting idempotent upgrade runbooks — pre-flight gate, lock, JSONL receipts (#526)",
+    ],
     [
       "pasqal devices | submit --device <d> --artifact <p> [--confirm <h>]",
       "Pasqal device path — list/select + gated submit (#160)",
@@ -77,12 +81,28 @@ export async function main(argv: string[]): Promise<number> {
       return launch(["estimate", ...rest]);
 
     case "doctor": {
-      // The studio binding's health check (#402): the manifest's world —
-      // paths exist, mounts readable, exactly one rw personal, drift flagged.
+      // The studio binding's health check (#402) + the fleet surface inventory
+      // (#525): six records, each with version + verdict + evidence. `--json`
+      // emits the machine contract (canonical JSON, surfaces only); the human
+      // table derives from the same records. Root flags make every probe
+      // injectable — the fixture suite never touches the real fleet surfaces.
       const { doctorReport } = await import("./doctor.js");
-      const report = await doctorReport();
-      console.log(report.rendered);
+      const report = await doctorReport(rest);
+      if (report.json !== null) console.log(report.json);
+      else console.log(report.rendered);
       return report.exit;
+    }
+
+    // ── the upgrade verbs (#526, spec D2): the four upgrade chains as
+    // receipt-emitting runbooks. Pre-flight composes the SAME doctor v2
+    // probes (current → no-op; unknown → abort; stale/integrity → proceed);
+    // single-operator lock; append-only JSONL receipts; the server-binary
+    // restore path. Same {json, code} shape as the spine verbs. ──
+    case "upgrade": {
+      const { upgradeVerb } = await import("./upgrade.js");
+      const { json, code } = await upgradeVerb(rest);
+      console.log(JSON.stringify(json));
+      return code;
     }
 
     // ── the Pasqal device path (#160): device selection + gated submission,

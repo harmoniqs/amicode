@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { probeCommand, formatHealthReport, type HealthResult } from "../src/healthcheck";
+import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "../src/healthcheck";
 
 describe("formatHealthReport", () => {
   it("summarizes all-ok", () => {
@@ -90,5 +90,65 @@ describe("probeCommand", () => {
     expect(r.code).toBe(3);
     expect(r.output).toContain("out");
     expect(r.output).toContain("boom");
+  });
+});
+
+describe("probeOpencodeTui", () => {
+  it("returns OK with resolved target path when symlink is healthy", () => {
+    const result = probeOpencodeTui({
+      lstatSync: () => ({ isSymbolicLink: () => true }),
+      readlinkSync: () => "/home/user/.amico/opencode/canonical/current/opencode",
+      accessSync: () => undefined,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.name).toBe("opencode TUI");
+    expect(result.detail).toContain("/home/user/.amico/opencode/canonical/current/opencode");
+  });
+
+  it("returns FAIL with fix hint when symlink is absent (ENOENT)", () => {
+    const result = probeOpencodeTui({
+      lstatSync: () => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+      readlinkSync: () => "",
+      accessSync: () => undefined,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.name).toBe("opencode TUI");
+    expect(result.detail).toMatch(/not found|absent/i);
+    expect(result.detail).toMatch(/install/i);
+  });
+
+  it("returns FAIL with fix hint when symlink exists but target is missing (dangling)", () => {
+    const result = probeOpencodeTui({
+      lstatSync: () => ({ isSymbolicLink: () => true }),
+      readlinkSync: () => "/nonexistent/path/opencode",
+      accessSync: () => { const e: any = new Error("ENOENT"); e.code = "ENOENT"; throw e; },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.name).toBe("opencode TUI");
+    expect(result.detail).toMatch(/dangling|target.*missing|does not exist/i);
+    expect(result.detail).toMatch(/install/i);
+  });
+
+  it("returns FAIL with fix hint when target exists but is not executable", () => {
+    const result = probeOpencodeTui({
+      lstatSync: () => ({ isSymbolicLink: () => true }),
+      readlinkSync: () => "/home/user/.amico/opencode/canonical/current/opencode",
+      accessSync: () => { const e: any = new Error("EACCES"); e.code = "EACCES"; throw e; },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.name).toBe("opencode TUI");
+    expect(result.detail).toMatch(/not executable/i);
+    expect(result.detail).toMatch(/install/i);
+  });
+
+  it("never throws even if fs functions throw unexpected errors", () => {
+    const result = probeOpencodeTui({
+      lstatSync: () => { throw new Error("disk I/O failure"); },
+      readlinkSync: () => "",
+      accessSync: () => undefined,
+    });
+    expect(result.ok).toBe(false);
+    expect(result.name).toBe("opencode TUI");
+    expect(result.detail).toBeTruthy();
   });
 });

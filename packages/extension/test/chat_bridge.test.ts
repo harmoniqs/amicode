@@ -1,9 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { handleAmicodeBridgeMessage, extractReportBugModel, type BridgeIo } from "../src/chat_bridge";
+import { handleAmicodeBridgeMessage, extractReportBugModel, resolveDbBackupDir, type BridgeIo } from "../src/chat_bridge";
 
 // ============================================================================
 // The shared iframe⇄extension bridge: strict allowlists, https-only externals,
@@ -230,5 +230,98 @@ describe("extractReportBugModel — the command's optional model payload (amicod
     expect(extractReportBugModel({ model: "kimi-k3" })).toBeUndefined();
     expect(extractReportBugModel({ model: { providerID: 7, modelID: "x" } })).toBeUndefined();
     expect(extractReportBugModel({ model: { providerID: "p" } })).toBeUndefined();
+  });
+});
+
+describe("amicode bridge — clipboard-image-read", () => {
+  it("reads a clipboard image via native tools and replies with a data URL", async () => {
+    const host = io();
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "clipboard-image-read", nonce: "img-1", tab: "pane-2" },
+      host,
+    );
+    expect(handled).toBe(true);
+    // The handler is async (spawns a native process); wait for it to complete.
+    // Multiple ticks needed: dynamic import + process spawn + result processing.
+    for (let i = 0; i < 60 && host.posted.length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(host.posted).toHaveLength(1);
+    const reply = host.posted[0] as Record<string, unknown>;
+    expect(reply.source).toBe("amicode");
+    expect(reply.kind).toBe("clipboard-image");
+    expect(reply.nonce).toBe("img-1");
+    expect(reply.tab).toBe("pane-2");
+    // dataUrl is either null (no image) or a valid data URL with image content
+    if (reply.dataUrl !== null) {
+      expect(typeof reply.dataUrl).toBe("string");
+      expect((reply.dataUrl as string).startsWith("data:image/")).toBe(true);
+      expect(typeof reply.mime).toBe("string");
+      expect((reply.mime as string).startsWith("image/")).toBe(true);
+      expect(typeof reply.filename).toBe("string");
+    }
+  });
+
+  it("a hidden panel never answers clipboard-image-read", async () => {
+    const host = io(false);
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "clipboard-image-read", nonce: "img-2" },
+      host,
+    );
+    expect(handled).toBe(true);
+    await flush();
+    expect(host.posted).toHaveLength(0);
+  });
+});
+
+describe("amicode bridge — data-storage-query uses XDG helpers (#563)", () => {
+  let origXdgData: string | undefined;
+  let origXdgConfig: string | undefined;
+
+  beforeEach(() => {
+    origXdgData = process.env.XDG_DATA_HOME;
+    origXdgConfig = process.env.XDG_CONFIG_HOME;
+  });
+  afterEach(() => {
+    if (origXdgData === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = origXdgData;
+    if (origXdgConfig === undefined) delete process.env.XDG_CONFIG_HOME;
+    else process.env.XDG_CONFIG_HOME = origXdgConfig;
+  });
+
+  it("returns paths based on XDG_DATA_HOME and XDG_CONFIG_HOME when set", () => {
+    process.env.XDG_DATA_HOME = "/custom/data";
+    process.env.XDG_CONFIG_HOME = "/custom/config";
+    const host = io();
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "data-storage-query", tab: "t1" },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(host.posted).toHaveLength(1);
+    const reply = host.posted[0] as Record<string, unknown>;
+    expect(reply.kind).toBe("data-storage-defaults");
+    expect(reply.databasePath).toBe("/custom/data/opencode/opencode.db");
+    expect(reply.configDir).toBe("/custom/config/opencode");
+    expect(reply.tab).toBe("t1");
+  });
+});
+
+describe("amicode bridge — backup dir resolution (#563)", () => {
+  it("resolveDbBackupDir uses path.dirname of sessionDatabase when set", () => {
+    const dir = resolveDbBackupDir("/custom/path/to/mydb.db");
+    expect(dir).toBe("/custom/path/to");
+  });
+
+  it("resolveDbBackupDir falls back to opencodeDataDir() when sessionDatabase is empty", () => {
+    const origXdg = process.env.XDG_DATA_HOME;
+    process.env.XDG_DATA_HOME = "/xdg/data";
+    try {
+      const dir = resolveDbBackupDir("");
+      expect(dir).toBe("/xdg/data/opencode");
+    } finally {
+      if (origXdg === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = origXdg;
+    }
   });
 });

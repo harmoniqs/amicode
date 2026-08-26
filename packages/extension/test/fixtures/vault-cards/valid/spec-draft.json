@@ -1,0 +1,10 @@
+{
+  "date": "2026-08-21",
+  "platform": "transmon",
+  "priority": "p1",
+  "status": "draft",
+  "tags": [
+    "context"
+  ],
+  "type": "spec"
+}

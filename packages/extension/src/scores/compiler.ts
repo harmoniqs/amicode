@@ -3,9 +3,12 @@ import { Score } from "./loader";
 import { ScoreManifest, Stage } from "./schema";
 
 // Compile a score into the injected-prompt section — "data-defined, prompt-executed"
-// (spec §6). The heading is kept EXACTLY "## Pulse-designer interview" for score #0
-// compatibility: spliced section lookups (and the hardcoded fallback section in
-// AGENTS.md) match on it by name. Pure and deterministic: same score → same string.
+// (spec §6). The heading reflects the actual score running ("## Onboarding interview"
+// for overture, "## Pulse-designer interview" for pulse-designer). A hidden HTML
+// comment marker is emitted for spliceIntoAgentsMd to locate the section reliably.
+// Pure and deterministic: same score → same string.
+
+const SPLICE_MARKER = "<!-- AMICODE_SCORE_SECTION -->";
 
 const INTERVIEW_CONTRACT = [
   "**Interview contract:** ONE question at a time — never batch. Ask, wait, record,",
@@ -34,7 +37,11 @@ function renderStages(stages: Stage[], dir: string, start: number): string[] {
     if (s.template) lines.push(`   - vetted template (absolute): \`${path.join(dir, s.template)}\``);
     for (const q of s.questions ?? []) {
       const choices = q.choices
-        ? ` — options: ${q.choices.map((c) => (c === q.default ? `${c} (recommended)` : c)).join(" | ")}`
+        ? ` — options: ${q.choices.map((c, idx) => {
+            const label = c === q.default ? `${c} (recommended)` : c;
+            const desc = q.choice_descriptions?.[idx];
+            return desc ? `${label} — ${desc}` : label;
+          }).join(" | ")}`
         : q.default
           ? ` — default: ${q.default}`
           : "";
@@ -49,8 +56,10 @@ function renderStages(stages: Stage[], dir: string, start: number): string[] {
 
 export function compileScore(score: Score): string {
   const m = score.manifest;
+  const heading = m.id === "overture" ? "## Onboarding interview" : "## Pulse-designer interview";
   const lines: string[] = [
-    `## Pulse-designer interview`,
+    SPLICE_MARKER,
+    heading,
     "",
     `> Compiled from score \`${m.id}\` v${m.version} — \`SCORE.md\` is the source of truth; do not edit this section by hand.`,
     "",
@@ -72,6 +81,7 @@ export function compileScore(score: Score): string {
  *  after an explicit handoff marker. */
 export function compileChainedScore(head: Score, tail: Score): string {
   const lines: string[] = [
+    SPLICE_MARKER,
     `## Pulse-designer interview`,
     "",
     `> Compiled from score \`${head.manifest.id}\` v${head.manifest.version} chained into ` +
@@ -112,12 +122,14 @@ export function chainManifest(head: Score, tail: Score): ScoreManifest {
   return { ...head.manifest, stages: [...head.manifest.stages, ...tail.manifest.stages] };
 }
 
-// Replace the "## Pulse-designer interview" section (through the next h2) with the
-// compiled content, prefixed by the router section. If the heading is missing the
-// compiled content is appended — the injection must never lose content.
+// Replace the score section (located by SPLICE_MARKER or the legacy heading
+// "## Pulse-designer interview") with the compiled content, prefixed by the
+// router section. If neither is found, the compiled content is appended.
 export function spliceIntoAgentsMd(agentsMd: string, routerSection: string, compiledScore: string): string {
   const block = `${routerSection}\n\n${compiledScore}`;
-  const start = agentsMd.indexOf("## Pulse-designer interview");
+  // Prefer the marker; fall back to legacy heading
+  let start = agentsMd.indexOf(SPLICE_MARKER);
+  if (start === -1) start = agentsMd.indexOf("## Pulse-designer interview");
   if (start === -1) return `${agentsMd}\n\n${block}`;
   const rest = agentsMd.slice(start + 1);
   const nextH2 = rest.search(/\n## /);

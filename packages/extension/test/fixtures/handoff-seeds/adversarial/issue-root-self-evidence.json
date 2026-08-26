@@ -1,0 +1,10 @@
+{
+  "kind": "issue",
+  "title": "An evidence pointer naming the validation root itself cites the entire vault as one artifact",
+  "motivation": "The degenerate pointer \".\" resolves to the validation root, which always exists; a seed citing it claims everything and nothing at once, and must be refused rather than treated as well-evidenced.",
+  "evidence": [
+    "."
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "chore"
+}

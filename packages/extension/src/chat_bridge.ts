@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
+import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 
 // ============================================================================
 // The amicode iframe⇄extension command bridge, shared by ChatPanel (one
@@ -13,6 +14,15 @@ import * as fs from "node:fs";
 // undefined and their relay simply forwards to the one iframe.
 // ============================================================================
 
+
+// Resolve the directory containing the session DB for backup purposes (#563).
+// When sessionDatabase setting is a non-empty path, use its parent directory;
+// otherwise fall back to opencode's XDG data directory.
+export function resolveDbBackupDir(sessionDatabase: string): string {
+  if (sessionDatabase) return path.dirname(sessionDatabase);
+  return opencodeDataDir();
+}
+
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
 // the iframe→parent→extension postMessage bridge. STRICT allowlist: the framed
 // app renders LLM output, so we never executeCommand anything outside this set.
@@ -20,7 +30,6 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.restartServer",
   "amicode.distillNow",
   "amicode.stopRun",
-  "amicode.savePulse",
   "amicode.openRunDir",
   "amicode.openInspector",
   // The composer's report-a-bug button (fork #116) posts this over the command
@@ -30,6 +39,12 @@ export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   // the fork forwards it here so the editor's Command Palette (where every
   // Amicode: command lives) opens as users expect.
   "workbench.action.showCommands",
+  // Zoom V2 (harmoniqs/amicode#322): the app captures Cmd/Ctrl+=/-/0 inside the
+  // iframe and forwards the intent here; the extension executes the workbench
+  // zoom command so the ENTIRE window zooms, not just the webview content.
+  "workbench.action.zoomIn",
+  "workbench.action.zoomOut",
+  "workbench.action.zoomReset",
 ]);
 
 /** The bug-session lifecycle sink (amicode#250) — the panels wire the
@@ -150,26 +165,58 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Save bridge (run-card PNG export): downloads are dead inside the framed
-  // app — the extension shows a save dialog and writes the file. PNG-only,
-  // basename-only, bounded size: the payload is untrusted.
+  // Clipboard image bridge: the outer webview's navigator.clipboard.read()
+  // requires user activation (a keystroke on that document), but the user typed
+  // inside the sandboxed iframe — so the async Clipboard API throws in newer
+  // Chromium/Electron. Route through the extension host instead: we spawn a
+  // platform-native tool to read the clipboard image as PNG and reply with a
+  // base64 data URL. Same visibility gate as text reads.
+  if (msg.kind === "clipboard-image-read") {
+    if (!io.visible()) return true;
+    const nonce = (msg as { nonce?: string }).nonce;
+    const tab = (msg as { tab?: string }).tab;
+    void readClipboardImageNative().then((result) => {
+      io.postToWebview({
+        source: "amicode",
+        kind: "clipboard-image",
+        nonce,
+        tab,
+        dataUrl: result?.dataUrl ?? null,
+        mime: result?.mime ?? null,
+        filename: result?.filename ?? null,
+      });
+    });
+    return true;
+  }
+
+  // Save bridge (run-card PNG + session markdown export): downloads are dead
+  // inside the framed app — the extension shows a save dialog and writes the
+  // file. Bounded size, basename-only: the payload is untrusted.
   if (
     msg.kind === "save-file" &&
     typeof (msg as { filename?: unknown }).filename === "string" &&
     typeof (msg as { dataUrl?: unknown }).dataUrl === "string"
   ) {
     const raw = msg as unknown as { filename: string; dataUrl: string };
-    const prefix = "data:image/png;base64,";
-    const base64 = raw.dataUrl.startsWith(prefix) ? raw.dataUrl.slice(prefix.length) : undefined;
     const name = path.basename(raw.filename).replace(/[^\w.-]+/g, "-");
-    if (!base64 || base64.length > 24_000_000 || !name.endsWith(".png")) return true;
+    if (!name || !/\.(png|md|markdown|txt)$/i.test(name)) return true;
+    let base64: string | undefined;
+    if (raw.dataUrl.startsWith("data:image/png;base64,")) base64 = raw.dataUrl.slice("data:image/png;base64,".length);
+    else if (raw.dataUrl.startsWith("data:text/markdown;base64,")) base64 = raw.dataUrl.slice("data:text/markdown;base64,".length);
+    else if (raw.dataUrl.startsWith("data:text/plain;base64,")) base64 = raw.dataUrl.slice("data:text/plain;base64,".length);
+    else {
+      const m = raw.dataUrl.match(/^data:[^;]+;base64,(.+)$/s);
+      if (m) base64 = m[1];
+    }
+    if (!base64 || base64.length > 24_000_000) return true;
+    const isPng = name.toLowerCase().endsWith(".png");
     void (async () => {
       const target = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(os.homedir(), "Downloads", name)),
-        filters: { Images: ["png"] },
+        filters: isPng ? { Images: ["png"] } : { Markdown: ["md", "txt", "markdown"] },
       });
       if (!target) return;
-      await vscode.workspace.fs.writeFile(target, Buffer.from(base64, "base64"));
+      await vscode.workspace.fs.writeFile(target, Buffer.from(base64!, "base64"));
       const pick = await vscode.window.showInformationMessage(`Amicode: saved ${path.basename(target.fsPath)}`, "Reveal");
       if (pick === "Reveal") await vscode.commands.executeCommand("revealFileInOS", target);
     })();
@@ -258,34 +305,40 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     };
 
     if (!enabled) {
-      // Toggle OFF: clear overrides, restore marketplace extension, and reload.
+      // Toggle OFF: clear overrides, reinstall the marketplace extension, and reload.
       void vscode.workspace.getConfiguration("amicode").update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
 
-      // Restore the marketplace extension dist if a backup exists
+      // Guard: write a temporary marker so onboarding won't re-trigger after
+      // the reinstall. The marker is consumed (deleted) on next activation.
+      // A manual uninstall by the user does NOT write this marker, so
+      // onboarding correctly re-triggers for genuine fresh installs.
+      try {
+        const { writeDevtoolsRestoreMarker } = require("./substrate/vault_store") as typeof import("./substrate/vault_store");
+        writeDevtoolsRestoreMarker();
+      } catch { /* non-critical — worst case onboarding re-shows */ }
+
+      // Reinstall from the marketplace to restore the user's current release.
+      // The old backup approach was fragile (went stale on extension updates).
+      // Uninstall+install is the only reliable way to restore a clean dist —
+      // `--force` alone says "already installed" for the same version.
       const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
       if (installedExt) {
-        const backupDist = path.join(installedExt.extensionPath, "dist.marketplace-backup");
-        const installedDist = path.join(installedExt.extensionPath, "dist");
-        if (fs.existsSync(backupDist)) {
-          try {
-            const backupFiles = fs.readdirSync(backupDist).filter(f => f.endsWith(".js") || f.endsWith(".js.map"));
-            for (const f of backupFiles) {
-              fs.copyFileSync(path.join(backupDist, f), path.join(installedDist, f));
-            }
-            console.log("[amicode/bridge] restored marketplace dist from backup");
-          } catch (restoreErr) {
-            console.warn("[amicode/bridge] marketplace dist restore failed:", restoreErr);
+        const { exec } = require("child_process") as typeof import("child_process");
+        const extId = "harmoniqs.amicode";
+        exec(`code --uninstall-extension ${extId} && code --install-extension ${extId}`, { timeout: 60_000 }, (err) => {
+          if (err) {
+            console.warn("[amicode/bridge] marketplace reinstall failed:", err.message);
+          } else {
+            console.log("[amicode/bridge] reinstalled marketplace extension");
           }
-        }
+          void vscode.commands.executeCommand("workbench.action.reloadWindow");
+        });
+      } else {
+        void vscode.commands.executeCommand("workbench.action.reloadWindow");
       }
 
-      // Don't restart server separately — reloading the window does it.
-      // Don't send reloadNeeded — the auto-reload handles it silently.
       io.postToWebview(reply);
-      setTimeout(() => {
-        void vscode.commands.executeCommand("workbench.action.reloadWindow");
-      }, 300);
       return true;
     }
 
@@ -376,7 +429,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
       // Build + reload is async; fire-and-forget from the sync handler.
       void (async () => {
-        const { exec } = await import("child_process");
+      const { exec } = await import("child_process");
         const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
           exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
             if (err) {
@@ -454,7 +507,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
       try {
         // ── Session DB backup ──
-        const dbDir = path.join(os.homedir(), ".local", "share", "opencode");
+        const sessionDbSetting = vscode.workspace.getConfiguration("amicode").get<string>("sessionDatabase", "").trim();
+        const dbDir = resolveDbBackupDir(sessionDbSetting);
         const backupDir = path.join(dbDir, `.backup-${new Date().toISOString().replace(/[:.]/g, "-")}`);
         try {
           const files = fs.readdirSync(dbDir).filter(f => f.startsWith("opencode") && f.endsWith(".db"));
@@ -494,6 +548,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           }
         }
 
+        // ── Install opencode dependencies ──
+        const installOc = await run("bun install", opencodePath);
+        if (!installOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `opencode install failed: ${installOc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
         // ── Build opencode ──
         const ocBuildDir = path.join(opencodePath, "packages", "opencode");
         const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir);
@@ -501,6 +565,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
             state: "failed", error: `opencode build failed: ${buildOc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
+        // ── Install amicode dependencies ──
+        const installAc = await run("pnpm install", amicodePath);
+        if (!installAc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `amicode install failed: ${installAc.error?.slice(0, 150)}`,
           });
           return;
         }
@@ -594,7 +668,22 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
               console.warn(`[amicode/bridge] ${f} sync failed:`, syncErr);
             }
           }
-          console.log("[amicode/bridge] synced content dirs + markdown to installed extension");
+          // Sync package.json — VS Code reads view/command contributions from
+          // the installed extension's package.json at activation time. Without
+          // this, a rebuilt extension.js that references renamed or new views
+          // (e.g. amicode.workspace vs the old amicode.armonia) fails with
+          // "No view is registered with id: ..." because the stale manifest
+          // doesn't declare them.
+          try {
+            const src = path.join(amicodePath, "packages", "extension", "package.json");
+            const dest = path.join(installedExt.extensionPath, "package.json");
+            if (fs.existsSync(src)) {
+              fs.copyFileSync(src, dest);
+            }
+          } catch (syncErr) {
+            console.warn("[amicode/bridge] package.json sync failed:", syncErr);
+          }
+          console.log("[amicode/bridge] synced content dirs + markdown + package.json to installed extension");
         }
 
         // ── Apply VS Code settings ──
@@ -624,6 +713,123 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       } catch (e: unknown) {
         io.postToWebview({
           source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+          state: "failed", error: e instanceof Error ? e.message : "Unknown error",
+        });
+      }
+    })();
+
+    return true;
+  }
+
+  // Devcontainer VSIX build: builds both repos using the pnpm-based workflow
+  // and emits a .vsix to the configured output path for manual installation.
+  if (msg.kind === "dev-tools-build-vsix") {
+    const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
+      : "";
+    const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
+      : "";
+    const outputPath = typeof (msg as { outputPath?: unknown }).outputPath === "string"
+      ? (msg as unknown as { outputPath: string }).outputPath.trim().replace(/^~/, os.homedir())
+      : "";
+
+    if (!opencodePath || !amicodePath || !outputPath) {
+      io.postToWebview({
+        source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+        state: "failed", error: "All three paths (opencode, amicode, output) must be set",
+      });
+      return true;
+    }
+
+    io.postToWebview({
+      source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+      state: "building",
+    });
+
+    void (async () => {
+      const { exec, execFile } = await import("child_process");
+      const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string; stdout?: string }> =>
+        new Promise((resolve) => {
+          exec(cmd, { cwd, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS ?? "--max-old-space-size=4096", AMICODE_OPENCODE_SRC: opencodePath } },
+            (err, stdout, stderr) => {
+              if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
+              else resolve({ ok: true, stdout: stdout?.trim() });
+            });
+        });
+
+      try {
+        // ── Step 1: Install opencode deps (bun-based repo) ──
+        const installOc = await run("bun install", opencodePath);
+        if (!installOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `bun install (opencode) failed: ${installOc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 2: Install amicode deps (pnpm-based repo) ──
+        const installAc = await run("pnpm install", amicodePath);
+        if (!installAc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `pnpm install (amicode) failed: ${installAc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 3: Build extension bundle (esbuild) ──
+        const buildExt = await run("pnpm --filter amicode build", amicodePath);
+        if (!buildExt.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `pnpm build failed: ${buildExt.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 4: Build opencode binary + vendor it ──
+        const buildOc = await run("pnpm --filter amicode opencode:build", amicodePath);
+        if (!buildOc.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `opencode:build failed: ${buildOc.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        // ── Step 5: Package vsix ──
+        const extDir = path.join(amicodePath, "packages", "extension");
+        const vsixName = `amicode-${Date.now()}.vsix`;
+        const vsixDest = path.join(outputPath, vsixName);
+
+        fs.mkdirSync(outputPath, { recursive: true });
+
+        // Use execFile (no shell) to avoid command injection via outputPath
+        const packResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
+          execFile("pnpm", ["exec", "vsce", "package", "--no-dependencies", "--allow-missing-repository", "-o", vsixDest],
+            { cwd: extDir, timeout: 300_000, env: { ...process.env, NODE_OPTIONS: process.env.NODE_OPTIONS ?? "--max-old-space-size=4096", AMICODE_OPENCODE_SRC: opencodePath } },
+            (err, _stdout, stderr) => {
+              if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
+              else resolve({ ok: true });
+            });
+        });
+        if (!packResult.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `vsce package failed: ${packResult.error?.slice(0, 200)}`,
+          });
+          return;
+        }
+
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
+          state: "done", vsixPath: vsixDest,
+        });
+      } catch (e: unknown) {
+        io.postToWebview({
+          source: "amicode", kind: "dev-tools-build-vsix-status", tab: (msg as { tab?: string }).tab,
           state: "failed", error: e instanceof Error ? e.message : "Unknown error",
         });
       }
@@ -703,10 +909,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "data-storage-query") {
     // Resolve the XDG defaults that opencode would use if no override is set.
     // Display with ~/ prefix for readability (consistent with Developer Tools).
-    const xdgData = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
-    const xdgConfig = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
-    const defaultDbPath = path.join(xdgData, "opencode", "opencode.db");
-    const defaultConfigDir = path.join(xdgConfig, "opencode");
+    const defaultDbPath = path.join(opencodeDataDir(), "opencode.db");
+    const defaultConfigDir = opencodeConfigDir();
     const home = os.homedir();
     const shorten = (p: string) => p.startsWith(home) ? "~" + p.slice(home.length) : p;
     io.postToWebview({
@@ -803,4 +1007,236 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Native clipboard image reader
+// ---------------------------------------------------------------------------
+// Reads the system clipboard image using platform-native tools. Returns a
+// base64 data URL on success, null if the clipboard holds no image or the
+// platform isn't supported. This sidesteps the Chromium user-activation
+// requirement that blocks navigator.clipboard.read() in the webview.
+
+interface ClipboardImageResult {
+  dataUrl: string;
+  mime: string;
+  filename: string;
+}
+
+async function readClipboardImageNative(): Promise<ClipboardImageResult | null> {
+  const platform = process.platform;
+  try {
+    if (platform === "darwin") {
+      return await readClipboardImageMac();
+    } else if (platform === "linux") {
+      return await readClipboardImageLinux();
+    } else if (platform === "win32") {
+      return await readClipboardImageWindows();
+    }
+  } catch {
+    // Any failure → no image
+  }
+  return null;
+}
+
+function execPromise(
+  cmd: string,
+  args: string[],
+  options?: { encoding?: "buffer" | BufferEncoding; timeout?: number },
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    import("node:child_process").then(({ execFile }) => {
+      execFile(cmd, args, { timeout: options?.timeout ?? 3000, maxBuffer: 20 * 1024 * 1024, encoding: "buffer" }, (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout as unknown as Buffer);
+      });
+    });
+  });
+}
+
+async function readClipboardImageMac(): Promise<ClipboardImageResult | null> {
+  // Priority 1: If the clipboard has a file URL pointing to an image, read the
+  // file directly. Finder file copies put the file icon as image data and the
+  // file path as public.file-url — we want the actual file contents.
+  try {
+    const fileUrlScript = [
+      'use framework "AppKit"',
+      "set pb to current application's NSPasteboard's generalPasteboard()",
+      'set furlType to "public.file-url"',
+      "set urlStr to (pb's stringForType:furlType) as text",
+      "if urlStr is missing value or urlStr is \"\" then",
+      '  error "no file url"',
+      "end if",
+      "return urlStr",
+    ].join("\n");
+    const urlOut = await execPromise("osascript", ["-l", "AppleScript", "-e", fileUrlScript]);
+    const fileUrl = urlOut.toString("utf8").trim();
+    if (fileUrl) {
+      const { readFileSync, existsSync } = await import("node:fs");
+      const { basename } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      // Resolve macOS .file ID URLs via osascript
+      let filePath: string;
+      if (fileUrl.startsWith("file:///.file/id=")) {
+        const resolveScript = `POSIX path of ("${fileUrl}" as POSIX file)`;
+        const resolved = await execPromise("osascript", ["-e", resolveScript]);
+        filePath = resolved.toString("utf8").trim();
+      } else {
+        filePath = fileURLToPath(fileUrl);
+      }
+      const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+      if (filePath && imageExts.test(filePath) && existsSync(filePath)) {
+        const buf = readFileSync(filePath);
+        const ext = filePath.match(imageExts)![1].toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+        return {
+          dataUrl: `data:${mime};base64,${buf.toString("base64")}`,
+          mime,
+          filename: basename(filePath),
+        };
+      }
+    }
+  } catch {
+    // No file URL or not an image file — fall through to pasteboard image
+  }
+
+  // Priority 2: Read clipboard image via osascript + NSPasteboard. Try PNG first
+  // (covers screenshots, browser copies), then fall back to TIFF (some apps only
+  // put TIFF on the pasteboard). The TIFF path writes to a temp file and uses
+  // `sips` to convert rather than fighting AppleScript-ObjC's syntax for
+  // NSBitmapImageRep.
+  const pngScript = [
+    'use framework "AppKit"',
+    "set pb to current application's NSPasteboard's generalPasteboard()",
+    "set pngType to current application's NSPasteboardTypePNG",
+    "set imgData to pb's dataForType:pngType",
+    "if imgData is missing value then",
+    '  error "no image"',
+    "end if",
+    "set rawBytes to (imgData's base64EncodedStringWithOptions:0) as text",
+    "return rawBytes",
+  ].join("\n");
+
+  try {
+    const stdout = await execPromise("osascript", ["-l", "AppleScript", "-e", pngScript]);
+    const base64 = stdout.toString("utf8").trim();
+    if (base64) {
+      return { dataUrl: `data:image/png;base64,${base64}`, mime: "image/png", filename: "pasted-image.png" };
+    }
+  } catch {
+    // PNG not on clipboard — try TIFF path
+  }
+
+  // TIFF fallback: write raw TIFF to a temp file, convert with sips
+  const tiffScript = [
+    'use framework "AppKit"',
+    'use framework "Foundation"',
+    "set pb to current application's NSPasteboard's generalPasteboard()",
+    "set tiffType to current application's NSPasteboardTypeTIFF",
+    "set imgData to pb's dataForType:tiffType",
+    "if imgData is missing value then",
+    '  error "no image"',
+    "end if",
+    "set rawBytes to (imgData's base64EncodedStringWithOptions:0) as text",
+    "return rawBytes",
+  ].join("\n");
+
+  try {
+    const { writeFileSync, readFileSync, unlinkSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+
+    const stdout = await execPromise("osascript", ["-l", "AppleScript", "-e", tiffScript]);
+    const tiffBase64 = stdout.toString("utf8").trim();
+    if (!tiffBase64) return null;
+
+    // Write TIFF, convert to PNG with sips
+    const tiffPath = join(tmpdir(), `amicode-paste-${Date.now()}.tiff`);
+    const pngPath = tiffPath.replace(".tiff", ".png");
+    writeFileSync(tiffPath, Buffer.from(tiffBase64, "base64"));
+    await execPromise("sips", ["-s", "format", "png", tiffPath, "--out", pngPath]);
+    const pngBuf = readFileSync(pngPath);
+    unlinkSync(tiffPath);
+    unlinkSync(pngPath);
+
+    return { dataUrl: `data:image/png;base64,${pngBuf.toString("base64")}`, mime: "image/png", filename: "pasted-image.png" };
+  } catch {
+    return null;
+  }
+}
+
+async function readClipboardImageLinux(): Promise<ClipboardImageResult | null> {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { basename } = await import("node:path");
+
+  // Priority 1: file URI list (Nautilus/Dolphin file copy)
+  try {
+    const uriOut = await execPromise("xclip", ["-selection", "clipboard", "-t", "text/uri-list", "-o"]);
+    const uri = uriOut.toString("utf8").trim().split("\n")[0];
+    if (uri && uri.startsWith("file://")) {
+      const filePath = decodeURIComponent(uri.replace("file://", ""));
+      const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+      if (imageExts.test(filePath) && existsSync(filePath)) {
+        const buf = readFileSync(filePath);
+        const ext = filePath.match(imageExts)![1].toLowerCase();
+        const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+        return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, mime, filename: basename(filePath) };
+      }
+    }
+  } catch {
+    // No URI list — fall through to image data
+  }
+
+  // Priority 2: raw image data
+  const stdout = await execPromise("xclip", ["-selection", "clipboard", "-t", "image/png", "-o"]);
+  if (!stdout.length) return null;
+  const base64 = stdout.toString("base64");
+  return {
+    dataUrl: `data:image/png;base64,${base64}`,
+    mime: "image/png",
+    filename: "pasted-image.png",
+  };
+}
+
+async function readClipboardImageWindows(): Promise<ClipboardImageResult | null> {
+  const { readFileSync, existsSync } = await import("node:fs");
+  const { basename } = await import("node:path");
+
+  // Priority 1: file drop list (Explorer file copy)
+  try {
+    const fileScript = `
+Add-Type -AssemblyName System.Windows.Forms
+$files = [System.Windows.Forms.Clipboard]::GetFileDropList()
+if ($files.Count -gt 0) { $files[0] } else { exit 1 }
+`;
+    const fileOut = await execPromise("powershell", ["-NoProfile", "-Command", fileScript]);
+    const filePath = fileOut.toString("utf8").trim();
+    const imageExts = /\.(png|jpe?g|gif|webp|avif|tiff?|bmp|heic|svg|ico)$/i;
+    if (filePath && imageExts.test(filePath) && existsSync(filePath)) {
+      const buf = readFileSync(filePath);
+      const ext = filePath.match(imageExts)![1].toLowerCase();
+      const mime = ext === "jpg" ? "image/jpeg" : ext === "tif" ? "image/tiff" : `image/${ext}`;
+      return { dataUrl: `data:${mime};base64,${buf.toString("base64")}`, mime, filename: basename(filePath) };
+    }
+  } catch {
+    // No file drop list — fall through to image data
+  }
+
+  // Priority 2: clipboard image data
+  const script = `
+Add-Type -AssemblyName System.Windows.Forms
+$img = [System.Windows.Forms.Clipboard]::GetImage()
+if ($img -eq $null) { exit 1 }
+$ms = New-Object System.IO.MemoryStream
+$img.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+[Convert]::ToBase64String($ms.ToArray())
+`;
+  const stdout = await execPromise("powershell", ["-NoProfile", "-Command", script]);
+  const base64 = stdout.toString("utf8").trim();
+  if (!base64) return null;
+  return {
+    dataUrl: `data:image/png;base64,${base64}`,
+    mime: "image/png",
+    filename: "pasted-image.png",
+  };
 }

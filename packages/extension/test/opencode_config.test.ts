@@ -8,6 +8,7 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  validatedModelPin,
   profileHasIdentity,
   routingSection,
 } from "../src/opencode_config";
@@ -93,9 +94,9 @@ describe("buildOpencodeConfigContent", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(cfg.agent ?? {}).toEqual({}); // no custom agents: the interview lives in AGENTS.md, agent-agnostic
   });
-  it("pins default_agent to plan (plan-first posture for new sessions)", () => {
+  it("pins default_agent to build (build-first posture — onboarding needs edit tools)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.default_agent).toBe("plan"); // read-only open; the user switches to build to execute
+    expect(cfg.default_agent).toBe("build"); // onboarding and interview need tool execution from the start
   });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
@@ -244,9 +245,9 @@ describe.skipIf(!existsSync(OC_BIN))("opencode config injection + merge (1.17.3)
     // stdout at module scope (its load line must stay on stderr).
     expect(cfg.plugin).toHaveLength(1);
     expect(cfg.plugin[0].endsWith(join("opencode-plugin", "amicode_tools.ts"))).toBe(true);
-    // #389: the pulse-designer agent shell is retired; default is plan.
+    // #389: the pulse-designer agent shell is retired; default is build.
     expect(cfg.agent?.["pulse-designer"]).toBeUndefined();
-    expect(cfg.default_agent).toBe("plan");
+    expect(cfg.default_agent).toBe("build");
   });
 });
 
@@ -368,5 +369,68 @@ describe("profileHasIdentity (wizard → overture gate)", () => {
     expect(profileHasIdentity(fp)).toBe(true);
     writeFileSync(fp, "not json");
     expect(profileHasIdentity(fp)).toBe(false); // corrupt → safe default (onboard)
+  });
+});
+
+describe("validatedModelPin — XDG and configDir override (#562)", () => {
+  it("respects XDG_CONFIG_HOME when resolving opencode.json", () => {
+    const xdgDir = mkdtempSync(join(tmpdir(), "xdg-config-"));
+    mkdirSync(join(xdgDir, "opencode"), { recursive: true });
+    writeFileSync(
+      join(xdgDir, "opencode", "opencode.json"),
+      JSON.stringify({ provider: { anthropic: {} } }),
+    );
+    const prev = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgDir;
+    try {
+      // The pin's provider IS in the config at the XDG path → returned
+      expect(validatedModelPin("anthropic/claude-sonnet-4-5")).toBe("anthropic/claude-sonnet-4-5");
+      // A provider NOT in the config → undefined
+      expect(validatedModelPin("openai/gpt-4o")).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prev;
+    }
+  });
+
+  it("configDir parameter wins over XDG_CONFIG_HOME", () => {
+    // Set up XDG path with anthropic only
+    const xdgDir = mkdtempSync(join(tmpdir(), "xdg-config-"));
+    mkdirSync(join(xdgDir, "opencode"), { recursive: true });
+    writeFileSync(
+      join(xdgDir, "opencode", "opencode.json"),
+      JSON.stringify({ provider: { anthropic: {} } }),
+    );
+    // Set up configDir override with openai only
+    const configDir = mkdtempSync(join(tmpdir(), "config-override-"));
+    writeFileSync(
+      join(configDir, "opencode.json"),
+      JSON.stringify({ provider: { openai: {} } }),
+    );
+    const prev = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = xdgDir;
+    try {
+      // configDir wins: openai is in the override config → returned
+      expect(validatedModelPin("openai/gpt-4o", configDir)).toBe("openai/gpt-4o");
+      // anthropic is NOT in the override config (even though it's in XDG) → undefined
+      expect(validatedModelPin("anthropic/claude-sonnet-4-5", configDir)).toBeUndefined();
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prev;
+    }
+  });
+
+  it("falls back to default XDG path when neither configDir nor XDG_CONFIG_HOME is set", () => {
+    // When no config file exists at the resolved path, the function trusts the pin (first boot behavior).
+    // We use a non-existent XDG_CONFIG_HOME to ensure no file is found at the resolved path.
+    const prev = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = "/nonexistent-xdg-path-562";
+    try {
+      // No config file at /nonexistent-xdg-path-562/opencode/opencode.json → trusts the pin
+      expect(validatedModelPin("anthropic/claude-sonnet-4-5")).toBe("anthropic/claude-sonnet-4-5");
+    } finally {
+      if (prev === undefined) delete process.env.XDG_CONFIG_HOME;
+      else process.env.XDG_CONFIG_HOME = prev;
+    }
   });
 });

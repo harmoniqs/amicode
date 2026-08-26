@@ -1,0 +1,13 @@
+{
+  "confidence": "medium",
+  "date": "2026-08-22",
+  "evidence": [],
+  "provenance": [
+    "experiments/x.md"
+  ],
+  "provenance_unrecoverable": true,
+  "reviewed_after": "journal/pass-1.md",
+  "source": "s",
+  "tags": [],
+  "type": "insight"
+}

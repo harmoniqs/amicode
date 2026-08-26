@@ -1,0 +1,49 @@
+# Dev gate pack — the contract of record for the dev mode's phase graph,
+# gates, roles, and handoffs, extracted from the issue-DAG walk (decompose,
+# per-slice implementation, integration) and its implementer role contract.
+
+closing_artifact = "landed-delta record (issues closed, PRs merged, advisories resolved)"
+
+[[phases]]
+name = "decompose"
+
+  [[phases.gates]]
+  name = "dev-gate"
+  kind = "mechanical"
+  owner = "director"
+  procedure = "Attach every unit of package work to an issue and a PR before any file is modified: the walk validates each issue exists and is open and establishes the branch-and-PR topology before dispatching the first slice."
+
+  [[phases.gates]]
+  name = "blocked-by-clearance"
+  kind = "mechanical"
+  owner = "director"
+  procedure = "Read each slice's blocked-by dependencies before creating any branch; a slice with an open blocker is never started and sits blocked until the blocker's PR merges."
+
+[[phases]]
+name = "implement"
+roles = ["implementer"]
+
+  [[phases.gates]]
+  name = "tdd-red-green"
+  kind = "mechanical"
+  owner = "implementer"
+  procedure = "Drive each acceptance criterion through a red-then-green tracer bullet on the caller-provided worktree branch; never delete, skip, or mark a test broken to force green, and report a red that will not go green as a failed return rather than a negotiation."
+
+[[phases]]
+name = "integrate"
+
+  [[phases.gates]]
+  name = "draft-pr-lifecycle"
+  kind = "derived"
+  owner = "director"
+  procedure = "Open the PR as a draft at the first commit — never before it — and mark it ready only when the full suite is green; in the orchestrated walk the implementer opens no PR and never merges, and the director merges green branches sequentially, never partial or non-green work."
+
+  [[phases.gates]]
+  name = "review"
+  kind = "human"
+  owner = "human"
+  procedure = "A unit finishing under human-in-the-loop review has its ready PR approved by a reviewer who is never the implementer, and no merge happens before that approval."
+
+[[handoffs]]
+kind = "hypothesis_seed"
+target = "autoresearch"

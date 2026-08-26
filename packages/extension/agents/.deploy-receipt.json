@@ -1,0 +1,31 @@
+{
+  "receipt_version": 1,
+  "deployed_at": "2026-08-23T12:56:11.089Z",
+  "dry_run": false,
+  "sources": [
+    {
+      "card": "autodev.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/autodev.md",
+      "sha256": "sha256:5094b3938f845b769898ae452c8a55f743eb9dfa4e1c2ee6993837efd58110cb"
+    },
+    {
+      "card": "autoresearch.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/autoresearch.md",
+      "sha256": "sha256:c3238c7b395fe6b9ab9d065c2c5fab18017e4b1e83c64ce1cfc99f2546b1f828"
+    }
+  ],
+  "destinations": [
+    {
+      "label": "staging",
+      "path": "/Users/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents",
+      "deployed": true,
+      "verified": true
+    },
+    {
+      "label": "global",
+      "path": "/Users/aaron/.config/opencode/agents",
+      "deployed": true,
+      "verified": true
+    }
+  ]
+}

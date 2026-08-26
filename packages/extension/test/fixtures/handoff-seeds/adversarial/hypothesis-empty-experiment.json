@@ -1,0 +1,8 @@
+{
+  "kind": "hypothesis",
+  "observation": "An empty suggested_experiment field renders a hypothesis card whose experiment line is blank",
+  "evidence": [
+    "experiments/experiment-20260822-193053-rwa-breakdown.md"
+  ],
+  "suggested_experiment": ""
+}

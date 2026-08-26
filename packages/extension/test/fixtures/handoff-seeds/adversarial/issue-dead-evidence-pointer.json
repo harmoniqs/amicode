@@ -1,0 +1,11 @@
+{
+  "kind": "issue",
+  "title": "Cat-state solves stall without a Fock-cutoff sufficiency guard",
+  "motivation": "Six failed cavity preps share one signature: a Fock cutoff too small for the target state's transients, silently truncating the state and corrupting the fidelity; the authoring flow never warns.",
+  "evidence": [
+    "insights/insight-20260822-063401-drift-detector-threshold.md",
+    "insights/insight-19700101-000000-never-recorded.md"
+  ],
+  "suggested_repo": "amicode",
+  "suggested_tier": "chore"
+}

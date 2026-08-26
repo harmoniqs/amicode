@@ -1,0 +1,17 @@
+{
+  "a_cards": [
+    "knowledge/feedback-piccolissimo.md"
+  ],
+  "b_cards": [
+    "knowledge/insight-magnus-strong.md"
+  ],
+  "date": "2026-08-22",
+  "evidence": [
+    "experiments/e8.md"
+  ],
+  "subject": "magnus-integrator",
+  "tags": [
+    "integrators"
+  ],
+  "type": "tension"
+}

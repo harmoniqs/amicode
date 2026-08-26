@@ -6,7 +6,7 @@ import { loadRepertoire } from "./scores/loader";
 import { loadPacks } from "./scores/packs";
 import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./scores/entitlements";
 import { buildRouterSection } from "./scores/router";
-import { compileScore, spliceIntoAgentsMd, compileChainedScore, chainManifest } from "./scores/compiler";
+import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
   resolveLibrarySkills,
   resolvePackageSkills,
@@ -18,23 +18,15 @@ import {
 } from "./scores/package_skills";
 import { readSolverModeState } from "./solver_mode";
 import { studioPathsOrLegacy } from "@amicode/schema";
+import { opencodeConfigDir } from "./opencode_xdg";
 import { buildRoutingSection, readRoutingContext } from "./routing";
 import {
   readProfileMd,
-  readKnowledgeLines,
-  readDemoLines,
-  readMemoryIndexLines,
   hasOnboardingCompleted,
   onboardingDir,
+  consumeDevtoolsRestoreMarker,
 } from "./substrate/vault_store";
 import { resolveMountStack, personalMount, type Mount, type MountStack } from "./substrate/mount_store";
-import {
-  buildAboutUserSection,
-  buildRecentProblemsSection,
-  buildReferenceDemosSection,
-  buildMountStackSection,
-  buildMemoryIndexSection,
-} from "./substrate/user_splice";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -114,13 +106,13 @@ export function resolveJuliaProject(configValue: string): string {
  *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
  *      pass this explicitly once .vsix packaging of opencode-plugin/ is
  *      verified; the default keeps existing call sites working unchanged.
- *    - `default_agent: "plan"` — plan-first posture: new sessions open on
- *      opencode's built-in read-only plan agent, not straight into execution.
- *      The picker stays plan/build ONLY (roles-not-modes, #368): the interview
- *      content lives in the compiled AGENTS.md score section (visible to every
- *      agent), and the pulse-designer agent entry is RETIRED (#389) — it was
- *      a four-line prompt shell over the config-root permission block, doing
- *      nothing build did not already do.
+ *    - `default_agent: "build"` — build-first posture: new sessions open on
+ *      opencode's build agent so onboarding and the interview can execute tools
+ *      immediately. The picker stays plan/build ONLY (roles-not-modes, #368):
+ *      the interview content lives in the compiled AGENTS.md score section
+ *      (visible to every agent), and the pulse-designer agent entry is RETIRED
+ *      (#389) — it was a four-line prompt shell over the config-root permission
+ *      block, doing nothing build did not already do.
  *    - an `external_directory` grant for the Problem-workspaces root, so the
  *      AGENT's file tools can read back system/formulation/run/event TOML the
  *      plugin wrote (the plugin's own fs writes are host-process calls and need
@@ -179,13 +171,13 @@ export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
   { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public"] },
   { path: path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills"), surfaces: ["internal"] },
 ];
-/** The physics/optimization skill subset (formerly `surface: product`, now `public`) —
- *  a documentation/reference anchor, NOT a selection input (selection is purely by
- *  frontmatter `surface: public`, see resolveLibrarySkills). The discovery test uses it
- *  as a superset check: each of these must appear in the discovered public set. */
-export const DEFAULT_PLATFORM_SKILLS = [
+/** The quantum-control skill subset — now internal (surface: internal, lives in
+ *  armonissima per ADR 0008). Retained here ONLY as a documentation anchor
+ *  listing which skills moved; the discovery test no longer checks these against
+ *  the public set. Selection is purely by frontmatter `surface` + root admission. */
+export const QUANTUM_CONTROL_SKILLS = [
   "atoms",
-  "pasqal", // the neutral-atom DEVICE path (solve -> Pulser -> emulator/QPU)
+  "pasqal",
   "bosonic",
   "fluxonium",
   "ions",
@@ -195,6 +187,14 @@ export const DEFAULT_PLATFORM_SKILLS = [
   "plot",
   "objectives",
   "demo",
+  "compose",
+  "constraints",
+  "design-a-pulse",
+  "multistart",
+  "problem-types",
+  "simulate",
+  "structural-analysis",
+  "warm-start",
 ];
 
 /** Bundled spec-C authoring assets (absolute), resolved relative to this module.
@@ -390,6 +390,33 @@ export function resolveModelPin(): string | undefined {
   return undefined;
 }
 
+/** Validate a model pin against the user's configured providers.
+ *  Returns the pin unchanged if its provider is configured, otherwise undefined.
+ *  This prevents injecting a stale pin that references a disconnected provider
+ *  (which causes 500s when the server tries to resolve it).
+ *  @param configDir Optional override directory (from amicode.configDir setting).
+ *    Priority: configDir > XDG_CONFIG_HOME > default. */
+export function validatedModelPin(pin: string | undefined, configDir?: string): string | undefined {
+  if (!pin) return undefined;
+  const providerID = pin.split("/")[0];
+  if (!providerID) return undefined;
+  // Read the user's global opencode.json to check configured providers
+  const configPath = configDir
+    ? path.join(configDir, "opencode.json")
+    : path.join(opencodeConfigDir(), "opencode.json");
+  try {
+    if (!fs.existsSync(configPath)) return pin; // no config → trust the pin (first boot)
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    const providers = Object.keys(raw?.provider ?? {});
+    if (providers.length === 0) return pin; // no providers section → trust the pin
+    // The pin's provider must be in the configured set
+    if (providers.includes(providerID)) return pin;
+    return undefined; // provider not configured — don't inject stale pin
+  } catch {
+    return pin; // can't read config → trust the pin
+  }
+}
+
 export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
@@ -410,6 +437,11 @@ export function buildOpencodeConfigContent(
    *  When false we OMIT the key entirely (rather than force it false) so a user's
    *  own global `experimental.openTelemetry` is never clobbered by the deep-merge. */
   telemetryOpen: boolean = false,
+  /** Additional plugin paths to register alongside pluginPath. Each entry is an
+   *  absolute path to a .ts plugin file. Used to register the amicode_context
+   *  plugin (experimental.chat.system.transform hook) without touching the
+   *  single-export amicode_tools pack. */
+  extraPluginPaths: string[] = [],
 ): string {
   const templatesDir = path.dirname(templatePath);
   // Least-privilege read grants for the skill index (spec §3): each indexed
@@ -425,16 +457,15 @@ export function buildOpencodeConfigContent(
   const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    // Plan-first posture (product default for ALL users): every new Amicode
-    // session opens on opencode's built-in, read-only `plan` agent; execution
-    // (the pulse-designer interview, solves) starts only when the user switches
-    // agents in the composer. Like everything in this blob, it deep-merges OVER
-    // the user's global config — an explicit per-message `agent` (the e2e tests,
-    // the distiller's --agent) is unaffected.
-    default_agent: "plan",
+    // Build-first posture (product default for ALL users): every new Amicode
+    // session opens on opencode's `build` agent so the onboarding interview and
+    // solves can execute tools immediately. Like everything in this blob, it
+    // deep-merges OVER the user's global config — an explicit per-message `agent`
+    // (the e2e tests, the distiller's --agent) is unaffected.
+    default_agent: "build",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
-    plugin: [pluginPath],
+    plugin: [pluginPath, ...extraPluginPaths],
     ...(skills ? { skills } : {}),
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
     // into cfg.experimental alongside any user keys (see telemetryOpen above).
@@ -453,8 +484,8 @@ export function buildOpencodeConfigContent(
         [`${SCRATCH_DIR}/**`]: "allow", // solve.jl + solve.log it writes
         [`/private${SCRATCH_DIR}/**`]: "allow", // macOS: /tmp → /private/tmp
         [`${runsRoot}/**`]: "allow", // run read-backs: FINISHED/result.toml/run.log
-        [`${path.join(os.homedir(), ".amico", "library")}/**`]: "allow", // uploaded papers ("read my latest paper" — home Library card)
-        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces the agent reads back
+        [`${path.join(os.homedir(), ".amico")}/**`]: "allow", // the whole amicode state tree: profile, problems, runs, library, onboarding
+        [`${problemsRoot()}/**`]: "allow", // amicode_* problem workspaces (may be overridden outside ~/.amico)
         [`${scoresRoot}/**`]: "allow", // score templates + memory hooks ([Why?]) the agent reads
         ...skillGrants, // per-indexed-skill dirs (spec §3, least-privilege)
         // Armonia mount stack (spec-20260707-002846 C1): a READ grant per mount
@@ -602,26 +633,26 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const visible = filterRepertoire(repertoire, ents.entitlements);
     const score0 = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.primary ?? "pulse-designer"));
     const overture = visible.find((s) => s.manifest.id === (pack?.manifest.onboarding.head ?? "overture"));
-    // Routing predicate (spec §3): onboard (chain overture → pulse-designer)
-    // ONLY when there is a vault to remember into AND the user has neither a
-    // materialized profile NOR a completion marker (the second disjunct closes
-    // the ~2-min materialization window; an empty/whitespace PROFILE.md counts
-    // as absent via readProfileMd). No vault ⇒ never onboard (nowhere to
-    // materialize) — just run pulse-designer.
+    // Routing predicate (spec §3): onboard (standalone overture) ONLY when
+    // there is a vault to remember into AND the user has neither a materialized
+    // profile NOR a completion marker. The overture is NEVER chained into
+    // pulse-designer — domain interviews start in subsequent sessions via the
+    // onset router.
     const shouldOnboard =
       !!overture &&
-      !!score0 &&
       vaultDir !== "" &&
       readProfileMd(vaultDir) === "" &&
       !hasOnboardingCompleted(onboardingDir()) &&
+      !consumeDevtoolsRestoreMarker() &&
       !profileHasIdentity(); // the welcome WIZARD already collected identity — don't re-interview
-    if (shouldOnboard && overture && score0) {
-      // Chained: ONE compiled section, ONE manifest (id `overture`, stages =
-      // overture ++ pulse-designer) so the score guard sees the whole flow.
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileChainedScore(overture, score0));
+    if (shouldOnboard && overture) {
+      // Standalone overture: the onboarding interview runs alone, no domain
+      // score chained after it. The pulse-designer (or any domain interview)
+      // starts in the NEXT session via the onset router.
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(overture));
       const manifestJson =
         JSON.stringify(
-          { manifest: chainManifest(overture, score0), score_dir: overture.dir, project_dir: projectDir },
+          { manifest: overture.manifest, score_dir: overture.dir, project_dir: projectDir },
           null,
           2,
         ) + "\n";
@@ -629,7 +660,19 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       fs.mkdirSync(problemsRoot(), { recursive: true });
       fs.writeFileSync(path.join(problemsRoot(), "score_manifest.json"), manifestJson);
     } else if (score0) {
-      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), compileScore(score0));
+      // Post-onboarding: the model does NOT proactively start any interview,
+      // but the overture content IS compiled in so "begin onboarding" works
+      // without a window reload. The onset router gates when it runs.
+      const preamble = [
+        "<!-- AMICODE_SCORE_SECTION -->",
+        "",
+        "You are a general-purpose autoresearch copilot. Do NOT proactively start",
+        "any domain-specific interview (pulse design, calibration, etc.) unless the",
+        "user explicitly asks for it. When they do, invoke the relevant skill from",
+        "the Skill index and follow the workflow in the ## Workflow section above.",
+      ].join("\n");
+      const overtureBlock = overture ? `\n\n${compileScore(overture)}` : "";
+      finalContent = spliceIntoAgentsMd(filled, buildRouterSection(visible), preamble + overtureBlock);
       // Manifest transport: the opencode plugin (Bun runtime, separate process tree)
       // reads score_manifest.json from the problems ROOT — that is the guard's
       // session-scoped manifestDir (per-problem interview state lives in each
@@ -669,7 +712,11 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     console.warn(`amicode: skill index failed (session continues without it): ${e}`);
   }
 
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
+  // Solver mode, routing, fleet, and the user-memory sections are injected
+  // per-prompt by the amicode_context plugin (see the recovery pointer the
+  // template carries at its tail). Early safe write in case a later step
+  // throws — the second write below is the authoritative one.
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // spec C: write the authoring.json seam amico-run reads (allowlist resolved
   // from the same entitlements the score filter used + the bundled asset paths).
@@ -690,42 +737,16 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   fs.rmSync(path.join(projectDir, "skills"), { recursive: true, force: true });
   const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
 
-  // User-memory splice (spec-20260705-002847 §6): About-this-user + Your-recent-
-  // problems, appended to the compiled content — own try/catch, personalization
-  // trouble must never brick the boot. `vaultDir` was resolved up front (above).
-  // When we routed to the overture (no profile yet) these read empty and add
-  // nothing — correct: there is no memory to splice on the very first session.
-  if (vaultDir) {
-    try {
-      const about = buildAboutUserSection(readProfileMd(vaultDir));
-      const recent = buildRecentProblemsSection(readKnowledgeLines(vaultDir));
-      const demos = buildReferenceDemosSection(readDemoLines(vaultDir)); // L1 §3
-      for (const section of [about, recent, demos]) {
-        if (section) finalContent = finalContent + "\n\n" + section;
-      }
-    } catch (e) {
-      console.warn(`amicode: user-memory splice failed (session continues unpersonalized): ${e}`);
-    }
-  }
-
-  // Mount-stack + memory-index splice (spec-20260707-002846 C3/C4 read side):
-  // its OWN try/catch — mount-parity trouble must never brick the boot. The
-  // mount-stack section renders whenever the stack has mounts (mounts can exist
-  // without a personal vault — e.g. a team-only stack); the typed-memory index
-  // is read from the personal mount, so it is gated on vaultDir. Empty stack
-  // ("" vaultDir) → both builders return "" → nothing is spliced.
-  try {
-    const mountSection = buildMountStackSection(stack);
-    if (mountSection) finalContent = finalContent + "\n\n" + mountSection;
-    if (vaultDir) {
-      const memorySection = buildMemoryIndexSection(readMemoryIndexLines(vaultDir));
-      if (memorySection) finalContent = finalContent + "\n\n" + memorySection;
-    }
-  } catch (e) {
-    console.warn(`amicode: mount-stack/memory-index splice failed (session continues): ${e}`);
-  }
-
-  fs.writeFileSync(agentsPath, finalContent + solverModeSection() + routingSection(), "utf8");
+  // Solver mode, routing, fleet, and the user-memory sections (profile,
+  // recent problems, reference demos, mount stack, memory index) are injected
+  // per-prompt by the amicode_context plugin (experimental.chat.system.transform
+  // hook), read LIVE from disk — a distiller write or a solver switch reaches
+  // the next message without a re-prep or restart (the boot-time file splices
+  // these replaced went stale between sessions; spec-20260705-002847 §6 and
+  // spec-20260707-002846 C3/C4 read side moved to the live hook). The
+  // recovery pointer the template carries at its tail tells the agent where
+  // to read the state directly if the hook ever fails silently.
+  fs.writeFileSync(agentsPath, finalContent, "utf8");
 
   // The agent reads the template from its bundled absolute path (the session
   // cwd is the workspace, not this temp dir — so no copy is made here).

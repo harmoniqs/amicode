@@ -1,0 +1,1124 @@
+@import "@opencode-ai/ui/v2/text-input-v2.css";
+@import "@opencode-ai/ui/v2/button-v2.css";
+
+[data-component="tabs-v2"][data-variant="settings"] {
+  height: 100%;
+}
+
+[data-component="dialog-v2"][data-variant="settings"] [data-slot="dialog-container"] {
+  background: var(--v2-background-bg-base);
+}
+
+[data-component="dialog-v2"][data-variant="settings"] [data-slot="dialog-body"] {
+  padding: 0;
+  overflow: hidden;
+}
+
+.settings-v2-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+  user-select: none;
+}
+
+.settings-v2-panel :is(input, textarea, [contenteditable="true"]) {
+  user-select: text;
+}
+
+.settings-v2-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.settings-v2-tab-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 40px 40px 32px;
+  background: linear-gradient(to bottom, var(--v2-background-bg-base) calc(100% - 24px), transparent);
+}
+
+.settings-v2-tab-title {
+  font-size: 15px;
+  font-weight: 640;
+  line-height: 1;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: 36px;
+  width: 100%;
+  padding: 0 40px 40px;
+}
+
+[data-slot="settings-v2-row-description"] a.settings-v2-link {
+  color: var(--v2-text-text-accent);
+  cursor: pointer;
+  text-decoration: none;
+}
+
+[data-slot="settings-v2-row-description"] a.settings-v2-link:hover {
+  color: var(--v2-text-text-accent-hover);
+}
+
+.settings-v2-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-v2-section-title {
+  padding-bottom: 8px;
+  font-size: 15px;
+  font-weight: 640;
+  line-height: 1;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-section-title + [data-component="settings-v2-list"] {
+  margin-top: -4px;
+  margin-bottom: 0;
+}
+
+[data-component="settings-v2-list"] {
+  border-radius: var(--radius-md);
+  background-color: var(--v2-background-bg-layer-01);
+  padding-inline: 20px;
+  box-shadow: inset 0 0 0 0.5px var(--v2-border-border-muted);
+}
+
+.settings-v2-interface-feature [data-component="settings-v2-list"] {
+  background-color: var(--v2-background-bg-base);
+  box-shadow: var(--v2-elevation-raised);
+}
+
+[data-component="settings-v2-row"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding-block: 20px;
+  border-bottom: 0.5px solid var(--v2-border-border-base);
+}
+
+[data-component="settings-v2-row"]:last-child {
+  border-bottom: none;
+}
+
+@media (min-width: 640px) {
+  [data-component="settings-v2-row"] {
+    flex-wrap: nowrap;
+  }
+}
+
+[data-slot="settings-v2-row-copy"] {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+}
+
+[data-slot="settings-v2-row-title"] {
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+  letter-spacing: -0.04px;
+  color: var(--v2-text-text-base);
+  font-variation-settings: "slnt" 0;
+}
+
+[data-slot="settings-v2-row-description"] {
+  margin-block: -3.5px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 20px;
+  color: var(--v2-text-text-muted);
+}
+
+[data-slot="settings-v2-row-control"] {
+  display: flex;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+[data-slot="settings-v2-row-control"] > div:has([data-component="switch"]),
+[data-slot="settings-v2-row-control"] > [data-component="switch"] {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px;
+}
+
+@media (min-width: 640px) {
+  [data-slot="settings-v2-row-control"] {
+    width: auto;
+    flex-shrink: 0;
+  }
+}
+
+[data-slot="settings-v2-row-control"] [data-component="text-input-v2"] {
+  width: 100%;
+}
+
+[data-component="dialog-v2"][data-variant="settings"] [data-component="select-v2-root"] {
+  width: fit-content;
+  max-width: 100%;
+}
+
+[data-component="dialog-v2"][data-variant="settings"] [data-component="button-v2"] {
+  width: fit-content;
+  max-width: 100%;
+}
+
+[data-component="tabs-v2"][data-variant="settings"][data-orientation="vertical"] [data-slot="tabs-v2-list"] {
+  background-color: var(--v2-background-bg-layer-01);
+}
+
+@media (max-width: 639px) {
+  .settings-v2[data-component="tabs-v2"][data-variant="settings"][data-orientation="vertical"]
+    [data-slot="tabs-v2-list"] {
+    width: 144px;
+    min-width: 144px;
+    padding-inline: 8px;
+  }
+}
+
+.settings-v2-nav-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 0 4px 4px;
+  user-select: none;
+}
+
+.settings-v2-nav-footer > span {
+  font-size: 11px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-faint);
+}
+
+.settings-v2-legacy-panel {
+  height: 100%;
+  overflow: hidden;
+}
+
+.settings-v2-legacy-panel [data-component="dialog"] {
+  display: contents;
+}
+
+.settings-v2-provider-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-block: 20px;
+  border-bottom: 0.5px solid var(--v2-border-border-base);
+}
+
+.settings-v2-provider-row:last-child {
+  border-bottom: none;
+}
+
+@media (min-width: 640px) {
+  .settings-v2-provider-row {
+    flex-wrap: nowrap;
+  }
+}
+
+.settings-v2-providers [data-component="provider-icon"] {
+  color: var(--v2-icon-icon-base);
+}
+
+.settings-v2-provider-lead {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-v2-provider-lead:not(:has(.settings-v2-provider-copy)) {
+  align-items: center;
+}
+
+.settings-v2-provider-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-v2-provider-main {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-provider-name {
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 16px;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-provider-description {
+  margin-block: -3.5px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 20px;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-provider-empty {
+  padding-block: 20px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-provider-env-hint {
+  padding-right: 12px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+  opacity: 0;
+  transition: opacity 200ms ease;
+  cursor: default;
+}
+
+.group:hover .settings-v2-provider-env-hint {
+  opacity: 1;
+}
+
+.settings-v2-providers-view-all {
+  margin-top: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+  color: var(--v2-text-text-accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+.settings-v2-providers-view-all:hover {
+  color: var(--v2-text-text-accent-hover);
+}
+
+.settings-v2-tab-body.settings-v2-providers {
+  gap: 32px;
+}
+
+.settings-v2-tab-header:has(+ .settings-v2-tab-body.settings-v2-providers) {
+  padding-bottom: 32px;
+}
+
+.settings-v2-providers .settings-v2-section-title {
+  padding-bottom: 0;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+}
+
+.settings-v2-providers .settings-v2-section-title + [data-component="settings-v2-list"] {
+  margin-top: 16px;
+}
+
+.settings-v2-tab-header.settings-v2-tab-header--stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 32px;
+}
+
+.settings-v2-tab-header--stacked > .settings-v2-tab-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-v2-tab-search {
+  position: relative;
+  width: 100%;
+}
+
+.settings-v2-tab-search [data-component="text-input-v2"] {
+  width: 100%;
+}
+
+.settings-v2-tab-search [data-slot="text-input-v2-input"] {
+  padding-right: 28px;
+}
+
+.settings-v2-tab-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  z-index: 1;
+  transform: translateY(-50%);
+}
+
+.settings-v2-models {
+  gap: 12px;
+}
+
+.settings-v2-models .settings-v2-section {
+  gap: 12px;
+}
+
+.settings-v2-models .settings-v2-section[data-expanded] {
+  padding-bottom: 12px;
+}
+
+.settings-v2-models-group-header {
+  display: flex;
+  align-items: center;
+  height: 28px;
+}
+
+.settings-v2-models-group-trigger {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 4px 8px 4px 4px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-models-group-trigger:focus-visible {
+  outline: 2px solid var(--v2-border-border-focus);
+  outline-offset: 2px;
+}
+
+@media (hover: hover) {
+  .settings-v2-models-group-trigger:not(:disabled):hover {
+    background-color: var(--v2-background-bg-layer-02);
+  }
+}
+
+.settings-v2-models-group-trigger:disabled {
+  cursor: default;
+}
+
+.settings-v2-models-group-chevron {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  color: var(--v2-icon-icon-muted);
+}
+
+.settings-v2-models-group-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-v2-models .settings-v2-section-title {
+  padding-bottom: 0;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 16px;
+}
+
+.settings-v2-models [data-component="provider-icon"] {
+  color: var(--v2-icon-icon-base);
+}
+
+.settings-v2-models [data-component="settings-v2-list"] {
+  padding-inline: 16px;
+}
+
+.settings-v2-models .settings-v2-section-title + [data-component="settings-v2-list"] {
+  margin-top: 0;
+}
+
+.settings-v2-models [data-slot="settings-v2-row-description"]:empty {
+  display: none;
+}
+
+.settings-v2-models [data-slot="settings-v2-row-copy"] {
+  gap: 0;
+}
+
+.settings-v2-models [data-slot="settings-v2-row-title"] {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-v2-models-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding-block: 48px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+  text-align: center;
+}
+
+.settings-v2-models-status-filter {
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-shortcuts .settings-v2-section {
+  gap: 16px;
+}
+
+.settings-v2-shortcuts .settings-v2-section-title {
+  padding-bottom: 0;
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+}
+
+.settings-v2-shortcuts [data-component="settings-v2-list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 20px;
+  border-radius: var(--radius-sm);
+}
+
+.settings-v2-shortcuts [data-component="settings-v2-list"] > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.settings-v2-shortcuts [data-component="settings-v2-list"] > div:not(:last-child) {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 0.5px solid var(--v2-border-border-base);
+}
+
+.settings-v2-shortcuts [data-component="settings-v2-list"] > div > span {
+  font-weight: 440;
+  font-size: 13px;
+  line-height: 1;
+  letter-spacing: -0.04px;
+  color: var(--v2-text-text-base);
+  font-variation-settings: "slnt" 0;
+}
+
+.settings-v2-keybind-button {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+  font-style: normal;
+  font-weight: 530;
+  font-size: 11px;
+  line-height: 1;
+  letter-spacing: 0.05px;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings:
+    "tnum" on,
+    "lnum" on;
+  font-variation-settings: "slnt" 0;
+  color: var(--v2-text-text-faint);
+}
+
+.settings-v2-keybind-button:hover {
+  background-color: var(--v2-background-bg-layer-02);
+}
+
+.settings-v2-keybind-button:focus-visible {
+  outline: 2px solid var(--v2-border-border-focus);
+  outline-offset: 2px;
+}
+
+.settings-v2-keybind-button--active {
+  color: var(--v2-text-text-faint);
+  border-radius: var(--radius-xs);
+  background-color: var(--v2-background-bg-layer-02);
+}
+
+.settings-v2-shortcuts-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding-block: 48px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+  text-align: center;
+}
+
+.settings-v2-shortcuts-status-filter {
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-tab-body.settings-v2-servers {
+  gap: 0;
+}
+
+.settings-v2-tab-header.settings-v2-servers-header {
+  padding-bottom: 24px;
+}
+
+.settings-v2-servers-header .settings-v2-tab-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-v2-tab-header.settings-v2-servers-header.settings-v2-tab-header--stacked {
+  gap: 24px;
+  padding-bottom: 24px;
+}
+
+.settings-v2-servers [data-component="settings-v2-list"] {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 20px;
+  border-radius: var(--radius-sm);
+}
+
+.settings-v2-servers-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.settings-v2-servers-row:not(:last-child) {
+  padding-bottom: 16px;
+  margin-bottom: 16px;
+  border-bottom: 0.5px solid var(--v2-border-border-base);
+}
+
+.settings-v2-servers-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.settings-v2-servers-lead {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.settings-v2-servers-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-v2-servers-name {
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-servers-meta {
+  font-size: 11px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+}
+
+.settings-v2-servers-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding-block: 48px;
+  font-size: 13px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-text-text-muted);
+  text-align: center;
+}
+
+.settings-v2-servers-status-filter {
+  color: var(--v2-text-text-base);
+}
+
+[data-component="dialog-v2"].settings-v2-server-dialog [data-slot="dialog-container"] {
+  width: 480px;
+  max-width: calc(100vw - 32px);
+  height: auto;
+  border-radius: var(--radius-md);
+  align-items: stretch;
+}
+
+[data-component="dialog-v2"].settings-v2-server-dialog [data-slot="dialog-content"] {
+  align-items: stretch;
+  width: 100%;
+}
+
+[data-component="dialog-v2"].settings-v2-server-dialog [data-slot="dialog-header"] {
+  align-items: center;
+  padding: 24px 24px 16px;
+}
+
+[data-component="dialog-v2"].settings-v2-server-dialog [data-slot="dialog-body"] {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+[data-component="dialog-v2"].settings-v2-server-dialog [data-slot="dialog-footer"] {
+  padding: 24px;
+}
+
+.settings-v2-server-dialog-label {
+  font-size: 13px;
+  font-weight: 530;
+  line-height: 1;
+  color: var(--v2-text-text-base);
+}
+
+.settings-v2-server-dialog-error {
+  font-size: 11px;
+  font-weight: 440;
+  line-height: 1;
+  color: var(--v2-state-fg-danger);
+}
+
+/* Permissions tab
+   Geometry/colour via the design-system tokens (design-polish.css). The
+   directory × action matrix is responsive: the tier card is an inline-size
+   container; the DEFAULT layout is stacked (pattern line, then a 2×2 of
+   labelled selects) because the settings dialog gives a tier card ~390px at
+   a normal window, and the table layout only switches on once the card is
+   wide enough to hold five columns. */
+.settings-v2-tab-header.settings-v2-permissions-header {
+  gap: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+.settings-v2-permissions-intro {
+  font-size: var(--font-size-md);
+  font-weight: 400;
+  line-height: 18px;
+  color: var(--v2-text-text-muted);
+  margin: 0;
+}
+.settings-v2-permissions {
+  gap: var(--space-5);
+  min-width: 0;
+}
+.settings-v2-permissions-card {
+  container-type: inline-size;
+  min-width: 0;
+  border-radius: var(--radius-lg);
+  background-color: var(--v2-background-bg-layer-01);
+  padding: var(--space-4);
+  box-shadow: inset 0 0 0 var(--border-width) var(--v2-border-border-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.settings-v2-permissions-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.settings-v2-permissions-card-title-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.settings-v2-permissions-card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-v2-permissions-card-title {
+  font-size: var(--font-size-base, 14px);
+  font-weight: var(--font-weight-emphasis);
+  color: var(--v2-text-text-base);
+  margin: 0;
+}
+.settings-v2-permissions-badge {
+  font-size: var(--font-size-xs);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.settings-v2-permissions-card-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+/* ── directory × action matrix ──
+   Stacked (default): each directory rule is a small settings list — the
+   pattern as its heading with the remove control, then one row per action
+   in the General-tab idiom (label left, inline select right). Table mode
+   (container ≥ 540px): header row + one grid row per pattern. */
+.settings-v2-permissions-matrix {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.settings-v2-permissions-matrix-header {
+  display: none; /* table mode only — see the container query below */
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-emphasis);
+  color: var(--v2-text-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.settings-v2-permissions-matrix-head {
+  text-align: right;
+}
+.settings-v2-permissions-rule {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "pattern remove"
+    "read    read"
+    "write   write"
+    "execute execute"
+    "network network";
+  column-gap: var(--space-2);
+  row-gap: 0;
+  align-items: center;
+  min-width: 0;
+  border-radius: var(--radius-md);
+  border: var(--border-width) solid var(--v2-border-border-muted);
+  padding: var(--space-1) var(--space-3);
+}
+.settings-v2-permissions-matrix-pattern {
+  grid-area: pattern;
+  font-size: var(--font-size-md);
+  font-family: var(--font-mono, monospace);
+  color: var(--v2-text-text-base);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  padding-block: var(--space-2);
+  justify-self: start;
+  max-width: 100%;
+}
+/* exception patterns are click-to-edit */
+button.settings-v2-permissions-matrix-pattern {
+  border: 0;
+  background: transparent;
+  padding-inline: 0;
+  cursor: text;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.16s ease;
+}
+button.settings-v2-permissions-matrix-pattern:hover {
+  text-decoration-color: var(--v2-text-text-muted);
+}
+button.settings-v2-permissions-matrix-pattern:focus-visible {
+  outline: 2px solid var(--v2-border-border-focus);
+  outline-offset: 2px;
+}
+.settings-v2-permissions-pattern-input {
+  grid-area: pattern;
+  font-family: var(--font-mono, monospace);
+  min-width: 0;
+}
+/* the ** rule reads as a plain label, not a glob */
+.settings-v2-permissions-matrix-pattern--default {
+  font-family: inherit;
+  font-weight: var(--font-weight-emphasis);
+}
+.settings-v2-permissions-group-label {
+  margin: var(--space-2) 0 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-emphasis);
+  color: var(--v2-text-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* the default rule sits directly in the card — no box, its rows are the
+   card's own rows; exceptions are boxed so they read as overrides */
+.settings-v2-permissions-rule[data-default] {
+  border: 0;
+  padding-inline: 0;
+}
+.settings-v2-permissions-rule[data-default] .settings-v2-permissions-matrix-remove {
+  display: none;
+}
+.settings-v2-permissions-matrix-remove {
+  grid-area: remove;
+}
+.settings-v2-permissions-matrix-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-width: 0;
+  padding-block: var(--space-1);
+  border-top: var(--border-width) solid var(--v2-border-border-muted);
+}
+.settings-v2-permissions-matrix-cell[data-group="read"] {
+  grid-area: read;
+}
+.settings-v2-permissions-matrix-cell[data-group="write"] {
+  grid-area: write;
+}
+.settings-v2-permissions-matrix-cell[data-group="execute"] {
+  grid-area: execute;
+}
+.settings-v2-permissions-matrix-cell[data-group="network"] {
+  grid-area: network;
+}
+.settings-v2-permissions-matrix-cell-label {
+  font-size: var(--font-size-md);
+  font-weight: 500;
+  color: var(--v2-text-text-base);
+  cursor: default;
+}
+/* execute / network = allow is the risky cell: value reads in the danger
+   colour, and a small marker so colour isn't the only signal */
+/* outranks select-v2's own value-text rule (lazy-loaded after this file) */
+[data-component="select-v2"][data-appearance]
+  [data-slot="select-v2-value-text"].settings-v2-permissions-effect--danger {
+  color: var(--v2-state-fg-danger);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.settings-v2-permissions-matrix-cell[data-danger] .settings-v2-permissions-matrix-cell-label::after {
+  content: " · risky";
+  font-size: var(--font-size-xs);
+  font-weight: 400;
+  color: var(--v2-state-fg-danger);
+}
+.settings-v2-permissions-matrix-help {
+  font-size: var(--font-size-xs);
+  color: var(--v2-text-text-faint);
+  margin: 0;
+}
+
+/* table mode: five columns once the card can actually hold them */
+@container (min-width: 540px) {
+  .settings-v2-permissions-matrix {
+    gap: var(--space-2);
+  }
+  .settings-v2-permissions-matrix-header,
+  .settings-v2-permissions-rule {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) repeat(4, minmax(72px, 96px)) 28px;
+    grid-template-areas: none;
+    gap: var(--space-2);
+    align-items: center;
+  }
+  .settings-v2-permissions-rule {
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+  }
+  .settings-v2-permissions-rule + .settings-v2-permissions-rule {
+    border-top: var(--border-width) solid var(--v2-border-border-muted);
+    padding-top: var(--space-2);
+  }
+  .settings-v2-permissions-rule[data-default] .settings-v2-permissions-matrix-remove {
+    display: block;
+    visibility: hidden;
+  }
+  .settings-v2-permissions-group-label {
+    margin-top: var(--space-1);
+  }
+  .settings-v2-permissions-pattern-input {
+    grid-area: auto;
+  }
+  .settings-v2-permissions-matrix-pattern,
+  .settings-v2-permissions-matrix-remove,
+  .settings-v2-permissions-matrix-cell[data-group] {
+    grid-area: auto;
+  }
+  .settings-v2-permissions-matrix-pattern {
+    padding-block: 0;
+  }
+  .settings-v2-permissions-matrix-cell {
+    justify-content: flex-end;
+    border-top: 0;
+    padding-block: 0;
+  }
+  /* the header row carries the column names; keep the per-cell label for
+     assistive tech only */
+  .settings-v2-permissions-matrix-cell-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}
+
+/* ── model assignment ── */
+.settings-v2-permissions-models {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: var(--border-width) solid var(--v2-border-border-base);
+  min-width: 0;
+}
+.settings-v2-permissions-models-title {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-emphasis);
+  color: var(--v2-text-text-base);
+  margin: 0;
+}
+.settings-v2-permissions-models-empty {
+  font-size: var(--font-size-sm);
+  color: var(--v2-text-text-muted);
+  margin: 0;
+}
+.settings-v2-permissions-models-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.settings-v2-permissions-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--v2-background-bg-layer-02);
+  font-size: var(--font-size-sm);
+  color: var(--v2-text-text-base);
+  border: var(--border-width) solid var(--v2-border-border-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-v2-permissions-model-remove {
+  border: 0;
+  background: transparent;
+  color: var(--v2-text-text-muted);
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-sm);
+}
+.settings-v2-permissions-model-remove:hover {
+  color: var(--v2-state-fg-danger);
+}
+.settings-v2-permissions-model-remove:focus-visible {
+  outline: 2px solid var(--v2-border-border-focus);
+}
+.settings-v2-permissions-models-hint {
+  font-size: var(--font-size-xs);
+  color: var(--v2-text-text-faint);
+}
+.settings-v2-permissions-model-picker-help {
+  font-size: var(--font-size-xs);
+  color: var(--v2-text-text-faint);
+  margin: 0 0 var(--space-2);
+}
+.settings-v2-permissions-model-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-1);
+  max-height: 180px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border: var(--border-width) solid var(--v2-border-border-base);
+  border-radius: var(--radius-md);
+  background: var(--v2-background-bg-base);
+  min-width: 0;
+}
+.settings-v2-permissions-model-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--v2-text-text-base);
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+.settings-v2-permissions-model-option:hover {
+  background: var(--v2-background-bg-layer-02);
+}
+.settings-v2-permissions-model-option:focus-within {
+  outline: 2px solid var(--v2-border-border-focus);
+  outline-offset: -2px;
+}
+.settings-v2-permissions-model-option input[type="checkbox"] {
+  flex-shrink: 0;
+}
+.settings-v2-permissions-model-option-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Developer Tools / Data & Storage inline validation */
+.settings-v2-field-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--v2-text-text-danger, #e5534b);
+}
+
+.settings-v2-field-warning {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--v2-text-text-warning, #d29922);
+}

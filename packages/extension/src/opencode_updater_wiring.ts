@@ -14,6 +14,8 @@ import {
   managedBinary,
   managedRoot,
 } from "./opencode_updater";
+import { stageOpencodeCliLink } from "./opencode_cli_link";
+import { opencodeDataDir } from "./opencode_xdg";
 
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
@@ -42,16 +44,16 @@ function markChecked(): void {
 
 /** The live chat DB the gate's compat probe boots a copy against: the user's
  *  Data & Storage override if set, else opencode's default data-dir DB. */
-function resolveLiveDb(): string | undefined {
+export function resolveLiveDb(): string | undefined {
   const cfg = vscode.workspace.getConfiguration("amicode").get<string>("sessionDatabase", "").trim();
   if (cfg) return fs.existsSync(cfg) ? cfg : undefined;
-  const def = path.join(os.homedir(), ".local", "share", "opencode", "opencode.db");
+  const def = path.join(opencodeDataDir(), "opencode.db");
   return fs.existsSync(def) ? def : undefined;
 }
 
 /** One check+adopt cycle. Silent on no-update/failure by design (auto-adopt
  *  posture: the user sees outcomes in the output channel, never a popup). */
-async function runCycle(channel: vscode.OutputChannel, opts: { manual: boolean }): Promise<string> {
+async function runCycle(channel: vscode.OutputChannel, opts: { manual: boolean; extensionPath: string }): Promise<string> {
   const check = await checkForUpdate();
   if (check.kind === "current") {
     channel.appendLine(`[updater] ${opts.manual ? "check: " : ""}canonical opencode ${check.current ?? "(none installed)"} is current`);
@@ -64,6 +66,8 @@ async function runCycle(channel: vscode.OutputChannel, opts: { manual: boolean }
     channel.appendLine(`[updater] staying on ${currentVersion() ?? "last-known-good"}: ${result.error}`);
     return `update to ${candidate.version} refused: ${result.error}`;
   }
+  // #561: refresh the CLI symlink after adoption so it points to the new binary
+  stageOpencodeCliLink(opts.extensionPath);
   return `updated canonical opencode → ${result.version}`;
 }
 
@@ -108,6 +112,7 @@ export function registerOpencodeUpdater(
   ctx: vscode.ExtensionContext,
   channel: vscode.OutputChannel,
 ): void {
+  const extensionPath = ctx.extensionPath;
   // Bootstrap: a fresh machine gets its managed install at first activation.
   // Fire-and-forget — activation must never block on a download. A FAILED
   // bootstrap does not mark the check done: an offline machine retries on the
@@ -115,19 +120,19 @@ export function registerOpencodeUpdater(
   // it comes online, instead of waiting out the 24h gate.
   if (!managedBinary()) {
     channel.appendLine("[updater] no managed canonical opencode — bootstrapping (background)");
-    void runCycle(channel, { manual: false }).then((msg) => {
+    void runCycle(channel, { manual: false, extensionPath }).then((msg) => {
       channel.appendLine(`[updater] bootstrap: ${msg}`);
       if (managedBinary()) markChecked();
     });
   } else if (dueForCheck()) {
-    void runCycle(channel, { manual: false });
+    void runCycle(channel, { manual: false, extensionPath });
     markChecked();
   }
 
   // Daily re-check while the window lives (activations usually beat the timer).
   const timer = setInterval(() => {
     if (dueForCheck()) {
-      void runCycle(channel, { manual: false });
+      void runCycle(channel, { manual: false, extensionPath });
       markChecked();
     }
   }, 60 * 60 * 1000);
@@ -135,7 +140,7 @@ export function registerOpencodeUpdater(
 
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.updateOpencode", async () => {
-      const msg = await runCycle(channel, { manual: true });
+      const msg = await runCycle(channel, { manual: true, extensionPath });
       void vscode.window.showInformationMessage(msg);
     }),
   );

@@ -96,31 +96,10 @@ function playWelcomeAnimation(): void {
          entrance and snap open at 0.90s. */
       .amico-mark .eye-lid { opacity: 0; }
 
-      /* 0.00s — Amico fades in and drops onto his feet, bouncing twice before
-         he settles. Volume is roughly conserved: he widens as he flattens.
-         Per-keyframe easing does the real work — falls accelerate, rises
-         decelerate; a single curve across the whole thing reads as floaty. */
+      /* 0.00s — Amico fades in at constant size. No drop, no bounce,
+         no scale — just appears. The button fades in after. */
       @keyframes amico-enter {
-        0% {
-          opacity: 0; transform: translateY(-260px) scale(0.92, 1.10);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
-        25% {
-          opacity: 1; transform: translateY(0) scale(1.14, 0.86);
-          animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
-        }
-        45% {
-          transform: translateY(-190px) scale(0.96, 1.06);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
-        65% {
-          transform: translateY(0) scale(1.08, 0.93);
-          animation-timing-function: cubic-bezier(0, 0, 0.3, 1);
-        }
-        82% {
-          transform: translateY(-70px) scale(0.99, 1.02);
-          animation-timing-function: cubic-bezier(0.4, 0, 1, 1);
-        }
+        0% { opacity: 0; }
         100% { opacity: 1; transform: translateY(0) scale(1, 1); }
       }
 
@@ -237,8 +216,8 @@ function playWelcomeAnimation(): void {
       }
 
       @keyframes amico-rise {
-        from { opacity: 0; transform: translateY(8px); }
-        to   { opacity: 1; transform: translateY(0); }
+        from { opacity: 0; }
+        to   { opacity: 1; }
       }
       @keyframes amico-fade-in {
         from { opacity: 0; }
@@ -327,6 +306,14 @@ function playWelcomeAnimation(): void {
       <p class="welcome-text" style="margin-top: 16px; font-size: 1.4rem; color: var(--vscode-foreground, #ccc);">
         Welcome to Amicode
       </p>
+      <button class="welcome-cta" style="margin-top: 40px; padding: 10px 32px;
+        font-family: var(--text-font, inherit); font-size: 14px; font-weight: 500;
+        background: var(--color-accent-fill, #fff676); color: var(--color-on-accent, #000);
+        border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+        border-radius: var(--border-radius, 4px);
+        cursor: pointer; opacity: 0; visibility: hidden; transition: opacity 2s ease-in, filter 0.16s ease;">
+        Get Started
+      </button>
     </div>
   `;
 
@@ -339,19 +326,9 @@ function playWelcomeAnimation(): void {
 
   // Show "Get Started" button after text fades in, user clicks to proceed
   setTimeout(() => {
-    const btn = document.createElement("button");
-    btn.textContent = "Get Started";
-    btn.className = "welcome-cta";
-    btn.style.cssText = `
-      margin-top: 40px; padding: 10px 32px;
-      font-family: var(--text-font, inherit); font-size: 14px; font-weight: 500;
-      background: var(--color-accent-fill, #fff676);
-      color: var(--color-on-accent, #000);
-      border: var(--border-width, 1px) solid var(--color-on-accent, #000);
-      border-radius: var(--border-radius, 4px);
-      cursor: pointer; opacity: 0; transition: opacity 0.5s ease-in, filter 0.16s ease;
-    `;
-    logo.appendChild(btn);
+    const btn = logo.querySelector(".welcome-cta") as HTMLButtonElement;
+    if (!btn) return;
+    btn.style.visibility = "visible";
     requestAnimationFrame(() => { btn.style.opacity = "1"; });
 
     btn.addEventListener("click", () => {
@@ -362,7 +339,7 @@ function playWelcomeAnimation(): void {
         revealForm();
       }, 400);
     });
-  }, 2000);
+  }, 3000);
 }
 
 // ─── Form ────────────────────────────────────────────────────────────────────
@@ -717,17 +694,17 @@ function buildForm(): void {
       importPreview.innerHTML = `
         <div style="margin-bottom: 12px;">
           <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
-            Choose which providers to import and pick your default:
+            Select which providers to import (tested credentials will be auto-selected):
           </p>
           ${providers
             .map(
               (p, i) => `
             <div class="import-provider-row" id="provider-row-${p.provider}">
               <label style="flex: 0 0 auto;">
-                <input type="checkbox" name="import-include" value="${p.provider}" checked />
+                <input type="checkbox" name="import-include" value="${p.provider}" />
               </label>
               <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} />
+                <input type="radio" name="import-default" value="${p.provider}" ${i === 0 ? "checked" : ""} disabled />
                 <span><strong>${providerNames[p.provider] ?? p.provider}</strong></span>
                 <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">from ${p.source}</span>
               </label>
@@ -757,7 +734,8 @@ function buildForm(): void {
         </p>
       `;
 
-      // Wire checkbox ↔ radio sync: unchecking a provider disables its radio
+      // Wire checkbox ↔ radio sync: unchecking a provider disables its radio;
+      // checking enables it
       const allCheckboxes = document.querySelectorAll<HTMLInputElement>('input[name="import-include"]');
       allCheckboxes.forEach((cb) => {
         cb.addEventListener("change", () => {
@@ -783,6 +761,9 @@ function buildForm(): void {
           } else {
             if (row) row.style.opacity = "1";
             if (radio) radio.disabled = false;
+            // If no default is selected, select this one
+            const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
+            if (!anyDefault && radio) radio.checked = true;
           }
           updateConfirmState();
         });
@@ -839,11 +820,23 @@ function buildForm(): void {
         if (ok) {
           statusEl.textContent = "✓";
           statusEl.style.color = "var(--vscode-testing-iconPassed, #73c991)";
+          // Auto-check passing providers and enable their radio (#455: opt-in, but
+          // passing the test is an explicit signal the credential works)
+          if (rowEl) {
+            rowEl.style.opacity = "1";
+            const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
+            const radio = rowEl.querySelector('input[name="import-default"]') as HTMLInputElement | null;
+            if (checkbox && !checkbox.checked) checkbox.checked = true;
+            if (radio) radio.disabled = false;
+            // If no default is selected yet, select this one
+            const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
+            if (!anyDefault && radio) radio.checked = true;
+          }
         } else {
           statusEl.textContent = "✗";
           statusEl.style.color = "var(--vscode-testing-iconFailed, #f14c4c)";
           statusEl.title = error ?? "Connection failed";
-          // Uncheck and dim failed providers
+          // Dim failed providers and ensure they stay unchecked
           if (rowEl) {
             rowEl.style.opacity = "0.5";
             const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
@@ -883,6 +876,80 @@ function buildForm(): void {
 }
 
 // ─── Boot ────────────────────────────────────────────────────────────────────
+
+// Listen for the transition-state signal from the host (after confirm-import).
+// Hides the form, keeps the animation (Amico idle), and shows "Getting Amico ready..."
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+  if (msg?.type === "show-transition") {
+    // Hide the form
+    formEl.classList.remove("visible");
+    formEl.style.display = "none";
+    // Hide the cancel button
+    const cancelEl = document.getElementById("cancel-btn");
+    if (cancelEl) cancelEl.style.display = "none";
+    // Remove the "Get Started" button left over from the welcome animation
+    const ctaBtn = animationEl.querySelector(".welcome-cta");
+    if (ctaBtn) ctaBtn.remove();
+    // Remove the welcome text ("Welcome" / subtitle)
+    const welcomeText = animationEl.querySelector(".welcome-text");
+    if (welcomeText) welcomeText.remove();
+    // Show the animation container (restore from the post-animation hidden state)
+    animationEl.style.display = "flex";
+    animationEl.style.opacity = "1";
+    animationEl.style.transition = "none";
+
+    // Swap the face to happy expression: remove bottom eye bars + add pixelated open grin
+    const svg = animationEl.querySelector(".amico-mark");
+    if (svg) {
+      // Remove the bottom bar from each eye (makes ∩ shape = happy closed eyes)
+      const leftEye = svg.querySelector(".left-eye");
+      const rightEye = svg.querySelector(".right-eye");
+      if (leftEye) {
+        // The 4th rect in eye-ring is the bottom bar (y ≈ 1870)
+        const rects = leftEye.querySelectorAll(".eye-ring rect");
+        if (rects.length >= 4) rects[3].remove();
+        // Remove the lid too (not needed for happy eyes)
+        const lid = leftEye.querySelector(".eye-lid");
+        if (lid) lid.remove();
+      }
+      if (rightEye) {
+        const rects = rightEye.querySelectorAll(".eye-ring rect");
+        if (rects.length >= 4) rects[3].remove();
+        const lid = rightEye.querySelector(".eye-lid");
+        if (lid) lid.remove();
+      }
+      // Stop eye animations (happy eyes don't blink)
+      if (leftEye) {
+        const ring = leftEye.querySelector(".eye-ring") as HTMLElement;
+        if (ring) ring.style.animation = "none";
+      }
+      if (rightEye) {
+        const ring = rightEye.querySelector(".eye-ring") as HTMLElement;
+        if (ring) ring.style.animation = "none";
+      }
+
+      // Switch from idle animations to excited jump
+      const breatheGroup = svg.querySelector(".mark-breathe") as HTMLElement;
+      if (breatheGroup) {
+        breatheGroup.style.animation = "amico-jump 2.0s ease-in-out infinite";
+      }
+    }
+
+    // Add "Getting Amico ready..." text below the animation
+    let transitionText = document.getElementById("transition-text");
+    if (!transitionText) {
+      transitionText = document.createElement("div");
+      transitionText.id = "transition-text";
+      transitionText.style.cssText = `
+        text-align: center; margin-top: 24px; font-size: 14px;
+        color: var(--vscode-descriptionForeground, #999);
+      `;
+      transitionText.textContent = "Getting Amico ready...";
+      animationEl.parentElement!.insertBefore(transitionText, animationEl.nextSibling);
+    }
+  }
+});
 
 // Wire the cancel button
 const cancelBtn = document.getElementById("cancel-btn");

@@ -11,9 +11,20 @@
 
 Your vaults, your fleet, your devices, your pulses — composed by conversation.
 
-<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · open [opencode](https://github.com/anomalyco/opencode) chat harness · telaio research harness by subscription (arriving) · model-agnostic — Kimi K3, Muse Spark, open models</sub>
+<sub>A VS Code extension · built on [Piccolo.jl](https://github.com/harmoniqs/Piccolo.jl) · open [opencode](https://github.com/anomalyco/opencode) chat harness · telaio research harness by subscription (arriving) · model-agnostic — GLM-5.3 or Kimi K3 recommended</sub>
 
 </div>
+
+> [!WARNING]
+> **Pre-release — this studio is mid-optimization.**
+>
+> Amicode currently exists in a superposition of *polished research tool* and
+> *construction site*; measurement collapses it into whichever state your day
+> needed least. We apply our own discipline to the product: nothing promotes
+> below F = 0.99, and this build is still climbing the curve — improving
+> monotonically, mostly. Hit an unconverged edge and `Amicode: Report a Bug`
+> files it with diagnostics attached; every report is a warm start for the
+> next iteration. You're part of the loop now.
 
 ---
 
@@ -21,7 +32,7 @@ Amicode is an **open autonomous research studio** that lives in your editor — 
 
 Describe what you want in plain language — a gate, a state preparation, a calibration sweep — and Amicode designs the pulse, runs the solve, and shows you the result. Every run is captured, every pulse versioned for warm-start, and every session distilled into durable knowledge. The loop gets smarter as you use it.
 
-Leveraging **Kimi K3** (Moonshot AI), **Muse Spark** (Meta), and other open models — on the open [opencode](https://github.com/anomalyco/opencode) ecosystem (vendored from `anomalyco/opencode`). Model-agnostic by design: the loop, not the model, is the product.
+**Recommended setup:** an [opencode](https://github.com/anomalyco/opencode) **go** subscription — add extra usage if you're running long campaigns, because autonomous research sessions are token-hungry — running **GLM-5.3** or **Kimi K3** (Moonshot AI), the two models we tune the loop against. Model-agnostic by design: bring your own provider and key and the studio works the same — the loop, not the model, is the product.
 
 We start with **quantum control** because it is the hardest physical system to prove the loop on. If the studio works here — arbitrary Hamiltonians, hard constraints, **hardware in the loop via Strumento.jl / QICK** — it generalizes to any physical system you can model. Bring your own Hamiltonian; the loop is the same. That's **physical intelligence**: not one device or platform, but a composable way to do experimental science. Plenty will sell you a closed “superintelligence” that never touches the hardware. We ship open, down to the RFSoC.
 
@@ -70,7 +81,7 @@ Amicode reads your **vaults** — the stack you mount under `~/.amico/vaults/` (
 
 Your machines form one logical studio. Vault mounts sync via `armonia-sync-once` (launchd, every 15 min); the chat database stays canonical via an SSH mesh; WIP follows you between hosts with `leave`/`arrive`. No second writer ever touches the same SQLite file, no live `.git` is file-synced — the invariants are enforced, not assumed. Check it with `/fleet`; the skill is the playbook. Solo still works fully offline — the fleet simply means you never have to choose which machine holds the truth.
 
-When the canonical is unreachable, `Amicode: Fleet — Enter Local Fallback` lets you keep working offline (local sessions, `Fleet: LOCAL FALLBACK` in the status bar) and `Rejoin` merges back when the tunnel is back. Drift is surfaced by `Amicode: Healthcheck` (`Fleet guard / settings / tunnel`) and one-command `pnpm sync` (`--check` CI twin, `--fix` also `git pull` + `fetch:opencode` + `Fleet — Repair`) — `Amicode: Repo Sync` runs it, and `Amicode: Open Amicode Terminal` opens a shell whose `opencode` is the vendored, amicode-aware binary (same `OPENCODE_CONFIG_CONTENT` as the chat) so `pnpm sync` there diagnoses the same panel you see.
+When the canonical is unreachable, `Amicode: Fleet — Enter Local Fallback` lets you keep working offline (local sessions, `Fleet: LOCAL FALLBACK` in the status bar) and `Rejoin` merges back when the tunnel is back. Drift is surfaced by `Amicode: Healthcheck` (`Fleet guard / settings / tunnel`) and one-command `pnpm sync` (`--check` CI twin, `--fix` also `git pull` + `fetch:opencode` + `Fleet — Repair`) — `Amicode: Repo Sync` runs it, and `Amicode: Open Amicode Terminal` opens a shell whose `opencode` is the amicode-aware binary — the managed, auto-updated canonical build (same `OPENCODE_CONFIG_CONTENT` as the chat; `opencode-amicode` reaches the vendored fleet build) — so `pnpm sync` there diagnoses the same panel you see.
 
 ### Open system management — from pulse to device
 
@@ -100,16 +111,16 @@ catalog           shared catalog       shared catalog, warm-starts
 
 ## Skills are the product
 
-Skills are not configuration — they are the capability surface. The **37 public skills** in `packages/extension/skills/` ship in the vsix, versioned with the product. Additional skills load from your own vault mounts and from co-located Julia packages behind entitlements.
+Skills are not configuration — they are the capability surface. The **38 public skills** in `packages/extension/skills/` ship in the vsix, versioned with the product. Additional skills load from your own vault mounts and from co-located Julia packages behind entitlements.
 
 | Surface | What it covers |
 |---|---|
 | Physics | `transmon`, `fluxonium`, `atoms` (Rydberg), `bosonic`, `ions` — Hamiltonians, drives, construction patterns |
-| Lab + catalog + vault | `amico-lab`, `amico-catalog`, `amico-vault`, `amico-strategy`, `amico-schema-check` |
-| Analysis + synthesis | `analyze`, `structural-analysis`, `hypothesis-review`, `dream-reflect` |
-| System | `fleet`, `setup`, `solve`, `simulate`, `warm-start`, `constraints`, `objectives` |
+| Lab + catalog + vault | `amico-lab`, `amico-catalog`, `amico-vault`, `amico-strategy`, `amico-schema-check`, `amico-slack` |
+| Analysis + synthesis | `analyze`, `structural-analysis`, `hypothesis-review`, `dream-reflect`, `autoresearch` |
+| System | `setup`, `solve`, `simulate`, `warm-start`, `constraints`, `objectives`, `problem-types` |
 | Delivery | `demo`, `pasqal`, `plot`, `compose`, `multistart` |
-| Engineering | `debugging`, `tdd`, `verification`, `brainstorming`, `deliberate`, `grill-me`, `report-a-bug` |
+| Engineering | `debugging`, `tdd`, `verification`, `brainstorming`, `deliberate`, `grill-me`, `grill-with-docs`, `improve-codebase-architecture`, `teach`, `report-a-bug` |
 
 The extension stages the union of the public bundle and your vault mounts at startup; mount presence is the eligibility proof.
 
@@ -182,3 +193,7 @@ sets up.
 <div align="center">
 <sub>Built by <a href="https://harmoniqs.co">Harmoniqs</a> · quantum control, composed.</sub>
 </div>
+
+---
+
+<sub>Trademark notice: Amicode is built by Harmoniqs and uses the open-source <a href="https://github.com/anomalyco/opencode">OpenCode</a> chat harness. Amicode and Harmoniqs are not affiliated with, endorsed by, or sponsored by the OpenCode team (SST / anomalyco).</sub>

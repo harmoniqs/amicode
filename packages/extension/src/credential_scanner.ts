@@ -15,6 +15,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 
 import { PROVIDER_MODELS } from "./onboarding_panel";
+import { opencodeConfigDir, opencodeDataDir } from "./opencode_xdg";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +82,7 @@ const PROVIDER_ENV_VAR: Record<string, string> = {
 /** Default scan options using standard paths. */
 export function defaultScanOptions(): ScanOptions {
   const home = os.homedir();
-  const dataDir = path.join(home, ".local", "share", "opencode");
+  const dataDir = opencodeDataDir();
   return {
     accountJsonPath: path.join(dataDir, "account.json"),
     authJsonPath: path.join(dataDir, "auth.json"),
@@ -270,19 +271,40 @@ export function webviewSafeResults(credentials: DetectedCredential[]): SafeCrede
   });
 }
 
+// ─── Key validation (#455) ───────────────────────────────────────────────────
+
+/** Known placeholder keys that should never be persisted to config. */
+const PLACEHOLDER_KEYS = new Set(["sk-test"]);
+
+/**
+ * Returns true if the API key is valid for writing to config.
+ * Rejects: empty strings, known placeholders, and keys shorter than 10 chars.
+ * Empty string is allowed ONLY when the caller explicitly passes it (OAuth
+ * providers like github-copilot don't use API keys at all — they pass empty
+ * and the entry is written without options.apiKey). This function is called
+ * only when a key IS present (non-empty), so empty returns false here.
+ */
+export function isValidApiKey(key: string): boolean {
+  if (!key || key.trim() === "") return false;
+  if (PLACEHOLDER_KEYS.has(key.trim())) return false;
+  if (key.trim().length < 10) return false;
+  return true;
+}
+
 // ─── Batch config writing (AC7) ──────────────────────────────────────────────
 
 /**
  * Write all detected providers to opencode.json in one pass.
  * The `activeProvider` becomes the active `model` (using its first model entry).
  * Uses the same schema as writeOnboardingConfig: provider.<id>.options.apiKey, env as string[].
+ * Credentials with placeholder or invalid keys are silently skipped (#455).
  */
 export function writeBatchConfig(
   credentials: DetectedCredential[],
   activeProvider: string,
   configPath?: string,
 ): void {
-  const targetPath = configPath ?? path.join(os.homedir(), ".config", "opencode", "opencode.json");
+  const targetPath = configPath ?? path.join(opencodeConfigDir(), "opencode.json");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
 
   // Read existing config to merge
@@ -295,12 +317,14 @@ export function writeBatchConfig(
     // Start fresh if parsing fails
   }
 
-  // Build provider entries
-  const providerEntry: Record<string, unknown> = {
-    ...(existing.provider as Record<string, unknown> ?? {}),
-  };
+  // Build provider entries — replaces the entire provider section
+  // (on redo, user's selection is the canonical set; old entries don't persist)
+  const providerEntry: Record<string, unknown> = {};
 
   for (const cred of credentials) {
+    // Skip credentials with invalid/placeholder keys (#455)
+    if (!isValidApiKey(cred.key)) continue;
+
     const entry: Record<string, unknown> = {};
     if (cred.key) {
       entry.options = { apiKey: cred.key };
@@ -312,16 +336,86 @@ export function writeBatchConfig(
     providerEntry[cred.provider] = entry;
   }
 
-  // Determine active model
+  // Determine active model — only set when we have a known default.
+  // Unknown providers (e.g. amazon-bedrock) let the server resolve its own
+  // default from the connected provider's model list.
   const activeModels = PROVIDER_MODELS[activeProvider];
-  const activeModel = activeModels?.[0]?.id ?? `${activeProvider}/unknown`;
+  const activeModel = activeModels?.[0]?.id;
 
-  const result = {
+  const result: Record<string, unknown> = {
     ...existing,
     $schema: "https://opencode.ai/config.json",
     provider: providerEntry,
-    model: activeModel,
   };
+  if (activeModel) {
+    result.model = activeModel;
+  } else {
+    // Remove stale model field if it points to an unknown model
+    delete result.model;
+  }
 
   fs.writeFileSync(targetPath, JSON.stringify(result, null, 2) + "\n");
+}
+
+// ─── Disconnect excluded providers from auth stores ──────────────────────────
+
+/**
+ * Remove credentials for excluded providers from opencode's auth stores.
+ * After a server restart, excluded providers will no longer auto-connect.
+ */
+export function disconnectProviders(
+  providers: string[],
+  options?: { accountJsonPath?: string; authJsonPath?: string },
+): void {
+  const dataDir = opencodeDataDir();
+  const accountPath = options?.accountJsonPath ?? path.join(dataDir, "account.json");
+  const authPath = options?.authJsonPath ?? path.join(dataDir, "auth.json");
+
+  // Build the set of serviceIDs to remove, including aliases
+  const excludeSet = new Set(providers);
+  if (excludeSet.has("opencode")) excludeSet.add("opencode-go");
+
+  // Remove from account.json (v2)
+  try {
+    const raw = fs.readFileSync(accountPath, "utf8");
+    const data = JSON.parse(raw);
+    if (data.version === 2 && typeof data.accounts === "object" && data.accounts !== null) {
+      let modified = false;
+      for (const [id, entry] of Object.entries(data.accounts)) {
+        const acct = entry as { serviceID?: string };
+        if (acct.serviceID && excludeSet.has(acct.serviceID)) {
+          delete data.accounts[id];
+          if (data.active && acct.serviceID in data.active) {
+            delete data.active[acct.serviceID];
+          }
+          modified = true;
+        }
+      }
+      if (modified) {
+        fs.writeFileSync(accountPath, JSON.stringify(data, null, 2) + "\n");
+      }
+    }
+  } catch {
+    // Skip if file doesn't exist or is malformed
+  }
+
+  // Remove from auth.json (v1)
+  try {
+    const raw = fs.readFileSync(authPath, "utf8");
+    const data = JSON.parse(raw);
+    if (typeof data === "object" && data !== null) {
+      let modified = false;
+      for (const serviceId of excludeSet) {
+        if (serviceId in data) {
+          delete data[serviceId];
+          modified = true;
+        }
+      }
+      if (modified) {
+        fs.writeFileSync(authPath, JSON.stringify(data, null, 2) + "\n");
+      }
+    }
+  } catch {
+    // Skip if file doesn't exist or is malformed
+  }
 }

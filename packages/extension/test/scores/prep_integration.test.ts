@@ -84,15 +84,14 @@ function entitledDir(): string {
 }
 
 describe("prepareOpencodeProject × scores (spec §6)", () => {
-  it("splices router + compiled score #0 over the hardcoded interview section", () => {
+  it("splices router + on-demand stub over the hardcoded interview section", () => {
     const proj = prep();
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Onset router");
-    expect(agents).toMatch(/Compiled from score `pulse-designer` v\d+/); // version-agnostic: content bumps must not red this suite
-    expect(agents).toContain("## Pulse-designer interview"); // heading preserved for the agent prompt
+    expect(agents).toContain("general-purpose autoresearch copilot"); // stub injected
     expect(agents).not.toContain("Stages, in order:"); // hardcoded body replaced
     expect(agents).toContain("## Identity"); // engine sections intact
-    expect(agents).toContain("AMICODE_ITER"); // run-dir contract intact
+    expect(agents).toContain("## Style & formatting"); // harness sections intact (ADR 0008: run-dir contract moved to solve skill)
     expect(agents).not.toMatch(/\{\{[A-Z_]+\}\}/); // substitution complete, incl. compiled content
   });
 
@@ -101,9 +100,6 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("pulse-designer");
     expect(manifest.manifest.version).toBeGreaterThanOrEqual(1); // tracks SCORE.md frontmatter
-    // the compiled banner and the manifest must agree on the version (no drift)
-    const agentsForVersion = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agentsForVersion).toContain(`Compiled from score \`pulse-designer\` v${manifest.manifest.version}`);
     expect(manifest.project_dir).toBe(proj.projectDir);
     expect(manifest.score_dir).toBe(path.join(DEFAULT_SCORES_ROOT, "pulse-designer"));
     // the copy the Bun-side guard actually reads as its manifestDir (problems root)
@@ -123,14 +119,14 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
 
     const proj = prep({ scoresRoot: badRoot, packsRoot: "/nonexistent/packs" });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("Stages, in order:"); // hardcoded interview kept as fallback
+    expect(agents).toContain("## The error-corrected research loop"); // generic loop kept as fallback (ADR 0008)
     expect(agents).not.toContain("## Onset router");
     expect(fs.existsSync(path.join(proj.projectDir, "score_manifest.json"))).toBe(false);
   });
 
   it("missing scores root behaves like fallback (no throw)", () => {
     const proj = prep({ scoresRoot: "/nonexistent/scores", packsRoot: "/nonexistent/packs" });
-    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("Stages, in order:");
+    expect(fs.readFileSync(proj.agentsPath, "utf8")).toContain("## The error-corrected research loop"); // generic fallback (ADR 0008)
   });
 
   it("writes authoring.json (spec C) — public allowlist, support set, existing bundled asset paths, tolerance", () => {
@@ -184,16 +180,17 @@ describe("buildOpencodeConfigContent × scores", () => {
 });
 
 describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1–C4, three-state vaultDir)", () => {
-  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory splice (regression guard)', () => {
+  it('vaultDir "" → personalization disabled: empty mount stack, no mount/memory content, recovery pointer only', () => {
     const proj = prep({ vaultDir: "" });
     expect(proj.mounts).toEqual([]);
     expect(proj.vaultDir).toBe("");
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).not.toContain("## Mount stack (Armonia");
-    expect(agents).not.toContain("## Memory index");
+    expect(agents).not.toMatch(/^## Mount stack \(Armonia/m); // only prose mentions survive
+    expect(agents).not.toMatch(/^## Memory index/m);
+    expect(agents).toContain("amicode_context plugin"); // live-injection recovery pointer
   });
 
-  it("vaultDir path → single forced personal mount at that path; returns mounts + splices the mount stack", () => {
+  it("vaultDir path → single forced personal mount at that path; returns mounts; sections live-injected, not spliced", () => {
     const vault = fs.mkdtempSync(path.join(os.tmpdir(), "forced-vault-"));
     fs.mkdirSync(path.join(vault, "amicode", "memory"), { recursive: true });
     fs.writeFileSync(
@@ -205,11 +202,14 @@ describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1
     expect(proj.mounts[0]).toMatchObject({ kind: "personal", path: vault, writable: true });
     expect(proj.vaultDir).toBe(vault); // vaultDir === personalMount path
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
-    expect(agents).toContain(`kind=personal · rw · ${vault}`);
-    // memory index reads from the personal mount:
-    expect(agents).toContain("## Memory index");
-    expect(agents).toContain("- [user-role](user_role.md) — Aaron is CEO");
+    // The mount stack + memory index are injected per-prompt by the
+    // amicode_context plugin (their live builders are pinned in
+    // test/stack_state.test.ts) — the prepared file must NOT carry them as
+    // sections (only the recovery pointer's prose mentions may appear).
+    expect(agents).not.toMatch(/^## Mount stack \(Armonia/m);
+    expect(agents).not.toMatch(/^## Memory index/m);
+    expect(agents).not.toContain("- [user-role](user_role.md) — Aaron is CEO");
+    expect(agents).toContain("amicode_context plugin"); // recovery pointer present
   });
 
   it("vaultDir undefined → auto-resolves the full stack from ~/.amico/vaults; vaultDir === personal mount", () => {
@@ -234,9 +234,10 @@ describe("prepareOpencodeProject × Armonia mount stack (spec-20260707-002846 C1
       expect(proj.mounts.map((m) => m.name)).toEqual(["armonia-me", "armonissima"]); // kind-rank: personal(0) < team(4)
       expect(proj.vaultDir).toBe(personal);
       const agents = fs.readFileSync(proj.agentsPath, "utf8");
-      expect(agents).toContain("## Mount stack (Armonia — read precedence top→bottom)");
-      expect(agents).toContain(`- armonia-me · kind=personal · rw · ${personal}`);
-      expect(agents).toContain(`- armonissima · kind=team · ro · ${team}`);
+      // Sections live-injected (see test/stack_state.test.ts), not spliced:
+      expect(agents).not.toMatch(/^## Mount stack \(Armonia/m);
+      expect(agents).not.toContain(`- armonia-me · kind=personal · rw · ${personal}`);
+      expect(agents).toContain("amicode_context plugin"); // recovery pointer present
     } finally {
       if (prevHome === undefined) delete process.env.HOME;
       else process.env.HOME = prevHome;
@@ -264,7 +265,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Skill index");
-    expect(agents).toMatch(/free-phase CZ path/i); // author-first routing from SCORE.md compiled in (§5)
+    // Pulse-designer content no longer compiled into session — verify skill index works independently
     expect(proj.skillPaths.some((p) => p.endsWith("/atoms/SKILL.md"))).toBe(true);
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
@@ -305,7 +306,7 @@ describe("prepareOpencodeProject × skill index (spec §3, Rev 2 — dual-source
       skillLibraryRoots: [mkLibRoot()],
     });
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(agents).toContain("Stages, in order:"); // score compile failed → fallback interview
+    expect(agents).toContain("## The error-corrected research loop"); // score compile failed → generic fallback (ADR 0008)
     expect(agents).toContain("## Skill index"); // yet the skill index is STILL present
     const skills = readSkills();
     expect(libNames(skills)).toContain("atoms");
@@ -396,13 +397,12 @@ PACKDRIVEN-BODY-MARKER.
     return root;
   }
 
-  it("the default pack's manifest drives the compiled interview + manifest transport", () => {
+  it("the default pack's manifest drives the manifest transport", () => {
     const packsRoot = fixturePacksRoot();
     const proj = prep({ packsRoot });
     const md = fs.readFileSync(proj.agentsPath, "utf8");
-    expect(md).toContain("**only**");
-    expect(md).toContain("PACKDRIVEN-BODY-MARKER.");
-    expect(md).toContain("custom-interview"); // compiled-from attribution line
+    expect(md).toContain("## Onset router"); // router is always spliced
+    expect(md).toContain("general-purpose autoresearch copilot"); // stub present
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("custom-interview");
     expect(manifest.score_dir).toBe(path.join(packsRoot, "quantum-control", "scores", "custom"));
@@ -411,9 +411,9 @@ PACKDRIVEN-BODY-MARKER.
   it("missing packs root falls back to the bundled scores repertoire exactly as today", () => {
     const proj = prep({ packsRoot: "/nonexistent/packs" });
     const md = fs.readFileSync(proj.agentsPath, "utf8");
-    // today's pulse-designer compilation, unchanged (AC4)
-    expect(md).toContain("## Pulse-designer interview");
-    expect(md).toContain("> Compiled from score `pulse-designer`");
+    // Today: on-demand stub, no compiled score content
+    expect(md).toContain("## Onset router");
+    expect(md).toContain("general-purpose autoresearch copilot");
   });
 });
 

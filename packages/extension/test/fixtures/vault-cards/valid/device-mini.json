@@ -1,0 +1,11 @@
+{
+  "name": "Mac mini",
+  "platforms": [
+    "server"
+  ],
+  "status": "online",
+  "tags": [
+    "fleet"
+  ],
+  "type": "device"
+}

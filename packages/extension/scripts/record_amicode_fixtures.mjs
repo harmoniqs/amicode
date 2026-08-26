@@ -153,20 +153,20 @@ const REQUESTS = [
   { method: "GET", path: "/amicode/library", name: "library — post-upload state" },
   // ── widget kernel + dashboard (slice 5) ────────────────────────────────────
   { method: "GET", path: "/amicode/widgets", name: "widget registry — builtins with content hashes" },
-  { method: "GET", path: "/amicode/widget-frame?id=meet-amico", name: "widget frame — served HTML + its own CSP" },
+  { method: "GET", path: "/amicode/widget-frame?id=jump-back-in", name: "widget frame — served HTML + its own CSP" },
   { method: "GET", path: "/amicode/widget-frame?id=not-a-widget", name: "widget frame — unknown id stub" },
-  { method: "GET", path: "/amicode/widget-code?id=about-you", name: "widget code — builtin source + hash" },
+  { method: "GET", path: "/amicode/widget-code?id=jump-back-in", name: "widget code — builtin source + hash" },
   { method: "GET", path: "/amicode/widget-code?id=no-such", name: "widget code — not_found" },
   {
     method: "POST",
     path: "/amicode/widget-fork",
-    body: { id: "pulse-bank", new_id: "my-pulse-bank", session: "seed-session" },
+    body: { id: "showcase", new_id: "my-showcase", session: "seed-session" },
     name: "widget fork — builtin forked into user widgets",
   },
   {
     method: "POST",
     path: "/amicode/widget-fork",
-    body: { id: "pulse-bank", new_id: "my-pulse-bank" },
+    body: { id: "showcase", new_id: "my-showcase" },
     name: "widget fork — exists refusal",
   },
   { method: "POST", path: "/amicode/widget-fork", body: { id: "nope" }, name: "widget fork — not_found" },
@@ -177,8 +177,7 @@ const REQUESTS = [
     body: {
       version: 1,
       widget: [
-        { id: "about-you", hidden: false, config: {}, group: "right" },
-        { id: "my-pulse-bank", hidden: true, config: {} },
+        { id: "my-showcase", hidden: true, config: {} },
       ],
       views: { home: "grid" },
     },
@@ -315,10 +314,10 @@ async function main() {
   let up = false;
   for (let i = 0; i < 60 && !up; i++) {
     try {
-      const r = await fetch(base + "/", { headers: { Authorization: auth } });
+      const r = await fetch(base + "/", { headers: { Authorization: auth }, signal: AbortSignal.timeout(5_000) });
       if (r.status === 200) up = true;
     } catch {
-      /* not listening yet */
+      /* not listening yet (or wedged — bounded by the abort) */
     }
     if (!up) await new Promise((r) => setTimeout(r, 500));
   }
@@ -348,6 +347,7 @@ async function main() {
       method: req.method,
       headers: { Authorization: auth, ...(body !== undefined ? { "Content-Type": "application/json" } : {}) },
       body,
+      signal: AbortSignal.timeout(20_000), // one wedged route must not hang the recording
     });
     const respBody = await r.text();
     // Record the request with {SANDBOX} restored so the replay re-substitutes

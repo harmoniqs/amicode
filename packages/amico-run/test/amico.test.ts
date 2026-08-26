@@ -5,10 +5,11 @@
 // mcp-serve facade. Run: `pnpm --filter @amicode/amico-run test`.
 import { describe, it, expect, beforeAll } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot } from "./helpers.js";
+import { fakeJulia, hermeticOpsEnv, readToml, tmpRoot, buildDoctorWorld, cleanupTracked } from "./helpers.js";
+import { validateDoctorReport } from "../src/doctor_schema.js";
 import { FakeCloud } from "./fake_cloud.js";
 
 const BUNDLE = join(__dirname, "..", "dist", "amico.js");
@@ -70,7 +71,7 @@ describe("amico router — help + unknown verb", () => {
   it("--help lists the full verb surface, exit 0", () => {
     const r = run(["--help"]);
     expect(r.code).toBe(0);
-    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "mcp-serve"]) {
+    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "doctor", "upgrade", "mcp-serve"]) {
       expect(r.stdout).toContain(`amico ${v}`);
     }
   });
@@ -267,5 +268,82 @@ describe("amico router — mcp-serve facade", () => {
     const out = JSON.parse(r.stdout);
     expect(out.stub).toBe(true);
     expect(out.tools).toEqual(expect.arrayContaining(["amico_catalog"]));
+  });
+});
+
+describe("amico router — doctor v2 (surface inventory, #525)", () => {
+  it("doctor --json with injected roots emits the canonical machine contract", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "doctor",
+      "--json",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+      "--running-binary", w.running,
+    ]);
+    // exit reflects the v1 studio binding only (machine-dependent); the
+    // surfaces contract is asserted on stdout, which must be JSON-only
+    const report = JSON.parse(r.stdout);
+    expect(report.surfaces).toHaveLength(6);
+    expect(report.surfaces.every((s: { verdict: string }) => s.verdict === "current")).toBe(true);
+    expect(validateDoctorReport(report).ok).toBe(true);
+    // canonical form: 2-space indent + trailing newline
+    expect(r.stdout.endsWith("\n")).toBe(true);
+    expect(r.stdout.split("\n")[1]).toBe('  "surfaces": [');
+    cleanupTracked();
+  });
+
+  it("doctor (human) prints the v1 binding table plus the surfaces section", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "doctor",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+      "--running-binary", w.running,
+    ]);
+    expect(r.stdout).toMatch(/studio binding/); // v1 section intact
+    expect(r.stdout).toMatch(/^surfaces:$/m); // v2 section gained
+    expect(r.stdout).toMatch(/server-binary/);
+    cleanupTracked();
+  });
+});
+
+describe("amico router — upgrade verbs (#526)", () => {
+  it("upgrade dispatches through the bundle: a current surface is a no-op with a receipt on stdout", () => {
+    const w = buildDoctorWorld();
+    const r = run([
+      "upgrade", "skills",
+      "--root-server", w.server,
+      "--root-vscext", w.vscext,
+      "--root-config", w.config,
+      "--root-repo-amicode", w.repoAmicode,
+      "--root-repo-fork", w.repoFork,
+      "--root-staging", w.staging,
+    ]);
+    expect(r.code).toBe(0);
+    const receipt = JSON.parse(r.stdout) as { verb: string; outcome: string; verification: boolean };
+    expect(receipt.verb).toBe("skills");
+    expect(receipt.outcome).toBe("no-op");
+    expect(receipt.verification).toBe(true);
+    // the JSONL store landed under the (injected) root-server's receipts dir
+    const receipts = readFileSync(join(w.server, "upgrade-receipts", "upgrade-receipts.jsonl"), "utf8");
+    expect(receipts.trim().split("\n").length).toBe(1);
+    expect(receipts).toContain('"outcome":"no-op"');
+    cleanupTracked();
+  });
+
+  it("upgrade with an unknown surface → usage error, exit 64", () => {
+    const r = run(["upgrade", "sidecar-bin"]);
+    expect(r.code).toBe(64);
+    expect(r.stderr + r.stdout).toMatch(/unknown surface/);
+    expect(r.stderr + r.stdout).toContain("sidecar-bin");
   });
 });

@@ -74,19 +74,6 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
-  // catalog-card dev preview webview bundle (#47 scaffold)
-  {
-    entryPoints: ["src/catalog_card_webview.ts"],
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    outfile: "dist/catalog_card_webview.js",
-    sourcemap: true,
-    minify: false,
-    logLevel: "info",
-    loader: { ".svg": "text" },
-  },
   // Chat Deck webview bundle — pane-manager shell (src/deck/shell.ts + model)
   {
     entryPoints: ["src/deck/shell.ts"],
