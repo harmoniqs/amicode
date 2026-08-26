@@ -8,6 +8,9 @@ import {
   mergeSkillEntries,
   discoverExternalSkillPaths,
   resolveUrlProvider,
+  readSkillProviders,
+  addSkillProvider,
+  removeSkillProvider,
   type SkillProvider,
   type SkillProvidersConfig,
   type MergedSkillEntry,
@@ -455,5 +458,42 @@ describe("resolveUrlProvider (issue #573 — URL providers with cache + offline 
 
     const entries = resolveUserSkills(path.join(configDir, "skill-providers.json"));
     expect(entries).toEqual([]);
+  });
+});
+
+describe("skill-providers.json CRUD (issue #573 — persistence for the Settings bridge)", () => {
+  it("readSkillProviders returns the providers array from a valid file", () => {
+    const configDir = mkRoot();
+    writeProvidersJson(configDir, [
+      { id: "my-lab", type: "directory", path: "/abs/skills", added: "2026-08-26T09:00:00Z" },
+    ]);
+    const config = readSkillProviders(path.join(configDir, "skill-providers.json"));
+    expect(config.providers).toHaveLength(1);
+    expect(config.providers[0].id).toBe("my-lab");
+    expect(config.version).toBe(1);
+  });
+
+  it("addSkillProvider appends to an existing file and removeSkillProvider deletes by id", () => {
+    const configDir = mkRoot();
+    const p = path.join(configDir, "skill-providers.json");
+
+    // Add first provider (creates file)
+    addSkillProvider(p, { id: "first", type: "directory", path: "/a", added: "2026-01-01T00:00:00Z" });
+    expect(readSkillProviders(p).providers).toHaveLength(1);
+
+    // Add second provider
+    addSkillProvider(p, { id: "second", type: "directory", path: "/b", added: "2026-01-02T00:00:00Z" });
+    expect(readSkillProviders(p).providers).toHaveLength(2);
+
+    // Remove first
+    removeSkillProvider(p, "first");
+    const after = readSkillProviders(p);
+    expect(after.providers).toHaveLength(1);
+    expect(after.providers[0].id).toBe("second");
+  });
+
+  it("readSkillProviders returns empty config when file is missing", () => {
+    const config = readSkillProviders("/nonexistent/skill-providers.json");
+    expect(config).toEqual({ version: 1, providers: [] });
   });
 });

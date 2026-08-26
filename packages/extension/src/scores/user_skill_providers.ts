@@ -174,3 +174,35 @@ export function discoverExternalSkillPaths(
 export function resolveUrlProvider(cacheDir: string): SkillIndexEntry[] {
   return scanSkillDirectory(cacheDir, "custom");
 }
+
+// --- Persistence (CRUD for skill-providers.json) ---
+
+const EMPTY_CONFIG: SkillProvidersConfig = { version: 1, providers: [] };
+
+/** Read and parse the skill-providers.json config. Missing/malformed → empty config. */
+export function readSkillProviders(providersPath: string): SkillProvidersConfig {
+  try {
+    const raw = fs.readFileSync(providersPath, "utf8");
+    const config = JSON.parse(raw) as SkillProvidersConfig;
+    if (!config || !Array.isArray(config.providers)) return { ...EMPTY_CONFIG, providers: [] };
+    return config;
+  } catch {
+    return { ...EMPTY_CONFIG, providers: [] };
+  }
+}
+
+/** Add a provider to skill-providers.json. Creates the file and parent dirs if missing. */
+export function addSkillProvider(providersPath: string, provider: SkillProvider): void {
+  const config = readSkillProviders(providersPath);
+  config.providers.push(provider);
+  fs.mkdirSync(path.dirname(providersPath), { recursive: true });
+  fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));
+}
+
+/** Remove a provider by id from skill-providers.json. No-op if id not found. */
+export function removeSkillProvider(providersPath: string, id: string): void {
+  const config = readSkillProviders(providersPath);
+  config.providers = config.providers.filter((p) => p.id !== id);
+  fs.mkdirSync(path.dirname(providersPath), { recursive: true });
+  fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));
+}

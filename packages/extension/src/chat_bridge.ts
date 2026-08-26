@@ -3,6 +3,13 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
+import {
+  readSkillProviders,
+  addSkillProvider,
+  removeSkillProvider,
+  discoverExternalSkillPaths,
+  type SkillProvider,
+} from "./scores/user_skill_providers";
 
 // ============================================================================
 // The amicode iframe⇄extension command bridge, shared by ChatPanel (one
@@ -1003,6 +1010,86 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     }
 
     io.postToWebview(reply);
+    return true;
+  }
+
+  // ─── Skill Providers (issue #573) ────────────────────────────────────────────
+  const skillProvidersPath = path.join(os.homedir(), ".amico", "amicode", "skill-providers.json");
+
+  if (msg.kind === "skill-providers-query") {
+    const config = readSkillProviders(skillProvidersPath);
+    io.postToWebview({
+      source: "amicode",
+      kind: "skill-providers-data",
+      providers: config.providers,
+      tab: msg.tab,
+    });
+    return true;
+  }
+
+  if (msg.kind === "skill-providers-add") {
+    const provider = (msg as { provider?: SkillProvider }).provider;
+    if (provider && typeof provider.id === "string" && typeof provider.type === "string") {
+      addSkillProvider(skillProvidersPath, provider);
+      io.postToWebview({
+        source: "amicode",
+        kind: "skill-providers-data",
+        providers: readSkillProviders(skillProvidersPath).providers,
+        tab: msg.tab,
+      });
+    }
+    return true;
+  }
+
+  if (msg.kind === "skill-providers-remove") {
+    const id = (msg as { id?: string }).id;
+    if (typeof id === "string") {
+      removeSkillProvider(skillProvidersPath, id);
+      io.postToWebview({
+        source: "amicode",
+        kind: "skill-providers-data",
+        providers: readSkillProviders(skillProvidersPath).providers,
+        tab: msg.tab,
+      });
+    }
+    return true;
+  }
+
+  if (msg.kind === "skill-providers-autodiscover") {
+    const existing = readSkillProviders(skillProvidersPath).providers;
+    const discovered = discoverExternalSkillPaths(os.homedir(), existing);
+    io.postToWebview({
+      source: "amicode",
+      kind: "skill-providers-discovered",
+      paths: discovered,
+      tab: msg.tab,
+    });
+    return true;
+  }
+
+  if (msg.kind === "skill-providers-pick-directory") {
+    // Open a native directory picker and return the selected path
+    void vscode.window
+      .showOpenDialog({ canSelectFolders: true, canSelectFiles: false, canSelectMany: false, openLabel: "Add Skill Provider" })
+      .then((uris) => {
+        if (uris && uris.length > 0) {
+          const dirPath = uris[0].fsPath;
+          const id = path.basename(dirPath);
+          const provider: SkillProvider = {
+            id,
+            type: "directory",
+            path: dirPath,
+            added: new Date().toISOString(),
+          };
+          addSkillProvider(skillProvidersPath, provider);
+          io.postToWebview({
+            source: "amicode",
+            kind: "skill-providers-data",
+            providers: readSkillProviders(skillProvidersPath).providers,
+            tab: msg.tab,
+          });
+        }
+      });
     return true;
   }
 
