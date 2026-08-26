@@ -77,7 +77,8 @@ export const SettingsSkillsV2: Component = () => {
               <Icon name="plus" />
               {language.t("settings.skills.action.add_directory")}
             </ButtonV2>
-            <ButtonV2 size="sm" variant="ghost" onClick={() => ctrl.autodiscover()}>
+            <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.autodiscover()}>
+              <Icon name="magnifying-glass" />
               Autodiscover
             </ButtonV2>
           </div>
