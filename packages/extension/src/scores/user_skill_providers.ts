@@ -206,3 +206,23 @@ export function removeSkillProvider(providersPath: string, id: string): void {
   fs.mkdirSync(path.dirname(providersPath), { recursive: true });
   fs.writeFileSync(providersPath, JSON.stringify(config, null, 2));
 }
+
+// --- Friendly naming ---
+
+/** Known path patterns → friendly display names. Matches the trailing
+ *  segments of the path so it works regardless of home directory prefix. */
+const KNOWN_PATH_NAMES: [RegExp, string][] = [
+  [/\.claude\/skills\/?$/, "Claude Skills"],
+  [/\.chatgpt\/skills\/?$/, "ChatGPT Skills"],
+  [/\.config\/opencode\/skills\/?$/, "OpenCode Skills"],
+  [/\.agents\/skills\/?$/, "Agents Skills"],
+];
+
+/** Derive a friendly provider name from a directory path.
+ *  Known engine paths get human-readable names; unknown paths use the basename. */
+export function friendlyProviderName(dirPath: string): string {
+  for (const [pattern, name] of KNOWN_PATH_NAMES) {
+    if (pattern.test(dirPath)) return name;
+  }
+  return path.basename(dirPath);
+}

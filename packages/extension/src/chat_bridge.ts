@@ -8,6 +8,7 @@ import {
   addSkillProvider,
   removeSkillProvider,
   discoverExternalSkillPaths,
+  friendlyProviderName,
   type SkillProvider,
 } from "./scores/user_skill_providers";
 
@@ -1061,7 +1062,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     io.postToWebview({
       source: "amicode",
       kind: "skill-providers-discovered",
-      paths: discovered,
+      paths: discovered.map((p) => ({ path: p, name: friendlyProviderName(p) })),
       tab: msg.tab,
     });
     return true;
@@ -1074,7 +1075,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       .then((uris) => {
         if (uris && uris.length > 0) {
           const dirPath = uris[0].fsPath;
-          const id = path.basename(dirPath);
+          const id = friendlyProviderName(dirPath);
           const provider: SkillProvider = {
             id,
             type: "directory",

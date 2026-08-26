@@ -11,6 +11,7 @@ import {
   readSkillProviders,
   addSkillProvider,
   removeSkillProvider,
+  friendlyProviderName,
   type SkillProvider,
   type SkillProvidersConfig,
   type MergedSkillEntry,
@@ -495,5 +496,27 @@ describe("skill-providers.json CRUD (issue #573 — persistence for the Settings
   it("readSkillProviders returns empty config when file is missing", () => {
     const config = readSkillProviders("/nonexistent/skill-providers.json");
     expect(config).toEqual({ version: 1, providers: [] });
+  });
+});
+
+describe("friendlyProviderName (issue #573 — auto-name known paths)", () => {
+  it("names ~/.claude/skills as 'Claude Skills'", () => {
+    expect(friendlyProviderName("/Users/alice/.claude/skills")).toBe("Claude Skills");
+  });
+
+  it("names ~/.config/opencode/skills as 'OpenCode Skills'", () => {
+    expect(friendlyProviderName("/Users/bob/.config/opencode/skills")).toBe("OpenCode Skills");
+  });
+
+  it("names ~/.agents/skills as 'Agents Skills'", () => {
+    expect(friendlyProviderName("/home/user/.agents/skills")).toBe("Agents Skills");
+  });
+
+  it("names ~/.chatgpt/skills as 'ChatGPT Skills'", () => {
+    expect(friendlyProviderName("/Users/dev/.chatgpt/skills")).toBe("ChatGPT Skills");
+  });
+
+  it("falls back to directory basename for unknown paths", () => {
+    expect(friendlyProviderName("/some/random/my-lab-tools")).toBe("my-lab-tools");
   });
 });

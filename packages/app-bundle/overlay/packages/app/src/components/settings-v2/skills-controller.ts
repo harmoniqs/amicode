@@ -10,9 +10,14 @@ export interface SkillProviderEntry {
   cache_path?: string
 }
 
+export interface DiscoveredPath {
+  path: string
+  name: string
+}
+
 export function createSkillProvidersController() {
   const [providers, setProviders] = createSignal<SkillProviderEntry[]>([])
-  const [discoveredPaths, setDiscoveredPaths] = createSignal<string[]>([])
+  const [discoveredPaths, setDiscoveredPaths] = createSignal<DiscoveredPath[]>([])
   const [loading, setLoading] = createSignal(true)
 
   // On mount, query the extension host for the current providers

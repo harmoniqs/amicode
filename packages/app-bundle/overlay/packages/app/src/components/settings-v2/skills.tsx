@@ -85,30 +85,27 @@ export const SettingsSkillsV2: Component = () => {
             <h3 class="settings-v2-section-title">Discovered</h3>
             <SettingsListV2>
               <For each={ctrl.discoveredPaths()}>
-                {(dirPath) => {
-                  const id = dirPath.split("/").pop() ?? "skills"
-                  return (
-                    <SettingsRowV2
-                      title={id}
-                      description={dirPath}
+                {(item) => (
+                  <SettingsRowV2
+                    title={item.name}
+                    description={item.path}
+                  >
+                    <ButtonV2
+                      size="xs"
+                      variant="secondary"
+                      onClick={() =>
+                        ctrl.addProvider({
+                          id: item.name,
+                          type: "directory",
+                          path: item.path,
+                          added: new Date().toISOString(),
+                        })
+                      }
                     >
-                      <ButtonV2
-                        size="xs"
-                        variant="secondary"
-                        onClick={() =>
-                          ctrl.addProvider({
-                            id,
-                            type: "directory",
-                            path: dirPath,
-                            added: new Date().toISOString(),
-                          })
-                        }
-                      >
-                        Add
-                      </ButtonV2>
-                    </SettingsRowV2>
-                  )
-                }}
+                      Add
+                    </ButtonV2>
+                  </SettingsRowV2>
+                )}
               </For>
             </SettingsListV2>
           </div>
