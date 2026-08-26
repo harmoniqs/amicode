@@ -16,6 +16,7 @@ import {
   type LibraryRoot,
   type LibraryRootSpec,
 } from "./scores/package_skills";
+import { resolveUserSkills, resolveWorkspaceSkills, mergeSkillEntries } from "./scores/user_skill_providers";
 import { readSolverModeState } from "./solver_mode";
 import { studioPathsOrLegacy } from "@amicode/schema";
 import { opencodeConfigDir } from "./opencode_xdg";
@@ -535,6 +536,13 @@ export interface OpencodeConfigOptions {
    *    ""        → personalization disabled (empty stack, no grants, no splice);
    *    a path    → a single forced personal mount at that path (dev escape hatch). */
   vaultDir?: string;
+  /** Absolute path to the user's skill-providers.json (issue #573).
+   *  Default: ~/.amico/amicode/skill-providers.json. Skills from custom
+   *  providers appear in the Skill Index labeled (custom). */
+  userSkillProvidersPath?: string;
+  /** Absolute path to the workspace .opencode/skills/ directory (issue #573).
+   *  Auto-loaded skills labeled (workspace). Undefined = no workspace skills. */
+  workspaceSkillsDir?: string;
   /** Stable project dir to (re)use across activations; created if missing and
    *  safe to re-prepare (every write below is overwrite-idempotent). Default:
    *  a fresh mkdtemp — but note the app PERSISTS the selected project per
@@ -699,13 +707,21 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
     const ents = readLocalEntitlements(entsDir).entitlements;
     const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
-    skillEntries = [
+    const shippedEntries: SkillIndexEntry[] = [
       // Library (public) skills by `surface: public` tag (spec-20260713-003804) — the
       // OSS-shippable surface (Armonia vault layer + physics/opt + generic craft). The
       // private tier is package-gated below (resolvePackageSkills), never here.
       ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
+    // User skill providers (issue #573): custom + workspace, merged with shadow semantics.
+    const providersPath = opts.userSkillProvidersPath ??
+      path.join(os.homedir(), ".amico", "amicode", "skill-providers.json");
+    const customEntries = resolveUserSkills(providersPath);
+    const workspaceEntries = opts.workspaceSkillsDir
+      ? resolveWorkspaceSkills(opts.workspaceSkillsDir)
+      : [];
+    skillEntries = mergeSkillEntries(customEntries, workspaceEntries, shippedEntries);
     const section = buildSkillIndexSection(skillEntries);
     if (section) finalContent = finalContent + "\n\n" + section;
   } catch (e) {

@@ -27,7 +27,7 @@
       "verdict": "current",
       "evidence": [
         "vendored /Users/aaron/armonia/repos/amicode/packages/extension/vendor/opencode/darwin-arm64/opencode --version 1.18.10",
-        "latest fork release tag v1.18.10-amicode.16 (base 1.18.10)",
+        "latest fork release tag v1.18.10-amicode.17 (base 1.18.10)",
         "version = release tag base"
       ]
     },

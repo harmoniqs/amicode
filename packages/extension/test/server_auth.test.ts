@@ -90,6 +90,7 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
       "GKSwstype",
       "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
+      "OPENCODE_DISABLE_EXTERNAL_SKILLS",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
     ]);
@@ -122,6 +123,7 @@ describe("buildServerSpawnEnv — the env keys the extension ADDS to the spawn",
       "GKSwstype",
       "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
+      "OPENCODE_DISABLE_EXTERNAL_SKILLS",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
     ]);
@@ -293,6 +295,7 @@ describe("buildServerSpawnEnv — telemetry integration (gate applied through th
       "GKSwstype",
       "MPLBACKEND",
       "OPENCODE_CONFIG_CONTENT",
+      "OPENCODE_DISABLE_EXTERNAL_SKILLS",
       "OPENCODE_SERVER_PASSWORD",
       "PATH",
     ]);
