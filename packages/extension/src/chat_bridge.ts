@@ -1039,7 +1039,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         providers: readSkillProviders(skillProvidersPath).providers,
         tab: msg.tab,
       });
-      void vscode.commands.executeCommand("amicode.reprepSkills");
     }
     return true;
   }
@@ -1054,7 +1053,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         providers: readSkillProviders(skillProvidersPath).providers,
         tab: msg.tab,
       });
-      void vscode.commands.executeCommand("amicode.reprepSkills");
     }
     return true;
   }
@@ -1108,7 +1106,6 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             providers: readSkillProviders(skillProvidersPath).providers,
             tab: msg.tab,
           });
-          void vscode.commands.executeCommand("amicode.reprepSkills");
         }
       });
     return true;

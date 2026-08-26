@@ -1690,31 +1690,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showErrorMessage(`Amicode: restart failed — ${(err as Error).message}`);
       }
     }),
-    // Issue #573: hot-reload skills when providers change (add/remove/rename).
-    // Re-runs prepareOpencodeProject (rewrites AGENTS.md + restages skills dir)
-    // then restarts the server so the engine picks up the new skill set.
-    vscode.commands.registerCommand("amicode.reprepSkills", async () => {
-      if (!binary || !serverManager) return;
-      opencodeChannel.appendLine(`[skills] re-prep triggered (provider change)`);
-      // Re-run prepareOpencodeProject to rewrite AGENTS.md (Skill Index) and
-      // restage skill files. The opencode server reads instructions fresh on
-      // each turn, so no restart is needed — the next message picks up the
-      // updated index. Skill files are loaded on-demand from the staged dir.
-      const project2 = prepareOpencodeProject({
-        agentsSrc: path.resolve(ctx.extensionPath, "AGENTS.md"),
-        templateSrc: path.resolve(
-          ctx.extensionPath,
-          "templates",
-          readSolverModeState().mode === "hp" ? "solve_template_hp.jl" : "solve_template.jl",
-        ),
-        juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
-        skillRoots: cfgArr("skillRoots"),
-        skillLibraryRoots: cfgLibraryRoots(),
-        vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
-        projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
-      });
-      ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths));
-      opencodeChannel.appendLine(`[skills] re-prep complete — ${project2.skillPaths.length} skills staged, index updated`);
+    // Issue #573: skill provider changes take effect on next session start.
+    // Live hot-reload (rewriting AGENTS.md while the server reads it) was
+    // causing crashes — deferred until the engine supports atomic reload.
+    vscode.commands.registerCommand("amicode.reprepSkills", () => {
+      // no-op placeholder; providers.json is read at next session prep
     }),
     // On-site fallback (β.6): stage the bundled pre-baked solve into the runs
     // root. Under the multi-run RunsManager (#57) a run that is FINISHED at
