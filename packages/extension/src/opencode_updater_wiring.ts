@@ -5,7 +5,6 @@
 // fleet/guard surfaces stay reachable after the PATH flip.
 import * as vscode from "vscode";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import {
   adoptRelease,
