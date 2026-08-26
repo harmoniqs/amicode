@@ -45,17 +45,6 @@ export const SettingsSkillsV2: Component = () => {
       </header>
 
       <div class="settings-v2-tab-body">
-        <div style="display:flex;gap:8px;">
-          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.addDirectory()}>
-            <Icon name="plus" />
-            {language.t("settings.skills.action.add_directory")}
-          </ButtonV2>
-          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.autodiscover()}>
-            <Icon name="magnifying-glass" />
-            Autodiscover
-          </ButtonV2>
-        </div>
-
         <SettingsListV2>
           <Show when={!ctrl.loading()} fallback={
             <div style="padding:20px;text-align:center;color:var(--v2-text-text-muted);font-size:13px;">
@@ -126,6 +115,17 @@ export const SettingsSkillsV2: Component = () => {
             </Show>
           </Show>
         </SettingsListV2>
+
+        <div style="display:flex;gap:8px;margin-top:12px;">
+          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.addDirectory()}>
+            <Icon name="plus" />
+            {language.t("settings.skills.action.add_directory")}
+          </ButtonV2>
+          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.autodiscover()}>
+            <Icon name="magnifying-glass" />
+            Autodiscover
+          </ButtonV2>
+        </div>
 
         {/* Autodiscover results */}
         <Show when={ctrl.discoveredPaths().length > 0}>
