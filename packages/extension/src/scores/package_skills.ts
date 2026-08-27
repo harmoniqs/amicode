@@ -5,14 +5,20 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Dual-source skill index (spec-20260704-113005 §1/§3). Two skill TYPES:
 //   - PACKAGE skills: co-located at packages/<P>.jl/skills/<name>/SKILL.md,
 //     discovered ONLY for entitlement-allowlisted packages (gated).
-//   - LIBRARY (public) skills: cross-package refs in the in-repo library
+//   - LIBRARY skills: cross-package refs in the in-repo library
 //     (packages/extension/skills/, moved out of the retired amico-plugin repo),
 //     discovered by SURFACE TAG (spec-20260713-003804): the library dir
-//     is scanned, but ONLY skills whose frontmatter carries `surface: public` are
-//     staged. `internal`, untagged, and any other value MUST NOT leak into
-//     Amicode; the tag IS the least-privilege guard, and the repo boundary backs
-//     it (internal content lives only in the armonissima vault).
-//     `public` = the OSS-shippable surface.
+//     is scanned, but ONLY skills whose frontmatter `surface:` tag is admitted
+//     by the root AND (for the entitled tier) covered by the session's resolved
+//     entitlements are staged. `internal`, untagged, and any other value MUST
+//     NOT leak into Amicode; the tag IS the least-privilege guard, and the repo
+//     boundary backs it (internal content lives only in the armonissima vault).
+//     Three surface tiers (ADR-0003 as amended by spec §A1 / ADR-0011):
+//     `public` = ships and loads for all; `entitled` = ships in the .vsix but
+//     stages ONLY for sessions whose resolved entitlements include the skill's
+//     `entitlement:` code (a STAGING gate, not a location — entitled skills
+//     share the in-repo library with public ones); `internal` = private vault,
+//     never ships.
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
@@ -24,11 +30,14 @@ export interface SkillIndexEntry {
 }
 
 /** A typed library root (ADR-0003, amicode#242): the directory PLUS the `surface:`
- *  tags it admits. Two tiers — the dev's private plugin checkout admits
- *  {public, internal} (checkout presence IS the eligibility proof: internal
- *  SKILL.md content exists only in the private repo, so nobody stages skills
- *  they do not already possess); the vendored public bundle admits {public}
- *  only, as defense in depth on top of the extract pipeline's guarantee. */
+ *  tags it admits. Three tiers (ADR-0003 as amended by spec §A1 / ADR-0011) —
+ *  the dev's private plugin checkout admits {public, internal} (checkout presence
+ *  IS the eligibility proof: internal SKILL.md content exists only in the private
+ *  repo, so nobody stages skills they do not already possess); the in-repo
+ *  library admits {public, entitled} — entitled entries additionally pass the
+ *  entitlement staging gate in resolveLibrarySkills; the vendored public bundle
+ *  admits {public} only, as defense in depth on top of the extract pipeline's
+ *  guarantee. */
 export interface LibraryRoot {
   path: string;
   surfaces: string[]; // admitted `surface:` tags
@@ -77,19 +86,32 @@ function expandHome(p: string): string {
 
 /** Parse a SKILL.md's frontmatter; throw on anything malformed (caller skips).
  *  `surface` (spec-20260713-003804) is optional — a string tag
- *  (`public` | `internal`) or undefined when the skill is untagged. It drives
- *  library-skill staging (see resolveLibrarySkills). */
-function readFrontmatter(skillPath: string): { name: string; description: string; surface?: string } {
+ *  (`public` | `entitled` | `internal`) or undefined when the skill is untagged.
+ *  `entitlement` (spec §Amendment A1) is the code a session must hold for an
+ *  entitled-surface skill to stage (see resolveLibrarySkills). It drives
+ *  library-skill staging. */
+function readFrontmatter(skillPath: string): {
+  name: string;
+  description: string;
+  surface?: string;
+  entitlement?: string;
+} {
   const raw = fs.readFileSync(skillPath, "utf8");
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
   if (!m) throw new Error("missing frontmatter");
-  const fm = parseYaml(m[1]) as { name?: string; description?: string; surface?: string };
+  const fm = parseYaml(m[1]) as {
+    name?: string;
+    description?: string;
+    surface?: string;
+    entitlement?: string;
+  };
   if (typeof fm.name !== "string" || typeof fm.description !== "string")
     throw new Error("frontmatter needs name + description");
   return {
     name: fm.name,
     description: fm.description,
     surface: typeof fm.surface === "string" ? fm.surface : undefined,
+    entitlement: typeof fm.entitlement === "string" ? fm.entitlement : undefined,
   };
 }
 
@@ -128,12 +150,19 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
   return out;
 }
 
-/** Library skills from the in-repo public library, discovered by SURFACE
- *  TAG (spec-20260713-003804) under PER-ROOT eligibility (ADR-0003, amicode#242).
+/** Library skills from the in-repo library, discovered by SURFACE
+ *  TAG (spec-20260713-003804) under PER-ROOT eligibility (ADR-0003, amicode#242)
+ *  plus the ENTITLED-TIER staging gate (spec §Amendment A1, ADR-0011).
  *  Each root is scanned, but ONLY skills whose frontmatter `surface:` tag is in
  *  that root's admitted `surfaces` are returned — the in-repo root admits
- *  {public} only, the armonissima vault root admits {internal} only, so
+ *  {public, entitled}, the armonissima vault root admits {internal} only, so
  *  internal content can stage ONLY from a vault mount the user already syncs.
+ *  `entitlements` (the session's resolved codes, from LocalEntitlementProvider —
+ *  resolved at prep time for EVERY session type) gates the entitled tier:
+ *  a `surface: entitled` skill stages IFF its `entitlement:` code is present
+ *  AND well-formed; a missing/malformed code is skip + warn (never throw),
+ *  a well-formed code the session lacks is a SILENT skip (an unentitled
+ *  session is the normal case, not an error).
  *  Untagged and malformed skills are DROPPED from every root. Staging
  *  (stageOpencodeSkills) copies only THIS selected set to the per-session stage
  *  dir — `skills.paths` never points at a library root itself. First root
@@ -142,7 +171,7 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
  *  The private tier is NOT otherwise a library concern: private-package skills
  *  live co-located in their package repos and are gated by resolvePackageSkills
  *  (entitlement-derived allowlist ∩ repo presence). */
-export function resolveLibrarySkills(roots: LibraryRootSpec[]): SkillIndexEntry[] {
+export function resolveLibrarySkills(roots: LibraryRootSpec[], entitlements: string[] = []): SkillIndexEntry[] {
   const out: SkillIndexEntry[] = [];
   const seen = new Set<string>(); // first-root-wins, keyed by dir name
   for (const r of roots) {
@@ -158,7 +187,7 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[]): SkillIndexEntry[
       if (seen.has(name)) continue;
       const skillPath = path.join(rootPath, name, "SKILL.md");
       if (!fs.existsSync(skillPath)) continue;
-      let fm: { name: string; description: string; surface?: string };
+      let fm: { name: string; description: string; surface?: string; entitlement?: string };
       try {
         fm = readFrontmatter(skillPath);
       } catch (e) {
@@ -168,6 +197,20 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[]): SkillIndexEntry[
       if (fm.surface === undefined) {
         console.warn(`amicode: dropping untagged library skill ${skillPath} (no surface: tag — default-deny)`);
         continue;
+      }
+      if (fm.surface === "entitled") {
+        // The entitled-tier staging gate (spec §A1.3(a)). A malformed/missing
+        // code is a frontmatter defect — the skill could never stage from ANY
+        // root, so warn (mirrors the untagged default-deny). A well-formed code
+        // the session lacks is the normal unentitled case — silently absent.
+        const code = fm.entitlement;
+        if (typeof code !== "string" || code.trim() === "") {
+          console.warn(
+            `amicode: dropping entitled library skill ${skillPath} (surface: entitled needs a non-empty entitlement: code)`,
+          );
+          continue;
+        }
+        if (!entitlements.includes(code)) continue;
       }
       if (!root.surfaces.includes(fm.surface)) continue; // THE GUARD, per-root
       seen.add(name); // this dir is the authoritative skill of that name (earlier root wins)

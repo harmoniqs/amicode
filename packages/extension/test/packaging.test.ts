@@ -96,27 +96,37 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
   });
 });
 
-// Leak guard on the shipped skill library itself (ADR-0003, amicode#242 —
-// re-homed from the vendored bundle to the in-repo dir). The public/private
-// boundary is now the REPO boundary; these tests red if an internal-surfaced
-// skill ever lands in the public library, at source rather than at extract.
+// Leak guard on the shipped skill library itself (ADR-0003 as amended by spec
+// §A1 / ADR-0011, amicode#614 — re-homed from the vendored bundle to the in-repo
+// dir). The public/private boundary is now the REPO boundary; these tests red if
+// an internal-surfaced skill ever lands in the shipped library, at source rather
+// than at extract. The shipped library admits the two shipping tiers — public
+// (loads for all) and entitled (stages only for entitled sessions; must carry a
+// non-empty entitlement code) — and still hard-refuses `internal`.
 const SKILLS_DIR = join(__dirname, "..", "skills");
-describe("in-repo public skill library — repo-boundary leak guard (ADR-0003)", () => {
-  it("every shipped SKILL.md carries surface: public — the library never ships internal (AC4)", () => {
+describe("in-repo skill library — repo-boundary leak guard (ADR-0003 as amended by ADR-0011)", () => {
+  it("every shipped SKILL.md carries surface: public or entitled (entitled needs its entitlement code) — the library never ships internal (AC4)", () => {
     const offenders: string[] = [];
     for (const name of readdirSync(SKILLS_DIR)) {
       const p = join(SKILLS_DIR, name, "SKILL.md");
       if (!existsSync(p)) continue;
       const m = readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
       const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
-      if (surface !== "public") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
+      // raw-value capture + quote-strip: `entitlement: ""` must read as EMPTY
+      // (the resolver refuses it at runtime; the guard must agree)
+      const entitlement = m?.[1].match(/^entitlement:\s*(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, "").trim();
+      const ok = surface === "public" || (surface === "entitled" && !!entitlement);
+      if (!ok) offenders.push(`${name} (surface=${surface ?? "MISSING"}${surface === "entitled" ? ", entitlement MISSING" : ""})`);
     }
-    expect(offenders, `non-public skills in the shipped library: ${offenders.join(", ")}`).toEqual([]);
+    expect(offenders, `non-shippable skills in the shipped library: ${offenders.join(", ")}`).toEqual([]);
   });
-  it("the internal dev-workflow skills are absent from the shipped set (AC5)", () => {
+  it("the internal dev-workflow skills are absent from the shipped set (AC5 — the repo boundary remains the internal gate)", () => {
     const names = readdirSync(SKILLS_DIR);
     // surface:internal (amico-plugin#52) — they leaked into the public bundle
     // once under the extract pipeline; the repo boundary must not regress.
+    // The entitled tier does NOT reopen this door: entitled ships from the
+    // same in-repo dir but stages only through the entitlement gate
+    // (resolveLibrarySkills); internal stays vault-only, never ships.
     expect(names).not.toContain("implement-issue");
     expect(names).not.toContain("break-into-subissues");
   });

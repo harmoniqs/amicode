@@ -159,12 +159,17 @@ export const DEFAULT_PACK_ID = "quantum-control";
  *  via settings (Task 6). */
 export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packages")];
 /** Library roots scanned (first-root-wins), TYPED by admitted surface set
- *  (ADR-0003, amicode#242; roots re-homed after the amico-plugin dissolution):
- *   1. the in-repo public library (packages/extension/skills/, sibling of
+ *  (ADR-0003, amicode#242; three-tier per spec §A1 / ADR-0011; roots re-homed
+ *  after the amico-plugin dissolution):
+ *   1. the in-repo library (packages/extension/skills/, sibling of
  *      src/ and dist/ — same __dirname trick as DEFAULT_SCORES_ROOT) — admits
- *      {public} ONLY. This is the single source of truth for public skills and
- *      the ONLY root a Marketplace user has; the public/private boundary is
- *      now the repo boundary, not an extract pipeline.
+ *      {public, entitled}. This is the single source of truth for shipping
+ *      skills and the ONLY root a Marketplace user has; the public/private
+ *      boundary is the repo boundary, not an extract pipeline. Entitled-tier
+ *      entries share this root (entitled is a STAGING gate, not a location):
+ *      they stage only for sessions whose resolved entitlements include the
+ *      skill's `entitlement:` code — resolved from LocalEntitlementProvider at
+ *      prep time, headless included.
  *   2. the team's armonissima vault mount — admits {internal}. Mount presence
  *      IS the eligibility proof: internal SKILL.md content exists only in the
  *      private team vault (synced by the armonia sync), so nobody stages
@@ -173,7 +178,7 @@ export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packag
  *      surface:internal) their path to Amicode. Missing roots are silently
  *      skipped (resolveLibrarySkills). */
 export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
-  { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public"] },
+  { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public", "entitled"] },
   { path: path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills"), surfaces: ["internal"] },
 ];
 /** The quantum-control skill subset — now internal (surface: internal, lives in
@@ -716,10 +721,12 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const ents = readLocalEntitlements(entsDir).entitlements;
     const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
     const shippedEntries: SkillIndexEntry[] = [
-      // Library (public) skills by `surface: public` tag (spec-20260713-003804) — the
-      // OSS-shippable surface (Armonia vault layer + physics/opt + generic craft). The
-      // private tier is package-gated below (resolvePackageSkills), never here.
-      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS),
+      // Library skills by `surface:` tag (spec-20260713-003804; entitled tier per
+      // spec §A1 / ADR-0011) — public ships to all, entitled stages only for
+      // sessions holding the skill's entitlement code (the entitlements resolved
+      // above, prep-time, headless included). The private tier is package-gated
+      // below (resolvePackageSkills), never here.
+      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents),
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
     // User skill providers (issue #573): custom + workspace, merged with shadow semantics.
