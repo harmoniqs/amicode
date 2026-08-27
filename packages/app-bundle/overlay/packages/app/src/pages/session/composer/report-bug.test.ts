@@ -2,10 +2,10 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test"
 import { bugDock } from "./bug-dock"
 import { REPORT_BUG_COMMAND, reportBug } from "./report-bug"
 
-// amicode#116: the v2 composer's report-a-bug button. Dock absent/closed →
+// amicode#116 + #476: the v2 composer's report-a-bug button. Dock absent/closed →
 // post the bridge command (the extension host opens the flow); dock open →
-// reveal/re-expand it and post nothing. The dock itself is slice #117, built
-// against the bugDock seam — these tests drive the signal directly.
+// reveal/re-expand AND still post the command so the extension can prompt to
+// start a new report (#476 — the second click must not be swallowed).
 describe("reportBug", () => {
   afterEach(() => bugDock.close())
 
@@ -25,7 +25,7 @@ describe("reportBug", () => {
     }
   })
 
-  test("reveals the open dock instead of posting — reveal/re-expand, zero bridge messages", () => {
+  test("reveals the open dock AND posts the command — #476 second click not swallowed", () => {
     const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
     try {
       bugDock.open() // #117 drives this when its dock mounts
@@ -34,8 +34,11 @@ describe("reportBug", () => {
 
       reportBug()
 
-      expect(spy).not.toHaveBeenCalled()
-      // reveal must be observable even on an already-open dock (re-expand).
+      // Both: focus the existing dock and let the extension prompt for a new report.
+      expect(spy).toHaveBeenCalledTimes(1)
+      const [message] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect(message).toEqual({ source: "amicode", kind: "command", command: REPORT_BUG_COMMAND })
+      // reveal must still be observable (re-expand).
       expect(bugDock.revealNonce()).toBe(before + 1)
       expect(bugDock.isOpen()).toBe(true)
     } finally {
@@ -48,24 +51,24 @@ describe("reportBug", () => {
     try {
       bugDock.open()
       reportBug()
-      expect(spy).not.toHaveBeenCalled()
+      expect(spy).toHaveBeenCalledTimes(1)
 
       bugDock.close()
       expect(bugDock.isOpen()).toBe(false)
       reportBug()
-      expect(spy).toHaveBeenCalledTimes(1)
+      expect(spy).toHaveBeenCalledTimes(2)
     } finally {
       spy.mockRestore()
     }
   })
 
-  test("an injected dock seam is consulted — open dock → reveal called, no post", () => {
+  test("an injected dock seam is consulted — open dock → reveal called and command posted (#476)", () => {
     const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
     let revealed = 0
     try {
       reportBug({ isOpen: () => true, reveal: () => revealed++ })
       expect(revealed).toBe(1)
-      expect(spy).not.toHaveBeenCalled()
+      expect(spy).toHaveBeenCalledTimes(1)
     } finally {
       spy.mockRestore()
     }

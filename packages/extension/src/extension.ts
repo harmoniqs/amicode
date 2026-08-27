@@ -536,6 +536,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       panel.postToApp(msg);
     },
     showError: (m) => void vscode.window.showErrorMessage(m),
+    showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items) as Promise<string | undefined>,
     log: (line) => opencodeChannel.appendLine(line),
     // Same pin rule as the boot/restart config pins above: ONLY an explicit
     // amicode.defaultModel pins a model; empty means "let the server decide".
