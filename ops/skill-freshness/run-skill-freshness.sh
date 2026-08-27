@@ -27,7 +27,8 @@
 # first drift (exact title "Skill freshness report (nightly)") and updated
 # (commented) on subsequent drifts — searched before creating, never
 # duplicated. A gh failure notes issue_update_failed in the receipt and does
-# NOT change the exit code.
+# NOT change the exit code. The exact-title search covers OPEN issues only:
+# a human-closed tracker is history — the next drift opens a fresh epoch.
 #
 # --dry-run: writes the per-surface report files and WOULD-DO lines to
 # stderr; appends NO receipt and touches NO issues. This is the testable
@@ -255,9 +256,11 @@ if [ "${#DRIFT_KEYS[@]}" -gt 0 ]; then
       echo
       build_issue_body "${body_args[@]}"
     } > "$body_file"
-    # exact-title search (any state) — one cumulative issue, never duplicated
+    # exact-title search (OPEN issues) — one cumulative issue, never duplicated.
+    # A human-closed tracker starts a new epoch: closed issues are history,
+    # never re-opened and never re-commented (issue Key Decision).
     found=""
-    if gh_list="$(gh issue list -R "$TRACKING_REPO" --state all \
+    if gh_list="$(gh issue list -R "$TRACKING_REPO" --state open \
         --search "\"$ISSUE_TITLE\" in:title" --json number,title,url --limit 20 2>/dev/null)"; then
       found="$(node -e '
         let list = [];
