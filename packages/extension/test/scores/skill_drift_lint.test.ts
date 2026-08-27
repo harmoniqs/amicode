@@ -248,6 +248,56 @@ describe("checkClaims", () => {
     expect(r.evidence).toContain("src/missing.jl");
   });
 
+  it("review NIT: package-root containment uses a path-sep guard — no sibling-prefix misattribution", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-sibling-"));
+    try {
+      // 'roots' is a string prefix of 'roots-extra' — without the sep guard the
+      // second root's package is tried (and labeled) under the first root
+      const r1 = path.join(base, "roots");
+      const r2 = path.join(base, "roots-extra");
+      fs.mkdirSync(path.join(r2, "Beta.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(r2, "Beta.jl", "src", "thing.jl"), "thing = 1\n");
+      const [r] = checkClaims([{ kind: "path", text: "src/thing.jl", packages: [], line: 1, source: "backtick" }], [r1, r2]);
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toContain("Beta.jl");
+      expect(r.evidence).toContain("package root 2"); // found under root 2, not mislabeled as root 1
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("review NIT: export scan strips trailing comments and supports multi-line export lists", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-exports-"));
+    try {
+      const pkgDir = path.join(base, "Exports.jl", "src");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(pkgDir, "Exports.jl"),
+        [
+          "module Exports",
+          "export alpha # trailing comment",
+          "export beta,",
+          "       gamma  # second-line comment",
+          "export delta, # comma then comment",
+          "       epsilon",
+          "end",
+        ].join("\n"),
+      );
+      const mk = (text: string) => ({ kind: "symbol" as const, text, packages: ["Exports"], line: 1, source: "backtick" as const });
+      const results = checkClaims([mk("alpha"), mk("beta"), mk("gamma"), mk("delta"), mk("epsilon")], [base]);
+      for (const r of results) {
+        expect(r.verdict).toBe("VERIFIED");
+        // via the EXPORT scan, not the source scan — the names exist nowhere else
+        expect(r.evidence).toMatch(/exported by Exports\.jl/);
+      }
+      // comment text is never a name: 'trailing' occurs only in the comment
+      const [junk] = checkClaims([mk("trailing")], [base]);
+      expect(junk.evidence).not.toMatch(/exported by/); // source-scan hit at most, never an export
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("path claims: UNVERIFIABLE with no roots and no skill dir", () => {
     const [r] = checkClaims([{ kind: "path", text: "src/whatever.jl", packages: [], line: 1, source: "backtick" }], []);
     expect(r.verdict).toBe("UNVERIFIABLE");

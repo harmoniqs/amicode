@@ -415,8 +415,20 @@ function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): Pac
   const exports = new Set<string>();
   for (const f of files) {
     const raw = fs.readFileSync(f, "utf8");
-    for (const m of raw.matchAll(/^\s*export\s+(.+)$/gm)) {
-      for (const name of m[1].split(/[\s,]+/)) {
+    // Per-line so export lists can carry trailing comments (never names) and
+    // continue across lines on a trailing comma (review NIT):
+    //   export alpha # not-a-name        → alpha
+    //   export beta,                     → beta, gamma
+    //          gamma
+    const lines = raw.split(/\r?\n/);
+    for (let li = 0; li < lines.length; li++) {
+      const m = /^\s*export\s+(.*)$/.exec(lines[li]);
+      if (!m) continue;
+      let stmt = m[1].replace(/\s*#.*$/, "").trim();
+      while (stmt.endsWith(",") && li + 1 < lines.length) {
+        stmt += " " + lines[++li].replace(/\s*#.*$/, "").trim();
+      }
+      for (const name of stmt.split(/[\s,]+/)) {
         const n = name.trim();
         if (n !== "") exports.add(n);
       }
@@ -622,7 +634,10 @@ function checkPathClaim(
       return { claim, verdict: "VERIFIED", evidence: `path exists: ${target} (package root ${i + 1})` };
     }
     for (const pkg of packages) {
-      if (!pkg.dir.startsWith(root)) continue; // (sep guard lands with the review-NIT fix)
+      // path-sep guard: a bare startsWith(root) also matches sibling roots
+      // sharing a string prefix ('roots' vs 'roots-extra'), misattributing
+      // evidence (review NIT)
+      if (!pkg.dir.startsWith(path.resolve(root) + path.sep)) continue;
       const inPkg = path.resolve(pkg.dir, target);
       if (!isInsideAnyRoot(inPkg, allowedRoots)) {
         escaped++;
