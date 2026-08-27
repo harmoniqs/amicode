@@ -730,6 +730,114 @@ describe("writeOnboardingConfig — placeholder key rejection (#455 AC5)", () =>
   });
 });
 
+// ─── #455: Phantom provider regression — only selected + bedrock ──────────
+
+describe("writeBatchConfig — phantom provider regression (#455 AC1/AC2/AC4/AC6)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("only writes explicitly selected provider + bedrock — not Zen/Anthropic phantoms", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    // Simulate scanner finding 3 providers, but user only checks openai
+    const allCredentials: DetectedCredential[] = [
+      { provider: "opencode", key: "opencode-valid-key-1234567890", source: "opencode (account)" },
+      { provider: "anthropic", key: "sk-ant-valid-key-1234567890", source: "environment" },
+      { provider: "openai", key: "sk-openai-valid-key-1234567890", source: "environment" },
+    ];
+    const selected = allCredentials.filter((c) => c.provider === "openai");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(selected, "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.openai).toBeDefined();
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+    expect(written.provider["amazon-bedrock"].options.apiKey).toMatch(/^ABSK-/);
+    // Phantoms must NOT be present
+    expect(written.provider.opencode).toBeUndefined();
+    expect(written.provider.anthropic).toBeUndefined();
+    // Only openai + bedrock keys present
+    const providerKeys = Object.keys(written.provider).sort();
+    expect(providerKeys).toEqual(["amazon-bedrock", "openai"]);
+  });
+
+  it("writes bedrock even when no providers selected (empty selection)", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig([], "openai", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+    expect(written.provider["amazon-bedrock"].options.apiKey).toMatch(/^ABSK-/);
+    expect(written.provider["amazon-bedrock"].env).toEqual(["AWS_BEARER_TOKEN_BEDROCK"]);
+    // No user providers
+    expect(Object.keys(written.provider)).toEqual(["amazon-bedrock"]);
+  });
+
+  it("never writes placeholder keys, but still provisions bedrock", async () => {
+    const { writeBatchConfig } = await import("../src/credential_scanner");
+    const credentials: DetectedCredential[] = [
+      { provider: "anthropic", key: "sk-test", source: "env" },
+      { provider: "openai", key: "short", source: "env" },
+    ];
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeBatchConfig(credentials, "anthropic", configPath);
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.openai).toBeUndefined();
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+  });
+});
+
+describe("writeOnboardingConfig — phantom + bedrock regression (#455 AC1/AC6)", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = makeTmpDir();
+  });
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("manual path: only selected provider + bedrock appear — no phantom Anthropic", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "openai", model: "openai/gpt-5.6-sol", apiKey: "sk-openai-valid-key-1234567890" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(written.provider.openai).toBeDefined();
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+    expect(written.provider.anthropic).toBeUndefined();
+    expect(written.provider.opencode).toBeUndefined();
+    const keys = Object.keys(written.provider).sort();
+    expect(keys).toEqual(["amazon-bedrock", "openai"]);
+  });
+
+  it("manual path: always provisions bedrock even when key is placeholder (invalid)", async () => {
+    const { writeOnboardingConfig } = await import("../src/onboarding_panel");
+    const configPath = path.join(tmpDir, "opencode.json");
+    writeOnboardingConfig(
+      { provider: "anthropic", model: "anthropic/claude-sonnet-4-5", apiKey: "sk-test" },
+      configPath,
+    );
+
+    const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    // Invalid provider NOT written
+    expect(written.provider?.anthropic).toBeUndefined();
+    // But bedrock still provisioned
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+  });
+});
+
 describe("writeBatchConfig — replaces provider section (redo overwrites)", () => {
   let tmpDir: string;
 
@@ -740,7 +848,7 @@ describe("writeBatchConfig — replaces provider section (redo overwrites)", () 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("replaces existing providers with only the selected ones", async () => {
+  it("replaces existing providers with only the selected ones — but always re-provisions bedrock infra", async () => {
     const { writeBatchConfig } = await import("../src/credential_scanner");
     const credentials: DetectedCredential[] = [
       { provider: "openai", key: "sk-openai-real-key-12345", source: "env" },
@@ -756,9 +864,10 @@ describe("writeBatchConfig — replaces provider section (redo overwrites)", () 
     writeBatchConfig(credentials, "openai", configPath);
 
     const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    // Old provider NOT preserved — user didn't select it this time
-    expect(written.provider["amazon-bedrock"]).toBeUndefined();
-    // Only the user-selected provider is present
+    // Bedrock is NOT removed — it's infrastructure, always re-provisioned with service credential
+    expect(written.provider["amazon-bedrock"]).toBeDefined();
+    expect(written.provider["amazon-bedrock"].options.apiKey).toMatch(/^ABSK-/);
+    // Only the user-selected provider is present besides bedrock
     expect(written.provider.openai).toBeDefined();
     expect(written.provider.openai.options.apiKey).toBe("sk-openai-real-key-12345");
     // Non-provider settings are still preserved
