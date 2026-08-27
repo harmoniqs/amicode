@@ -11,6 +11,7 @@ source of truth; `~/.amico/ops/` on the mini is a **deploy target** — deploy w
 | `fleet-status.sh` | every 5 min (`co.harmoniqs.fleet-status`) | ssh probes (mini/macbook/erlich), canonical chat DB, server lsof, `~/.amico/sync.log`, local repo scan | `~/.amico/ops/fleet-status.json` (the dashboard widget's input); macOS notification on server-guard state change |
 | `fleet-alert.sh` | every 15 min (`co.harmoniqs.fleet-alert`) | `fleet-status.json`, state file | **Slack `#fleet`** — device transitions only (noise-gated; always-on hosts `mini erlich` notify, laptops never do); down->24h re-reminds once daily |
 | `papers-digest/daily.sh` | daily ~09:00 (`co.harmoniqs.amicode-papers-digest`) | the frozen bundle | **Slack `#papers`** — top-5 quant-ph digest; appends to `papers-digest/log.txt` |
+| `skill-freshness/run-skill-freshness.sh` | daily ~04:30 (`co.harmoniqs.skill-freshness`) | the three skill surfaces (repo public library, armonissima vault library, server staging tree), Julia package checkouts, the `#586` lint CLI | receipt line appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift, the tracking issue "Skill freshness report (nightly)" in `harmoniqs/armonissima` (created once, then commented); reports under `skill-freshness/reports/` |
 
 The launchd plists themselves are versioned alongside (`ops/launchd/`) — reference
 copies; installing them is a one-time `launchctl load` on the mini (paths inside are
@@ -19,7 +20,8 @@ absolute to `/Users/aaron`).
 ## Runtime state (NOT in this repo, never overwritten by deploy)
 
 `fleet-status.json`, `fleet-status.guard-state`, `fleet-alert.state`,
-`fleet-alert.launchd.{out,err}`, `papers-digest/{log.txt,launchd.*}` — all live under
+`fleet-alert.launchd.{out,err}`, `papers-digest/{log.txt,launchd.*}`,
+`skill-freshness/{reports/,launchd.*}` — all live under
 `~/.amico/ops/` on the mini and belong to the running system. `install.sh` touches
 none of them.
 
@@ -74,6 +76,36 @@ ssh erlich 'mkdir -p ~/.amico/ops' && scp ops/hunt.sh erlich:.amico/ops/hunt.sh
 
 Hunt artifacts (`~/.amico/ops/hunts/<id>/{hunt.log,heartbeat}`) are runtime
 state — never overwritten by deploy, same as the state files below.
+
+## Skill freshness: `skill-freshness/run-skill-freshness.sh` (#587)
+
+Nightly cadence over the three skill surfaces, using the `#586` lint CLI from the
+canonical repo checkout (`~/armonia/repos/amicode` — no frozen bundle needed; the
+lint is TS run directly under node):
+
+| surface | default dir | lint lane | min-skills floor |
+|---|---|---|---|
+| `public` | `packages/extension/skills` (repo checkout) | `--structural-only` | 20 |
+| `internal` | `~/.amico/vaults/armonissima/skills` | full (package cross-check) | 50 |
+| `staging` | `~/.amico/server/opencode-project-staging/opencode-project/skills` | full (package cross-check) | 45 |
+
+Every real run appends ONE JSON line to the upgrade-receipts journal
+(`~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`,
+`"kind":"skill-freshness"`); per-surface report JSONs land under
+`skill-freshness/reports/`. Absent surface dirs are recorded as `"skipped"` —
+the job degrades, never crashes. Exit code is driven by lint structural
+failures only. On drift (structural>0 OR drifted>0 on any ran surface) it
+opens (once) and subsequently comments the tracking issue **"Skill freshness
+report (nightly)"** in `harmoniqs/armonissima` — searched by exact title
+before creating, never duplicated; a `gh` failure marks
+`issue_update_failed` on the receipt without changing the exit code.
+
+`--dry-run` writes the reports and WOULD-DO lines but appends no receipt and
+touches no issues — that is the tested seam
+(`packages/extension/test/ops/skill_freshness_orchestrator.test.ts`).
+
+Read-only with respect to skill content: the cadence reports drift, it never
+edits skills, and there is no LLM judgment anywhere in the verdict path.
 
 ## Deploy
 
