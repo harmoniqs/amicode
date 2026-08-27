@@ -410,7 +410,7 @@ function collectJuliaFiles(dir: string): string[] {
   const out: string[] = [];
   const walk = (d: string, depth: number) => {
     if (depth > 8) return; // defensive — fixture and package trees are shallow
-    let entries: string[] = [];
+    let entries: fs.Dirent[] = [];
     try {
       entries = fs.readdirSync(d, { withFileTypes: true });
     } catch {
