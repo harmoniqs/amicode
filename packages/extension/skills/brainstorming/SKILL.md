@@ -31,7 +31,7 @@ You MUST create a task for each of these items and complete them in order:
 2. **Select & run a grilling skill** — investigate, recommend `grill-me` vs `grill-with-docs`, let the user choose, then invoke it to resolve the design tree to shared understanding
 3. **Propose 2-3 approaches** — with trade-offs and your recommendation
 4. **Present design** — in sections scaled to their complexity, get user approval after each section
-5. **Produce the design-of-record** — render the approved design into the canonical template (decision-surface layout + density tier; see `write-an-issue` + ADR `docs/adr/0001`)
+5. **Produce the design-of-record** — render the approved design into the canonical template (two-reader decision-surface layout + density tier; see `write-an-issue`)
 6. **Route it — ask the user the terminus** — vault spec/plan or GitHub issue — options ordered by the *compounding-why* recommendation (research → spec/plan first · tooling/architecture → issue + repo ADR/`CONTEXT.md` · chore → issue first). Offer the issue option only when `write-an-issue` is in the session's skill index. Draft locally; publish nothing yet
 7. **Review loop** — `amico spec review <path>` (the `/deliberate` loop: free mechanical tier first, then one-lens critics on the artifact alone); fix and re-run until approved (max 3 rounds, then surface to human)
 8. **User-approve, then publish** — user reviews the local draft; on approval, publish (commit the vault spec/plan or ADR + `CONTEXT.md`; issue terminus only: `write-an-issue` → `gh issue create`) + bidirectional link. Nothing outward-facing before approval
@@ -130,7 +130,7 @@ The heuristic keys on **domain-language stakes**, not merely file presence (intr
 
 ## After the Design
 
-Once the design is approved, **produce → route → draft → publish** a single *design-of-record*. brainstorming owns this flow; the template + layout live in `write-an-issue` + ADR `docs/adr/0001-issue-as-two-reader-document.md` (don't re-inline them here).
+Once the design is approved, **produce → route → draft → publish** a single *design-of-record*. brainstorming owns this flow; the template lives in `write-an-issue`, and the layout itself — the two-reader **decision surface** (`> [!IMPORTANT]`: Problem · Approach · Scope · Assumptions, over execution detail: Acceptance Criteria · Key Decisions · Constraints & Invariants) — is rendered right below (**1. Produce**).
 
 **1. Produce.** Render the approved design into the canonical template — the two-reader **decision-surface layout** (`> [!IMPORTANT]` surface: Problem · Approach · Approaches Considered · Scope · Assumptions, over execution detail: Acceptance Criteria · Key Decisions(+Data Contracts) · Constraints & Invariants · Prior Art · Source · Notes), at **standard** or **PRD** density. Rules: no file paths/code, decision-complete, testable criteria, include-if-present.
 
