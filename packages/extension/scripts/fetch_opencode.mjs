@@ -11,7 +11,6 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import {
   chmodSync,
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -131,27 +130,6 @@ function resolveBun() {
  *  cards, v2 titlebar, draft flow) at runtime even though the code is compiled
  *  in. Any other channel maps to "dev" → new-layout default ON. */
 function defaultBuild(cloneDir, version) {
-  // Apply the app-bundle overlay before building: only copy files that are NEW
-  // (don't exist in the fork). Files already present in the fork are assumed to
-  // be the current version — the overlay may carry stale snapshots of those.
-  // This adds amicode-specific new files (e.g. Skills tab) without regressing
-  // existing UI code.
-  const overlayDir = join(PKG_ROOT, "..", "app-bundle", "overlay");
-  if (existsSync(overlayDir)) {
-    const applyNewFiles = (src, dest) => {
-      for (const entry of readdirSync(src, { withFileTypes: true })) {
-        const s = join(src, entry.name);
-        const d = join(dest, entry.name);
-        if (entry.isDirectory()) {
-          applyNewFiles(s, d);
-        } else if (!existsSync(d)) {
-          mkdirSync(join(dest), { recursive: true });
-          cpSync(s, d);
-        }
-      }
-    };
-    applyNewFiles(overlayDir, cloneDir);
-  }
   const bun = resolveBun();
   execFileSync(bun, ["run", "script/build.ts", "--single", "--skip-install"], {
     cwd: join(cloneDir, "packages", "opencode"),
