@@ -54,11 +54,41 @@ export function contextKind(ref: ContextRef): ContextTreeKind {
 }
 
 /** A path inside an attached vault mount → {mount, rel} so the host can open
- *  it through the Vault panel instead of a project file tab. */
+ *  it through the Vault panel instead of a project file tab. The mount here is
+ *  the vault's DIRECTORY identity (the path segment), which the /amicode/vaults
+ *  wire may key differently (marker `name`) — resolve through vaultNodeLocked
+ *  / the wire's dirName before treating it as a mount id (amicode#447). */
 export function vaultRefFromPath(path: string): { mount: string; rel: string } | undefined {
   const m = path.match(/\/\.amico\/vaults\/([^/]+)\/(.+)$/)
   if (m) return { mount: m[1], rel: m[2] }
   return undefined
+}
+
+/** One mount on the /amicode/vaults wire: the marker-name `id`, whether the
+ *  mount allows browsing, and the DIRECTORY identity its file paths carry
+ *  (emitted by the server since amicode#447). */
+export type VaultMountStatus = { id: string; browsable?: boolean; dirName?: string }
+
+/** The click-lock decision for a vault node in the context tree (the
+ *  Obsidian-style knowledge graph). `vaultDir` is the identity the node's path
+ *  carries (vaultRefFromPath: the vault directory segment), which may differ
+ *  from the marker-name id the wire keys — reconcile through `dirName` first,
+ *  then by id. A mount known to refuse browsing locks, an identity no wire
+ *  mount claims locks (fail-closed — a proprietary mount we can't see), and
+ *  NO wire data at all doesn't (the fetch failed; the server still enforces
+ *  the real gate, so a click may try). */
+export function vaultNodeLocked(input: {
+  mounts: readonly VaultMountStatus[] | undefined
+  vaultDir: string
+}): boolean {
+  const list = input.mounts
+  if (!list) return false
+  const byDir = new Map(
+    list.filter((m) => typeof m.dirName === "string" && m.dirName).map((m) => [m.dirName as string, m]),
+  )
+  const mount = byDir.get(input.vaultDir) ?? list.find((m) => m.id === input.vaultDir)
+  if (!mount) return true
+  return mount.browsable === false
 }
 
 const dedupKey = (ref: ContextRef, kind: ContextTreeKind) =>

@@ -96,12 +96,15 @@ export function isTextFile(name: string): boolean {
   return TEXT_EXT.has(ext) || TEXT_EXT.has(name.toLowerCase())
 }
 
-/** Resolve a mount id (the `name` in its .amico-vault.toml marker, falling back
- *  to the directory basename — parity with vaults.ts scanMounts) to its real
- *  directory. When two mounts declare the same marker name, the one whose
- *  DIRECTORY is also named `id` wins, so a duplicate can't silently shadow a
- *  vault the researcher can see in the mount list. Returns undefined when no
- *  such mount exists. */
+/** Resolve a mount id to its real directory. TWO identities resolve, so the
+ *  knowledge-graph's path-derived refs open what they point at (amicode#447):
+ *  the marker `name` (what the wire keys mounts by), falling back to the
+ *  directory basename — the identity a vault FILE path carries, which differs
+ *  from the marker name on the standard fleet layout (dir
+ *  `armonia-aaron-trowbridge`, marker `name = "aaron"`). When two mounts
+ *  declare the same marker name, the one whose DIRECTORY is also named `id`
+ *  wins, so a duplicate can't silently shadow a vault the researcher can see
+ *  in the mount list. Returns undefined when no such mount exists. */
 export function mountDir(id: string, root: string = vaultsRoot()): string | undefined {
   let entries: string[]
   try {
@@ -110,6 +113,7 @@ export function mountDir(id: string, root: string = vaultsRoot()): string | unde
     return undefined
   }
   let byName: string | undefined
+  let byBase: string | undefined
   for (const base of entries) {
     let text: string
     try {
@@ -118,11 +122,13 @@ export function mountDir(id: string, root: string = vaultsRoot()): string | unde
       continue
     }
     const name = text.match(/^\s*name\s*=\s*"([^"]*)"/m)?.[1] || base
-    if (name !== id) continue
-    if (base === id) return path.join(root, base)
-    byName ??= path.join(root, base)
+    if (base === id) {
+      if (name === id) return path.join(root, base)
+      byBase ??= path.join(root, base)
+    }
+    if (name === id) byName ??= path.join(root, base)
   }
-  return byName
+  return byName ?? byBase
 }
 
 export type VaultFileEntry = { path: string; name: string; size: number; readable: boolean }

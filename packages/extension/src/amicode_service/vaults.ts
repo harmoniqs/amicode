@@ -87,13 +87,19 @@ export function annotateBrowsable(
   env: Record<string, string | undefined> = process.env,
 ): string {
   try {
-    const parsed = JSON.parse(body) as { mounts?: { id?: unknown; browsable?: boolean }[] }
+    const parsed = JSON.parse(body) as { mounts?: { id?: unknown; browsable?: boolean; dirName?: string }[] }
     if (!Array.isArray(parsed.mounts)) return body
     const allowed = browseAllowed(env)
     for (const m of parsed.mounts) {
       if (typeof m?.id !== "string") continue
       const dir = allowed ? mountDir(m.id, root) : undefined
       m.browsable = !!dir && !mountBrowseRefusal(m.id, dir, env)
+      // amicode#447: the directory identity each mount's FILE paths carry (the
+      // basename, not the absolute — the path is the researcher's own). The
+      // app reconciles a path-derived vault ref (the directory segment)
+      // against the mount list through it; without it a dir≠name mount's
+      // notes resolve to no known mount and lock or 404.
+      m.dirName = dir ? path.basename(dir) : undefined
     }
     return JSON.stringify(parsed)
   } catch {
