@@ -825,6 +825,7 @@
     "packages/app/e2e/regression/review-line-comment.spec.ts": "953e9c67ed4cee91968369088237cf2288558eaa55e55b61f385571bccad7003",
     "packages/app/e2e/regression/session-timeline-lifecycle-state.spec.ts": "00bfd4f6199c1b350d14a9eda5e3a4c546b020df32e3604609326281869d6d4f",
     "packages/app/e2e/regression/session-timeline-tool-projection.spec.ts": "c0bb866b113d38ddec084e04027030cf5b7c81f1fe4e6ee88fcd7b1b161296c3",
+    "packages/app/e2e/regression/tab-dblclick-close.spec.ts": "7bf9490c2f39281c7751c39747bb720ec1b5571d7b7ddc803686071aa8ad55aa",
     "packages/app/e2e/regression/tab-navigate-mousedown.spec.ts": "8521d43183f0df624449edbba8ee4dc646f0ecb84a9c5a04d275613f9da875ae",
     "packages/app/e2e/regression/workbench-drops.spec.ts": "0188f4f1ff07a40945a4900bfa85e21a4f578be9f18257a803200a18ce41ac05",
     "packages/app/e2e/regression/workbench-panes.spec.ts": "e0dfb84bd1b8be00a89cf48387aeaab5ec75845e8efbc8e4fa8252204fb27e8f",
@@ -894,6 +895,8 @@
     "packages/app/src/components/settings-v2/general.tsx": "7efddf68e7b7332f396934b76c35267763223a351e91121e6eeaa9f5390df76d",
     "packages/app/src/components/settings-v2/permissions.tsx": "c91efb2cd0b6fbc01cc28d540475b9b4ff19370d47f8291a22f7a0a2545bc51a",
     "packages/app/src/components/settings-v2/settings-v2.css": "3a7fe0e2d0b463ae9127b420910fab2f726b4ea6fcc110ed8aba63510f8e0bc1",
+    "packages/app/src/components/settings-v2/skills-controller.ts": "2c7344d144da0eec1c25083ead45f5afb2a8c6fd759541ad719cae9a09fcd19b",
+    "packages/app/src/components/settings-v2/skills.tsx": "653695b40c4a6e4a15a7e4ed02e11871bbc26498440658ffd531d66d9b3c8a33",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
     "packages/app/src/components/status-popover-body.tsx": "a78d557256283fd05657d999b2a6babc0bcb5ae3dcfa2cb07f770ebb602a94a1",
@@ -906,7 +909,7 @@
     "packages/app/src/components/titlebar-channel.test.ts": "fe4dbe37e8b599878e16f2e56a62814fa787a94f2e523b3ca3f2d5310cf940cb",
     "packages/app/src/components/titlebar-channel.ts": "2e01bb619f36799a684952538bc47844bac96a2c5eaaed240c6317d2b07b8efa",
     "packages/app/src/components/titlebar-tab-nav.css": "90930c2f9476fb0eace8692424a029b3510781c88d1ee61f7f2edba559526832",
-    "packages/app/src/components/titlebar-tab-nav.tsx": "2304e936af56c24f27f1549f4f8751a600ed274123d7a3973ecfa6a5bb28102c",
+    "packages/app/src/components/titlebar-tab-nav.tsx": "ef94567ec6365126082838e01d0b8c3f8f0b03b2b7528ebd8d152ecdc699a111",
     "packages/app/src/components/titlebar-tab-popover.css": "d731db2d7d49838004089a3d82ff68c22214b0ca636bf3b8e02498c14dadbf8d",
     "packages/app/src/components/titlebar-tab-strip.tsx": "182a21a367b36dca30a570ea98015f434cec49db671edca6e921778a3abeb6e8",
     "packages/app/src/components/titlebar.tsx": "359d41238a3503900621877d8094e50517cb53870428e4c0fb316858c3381a40",
@@ -1020,6 +1023,7 @@
     "packages/app/src/pages/session/v2/accumulate-diffs.ts": "f10a1e097a86f746f3fc2b861454f3b8f509e6895c54b7e3bd0317dbf3d14acf",
     "packages/app/src/pages/session/v2/review-panel-v2-state.test.ts": "ac0cf1939c164948d9a0c54cc15076b30413612d872237e0fbd0912804c1ced0",
     "packages/app/src/pages/session/v2/review-panel-v2-state.ts": "e27c3aa236d2862e3cbd87128c4e03e6d810974faaaadb12a7e04cdd3b531e1c",
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814",
     "packages/app/src/theme-preload.test.ts": "d9e4e96dd39a3491493637682611bedf6ddf4b6e4dbdddcb60bf006211b137a1",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
@@ -1313,9 +1317,6 @@
     "packages/ui/src/v2/components/toast-v2.css": "9b652d908f39e35cdf1764f1675e4db3dea1d7abf43cb792cfa2d27b699f2723",
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
-    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
-    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814",
-    "packages/app/src/components/settings-v2/skills-controller.ts": "2c7344d144da0eec1c25083ead45f5afb2a8c6fd759541ad719cae9a09fcd19b",
-    "packages/app/src/components/settings-v2/skills.tsx": "653695b40c4a6e4a15a7e4ed02e11871bbc26498440658ffd531d66d9b3c8a33"
+    "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc"
   }
 }
