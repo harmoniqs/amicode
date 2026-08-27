@@ -20,8 +20,17 @@
 //                         per-skill per-claim; text is the human listing)
 //   --out <file>          write the report to a file instead of stdout
 //
-// Exit code: non-zero ONLY for structural failures (or usage errors) —
-// semantic drift is report-mode by design.
+// Exit codes (review NIT — the contract, in one table):
+//   0  ok — zero structural failures (semantic drift alone never fails;
+//      report-mode by design, the nightly cadence owns escalation)
+//   1  structural failure — malformed frontmatter, duplicate skill names,
+//      broken relative refs, an existing-but-unreadable skills dir under
+//      requireSkillsDir (strict mode), or the --min-skills floor not met
+//   2  usage / pre-flight error — bad arguments, or the --skills dir does
+//      not exist (missing ≠ unreadable: a MISSING dir is caught here by
+//      the CLI pre-flight with exit 2, while an EXISTING-but-unreadable
+//      dir passes pre-flight and fails structurally with exit 1 — the
+//      EACCES-vs-missing divergence)
 //
 // Runs on any node with native TS type-stripping (≥22.18 default-on; the
 // mini's node 26 qualifies — same pattern as scripts/updater_live_drill.mts).

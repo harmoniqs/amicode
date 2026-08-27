@@ -846,8 +846,14 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
   return opts;
 }
 
-/** Exit code: non-zero ONLY for structural failures — semantic drift is
- *  report-mode (the nightly cadence owns escalation). */
+/** Exit code (the CLI contract — see scripts/skill_drift_lint.mts for the
+ *  full table): 0 = ok (zero structural failures; semantic drift alone
+ *  never fails), 1 = structural failure (malformed frontmatter, duplicate
+ *  names, broken relative refs, existing-but-unreadable skills dir in
+ *  strict mode, min-skills floor not met). 2 (usage/pre-flight, e.g. a
+ *  MISSING --skills dir) is the runner's, not this function's — that is
+ *  the EACCES-vs-missing divergence: missing → exit 2 pre-flight,
+ *  existing-but-unreadable → strict-mode structural exit 1. */
 export function lintExitCode(report: SkillsLintReport): number {
   return report.ok ? 0 : 1;
 }
