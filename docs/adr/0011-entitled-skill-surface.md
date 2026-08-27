@@ -16,8 +16,16 @@ the vault root admits `{internal}` only.
 The gate is a prep-time decision, not a run-gate. `resolveLibrarySkills(roots, entitlements)`
 receives the session's resolved entitlements — read from the same `LocalEntitlementProvider`
 (`entitlements.toml`) the score repertoire filter already uses — and `prepareOpencodeProject`
-passes them through for EVERY session type, headless included. Staging happens where the other
-staging happens, so there is no session shape that sees the shipped file but skips the gate.
+passes them through for EVERY session the extension preps, headless included. Staging happens
+where the other staging happens — for extension-prepped sessions there is no session shape that
+sees the shipped file but skips the gate.
+
+**Known open enforcement point:** the headless server boot lane (the fleet's boot script) rsyncs
+the raw VSIX library over its staged tree without the entitlement filter — that lane is the
+server-staging convergence slice (resolver-CLI at boot, spec §A1.3/D4), and until it lands,
+headless sessions stage entitled-tier content regardless of entitlement. The content policy
+(safe-to-possess) makes this an ordering inconsistency, not a confidentiality break; the gate
+closes with slice (d).
 No LLM anywhere in the gating path: the check is `entitlements.includes(code)`. A missing or
 malformed entitlement code is skip + warn (the resolver's standing philosophy — a defective
 skill never blocks a session); a well-formed code the session lacks is a silent skip, because
