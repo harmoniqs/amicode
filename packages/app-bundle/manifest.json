@@ -1144,7 +1144,7 @@
     "packages/ui/src/amicode/ask-card.tsx": "599d249ecd528713cb57ba908ade45ae56cf4244690627a8a9eaa9dde8886adc",
     "packages/ui/src/amicode/ask.test.ts": "1daa4ccf6cc41f17039c5ffb0a09243ba364b5af6e174ecd1040787afb7907e2",
     "packages/ui/src/amicode/ask.ts": "5081435a8b09b2eba12240a9914bbe222303460bd21044bbf8482bc190ff2efe",
-    "packages/ui/src/amicode/brain-data.ts": "f23483cda811e148748d4f47435c6d01c03d52e9a65ad74cae2c0ea30ce0b8dc",
+    "packages/ui/src/amicode/brain-data.ts": "0b19aad7ece9726d97981ccc72095e5e7607ca71e5f031d9efcb32c766636535",
     "packages/ui/src/amicode/brain-engine.test.ts": "3b244fbe15ac87529655acd688da9181af53a1dfeb3f9f87e5f77000db3aada6",
     "packages/ui/src/amicode/brain-engine.ts": "500b03cd43d4cdbd76a575f4517a4aaac788167e1d41a396d6dc6bce3cdfb8dc",
     "packages/ui/src/amicode/brain-ref.ts": "9d8aaa8b24fb0b74acc0c4cdafc265c1808c28c95d4ac9b815fd2e54ea89f46d",
