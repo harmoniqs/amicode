@@ -32,6 +32,14 @@ function readFixtureSkill(name: string): string {
   return fs.readFileSync(path.join(FIXTURE_SKILLS, name, "SKILL.md"), "utf8");
 }
 
+/** lintSkillsDir takes a LIBRARY root (a dir of <name>/SKILL.md dirs), so
+ *  single-skill tests get a temp tree holding just that skill. */
+function loneSkillTree(name: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-lone-"));
+  fs.cpSync(path.join(FIXTURE_SKILLS, name), path.join(root, name), { recursive: true });
+  return root;
+}
+
 // ---------------------------------------------------------------------------
 // extractClaims — conservative, precision-first (issue Key Decision)
 // ---------------------------------------------------------------------------
@@ -56,7 +64,7 @@ describe("extractClaims", () => {
     const claims = extractClaims(readFixtureSkill("clean"));
     // in-fence qualified ref to an imported package
     expect(claims).toContainEqual(
-      expect.objectContaining({ kind: "qualified-symbol", text: "FixturePkg.make_widget", package: "FixturePkg" }),
+      expect.objectContaining({ kind: "qualified-symbol", text: "FixturePkg.make_widget", packages: ["FixturePkg"] }),
     );
     // prose backtick with a capitalized module part
     expect(claims).toContainEqual(
@@ -183,7 +191,7 @@ describe("checkClaims", () => {
   });
 
   it("UNVERIFIABLE when the cited package is absent from all roots", () => {
-    const [r] = checkClaims([{ kind: "qualified-symbol", text: "GhostPkg.thing", package: "GhostPkg", line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    const [r] = checkClaims([{ kind: "qualified-symbol", text: "GhostPkg.thing", packages: ["GhostPkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
     expect(r.verdict).toBe("UNVERIFIABLE");
     expect(r.evidence).toContain("GhostPkg");
   });
@@ -194,9 +202,9 @@ describe("checkClaims", () => {
   });
 
   it("qualified prose claims resolve against the named package", () => {
-    const [ok] = checkClaims([{ kind: "qualified-symbol", text: "FixturePkg.Widget", package: "FixturePkg", line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    const [ok] = checkClaims([{ kind: "qualified-symbol", text: "FixturePkg.Widget", packages: ["FixturePkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
     expect(ok.verdict).toBe("VERIFIED");
-    const [bad] = checkClaims([{ kind: "qualified-symbol", text: "FixturePkg.phantom_fn", package: "FixturePkg", line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    const [bad] = checkClaims([{ kind: "qualified-symbol", text: "FixturePkg.phantom_fn", packages: ["FixturePkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
     expect(bad.verdict).toBe("DRIFTED");
   });
 
@@ -209,7 +217,7 @@ describe("checkClaims", () => {
     const [skill] = checkClaims([{ kind: "path", text: "companion.md", packages: [], line: 1, source: "backtick" }], [], { skillDir: cleanDir });
     expect(skill.verdict).toBe("VERIFIED");
     // extra search root (library root / repo root passed by the caller)
-    const [root] = checkClaims([{ kind: "path", text: "skills/clean/companion.md", packages: [], line: 1, source: "backtick" }], [], { searchRoots: [FIXTURE_SKILLS] });
+    const [root] = checkClaims([{ kind: "path", text: "clean/companion.md", packages: [], line: 1, source: "backtick" }], [], { searchRoots: [FIXTURE_SKILLS] });
     expect(root.verdict).toBe("VERIFIED");
   });
 
@@ -231,7 +239,7 @@ describe("checkClaims", () => {
 
 describe("lintSkillsDir", () => {
   it("clean skill: ok, zero structural failures, all claims VERIFIED", () => {
-    const report = lintSkillsDir(path.join(FIXTURE_SKILLS, "clean"), [FIXTURE_PACKAGES]);
+    const report = lintSkillsDir(loneSkillTree("clean"), [FIXTURE_PACKAGES]);
     expect(report.ok).toBe(true);
     expect(report.aggregate.structuralFailures).toBe(0);
     expect(report.aggregate.drifted).toBe(0);
@@ -241,7 +249,7 @@ describe("lintSkillsDir", () => {
   });
 
   it("drifted skill: semantic DRIFTED claims reported but ok stays true (report-mode)", () => {
-    const report = lintSkillsDir(path.join(FIXTURE_SKILLS, "drifted"), [FIXTURE_PACKAGES]);
+    const report = lintSkillsDir(loneSkillTree("drifted"), [FIXTURE_PACKAGES]);
     expect(report.ok).toBe(true);
     expect(report.aggregate.drifted).toBeGreaterThanOrEqual(3); // PhantomWidget (fence+prose), phantom_fn (fence+prose)
     const driftedTexts = report.skills[0].claims.filter((c) => c.verdict === "DRIFTED").map((c) => c.claim.text);
@@ -250,15 +258,15 @@ describe("lintSkillsDir", () => {
   });
 
   it("malformed frontmatter is a STRUCTURAL failure (non-zero exit semantics)", () => {
-    const report = lintSkillsDir(path.join(FIXTURE_SKILLS, "malformed"), []);
+    const report = lintSkillsDir(loneSkillTree("malformed"), []);
     expect(report.ok).toBe(false);
-    expect(report.skills[0].structural.join()).toMatch(/frontmatter/i);
+    expect(report.skills[0].structural.map((f) => f.message).join()).toMatch(/frontmatter/i);
   });
 
   it("a broken relative link within the skills tree is a STRUCTURAL failure", () => {
-    const report = lintSkillsDir(path.join(FIXTURE_SKILLS, "broken-paths"), [FIXTURE_PACKAGES]);
+    const report = lintSkillsDir(loneSkillTree("broken-paths"), [FIXTURE_PACKAGES]);
     expect(report.ok).toBe(false);
-    expect(report.skills[0].structural.join()).toMatch(/missing-companion\.md/);
+    expect(report.skills[0].structural.map((f) => f.message).join()).toMatch(/missing-companion\.md/);
     // while the broken PACKAGE path stays semantic (report-mode)
     expect(report.skills[0].claims.find((c) => c.claim.text === "src/missing.jl")?.verdict).toBe("DRIFTED");
   });
@@ -266,7 +274,7 @@ describe("lintSkillsDir", () => {
   it("duplicate frontmatter names across skill dirs are STRUCTURAL failures on the later skill (sorted order)", () => {
     const report = lintSkillsDir(FIXTURE_SKILLS, [FIXTURE_PACKAGES]);
     const dupTwo = report.skills.find((s) => s.skill === "dup-two")!;
-    expect(dupTwo.structural.join()).toMatch(/duplicate.*duplicated.*dup-one/i);
+    expect(dupTwo.structural.map((f) => f.message).join()).toMatch(/duplicate.*duplicated.*dup-one/i);
     const dupOne = report.skills.find((s) => s.skill === "dup-one")!;
     expect(dupOne.structural).toEqual([]);
   });
@@ -290,7 +298,7 @@ describe("lintSkillsDir", () => {
   it("structuralOnly: link refs still checked, package cross-check skipped entirely (the CI lane)", () => {
     const report = lintSkillsDir(FIXTURE_SKILLS, [], { structuralOnly: true });
     // broken link still structural
-    expect(report.skills.find((s) => s.skill === "broken-paths")!.structural.join()).toMatch(/missing-companion\.md/);
+    expect(report.skills.find((s) => s.skill === "broken-paths")!.structural.map((f) => f.message).join()).toMatch(/missing-companion\.md/);
     // drifted skill's claims are NOT checked (no package cross-check at all)
     const drifted = report.skills.find((s) => s.skill === "drifted")!;
     expect(drifted.claims).toEqual([]);
@@ -312,7 +320,7 @@ describe("lintSkillsDir", () => {
   });
 
   it("skill reports carry per-claim verdict evidence with claim location", () => {
-    const report = lintSkillsDir(path.join(FIXTURE_SKILLS, "drifted"), [FIXTURE_PACKAGES]);
+    const report = lintSkillsDir(loneSkillTree("drifted"), [FIXTURE_PACKAGES]);
     const drifted = report.skills[0].claims.filter((c) => c.verdict === "DRIFTED");
     for (const r of drifted) {
       expect(r.claim.line).toBeGreaterThan(0);
@@ -358,9 +366,9 @@ describe("CLI helpers", () => {
   });
 
   it("lintExitCode: non-zero ONLY for structural failures; drift alone exits 0", () => {
-    expect(lintExitCode(lintSkillsDir(path.join(FIXTURE_SKILLS, "drifted"), [FIXTURE_PACKAGES]))).toBe(0);
+    expect(lintExitCode(lintSkillsDir(loneSkillTree("drifted"), [FIXTURE_PACKAGES]))).toBe(0);
     expect(lintExitCode(lintSkillsDir(FIXTURE_SKILLS, []))).toBe(1);
-    expect(lintExitCode(lintSkillsDir(path.join(FIXTURE_SKILLS, "clean"), [FIXTURE_PACKAGES]))).toBe(0);
+    expect(lintExitCode(lintSkillsDir(loneSkillTree("clean"), [FIXTURE_PACKAGES]))).toBe(0);
   });
 
   it("renderSummary: short human summary with counts", () => {
@@ -373,7 +381,7 @@ describe("CLI helpers", () => {
   });
 
   it("renderTextReport: per-skill listing with verdicts", () => {
-    const text = renderTextReport(lintSkillsDir(path.join(FIXTURE_SKILLS, "drifted"), [FIXTURE_PACKAGES]));
+    const text = renderTextReport(lintSkillsDir(loneSkillTree("drifted"), [FIXTURE_PACKAGES]));
     expect(text).toContain("drifted");
     expect(text).toContain("DRIFTED");
     expect(text).toContain("PhantomWidget");
@@ -453,8 +461,10 @@ describe("real public library (packages/extension/skills)", () => {
     expect(report.ok).toBe(true);
     const verdicts = new Set(["VERIFIED", "DRIFTED", "UNVERIFIABLE"]);
     for (const s of report.skills) {
-      for (const c of s.claims) expect(verdicts.has(c.verdict)).toBe(true);
-      expect(c_verdictShape(c.claim)).toBe(true);
+      for (const c of s.claims) {
+        expect(verdicts.has(c.verdict)).toBe(true);
+        expect(c_verdictShape(c.claim)).toBe(true);
+      }
     }
     // and it actually checked something (the library cites real API names)
     expect(report.aggregate.verified + report.aggregate.drifted + report.aggregate.unverifiable).toBeGreaterThan(0);
