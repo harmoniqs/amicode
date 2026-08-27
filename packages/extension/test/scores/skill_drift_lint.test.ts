@@ -343,6 +343,26 @@ describe("lintSkillsDir", () => {
     expect(report.ok).toBe(false);
   });
 
+  it("review MINOR: CRLF line endings parse fine (no false missing-frontmatter structural failure)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-crlf-"));
+    try {
+      const skill = path.join(root, "crlf-skill");
+      fs.mkdirSync(skill);
+      fs.writeFileSync(
+        path.join(skill, "SKILL.md"),
+        "---\r\nname: crlf-skill\r\ndescription: windows line endings\r\n---\r\n\r\nBody mentions `helper_fn!`.\r\n",
+      );
+      const report = lintSkillsDir(root, []);
+      expect(report.ok).toBe(true);
+      expect(report.skills[0].name).toBe("crlf-skill");
+      expect(report.skills[0].structural).toEqual([]);
+      // the body lane was already CRLF-tolerant; claims still extract
+      expect(report.skills[0].claims.find((c) => c.claim.text === "helper_fn!")).toBeTruthy();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("structuralOnly: link refs still checked, package cross-check skipped entirely (the CI lane)", () => {
     const report = lintSkillsDir(FIXTURE_SKILLS, [], { structuralOnly: true });
     // broken link still structural

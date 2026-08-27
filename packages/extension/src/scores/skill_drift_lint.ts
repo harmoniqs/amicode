@@ -650,7 +650,10 @@ function checkPathClaim(
 // ---------------------------------------------------------------------------
 
 function parseFrontmatter(raw: string): { name: string; description: string } | { error: string } {
-  const m = raw.match(/^---\n([\s\S]*?)\n---/);
+  // CRLF-tolerant: extractClaims splits on /\r?\n/, so only this match was
+  // line-ending blind (a \r\n file read as "missing frontmatter" — review MINOR)
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const m = normalized.match(/^---\n([\s\S]*?)\n---/);
   if (!m) return { error: "missing frontmatter block" };
   let fm: unknown;
   try {
