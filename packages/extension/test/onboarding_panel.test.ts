@@ -17,6 +17,7 @@ import {
   type OnboardingConfig,
   writeOnboardingConfig,
   testConnection,
+  probeModels,
   onOnboardingComplete,
   dismissOnboardingPanel,
   getOnboardingPanel,
@@ -631,5 +632,228 @@ describe("Webview HTML generation (AC2, AC9)", () => {
     expect(panel.webview.html).toContain("Content-Security-Policy");
     expect(panel.webview.html).toContain("nonce-");
     spy.mockRestore();
+  });
+});
+
+describe("testConnection — Bedrock model probe (model-access validation)", () => {
+  it("makes an HTTP call to Bedrock converse endpoint with bearer auth", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const result = await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "ABSK-test-token" },
+      fetchMock,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(true);
+
+    // Should hit bedrock-runtime endpoint
+    const url = fetchMock.mock.calls[0][0] as string;
+    expect(url).toContain("bedrock-runtime");
+    expect(url).toContain("amazonaws.com");
+    // Should contain the model ID (URL-encoded)
+    expect(url).toContain("converse");
+  });
+
+  it("uses Authorization: Bearer header with the API key", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "ABSK-my-token-123" },
+      fetchMock,
+    );
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = options.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe("Bearer ABSK-my-token-123");
+  });
+
+  it("returns ok:false on 403 (model not authorized)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    });
+    const result = await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-5", apiKey: "ABSK-token" },
+      fetchMock,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("403");
+  });
+
+  it("returns ok:false on 401 (invalid credentials)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    });
+    const result = await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "bad-token" },
+      fetchMock,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("401");
+  });
+
+  it("applies us. prefix to model ID for US region when model contains 'claude'", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "ABSK-token" },
+      fetchMock,
+    );
+    const url = fetchMock.mock.calls[0][0] as string;
+    // The resolved model ID in the URL should have us. prefix
+    expect(url).toContain("us.anthropic.claude-opus-4-6-v1");
+  });
+
+  it("does not double-prefix model IDs that already have a region prefix", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/us.anthropic.claude-opus-4-6-v1", apiKey: "ABSK-token" },
+      fetchMock,
+    );
+    const url = fetchMock.mock.calls[0][0] as string;
+    // Should NOT have us.us.anthropic...
+    expect(url).not.toContain("us.us.");
+    expect(url).toContain("us.anthropic.claude-opus-4-6-v1");
+  });
+
+  it("sends a minimal converse payload (maxTokens: 1)", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "ABSK-token" },
+      fetchMock,
+    );
+    const options = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(options.body as string);
+    expect(body.inferenceConfig.maxTokens).toBe(1);
+    expect(body.messages).toHaveLength(1);
+    expect(body.messages[0].role).toBe("user");
+  });
+
+  it("returns ok:false on network error", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+    const result = await testConnection(
+      { provider: "amazon-bedrock", model: "amazon-bedrock/anthropic.claude-opus-4-6-v1", apiKey: "ABSK-token" },
+      fetchMock,
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("ECONNREFUSED");
+  });
+});
+
+describe("probeModels — find first accessible model for a provider", () => {
+  it("returns the first model if it succeeds", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const result = await probeModels(
+      "amazon-bedrock",
+      "ABSK-token",
+      fetchMock,
+    );
+    expect(result).toBeDefined();
+    expect(result!.id).toBe(PROVIDER_MODELS["amazon-bedrock"][0].id);
+    // Should only have called fetch once (first model worked)
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to second model when first returns 403", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, statusText: "Forbidden" })
+      .mockResolvedValueOnce({ ok: true });
+    const result = await probeModels(
+      "amazon-bedrock",
+      "ABSK-token",
+      fetchMock,
+    );
+    expect(result).toBeDefined();
+    expect(result!.id).toBe(PROVIDER_MODELS["amazon-bedrock"][1].id);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("falls back through all models, returns last one that works", async () => {
+    const models = PROVIDER_MODELS["amazon-bedrock"];
+    // All fail except the last
+    const fetchMock = vi.fn();
+    for (let i = 0; i < models.length - 1; i++) {
+      fetchMock.mockResolvedValueOnce({ ok: false, status: 403, statusText: "Forbidden" });
+    }
+    fetchMock.mockResolvedValueOnce({ ok: true });
+
+    const result = await probeModels(
+      "amazon-bedrock",
+      "ABSK-token",
+      fetchMock,
+    );
+    expect(result).toBeDefined();
+    expect(result!.id).toBe(models[models.length - 1].id);
+    expect(fetchMock).toHaveBeenCalledTimes(models.length);
+  });
+
+  it("returns undefined when all models fail with 403", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+    });
+    const result = await probeModels(
+      "amazon-bedrock",
+      "ABSK-token",
+      fetchMock,
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it("stops on 401 (bad credentials) without trying more models", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+    });
+    const result = await probeModels(
+      "amazon-bedrock",
+      "bad-token",
+      fetchMock,
+    );
+    expect(result).toBeUndefined();
+    // Should stop after first 401 — credentials are bad, no point trying others
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns first model for providers without a test endpoint (untestable)", async () => {
+    const fetchMock = vi.fn();
+    // github-copilot has no test endpoint — probeModels should return first model without probing
+    const result = await probeModels(
+      "github-copilot",
+      "",
+      fetchMock,
+    );
+    expect(result).toBeDefined();
+    expect(result!.id).toBe(PROVIDER_MODELS["github-copilot"][0].id);
+    // No fetch call made for untestable providers
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns undefined for providers with empty model list", async () => {
+    const fetchMock = vi.fn();
+    const result = await probeModels(
+      "custom",
+      "key",
+      fetchMock,
+    );
+    expect(result).toBeUndefined();
+  });
+
+  it("probes each model with the correct resolved model ID in the URL", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 403, statusText: "Forbidden" })
+      .mockResolvedValueOnce({ ok: true });
+    await probeModels(
+      "amazon-bedrock",
+      "ABSK-token",
+      fetchMock,
+    );
+    // First call should probe the first model
+    const url1 = fetchMock.mock.calls[0][0] as string;
+    expect(url1).toContain("claude-opus-4-6-v1");
+    // Second call should probe the second model
+    const url2 = fetchMock.mock.calls[1][0] as string;
+    expect(url2).toContain("claude-sonnet-4-5-v2");
   });
 });
