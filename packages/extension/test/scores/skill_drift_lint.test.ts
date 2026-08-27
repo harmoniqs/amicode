@@ -375,6 +375,30 @@ describe("lintSkillsDir", () => {
     }
   });
 
+  it("review MINOR: --min-skills floor — an empty-but-existing dir fails the floor instead of silently ok:true skills:0", () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-empty-"));
+    try {
+      const floored = lintSkillsDir(emptyDir, [], { minSkills: 1 });
+      expect(floored.ok).toBe(false);
+      expect(floored.aggregate.skills).toBe(0);
+      expect(floored.topStructural.map((f) => f.message)).toContainEqual("min-skills floor not met: 0 < 1");
+      expect(floored.aggregate.structuralFailures).toBe(1);
+      // the summary lane surfaces it for the nightly consumer
+      expect(renderSummary(floored)).toMatch(/min-skills floor not met: 0 < 1/);
+      // default (no floor) keeps the library-scan behavior: silently empty is ok
+      expect(lintSkillsDir(emptyDir, []).ok).toBe(true);
+    } finally {
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it("review MINOR: --min-skills floor met vs not met on a one-skill tree", () => {
+    expect(lintSkillsDir(loneSkillTree("clean"), [], { minSkills: 1 }).ok).toBe(true);
+    const short = lintSkillsDir(loneSkillTree("clean"), [], { minSkills: 2 });
+    expect(short.ok).toBe(false);
+    expect(short.topStructural[0].message).toBe("min-skills floor not met: 1 < 2");
+  });
+
   it("structuralOnly: link refs still checked, package cross-check skipped entirely (the CI lane)", () => {
     const report = lintSkillsDir(FIXTURE_SKILLS, [], { structuralOnly: true });
     // broken link still structural
@@ -431,6 +455,7 @@ describe("CLI helpers", () => {
       skillsDir: "/tmp/skills",
       packageRoots: [],
       structuralOnly: false,
+      minSkills: 0,
       reportFormat: "json",
       outFile: undefined,
     });
@@ -445,9 +470,19 @@ describe("CLI helpers", () => {
       skillsDir: "/s",
       packageRoots: ["/a", "/b", "/c"],
       structuralOnly: true,
+      minSkills: 0,
       reportFormat: "text",
       outFile: "r.json",
     });
+  });
+
+  it("parseLintArgs: --min-skills floor (integer, default 0 = no floor; rejects missing/non-integer/negative)", () => {
+    expect(parseLintArgs(["--min-skills", "3"], { defaultSkillsDir: "/s" })).toMatchObject({ minSkills: 3 });
+    expect(parseLintArgs(["--min-skills", "0"], { defaultSkillsDir: "/s" })).toMatchObject({ minSkills: 0 });
+    expect(parseLintArgs(["--min-skills"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
+    expect(parseLintArgs(["--min-skills", "abc"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
+    expect(parseLintArgs(["--min-skills", "2.5"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
+    expect(parseLintArgs(["--min-skills", "-1"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
   });
 
   it("parseLintArgs: unknown flag or missing value → error object", () => {
@@ -518,6 +553,25 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
     expect(report.ok).toBe(false);
     expect(report.aggregate.structuralFailures).toBe(3);
     expect(r.stderr).toMatch(/structural/i);
+  });
+
+  it("--min-skills floor below the linted count exits 1 with a top-level structural failure", () => {
+    const cleanTree = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-cli-floor-"));
+    fs.cpSync(path.join(FIXTURE_SKILLS, "clean"), path.join(cleanTree, "clean"), { recursive: true });
+    try {
+      const r = spawnSync(process.execPath, [CLI, "--skills", cleanTree, "--min-skills", "5"], {
+        encoding: "utf8",
+        cwd: EXT_ROOT,
+      });
+      expect(r.status).toBe(1);
+      const report = JSON.parse(r.stdout);
+      expect(report.ok).toBe(false);
+      expect(report.topStructural.map((f: { message: string }) => f.message)).toContainEqual(
+        "min-skills floor not met: 1 < 5",
+      );
+    } finally {
+      fs.rmSync(cleanTree, { recursive: true, force: true });
+    }
   });
 });
 

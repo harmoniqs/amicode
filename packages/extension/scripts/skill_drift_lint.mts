@@ -4,8 +4,8 @@
 // job, issue #587, consumes this).
 //
 //   node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
-//                                      [--structural-only] [--report json|text]
-//                                      [--out <file>]
+//                                      [--structural-only] [--min-skills <n>]
+//                                      [--report json|text] [--out <file>]
 //
 //   --skills <dir>        skills library root (default: this repo's public
 //                         library, packages/extension/skills)
@@ -13,6 +13,9 @@
 //                         repeatable, comma-separated ok. Absent → paths/symbols
 //                         with no other resolution are UNVERIFIABLE.
 //   --structural-only     structure only, zero package cross-check (the CI lane)
+//   --min-skills <n>      fail structurally when fewer than n skills were
+//                         linted (default 0 = no floor) — distinguishes
+//                         "clean" from "linted nothing" for the nightly job
 //   --report json|text    stdout format (default json — machine-readable,
 //                         per-skill per-claim; text is the human listing)
 //   --out <file>          write the report to a file instead of stdout
@@ -38,7 +41,8 @@ import {
 
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const USAGE = `usage: node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
-                                        [--structural-only] [--report json|text] [--out <file>]`;
+                                        [--structural-only] [--min-skills <n>]
+                                        [--report json|text] [--out <file>]`;
 
 function main(argv: string[]): number {
   if (argv.includes("--help") || argv.includes("-h")) {
@@ -59,6 +63,7 @@ function main(argv: string[]): number {
   const report = lintSkillsDir(parsed.skillsDir, parsed.packageRoots, {
     structuralOnly: parsed.structuralOnly,
     requireSkillsDir: true, // defense in depth vs. the pre-validation race
+    minSkills: parsed.minSkills,
   });
   const body = parsed.reportFormat === "text" ? renderTextReport(report) : JSON.stringify(report, null, 2);
   if (parsed.outFile) {

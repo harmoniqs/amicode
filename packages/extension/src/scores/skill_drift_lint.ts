@@ -96,6 +96,10 @@ export interface LintOptions {
    *  a silently empty report. Library callers scanning optional roots keep
    *  the default (false) behavior. */
   requireSkillsDir?: boolean;
+  /** Refuse to report a "clean" run when fewer than this many skills were
+   *  linted — lets the nightly consumer distinguish "clean" from "linted
+   *  nothing" (an empty-but-existing dir). 0 (the default) = no floor. */
+  minSkills?: number;
 }
 
 export interface CheckClaimsOptions {
@@ -740,6 +744,12 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
     skills.push({ skill: entry, path: path.join(entry, "SKILL.md"), name, structural, claims: reported });
   }
 
+  // --min-skills floor (review MINOR): "linted nothing" is not "clean" when
+  // the caller asked for a minimum. A report-level structural failure.
+  if (opts.minSkills !== undefined && opts.minSkills > 0 && skills.length < opts.minSkills) {
+    topStructural.push({ message: `min-skills floor not met: ${skills.length} < ${opts.minSkills}` });
+  }
+
   const aggregate = {
     skills: skills.length,
     structuralFailures:
@@ -768,6 +778,8 @@ export interface CliLintOptions {
   skillsDir: string;
   packageRoots: string[];
   structuralOnly: boolean;
+  /** --min-skills floor: fail structurally when fewer skills were linted. */
+  minSkills: number;
   reportFormat: "json" | "text";
   outFile?: string;
 }
@@ -779,6 +791,7 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
     skillsDir: defaults.defaultSkillsDir,
     packageRoots: [],
     structuralOnly: false,
+    minSkills: 0,
     reportFormat: "json",
     outFile: undefined,
   };
@@ -797,6 +810,12 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
       }
     } else if (arg === "--structural-only") {
       opts.structuralOnly = true;
+    } else if (arg === "--min-skills") {
+      const v = value();
+      if (v === undefined) return { error: "--min-skills requires a number" };
+      const n = Number(v);
+      if (!Number.isInteger(n) || n < 0) return { error: `--min-skills must be a non-negative integer, got '${v}'` };
+      opts.minSkills = n;
     } else if (arg === "--report") {
       const v = value();
       if (v !== "json" && v !== "text") return { error: `--report must be json or text, got '${v ?? ""}'` };
