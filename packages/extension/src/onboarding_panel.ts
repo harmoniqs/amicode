@@ -371,22 +371,32 @@ export function releaseOnboardingPanel(): void {
  *  background. Used as an immediate visual while the server restarts. The exact
  *  same SVG + CSS appears in ChatPanel.renderTransitionHtml's overlay, so when
  *  adopt() fires there's no visible flash (same pixels). */
-function splashHtml(): string {
+function splashHtml(fontUri?: vscode.Uri, cspSource?: string): string {
+  // The face is inlined as its own @font-face rather than via brand.css so the
+  // splash stays a single self-contained string; without it the handoff screen
+  // renders in the editor UI font while everything around it is DM Sans.
+  const fontFace = fontUri
+    ? `@font-face { font-family: "DM Sans"; src: url("${fontUri}") format("woff2-variations"); font-weight: 100 1000; font-display: swap; }`
+    : ""
+  const csp = `default-src 'none'; style-src 'unsafe-inline';${cspSource ? ` font-src ${cspSource};` : ""}`
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';">
+<meta http-equiv="Content-Security-Policy" content="${csp}">
 <style>
+${fontFace}
   html, body { height: 100%; margin: 0; overflow: hidden; }
   body { background: var(--vscode-editor-background); display: flex; flex-direction: column;
          align-items: center; justify-content: center; }
   .splash-mark {
     width: 176px; height: 157px;
-    fill: var(--color-accent-ink, #fff676);
+    fill: var(--color-accent-ink, #FFE614);
     overflow: visible;
   }
+  /* On light the mark goes ink: brand yellow is ~1.3:1 on white, so a yellow
+     glyph is invisible there. Same rule the app follows. */
   body.vscode-light .splash-mark,
   body.vscode-high-contrast-light .splash-mark {
-    fill: var(--color-accent-ink, var(--vscode-foreground, #424242));
+    fill: #000000;
   }
   .splash-mark .mark-breathe {
     transform-box: fill-box; transform-origin: 50% 100%;
@@ -403,7 +413,7 @@ function splashHtml(): string {
   .splash-text {
     margin-top: 16px; font-size: 1.4rem;
     color: var(--vscode-foreground, #ccc);
-    font-family: var(--vscode-font-family, system-ui);
+    font-family: "DM Sans", var(--vscode-font-family, system-ui);
   }
 </style>
 </head><body>
@@ -473,7 +483,10 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             // The server will resolve the new provider's default on its own.
             void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
             // Swap the panel HTML directly to the splash (same as confirm-import)
-            panel.webview.html = splashHtml();
+            panel.webview.html = splashHtml(
+              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+              panel.webview.cspSource,
+            );
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
@@ -567,7 +580,10 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             // Swap the panel HTML directly to the splash — no webview-side
             // DOM manipulation, so there's no flash when adopt() fires later
             // (adopt's overlay uses the exact same SVG + CSS).
-            panel.webview.html = splashHtml();
+            panel.webview.html = splashHtml(
+              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+              panel.webview.cspSource,
+            );
             // Signal that the next chat panel open should auto-send the onboarding greeting
             ChatPanel.setPendingOnboardingGreeting(true);
             fireOnboardingComplete();
@@ -613,11 +629,27 @@ function buildWebviewHtml(
 ): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource};">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource}; font-src ${webview.cspSource};">
 <link rel="stylesheet" href="${uri("media", "brand.css")}" />
 <link rel="stylesheet" href="${uri("media", "layout.css")}" />
 <style nonce="${nonce}">
+  /* font-src above is what lets brand.css's faces load at all — without it the
+     panel silently fell back to the editor UI font while the rest of the
+     product rendered in DM Sans. */
   html, body { height: 100%; margin: 0; }
+  /* Without a base size the panel inherited the browser's 16px, so its labels
+     and headings ran several steps larger than the rest of the product (which
+     sits around 13px). --text-body is the editor's own UI size. */
+  body {
+    font-family: var(--text-font);
+    font-size: var(--text-body, 13px);
+    line-height: 1.5;
+    color: var(--vscode-foreground);
+  }
+  /* Form controls do not inherit a font by default, so without this the inputs,
+     selects and buttons rendered in the platform default while the prose around
+     them was DM Sans. */
+  button, input, select, textarea { font-family: inherit; }
   .animation-container { display: flex; align-items: center; justify-content: center; height: 100vh; flex-direction: column; }
   .form-container { display: none; }
   .form-container.visible { display: block; height: 100vh; }
