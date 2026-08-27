@@ -97,6 +97,15 @@ describe("extractClaims", () => {
     expect(texts).toEqual(["src/widgets.jl", "docs/adr/0001-design.md", "packages/Legato.jl"]);
   });
 
+  it("review MAJOR: drops backticked path claims carrying .. traversal segments (normal src/ claims unaffected)", () => {
+    const md = "The loader is `src/../../../../tmp/canary.toml`, the real code is `src/widgets.jl`.";
+    const pathTexts = extractClaims(md)
+      .filter((c) => c.kind === "path")
+      .map((c) => c.text);
+    // the traversal citation is NOT a claim; the ordinary path still is
+    expect(pathTexts).toEqual(["src/widgets.jl"]);
+  });
+
   it("extracts relative markdown links as path claims sourced from links", () => {
     const claims = extractClaims(readFixtureSkill("broken-paths"));
     expect(claims).toContainEqual(
@@ -230,6 +239,45 @@ describe("checkClaims", () => {
   it("path claims: UNVERIFIABLE with no roots and no skill dir", () => {
     const [r] = checkClaims([{ kind: "path", text: "src/whatever.jl", packages: [], line: 1, source: "backtick" }], []);
     expect(r.verdict).toBe("UNVERIFIABLE");
+  });
+
+  it("review MAJOR: a ..-traversal candidate resolving OUTSIDE every declared root is DRIFTED (never VERIFIED)", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-traversal-"));
+    try {
+      // the canary exists — but OUTSIDE the skill dir and the library dir
+      fs.writeFileSync(path.join(base, "canary.toml"), "x = 1\n");
+      const lib = path.join(base, "lib");
+      const skillDir = path.join(lib, "victim");
+      fs.mkdirSync(skillDir, { recursive: true });
+      // resolve(skillDir, "src/../../../canary.toml") === base/canary.toml — outside both roots
+      const [r] = checkClaims(
+        [{ kind: "path", text: "src/../../../canary.toml", packages: [], line: 1, source: "backtick" }],
+        [],
+        { skillDir, searchRoots: [skillDir, lib] },
+      );
+      expect(r.verdict).toBe("DRIFTED");
+      expect(r.evidence).toMatch(/outside all declared roots/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("review MAJOR: containment is on the RESOLVED path — a ..-target that stays inside the roots still verifies", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-traversal-ok-"));
+    try {
+      const lib = path.join(base, "lib");
+      const skillDir = path.join(lib, "innocent");
+      fs.mkdirSync(skillDir, { recursive: true });
+      fs.writeFileSync(path.join(lib, "companion.md"), "nearby\n");
+      const [r] = checkClaims(
+        [{ kind: "path", text: "../companion.md", packages: [], line: 1, source: "backtick" }],
+        [],
+        { skillDir, searchRoots: [skillDir, lib] },
+      );
+      expect(r.verdict).toBe("VERIFIED");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

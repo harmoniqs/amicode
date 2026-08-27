@@ -127,6 +127,12 @@ const REPO_PATH_PREFIXES = [
  *  not a concrete path. */
 const GLOB_CHARS = /[*?<>{}[\]]/;
 
+/** `..` path segments — a traversal claim escapes the declared roots (review
+ *  MAJOR: a SKILL.md citing `src/../../…` must never become a verifiable
+ *  claim). Sibling guard of GLOB_CHARS in proseBacktickClaim; the checker
+ *  layer containment-checks resolved candidates independently. */
+const TRAVERSAL_SEGMENT = /(?:^|\/)\.\.(?:\/|$)/;
+
 /** Curated Julia Base callables and types. A call to one of these in a fence
  *  (or a backtick in prose) is never a package-API claim. Conservative by
  *  design: anything not listed IS treated as a claim. */
@@ -327,7 +333,8 @@ function proseBacktickClaim(t: string, lineNo: number): SkillClaim | null {
     normalized.includes("/") &&
     REPO_PATH_PREFIXES.some((p) => normalized.startsWith(p)) &&
     /^[A-Za-z0-9._\-\/]+$/.test(normalized) &&
-    !GLOB_CHARS.test(normalized)
+    !GLOB_CHARS.test(normalized) &&
+    !TRAVERSAL_SEGMENT.test(normalized)
   ) {
     const last = normalized.split("/").pop() ?? "";
     const ext = last.includes(".") ? last.split(".").pop()! : "";
@@ -532,6 +539,18 @@ function checkSymbolClaim(
   };
 }
 
+/** Containment: is `resolved` inside (or equal to) one of the allowed roots?
+ *  Guards BOTH the trust verdict and the stat surface: a candidate whose `..`
+ *  segments escape every declared root is never VERIFIED and never statted
+ *  (review MAJOR — defense in depth behind the extraction guard). */
+function isInsideAnyRoot(resolved: string, roots: string[]): boolean {
+  for (const root of roots) {
+    const base = path.resolve(root);
+    if (resolved === base || resolved.startsWith(base + path.sep)) return true;
+  }
+  return false;
+}
+
 function checkPathClaim(
   claim: SkillClaim,
   packageRoots: string[],
@@ -541,6 +560,12 @@ function checkPathClaim(
 ): ClaimResult {
   const target = claim.text.replace(/^\.\//, "");
   const tried: string[] = [];
+  // Every resolved candidate must land inside one of the declared roots
+  // (skill dir / search roots / package roots). Candidates that resolve
+  // outside are never statted and can never yield VERIFIED.
+  const allowedRoots = [...searchRoots, ...packageRoots];
+  if (opts.skillDir) allowedRoots.push(opts.skillDir);
+  let escaped = 0;
 
   // relative markdown links resolve against the skill's own directory
   if (claim.source === "link") {
@@ -548,6 +573,9 @@ function checkPathClaim(
       return { claim, verdict: "UNVERIFIABLE", evidence: "relative link with no skill dir given — cannot resolve" };
     }
     const resolved = path.resolve(opts.skillDir, target);
+    if (!isInsideAnyRoot(resolved, allowedRoots)) {
+      return { claim, verdict: "DRIFTED", evidence: `path resolves outside all declared roots: '${target}'` };
+    }
     tried.push(path.relative(opts.skillDir, resolved) || target);
     if (fs.existsSync(resolved)) {
       return {
@@ -562,6 +590,10 @@ function checkPathClaim(
   // backticked paths: skill dir / search roots, then package roots (+ <Pkg>.jl/)
   for (const root of searchRoots) {
     const resolved = path.resolve(root, target);
+    if (!isInsideAnyRoot(resolved, allowedRoots)) {
+      escaped++;
+      continue;
+    }
     tried.push(`${path.relative(root, resolved) || target} (search root)`);
     if (fs.existsSync(resolved)) {
       const rel = path.relative(root, resolved) || target;
@@ -575,13 +607,21 @@ function checkPathClaim(
   for (let i = 0; i < packageRoots.length; i++) {
     const root = packageRoots[i];
     const direct = path.resolve(root, target);
+    if (!isInsideAnyRoot(direct, allowedRoots)) {
+      escaped++;
+      continue;
+    }
     tried.push(`${target} (package root ${i + 1})`);
     if (fs.existsSync(direct)) {
       return { claim, verdict: "VERIFIED", evidence: `path exists: ${target} (package root ${i + 1})` };
     }
     for (const pkg of packages) {
-      if (!pkg.dir.startsWith(root)) continue;
+      if (!pkg.dir.startsWith(root)) continue; // (sep guard lands with the review-NIT fix)
       const inPkg = path.resolve(pkg.dir, target);
+      if (!isInsideAnyRoot(inPkg, allowedRoots)) {
+        escaped++;
+        continue;
+      }
       tried.push(`${pkg.name}.jl/${target}`);
       if (fs.existsSync(inPkg)) {
         return { claim, verdict: "VERIFIED", evidence: `path exists: ${pkg.name}.jl/${target} (package root ${i + 1})` };
@@ -590,6 +630,13 @@ function checkPathClaim(
   }
   if (searchRoots.length === 0 && packageRoots.length === 0) {
     return { claim, verdict: "UNVERIFIABLE", evidence: "no skill dir, search roots, or package roots given" };
+  }
+  if (escaped > 0) {
+    return {
+      claim,
+      verdict: "DRIFTED",
+      evidence: `path resolves outside all declared roots: '${target}' (${escaped} escaping candidate${escaped === 1 ? "" : "s"} not checked)`,
+    };
   }
   return {
     claim,
