@@ -191,12 +191,17 @@ for key in "${KEYS[@]}"; do
 done
 
 # --- issue body builder (shared by create/comment) -------------------------------
+# GraphQL caps issue bodies at 65536 chars (incident 2026-08-27, #601): full
+# JSON never goes in the body — it lives on disk under REPORTS_DIR; the body
+# carries the summary, a compact digest, and the report paths, with a hard cap.
+MAX_BODY_CHARS=50000
 build_issue_body() {
   # args: surface=report-path pairs; prints markdown to stdout
-  node -e '
+  MAX_BODY_CHARS="$MAX_BODY_CHARS" node -e '
+    const MAX = parseInt(process.env.MAX_BODY_CHARS || "50000", 10);
     const fs = require("node:fs");
     const pairs = process.argv.slice(1);
-    const rows = []; const tops = []; const structs = []; const jsons = [];
+    const rows = []; const tops = []; const structs = []; const jsons = []; const paths = [];
     for (const pair of pairs) {
       const eq = pair.indexOf("=");
       const key = pair.slice(0, eq);
@@ -217,14 +222,25 @@ build_issue_body() {
       for (const f of r.topStructural || []) structs.push("- (report) " + f.message);
       for (const s of r.skills || []) for (const f of (s.structural || []).slice(0, 3))
         structs.push("- `" + s.skill + "`" + (f.line ? ":" + f.line : "") + " " + f.message);
-      jsons.push(JSON.stringify({ surface: key, report: r }, null, 2));
+      jsons.push(JSON.stringify({ surface: key, aggregate: a, top_drifted: (r.skills || [])
+        .map((s) => ({ skill: s.skill, n: (s.claims || []).filter((c) => c.verdict === "DRIFTED").length,
+          examples: (s.claims || []).filter((c) => c.verdict === "DRIFTED").slice(0, 3)
+            .map((c) => c.claim.text + " (line " + c.claim.line + ")") }))
+        .filter((s) => s.n > 0).sort((x, y) => y.n - x.n).slice(0, 8) }, null, 2));
+      paths.push("- `" + file + "`");
     }
     let out = "Nightly skill-freshness cadence run — mechanical verdicts from the #586 lint (no LLM judgment).\n\n";
     out += "| surface | ok | skills | verified | drifted | structural |\n|---|---|---|---|---|---|\n";
     out += rows.join("\n") + "\n";
     if (tops.length) out += "\n**Top drifted skills**\n" + tops.join("\n") + "\n";
     if (structs.length) out += "\n**Structural failures** (first 10)\n" + structs.slice(0, 10).join("\n") + "\n";
-    out += "\n<details><summary>Full lint JSON reports</summary>\n\n```json\n" + jsons.join("\n\n") + "\n```\n\n</details>\n";
+    out += "\n**Full reports on disk** (receipts journal: `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`)\n"
+      + paths.join("\n") + "\n";
+    out += "\n<details><summary>Compact digest (aggregate + top drifted claims; full JSON on disk)</summary>\n\n```json\n"
+      + jsons.join("\n\n") + "\n```\n\n</details>\n";
+    if (out.length > MAX) {
+      out = out.slice(0, MAX) + "\n\n…(digest truncated — full JSON in the on-disk report paths above)\n";
+    }
     process.stdout.write(out);
   ' "$@"
 }
@@ -240,6 +256,7 @@ append_receipt() {
 
 # --- drift escalation: exactly one tracking issue, updated never duplicated ----
 ISSUE_UPDATE_FAILED=0
+TRACKING_ISSUE=""
 if [ "${#DRIFT_KEYS[@]}" -gt 0 ]; then
   if [ "$DRY_RUN" = "1" ]; then
     echo "$SELF_NAME: WOULD-DO: open-or-update tracking issue '$ISSUE_TITLE' in $TRACKING_REPO (drift on: ${DRIFT_KEYS[*]})" >&2
@@ -274,10 +291,15 @@ if [ "${#DRIFT_KEYS[@]}" -gt 0 ]; then
       if ! gh issue comment "$found" -R "$TRACKING_REPO" --body-file "$body_file" >&2; then
         echo "$SELF_NAME: WARN gh issue comment failed — receipt notes issue_update_failed" >&2
         ISSUE_UPDATE_FAILED=1
+      else
+        TRACKING_ISSUE="https://github.com/$TRACKING_REPO/issues/$found"
       fi
     else
       echo "$SELF_NAME: no tracking issue found — creating '$ISSUE_TITLE' in $TRACKING_REPO" >&2
-      if ! gh issue create -R "$TRACKING_REPO" --title "$ISSUE_TITLE" --body-file "$body_file" >&2; then
+      if url="$(gh issue create -R "$TRACKING_REPO" --title "$ISSUE_TITLE" --body-file "$body_file" 2>/dev/null)"; then
+        TRACKING_ISSUE="$url"
+        echo "$SELF_NAME: tracking issue created → $TRACKING_ISSUE" >&2
+      else
         echo "$SELF_NAME: WARN gh issue create failed — receipt notes issue_update_failed" >&2
         ISSUE_UPDATE_FAILED=1
       fi
@@ -294,6 +316,7 @@ if [ "$DRY_RUN" = "1" ]; then
 else
   extra=""
   [ "$ISSUE_UPDATE_FAILED" = "1" ] && extra=',"issue_update_failed":true'
+  if [ -n "${TRACKING_ISSUE:-}" ]; then extra="$extra,\"tracking_issue\":\"$TRACKING_ISSUE\""; fi
   append_receipt "$extra"
 fi
 
