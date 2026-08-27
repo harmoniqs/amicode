@@ -107,9 +107,13 @@ export function resolveJuliaProject(configValue: string): string {
  *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
  *      pass this explicitly once .vsix packaging of opencode-plugin/ is
  *      verified; the default keeps existing call sites working unchanged.
- *    - `default_agent: "build"` — build-first posture: new sessions open on
- *      opencode's build agent so onboarding and the interview can execute tools
- *      immediately. The picker stays plan/build ONLY (roles-not-modes, #368):
+ *    - `default_agent: "plan"` — plan-first posture: new sessions open on
+ *      opencode's plan agent; the ordered picker is plan → build → autodev →
+ *      autoresearch (opencode's Agent.list keeps the default first, then
+ *      alphabetical among the rest — so plan first, build next after the
+ *      autodev/autoresearch custom sort fix, else plan, autodev,
+ *      autoresearch, build). The picker is plan/build + the two director
+ *      modes (roles-not-modes, #368):
  *      the interview content lives in the compiled AGENTS.md score section
  *      (visible to every agent), and the pulse-designer agent entry is RETIRED
  *      (#389) — it was a four-line prompt shell over the config-root permission
@@ -458,12 +462,15 @@ export function buildOpencodeConfigContent(
   const skills = skillsStageDir ? { paths: [skillsStageDir] } : undefined;
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
-    // Build-first posture (product default for ALL users): every new Amicode
-    // session opens on opencode's `build` agent so the onboarding interview and
-    // solves can execute tools immediately. Like everything in this blob, it
-    // deep-merges OVER the user's global config — an explicit per-message `agent`
-    // (the e2e tests, the distiller's --agent) is unaffected.
-    default_agent: "build",
+    // Plan-first posture (product default for ALL users): every new Amicode
+    // session opens on opencode's `plan` agent. The desired picker order is
+    // plan → build → autodev → autoresearch (Agent.list keeps the default
+    // first, then alphabetical — so plan first; the exact
+    // plan/build/autodev/autoresearch sequence requires the custom Agent.list
+    // sort patch when that ordering is required). Like everything in this blob,
+    // it deep-merges OVER the user's global config — an explicit per-message
+    // `agent` (the e2e tests, the distiller's --agent) is unaffected.
+    default_agent: "plan",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     plugin: [pluginPath, ...extraPluginPaths],
@@ -471,11 +478,12 @@ export function buildOpencodeConfigContent(
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
     // into cfg.experimental alongside any user keys (see telemetryOpen above).
     ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
-    // No `agent` overrides: the picker is opencode's native plan/build only
-    // (#389 — the pulse-designer agent entry is retired; its prompt was a
-    // shell deferring to the compiled AGENTS.md interview section, and its
-    // permission grants were always the config-root block above). The
-    // interview runs from ANY agent via the injected instructions.
+    // No `agent` overrides: the picker is opencode's native plan/build plus
+    // the two director modes autodev/autoresearch (#389 — the pulse-designer
+    // agent entry is retired; its prompt was a shell deferring to the
+    // compiled AGENTS.md interview section, and its permission grants were
+    // always the config-root block above). The interview runs from ANY agent
+    // via the injected instructions.
     permission: {
       bash: "allow",
       edit: "allow",

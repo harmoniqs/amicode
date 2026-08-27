@@ -94,9 +94,9 @@ describe("buildOpencodeConfigContent", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(cfg.agent ?? {}).toEqual({}); // no custom agents: the interview lives in AGENTS.md, agent-agnostic
   });
-  it("pins default_agent to build (build-first posture — onboarding needs edit tools)", () => {
+  it("pins default_agent to plan (plan-first posture — ordered picker plan → build → autodev → autoresearch)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.default_agent).toBe("build"); // onboarding and interview need tool execution from the start
+    expect(cfg.default_agent).toBe("plan"); // plan first; Agent.list keeps default first then alphabetical (custom sort makes build second)
   });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
@@ -245,9 +245,9 @@ describe.skipIf(!existsSync(OC_BIN))("opencode config injection + merge (1.17.3)
     // stdout at module scope (its load line must stay on stderr).
     expect(cfg.plugin).toHaveLength(1);
     expect(cfg.plugin[0].endsWith(join("opencode-plugin", "amicode_tools.ts"))).toBe(true);
-    // #389: the pulse-designer agent shell is retired; default is build.
+    // #389: the pulse-designer agent shell is retired; default is plan (ordered picker plan → build → autodev → autoresearch).
     expect(cfg.agent?.["pulse-designer"]).toBeUndefined();
-    expect(cfg.default_agent).toBe("build");
+    expect(cfg.default_agent).toBe("plan");
   });
 });
 
