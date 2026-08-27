@@ -1,4 +1,6 @@
 import * as path from "node:path";
+import { homedir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 
 // ============================================================================
 // Bug-report orchestration (amicode#250, lifecycle spec: docs/adr/0004).
@@ -89,6 +91,10 @@ export interface BugReportDeps {
    *  label or undefined on dismiss. Injected for testability; the production
    *  wiring is `vscode.window.showInformationMessage`. */
   showInformationMessage?: (message: string, ...items: string[]) => Promise<string | undefined> | Thenable<string | undefined>;
+  /** Where the unverified-filed path (amicode#311) persists the report
+   *  transcript. Injected for testability; the production default is
+   *  `~/.amico/bug-reports/`. */
+  reportSaveDir?: () => string | undefined;
   /** The session-level model pin as `provider/model`, or undefined to let the
    *  server resolve its own default. Same rule as everywhere else in the
    *  extension: ONLY an explicit `amicode.defaultModel` pins (see
@@ -105,6 +111,15 @@ export interface BugReportBridgeSink {
   filed(sessionID: string, url: string): void;
   closed(sessionID: string): void;
   poke(): void;
+}
+
+/** A GitHub issue URL for a real issue (owner/repo/issues/<digits>) — the only
+ *  token shape that counts as a verifiable filing. Everything else (the skill's
+ *  `filed-via-browser` token, a pre-filled new-issue URL, an empty token, or
+ *  the nonsense `issues/created_by/<N>` link seen in amicode#311) is NOT proof
+ *  an issue exists. */
+export function isValidIssueUrl(url: string): boolean {
+  return /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/issues\/\d+$/.test(url);
 }
 
 export class BugReportManager {
@@ -382,9 +397,18 @@ export class BugReportManager {
   }
 
   /** Filed → archive (the soft hide, restorable) and close the dock. Unknown
-   *  ids — including a late bug-filed for an already-terminal session — drop. */
+   *  ids — including a late bug-filed for an already-terminal session — drop.
+   *
+   *  amicode#311: a token that is not a verifiable issue URL (browser-fallback
+   *  failure, `filed-via-browser`, nonsense link) is NOT a filing — the session
+   *  stays alive, the failure surfaces, and the report is preserved (see
+   *  `onUnverifiedFiled`). */
   private async onBugFiled(sessionID: string, url: string): Promise<void> {
     if (sessionID !== this.current) return;
+    if (!isValidIssueUrl(url)) {
+      await this.onUnverifiedFiled(sessionID, url);
+      return;
+    }
     this.current = undefined; // terminal latch: later messages for this id are unknown
     // The url rides the log only; it is app-supplied (LLM-adjacent) — bound it.
     this.deps.log?.(`[bug] filed (${url.slice(0, 300)}) — archiving ${sessionID}`);
@@ -401,6 +425,79 @@ export class BugReportManager {
       }
     }
     this.deps.postDown({ source: "amicode", kind: CLOSE_BUG_REPORT_KIND, sessionID });
+  }
+
+  /** The unverified-filed path (amicode#311): the sentinel's token does not
+   *  prove an issue exists — the browser fallback failed, or the user never
+   *  submitted. The report must never be swallowed here:
+   *   - the bug session STAYS alive and interactive (no archive, no close —
+   *     the dock's poke/keep-alive contract keeps working);
+   *   - the failure surfaces visibly (`showError`), stating no issue was
+   *     created;
+   *   - the report content is persisted to disk and its path pointed to, so a
+   *     failed transmission never loses it. */
+  private async onUnverifiedFiled(sessionID: string, url: string): Promise<void> {
+    this.deps.log?.(`[bug] filed token is not a verifiable issue URL (${url.slice(0, 60)}) — keeping ${sessionID} alive`);
+    const savedPath = await this.saveReportTranscript(sessionID);
+    if (savedPath) {
+      this.deps.showError(
+        "Amicode: the bug report was NOT filed — the browser fallback did not create a GitHub issue (no issue was created). " +
+          `Your report content is saved at ${savedPath} — reopen it to retry or copy it into a new issue.`,
+      );
+    } else {
+      this.deps.showError(
+        "Amicode: the bug report was NOT filed — the browser fallback did not create a GitHub issue (no issue was created). " +
+          "The bug session stays open — copy its content before closing.",
+      );
+    }
+    // `this.current` intentionally stays SET: the session is alive, a poke or
+    // a later reportBug still reaches it (the dock must not freeze).
+  }
+
+  /** Persist the bug session's transcript (its messages, fetched read-only
+   *  from the server) to a markdown file the failure path can point at.
+   *  Returns undefined on any failure — the caller degrades to the
+   *  path-less message rather than pointing at a file that isn't there. */
+  private async saveReportTranscript(sessionID: string): Promise<string | undefined> {
+    const server = this.deps.server();
+    if (!server) return undefined;
+    let lines: string;
+    try {
+      const res = await this.fetch(new URL(`/session/${sessionID}/message`, server.url), server, { method: "GET" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const messages = (await res.json()) as Array<{
+        info?: { role?: unknown };
+        parts?: Array<{ type?: unknown; text?: unknown }>;
+      }>;
+      if (!Array.isArray(messages)) throw new Error("unexpected transcript shape");
+      const body: string[] = [`# Bug report transcript (session ${sessionID})`, ""];
+      for (const message of messages) {
+        const role =
+          message?.info && typeof message.info === "object" && typeof message.info.role === "string"
+            ? message.info.role
+            : "message";
+        for (const part of Array.isArray(message?.parts) ? message.parts : []) {
+          if (part && part.type === "text" && typeof part.text === "string") {
+            body.push(`## ${role}`, "", part.text, "");
+          }
+        }
+      }
+      lines = body.join("\n");
+    } catch (e) {
+      this.deps.log?.(`[bug] transcript fetch failed (${(e as Error).message}) — no report file written`);
+      return undefined;
+    }
+    try {
+      const dir = this.deps.reportSaveDir?.() ?? path.join(homedir(), ".amico", "bug-reports");
+      const safeID = sessionID.replace(/[^\w-]/g, "_"); // ids are [\w-]; sanitize anyway
+      const file = path.join(dir, `${safeID}.md`);
+      await mkdir(dir, { recursive: true });
+      await writeFile(file, lines, "utf8");
+      return file;
+    } catch (e) {
+      this.deps.log?.(`[bug] report save failed (${(e as Error).message})`);
+      return undefined;
+    }
   }
 
   /** Closed before filing → abort the in-flight turn, then hard delete. */
