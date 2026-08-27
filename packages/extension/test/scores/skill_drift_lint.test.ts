@@ -313,10 +313,21 @@ describe("lintSkillsDir", () => {
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
   });
 
-  it("a missing skills dir yields an empty (ok) report, no throw", () => {
+  it("a missing skills dir yields an empty (ok) report by default (library-scan mode)", () => {
     const report = lintSkillsDir(path.join(os.tmpdir(), "amicode-no-such-skills-dir"), []);
     expect(report.skills).toEqual([]);
     expect(report.ok).toBe(true);
+  });
+
+  it("a missing skills dir is a TOP-LEVEL structural failure in strict mode — never silently ok", () => {
+    const dir = path.join(os.tmpdir(), "amicode-no-such-skills-dir");
+    const report = lintSkillsDir(dir, [], { requireSkillsDir: true });
+    expect(report.ok).toBe(false);
+    expect(report.aggregate.structuralFailures).toBe(1);
+    expect(report.topStructural[0].message).toContain(dir);
+    // and the JSON summary carries the failure visibly for the nightly consumer
+    const summary = renderSummary(report);
+    expect(summary).toMatch(/TOP-LEVEL STRUCTURAL/);
   });
 
   it("skill reports carry per-claim verdict evidence with claim location", () => {

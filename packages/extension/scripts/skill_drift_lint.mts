@@ -50,8 +50,15 @@ function main(argv: string[]): number {
     console.error(`skill-drift-lint: ${parsed.error}\n${USAGE}`);
     return 2;
   }
+  // The CLI names its dirs explicitly — a dir that does not exist is a usage
+  // error, never a silently-ok empty report (integration-gate finding, #586).
+  if (!fs.statSync(parsed.skillsDir, { throwIfNoEntry: false })?.isDirectory()) {
+    console.error(`skill-drift-lint: skills dir not found: ${parsed.skillsDir}\n${USAGE}`);
+    return 2;
+  }
   const report = lintSkillsDir(parsed.skillsDir, parsed.packageRoots, {
     structuralOnly: parsed.structuralOnly,
+    requireSkillsDir: true, // defense in depth vs. the pre-validation race
   });
   const body = parsed.reportFormat === "text" ? renderTextReport(report) : JSON.stringify(report, null, 2);
   if (parsed.outFile) {

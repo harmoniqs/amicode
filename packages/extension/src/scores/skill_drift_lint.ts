@@ -74,6 +74,9 @@ export interface SkillsLintReport {
   packageRoots: string[];
   structuralOnly: boolean;
   skills: SkillReport[];
+  /** Report-level structural failures — not attributable to any one skill
+   *  (e.g. the requested skills dir itself is unreadable). */
+  topStructural: StructuralFailure[];
   aggregate: {
     skills: number;
     structuralFailures: number;
@@ -88,6 +91,11 @@ export interface LintOptions {
   /** CI lane: check structure only — link refs resolve against the skill dir,
    *  no package cross-check at all (CI has no private checkouts). */
   structuralOnly?: boolean;
+  /** Strict mode for callers that explicitly named the dir (the CLI, the
+   *  nightly cadence): an unreadable skills dir is a structural FAILURE, not
+   *  a silently empty report. Library callers scanning optional roots keep
+   *  the default (false) behavior. */
+  requireSkillsDir?: boolean;
 }
 
 export interface CheckClaimsOptions {
@@ -620,10 +628,15 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
   const seenNames = new Map<string, string>(); // frontmatter name → skill dir
 
   let entries: string[] = [];
+  const topStructural: StructuralFailure[] = [];
   try {
     entries = fs.readdirSync(skillsDir);
   } catch {
-    entries = []; // missing dir → empty report, no throw
+    entries = [];
+    if (opts.requireSkillsDir === true) {
+      topStructural.push({ message: `skills dir not readable (requested explicitly): ${skillsDir}` });
+    }
+    // Otherwise: optional root → empty report, no throw (library-scan mode).
   }
 
   for (const entry of entries.sort()) {
@@ -677,7 +690,8 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
 
   const aggregate = {
     skills: skills.length,
-    structuralFailures: skills.reduce((n, s) => n + s.structural.length, 0),
+    structuralFailures:
+      skills.reduce((n, s) => n + s.structural.length, 0) + topStructural.length,
     verified: skills.reduce((n, s) => n + s.claims.filter((c) => c.verdict === "VERIFIED").length, 0),
     drifted: skills.reduce((n, s) => n + s.claims.filter((c) => c.verdict === "DRIFTED").length, 0),
     unverifiable: skills.reduce((n, s) => n + s.claims.filter((c) => c.verdict === "UNVERIFIABLE").length, 0),
@@ -687,6 +701,7 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
     packageRoots,
     structuralOnly,
     skills,
+    topStructural,
     aggregate,
     ok: aggregate.structuralFailures === 0,
   };
@@ -754,11 +769,13 @@ export function lintExitCode(report: SkillsLintReport): number {
 /** Short human summary (stderr lane of the CLI). */
 export function renderSummary(report: SkillsLintReport): string {
   const a = report.aggregate;
-  return [
+  const lines = [
     `skill-drift-lint: ${a.skills} skills checked (${report.structuralOnly ? "structural only" : "full cross-check"})`,
     `  structural failures: ${a.structuralFailures}`,
     `  claims: ${a.verified} verified · ${a.drifted} drifted · ${a.unverifiable} unverifiable`,
-  ].join("\n");
+  ];
+  for (const f of report.topStructural) lines.push(`  TOP-LEVEL STRUCTURAL: ${f.message}`);
+  return lines.join("\n");
 }
 
 /** Human-readable full report (the --report text lane). */
