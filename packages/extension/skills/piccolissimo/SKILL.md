@@ -135,7 +135,7 @@ than the Magnus variants.
 For manual substep sizing of the fixed-step cells, two exported diagnostics do
 the arithmetic for you: `suggest_n_sub(H_drift, H_drives, bracket, coeff!, Ψ0, Δt;
 phase_budget = 2.0, dyn_tol = 1e-8, grad_tol = 1e-6)` returns a substep count for
-one interval, and `expl_discretization_error(...; same kwargs, n_sub)` reports the
+one interval, and `expl_discretization_error(...; same kwargs, n_sub)` (positional) reports the
 estimated discretization error at a given count. Sizing is frozen after
 construction — a mid-solve re-size is never silently attempted.
 

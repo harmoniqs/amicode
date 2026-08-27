@@ -61,7 +61,7 @@ NLPs that reuse the original problem's dynamics and constraints:
 | `make_global_regularizer(name, traj, R)` | Quadratic penalty $(R/2)\|\theta - \text{baseline}\|^2$ on one global variable — compose your own `R_θ` set if the constructors' NamedTuple form doesn't express it |
 
 The discipline that makes this fast: **build once, update in place**. The
-`SubproblemHandle` holds shared references to the mutable internals, so
+`SubproblemHandle` holds shared references to the objective's mutable parameters, so
 `update_subproblem!` touches only targets, baselines, and the warm start —
 no reconstruction between outer iterations.
 
@@ -168,7 +168,7 @@ c     = capture(sub, direction)                           # fraction of the dire
 > consumes (the conjugation-frames / encoded-decay-rate kernels, imported from
 > Piccolissimo as `conjugation_frames` and companions) are present only when
 > your Piccolissimo environment is paired with the conjugation-kernels branch
-> (`wip/414-conjugation-kernels` at the time of writing) rather than the
+> (pre-paired by your delivery contact) rather than the
 > mainline checkout. If the pairing is wrong, `using Intonatissimo` fails at
 > load with a missing-name error — re-pair the environment; the calls above do
 > not change.
