@@ -105,6 +105,25 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     return obj;
   };
 
+  /** amicode#447: the port's /amicode/vaults wire deliberately extends the
+   *  fork pin's — each mount gains `dirName`, the vault DIRECTORY identity its
+   *  file paths carry, so the app can reconcile a path-derived vault ref
+   *  against the mount list (marker `name` ≠ directory on the standard fleet
+   *  layout). Stripped from BOTH sides so parity stays comparable across the
+   *  next pin bump; the field itself is unit-tested in
+   *  vault_mount_identity.test.ts. */
+  const normalizePortExtensions = (obj: any): any => {
+    if (obj && typeof obj === "object" && Array.isArray(obj.mounts)) {
+      const mounts = obj.mounts.map((m: any) => {
+        if (!m || typeof m !== "object" || !("dirName" in m)) return m;
+        const { dirName: _dropped, ...rest } = m;
+        return rest;
+      });
+      return { ...obj, mounts };
+    }
+    return obj;
+  };
+
   const normalizeWallClock = (obj: any): any => {
     if (
       obj &&
@@ -187,7 +206,7 @@ describe("amicode service — golden-fixture parity with the fork", () => {
         // JSON routes: deep-equal on parsed bodies (key order is the port's
         // business; structure and values are the contract).
         const canon = (o: any, seededAt: number) =>
-          normalizePostPinDrift(normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt))));
+          normalizePortExtensions(normalizePostPinDrift(normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)))));
         expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
       } else {
         // Non-JSON routes (the served widget frame): byte-exact after sandbox

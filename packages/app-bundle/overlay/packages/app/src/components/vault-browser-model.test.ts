@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { pickVaultServer, vaultMountsState } from "./vault-browser-model"
+import { pickVaultServer, vaultMountsState, effectiveMount } from "./vault-browser-model"
 
 // amicode#105: the drawer is the vault's ONLY host, so it must work on every
 // route — and say why when it can't. Pre-fix, a failed mounts fetch and an
@@ -58,5 +58,26 @@ describe("the vault drawer is global (amicode#105)", () => {
   test("vault-panel.tsx carries no route-param guard", () => {
     const source = readFileSync(join(import.meta.dir, "vault-panel.tsx"), "utf8")
     expect(source).not.toContain("params.id")
+  })
+})
+
+// amicode#447: a deep-link target carries the vault's DIRECTORY identity from
+// the node's path, which the mounts list may key differently (marker `name`).
+// The chosen mount must go to the fetches VERBATIM — the server resolves both
+// identities — never silently swapped for the first listed mount.
+describe("effectiveMount (amicode#447)", () => {
+  const mounts = [{ id: "aaron" }, { id: "armonissima" }]
+
+  test("keeps a chosen mount the list doesn't key (the deep-link directory id)", () => {
+    expect(effectiveMount("armonia-aaron-trowbridge", mounts)).toBe("armonia-aaron-trowbridge")
+  })
+
+  test("keeps a listed chosen mount (the chip flow, unchanged)", () => {
+    expect(effectiveMount("armonissima", mounts)).toBe("armonissima")
+  })
+
+  test("falls back to the first listed mount with no choice", () => {
+    expect(effectiveMount(undefined, mounts)).toBe("aaron")
+    expect(effectiveMount(undefined, [])).toBeUndefined()
   })
 })
