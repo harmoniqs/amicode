@@ -55,7 +55,29 @@ export class ServerManager {
     if (this.child) {
       throw new Error("opencode server already running");
     }
-    const port = this.opts.port ?? (await pickFreePort());
+
+    let port: number;
+    if (this.opts.port) {
+      // A fixed port was configured (e.g. amicode.opencodePort = 43117).
+      // Verify it's actually free before asking opencode to bind it — on shared
+      // remote hosts (SSH) another process (or another Amicode window) may
+      // already occupy it.
+      const available = await portIsAvailable(this.opts.port);
+      if (available) {
+        port = this.opts.port;
+      } else {
+        port = await pickFreePort();
+        this.opts.channel.appendLine(
+          `[server] configured port ${this.opts.port} is in use — falling back to ephemeral port ${port}`,
+        );
+        vscode.window.showWarningMessage(
+          `Amicode: port ${this.opts.port} was occupied — started on port ${port} instead.`,
+        );
+      }
+    } else {
+      port = await pickFreePort();
+    }
+
     this._port = port;
     this.opts.channel.appendLine(`[server] spawning opencode serve --port=${port} (cwd=${this.opts.cwd})`);
 
@@ -146,6 +168,21 @@ function pickFreePort(): Promise<number> {
       }
     });
     srv.on("error", reject);
+  });
+}
+
+/** Returns true if the given port can be bound on 127.0.0.1 (i.e. is not in use). */
+function portIsAvailable(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once("error", (err: NodeJS.ErrnoException) => {
+      // EADDRINUSE means something else is on this port; any other error
+      // (EACCES, etc.) also means we can't use it.
+      resolve(false);
+    });
+    srv.listen(port, "127.0.0.1", () => {
+      srv.close(() => resolve(true));
+    });
   });
 }
 

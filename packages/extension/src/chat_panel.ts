@@ -55,6 +55,8 @@ export class ChatPanel {
   /** Callbacks fired when the app signals ready (app-ready message from iframe). */
   private static appReadyCallbacks: Array<() => void> = [];
   private readonly disposables: vscode.Disposable[] = [];
+  /** The origin the iframe was built with — used to detect port changes on restart. */
+  readonly origin: string;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -69,6 +71,7 @@ export class ChatPanel {
     hideProjectDir?: string,
     withSplash?: boolean,
   ) {
+    this.origin = opencodeUrl.origin;
     this.panel.webview.html = withSplash
       ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
       : this.renderHtml(opencodeUrl, authToken, hideProjectDir);
@@ -162,6 +165,32 @@ export class ChatPanel {
   /** Post an arbitrary message to the webview (relayed to the iframe). */
   postMessage(msg: unknown): Thenable<boolean> {
     return this.panel.webview.postMessage(msg);
+  }
+
+  /** Notify all live panels that the server URL changed (or that the server
+   *  restarted on the same port). If the port changed, the panel's iframe is
+   *  stale and must be recreated — returns true if recreation is needed. */
+  static notifyServerUrlChanged(url: URL): boolean {
+    const current = ChatPanel.current;
+    if (!current) return false;
+    if (current.origin !== url.origin) return true
+    // Same origin — just inform the webview the server restarted.
+    for (const panel of ChatPanel.live) {
+      void panel.panel.webview.postMessage({
+        source: "amicode",
+        kind: "server-url-changed",
+        url: url.href,
+      });
+    }
+    return false;
+  }
+
+  /** Dispose the current primary panel (closes the VS Code tab). Used when the
+   *  server port changed and the iframe needs to be rebuilt with a new origin. */
+  static disposeCurrent(): void {
+    if (ChatPanel.current) {
+      ChatPanel.current.panel.dispose();
+    }
   }
 
   /** AC5's gate setter — called after each session prep with
@@ -388,7 +417,7 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "server-url-changed" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
@@ -558,11 +587,4 @@ export class ChatPanel {
     if (ChatPanel.current === this) ChatPanel.current = undefined;
   }
 
-  /** Close the current singleton chat panel (if one exists). Used by redo-onboarding
-   *  to clear the view before opening the onboarding webview. */
-  static disposeCurrent(): void {
-    if (ChatPanel.current) {
-      ChatPanel.current.panel.dispose();
-    }
-  }
 }

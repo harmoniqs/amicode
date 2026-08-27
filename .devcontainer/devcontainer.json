@@ -8,7 +8,10 @@
     "vscode": {
       "extensions": [
         "harmoniqs.amicode"
-      ]
+      ],
+      "settings": {
+        "amicode.opencodePort": 43117
+      }
     }
   }
 }

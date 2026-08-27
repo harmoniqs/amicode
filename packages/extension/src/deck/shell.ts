@@ -420,6 +420,10 @@ window.addEventListener("message", (e) => {
     ) {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
+    // Server URL push: broadcast to all panes so the SSE loop can reconnect.
+    if (d.kind === "server-url-changed") {
+      for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
+    }
     // #351: inspector fan-out — broadcast to every live pane (no tab routing;
     // the app's Work Column tabs buffer per-run/per-device themselves).
     if (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) {
