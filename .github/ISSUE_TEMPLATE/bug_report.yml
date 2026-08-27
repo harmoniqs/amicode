@@ -1,0 +1,56 @@
+name: Bug Report
+description: File a bug report to help us improve amicode
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. A clear, reproducible bug report
+        is the fastest way to get it fixed.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: Walk us through how to trigger the bug. Be specific — commands, clicks, inputs.
+      placeholder: |
+        1. Open a transmon problem
+        2. Set levels = 4, drive_max = 0.2
+        3. Click Solve
+        4. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Amicode Version
+      description: The version shown in VS Code's Extensions pane.
+      placeholder: e.g. 0.2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: What operating system are you running?
+      options:
+        - macOS (arm64)
+        - macOS (x64)
+        - Linux (x64)
+        - Linux (arm64)
+        - Windows (x64)
+        - Windows (arm64)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Log Output
+      description: Copy-paste any relevant log output from the Amicode output channel (View → Output → Amicode).
+      render: shell

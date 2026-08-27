@@ -1,0 +1,35 @@
+name: Feature Request
+description: Suggest an idea for amicode
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature. The best requests include concrete use cases,
+        a sketch of how it might work, and any alternatives you've considered.
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: What problem does this solve? What workflow is this unblocking?
+      placeholder: |
+        When designing pulses for fluxonium, I need to …
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: How do you imagine this working? A sketch is fine — code snippets, mockups, or a description.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches have you considered, and why did you rule them out?
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Links, references, related issues, or anything else that helps.
