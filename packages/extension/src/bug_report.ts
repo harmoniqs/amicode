@@ -79,6 +79,10 @@ export interface BugReportDeps {
   showError(message: string): void;
   log?(line: string): void;
   fetchImpl?: typeof fetch;
+  /** Prompt when a bug report is already open — returns the chosen item
+   *  label or undefined on dismiss. Injected for testability; the production
+   *  wiring is `vscode.window.showInformationMessage`. */
+  showInformationMessage?: (message: string, ...items: string[]) => Promise<string | undefined> | Thenable<string | undefined>;
   /** The session-level model pin as `provider/model`, or undefined to let the
    *  server resolve its own default. Same rule as everywhere else in the
    *  extension: ONLY an explicit `amicode.defaultModel` pins (see
@@ -132,7 +136,9 @@ export class BugReportManager {
   }
 
   /** The `amicode.reportBug` command: reveal the open bug session, else
-   *  create + arm + open a new one. Never two bug sessions. */
+   *  create + arm + open a new one. A second invocation while a session is
+   *  live no longer silently swallows — it prompts to start a new report or
+   *  reveal the existing one (#476). Never two bug sessions concurrently. */
   async reportBug(): Promise<void> {
     if (this.current) {
       // Verify before revealing (amicode#249 QA): a session closed while the
@@ -142,11 +148,39 @@ export class BugReportManager {
       const server = this.deps.server();
       const alive = server ? await this.sessionExists(server, this.current) : true;
       if (alive) {
-        this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
-        return;
+        // #476: the bug icon while the dock is open must NOT be swallowed.
+        // If a prompt handler is wired (production: vscode info message), offer
+        // to close the current draft and start fresh; otherwise just reveal.
+        const prompt = this.deps.showInformationMessage;
+        if (prompt) {
+          const choice = await prompt(
+            "A bug report is already open. Start a new report? The current draft will be closed.",
+            "Start new report",
+            "Show current report",
+          );
+          if (choice === "Start new report") {
+            const srv = this.deps.server();
+            if (srv) {
+              try {
+                await this.fetch(new URL(`/session/${this.current}/abort`, srv.url), srv, { method: "POST" });
+              } catch {}
+              await this.deleteSession(srv, this.current);
+            }
+            this.deps.postDown({ source: "amicode", kind: CLOSE_BUG_REPORT_KIND, sessionID: this.current });
+            this.deps.log?.(`[bug] closing existing ${this.current} to start new report`);
+            this.current = undefined;
+          } else {
+            this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
+            return;
+          }
+        } else {
+          this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID: this.current });
+          return;
+        }
+      } else {
+        this.deps.log?.(`[bug] remembered session ${this.current} is gone — clearing`);
+        this.current = undefined;
       }
-      this.deps.log?.(`[bug] remembered session ${this.current} is gone — clearing`);
-      this.current = undefined;
     }
     if (this.opening) {
       // A concurrent invocation joins the in-flight open, then reveals.
