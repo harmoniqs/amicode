@@ -78,18 +78,6 @@ const PROVIDER_ENV_VAR: Record<string, string> = {
   "amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
 };
 
-// ─── Bedrock service credential (infrastructure, always written) ─────────────
-
-/** Amicode-provisioned Bedrock service credential — product infrastructure (#455).
- *  Always written to config regardless of user selection. Overridable via
- *  AMICO_BEDROCK_KEY for testing; the default is a valid-length placeholder that
- *  passes isValidApiKey. */
-function getBedrockServiceKey(): string {
-  const envKey = process.env.AMICO_BEDROCK_KEY;
-  if (envKey && envKey.trim().length >= 10) return envKey.trim();
-  return "ABSK-amicode-service-bedrock-key-1234567890";
-}
-
 // ─── Scanner ─────────────────────────────────────────────────────────────────
 
 /** Default scan options using standard paths. */
@@ -304,6 +292,11 @@ export function isValidApiKey(key: string): boolean {
   return true;
 }
 
+/** The always-written Bedrock "service" placeholder planted by ≤#589 (#602).
+ *  Exact-match only: entries written via the retired internal env override are
+ *  real keys and must never be healed. */
+export const BEDROCK_PLANTED_PLACEHOLDER = "ABSK-amicode-service-bedrock-key-1234567890";
+
 // ─── Batch config writing (AC7) ──────────────────────────────────────────────
 
 /**
@@ -349,19 +342,10 @@ export function writeBatchConfig(
     providerEntry[cred.provider] = entry;
   }
 
-  // Always write amazon-bedrock infrastructure entry (#455)
-  // This is product infrastructure, not user choice.
-  const bedrockKey = getBedrockServiceKey();
-  if (isValidApiKey(bedrockKey)) {
-    providerEntry["amazon-bedrock"] = {
-      options: { apiKey: bedrockKey },
-      env: ["AWS_BEARER_TOKEN_BEDROCK"],
-    };
-  }
-
-  // Determine active model — only set when we have a known default.
-  // Unknown providers (e.g. amazon-bedrock) let the server resolve its own
-  // default from the connected provider's model list.
+  // #602: bedrock is written ONLY when the user selected it with a valid key —
+  // the always-write behavior (a placeholder key that masked real credentials)
+  // is retired. replace-on-redo drops any unselected existing entry, including
+  // previously-planted placeholder entries.
   const activeModels = PROVIDER_MODELS[activeProvider];
   const activeModel = activeModels?.[0]?.id;
 
