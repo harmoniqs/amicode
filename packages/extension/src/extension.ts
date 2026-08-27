@@ -95,6 +95,11 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
+// Post-ready routing (onboarding gate + provider signal). Assigned at boot, and
+// re-invoked by every path that REPLACES serverManager — a replacement registers
+// its own onReady, so without this the boot handler is orphaned and the first
+// run silently loses its Stage 0 surface.
+let routePostReady: ((url: URL) => void) | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
@@ -844,10 +849,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push(sseClient);
 
-    serverManager.onReady((url) => {
-      opencodeReadyUrl = url;
-      statusBar?.setServerReady(true);
-      sseClient?.connect(url);
+    routePostReady = (url) => {
       // Onboarding gate: if no model is configured, open the Stage 0 webview
       // instead of chat. The webview will fire onOnboardingComplete when done,
       // which then opens chat.
@@ -906,6 +908,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
         );
       });
+    };
+
+    serverManager.onReady((url) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      sseClient?.connect(url);
+      routePostReady?.(url);
     });
 
     serverManager.start().catch((err) => {
@@ -971,6 +980,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      routePostReady?.(url);
     });
     await serverManager.start();
     if (project2.vaultDir) {
