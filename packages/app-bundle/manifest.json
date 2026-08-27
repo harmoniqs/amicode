@@ -9,7 +9,7 @@
   "extracted_at": "2026-08-23T15:32:52.432Z",
   "per_package": {
     "packages/app": {
-      "A": 100,
+      "A": 102,
       "M": 134,
       "D": 1
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 502,
+    "overlay_total": 505,
     "deletions": 7,
     "server_coupled": 44
   },
@@ -1314,6 +1314,8 @@
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
     "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
-    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814"
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814",
+    "packages/app/src/components/settings-v2/skills-controller.ts": "2c7344d144da0eec1c25083ead45f5afb2a8c6fd759541ad719cae9a09fcd19b",
+    "packages/app/src/components/settings-v2/skills.tsx": "653695b40c4a6e4a15a7e4ed02e11871bbc26498440658ffd531d66d9b3c8a33"
   }
 }
