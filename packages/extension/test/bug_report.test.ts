@@ -457,7 +457,9 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
       "GET /session/ses_bug": { status: 200, body: { id: "ses_bug", metadata: { bug_report: {} }, time: { archived: 1700000000000 } } },
     });
 
-    manager.sink.filed("ses_bug", "filed-via-browser");
+    // A real-shaped issue URL (owner/repo/issues/<n>) — the only token that
+    // reads as a verified filing since amicode#311's URL validation.
+    manager.sink.filed("ses_bug", "https://github.com/x/y/issues/1");
     await new Promise((r) => setTimeout(r, 0));
     calls.length = 0;
     posted.length = 0;
@@ -472,8 +474,8 @@ describe("failure cleanup + unknown-id drops (AC4)", () => {
   it("a duplicate bug-filed for the same id archives exactly once", async () => {
     const { manager, calls, posted } = await openBugSession();
 
-    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
-    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
+    manager.sink.filed("ses_bug", "https://github.com/x/y/issues/1");
+    manager.sink.filed("ses_bug", "https://github.com/x/y/issues/1");
     await new Promise((r) => setTimeout(r, 0));
 
     expect(calls.filter((c) => c.method === "PATCH")).toHaveLength(1);
@@ -503,7 +505,7 @@ describe("bug-report-poke — the app's boot catch-up (QA: lost-open race)", () 
 
   it("a poke after the session terminated is silence (the dock stays gone)", async () => {
     const { manager, posted } = await openBugSession();
-    manager.sink.filed("ses_bug", "https://github.com/x/issues/1");
+    manager.sink.filed("ses_bug", "https://github.com/x/y/issues/1");
     await new Promise((r) => setTimeout(r, 0));
     posted.length = 0;
 
