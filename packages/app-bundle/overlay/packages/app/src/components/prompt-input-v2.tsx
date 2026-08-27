@@ -52,6 +52,16 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
   const dialog = useDialog()
   const command = useCommand()
   const language = useLanguage()
+  const liveModel = createMemo(() => {
+    const current = props.controller.model.selection.current()
+    if (!current) return undefined
+    const variant = props.controller.model.selection.variant.current() ?? props.controller.model.selection.variant.selected()
+    return {
+      providerID: current.provider.id,
+      modelID: current.id,
+      ...(variant ? { variant } : {}),
+    }
+  })
 
   return (
     <div class="flex flex-col gap-3">
@@ -65,7 +75,9 @@ export function PromptInputV2Composer(props: PromptInputV2ComposerProps) {
         // amicode/opencode#116: report-a-bug, right-anchored immediately left
         // of send. The boot-param gate lives HERE (not inside the button) so a
         // gated-off button passes `undefined` and the row's layout never shifts.
-        trailingControl={bugReportEnabled() ? <ReportBugButton /> : undefined}
+        // amicode#277: carry the composer's live model selection onto the bug
+        // session so the repro runs what the user was running.
+        trailingControl={bugReportEnabled() ? <ReportBugButton model={liveModel()} /> : undefined}
         modelControl={
           <PromptInputV2ModelControl
             loading={props.controller.model.loading}

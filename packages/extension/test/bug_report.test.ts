@@ -66,7 +66,10 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
       "POST /session": { status: 200, body: { id: "ses_bug1" } },
       "POST /session/ses_bug1/command": { status: 200, body: {} },
     });
-    const { d, posted } = deps({ activeRunPointer: () => "default/20260803-104655-x-gate" }, fetchImpl);
+    const { d, posted } = deps(
+      { activeRunPointer: () => "default/20260803-104655-x-gate", defaultModel: () => undefined },
+      fetchImpl,
+    );
 
     await new BugReportManager(d).reportBug();
 
@@ -600,5 +603,94 @@ describe("the ghost-session guard (amicode#249 QA: closed while the bridge was d
     expect(calls.filter((c) => c.method === "POST" && new URL(c.url).pathname === "/session")).toEqual([]);
     // The liveness probe is the only new call — read-only.
     expect(calls.filter((c) => c.method !== "GET")).toEqual([]);
+  });
+});
+
+describe("composer live model selection onto bug session (amicode#277)", () => {
+  it("live selection is honoured — arms with provider/model (AC1)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_live" } },
+      "POST /session/ses_bug_live/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => "anthropic/claude-sonnet" }, fetchImpl);
+
+    await new BugReportManager(d).reportBug({ providerID: "openai", modelID: "gpt-4o", variant: undefined });
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_live/command"));
+    expect(arm).toHaveLength(1);
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "openai/gpt-4o" });
+  });
+
+  it("variant travels with the live selection (AC2)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_var" } },
+      "POST /session/ses_bug_var/command": { status: 200, body: {} },
+    });
+    const { d } = deps({}, fetchImpl);
+
+    await new BugReportManager(d).reportBug({ providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" });
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_var/command"));
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "", model: "anthropic/claude-sonnet-4", variant: "thinking" });
+  });
+
+  it("live selection takes precedence over configured default (AC1 + AC3)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_prec" } },
+      "POST /session/ses_bug_prec/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => "anthropic/claude-sonnet" }, fetchImpl);
+
+    await new BugReportManager(d).reportBug({ providerID: "openai", modelID: "gpt-4o" });
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_prec/command"));
+    expect((arm[0].body as { model: string }).model).toBe("openai/gpt-4o");
+  });
+
+  it("with no live selection the configured default is used (AC3)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_cfg" } },
+      "POST /session/ses_bug_cfg/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => "opencode/deepseek-v4-pro" }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_cfg/command"));
+    expect((arm[0].body as { model: string }).model).toBe("opencode/deepseek-v4-pro");
+  });
+
+  it("with neither live nor configured, model is omitted and server resolves (AC3)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_none" } },
+      "POST /session/ses_bug_none/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_none/command"));
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+  });
+
+  it("a malformed live payload never blocks — falls back to configured default (AC4)", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_mal" } },
+      "POST /session/ses_bug_mal/command": { status: 200, body: {} },
+    });
+    // Simulate bridge having stripped malformed -> reportBug called without live (undefined)
+    // The manager should then fall back to configured default rather than error.
+    const { d } = deps({ defaultModel: () => "opencode/deepseek-v4-pro" }, fetchImpl);
+
+    await new BugReportManager(d).reportBug(undefined);
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_mal/command"));
+    expect((arm[0].body as { model: string }).model).toBe("opencode/deepseek-v4-pro");
   });
 });

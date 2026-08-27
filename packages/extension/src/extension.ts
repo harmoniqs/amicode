@@ -1525,8 +1525,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
     // Report a Bug (amicode#250): the palette entry + the composer bug button's
     // bridge command share this one handler — the manager owns create/arm/open,
-    // the lifecycle, and the single-open invariant.
-    vscode.commands.registerCommand(REPORT_BUG_COMMAND, () => void bugReport.reportBug()),
+    // the lifecycle, and the single-open invariant. The composer's live model
+    // selection (provider/model/variant) rides the bridge as an optional arg
+    // (amicode#277) — already validated at the trust boundary — and takes
+    // precedence over the configured default.
+    vscode.commands.registerCommand(REPORT_BUG_COMMAND, (model?: import("./bug_report").ReportBugModel) => void bugReport.reportBug(model)),
     // Run picker: switch the Work Column Run Inspector between tracked runs.
     // Now posts to the bridge (no bottom panel to reveal).
     vscode.commands.registerCommand("amicode.selectRun", async () => {

@@ -7,10 +7,14 @@
 import { Icon as IconV2 } from "@opencode-ai/ui/v2/icon"
 import { IconButtonV2, type IconButtonV2Props } from "@opencode-ai/ui/v2/icon-button-v2"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
-import { reportBug } from "@/pages/session/composer/report-bug"
+import { reportBug, type ReportBugModel } from "@/pages/session/composer/report-bug"
 import "./report-bug-button.css"
 
-export function ReportBugButton(props: { disabled?: boolean; /** stories only: force a visual state */ state?: IconButtonV2Props["state"] }) {
+export function ReportBugButton(props: {
+  disabled?: boolean
+  /** stories only: force a visual state */ state?: IconButtonV2Props["state"]
+  model?: ReportBugModel
+}) {
   return (
     <TooltipV2 placement="top" value="Report a bug" inactive={props.disabled}>
       <IconButtonV2
@@ -22,7 +26,7 @@ export function ReportBugButton(props: { disabled?: boolean; /** stories only: f
         icon={<IconV2 name="bug" />}
         aria-label="Report a bug"
         disabled={props.disabled}
-        onClick={() => reportBug()}
+        onClick={() => reportBug(undefined, props.model)}
       />
     </TooltipV2>
   )

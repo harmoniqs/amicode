@@ -233,6 +233,97 @@ describe("extractReportBugModel — the command's optional model payload (amicod
   });
 });
 
+describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
+  it("carries the composer's live model selection onto the command (AC1)", async () => {
+    const host = io();
+    let received: unknown;
+    const cmd = vscode.commands.registerCommand("amicode.reportBug", (model: unknown) => {
+      received = model;
+    });
+    handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "command", command: "amicode.reportBug", model: { providerID: "openai", modelID: "gpt-4o" } },
+      host,
+    );
+    await flush();
+    expect(received).toEqual({ providerID: "openai", modelID: "gpt-4o" });
+    cmd.dispose();
+  });
+
+  it("variant travels with the selection (AC2)", async () => {
+    const host = io();
+    let received: unknown;
+    const cmd = vscode.commands.registerCommand("amicode.reportBug", (model: unknown) => {
+      received = model;
+    });
+    handleAmicodeBridgeMessage(
+      {
+        source: "amicode",
+        kind: "command",
+        command: "amicode.reportBug",
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" },
+      },
+      host,
+    );
+    await flush();
+    expect(received).toEqual({ providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" });
+    cmd.dispose();
+  });
+
+  it("malformed, oversized, or absent payload never blocks — falls back to no model (AC4)", async () => {
+    const host = io();
+    let received: unknown = "sentinel";
+    const cmd = vscode.commands.registerCommand("amicode.reportBug", (model: unknown) => {
+      received = model;
+    });
+    // malformed: missing modelID
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.reportBug", model: { providerID: "openai" } }, host);
+    await flush();
+    expect(received).toBeUndefined();
+    // oversized
+    received = "sentinel";
+    handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "command", command: "amicode.reportBug", model: { providerID: "x".repeat(201), modelID: "gpt-4o" } },
+      host,
+    );
+    await flush();
+    expect(received).toBeUndefined();
+    // absent
+    received = "sentinel";
+    handleAmicodeBridgeMessage({ source: "amicode", kind: "command", command: "amicode.reportBug" }, host);
+    await flush();
+    expect(received).toBeUndefined();
+    cmd.dispose();
+  });
+
+  it("payload is shape-validated and length-bounded at the bridge (AC5)", async () => {
+    expect(extractReportBugModel({ model: { providerID: "a".repeat(201), modelID: "b" } })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: "", modelID: "b" } })).toBeUndefined();
+    expect(extractReportBugModel({ model: { providerID: "a", modelID: "b", variant: "x".repeat(201) } })).toEqual({
+      providerID: "a",
+      modelID: "b",
+    });
+  });
+
+  it("no additional command gains a payload channel and the allowlist is unchanged in size (AC7)", async () => {
+    const { BRIDGE_ALLOWED_COMMANDS } = await import("../src/chat_bridge");
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(10);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
+    // other allowlisted commands ignore model payload
+    const host = io();
+    let received: unknown = "sentinel";
+    const cmd = vscode.commands.registerCommand("amicode.restartServer", (model: unknown) => {
+      received = model;
+    });
+    handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "command", command: "amicode.restartServer", model: { providerID: "openai", modelID: "gpt-4o" } },
+      host,
+    );
+    await flush();
+    expect(received).toBeUndefined();
+    cmd.dispose();
+  });
+});
+
 describe("amicode bridge — clipboard-image-read", () => {
   it("reads a clipboard image via native tools and replies with a data URL", async () => {
     const host = io();

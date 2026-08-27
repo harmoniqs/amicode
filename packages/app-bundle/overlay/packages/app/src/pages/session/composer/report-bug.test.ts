@@ -73,4 +73,66 @@ describe("reportBug", () => {
       spy.mockRestore()
     }
   })
+
+  // amicode#277: carry the composer's live model selection onto the bug session
+  test("carries the live model selection onto the bridge message (AC1)", () => {
+    const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
+    try {
+      reportBug(undefined, { providerID: "openai", modelID: "gpt-4o" })
+      const [msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect(msg).toEqual({ source: "amicode", kind: "command", command: REPORT_BUG_COMMAND, model: { providerID: "openai", modelID: "gpt-4o" } })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("variant travels with the selection (AC2)", () => {
+    const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
+    try {
+      reportBug(undefined, { providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" })
+      const [msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect(msg).toEqual({
+        source: "amicode",
+        kind: "command",
+        command: REPORT_BUG_COMMAND,
+        model: { providerID: "anthropic", modelID: "claude-sonnet-4", variant: "thinking" },
+      })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("absent model tolerated — no model field (AC3)", () => {
+    const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
+    try {
+      reportBug(undefined, undefined)
+      const [msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect(msg).toEqual({ source: "amicode", kind: "command", command: REPORT_BUG_COMMAND })
+      expect("model" in msg).toBe(false)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("malformed, oversized, or absent payload never blocks — stripped (AC4 + AC5)", () => {
+    const spy = spyOn(window.parent, "postMessage").mockImplementation(() => {})
+    try {
+      // malformed: missing modelID
+      reportBug(undefined, { providerID: "openai", modelID: "" } as unknown as { providerID: string; modelID: string })
+      let [msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect("model" in msg).toBe(false)
+      spy.mockClear()
+      // oversized
+      reportBug(undefined, { providerID: "x".repeat(201), modelID: "gpt-4o" })
+      ;[msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect("model" in msg).toBe(false)
+      // variant oversized → stripped but model kept
+      spy.mockClear()
+      reportBug(undefined, { providerID: "openai", modelID: "gpt-4o", variant: "x".repeat(201) })
+      ;[msg] = spy.mock.calls[0] as unknown as [Record<string, unknown>, unknown]
+      expect(msg).toEqual({ source: "amicode", kind: "command", command: REPORT_BUG_COMMAND, model: { providerID: "openai", modelID: "gpt-4o" } })
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })

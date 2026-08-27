@@ -65,6 +65,12 @@ export interface BugReportServer {
   authorization: string;
 }
 
+export interface ReportBugModel {
+  providerID: string;
+  modelID: string;
+  variant?: string;
+}
+
 export interface BugReportDeps {
   /** undefined while the server is down — the command then fails actionably. */
   server(): BugReportServer | undefined;
@@ -88,10 +94,8 @@ export interface BugReportDeps {
    *  extension: ONLY an explicit `amicode.defaultModel` pins (see
    *  extension.ts's boot/restart pins) — we never guess a model.
    *
-   *  This is the SESSION-level half of the model handoff. The COMPOSER-level
-   *  half — carrying the user's live in-chat selection onto the command, via
-   *  `extractReportBugModel` in chat_bridge.ts — is deliberately not wired
-   *  here; it crosses the iframe boundary and is tracked separately. */
+   *  Precedence for the arming turn is: live composer selection (passed to
+   *  reportBug) → configured default → server default (omit). */
   defaultModel?(): string | undefined;
 }
 
@@ -138,8 +142,13 @@ export class BugReportManager {
   /** The `amicode.reportBug` command: reveal the open bug session, else
    *  create + arm + open a new one. A second invocation while a session is
    *  live no longer silently swallows — it prompts to start a new report or
-   *  reveal the existing one (#476). Never two bug sessions concurrently. */
-  async reportBug(): Promise<void> {
+   *  reveal the existing one (#476). Never two bug sessions concurrently.
+   *
+   *  `liveModel` is the composer's live selection (provider/model/variant),
+   *  already shape-validated at the bridge. It takes precedence over the
+   *  configured default; with neither the field is omitted and the server
+   *  resolves its own. */
+  async reportBug(liveModel?: ReportBugModel): Promise<void> {
     if (this.current) {
       // Verify before revealing (amicode#249 QA): a session closed while the
       // bridge was down (disposed webview, dead window) leaves `current`
@@ -190,7 +199,7 @@ export class BugReportManager {
       }
       return;
     }
-    this.opening = this.open();
+    this.opening = this.open(liveModel);
     try {
       await this.opening;
     } finally {
@@ -224,7 +233,7 @@ export class BugReportManager {
 
   // -------- internal --------
 
-  private async open(): Promise<void> {
+  private async open(liveModel?: ReportBugModel): Promise<void> {
     const server = this.deps.server();
     if (!server) {
       this.deps.showError(
@@ -251,7 +260,7 @@ export class BugReportManager {
     let sessionID: string | undefined;
     try {
       sessionID = await this.createSession(server, envelope);
-      await this.armSession(server, sessionID);
+      await this.armSession(server, sessionID, liveModel);
     } catch (e) {
       // No orphans: a created-but-unarmed (or ambiguous) session is deleted.
       if (sessionID) await this.deleteSession(server, sessionID);
@@ -333,14 +342,41 @@ export class BugReportManager {
 
   /** Arm: the report-a-bug slash command as the session's first turn.
    *
-   *  The model field is always omitted — the server resolves its own default
-   *  from the first connected provider's best model. Passing a stale
-   *  `amicode.defaultModel` that references an unconnected provider causes a
-   *  500 (the server can't route to a disconnected provider). */
-  private async armSession(server: BugReportServer, sessionID: string): Promise<void> {
+   *  Precedence is live selection → configured default → server default
+   *  (omit). Each level is a strict fallback; an empty or malformed value
+   *  never pins the session — it falls through. The live variant travels with
+   *  its model; the configured pin cannot express a variant. */
+  private async armSession(server: BugReportServer, sessionID: string, liveModel?: ReportBugModel): Promise<void> {
+    const body: Record<string, unknown> = { command: REPORT_A_BUG_SKILL, arguments: "" };
+    // Precedence: live → configured → omit. Validation mirrors the bridge's
+    // bounded-string checks; a malformed live value never blocks the command.
+    const liveValid =
+      liveModel &&
+      typeof liveModel.providerID === "string" &&
+      liveModel.providerID !== "" &&
+      liveModel.providerID.length <= 200 &&
+      typeof liveModel.modelID === "string" &&
+      liveModel.modelID !== "" &&
+      liveModel.modelID.length <= 200;
+    if (liveValid) {
+      body.model = `${liveModel.providerID}/${liveModel.modelID}`;
+      if (typeof liveModel.variant === "string" && liveModel.variant !== "" && liveModel.variant.length <= 200) {
+        body.variant = liveModel.variant;
+      }
+    } else {
+      const configured = this.deps.defaultModel?.()?.trim();
+      if (
+        configured &&
+        configured !== "" &&
+        configured.length <= 200 &&
+        /^[\w.-]+\/[\w.:-]+$/.test(configured)
+      ) {
+        body.model = configured;
+      }
+    }
     const res = await this.fetch(new URL(`/session/${sessionID}/command`, server.url), server, {
       method: "POST",
-      body: { command: REPORT_A_BUG_SKILL, arguments: "" },
+      body,
     });
     if (!res.ok) throw new Error(`couldn't arm the report-a-bug skill (HTTP ${res.status})`);
   }
