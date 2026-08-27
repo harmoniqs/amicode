@@ -254,11 +254,13 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
     expect(names.length).toBeGreaterThanOrEqual(countTaggedSkills(vault, /internal/));
   });
 
-  // spec-20260713-003804 §6 tag-required check. The tag-derived count above is near-tautological
-  // (an untagged skill is invisible to BOTH sides), so it cannot catch a public-intended skill
-  // left untagged — which under default-deny silently fails to ship. This is that regression guard:
-  // every real in-repo library skill MUST carry an explicit surface: public.
-  it("every real in-repo library skill carries an explicit surface: public", () => {
+  // spec-20260713-003804 §6 tag-required check, three-tier form (ADR-0011). The
+  // tag-derived count above is near-tautological (an untagged skill is invisible to
+  // BOTH sides), so it cannot catch a shipping-intended skill left untagged — which
+  // under default-deny silently fails to ship. This is that regression guard: every
+  // real in-repo library skill MUST carry an explicit shipping surface (public, or
+  // entitled with its entitlement code) — internal stays vault-only.
+  it("every real in-repo library skill carries an explicit surface: public or entitled (entitled needs its code)", () => {
     const root = inRepoLibraryRoot();
     if (!root) return;
     const offenders: string[] = [];
@@ -267,9 +269,13 @@ describe("resolveLibrarySkills (spec-20260713-003804 — surface:public discover
       if (!fs.existsSync(p)) continue;
       const m = fs.readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
       const surface = m?.[1].match(/^surface:\s*(\S+)/m)?.[1];
-      if (surface !== "public") offenders.push(`${name} (surface=${surface ?? "MISSING"})`);
+      // raw-value capture + quote-strip: `entitlement: ""` must read as EMPTY
+      // (the resolver refuses it at runtime; the guard must agree)
+      const entitlement = m?.[1].match(/^entitlement:\s*(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, "").trim();
+      const ok = surface === "public" || (surface === "entitled" && !!entitlement);
+      if (!ok) offenders.push(`${name} (surface=${surface ?? "MISSING"}${surface === "entitled" ? ", entitlement MISSING" : ""})`);
     }
-    expect(offenders, `untagged/mis-tagged in-repo library skills: ${offenders.join(", ")}`).toEqual([]);
+    expect(offenders, `non-shippable in-repo library skills: ${offenders.join(", ")}`).toEqual([]);
   });
 });
 
