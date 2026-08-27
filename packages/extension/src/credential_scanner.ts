@@ -301,7 +301,8 @@ export const BEDROCK_PLANTED_PLACEHOLDER = "ABSK-amicode-service-bedrock-key-123
 
 /**
  * Write all detected providers to opencode.json in one pass.
- * The `activeProvider` becomes the active `model` (using its first model entry).
+ * The `activeProvider` becomes the active `model` (using its first model entry,
+ * or `modelOverride` if provided from model probing).
  * Uses the same schema as writeOnboardingConfig: provider.<id>.options.apiKey, env as string[].
  * Credentials with placeholder or invalid keys are silently skipped (#455).
  */
@@ -309,6 +310,7 @@ export function writeBatchConfig(
   credentials: DetectedCredential[],
   activeProvider: string,
   configPath?: string,
+  modelOverride?: string,
 ): void {
   const targetPath = configPath ?? path.join(opencodeConfigDir(), "opencode.json");
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -347,7 +349,7 @@ export function writeBatchConfig(
   // is retired. replace-on-redo drops any unselected existing entry, including
   // previously-planted placeholder entries.
   const activeModels = PROVIDER_MODELS[activeProvider];
-  const activeModel = activeModels?.[0]?.id;
+  const activeModel = modelOverride ?? activeModels?.[0]?.id;
 
   const result: Record<string, unknown> = {
     ...existing,

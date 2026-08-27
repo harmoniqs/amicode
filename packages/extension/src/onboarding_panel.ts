@@ -70,7 +70,8 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
     { id: "vercel/openai/gpt-5.6-sol", name: "GPT-5.6 Sol" },
   ],
   "amazon-bedrock": [
-    { id: "amazon-bedrock/anthropic.claude-opus-5", name: "Claude Opus 5 (Bedrock)" },
+    { id: "amazon-bedrock/anthropic.claude-opus-4-6-v1", name: "Claude Opus 4.6 (Bedrock)" },
+    { id: "amazon-bedrock/anthropic.claude-sonnet-4-5-v2", name: "Claude Sonnet 4.5 v2 (Bedrock)" },
     { id: "amazon-bedrock/anthropic.claude-sonnet-5", name: "Claude Sonnet 5 (Bedrock)" },
   ],
   custom: [],
@@ -219,6 +220,32 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
   vercel: "https://api.vercel.ai/v1/chat/completions",
 };
 
+/** Cross-region inference profile prefixes — models with these are already resolved. */
+const BEDROCK_CROSS_REGION_PREFIXES = ["global.", "us.", "eu.", "jp.", "apac.", "au."];
+
+/** Resolve a bare Bedrock model ID to its region-prefixed form.
+ *  Mirrors the logic in opencode's provider transform layer. */
+function resolveBedrockModelId(bareModelId: string, region: string = "us-east-1"): string {
+  // Already has a cross-region prefix — pass through
+  if (BEDROCK_CROSS_REGION_PREFIXES.some((p) => bareModelId.startsWith(p))) {
+    return bareModelId;
+  }
+  // US region: prefix with "us." for claude/nova/deepseek models
+  const regionPrefix = region.split("-")[0];
+  if (regionPrefix === "us") {
+    const requiresPrefix = ["nova-micro", "nova-lite", "nova-pro", "nova-premier", "nova-2", "claude", "deepseek"]
+      .some((item) => bareModelId.includes(item));
+    if (requiresPrefix) return `us.${bareModelId}`;
+  }
+  return bareModelId;
+}
+
+/** Build the Bedrock converse endpoint URL for a given model. */
+function buildBedrockEndpoint(modelId: string, region: string = "us-east-1"): string {
+  const resolved = resolveBedrockModelId(modelId, region);
+  return `https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(resolved)}/converse`;
+}
+
 /** Test the connection by making exactly one minimal LLM API call.
  *  Returns ok:true on success, ok:false with error message on failure.
  *  Providers without a known test endpoint return ok:true (untestable, not failed).
@@ -227,6 +254,11 @@ export async function testConnection(
   config: OnboardingConfig,
   fetchImpl: typeof fetch = globalThis.fetch,
 ): Promise<TestConnectionResult> {
+  // Bedrock uses a dynamic endpoint (region + model in URL), handled separately
+  if (config.provider === "amazon-bedrock") {
+    return testBedrockConnection(config, fetchImpl);
+  }
+
   const endpoint = PROVIDER_TEST_ENDPOINTS[config.provider];
   if (!endpoint) {
     // Provider has no test endpoint — treat as untestable (pass), not unknown
@@ -303,6 +335,81 @@ function buildTestRequest(
       headers: { Authorization: `Bearer ${config.apiKey}` },
     },
   };
+}
+
+// ─── Bedrock connection test ─────────────────────────────────────────────────
+
+/** Test a Bedrock connection by making a minimal converse API call.
+ *  Uses the bearer-token auth path (Authorization: Bearer). The model ID is
+ *  resolved with the standard US-region prefix logic so the probe hits the
+ *  same endpoint the runtime would. */
+async function testBedrockConnection(
+  config: OnboardingConfig,
+  fetchImpl: typeof fetch,
+): Promise<TestConnectionResult> {
+  // Strip the provider prefix from model ID (e.g. "amazon-bedrock/anthropic.claude-opus-4-6-v1" → "anthropic.claude-opus-4-6-v1")
+  const bareModelId = config.model.replace(/^amazon-bedrock\//, "");
+  const region = process.env.AWS_REGION ?? "us-east-1";
+  const url = buildBedrockEndpoint(bareModelId, region);
+
+  try {
+    const response = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: [{ text: "hi" }] }],
+        inferenceConfig: { maxTokens: 1 },
+      }),
+    });
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `${response.status} ${response.statusText ?? "Error"}`,
+      };
+    }
+    return { ok: true };
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: msg };
+  }
+}
+
+// ─── Model probing (fallback on 403) ─────────────────────────────────────────
+
+/** Probe models in order for a provider. Returns the first model that passes
+ *  testConnection, or undefined if all fail. For providers without a test
+ *  endpoint (e.g. github-copilot), returns the first model without probing.
+ *  Stops immediately on 401 (bad credentials — no point trying more models). */
+export async function probeModels(
+  provider: string,
+  apiKey: string,
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<ModelEntry | undefined> {
+  const models = PROVIDER_MODELS[provider];
+  if (!models || models.length === 0) return undefined;
+
+  // Providers without a test endpoint: return first model untested
+  const hasEndpoint = provider === "amazon-bedrock" || provider in PROVIDER_TEST_ENDPOINTS;
+  if (!hasEndpoint) {
+    return models[0];
+  }
+
+  for (const model of models) {
+    const result = await testConnection(
+      { provider, model: model.id, apiKey },
+      fetchImpl,
+    );
+    if (result.ok) return model;
+    // 401 = bad credentials entirely — stop probing, no model will work
+    if (result.error?.startsWith("401")) return undefined;
+    // 403 = this specific model not authorized — try next
+  }
+
+  return undefined;
 }
 
 // ─── Event emitter for onboarding completion ─────────────────────────────────
@@ -486,6 +593,7 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
       // Handle messages from the webview
       let heldCredentials: DetectedCredential[] = [];
       const testResults = new Map<string, boolean>(); // provider -> passed
+      const validatedModels = new Map<string, string>(); // provider -> validated model ID
       let scanAborted = false;
 
       panel.webview.onDidReceiveMessage(
@@ -547,20 +655,24 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
                   payload: { providers: webviewSafeResults(heldCredentials) },
                 });
 
-                // Run connection tests in parallel (AC12)
+                // Run connection tests with model probing in parallel (AC12)
+                // For each provider, probe models in order to find the first accessible one
                 const testPromises = heldCredentials.map(async (cred) => {
-                  const models = PROVIDER_MODELS[cred.provider];
-                  const model = models?.[0]?.id ?? `${cred.provider}/unknown`;
-                  const result = await testConnection({
-                    provider: cred.provider,
-                    model,
-                    apiKey: cred.key,
-                  });
-                  testResults.set(cred.provider, result.ok);
+                  const validModel = await probeModels(cred.provider, cred.key);
+                  const ok = validModel !== undefined;
+                  testResults.set(cred.provider, ok);
+                  if (validModel) {
+                    validatedModels.set(cred.provider, validModel.id);
+                  }
                   if (!scanAborted) {
                     panel.webview.postMessage({
                       type: "test-status-update",
-                      payload: { provider: cred.provider, ok: result.ok, error: result.error },
+                      payload: {
+                        provider: cred.provider,
+                        ok,
+                        error: ok ? undefined : "No accessible model found for this provider",
+                        ...(validModel ? { model: validModel.id } : {}),
+                      },
                     });
                   }
                 });
@@ -583,8 +695,10 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             const passedCredentials = heldCredentials.filter(
               (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
             );
+            // Use the validated model from probing (if available) instead of the static first entry
+            const modelOverride = validatedModels.get(payload.activeProvider);
             // Always write batch config — even with zero user providers, bedrock infra is provisioned
-            writeBatchConfig(passedCredentials, payload.activeProvider);
+            writeBatchConfig(passedCredentials, payload.activeProvider, undefined, modelOverride);
             // If user excluded 'opencode', disconnect it from the auth store.
             // This is the only provider that needs file-level removal (it's a
             // built-in integration, not in the connections seam).
@@ -593,6 +707,7 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             }
             heldCredentials = [];
             testResults.clear();
+            validatedModels.clear();
             // Clear stale model pin — the old provider may no longer be connected.
             void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
             // Swap the panel HTML directly to the splash — no webview-side
