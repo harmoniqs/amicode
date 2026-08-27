@@ -239,8 +239,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       // amicode#249 QA: the report-a-bug command may carry the composer's live
       // model selection (providerID + modelID + variant — the bug session
       // runs what the user was running). Shape-validated, bounded; anything
-      // malformed is stripped, never fatal to the command.
-      void vscode.commands.executeCommand(command);
+      // malformed is stripped, never fatal to the command. Only reportBug
+      // carries a payload — the allowlist size is unchanged and no other
+      // command gains a channel (AC7).
+      if (command === "amicode.reportBug") {
+        const model = extractReportBugModel(msg);
+        if (model) void vscode.commands.executeCommand(command, model);
+        else void vscode.commands.executeCommand(command);
+      } else {
+        void vscode.commands.executeCommand(command);
+      }
       return true;
     }
     return false;

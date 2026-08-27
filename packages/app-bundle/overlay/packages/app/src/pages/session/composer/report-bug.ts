@@ -8,7 +8,17 @@ import { bugDock } from "./bug-dock"
 /** The bridge command the extension host relays to its bug-report flow. */
 export const REPORT_BUG_COMMAND = "amicode.reportBug"
 
-export function reportBug(dock: Pick<typeof bugDock, "isOpen" | "reveal"> = bugDock): void {
+/** Live model selection carried onto the bug session (amicode#277). */
+export interface ReportBugModel {
+  providerID: string
+  modelID: string
+  variant?: string
+}
+
+export function reportBug(
+  dock: Pick<typeof bugDock, "isOpen" | "reveal"> = bugDock,
+  model?: ReportBugModel,
+): void {
   // #476: a second click while the dock is open must NOT be swallowed.
   // Reveal (focus/re-expand) the existing dock AND still post the command so
   // the extension can prompt to start a new report. The extension owns the
@@ -18,6 +28,22 @@ export function reportBug(dock: Pick<typeof bugDock, "isOpen" | "reveal"> = bugD
     dock.reveal()
   }
   try {
-    window.parent?.postMessage({ source: "amicode", kind: "command", command: REPORT_BUG_COMMAND }, "*")
+    const envelope: Record<string, unknown> = { source: "amicode", kind: "command", command: REPORT_BUG_COMMAND }
+    if (
+      model &&
+      typeof model.providerID === "string" &&
+      model.providerID !== "" &&
+      model.providerID.length <= 200 &&
+      typeof model.modelID === "string" &&
+      model.modelID !== "" &&
+      model.modelID.length <= 200
+    ) {
+      const payload: Record<string, string> = { providerID: model.providerID, modelID: model.modelID }
+      if (typeof model.variant === "string" && model.variant !== "" && model.variant.length <= 200) {
+        payload.variant = model.variant
+      }
+      envelope.model = payload
+    }
+    window.parent?.postMessage(envelope, "*")
   } catch {}
 }
