@@ -274,11 +274,13 @@ function extractFromJuliaFence(
 
     const masked = text.replace(/"(?:[^"\\]|\\.)*"/g, (s) => " ".repeat(s.length)); // mask string literals
 
-    // qualified refs — only to modules in this fence's using/import context
+    // qualified refs — only to modules in this fence's using/import context,
+    // and never to Base/stdlib modules (same filter as the prose lane — a
+    // `using Test` fence must not mint an UNVERIFIABLE `Test.runtests`)
     const qualified = /\b([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_!]*)\b/g;
     let q: RegExpExecArray | null;
     while ((q = qualified.exec(masked))) {
-      if (context.has(q[1]) && !isPathLikeExtension(q[2])) {
+      if (context.has(q[1]) && !isPathLikeExtension(q[2]) && !JULIA_BASE_NAMES.has(q[1])) {
         add({ kind: "qualified-symbol", text: `${q[1]}.${q[2]}`, packages: [q[1]], line, source: "julia-fence" });
       }
     }

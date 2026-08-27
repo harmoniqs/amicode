@@ -149,6 +149,18 @@ describe("extractClaims", () => {
     expect(extractClaims(md)).toEqual([]);
   });
 
+  it("review MINOR: fence-lane qualified refs to stdlib/base modules are filtered like the prose lane (using Test + Test.runtests)", () => {
+    const md = "```julia\nusing Test\nTest.runtests()\n```";
+    // `Test` is a Julia stdlib module — the prose lane already filters it;
+    // the fence lane must not mint an UNVERIFIABLE `Test.runtests` claim
+    expect(extractClaims(md)).toEqual([]);
+    // positive control: an imported package's qualified ref still extracts
+    const md2 = "```julia\nusing FixturePkg\nFixturePkg.make_widget(x)\n```";
+    expect(extractClaims(md2)).toContainEqual(
+      expect.objectContaining({ kind: "qualified-symbol", text: "FixturePkg.make_widget" }),
+    );
+  });
+
   it("does not extract paths from string literals inside julia fences", () => {
     const md = "```julia\npulse, meta = load_traj(\"runs/foo/pulse.jld2\")\n```\n";
     const claims = extractClaims(md);
