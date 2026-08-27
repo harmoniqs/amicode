@@ -1,0 +1,70 @@
+#!/usr/bin/env node
+// Skill-content drift lint CLI (amicode#586). Deterministic, no network, no
+// clock, no LLM — the report-mode half of the freshness cadence (the nightly
+// job, issue #587, consumes this).
+//
+//   node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
+//                                      [--structural-only] [--report json|text]
+//                                      [--out <file>]
+//
+//   --skills <dir>        skills library root (default: this repo's public
+//                         library, packages/extension/skills)
+//   --packages <root>     package-checkout root containing <Pkg>.jl dirs;
+//                         repeatable, comma-separated ok. Absent → paths/symbols
+//                         with no other resolution are UNVERIFIABLE.
+//   --structural-only     structure only, zero package cross-check (the CI lane)
+//   --report json|text    stdout format (default json — machine-readable,
+//                         per-skill per-claim; text is the human listing)
+//   --out <file>          write the report to a file instead of stdout
+//
+// Exit code: non-zero ONLY for structural failures (or usage errors) —
+// semantic drift is report-mode by design.
+//
+// Runs on any node with native TS type-stripping (≥22.18 default-on; the
+// mini's node 26 qualifies — same pattern as scripts/updater_live_drill.mts).
+// The vitest suite covers the pure helpers in src/scores/skill_drift_lint.ts
+// on CI's node 20 and smoke-runs this file end-to-end where the runtime
+// supports it.
+import * as fs from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  lintSkillsDir,
+  parseLintArgs,
+  lintExitCode,
+  renderSummary,
+  renderTextReport,
+} from "../src/scores/skill_drift_lint.ts";
+
+const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const USAGE = `usage: node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
+                                        [--structural-only] [--report json|text] [--out <file>]`;
+
+function main(argv: string[]): number {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(USAGE);
+    return 0;
+  }
+  const parsed = parseLintArgs(argv, { defaultSkillsDir: join(EXT_ROOT, "skills") });
+  if ("error" in parsed) {
+    console.error(`skill-drift-lint: ${parsed.error}\n${USAGE}`);
+    return 2;
+  }
+  const report = lintSkillsDir(parsed.skillsDir, parsed.packageRoots, {
+    structuralOnly: parsed.structuralOnly,
+  });
+  const body = parsed.reportFormat === "text" ? renderTextReport(report) : JSON.stringify(report, null, 2);
+  if (parsed.outFile) {
+    fs.writeFileSync(parsed.outFile, body + "\n");
+    console.error(`skill-drift-lint: report written to ${parsed.outFile}`);
+  } else {
+    console.log(body);
+  }
+  console.error(renderSummary(report)); // the human summary rides stderr
+  return lintExitCode(report);
+}
+
+// run only when executed as a script (imports for testing stay side-effect-free)
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  process.exit(main(process.argv.slice(2)));
+}
