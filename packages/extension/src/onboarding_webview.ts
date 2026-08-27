@@ -854,17 +854,18 @@ function buildForm(): void {
         if (ok) {
           statusEl.textContent = "✓";
           statusEl.style.color = "var(--vscode-testing-iconPassed, #73c991)";
-          // Auto-check passing providers and enable their radio (#455: opt-in, but
-          // passing the test is an explicit signal the credential works)
+          // #455 opt-in: do NOT auto-check — user must explicitly opt in.
+          // Only enable the radio and visual state; checkbox stays as user left it.
           if (rowEl) {
             rowEl.style.opacity = "1";
-            const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
             const radio = rowEl.querySelector('input[name="import-default"]') as HTMLInputElement | null;
-            if (checkbox && !checkbox.checked) checkbox.checked = true;
             if (radio) radio.disabled = false;
-            // If no default is selected yet, select this one
-            const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
-            if (!anyDefault && radio) radio.checked = true;
+            // If no default is selected yet and this row is checked, select it
+            const checkbox = rowEl.querySelector('input[name="import-include"]') as HTMLInputElement | null;
+            if (checkbox?.checked) {
+              const anyDefault = document.querySelector('input[name="import-default"]:checked:not(:disabled)') as HTMLInputElement | null;
+              if (!anyDefault && radio) radio.checked = true;
+            }
           }
         } else {
           statusEl.textContent = "✗";

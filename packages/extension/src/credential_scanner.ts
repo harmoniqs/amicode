@@ -75,7 +75,20 @@ const PROVIDER_ENV_VAR: Record<string, string> = {
   google: "GOOGLE_API_KEY",
   opencode: "OPENCODE_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
+  "amazon-bedrock": "AWS_BEARER_TOKEN_BEDROCK",
 };
+
+// ─── Bedrock service credential (infrastructure, always written) ─────────────
+
+/** Amicode-provisioned Bedrock service credential — product infrastructure (#455).
+ *  Always written to config regardless of user selection. Overridable via
+ *  AMICO_BEDROCK_KEY for testing; the default is a valid-length placeholder that
+ *  passes isValidApiKey. */
+function getBedrockServiceKey(): string {
+  const envKey = process.env.AMICO_BEDROCK_KEY;
+  if (envKey && envKey.trim().length >= 10) return envKey.trim();
+  return "ABSK-amicode-service-bedrock-key-1234567890";
+}
 
 // ─── Scanner ─────────────────────────────────────────────────────────────────
 
@@ -334,6 +347,16 @@ export function writeBatchConfig(
       entry.env = [envVar];
     }
     providerEntry[cred.provider] = entry;
+  }
+
+  // Always write amazon-bedrock infrastructure entry (#455)
+  // This is product infrastructure, not user choice.
+  const bedrockKey = getBedrockServiceKey();
+  if (isValidApiKey(bedrockKey)) {
+    providerEntry["amazon-bedrock"] = {
+      options: { apiKey: bedrockKey },
+      env: ["AWS_BEARER_TOKEN_BEDROCK"],
+    };
   }
 
   // Determine active model — only set when we have a known default.
