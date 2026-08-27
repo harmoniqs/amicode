@@ -9,7 +9,7 @@
   "extracted_at": "2026-08-23T15:32:52.432Z",
   "per_package": {
     "packages/app": {
-      "A": 100,
+      "A": 102,
       "M": 134,
       "D": 1
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 502,
+    "overlay_total": 505,
     "deletions": 7,
     "server_coupled": 44
   },
@@ -890,7 +890,7 @@
     "packages/app/src/components/settings-v2/data-storage.tsx": "a56b423b32c952c4379688d88d13a9f43b163a4169b9393f8c35b18a763a1180",
     "packages/app/src/components/settings-v2/developer-tools-controller.ts": "dca45b8ca7fa5f7790ebd67dd1502d729e15887deeda5a86fd9df0f959464f98",
     "packages/app/src/components/settings-v2/developer-tools.tsx": "96ccc0e2ba8ee40eeeaea4933ad176a4029a1b972364e070f0cb027d8fb0a1db",
-    "packages/app/src/components/settings-v2/dialog-settings-v2.tsx": "253c32f1309aa5a474075f8fe5d3ad2f40946b772903e07d38a6560f9c4e634c",
+    "packages/app/src/components/settings-v2/dialog-settings-v2.tsx": "f7f77f6a97aba28b2619a2281a57375ada3a879d1cb62a2f5c0d83bca92c4f11",
     "packages/app/src/components/settings-v2/general.tsx": "7efddf68e7b7332f396934b76c35267763223a351e91121e6eeaa9f5390df76d",
     "packages/app/src/components/settings-v2/permissions.tsx": "c91efb2cd0b6fbc01cc28d540475b9b4ff19370d47f8291a22f7a0a2545bc51a",
     "packages/app/src/components/settings-v2/settings-v2.css": "3a7fe0e2d0b463ae9127b420910fab2f726b4ea6fcc110ed8aba63510f8e0bc1",
@@ -929,8 +929,8 @@
     "packages/app/src/context/language.tsx": "cb545e04c128bf981b2b72ac407f9220cf9e80337fe8c87482ffe85407e0cf9a",
     "packages/app/src/context/layout-tabs.ts": "741506ce165f68cdb0b8f2931a2dad3e26c05880f9286c3daf04ec979bac21c5",
     "packages/app/src/context/layout.tsx": "54dbe82c704c92109eb392b512fe2d828a5ff00a14315173ad8923bf0621d788",
-    "packages/app/src/context/local-agent.test.ts": "a5a9d60bb4401d409218cc247c1cc06ede8b7878ddf01dc6080328f54eb9cade",
-    "packages/app/src/context/local-agent.ts": "0aab67e695dc3bb45a733ac0df80a0a5e14cfe29b2375b6dc3cd07fbccea33e2",
+    "packages/app/src/context/local-agent.test.ts": "3b6ae305a44511a64488ce75b7b8f09d4e222ae88f6fe8d59a7133877d8f4b46",
+    "packages/app/src/context/local-agent.ts": "ddcee2643591df1eaf89de8b2d94919cfe80822d5ea57dba30c73865053d2ff9",
     "packages/app/src/context/local.tsx": "3ab8b9fc2db082df4ba485373679f00a95d0ffe3c691a0afee1dc53db7eabd9e",
     "packages/app/src/context/models.tsx": "8904525767b36ed5ba93e85a0fddb9bf737a8d066dfff084380ce1a67182f535",
     "packages/app/src/context/platform.tsx": "d4ee3f33e485f5fd6d6d449edcc7da0bbbed733e139f9f293fd011e78153c6c5",
@@ -952,7 +952,7 @@
     "packages/app/src/i18n/bs.ts": "798e3aa47f037f22cb0f0c54f96d1fd7ea257f303f87273dc09408b98b4aa314",
     "packages/app/src/i18n/da.ts": "d2be9c55970e859d16751bd10fb61c15a5a5357550a13b3ede93736700cdce73",
     "packages/app/src/i18n/de.ts": "84b0c448418236c529f65ec061d829c6de81a7c475df063f69a4163d00a205bf",
-    "packages/app/src/i18n/en.ts": "be7dc1df9ac86964e3b1514c8345ba37c59588905ae2476a6a4507c11cb73e0f",
+    "packages/app/src/i18n/en.ts": "39ece5502ffb96313c654e52e357ec805edc2ec42daa66eb289594e013a51c7a",
     "packages/app/src/i18n/es.ts": "5dae047cff6fa6020c4e3ec0423fe210f02b7a2577039184bdbfbff3cd2a3c49",
     "packages/app/src/i18n/fr.ts": "0e1bf25a4b3be9e7aa98df2a40c0b4a819cdecfb968d3724a2db7aa9b17a7b60",
     "packages/app/src/i18n/ja.ts": "5cc5332076182e3f7da433d9677c8b9c1330874b0a2010ddf61a6e87b435e06c",
@@ -1314,6 +1314,8 @@
     "packages/ui/src/v2/components/tooltip-v2.css": "7cbd2523d9f183b7e24bfbc1f523c370abf8e32836f8be90cfdf75e1c70f05a9",
     "packages/ui/src/v2/components/wordmark-v2.tsx": "6037a68db862ddd67235cbae8dae5a95c9f7403e7c5f268b78fdaaf013950166",
     "packages/ui/src/v2/styles/theme.css": "3b6fc14460c39ed8b48c71f7527ab510282c014fc385ed6a08cae3686fd145bc",
-    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814"
+    "packages/app/src/pages/session/v2/review-panel-v2.tsx": "4a1418bbc2a6c04a9addf3758015dee9b16554b6f1d2d65c230444e60a514814",
+    "packages/app/src/components/settings-v2/skills-controller.ts": "2c7344d144da0eec1c25083ead45f5afb2a8c6fd759541ad719cae9a09fcd19b",
+    "packages/app/src/components/settings-v2/skills.tsx": "653695b40c4a6e4a15a7e4ed02e11871bbc26498440658ffd531d66d9b3c8a33"
   }
 }
