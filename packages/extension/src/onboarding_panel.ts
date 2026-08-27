@@ -19,6 +19,7 @@ import {
   writeBatchConfig,
   disconnectProviders,
   isValidApiKey,
+  BEDROCK_PLANTED_PLACEHOLDER,
   type DetectedCredential,
 } from "./credential_scanner";
 import { ChatPanel } from "./chat_panel";
@@ -101,6 +102,20 @@ function defaultConfigPath(): string {
   return path.join(os.homedir(), ".config", "opencode", "opencode.json");
 }
 
+/** #602: drop the always-write Bedrock placeholder entry planted by ≤#589, if
+ *  present. Exact-match on the planted constant — real keys (including entries
+ *  written via the retired internal env override) are never healed. */
+function healPlantedBedrockEntry(existing: Record<string, unknown>): void {
+  const existingProvider = existing.provider as Record<string, unknown> | undefined;
+  if (!existingProvider) return;
+  const bedrock = existingProvider["amazon-bedrock"] as
+    | { options?: { apiKey?: unknown } }
+    | undefined;
+  if (bedrock?.options?.apiKey === BEDROCK_PLANTED_PLACEHOLDER) {
+    delete existingProvider["amazon-bedrock"];
+  }
+}
+
 /** Write the onboarding config to the opencode config file.
  *  Creates parent directories if needed. Merges with existing config if present.
  *  Rejects placeholder/invalid API keys — the provider entry is not written (#455). */
@@ -119,32 +134,17 @@ export function writeOnboardingConfig(
   } catch {
     // If parsing fails, start fresh
   }
+  healPlantedBedrockEntry(existing);
 
-   // Bedrock service key helper (infrastructure, always written)
-  function getBedrockServiceKey(): string {
-    const envKey = process.env.AMICO_BEDROCK_KEY;
-    if (envKey && envKey.trim().length >= 10) return envKey.trim();
-    return "ABSK-amicode-service-bedrock-key-1234567890";
-  }
-  const bedrockKey = getBedrockServiceKey();
-  const bedrockEntry: Record<string, unknown> = {
-    options: { apiKey: bedrockKey },
-    env: ["AWS_BEARER_TOKEN_BEDROCK"],
-  };
+   // #602: the always-written Bedrock entry (an unauthenticated placeholder that
+   // masked real credentials) is retired — bedrock is written only when selected.
 
    // Reject placeholder/invalid keys (#455) — but allow empty keys (OAuth providers)
   if (config.apiKey && !isValidApiKey(config.apiKey)) {
     // Key is non-empty but invalid — don't write this provider, just preserve existing config
-    // but always ensure bedrock infrastructure is present
-    const existingProvider = (existing.provider as Record<string, unknown> ?? {});
-    const providerWithBedrock: Record<string, unknown> = {
-      ...existingProvider,
-      "amazon-bedrock": bedrockEntry,
-    };
     const result: Record<string, unknown> = {
       ...existing,
       $schema: "https://opencode.ai/config.json",
-      provider: providerWithBedrock,
     };
     // Only write model if it's a known valid ID (not empty, not "provider/unknown")
     if (config.model && !config.model.endsWith("/unknown")) {
@@ -172,8 +172,6 @@ export function writeOnboardingConfig(
     ...(existing.provider as Record<string, unknown> ?? {}),
     [config.provider]: providerConfig,
   };
-  // Always ensure bedrock infrastructure is present (#455) — not subject to user selection
-  providerEntry["amazon-bedrock"] = bedrockEntry;
 
   const result: Record<string, unknown> = {
     ...existing,
