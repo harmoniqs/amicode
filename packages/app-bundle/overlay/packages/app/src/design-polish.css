@@ -301,3 +301,50 @@ span[data-component="tag"][data-variant="accent"] {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
 }
+
+/* ============================================================
+   THOUGHT RAIL — persistent dot overlay (#628)
+   ============================================================ */
+
+/* The continuous rail line running alongside the active turn */
+.thought-rail-line {
+  background: color-mix(in srgb, var(--v2-icon-icon-accent) 35%, transparent);
+  border-radius: var(--radius-full);
+  transition: height 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* The sticky dot container — spring animation on position change */
+.thought-rail-dot {
+  transition: top 250ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* The wave inside the dot — accent color, sized for the rail */
+.thought-rail-wave {
+  width: 14px;
+  height: 14px;
+}
+
+/* Crossfade on turn completion */
+.thought-rail-overlay {
+  opacity: 1;
+  transition: opacity 150ms ease-out;
+}
+.thought-rail-overlay--settled {
+  opacity: 0;
+}
+
+/* Done-dot: appears per-row after turn completion */
+.thought-rail-done-dot {
+  background: color-mix(in srgb, var(--v2-icon-icon-accent) 55%, transparent);
+  transition: opacity 150ms ease-out;
+}
+
+/* Reduced motion: no spring, no crossfade, instant transitions */
+@media (prefers-reduced-motion: reduce) {
+  .thought-rail-line,
+  .thought-rail-dot,
+  .thought-rail-overlay,
+  .thought-rail-done-dot {
+    transition: none !important;
+  }
+}

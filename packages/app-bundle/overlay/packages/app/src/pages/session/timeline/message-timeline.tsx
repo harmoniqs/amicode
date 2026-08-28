@@ -95,6 +95,7 @@ import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
+import { createSmoothScroller } from "./smooth-scroll"
 
 const emptyMessages: MessageType[] = []
 const emptyParts: PartType[] = []
@@ -565,6 +566,14 @@ export function MessageTimeline(props: {
     },
   })
   const resizeItem = virtualizer.resizeItem
+  // Smooth scroller: replaces instant scrollToEnd when content grows while anchored.
+  // User gestures cancel the animation; reduced-motion falls back to instant.
+  const reducedMotion = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  const smoothScroller = createSmoothScroller({
+    getElement: () => listRoot(),
+    duration: 180,
+    reducedMotion,
+  })
   let resizeAnchorScheduled = false
   const anchorResizedBottom = () => {
     if (resizeAnchorScheduled || props.hasScrollGesture()) return
@@ -572,7 +581,7 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      virtualizer.scrollToEnd()
+      smoothScroller.scrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -813,6 +822,8 @@ export function MessageTimeline(props: {
     // amicode#271: update scroll offset for the last-prompt bubble
     setScrollTop(event.currentTarget.scrollTop)
     if (!props.hasScrollGesture()) return
+    // Cancel smooth scroll on user gesture (#628)
+    if (smoothScroller.isAnimating()) smoothScroller.cancel()
     // User-initiated scroll — clear any click override so bubble tracks position
     // (but not if we're mid-programmatic scroll from a bubble click)
     if (!bubbleScrolling) setBubbleOverride(undefined)
@@ -1325,7 +1336,7 @@ export function MessageTimeline(props: {
         data-message-id={input.row().userMessageID}
         data-timeline-row={input.row()._tag}
         classList={{
-          "min-w-0 w-full max-w-full": true,
+          "min-w-0 w-full max-w-full md:pl-3": true,
           "md:max-w-200 2xl:max-w-[1000px]": props.centered,
           "md:mx-auto": props.centered,
           "pt-3": previousAssistantPart(),

@@ -2,3 +2,4 @@
 // Logic lives in ../amicode/thinking.ts and ../amicode/thinking-line.tsx.
 export { turnTokens } from "../amicode/thinking"
 export { ThinkingLine } from "../amicode/thinking-line"
+export { AmicoWave } from "../amicode/amico-wave"
