@@ -19,7 +19,7 @@ import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@opencode-ai/ui/accordion"
 import { AmicodeEntityRail } from "@opencode-ai/ui/amicode-entity-rail"
-import { ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
+import { AmicoWave, ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
 import {
   AmicodeEntityView,
   entityLabel,
@@ -1329,6 +1329,12 @@ export function MessageTimeline(props: {
       const row = input.row()
       return row._tag === "AssistantPart" && row.previousAssistantPart
     }
+    // Rail visibility: show on Thinking and AssistantPart rows
+    const showsRail = () => {
+      const tag = input.row()._tag
+      return tag === "Thinking" || tag === "AssistantPart"
+    }
+    const isWorking = () => workingTurn(input.row().userMessageID)
 
     return (
       <div
@@ -1336,13 +1342,71 @@ export function MessageTimeline(props: {
         data-message-id={input.row().userMessageID}
         data-timeline-row={input.row()._tag}
         classList={{
-          "min-w-0 w-full max-w-full md:pl-3": true,
+          "min-w-0 w-full max-w-full": true,
           "md:max-w-200 2xl:max-w-[1000px]": props.centered,
           "md:mx-auto": props.centered,
           "pt-3": previousAssistantPart(),
         }}
       >
         <div data-component="session-turn" class="min-w-0 w-full relative" style={{ height: "auto" }}>
+          {/* Rail dot + line — renders inside the content's left padding area */}
+          <Show when={showsRail()}>
+            <div
+              class="thought-rail-segment hidden md:block"
+              classList={{ "is-working": isWorking() }}
+              style={{
+                position: "absolute",
+                top: "0",
+                left: "12px",
+                width: "20px",
+                height: "100%",
+                "pointer-events": "none",
+                "z-index": "5",
+              }}
+            >
+              {/* Vertical rail line */}
+              <div
+                class="thought-rail-line"
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  left: "5px",
+                  width: "2px",
+                  height: "100%",
+                }}
+              />
+              {/* The dot — AmicoWave when working, static dot when done */}
+              <div
+                class="thought-rail-dot-anchor"
+                style={{
+                  position: "absolute",
+                  top: input.row()._tag === "Thinking" ? "8px" : "18px",
+                  left: "0",
+                  width: "12px",
+                  height: "12px",
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                }}
+              >
+                <Show
+                  when={isWorking()}
+                  fallback={
+                    <div
+                      class="thought-rail-done-dot"
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        "border-radius": "50%",
+                      }}
+                    />
+                  }
+                >
+                  <AmicoWave class="thought-rail-wave" />
+                </Show>
+              </div>
+            </div>
+          </Show>
           {input.children}
         </div>
       </div>
