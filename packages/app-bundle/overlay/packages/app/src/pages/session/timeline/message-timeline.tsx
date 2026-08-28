@@ -19,7 +19,7 @@ import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@opencode-ai/ui/accordion"
 import { AmicodeEntityRail } from "@opencode-ai/ui/amicode-entity-rail"
-import { ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
+import { AmicoWave, ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
 import {
   AmicodeEntityView,
   entityLabel,
@@ -95,6 +95,7 @@ import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
+import { createSmoothScroller } from "./smooth-scroll"
 
 const emptyMessages: MessageType[] = []
 const emptyParts: PartType[] = []
@@ -565,6 +566,14 @@ export function MessageTimeline(props: {
     },
   })
   const resizeItem = virtualizer.resizeItem
+  // Smooth scroller: replaces instant scrollToEnd when content grows while anchored.
+  // User gestures cancel the animation; reduced-motion falls back to instant.
+  const reducedMotion = typeof window !== "undefined" && !!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+  const smoothScroller = createSmoothScroller({
+    getElement: () => listRoot(),
+    duration: 180,
+    reducedMotion,
+  })
   let resizeAnchorScheduled = false
   const anchorResizedBottom = () => {
     if (resizeAnchorScheduled || props.hasScrollGesture()) return
@@ -572,7 +581,7 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      virtualizer.scrollToEnd()
+      smoothScroller.scrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -813,6 +822,8 @@ export function MessageTimeline(props: {
     // amicode#271: update scroll offset for the last-prompt bubble
     setScrollTop(event.currentTarget.scrollTop)
     if (!props.hasScrollGesture()) return
+    // Cancel smooth scroll on user gesture (#628)
+    if (smoothScroller.isAnimating()) smoothScroller.cancel()
     // User-initiated scroll — clear any click override so bubble tracks position
     // (but not if we're mid-programmatic scroll from a bubble click)
     if (!bubbleScrolling) setBubbleOverride(undefined)
@@ -1318,6 +1329,12 @@ export function MessageTimeline(props: {
       const row = input.row()
       return row._tag === "AssistantPart" && row.previousAssistantPart
     }
+    // Rail visibility: show on Thinking and AssistantPart rows
+    const showsRail = () => {
+      const tag = input.row()._tag
+      return tag === "Thinking" || tag === "AssistantPart"
+    }
+    const isWorking = () => workingTurn(input.row().userMessageID)
 
     return (
       <div
@@ -1332,6 +1349,64 @@ export function MessageTimeline(props: {
         }}
       >
         <div data-component="session-turn" class="min-w-0 w-full relative" style={{ height: "auto" }}>
+          {/* Rail dot + line — renders inside the content's left padding area */}
+          <Show when={showsRail()}>
+            <div
+              class="thought-rail-segment hidden md:block"
+              classList={{ "is-working": isWorking() }}
+              style={{
+                position: "absolute",
+                top: "0",
+                left: "12px",
+                width: "20px",
+                height: "100%",
+                "pointer-events": "none",
+                "z-index": "5",
+              }}
+            >
+              {/* Vertical rail line */}
+              <div
+                class="thought-rail-line"
+                style={{
+                  position: "absolute",
+                  top: "0",
+                  left: "5px",
+                  width: "2px",
+                  height: "100%",
+                }}
+              />
+              {/* The dot — AmicoWave when working, static dot when done */}
+              <div
+                class="thought-rail-dot-anchor"
+                style={{
+                  position: "absolute",
+                  top: input.row()._tag === "Thinking" ? "8px" : "18px",
+                  left: "0",
+                  width: "12px",
+                  height: "12px",
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                }}
+              >
+                <Show
+                  when={isWorking()}
+                  fallback={
+                    <div
+                      class="thought-rail-done-dot"
+                      style={{
+                        width: "6px",
+                        height: "6px",
+                        "border-radius": "50%",
+                      }}
+                    />
+                  }
+                >
+                  <AmicoWave class="thought-rail-wave" />
+                </Show>
+              </div>
+            </div>
+          </Show>
           {input.children}
         </div>
       </div>
