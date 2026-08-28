@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
+import { execFile, execFileSync } from "node:child_process";
 
 import {
   scanCredentials,
@@ -23,6 +24,13 @@ import {
   type DetectedCredential,
 } from "./credential_scanner";
 import { ChatPanel } from "./chat_panel";
+import { resolveOpencodeBinary } from "./opencode_binary";
+import { resolveAmicoCli } from "./fleet_panel";
+import {
+  discoverExternalSkillPaths,
+  addSkillProvider,
+  friendlyProviderName,
+} from "./scores/user_skill_providers";
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -567,9 +575,97 @@ ${fontFace}
 </body></html>`;
 }
 
+// ─── Sessions + skills import ────────────────────────────────────────────────
+
+interface SessionsSkillsScan {
+  claude: number;
+  codex: number;
+  skillPaths: { path: string; name: string }[];
+}
+
+/** Scan for importable sessions (Claude/Codex) and external skill directories.
+ *  Sessions come from `amico sessions preview --json`; skills from the known
+ *  engine auto-load paths (~/.claude/skills, ~/.agents/skills, ~/.config/opencode/skills). */
+function scanSessionsSkills(extensionRoot: string): SessionsSkillsScan {
+  const amicoCli = resolveAmicoCli(extensionRoot);
+  let claude = 0;
+  let codex = 0;
+  try {
+    const out = execFileSync(amicoCli, ["sessions", "preview", "--json"], { encoding: "utf8", timeout: 30_000 });
+    const parsed = JSON.parse(out) as { sources?: { claude?: { count?: number }; codex?: { count?: number } } };
+    claude = parsed.sources?.claude?.count ?? 0;
+    codex = parsed.sources?.codex?.count ?? 0;
+  } catch {
+    // discovery failed — report zero; the webview renders "none found"
+  }
+  const skillPaths = discoverExternalSkillPaths(os.homedir()).map((p) => ({ path: p, name: friendlyProviderName(p) }));
+  return { claude, codex, skillPaths };
+}
+
+/** Run the sessions import for the selected sources, then register the selected
+ *  skill directories as providers. Reports a single completion payload. */
+function runSessionsSkillsImport(
+  extensionRoot: string,
+  selection: { importClaude: boolean; importCodex: boolean; skillPaths: string[] },
+  onDone: (summary: { sessionsImported: number; sessionsFailed: number; skillsImported: number }) => void,
+): void {
+  const amicoCli = resolveAmicoCli(extensionRoot);
+  const sources: string[] = [];
+  if (selection.importClaude) sources.push("claude");
+  if (selection.importCodex) sources.push("codex");
+
+  let opencodeBinary: string | undefined;
+  try {
+    opencodeBinary = resolveOpencodeBinary(
+      extensionRoot,
+      vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "") ?? "",
+    ).path;
+  } catch {
+    opencodeBinary = undefined;
+  }
+
+  const finish = (sessionsImported: number, sessionsFailed: number, skillsImported: number): void => {
+    onDone({ sessionsImported, sessionsFailed, skillsImported });
+  };
+
+  const importSkills = (): number => {
+    const providersPath = path.join(os.homedir(), ".amico", "amicode", "skill-providers.json");
+    let added = 0;
+    for (const p of selection.skillPaths) {
+      addSkillProvider(providersPath, { id: friendlyProviderName(p), type: "directory", path: p, added: new Date().toISOString() });
+      added++;
+    }
+    return added;
+  };
+
+  if (sources.length === 0) {
+    finish(0, 0, importSkills());
+    return;
+  }
+
+  const args = ["sessions", "import", "--source", sources.join(","), "--json"];
+  if (opencodeBinary) args.push("--opencode", opencodeBinary);
+
+  execFile(amicoCli, args, { timeout: 10 * 60_000, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" }, (err, stdout) => {
+    let imported = 0;
+    let failed = 0;
+    if (!err && stdout) {
+      try {
+        const parsed = JSON.parse(stdout) as { summary?: { imported?: number; failed?: number } };
+        imported = parsed.summary?.imported ?? 0;
+        failed = parsed.summary?.failed ?? 0;
+      } catch {
+        // unparseable output — report zero
+      }
+    } else if (err) {
+      failed = 1;
+    }
+    finish(imported, failed, importSkills());
+  });
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
-export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
-  ctx.subscriptions.push(
+export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {  ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.onboarding.open", () => {
       if (currentPanel) {
         currentPanel.reveal(vscode.ViewColumn.One);
@@ -723,6 +819,21 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             // Restart server so it picks up the new provider config.
             // Chat opens via the onReady-gated listener in extension.ts.
             void vscode.commands.executeCommand("amicode.restartServer");
+          } else if (msg.type === "scan-sessions-skills") {
+            const scan = scanSessionsSkills(ctx.extensionPath);
+            panel.webview.postMessage({
+              type: "sessions-skills-scan-results",
+              payload: scan,
+            });
+          } else if (msg.type === "confirm-sessions-skills-import") {
+            const payload = msg.payload as { importClaude: boolean; importCodex: boolean; skillPaths: string[] };
+            panel.webview.postMessage({ type: "sessions-skills-import-status", payload: { state: "running" } });
+            runSessionsSkillsImport(ctx.extensionPath, payload, (summary) => {
+              panel.webview.postMessage({
+                type: "sessions-skills-import-done",
+                payload: summary,
+              });
+            });
           } else if (msg.type === "transition-complete") {
             // The extension signals that the chat panel is ready — dispose the
             // splash now. This is posted by the extension host after app-ready.

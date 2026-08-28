@@ -450,6 +450,14 @@ function buildForm(): void {
         <div id="import-status" style="display: none; margin-top: 12px;"></div>
         <div id="import-preview" style="display: none; margin-top: 16px; text-align: left;"></div>
       </div>
+
+      <div id="sessions-skills-section" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--vscode-input-border, #3c3c3c); text-align: center;">
+        <a id="sessions-skills-link" href="#" style="font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
+          Import previous sessions &amp; skills
+        </a>
+        <div id="sessions-skills-status" style="display: none; margin-top: 12px;"></div>
+        <div id="sessions-skills-preview" style="display: none; margin-top: 16px; text-align: left;"></div>
+      </div>
     </div>
   `;
 
@@ -681,6 +689,154 @@ function buildForm(): void {
 
     // Trigger the scan
     vscodeApi.postMessage({ type: "scan-credentials" });
+  });
+
+  // ─── Import previous sessions & skills UI ─────────────────────────────────
+
+  const sessionsSkillsLink = document.getElementById("sessions-skills-link") as HTMLAnchorElement;
+  const sessionsSkillsStatus = document.getElementById("sessions-skills-status") as HTMLDivElement;
+  const sessionsSkillsPreview = document.getElementById("sessions-skills-preview") as HTMLDivElement;
+
+  sessionsSkillsLink.addEventListener("click", (e) => {
+    e.preventDefault();
+    sessionsSkillsLink.style.display = "none";
+    sessionsSkillsStatus.style.display = "flex";
+    sessionsSkillsStatus.style.alignItems = "center";
+    sessionsSkillsStatus.style.gap = "8px";
+    sessionsSkillsStatus.style.justifyContent = "center";
+    sessionsSkillsStatus.innerHTML = `
+      <span class="scan-dot scan-dot--searching"></span>
+      <span style="font-size: 13px; color: var(--vscode-descriptionForeground);">Searching...</span>
+    `;
+    vscodeApi.postMessage({ type: "scan-sessions-skills" });
+  });
+
+  window.addEventListener("message", (event) => {
+    const msg = event.data;
+
+    if (msg?.type === "sessions-skills-scan-results") {
+      const { claude, codex, skillPaths } = msg.payload as {
+        claude: number;
+        codex: number;
+        skillPaths: Array<{ path: string; name: string }>;
+      };
+      const hasSessions = claude > 0 || codex > 0;
+      const hasSkills = skillPaths.length > 0;
+
+      if (!hasSessions && !hasSkills) {
+        sessionsSkillsStatus.innerHTML = `
+          <span style="font-size: 13px; color: var(--vscode-descriptionForeground);">No previous sessions or skills found.</span>
+        `;
+        setTimeout(() => {
+          sessionsSkillsLink.style.display = "inline";
+          sessionsSkillsLink.textContent = "Try again";
+        }, 2000);
+        return;
+      }
+
+      sessionsSkillsStatus.innerHTML = `
+        <span class="scan-dot scan-dot--found"></span>
+        <span style="font-size: 13px; color: var(--vscode-testing-iconPassed, #73c991);">Found importable history!</span>
+      `;
+
+      const sessionRows = [
+        claude > 0
+          ? `<div class="import-provider-row">
+              <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" name="sessions-include" value="claude" checked />
+                <span><strong>Claude Code sessions</strong></span>
+                <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${claude} found</span>
+              </label>
+            </div>`
+          : "",
+        codex > 0
+          ? `<div class="import-provider-row">
+              <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                <input type="checkbox" name="sessions-include" value="codex" checked />
+                <span><strong>Codex sessions</strong></span>
+                <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${codex} found</span>
+              </label>
+            </div>`
+          : "",
+      ].join("");
+
+      const skillRows = skillPaths
+        .map(
+          (s) => `<div class="import-provider-row">
+            <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" name="skills-include" value="${s.path}" checked />
+              <span><strong>${s.name}</strong></span>
+              <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${s.path}</span>
+            </label>
+          </div>`,
+        )
+        .join("");
+
+      sessionsSkillsPreview.style.display = "block";
+      sessionsSkillsPreview.innerHTML = `
+        <div style="margin-bottom: 12px;">
+          <p style="font-size: 13px; color: var(--vscode-descriptionForeground); margin: 0 0 12px;">
+            Bring your history into Amicode:
+          </p>
+          ${sessionRows}
+          ${skillRows}
+        </div>
+        <button id="confirm-sessions-skills-btn"
+          style="width:100%; padding: 10px 16px; cursor: pointer;
+          background: var(--color-accent-fill, #FFE614); color: var(--color-on-accent, #111);
+          border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+          border-radius: var(--border-radius, 4px); font-size: 14px; font-weight: 500;">
+          Import
+        </button>
+        <a id="sessions-skills-back-link" href="#" style="display: block; text-align: center; margin-top: 12px;
+          font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
+          Skip
+        </a>
+      `;
+
+      const confirmBtn = document.getElementById("confirm-sessions-skills-btn") as HTMLButtonElement;
+      confirmBtn.addEventListener("click", () => {
+        const importClaude = (document.querySelector('input[name="sessions-include"][value="claude"]') as HTMLInputElement)?.checked ?? false;
+        const importCodex = (document.querySelector('input[name="sessions-include"][value="codex"]') as HTMLInputElement)?.checked ?? false;
+        const skillPathsSelected = Array.from(
+          document.querySelectorAll<HTMLInputElement>('input[name="skills-include"]:checked'),
+        ).map((cb) => cb.value);
+        sessionsSkillsPreview.style.display = "none";
+        sessionsSkillsStatus.innerHTML = `
+          <span class="scan-dot scan-dot--searching"></span>
+          <span style="font-size: 13px; color: var(--vscode-descriptionForeground);">Importing...</span>
+        `;
+        vscodeApi.postMessage({
+          type: "confirm-sessions-skills-import",
+          payload: { importClaude, importCodex, skillPaths: skillPathsSelected },
+        });
+      });
+
+      const backLink = document.getElementById("sessions-skills-back-link") as HTMLAnchorElement;
+      backLink.addEventListener("click", (e) => {
+        e.preventDefault();
+        sessionsSkillsPreview.style.display = "none";
+        sessionsSkillsStatus.style.display = "none";
+        sessionsSkillsLink.style.display = "inline";
+      });
+    }
+
+    if (msg?.type === "sessions-skills-import-done") {
+      const { sessionsImported, sessionsFailed, skillsImported } = msg.payload as {
+        sessionsImported: number;
+        sessionsFailed: number;
+        skillsImported: number;
+      };
+      const parts: string[] = [];
+      if (sessionsImported > 0) parts.push(`${sessionsImported} session${sessionsImported === 1 ? "" : "s"} imported`);
+      if (skillsImported > 0) parts.push(`${skillsImported} skill${skillsImported === 1 ? "" : "s"} imported`);
+      const summary = parts.length > 0 ? parts.join(", ") : "Nothing to import";
+      const failed = sessionsFailed > 0 ? ` (${sessionsFailed} failed)` : "";
+      sessionsSkillsStatus.innerHTML = `
+        <span class="scan-dot ${sessionsFailed > 0 ? "scan-dot--failed" : "scan-dot--found"}"></span>
+        <span style="font-size: 13px; color: var(--vscode-descriptionForeground);">${summary}${failed}</span>
+      `;
+    }
   });
 
   // Handle scan status & results from host
