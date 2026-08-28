@@ -2,7 +2,7 @@
   "name": "amicode",
   "displayName": "Amicode",
   "description": "Open autonomous research in VS Code \u2014 vaults, fleet, and live solves for quantum control and physical intelligence.",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "publisher": "harmoniqs",
   "license": "Apache-2.0",
   "icon": "media/icon.png",

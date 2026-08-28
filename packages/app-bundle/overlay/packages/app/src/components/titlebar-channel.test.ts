@@ -8,9 +8,9 @@ describe("channelBadgeText", () => {
     expect(channelBadgeText("prod", true)).toBe("DEV")
   })
 
-  test("returns BETA on beta or dev channel when developer mode is off", () => {
+  test("returns DEV on dev channel and BETA on beta channel when developer mode is off", () => {
+    expect(channelBadgeText("dev", false)).toBe("DEV")
     expect(channelBadgeText("beta", false)).toBe("BETA")
-    expect(channelBadgeText("dev", false)).toBe("BETA")
   })
 
   test("returns null on prod channel when developer mode is off", () => {
