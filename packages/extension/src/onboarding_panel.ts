@@ -504,7 +504,7 @@ export function releaseOnboardingPanel(): void {
  *  background. Used as an immediate visual while the server restarts. The exact
  *  same SVG + CSS appears in ChatPanel.renderTransitionHtml's overlay, so when
  *  adopt() fires there's no visible flash (same pixels). */
-function splashHtml(fontUri?: vscode.Uri, cspSource?: string): string {
+function splashHtml(fontUri?: vscode.Uri, cspSource?: string, subtitle?: string): string {
   // The face is inlined as its own @font-face rather than via brand.css so the
   // splash stays a single self-contained string; without it the handoff screen
   // renders in the editor UI font while everything around it is DM Sans.
@@ -548,6 +548,11 @@ ${fontFace}
     color: var(--vscode-foreground, #ccc);
     font-family: "DM Sans", var(--vscode-font-family, system-ui);
   }
+  .splash-subtitle {
+    margin-top: 8px; font-size: 0.95rem;
+    color: var(--vscode-descriptionForeground, #999);
+    font-family: "DM Sans", var(--vscode-font-family, system-ui);
+  }
 </style>
 </head><body>
   <svg class="splash-mark" viewBox="2 74 3596 3212" xmlns="http://www.w3.org/2000/svg">
@@ -572,6 +577,7 @@ ${fontFace}
     </g>
   </svg>
   <div class="splash-text">Getting Amico ready...</div>
+  ${subtitle ? `<div class="splash-subtitle">${subtitle}</div>` : ""}
 </body></html>`;
 }
 
@@ -661,12 +667,14 @@ function runSessionsSkillsImport(
 }
 
 /** Finish onboarding: clear the stale model pin, swap to the splash, fire the
- *  completion listeners, and restart the server so it picks up the new config. */
-function completeOnboarding(panel: vscode.WebviewPanel, ctx: vscode.ExtensionContext): void {
+ *  completion listeners, and restart the server so it picks up the new config.
+ *  `importingSessions` adds a "importing in the background" note to the splash. */
+function completeOnboarding(panel: vscode.WebviewPanel, ctx: vscode.ExtensionContext, importingSessions = false): void {
   void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
   panel.webview.html = splashHtml(
     panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
     panel.webview.cspSource,
+    importingSessions ? "Your sessions are importing in the background" : undefined,
   );
   ChatPanel.setPendingOnboardingGreeting(true);
   fireOnboardingComplete();
@@ -819,7 +827,7 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             runSessionsSkillsImport(ctx.extensionPath, payload, () => {
               // background completion — nothing to post; the webview is transitioning.
             });
-            completeOnboarding(panel, ctx);
+            completeOnboarding(panel, ctx, true);
           } else if (msg.type === "skip-sessions-skills") {
             completeOnboarding(panel, ctx);
           } else if (msg.type === "transition-complete") {
