@@ -477,7 +477,7 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     spy.mockRestore();
   });
 
-  it("confirm-import keeps the panel alive as a transition splash (not disposed immediately)", async () => {
+  it("confirm-import advances to the sessions page (not disposed, no splash yet)", async () => {
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");
     await vscode.commands.executeCommand("amicode.onboarding.open");
     const panel = spy.mock.results[0].value as {
@@ -508,12 +508,12 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     });
     await new Promise((r) => setTimeout(r, 50));
 
-    // Panel should NOT have been disposed yet — it's showing the transition splash
+    // Panel should NOT have been disposed yet — it advances to the sessions page
     expect(disposeSpy).not.toHaveBeenCalled();
 
-    // Instead, the panel HTML should have been swapped to the splash
-    expect(panel.webview.html).toContain("Getting Amico ready");
-    expect(panel.webview.html).toContain("splash-mark");
+    // It posts show-sessions-page (the step before the splash), not the splash
+    const posted = postSpy.mock.calls.map((c: unknown[]) => c[0]);
+    expect(posted.some((m: { type: string }) => m.type === "show-sessions-page")).toBe(true);
 
     spy.mockRestore();
   });
@@ -539,13 +539,8 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     const postSpy = vi.fn().mockResolvedValue(true);
     panel.webview.postMessage = postSpy;
 
-    // Trigger scan + confirm to enter transition state
-    panel.webview._simulateMessage({ type: "scan-credentials" });
-    await new Promise((r) => setTimeout(r, 50));
-    panel.webview._simulateMessage({
-      type: "confirm-import",
-      payload: { activeProvider: "anthropic" },
-    });
+    // Skipping the sessions page enters the transition splash
+    panel.webview._simulateMessage({ type: "skip-sessions-skills" });
     await new Promise((r) => setTimeout(r, 50));
 
     // Panel still alive
@@ -560,7 +555,7 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     spy.mockRestore();
   });
 
-  it("confirm-import restarts server but does NOT open chat directly (waits for ready)", async () => {
+  it("skip-sessions-skills restarts server but does NOT open chat directly (waits for ready)", async () => {
     // Clear command execution history
     (vscode.commands as { executed: string[] }).executed = [];
 
@@ -576,13 +571,8 @@ describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", 
     const postSpy = vi.fn().mockResolvedValue(true);
     panel.webview.postMessage = postSpy;
 
-    // Trigger scan then confirm
-    panel.webview._simulateMessage({ type: "scan-credentials" });
-    await new Promise((r) => setTimeout(r, 50));
-    panel.webview._simulateMessage({
-      type: "confirm-import",
-      payload: { activeProvider: "anthropic", includedProviders: ["anthropic"] },
-    });
+    // Skipping the sessions page completes onboarding
+    panel.webview._simulateMessage({ type: "skip-sessions-skills" });
     await new Promise((r) => setTimeout(r, 50));
 
     const executed = (vscode.commands as { executed: string[] }).executed;

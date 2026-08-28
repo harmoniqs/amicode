@@ -45,7 +45,7 @@ describe("Onboarding end-to-end flow", () => {
     spy.mockRestore();
   });
 
-  it("config-success disposes panel and fires onOnboardingComplete listener", async () => {
+  it("config-success advances to the sessions page, then skip completes onboarding", async () => {
     const spy = vi.spyOn(vscode.window, "createWebviewPanel");
     const completed: boolean[] = [];
     onOnboardingComplete(() => { completed.push(true); });
@@ -53,8 +53,10 @@ describe("Onboarding end-to-end flow", () => {
     await vscode.commands.executeCommand("amicode.onboarding.open");
 
     const panel = spy.mock.results[0].value as {
-      webview: { _simulateMessage: (msg: unknown) => void };
+      webview: { _simulateMessage: (msg: unknown) => void; postMessage: ReturnType<typeof vi.fn> };
     };
+    const postSpy = vi.fn().mockResolvedValue(true);
+    panel.webview.postMessage = postSpy;
 
     // Simulate successful config from webview
     panel.webview._simulateMessage({
@@ -62,7 +64,15 @@ describe("Onboarding end-to-end flow", () => {
       payload: { provider: "anthropic", model: "anthropic/claude-sonnet-4", apiKey: "sk-test" },
     });
 
+    // config-success advances to the sessions page — does not complete yet
+    expect(completed).toHaveLength(0);
+    const posted = postSpy.mock.calls.map((c: unknown[]) => c[0]);
+    expect(posted.some((m: { type: string }) => m.type === "show-sessions-page")).toBe(true);
+
+    // Skipping the sessions page completes onboarding
+    panel.webview._simulateMessage({ type: "skip-sessions-skills" });
     expect(completed).toHaveLength(1);
+
     spy.mockRestore();
   });
 
