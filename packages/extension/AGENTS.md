@@ -78,6 +78,15 @@ infrastructure.
 rename them with `amicode_problem`. All design state, events, and entities live
 there.
 
+**`amicode_session`** spawns new chat sessions that appear as background tabs
+beside the current one (the only server-mutating tool in the `amicode_*` pack —
+everything else is local bookkeeping). Use it for parallel or branching work
+the USER should see and steer; use the Task tool for subagent-style work they
+need not watch. Children start their first turn immediately and run on the
+user's model budget — fan out deliberately (max 4 per call). `mode: "fork"`
+seeds a child from this session's history; the spawn-depth cap (2) is soft and
+overridable with `force: true`.
+
 **`amico-run`** is the gate + launch CLI. It validates specs, scans imports,
 checks tiers, and launches scripts. `amico-run --help` prints usage.
 
