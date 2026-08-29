@@ -116,7 +116,6 @@ export class SseLivenessTracker {
     if (now - last < this.stalenessMs) return;
     if (this.state === "live") {
       this.transition("stale");
-      if (this.state !== "stale") return;
     }
     if (this.probing) return;
     this.probing = true;
