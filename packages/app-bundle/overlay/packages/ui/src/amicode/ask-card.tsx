@@ -1,7 +1,6 @@
 import { For, Show, createSignal } from "solid-js"
 import { amicodeAskBridge } from "./ask-bridge"
 import { answeredOption, hasUserReplyAfter, type AskInput } from "./ask"
-import { AmicoMark } from "./spinner"
 // The session data context moved to packages/session-ui with the message-part
 // stack; the card renders inside its provider, so consume it from there.
 // (Package-direction irregularity, but module-level acyclic: data.tsx's only
@@ -54,9 +53,6 @@ export function AmicodeAskCard(props: { ask: AskInput; messageID?: string; sessi
       }}
     >
       <div style={{ display: "flex", "align-items": "center", gap: "8px" }}>
-        <span class="amc-sig">
-          <AmicoMark />
-        </span>
         <span style={{ "font-weight": "600", color: "var(--v2-text-text-base)" }}>Question</span>
       </div>
       <div data-slot="amicode-ask-question" style={{ "font-size": "13px", color: "var(--v2-text-text-base)" }}>

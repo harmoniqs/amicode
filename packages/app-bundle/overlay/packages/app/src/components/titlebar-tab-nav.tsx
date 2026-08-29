@@ -194,10 +194,6 @@ export function TabNavItem(props: {
         if (event.button !== MIDDLE_MOUSE_BUTTON) return
         closeTab(event)
       }}
-      onDblClick={(event) => {
-        if (editing()) return
-        closeTab(event)
-      }}
     >
       <a
         data-slot="tab-link"
@@ -351,7 +347,6 @@ export function DraftTabItem(props: {
         if (event.button !== MIDDLE_MOUSE_BUTTON) return
         closeTab(event)
       }}
-      onDblClick={closeTab}
     >
       <a
         data-slot="tab-link"

@@ -38,6 +38,7 @@ export function PanelMenu(props: {
       <DropdownMenu.Trigger
         class="flex items-center justify-center w-7 h-7 rounded-md text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors cursor-pointer"
         aria-label="Open panel"
+        data-tour-target="panel-menu"
       >
         <Icon name="plus-small" />
       </DropdownMenu.Trigger>

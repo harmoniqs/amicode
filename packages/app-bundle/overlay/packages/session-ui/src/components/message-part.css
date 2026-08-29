@@ -138,29 +138,46 @@
 
   [data-slot="user-message-body"] {
     width: fit-content;
-    max-width: min(82%, 64ch);
+    /* the website's prompt bubble is max-w-[85%] of its screen */
+    max-width: 85%;
     margin-left: auto;
     display: flex;
     flex-direction: column;
     align-items: flex-end;
   }
 
+  /* The prompt bubble, from the website's /amicode chat (harmoniqs-ai
+     app/components/demo/parts.jsx, `Turn`): the user's words are the INVERSE
+     of the ground — bg-deep/text-bg there. The app tokens
+     (--prompt-bubble-*, design-polish.css) realise that per scheme: the
+     site's ink bubble verbatim on light; on dark a quiet elevated layer
+     under base ink — any light bubble glared at chat scale on a dark field.
+     Fallback = raw inverse, for consumers without the app skin.
+     Padding is the site's px-4 py-2.5. */
   [data-slot="user-message-text"] {
     display: inline-block;
     white-space: pre-wrap;
     word-break: break-word;
     overflow: hidden;
-    background: var(--v2-background-bg-layer-02);
+    background: var(--prompt-bubble-bg, var(--v2-background-bg-inverse));
+    color: var(--prompt-bubble-ink, var(--v2-text-text-inverse));
     border: none;
-    padding: 8px 12px;
+    padding: 10px 16px;
     border-radius: var(--radius-lg);
 
-    [data-highlight="file"] {
-      color: var(--syntax-property);
-    }
-
+    /* On the flipped ground the scheme-tuned syntax colours fail contrast —
+       each was picked against the page ground, and this bubble is its
+       inverse. References instead take the site's File-chip grammar: mono on
+       a soft chip of the bubble's own foreground (the site's `bg-fg/8`,
+       mixed from text-inverse here so it flips with the bubble). */
+    [data-highlight="file"],
     [data-highlight="agent"] {
-      color: var(--syntax-type);
+      font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+      font-size: 0.85em;
+      color: inherit;
+      background: color-mix(in srgb, var(--prompt-bubble-ink, var(--v2-text-text-inverse)) 14%, transparent);
+      border-radius: var(--radius-sm);
+      padding: 0.08em 0.35em;
     }
 
     max-width: 100%;
@@ -229,44 +246,20 @@
 
 [data-component="text-part"] {
   width: 100%;
-  margin-top: 24px;
 
   [data-slot="text-part-body"] {
     margin-top: 0;
   }
+}
 
-  [data-slot="text-part-copy-wrapper"] {
-    min-height: 24px;
-    margin-top: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 10px;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.15s ease;
-    will-change: opacity;
+[data-slot="turn-footer"] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
 
-    [data-component="tooltip-trigger"] {
-      display: inline-flex;
-      width: fit-content;
-    }
-  }
-
-  [data-slot="text-part-meta"] {
+  [data-slot="turn-footer-meta"] {
     user-select: none;
-  }
-
-  [data-slot="text-part-copy-wrapper"][data-interrupted] {
-    width: 100%;
-    justify-content: flex-end;
-    gap: 12px;
-  }
-
-  &:hover [data-slot="text-part-copy-wrapper"],
-  &:focus-within [data-slot="text-part-copy-wrapper"] {
-    opacity: 1;
-    pointer-events: auto;
   }
 }
 
@@ -1432,10 +1425,6 @@ button[data-component="tool-loaded-file"]:hover span {
 body[data-new-layout] [data-component="user-message"] {
   font-weight: 440;
 
-  [data-slot="user-message-text"] {
-    background: var(--v2-background-bg-layer-01);
-  }
-
   [data-slot="user-message-comments"] {
     display: flex;
     flex-direction: column;
@@ -1472,10 +1461,6 @@ body[data-new-layout] [data-component="user-message"] {
     width: 342px;
     padding-bottom: 12px;
   }
-}
-
-[data-color-scheme="light"] body[data-new-layout] [data-component="user-message"] [data-slot="user-message-text"] {
-  background: var(--v2-background-bg-layer-02);
 }
 
 body:not([data-new-layout]) {

@@ -57,7 +57,7 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
 
   return (
     <SettingsListV2>
-      {/* Rebuild buttons */}
+      {/* Action buttons row — at the top for discoverability */}
       <Show when={props.controller.enabled()}>
         <div class="devtools-rebuild-row">
           <ButtonV2
@@ -78,7 +78,32 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
           </ButtonV2>
         </div>
       </Show>
+      <Show when={props.controller.devcontainerMode()}>
+        <div class="devtools-rebuild-row">
+          <ButtonV2
+            size="small"
+            variant="neutral"
+            onClick={() => props.controller.buildVsix()}
+            disabled={props.controller.vsixBuildState() === "rebuilding"}
+          >
+            {props.controller.vsixBuildState() === "rebuilding" ? "Building VSIX..." : "Build VSIX"}
+          </ButtonV2>
+        </div>
+        <Show when={props.controller.vsixBuildState() === "rebuilt"}>
+          <div class="devtools-rebuild-status devtools-rebuild-status--done">
+            <span class="devtools-status-dot devtools-status-dot--green" />
+            <span>VSIX built: {props.controller.vsixPath() ?? ""}</span>
+          </div>
+        </Show>
+        <Show when={props.controller.vsixBuildState() === "failed"}>
+          <div class="devtools-rebuild-status devtools-rebuild-status--failed">
+            <span class="devtools-status-dot devtools-status-dot--red" />
+            <span>{props.controller.vsixBuildError()}</span>
+          </div>
+        </Show>
+      </Show>
 
+      {/* Toggle 1: Developer mode (hot-reload, eager actions) */}
       <SettingsRowV2
         title={language.t("settings.general.row.developerMode.title")}
         description={language.t("settings.general.row.developerMode.description")}
@@ -91,75 +116,110 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
         </div>
       </SettingsRowV2>
 
+      {/* Toggle 2: Devcontainer mode (vsix build, no eager actions) — independent */}
       <SettingsRowV2
-        title={language.t("settings.general.row.opencodePath.title")}
-        description={
-          <>
-            {language.t("settings.general.row.opencodePath.description")}
-            <Show when={opencodeError()}>
-              <span class="settings-v2-field-error">{opencodeError()}</span>
-            </Show>
-          </>
-        }
+        title="Devcontainer mode (experimental)"
+        description="Build a .vsix for manual installation instead of hot-reloading"
       >
-        <div class="w-full sm:w-[280px]">
-          <TextInputV2
-            data-action="settings-opencode-path"
-            type="text"
-            appearance="base"
-            value={props.controller.opencodePath()}
-            onInput={(event) => props.controller.setOpencodePath(event.currentTarget.value)}
-            onBlur={() => props.controller.commitOpencodePath()}
-            placeholder={language.t("settings.general.row.opencodePath.placeholder")}
-            disabled={!props.controller.enabled()}
-            spellcheck={false}
-            autocorrect="off"
-            autocomplete="off"
-            autocapitalize="off"
-            aria-label={language.t("settings.general.row.opencodePath.title")}
-          />
-        </div>
+        <ToggleSwitch
+          checked={props.controller.devcontainerMode()}
+          onChange={(checked) => props.controller.setDevcontainerMode(checked)}
+        />
       </SettingsRowV2>
 
-      <SettingsRowV2
-        title={language.t("settings.general.row.amicodePath.title")}
-        description={
-          <>
-            {language.t("settings.general.row.amicodePath.description")}
-            <Show when={building()}>
-              <span class="settings-v2-field-info">
-                {language.t("settings.general.row.amicodePath.building")}
-              </span>
-            </Show>
-            <Show when={amicodeError()}>
-              <span class="settings-v2-field-error">{amicodeError()}</span>
-            </Show>
-            <Show when={reloadNeeded()}>
-              <span class="settings-v2-field-warning">
-                {language.t("settings.general.row.amicodePath.reloadNeeded")}
-              </span>
-            </Show>
-          </>
-        }
-      >
-        <div class="w-full sm:w-[280px]">
-          <TextInputV2
-            data-action="settings-amicode-path"
-            type="text"
-            appearance="base"
-            value={props.controller.amicodePath()}
-            onInput={(event) => props.controller.setAmicodePath(event.currentTarget.value)}
-            onBlur={() => props.controller.commitAmicodePath()}
-            placeholder={language.t("settings.general.row.amicodePath.placeholder")}
-            disabled={!props.controller.enabled()}
-            spellcheck={false}
-            autocorrect="off"
-            autocomplete="off"
-            autocapitalize="off"
-            aria-label={language.t("settings.general.row.amicodePath.title")}
-          />
-        </div>
-      </SettingsRowV2>
+      {/* Path inputs — visible when EITHER mode is ON */}
+      <Show when={props.controller.enabled() || props.controller.devcontainerMode()}>
+        <SettingsRowV2
+          title={language.t("settings.general.row.opencodePath.title")}
+          description={
+            <>
+              {language.t("settings.general.row.opencodePath.description")}
+              <Show when={opencodeError()}>
+                <span class="settings-v2-field-error">{opencodeError()}</span>
+              </Show>
+            </>
+          }
+        >
+          <div class="w-full sm:w-[280px]">
+            <TextInputV2
+              data-action="settings-opencode-path"
+              type="text"
+              appearance="base"
+              value={props.controller.opencodePath()}
+              onInput={(event) => props.controller.setOpencodePath(event.currentTarget.value)}
+              onBlur={() => props.controller.commitOpencodePath()}
+              placeholder={language.t("settings.general.row.opencodePath.placeholder")}
+              spellcheck={false}
+              autocorrect="off"
+              autocomplete="off"
+              autocapitalize="off"
+              aria-label={language.t("settings.general.row.opencodePath.title")}
+            />
+          </div>
+        </SettingsRowV2>
+
+        <SettingsRowV2
+          title={language.t("settings.general.row.amicodePath.title")}
+          description={
+            <>
+              {language.t("settings.general.row.amicodePath.description")}
+              <Show when={building()}>
+                <span class="settings-v2-field-info">
+                  {language.t("settings.general.row.amicodePath.building")}
+                </span>
+              </Show>
+              <Show when={amicodeError()}>
+                <span class="settings-v2-field-error">{amicodeError()}</span>
+              </Show>
+              <Show when={reloadNeeded()}>
+                <span class="settings-v2-field-warning">
+                  {language.t("settings.general.row.amicodePath.reloadNeeded")}
+                </span>
+              </Show>
+            </>
+          }
+        >
+          <div class="w-full sm:w-[280px]">
+            <TextInputV2
+              data-action="settings-amicode-path"
+              type="text"
+              appearance="base"
+              value={props.controller.amicodePath()}
+              onInput={(event) => props.controller.setAmicodePath(event.currentTarget.value)}
+              onBlur={() => props.controller.commitAmicodePath()}
+              placeholder={language.t("settings.general.row.amicodePath.placeholder")}
+              spellcheck={false}
+              autocorrect="off"
+              autocomplete="off"
+              autocapitalize="off"
+              aria-label={language.t("settings.general.row.amicodePath.title")}
+            />
+          </div>
+        </SettingsRowV2>
+      </Show>
+
+      {/* VSIX output path — only when devcontainer mode is ON */}
+      <Show when={props.controller.devcontainerMode()}>
+        <SettingsRowV2
+          title="VSIX output path"
+          description="Directory where the built .vsix is emitted"
+        >
+          <div class="w-full sm:w-[280px]">
+            <TextInputV2
+              type="text"
+              appearance="base"
+              value={props.controller.vsixOutputPath()}
+              onInput={(e) => props.controller.setVsixOutputPath(e.currentTarget.value)}
+              placeholder="/workspaces/artifacts/"
+              spellcheck={false}
+              autocorrect="off"
+              autocomplete="off"
+              autocapitalize="off"
+              aria-label="VSIX output path"
+            />
+          </div>
+        </SettingsRowV2>
+      </Show>
     </SettingsListV2>
   )
 }

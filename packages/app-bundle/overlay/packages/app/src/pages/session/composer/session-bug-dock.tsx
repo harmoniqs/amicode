@@ -292,22 +292,6 @@ export function BugDockView(props: {
 }) {
   const [store, setStore] = createStore({ height: HEADER_HEIGHT + 120 })
   let contentRef: HTMLDivElement | undefined
-  let textareaRef: HTMLTextAreaElement | undefined
-  let wasFocused = false
-  let blurTimer: number | undefined
-
-  // Preserve focus across background diagnostics completion (amicode#478):
-  // the bug session flips busy and agentText appears while the user may be
-  // mid-typing. A reactive border/text update must not steal focus. The blur
-  // timer keeps wasFocused true through the synchronous blur that fires during
-  // the DOM patch so the deferred effect still sees it.
-  const restoreFocusIfNeeded = () => {
-    if (wasFocused && textareaRef && document.activeElement !== textareaRef) {
-      requestAnimationFrame(() => textareaRef?.focus())
-    }
-  }
-  createEffect(on(() => props.busy, restoreFocusIfNeeded, { defer: true }))
-  createEffect(on(() => props.agentText, restoreFocusIfNeeded, { defer: true }))
 
   // The dock family's animated max-height idiom (the todo dock's shape):
   // measure the collapse-independent content, spring between full and header.
@@ -473,22 +457,15 @@ export function BugDockView(props: {
               </span>
               <div class="flex gap-2">
                 <textarea
-                  ref={(el) => (textareaRef = el)}
                   value={props.answerText}
                   onInput={(e) => props.onAnswerChange(e.currentTarget.value)}
-                  onFocus={() => {
-                    if (blurTimer !== undefined) window.clearTimeout(blurTimer)
-                    wasFocused = true
-                  }}
-                  onBlur={() => {
-                    if (blurTimer !== undefined) window.clearTimeout(blurTimer)
-                    blurTimer = window.setTimeout(() => {
-                      if (document.activeElement !== textareaRef) wasFocused = false
-                    }, 300)
-                  }}
                   placeholder="Type your answer…"
                   disabled={props.answering}
-                  class="flex-1 resize-none rounded-md border-[0.5px] border-v2-border-border-base bg-v2-background-bg-layer-02 px-3 py-1.5 text-[13px] leading-5 text-v2-text-text-base placeholder:text-v2-text-text-faint focus:outline-none focus:border-v2-border-border-focus focus:shadow-[0_0_0_1px_var(--v2-border-border-focus)]"
+                  classList={{
+                    "flex-1 resize-none rounded-md border-[0.5px] bg-v2-background-bg-layer-02 px-3 py-1.5 text-[13px] leading-5 text-v2-text-text-base placeholder:text-v2-text-text-faint focus:outline-none": true,
+                    "border-v2-state-fg-warning shadow-[0_0_0_1px_var(--v2-state-fg-warning)]": !props.busy,
+                    "border-v2-border-border-base": props.busy,
+                  }}
                   rows={2}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.shiftKey) {

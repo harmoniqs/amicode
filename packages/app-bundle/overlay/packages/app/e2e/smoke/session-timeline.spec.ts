@@ -109,7 +109,7 @@ test.describe("smoke: session timeline", () => {
 
     const spacer = scroller.locator('[data-timeline-row="bottom-spacer"]')
     await expect(spacer).toBeVisible()
-    expect(await spacer.evaluate((element) => element.getBoundingClientRect().height)).toBe(64)
+    expect(await spacer.evaluate((element) => element.getBoundingClientRect().height)).toBe(24)
     await expect
       .poll(() => scroller.evaluate((element) => element.scrollHeight - element.clientHeight - element.scrollTop))
       .toBeLessThanOrEqual(1)

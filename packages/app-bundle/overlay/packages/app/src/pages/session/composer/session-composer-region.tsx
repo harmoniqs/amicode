@@ -5,6 +5,7 @@ import { bugReportEnabled } from "@/utils/amicode-bug-report"
 import { SessionBugDock } from "@/pages/session/composer/session-bug-dock"
 import { SessionPermissionDock } from "@/pages/session/composer/session-permission-dock"
 import { SessionQuestionDock } from "@/pages/session/composer/session-question-dock"
+import { SessionTourSpotlight, isTourRequest } from "@/pages/session/composer/session-tour"
 import { SessionFollowupDock } from "@/pages/session/composer/session-followup-dock"
 import { SessionRevertDock } from "@/pages/session/composer/session-revert-dock"
 import { SessionTodoDock } from "@/pages/session/composer/session-todo-dock"
@@ -33,6 +34,7 @@ export function SessionComposerRegion(props: {
       }}
     >
       <div
+        data-tour-target="composer"
         classList={{
           "w-full px-3 pointer-events-auto": true,
           "md:max-w-200 md:mx-auto 2xl:max-w-[1000px]": controller.centered(),
@@ -45,6 +47,9 @@ export function SessionComposerRegion(props: {
             </div>
           )}
         </Show>
+        {/* Overture Stage-7 tour: rings the chrome element the active
+            "Tour · X" question card names; renders nothing off-tour. */}
+        <SessionTourSpotlight request={controller.state.questionRequest()} />
 
         <Show when={controller.state.permissionRequest()} keyed>
           {(request) => (
@@ -154,7 +159,15 @@ export function SessionComposerRegion(props: {
                 fallback={
                   <Show
                     when={controller.archived()}
-                    fallback={<Show when={!controller.state.blocked()}>{props.promptInput}</Show>}
+                    fallback={
+                      <Show
+                        when={
+                          !controller.state.blocked() || isTourRequest(controller.state.questionRequest())
+                        }
+                      >
+                        {props.promptInput}
+                      </Show>
+                    }
                   >
                     <div
                       ref={controller.setPromptRef}

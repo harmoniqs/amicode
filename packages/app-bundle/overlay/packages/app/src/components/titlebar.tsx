@@ -23,7 +23,9 @@ import { TitlebarTabStrip } from "@/components/titlebar-tab-strip"
 import { makeEventListener } from "@solid-primitives/event-listener"
 import { createMediaQuery } from "@solid-primitives/media"
 import { readSessionTabsRemovedDetail, SESSION_TABS_REMOVED_EVENT } from "@/components/titlebar-session-events"
+import { ProfilePopoverTrigger } from "@/components/profile-popover"
 import { useGlobal } from "@/context/global"
+import { resolveLandingDirectory } from "@/pages/new-session-landing"
 import { ServerConnection, useServer } from "@/context/server"
 import { tabHref, useTabs, type Tab } from "@/context/tabs"
 import type { PromptSession } from "@/context/prompt"
@@ -314,39 +316,19 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                 return
               }
 
+              // Same fallback as NewSessionLanding: a server running outside any
+              // registered project must not leave "+" as a silent no-op.
               const fallback = global.servers.list().flatMap((conn) => {
-                const project = global.ensureServerCtx(conn).projects.list()[0]
-                return project ? [{ server: ServerConnection.key(conn), project }] : []
+                const ctx = global.ensureServerCtx(conn)
+                const directory = resolveLandingDirectory(ctx.projects.list(), ctx.sync.data.project[0]?.worktree)
+                return directory ? [{ server: ServerConnection.key(conn), directory }] : []
               })[0]
               if (!fallback) return
 
-              tabs.newDraft({ server: fallback.server, directory: fallback.project.worktree }, "")
-            }
-            const toggleHome = () => tabs.toggleHome({ home: layout.route().type === "home", current: currentTab() })
-
-            const dialog = useDialog()
-            const [settingsOpen, setSettingsOpen] = createSignal(false)
-            const showSettings = () => {
-              const sessionID = params.id
-              void import("@/components/settings-v2").then((module) => {
-                setSettingsOpen(true)
-                void dialog.show(
-                  () => <module.DialogSettings sessionID={sessionID} />,
-                  () => setSettingsOpen(false),
-                )
-              })
+              tabs.newDraft({ server: fallback.server, directory: fallback.directory }, "")
             }
 
-            command.register("titlebar-home", () => [
-              {
-                id: "home.toggle",
-                title: language.t("home.title"),
-                category: language.t("command.category.view"),
-                keybind: "mod+b",
-                hidden: true,
-                onSelect: toggleHome,
-              },
-            ])
+            command.register("titlebar-home", () => [])
 
             command.register("tabs", () => {
               const current = currentTab()
@@ -396,49 +378,9 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                 <Show when={windows() || linux()}>
                   <WindowsAppMenu command={command} platform={platform} variant="v2" />
                 </Show>
-                <TooltipV2
-                  placement="bottom"
-                  value={
-                    <>
-                      {language.t("command.settings.open")}
-                      <KeybindV2 keys={command.keybindParts("settings.open")} variant="neutral" />
-                    </>
-                  }
-                  class="shrink-0"
-                >
-                  <IconButtonV2
-                    type="button"
-                    variant="ghost-muted"
-                    size="large"
-                    class="!w-9 shrink-0"
-                    icon={<IconV2 name="settings-gear" />}
-                    state={settingsOpen() ? "pressed" : undefined}
-                    onClick={showSettings}
-                    aria-label={language.t("command.settings.open")}
-                  />
-                </TooltipV2>
-                <TooltipV2
-                  placement="bottom"
-                  value={
-                    <>
-                      {language.t("home.title")}
-                      <KeybindV2 keys={command.keybindParts("home.toggle")} variant="neutral" />
-                    </>
-                  }
-                  class="shrink-0"
-                >
-                  <IconButtonV2
-                    type="button"
-                    variant="ghost-muted"
-                    size="large"
-                    class="!w-9 shrink-0"
-                    icon={<IconV2 name="grid-plus" />}
-                    state={layout.route().type === "home" ? "pressed" : undefined}
-                    onClick={toggleHome}
-                    aria-label={language.t("home.title")}
-                    aria-pressed={layout.route().type === "home"}
-                  />
-                </TooltipV2>
+                {/* Profile and Settings live at the trailing edge with the
+                    other account/status controls (Sessions, Status, Side
+                    Panel) — see TitlebarV2Right. */}
                 {/* Removed: sidebar-left toggle button (harmoniqs/amicode#265).
                     The button called layout.sidebar.toggle() but no component in
                     NewLayout observes that signal — WorkbenchPanel only mounts in
@@ -458,16 +400,28 @@ export function Titlebar(props: { update?: TitlebarUpdate; debugTools?: { visibl
                   onOverflowChange={setTabsAreOverflowing}
                 />
                 <Show when={!(creating() && params.dir)}>
-
-                  <IconButtonV2
-                    type="button"
-                    variant="ghost-muted"
-                    size="large"
-                    class="shrink-0"
-                    icon={<IconV2 name="plus" />}
-                    onClick={openNewTab}
-                    aria-label={language.t("command.session.new")}
-                  />
+                  <span class="flex shrink-0" data-tour-target="new-chat">
+                    <TooltipV2
+                      placement="bottom"
+                      value={
+                        <>
+                          {language.t("command.session.new")}
+                          <KeybindV2 keys={command.keybindParts("session.new")} variant="neutral" />
+                        </>
+                      }
+                      class="shrink-0"
+                    >
+                      <IconButtonV2
+                        type="button"
+                        variant="ghost-muted"
+                        size="large"
+                        class="shrink-0"
+                        icon={<IconV2 name="plus" />}
+                        onClick={openNewTab}
+                        aria-label={language.t("command.session.new")}
+                      />
+                    </TooltipV2>
+                  </span>
                 </Show>
                 <div class="flex-1" />
                 <TitlebarV2Right state={v2RightState()} />
@@ -625,12 +579,56 @@ type TitlebarV2RightState = {
 }
 
 function TitlebarV2Right(props: { state: TitlebarV2RightState }) {
+  const language = useLanguage()
+  const command = useCommand()
+  const dialog = useDialog()
+  const params = useParams()
+  const [settingsOpen, setSettingsOpen] = createSignal(false)
+  const showSettings = () => {
+    const sessionID = params.id
+    void import("@/components/settings-v2").then((module) => {
+      setSettingsOpen(true)
+      void dialog.show(
+        () => <module.DialogSettings sessionID={sessionID} />,
+        () => setSettingsOpen(false),
+      )
+    })
+  }
   return (
     <div class="relative z-20 flex shrink-0 items-center justify-end gap-0 overflow-visible">
       <Show when={props.state.update.visible}>
         <TitlebarUpdateIconButton state={props.state.update} />
       </Show>
+      {/* Session-scoped controls (Sessions / Status / Side Panel) portal in here. */}
       <div id="opencode-titlebar-right" class="flex shrink-0 items-center justify-end gap-0" />
+      <span class="flex shrink-0" data-tour-target="profile">
+        <TooltipV2 placement="bottom" value={language.t("profile.title") || "Profile"} class="shrink-0">
+          <ProfilePopoverTrigger />
+        </TooltipV2>
+      </span>
+      <span class="flex shrink-0" data-tour-target="settings">
+        <TooltipV2
+          placement="bottom"
+          value={
+            <>
+              {language.t("command.settings.open")}
+              <KeybindV2 keys={command.keybindParts("settings.open")} variant="neutral" />
+            </>
+          }
+          class="shrink-0"
+        >
+          <IconButtonV2
+            type="button"
+            variant="ghost-muted"
+            size="large"
+            class="!w-9 shrink-0"
+            icon={<IconV2 name="settings-gear" />}
+            state={settingsOpen() ? "pressed" : undefined}
+            onClick={showSettings}
+            aria-label={language.t("command.settings.open")}
+          />
+        </TooltipV2>
+      </span>
     </div>
   )
 }

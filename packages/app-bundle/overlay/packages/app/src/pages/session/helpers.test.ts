@@ -274,4 +274,60 @@ describe("createSessionTabs", () => {
       dispose()
     })
   })
+
+  test("pulseInspector is closable and reopenable", () => {
+    // Step 1: pulseInspector is open and active
+    const initial = { tabs: { all: ["pulseInspector"], active: "pulseInspector" as string | undefined }, preview: undefined }
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => initial.tabs.active, all: () => initial.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.activeTab()).toBe("pulseInspector")
+      expect(result.pulseInspectorOpen()).toBe(true)
+      expect(result.closableTab()).toBe("pulseInspector")
+      dispose()
+    })
+
+    // Step 2: close pulseInspector — removed from state
+    const afterClose = closeSessionTab(initial, "pulseInspector")
+    expect(afterClose.tabs.all).toEqual([])
+    expect(afterClose.tabs.active).toBeUndefined()
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => afterClose.tabs.active, all: () => afterClose.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.pulseInspectorOpen()).toBe(false)
+      expect(result.activeTab()).toBe("home")
+      dispose()
+    })
+
+    // Step 3: re-open pulseInspector
+    const afterReopen = openSessionTab(
+      { tabs: afterClose.tabs, preview: afterClose.preview },
+      "pulseInspector",
+    )
+    expect(afterReopen.tabs.all).toContain("pulseInspector")
+    expect(afterReopen.tabs.active).toBe("pulseInspector")
+
+    createRoot((dispose) => {
+      const tabs = createMemo(() => ({ active: () => afterReopen.tabs.active, all: () => afterReopen.tabs.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+      })
+      expect(result.pulseInspectorOpen()).toBe(true)
+      expect(result.activeTab()).toBe("pulseInspector")
+      expect(result.closableTab()).toBe("pulseInspector")
+      dispose()
+    })
+  })
 })

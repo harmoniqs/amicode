@@ -9,6 +9,7 @@
     "./session-diff": "./src/components/session-diff.ts",
     "./message-file": "./src/components/message-file.ts",
     "./message-part-text": "./src/components/message-part-text.ts",
+    "./build-trace": "./src/components/build-trace.ts",
     "./markdown-stream": "./src/components/markdown-stream.ts",
     "./markdown-cache": "./src/components/markdown-cache.tsx",
     "./markdown-file-refs": "./src/components/markdown-file-refs.ts",
@@ -27,9 +28,10 @@
   },
   "scripts": {
     "typecheck": "tsgo --noEmit",
-    "test": "bun test src --only-failures"
+    "test": "bun test --conditions=browser src"
   },
   "devDependencies": {
+    "@happy-dom/global-registrator": "20.0.11",
     "@tsconfig/node22": "catalog:",
     "@types/bun": "catalog:",
     "@types/katex": "0.16.7",

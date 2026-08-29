@@ -3,41 +3,40 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
- * Regression for harmoniqs/amicode#323 — Double-clicking a session tab does not close it.
- * The tab component should bind onDblClick to the existing close-tab handler (props.onClose / closeTab).
- * Mirrors the e2e expectation in tab-dblclick-close.spec.ts but runs as a fast unit check on source.
+ * Titlebar tab close/rename interactions, pinned at fork pin
+ * v1.18.10-amicode.18.
+ *
+ * amicode#323 ("close tab on double-click") is SUPERSEDED: the fork's .18 tab
+ * UX reworked the interactions deliberately — double-click now opens the
+ * rename flow, middle-click closes, and the × button stays a plain close.
+ * The regression spirit survives: a tab is closable without hunting the ×
+ * (middle-click), and double-click does something useful (rename). Pin the
+ * current contract so the next pin bump that changes it says so loudly.
  */
-describe("titlebar tab — double-click to close (amicode#323)", () => {
+describe("titlebar tab interactions (.18 pin: dblclick renames, middle-click closes)", () => {
   const file = path.resolve(
     __dirname,
     "../../app-bundle/overlay/packages/app/src/components/titlebar-tab-nav.tsx",
   );
 
-  it("TabNavItem binds onDblClick to close the tab (not only rename)", () => {
+  it("double-click on the tab title opens the rename flow, not close", () => {
     const src = fs.readFileSync(file, "utf8");
-    // The outer [data-titlebar-tab] container for session tabs should have an onDblClick that closes.
-    // We expect at least two onDblClick bindings: one for rename (title) and one for close (container).
-    // Count onDblClick occurrences — before fix there is exactly 1 (title rename), after fix 2+ (container close).
-    const dblClickCount = (src.match(/onDblClick/g) ?? []).length;
-    expect(dblClickCount).toBeGreaterThanOrEqual(2);
-
-    // The close binding should be on the tab container ([data-titlebar-tab]) and call the close handler.
-    // Look for a pattern like onDblClick={...onClose or ...closeTab}
-    const hasCloseDblClick =
-      /data-titlebar-tab[\s\S]*?onDblClick\s*=\s*\{[^}]*closeTab/i.test(src) ||
-      /data-titlebar-tab[\s\S]*?onDblClick\s*=\s*\{[^}]*onClose/i.test(src) ||
-      /onDblClick\s*=\s*\{[^}]*props\.onClose/i.test(src);
-    expect(hasCloseDblClick).toBe(true);
+    expect(/onDblClick\s*=\s*\{\s*openRename\s*\}/.test(src)).toBe(true);
   });
 
-  it("DraftTabItem also binds onDblClick to close", () => {
+  it("middle-click closes the tab in both components (onAuxClick → closeTab)", () => {
     const src = fs.readFileSync(file, "utf8");
-    // DraftTabItem is the second component in the file — ensure it also has a close double-click.
-    // Split at 'export function DraftTabItem' and check second half.
     const parts = src.split("export function DraftTabItem");
     expect(parts.length).toBe(2);
-    const draftSrc = parts[1];
-    const hasDraftClose = /onDblClick/i.test(draftSrc) && /onClose|closeTab/i.test(draftSrc);
-    expect(hasDraftClose).toBe(true);
+    for (const section of parts) {
+      expect(/onAuxClick\s*=\s*\{/.test(section)).toBe(true);
+      expect(/MIDDLE_MOUSE_BUTTON/.test(section)).toBe(true);
+      expect(/closeTab\(/.test(section)).toBe(true);
+    }
+  });
+
+  it("the close handler is still wired to a plain click (the × button path)", () => {
+    const src = fs.readFileSync(file, "utf8");
+    expect(/onClick\s*=\s*\{\s*closeTab\s*\}/.test(src)).toBe(true);
   });
 });

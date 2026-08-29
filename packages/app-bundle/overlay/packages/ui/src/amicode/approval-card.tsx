@@ -1,7 +1,6 @@
 import { Show, createMemo } from "solid-js"
 import { amicodeApprovalBridge } from "./approval-bridge"
 import { approvalState, boundsText, isActionable, type ApprovalRequest } from "./approval"
-import { AmicoMark } from "./spinner"
 
 // AMICODE: the capability-warrant card for amicode_request_approval tool parts
 // (spec-20260727-164748 §9.5). Structurally the ask card's sibling — request text
@@ -25,6 +24,14 @@ import { AmicoMark } from "./spinner"
 //      worse than no card.
 //
 // Display label is AMICO (persona); component/data-* identifiers stay amicode-*.
+//
+// NO AMICO MARK. The H-glyph came off every amicode chat surface on 2026-08-23 —
+// receipt card, run window, ask card, and this one last. It survived the first
+// three sweeps because it mounted as a bare glyph rather than through .amc-sig,
+// so a class-based search never saw it. Unlike the receipt card's it never
+// pulsed, so it carried none of that contrast problem; it went for consistency.
+// "Approval needed" already names the surface, and at 13px the glyph resolves to
+// a block rather than to a brand.
 
 export function AmicodeApprovalCard(props: { request: ApprovalRequest }) {
   // No clock signal: the state recomputes on any bridge/warrant change, and an
@@ -49,7 +56,6 @@ export function AmicodeApprovalCard(props: { request: ApprovalRequest }) {
   return (
     <div data-component="amicode-approval-card" data-state={state().kind}>
       <div class="amc-ap-head">
-        <AmicoMark />
         <span class="amc-ap-title">
           <Show when={state().kind === "granted"} fallback="Approval needed">
             Approved
