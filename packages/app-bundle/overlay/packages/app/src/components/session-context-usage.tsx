@@ -131,6 +131,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
   return (
     <Show when={params.id}>
       <TooltipV2 value={tooltipValue()} placement={props.placement ?? "top"} shift={-8}>
+        <span class="flex shrink-0" data-tour-target="context-ring">
         <Switch>
           <Match when={variant() === "indicator"}>{circle()}</Match>
           <Match when={buttonAppearance() === "v2"}>
@@ -155,6 +156,7 @@ export function SessionContextUsage(props: SessionContextUsageProps) {
             </Button>
           </Match>
         </Switch>
+        </span>
       </TooltipV2>
     </Show>
   )

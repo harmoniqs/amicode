@@ -16,6 +16,7 @@ import {
 } from "@/components/prompt-project-selector"
 import { inAmicode } from "@/pages/session/use-amicode-commands"
 import { StatusPopoverV2 } from "@/components/status-popover"
+import { SessionChatsDropdown } from "@/components/session/session-header"
 import { useLanguage } from "@/context/language"
 import { useSDK } from "@/context/sdk"
 import { useServerSync } from "@/context/server-sync"
@@ -40,7 +41,13 @@ export function NewSessionView(props: {
         data-component="session-new-design"
         class="relative flex-1 min-h-0 overflow-hidden rounded-md bg-v2-background-bg-deep"
       >
-        <div class="absolute inset-x-0 top-[25.375%] flex justify-center px-6">
+        {/* amicode: centre the mark+composer group optically — flex centring
+            with the same pb-lift the start screen uses (session-new-view),
+            so the group tracks the panel's height. Upstream's fixed
+            top-[25.375%] anchor was tuned for a wide desktop window; in the
+            tall Amicode webview it beached the group in the upper third with
+            a hold of empty space below. */}
+        <div class="absolute inset-0 flex items-center justify-center px-6 pb-24">
           <div class={NEW_SESSION_CONTENT_WIDTH}>
             {/* amicode: brand mark + wordmark (recovered composition — the
                 H-robot over the AMICODE wordmark, Kate's Kimi-clean ordering;
@@ -107,11 +114,14 @@ export function NewSessionStatus(props: { mount: Accessor<HTMLElement | null>; v
     <Show when={props.mount()} keyed>
       {(mount) => (
         <Portal mount={mount}>
-          <Show when={props.visible()}>
-            <Tooltip placement="bottom" value={language.t("status.popover.trigger")}>
+          <div class="flex items-center gap-2">
+            <TooltipV2 placement="bottom" value="Sessions" class="shrink-0">
+              <SessionChatsDropdown />
+            </TooltipV2>
+            <TooltipV2 placement="bottom" value={language.t("status.popover.trigger")} class="shrink-0">
               <StatusPopoverV2 />
-            </Tooltip>
-          </Show>
+            </TooltipV2>
+          </div>
         </Portal>
       )}
     </Show>

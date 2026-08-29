@@ -59,10 +59,10 @@ const DEFAULT_TERMINAL_COLORS: Record<"light" | "dark", TerminalColors> = {
     selectionBackground: withAlpha("#000000", 0.2),
   },
   dark: {
-    background: "#000000",
-    foreground: "#EFEDCD",
-    cursor: "#EFEDCD",
-    selectionBackground: withAlpha("#EFEDCD", 0.25),
+    background: "#191515",
+    foreground: "#d4d4d4",
+    cursor: "#d4d4d4",
+    selectionBackground: withAlpha("#d4d4d4", 0.25),
   },
 }
 

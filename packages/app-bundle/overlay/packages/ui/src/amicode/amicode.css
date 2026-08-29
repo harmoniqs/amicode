@@ -13,10 +13,6 @@
   0%, 100% { opacity: 1; }
   50% { opacity: 0.32; }
 }
-@keyframes amc-blip {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--v2-icon-icon-accent) 30%, transparent); }
-  50% { opacity: 0.45; box-shadow: 0 0 0 4px color-mix(in srgb, var(--v2-icon-icon-accent) 12%, transparent); }
-}
 @keyframes amc-shimmer {
   100% { transform: translateX(100%); }
 }
@@ -52,46 +48,21 @@
   flex-shrink: 0;
 }
 
-/* ---- thinking block (Claude-Code-esque working indicator) ---------------- */
-/* Two-row grid shown while a reply streams (thinking-line.tsx): the harmonic
- * wave and cycling gerund ride the top row; the live meta line (elapsed ·
- * tokens · esc) sits below, starting under the wave. Anti-glitch invariants,
- * earned the hard way:
- *  - GRID, never flex-wrap — the old flex row once let a greedy sibling
- *    heading squeeze the meta until "↑ 8.7k tokens" shattered across three
- *    lines, and baseline alignment scattered the wave/verb;
- *  - the verb reserves the longest gerund's width (16ch covers
- *    "Fidelitymaxxing…") so word rotation never shifts the layout around it;
- *  - the meta renders from mount (elapsed always ticks), so the block's height
- *    is constant whether or not tokens/hints are present;
- *  - nowrap + ellipsis on the meta for absurdly narrow panes.
- * DOM order is word-first so the block's first baseline is the VERB's — the
- * sibling activity heading (session-turn-thinking) aligns with the verb, not
- * the wave's edge. Explicit grid placement keeps the visual order. */
+/* ---- thinking block (meta line while a reply streams) -------------------- */
+/* The meta line (elapsed · tokens · esc). The harmonic dot is rendered by the
+ * timeline at the rail-dot position, not by this component. */
 .amc-thinking {
-  display: inline-grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 8px;
-  row-gap: 2px;
-  align-items: center;
+  display: inline-block;
   min-width: 0;
   max-width: 100%;
   font-size: 11px;
   letter-spacing: 0.01em;
   color: var(--v2-text-text-muted);
 }
-.amc-thinking .amc-wave { grid-column: 1; grid-row: 1; }
-.amc-thinking-word {
-  grid-column: 2;
-  grid-row: 1;
-  font-weight: 600;
-  white-space: nowrap;
-  min-width: 16ch;
-  color: var(--v2-text-text-accent);
-}
 .amc-thinking-meta {
-  grid-column: 1 / -1;
-  grid-row: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -99,10 +70,15 @@
   color: var(--v2-text-text-faint);
   font-variant-numeric: tabular-nums;
 }
-/* inline children (no flex) so the whole meta truncates as one line of text */
-.amc-thinking-meta > * + * { margin-left: 6px; }
 .amc-thinking-sep { opacity: 0.55; }
 .amc-thinking-hint { font-style: italic; }
+
+/* Turn footer: the completed-turn meta row (copy + elapsed + tokens) */
+[data-slot="session-turn-thinking-meta"] {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
 
 /* ---- an opened skill file (message-part.tsx, ToolRegistry "skill") ------- */
 /* Expanding a skill used to dump its instructions as bare markdown straight into the
@@ -199,16 +175,21 @@
   max-width: 100%;
   min-width: 0;
   text-align: left;
-  /* Rail-free and tint-free: neutral hairline + surface, no gold accent. */
-  border: 1px solid var(--v2-border-border-base);
+  /* The website's chip grammar (harmoniqs-ai demo/parts.jsx `File`,
+     scenes.jsx `Chips`): a soft tint of the FOREGROUND itself — bg-fg/8 —
+     no hairline, no bevel. The tint is mixed from text-base so it flips
+     with the scheme the way fg/8 flips with the site's ink. The border is
+     kept at 1px transparent so the error state can colour it without the
+     chip changing size (Kate 2026-08-24: match the site's chips). */
+  border: 1px solid transparent;
   /* medium corners suit a short single-line pill; --radius-lg over-rounds it (Kate 2026-07-24) */
   border-radius: var(--radius-md);
-  background: var(--v2-background-bg-layer-01);
+  background: color-mix(in srgb, var(--v2-text-text-base) 8%, transparent);
   padding: 4px 8px;
   font-size: 12px;
   line-height: 16px;
   color: var(--v2-text-text-base);
-  box-shadow: var(--v2-elevation-elements, 0 0.5px 0.5px rgba(0, 0, 0, 0.2));
+  box-shadow: none;
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
@@ -218,13 +199,11 @@
   cursor: pointer;
 }
 [data-component="amicode-card"][data-clickable="true"]:hover {
-  background: var(--v2-background-bg-layer-02);
-  border-color: var(--v2-border-border-strong);
-  box-shadow: var(--v2-elevation-raised, 0 1px 2px rgba(0, 0, 0, 0.25));
+  /* hover = the same tint, deeper — the site differentiates with fills */
+  background: color-mix(in srgb, var(--v2-text-text-base) 13%, transparent);
 }
 [data-component="amicode-card"][data-clickable="true"]:active {
-  /* pressed = elevation drop, never a bounds-moving transform */
-  box-shadow: none;
+  background: color-mix(in srgb, var(--v2-text-text-base) 16%, transparent);
 }
 [data-component="amicode-card"]:focus-visible {
   outline: 1px solid var(--v2-border-border-focus);
@@ -234,14 +213,6 @@
   border-color: color-mix(in srgb, var(--v2-state-fg-danger) 38%, var(--v2-border-border-base));
   background: color-mix(in srgb, var(--v2-state-fg-danger) 6%, var(--v2-background-bg-layer-01));
 }
-[data-component="amicode-card"][data-state="error"] .amc-mark,
-[data-component="amicode-card"][data-state="error"] .amc-wordmark {
-  color: var(--v2-state-fg-danger);
-}
-[data-component="amicode-card"] .amc-mark {
-  width: 13px;
-  height: 13px;
-}
 
 [data-component="amicode-card"] .amc-body {
   display: inline-flex;
@@ -250,21 +221,35 @@
   min-width: 0;
   overflow: hidden;
 }
+/* The kind, in the site's label voice: mono, uppercase, tracked, quiet —
+   the same voice as Panel labels and the rail's step labels — instead of
+   bold sans. The DETAIL carries the ink; the label introduces it. */
 [data-component="amicode-card"] .amc-label {
-  font-weight: 650;
-  color: var(--v2-text-text-base);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--v2-text-text-muted);
   white-space: nowrap;
   flex-shrink: 0;
 }
+/* the specific — a file-like reference, so it reads mono at full ink,
+   exactly the site's File chip */
 [data-component="amicode-card"] .amc-detail {
-  color: var(--v2-text-text-muted);
+  font-family: var(--font-family-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--v2-text-text-base);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;
 }
 [data-component="amicode-card"][data-state="running"] .amc-detail {
-  color: var(--v2-text-text-accent);
+  /* neutral while running — the rail's yellow node is the live signal
+     (Kate 2026-08-24: yellow marks only the active process, and a yellow
+     foreground on light is illegible anyway) */
+  color: var(--v2-text-text-muted);
 }
 [data-component="amicode-card"][data-state="error"] .amc-detail {
   color: var(--v2-state-fg-danger);
@@ -311,17 +296,10 @@
 [data-component="amicode-card"] .amc-tick {
   width: 12px;
   height: 12px;
-  color: var(--v2-state-fg-success);
+  /* ink, not green — the site has no green anywhere; done is a neutral mark
+     (its rail dot fills ink) and yellow is reserved for the active process */
+  color: var(--v2-text-text-base);
   flex-shrink: 0;
-}
-[data-component="amicode-card"] .amc-livedot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--v2-icon-icon-accent);
-}
-@media (prefers-reduced-motion: no-preference) {
-  [data-component="amicode-card"][data-state="running"] .amc-livedot { animation: amc-blip 1.2s ease-in-out infinite; }
 }
 [data-component="amicode-card"] .amc-chev {
   color: var(--v2-text-text-faint);

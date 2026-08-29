@@ -99,48 +99,28 @@
 }
 
 /* ── session status dots ──
-   SEMANTIC, not brand: a status dot's job is to say what state a session is in,
-   so it sits outside the yellow system. Brand yellow was tried for "running" and
-   is unusable here — 1.27:1 on white, invisible without a crutch. No rings
-   either: each tone clears >=3:1 against its own ground unaided, and an edge
-   would only mute the hue that carries the meaning.
-
-   Chosen by simulating deuteranopia, protanopia and tritanopia (Vienot 1999)
-   over a candidate search. Two constraints beyond contrast:
-
-   1. worst pairwise CIELAB separation is maximised across all three CVD types;
-   2. idle and done must differ in LIGHTNESS, not just chroma. An earlier set had
-      them at L* 48 vs 44 — same lightness, separated only by saturation, which
-      is precisely what reads as "a slightly green grey". They now sit ~23 L*
-      apart in both schemes.
-
-   Colour is never the only signal: each dot carries role="img" plus an
-   aria-label and title naming the state.
-
-   light: worst CVD dE 13.7 · idle/done dE 73.9 (dL* 24) · min contrast 3.19:1
-   dark:  worst CVD dE 31.3 · idle/done dE 72.3 (dL* 22) · min contrast 3.71:1 */
+   Four states: green (done, unread), grey (done, seen), yellow (running),
+   red (error). Colour is never the only signal: each dot carries
+   role="img" + aria-label. */
 :root,
 [data-color-scheme="light"] {
-  --status-idle: #52525b;        /* L* 35 · 7.73:1 — neutral, no hue, so it stays quiet */
-  --status-running: #1d4ed8;     /* L* 39 · 6.70:1 — blue reads as in-progress */
-  --status-attention: #d97706;   /* L* 60 · 3.19:1 — amber, needs you */
-  --status-error: #ef4444;       /* L* 55 · 3.76:1 */
-  --status-done: #16a34a;        /* L* 59 · 3.30:1 — vivid, and 24 L* clear of idle */
+  --status-idle: #a1a1aa;        /* grey — done and seen */
+  --status-running: #ca8a04;     /* yellow-600 — working */
+  --status-done: #16a34a;        /* green-600 — done, unread */
+  --status-error: #dc2626;       /* red-600 */
 }
 [data-color-scheme="dark"] {
-  --status-idle: #8a8a8a;        /* L* 57 ·  5.56:1 */
-  --status-running: #2563eb;     /* L* 46 ·  3.71:1 */
-  --status-attention: #fbbf24;   /* L* 81 · 11.49:1 */
-  --status-error: #dc2626;       /* L* 48 ·  3.97:1 */
-  --status-done: #4ade80;        /* L* 79 · 11.01:1 */
+  --status-idle: #71717a;        /* grey */
+  --status-running: #eab308;     /* yellow-500 */
+  --status-done: #4ade80;        /* green-400 */
+  --status-error: #ef4444;       /* red-500 */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
-    --status-idle: #8a8a8a;
-    --status-running: #2563eb;
-    --status-attention: #fbbf24;
-    --status-error: #dc2626;
+    --status-idle: #71717a;
+    --status-running: #eab308;
     --status-done: #4ade80;
+    --status-error: #ef4444;
   }
 }
 
@@ -170,6 +150,140 @@
   }
 }
 
+/* ── prompt bubble ground — per-scheme REALISATION ──
+   On LIGHT the user's words are the INVERSE of the ground — the website's
+   ink bubble, verbatim (the site is light-only, so the inverse grammar is a
+   light-mode truth). On DARK any light bubble read harsh at chat scale:
+   Kate walked the inverse down 100%→85%→70% luminance (7b1ff4e, 1ef7c41)
+   and it still glared — dark wants LOW contrast, not an inverse. The dark
+   bubble is therefore the theme's own quiet elevation: layer-02 on the
+   ground (≈1.5:1, a whisper of lift — stock #2e2e2e on #161616) under full
+   base ink (≈12:1, unchanged readability). */
+:root,
+[data-color-scheme="light"] {
+  --prompt-bubble-bg: var(--v2-background-bg-inverse);
+  --prompt-bubble-ink: var(--v2-text-text-inverse);
+}
+[data-color-scheme="dark"] {
+  --prompt-bubble-bg: var(--v2-background-bg-layer-02);
+  --prompt-bubble-ink: var(--v2-text-text-base);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-color-scheme="light"]) {
+    --prompt-bubble-bg: var(--v2-background-bg-layer-02);
+    --prompt-bubble-ink: var(--v2-text-text-base);
+  }
+}
+
+/* ── entrance motion — timeline blocks land whole ──
+   New timeline rows (Kate 2026-08-24) enter as complete blocks: a small rise
+   and fade, fast and crisp, decided per row-key exactly once (the timeline
+   guards against virtual-row remount replays). Opacity+transform only — the
+   virtualizer owns row position and measured height, so entrance motion must
+   never touch layout. Reduced motion keeps the fade, drops the rise. */
+:root {
+  /* IDENTICAL to the website's chat grammar (harmoniqs-ai demo/parts.jsx,
+     verified against the production chunk): enter from below and slightly
+     blurred — HIDDEN {opacity:0, y:8, blur(8px)} → SHOWN over 0.3s on
+     [.2,0,.2,1] (soft attack, soft landing); leave UPWARD and re-blurred
+     over 0.2s on [.4,0,1,1] (exits shorter than entrances — the direction
+     says "arriving" vs "being cleared"). */
+  --motion-enter-duration: 0.3s;
+  --motion-enter-rise: 8px;
+  --motion-enter-blur: 8px;
+  --motion-enter-ease: cubic-bezier(0.2, 0, 0.2, 1);
+  --motion-exit-duration: 0.2s;
+  --motion-exit-ease: cubic-bezier(0.4, 0, 1, 1);
+}
+/* fill BACKWARDS, not both: backwards still covers the cascade's delay phase
+   (rows hold at the hidden frame until their turn), while after the animation
+   the element returns to its natural styles — `both` left a permanent
+   filter:blur(0) on every entered row, a forced stacking context + raster
+   layer for the rest of the session. */
+[data-timeline-enter] {
+  animation: timeline-enter var(--motion-enter-duration) var(--motion-enter-ease) backwards;
+}
+/* chunk entrances inside a streaming prose row — the same grammar, skinned
+   onto the attribute session-ui's ChunkedStreamMarkdown sets per settled
+   chunk (Kate 2026-08-25: replies land in chunks, not one final block). */
+[data-part-enter] {
+  animation: timeline-enter var(--motion-enter-duration) var(--motion-enter-ease) backwards;
+}
+/* Prose-fragment cards get a snappier, blur-free entrance (#265): 150ms
+   ease-out, 10px rise, no blur. Faster than the general timeline-enter because
+   these settle during active streaming — the eye is already watching the bottom
+   edge, so the entrance can be crisp without startling. */
+[data-prose-fragment][data-part-enter] {
+  animation: prose-fragment-enter 150ms ease-out backwards;
+}
+@keyframes prose-fragment-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* The open cascade holds at frame 0 (opacity 0, risen, blurred) until the
+   timeline has settled at the bottom — released by removing
+   [data-entrance-pending] (message-timeline.tsx entranceReady). Also keeps
+   the draft handoff's entrance from playing behind the cold-mount veil. */
+[data-entrance-pending] [data-timeline-enter] {
+  animation-play-state: paused;
+}
+@keyframes timeline-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--motion-enter-rise));
+    filter: blur(var(--motion-enter-blur));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0px);
+  }
+}
+/* ── prose fragment cards ── every fragment Amico relays is its OWN bordered
+   card, a message within the chat (Kate 2026-08-25; supersedes the
+   one-container-per-reply segment). Each chunk of a streamed reply arrives
+   as its own card with its own entrance; history splits identically so the
+   cards persist. Chips/receipts keep their borderless chip grammar. The
+   hairline is the theme's default border, the radius the brand 4px. */
+[data-slot="text-part-body"]:has([data-prose-fragment]) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+[data-prose-fragment] {
+  border: var(--border-width) solid var(--v2-border-border-base);
+  border-radius: var(--radius-lg);
+  padding: 10px 14px;
+}
+/* markdown's own block margins would pad the card's top and bottom twice */
+[data-prose-fragment] :first-child {
+  margin-top: 0;
+}
+[data-prose-fragment] :last-child {
+  margin-bottom: 0;
+}
+
+/* No exit animation. The site's GONE grammar (up + re-blur) was tried as a
+   positioned ghost clone and misfired — a body-appended clone escapes the
+   theme scope and the virtualizer relayouts under the captured rect. The
+   --motion-exit-* tokens above stay as the documented grammar should a real
+   FLIP-based exit ever be built. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-enter-rise: 0px;
+    --motion-enter-blur: 0px;
+  }
+  [data-prose-fragment][data-part-enter] {
+    animation: none;
+  }
+}
+
 /* ── inline code: readable in both schemes ── */
 :not(pre) > code {
   color: #3d4451;
@@ -195,6 +309,14 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
   *, *::before, *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+  /* The timeline entrance deliberately KEEPS its fade under reduced motion —
+     the rise is already zeroed via --motion-enter-rise above, and without the
+     fade a withheld block would pop in with no signal at all. The global
+     0.01ms reset would otherwise annihilate it. */
+  [data-timeline-enter],
+  [data-part-enter] {
+    animation-duration: var(--motion-enter-duration) !important;
   }
 }
 
@@ -223,17 +345,34 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
   border-color: var(--v2-border-border-strong);
 }
 
-/* send: a control button in the brand accent, near-black ink (yellow-button
-   ink is ALWAYS near-black). Radius = --radius-md, matching the other footer
-   controls (+, pickers) — NOT a circle (Kate 2026-07-23: follow the radius scale). */
+/* send: the website's composer arrow, both states (harmoniqs-ai
+   demo/parts.jsx `Composer`). ARMED (something to send) it is the brand chip:
+   yellow fill, near-black glyph, and the ink edge every yellow fill takes.
+   IDLE it is the site's outline button — transparent, full-strength ink
+   border and glyph — NOT a dimmed ghost of the yellow one, so the arming
+   moment reads as the site's neutral→yellow flip. Radius = --radius-md,
+   matching the other footer controls (+, pickers) — NOT a circle
+   (Kate 2026-07-23: follow the radius scale). */
 [data-action="prompt-submit"] {
   border-radius: var(--radius-md) !important;
   background: var(--accent) !important;
   color: var(--accent-ink) !important;
+  border: var(--border-width) solid var(--accent-edge-ink) !important;
+  box-shadow: none !important;
   transition: transform 0.16s ease, filter 0.16s ease;
 }
 [data-action="prompt-submit"] svg { color: var(--accent-ink) !important; }
 [data-action="prompt-submit"]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+[data-action="prompt-submit"]:disabled {
+  background: transparent !important;
+  border-color: var(--v2-text-text-base) !important;
+  color: var(--v2-text-text-base) !important;
+  /* the component's disabled:opacity-50 would grey the outline the site
+     draws at full strength */
+  opacity: 1 !important;
+}
+[data-action="prompt-submit"]:disabled svg { color: var(--v2-text-text-base) !important; }
+[data-action="prompt-submit"]:disabled:hover { filter: none; transform: none; }
 
 /* accent tag (badge-v2 `variant="accent"`): the shared primitive paints
    --v2-text-text-contrast over bg-accent, which on dark is LIGHT text on
@@ -300,4 +439,86 @@ span[data-component="tag"][data-variant="accent"] {
 @keyframes amc-solver-switch-pulse {
   0%, 100% { opacity: 0.35; }
   50% { opacity: 1; }
+}
+
+/* ── Onboarding walkthrough spotlight (session-tour.tsx) ───────────────────
+   A ring traced on the chrome element the current "Tour · X" stop names. The
+   ring is the whole marker — there is no label, because the stop's own text
+   already names the surface. Decorative only (aria-hidden, pointer-events
+   none); sits above the shell but below dialogs (10000+). */
+[data-component="amc-tour-spotlight"] {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  pointer-events: none;
+}
+/* The scrim: everything except the stop's element and the walkthrough card is
+   softened, so the eye has one place to go. Blur is deliberately shallow (3px)
+   and paired with only a light dim — enough to push the rest of the window back
+   without hiding what the reader is being taught to recognise. The holes are
+   punched with an even-odd clip-path, recomputed as the ring moves. */
+[data-component="amc-tour-spotlight"] .amc-tour-scrim {
+  position: absolute;
+  inset: 0;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  background: color-mix(in srgb, var(--v2-background-bg-base) 22%, transparent);
+  transition: opacity 0.2s ease;
+}
+[data-component="amc-tour-spotlight"] .amc-tour-ring {
+  position: absolute;
+  /* No glow — nothing else in this UI uses one, and the scrim already says
+     "look here". Just the accent edge, the way state is marked everywhere else.
+     No fill either: this sits ON TOP of a live control, and a wash would tint
+     the very thing the reader is being taught to recognise. */
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  /* Eases between elements rather than teleporting. */
+  transition: top 0.22s cubic-bezier(0.2, 0, 0, 1), left 0.22s cubic-bezier(0.2, 0, 0, 1),
+    width 0.22s cubic-bezier(0.2, 0, 0, 1), height 0.22s cubic-bezier(0.2, 0, 0, 1);
+  /* Fades in once as the highlight lands. Keyed on the stop, so it plays per
+     stop and not on the measure tick. */
+  animation: amc-tour-arrive 0.25s ease-out both;
+}
+@keyframes amc-tour-arrive {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="amc-tour-spotlight"] .amc-tour-ring {
+    animation: none;
+  }
+}
+
+/* ── composer ⇄ dock card morph ──
+   The question / walkthrough card and the composer swap places in the same
+   dock. Without a transition the swap is an instant pop; these ease the card
+   in and out so the region reads as one surface changing shape rather than
+   two components replacing each other. Motion-reduced users get the swap with
+   no movement, which is the honest fallback for a positional animation. */
+[data-component="session-prompt-dock"] [data-component="session-question-dock"] {
+  animation: amc-dock-morph-in 0.22s cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes amc-dock-morph-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+[data-component="session-prompt-dock"] [data-component="prompt-input-v2"] {
+  animation: amc-dock-morph-in 0.22s cubic-bezier(0.2, 0, 0, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-component="session-prompt-dock"] [data-component="session-question-dock"],
+  [data-component="session-prompt-dock"] [data-component="prompt-input-v2"] {
+    animation: none;
+  }
 }

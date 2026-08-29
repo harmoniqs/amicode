@@ -36,17 +36,3 @@ export function vaultMountsState<Mount>(input: {
   const mounts = Array.isArray(input.raw.mounts) ? input.raw.mounts : []
   return mounts.length === 0 ? { kind: "empty" } : { kind: "ready", mounts }
 }
-
-/** The mount the drawer asks for its listing/file fetches. A deep-link target
- *  (context-tree note click, amicode#447) carries the vault's DIRECTORY
- *  identity from the node's path — which the mounts list may key differently
- *  (marker `name`) — so the chosen mount is sent VERBATIM and the server
- *  resolves and validates both identities; swapping it for the first listed
- *  mount was correct only while personal happened to sort first. Chips always
- *  choose listed ids, so this only widens what a deep-link may carry. */
-export function effectiveMount<Mount extends { id: string }>(
-  chosen: string | undefined,
-  mounts: readonly Mount[],
-): string | undefined {
-  return chosen ?? mounts[0]?.id
-}

@@ -205,7 +205,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
                               data-active={row.path === (root ? file.slice(root.length + 1) : file) ? "" : undefined}
                               style={{ "padding-left": `${row.depth * 16 + 8}px` }}
                               onClick={() => {
-                                const fullPath = root ? root + "/" + row.path : row.path
+                                const fullPath = root ? root + "/" + row.path! : row.path!
                                 onSelect(fullPath)
                               }}
                             >

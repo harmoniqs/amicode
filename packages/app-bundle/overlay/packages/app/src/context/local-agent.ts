@@ -11,5 +11,5 @@ export function hasAgentChoice<T extends { native?: boolean }>(items: T[]) {
 }
 
 export function resolveAgent<T extends { name: string }>(items: T[], name?: string) {
-  return items.find((item) => item.name === name) ?? items.find((item) => item.name === "plan") ?? items[0]
+  return items.find((item) => item.name === name) ?? items.find((item) => item.name === "build") ?? items[0]
 }

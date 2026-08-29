@@ -29,7 +29,7 @@ import {
   type ContextTreeScheme,
   type ContextTreeSelection,
 } from "@opencode-ai/ui/context-tree-engine"
-import { buildContextTree, vaultRefFromPath, vaultNodeLocked, type VaultMountStatus, type ContextTurn } from "@opencode-ai/ui/context-tree-data"
+import { buildContextTree, vaultRefFromPath, type ContextTurn } from "@opencode-ai/ui/context-tree-data"
 import { vaultPanel } from "@/context/vault-panel"
 import { createOpenSessionFileTab } from "@/pages/session/helpers"
 import { getSessionContext } from "./session-context-metrics"
@@ -265,22 +265,24 @@ export function SessionContextTab() {
   ] satisfies { label: string; value: () => JSX.Element }[]
 
   // ─── Context tree (relocated from the top panel per ADR 0004) ────────────
-  // per-mount browsability from GET /amicode/vaults; the wire also carries
-  // each mount's DIRECTORY identity (dirName) so a path-derived vault ref —
-  // which names the vault by its directory, not its marker-name id —
-  // resolves to the right mount instead of failing closed (amicode#447)
+  // per-mount browsability from GET /amicode/vaults
   const [vaultsRaw] = createResource(
     () => server.current,
     (conn) => amicodeGet(conn, "/amicode/vaults").catch(() => undefined),
   )
-  const vaultMounts = createMemo<readonly VaultMountStatus[] | undefined>(() => {
-    const raw = vaultsRaw() as { mounts?: { id?: string; browsable?: boolean; dirName?: string }[] } | undefined
+  const browsableMounts = createMemo<Map<string, boolean | undefined> | undefined>(() => {
+    const raw = vaultsRaw() as { mounts?: { id?: string; browsable?: boolean }[] } | undefined
     if (!raw || !Array.isArray(raw.mounts)) return undefined
-    return raw.mounts.filter(
-      (m): m is VaultMountStatus => typeof m?.id === "string",
+    return new Map(
+      raw.mounts.filter((m) => typeof m?.id === "string").map((m) => [m.id as string, m.browsable]),
     )
   })
-  const vaultLocked = (mount: string) => vaultNodeLocked({ mounts: vaultMounts(), vaultDir: mount })
+  const vaultLocked = (mount: string) => {
+    const map = browsableMounts()
+    if (!map) return false
+    if (!map.has(mount)) return true
+    return map.get(mount) === false
+  }
 
   const busy = createMemo(() => (sync().data.session_status[params.id ?? ""]?.type ?? "idle") !== "idle")
 

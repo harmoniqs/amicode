@@ -3,6 +3,7 @@ import { useSpring } from "@opencode-ai/ui/motion-spring"
 import { type Accessor, createEffect, createMemo, createResource, onCleanup } from "solid-js"
 import { createStore } from "solid-js/store"
 import type { PromptInputState } from "@/components/prompt-input"
+import { isTourRequest } from "@/pages/session/composer/session-tour"
 import { useSync } from "@/context/sync"
 import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
 import type { SessionComposerController } from "./session-composer-state"
@@ -138,7 +139,11 @@ export function createSessionComposerRegionController(input: {
     parentID,
     child: () => !!parentID(),
     archived,
-    showComposer: () => !input.state.blocked() || !!parentID() || archived(),
+    // A tour stop narrates rather than asks, so it leaves the composer up —
+    // both because nothing is actually being demanded of the reader, and
+    // because the Composer stop needs a composer on screen to point at.
+    showComposer: () =>
+      !input.state.blocked() || isTourRequest(input.state.questionRequest()) || !!parentID() || archived(),
     handoffPrompt: () => getSessionHandoff(input.sessionKey())?.prompt,
     promptReady: () => input.prompt.ready() || promptReady(),
     dock: () => (store.ready && input.state.dock()) || value() > 0.001,

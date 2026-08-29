@@ -261,7 +261,7 @@ export function PromptInputV2(props: PromptInputV2Props) {
             stopping={view.submit.stopping()}
             disabled={!props.controller.canSubmit()}
             sendLabel="Send"
-            stopLabel="Stop"
+            stopLabel="Interrupt (Esc)"
             onSubmit={props.controller.submit}
             onStop={props.controller.stop}
           />

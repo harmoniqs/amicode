@@ -4,6 +4,7 @@ import {
   insertTextAtSelection,
   installGlobalClipboardFallback,
   isEditableTarget,
+  setClipboardImageHandler,
   setSessionCopyProvider,
 } from "./global-clipboard"
 
@@ -359,7 +360,7 @@ describe("installGlobalClipboardFallback", () => {
     expect(bridge.posted).toHaveLength(0)
   })
 
-  test("non-editable targets: mod+V is a no-op (nothing to paste into)", () => {
+  test("non-editable targets: mod+V still attempts image paste (focus may be on chat messages)", async () => {
     const bridge = framedWindow()
     install(bridge.win)
     const button = document.createElement("button")
@@ -367,8 +368,10 @@ describe("installGlobalClipboardFallback", () => {
 
     const event = keydown(button, "v")
 
-    expect(event.defaultPrevented).toBe(false)
-    expect(bridge.posted).toHaveLength(0)
+    // Cmd+V is now handled even on non-editables (for image paste)
+    expect(event.defaultPrevented).toBe(true)
+    // It fires a clipboard-request to check for text first
+    expect(bridge.posted.some((m) => m.kind === "clipboard-request")).toBe(true)
   })
 
   test("unframed windows are left entirely to native clipboard handling", async () => {
@@ -694,5 +697,115 @@ describe("installGlobalClipboardFallback", () => {
     const el = field("text", "abc", 0, 3)
 
     expect(keydown(el, "a", { altKey: true }).defaultPrevented).toBe(false)
+  })
+
+  test("mod+V with empty text clipboard delivers image to the registered handler", async () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const el = field("text", "", 0, 0)
+
+    const received: File[] = []
+    setClipboardImageHandler((file) => received.push(file))
+    cleanups.push(() => setClipboardImageHandler(undefined))
+
+    keydown(el, "v")
+
+    // First the text bridge replies empty — no text on clipboard
+    const textReq = bridge.posted.find((m) => m.kind === "clipboard-request")!
+    bridge.reply({ source: "amicode", kind: "clipboard", nonce: textReq.nonce, text: "" })
+    await tick()
+
+    // Then the image bridge request fires and gets an image reply
+    const imageReq = bridge.posted.find((m) => m.kind === "clipboard-image-request")!
+    expect(imageReq).toBeDefined()
+    // Simulate a PNG data URL reply from the host
+    const pngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    bridge.reply({
+      source: "amicode",
+      kind: "clipboard-image",
+      nonce: imageReq.nonce,
+      dataUrl: pngDataUrl,
+      mime: "image/png",
+      filename: "pasted-image.png",
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0].type).toBe("image/png")
+    expect(received[0].name).toBe("pasted-image.png")
+  })
+
+  test("mod+V on a non-editable target still delivers an image to the handler", async () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+
+    // A non-editable element (like a chat message div)
+    const div = document.createElement("div")
+    div.textContent = "some chat message"
+    document.body.appendChild(div)
+
+    const received: File[] = []
+    setClipboardImageHandler((file) => received.push(file))
+    cleanups.push(() => setClipboardImageHandler(undefined))
+
+    keydown(div, "v")
+
+    // Text bridge replies empty
+    const textReq = bridge.posted.find((m) => m.kind === "clipboard-request")!
+    bridge.reply({ source: "amicode", kind: "clipboard", nonce: textReq.nonce, text: "" })
+    await tick()
+
+    // Image bridge fires and gets a reply
+    const imageReq = bridge.posted.find((m) => m.kind === "clipboard-image-request")!
+    expect(imageReq).toBeDefined()
+    const pngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    bridge.reply({
+      source: "amicode",
+      kind: "clipboard-image",
+      nonce: imageReq.nonce,
+      dataUrl: pngDataUrl,
+      mime: "image/png",
+      filename: "pasted-image.png",
+    })
+    await tick()
+
+    expect(received).toHaveLength(1)
+    expect(received[0].type).toBe("image/png")
+  })
+
+  test("mod+V with an image filename as text (Finder copy) prefers the image over the text", async () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const el = field("text", "", 0, 0)
+
+    const received: File[] = []
+    setClipboardImageHandler((file) => received.push(file))
+    cleanups.push(() => setClipboardImageHandler(undefined))
+
+    keydown(el, "v")
+
+    // Bridge replies with the filename (Finder puts this as text alongside the image)
+    const textReq = bridge.posted.find((m) => m.kind === "clipboard-request")!
+    bridge.reply({ source: "amicode", kind: "clipboard", nonce: textReq.nonce, text: "screenshot.png" })
+    await tick()
+
+    // Because it looks like an image filename, the image bridge fires
+    const imageReq = bridge.posted.find((m) => m.kind === "clipboard-image-request")!
+    expect(imageReq).toBeDefined()
+    const pngDataUrl = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    bridge.reply({
+      source: "amicode",
+      kind: "clipboard-image",
+      nonce: imageReq.nonce,
+      dataUrl: pngDataUrl,
+      mime: "image/png",
+      filename: "pasted-image.png",
+    })
+    await tick()
+
+    // Image was pasted, not the filename text
+    expect(received).toHaveLength(1)
+    expect(received[0].type).toBe("image/png")
+    expect(el.value).toBe("") // text was NOT inserted
   })
 })

@@ -3,6 +3,7 @@ import { batch, createEffect, createMemo, createSignal, onCleanup } from "solid-
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
+import { developerBootFlag } from "@/utils/amicode-developer"
 
 export interface NotificationSettings {
   agent: boolean
@@ -54,6 +55,8 @@ export interface Settings {
     enabled: boolean
     opencodePath: string
     amicodePath: string
+    devcontainerMode: boolean
+    vsixOutputPath: string
   }
   keybinds: Record<string, string>
   permissions: {
@@ -219,6 +222,8 @@ const defaultSettings: Settings = {
     enabled: false,
     opencodePath: "",
     amicodePath: "",
+    devcontainerMode: false,
+    vsixOutputPath: "/workspaces/artifacts/",
   },
   keybinds: {},
   permissions: {
@@ -562,7 +567,7 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         },
       },
       developer: {
-        enabled: withFallback(() => store.developer?.enabled, defaultSettings.developer.enabled),
+        enabled: withFallback(() => store.developer?.enabled || developerBootFlag(), defaultSettings.developer.enabled || developerBootFlag()),
         setEnabled(value: boolean) {
           setStore("developer", "enabled", value)
         },
@@ -573,6 +578,14 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         amicodePath: withFallback(() => store.developer?.amicodePath, defaultSettings.developer.amicodePath),
         setAmicodePath(value: string) {
           setStore("developer", "amicodePath", value)
+        },
+        devcontainerMode: withFallback(() => store.developer?.devcontainerMode, defaultSettings.developer.devcontainerMode),
+        setDevcontainerMode(value: boolean) {
+          setStore("developer", "devcontainerMode", value)
+        },
+        vsixOutputPath: withFallback(() => store.developer?.vsixOutputPath, defaultSettings.developer.vsixOutputPath),
+        setVsixOutputPath(value: string) {
+          setStore("developer", "vsixOutputPath", value)
         },
       },
     }

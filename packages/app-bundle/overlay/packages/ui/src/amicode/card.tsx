@@ -9,7 +9,6 @@ import { parseDiffSentinel, receiptParts, INLINE_KINDS } from "./receipt"
 import { receiptIsCurrent } from "./receipt-currency"
 import { systemReceiptPieces, formulationReceiptPieces } from "./facets"
 import { compositeChip, chipText } from "./problem"
-import { AmicoMark } from "./spinner"
 import {
   openAmicodeEntity,
   amicodeProblemView,
@@ -118,14 +117,15 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
   // (<div>) shells. Split so the shell can be a real button only when there is
   // an entity to open — a bare <button> would inherit type="submit" and fire
   // the composer form; a plain onClick <div> would be invisible to the keyboard.
-  // amicode: the "AMICO" wordmark is gone from cards — identity lives in the
-  // entity rail now (spec-20260712-amico-third-actor). The H-mark stays as a
-  // subtle leading glyph so a de-stamped card still reads as Amico's work.
-  const Sig = () => (
-    <span class="amc-sig">
-      <AmicoMark running={running()} />
-    </span>
-  )
+  // amicode: the card carries NO Amico mark. The wordmark went first (identity
+  // lives in the entity rail — spec-20260712-amico-third-actor); the H-mark
+  // followed it (Kate 2026-08-23), because on a card it was identity doing a
+  // status job. Every card in the timeline is Amico's work, so the glyph carried
+  // no information — while its opacity pulse announced "running" a third time,
+  // over the top of Detail's colour shift and the Livedot. The pulse also bottomed
+  // out at 0.32, compositing the brand yellow to #6A621F = 2.50:1 on dark and
+  // #AAAAAA = 2.23:1 on light, both under the 3:1 a UI glyph needs.
+  // Running now lives in exactly ONE place: the thought rail's dot beside the row.
   const Body = () => (
     <Show
       when={parts()}
@@ -202,10 +202,15 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
       )}
     </Show>
   )
+  // Render the trail ONLY when it has something in it. .amc-trail carries
+  // margin-left: 12px, so an empty one still pays for that gap — which is what
+  // dropping the Livedot exposed: a running card had nothing left to show but
+  // kept the space, leaving 20px on the right against the 8px on the left.
+  const hasTrail = () => state() === "done" || clickable()
   const Trail = () => (
-    <span class="amc-trail">
-      <Switch>
-        <Match when={state() === "done"}>
+    <Show when={hasTrail()}>
+      <span class="amc-trail">
+        <Show when={state() === "done"}>
           <svg class="amc-tick" viewBox="0 0 16 16" fill="none" aria-hidden="true">
             <path
               d="M3.5 8.5l3 3 6-6.5"
@@ -215,17 +220,14 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
               stroke-linejoin="round"
             />
           </svg>
-        </Match>
-        <Match when={state() === "running"}>
-          <span class="amc-livedot" aria-hidden="true" />
-        </Match>
-      </Switch>
-      <Show when={clickable()}>
-        <span class="amc-chev" aria-hidden="true">
-          ›
-        </span>
-      </Show>
-    </span>
+        </Show>
+        <Show when={clickable()}>
+          <span class="amc-chev" aria-hidden="true">
+            ›
+          </span>
+        </Show>
+      </span>
+    </Show>
   )
 
   return (
@@ -233,8 +235,6 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
       when={clickable()}
       fallback={
         <div data-component="amicode-card" data-tool={props.tool} data-state={state()} data-clickable="false">
-          <Sig />
-          <span class="amc-rule" aria-hidden="true" />
           <Body />
           <Trail />
         </div>
@@ -249,8 +249,6 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
         aria-label={openLabel()}
         onClick={open}
       >
-        <Sig />
-        <span class="amc-rule" aria-hidden="true" />
         <Body />
         <Trail />
       </button>
@@ -278,8 +276,7 @@ function Chip(props: { tool: string; status?: string; output?: string; count?: n
 export function AmicoSkillChip(props: { kind: string; name?: string; status?: string; path?: string }) {
   const running = () => props.status === "pending" || props.status === "running"
   const errored = () => props.status === "error" || props.status === "failed"
-  const state = () =>
-    errored() ? "error" : running() ? "running" : props.status === "completed" ? "done" : "idle"
+  const state = () => (errored() ? "error" : running() ? "running" : props.status === "completed" ? "done" : "idle")
 
   const open = (event: MouseEvent) => {
     event.preventDefault()
@@ -289,10 +286,6 @@ export function AmicoSkillChip(props: { kind: string; name?: string; status?: st
 
   const inner = (
     <>
-      <span class="amc-sig">
-        <AmicoMark running={running()} />
-      </span>
-      <span class="amc-rule" aria-hidden="true" />
       <span class="amc-body">
         <span class="amc-label" data-slot="amicode-skill-kind">
           {props.kind}
@@ -303,24 +296,19 @@ export function AmicoSkillChip(props: { kind: string; name?: string; status?: st
           </span>
         </Show>
       </span>
-      <span class="amc-trail">
-        <Switch>
-          <Match when={state() === "done"}>
-            <svg class="amc-tick" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-              <path
-                d="M3.5 8.5l3 3 6-6.5"
-                stroke="currentColor"
-                stroke-width="1.75"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              />
-            </svg>
-          </Match>
-          <Match when={state() === "running"}>
-            <span class="amc-livedot" aria-hidden="true" />
-          </Match>
-        </Switch>
-      </span>
+      <Show when={state() === "done"}>
+        <span class="amc-trail">
+          <svg class="amc-tick" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path
+              d="M3.5 8.5l3 3 6-6.5"
+              stroke="currentColor"
+              stroke-width="1.75"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </span>
+      </Show>
     </>
   )
 

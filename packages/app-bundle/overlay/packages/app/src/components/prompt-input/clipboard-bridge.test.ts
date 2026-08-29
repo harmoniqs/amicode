@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { readClipboardViaBridge, writeClipboardViaBridge } from "./clipboard-bridge"
+import { readClipboardImageViaBridge, readClipboardViaBridge, writeClipboardViaBridge } from "./clipboard-bridge"
 
 type Listener = (event: MessageEvent) => void
 
@@ -120,5 +120,71 @@ describe("writeClipboardViaBridge", () => {
 
     expect(writeClipboardViaBridge("ignored", win)).toBe(false)
     expect(posted).toHaveLength(0)
+  })
+})
+
+describe("readClipboardImageViaBridge", () => {
+  test("posts clipboard-image-request and resolves with a File from the data URL reply", async () => {
+    const bridge = fakeFramedWindow()
+    const pending = readClipboardImageViaBridge(bridge.win)
+
+    expect(bridge.posted).toHaveLength(1)
+    const request = bridge.posted[0]
+    expect(request.source).toBe("amicode")
+    expect(request.kind).toBe("clipboard-image-request")
+    expect(typeof request.nonce).toBe("string")
+
+    // Simulate the extension host reply (routed through the outer webview)
+    // Minimal 1x1 red PNG as base64
+    const pngBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
+    bridge.reply({
+      source: "amicode",
+      kind: "clipboard-image",
+      nonce: request.nonce,
+      dataUrl: `data:image/png;base64,${pngBase64}`,
+      mime: "image/png",
+      filename: "pasted-image.png",
+    })
+
+    const file = await pending
+    expect(file).not.toBeNull()
+    expect(file!.name).toBe("pasted-image.png")
+    expect(file!.type).toBe("image/png")
+    expect(file!.size).toBeGreaterThan(0)
+  })
+
+  test("resolves null when the reply carries no image (clipboard had no image)", async () => {
+    const bridge = fakeFramedWindow()
+    const pending = readClipboardImageViaBridge(bridge.win)
+    const request = bridge.posted[0]
+
+    bridge.reply({
+      source: "amicode",
+      kind: "clipboard-image",
+      nonce: request.nonce,
+      dataUrl: null,
+      mime: null,
+      filename: null,
+    })
+
+    expect(await pending).toBeNull()
+  })
+
+  test("resolves null on timeout (extension host unreachable)", async () => {
+    const bridge = fakeFramedWindow()
+    const pending = readClipboardImageViaBridge(bridge.win, 15)
+    // No reply — timeout fires
+    expect(await pending).toBeNull()
+  })
+
+  test("resolves null when the app is not framed", async () => {
+    const win = {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    } as unknown as Window
+    ;(win as unknown as { parent: Window }).parent = win
+
+    expect(await readClipboardImageViaBridge(win)).toBeNull()
   })
 })
