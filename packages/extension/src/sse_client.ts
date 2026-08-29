@@ -1,6 +1,7 @@
 import * as http from "node:http";
 import * as vscode from "vscode";
 import type { StatusBarManager } from "./status_bar";
+import { SseLivenessTracker, type SseState } from "./sse_liveness";
 
 // ============================================================================
 // OpencodeEventClient — Channel 1 of the bidirectional plumbing.
@@ -25,6 +26,9 @@ export interface SseClientOptions {
    *  without it the fork 401s /event and the reconnect loop spins forever.
    *  Never logged; the value exists only on the wire. */
   authorization?: string;
+  /** Liveness states (L1, #638): fired on every transition. The status bar
+   *  is driven automatically from this; this hook is for any other sink. */
+  onSseState?: (from: SseState, to: SseState) => void;
 }
 
 export class OpencodeEventClient implements vscode.Disposable {
@@ -34,17 +38,67 @@ export class OpencodeEventClient implements vscode.Disposable {
   private url?: URL;
   private reconnectTimer?: NodeJS.Timeout;
   private disposed = false;
+  private liveness?: SseLivenessTracker;
 
   constructor(private readonly opts: SseClientOptions) {}
 
   connect(serverUrl: URL): void {
     this.url = new URL("/event", serverUrl);
     this.opts.channel.appendLine(`[sse] connecting to ${this.url}`);
+    // Liveness (L1, #638): frames are the truth; the probe splits a quiet
+    // half-open stream from a dead server; every transition reaches the
+    // status bar and the caller's hook — "thinking" is never unbacked.
+    this.liveness?.dispose();
+    this.liveness = new SseLivenessTracker({
+      probe: () => this.probeServer(),
+      log: (line) => this.opts.channel.appendLine(line),
+      onStateChange: (from, to) => {
+        this.opts.onSseState?.(from, to);
+        this.opts.statusBar?.setSseState(to);
+      },
+      onReconnectNeeded: () => {
+        // half-open: the server is alive but this stream will never speak
+        // again — tear it down; the reconnect loop reopens fresh
+        try {
+          this.req?.destroy();
+        } catch {
+          /* noop */
+        }
+        try {
+          this.res?.destroy();
+        } catch {
+          /* noop */
+        }
+        this.scheduleReconnect();
+      },
+    });
+    this.liveness.start();
     this.openOnce();
+  }
+
+  /** The stream's honest state — for callers and tests. */
+  get sseState(): SseState {
+    return this.liveness?.getState() ?? "connecting";
+  }
+
+  /** A short-timeout GET on the server root with the same credential the
+   *  stream uses — the STALE branch's dead-or-alive question. */
+  private async probeServer(): Promise<boolean> {
+    if (!this.url) return false;
+    try {
+      const r = await fetch(this.url.origin, {
+        signal: AbortSignal.timeout(2_000),
+        headers: this.opts.authorization ? { Authorization: this.opts.authorization } : undefined,
+      });
+      return r.status > 0;
+    } catch {
+      return false;
+    }
   }
 
   dispose(): void {
     this.disposed = true;
+    this.liveness?.dispose();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     try {
       this.req?.destroy();
@@ -74,25 +128,30 @@ export class OpencodeEventClient implements vscode.Disposable {
       (res) => {
         this.res = res;
         if (res.statusCode !== 200) {
+          this.liveness?.noteDisconnected();
           this.opts.channel.appendLine(`[sse] bad status ${res.statusCode}; will retry`);
           this.scheduleReconnect();
           return;
         }
         this.opts.channel.appendLine(`[sse] connected`);
+        this.liveness?.noteConnected();
         res.setEncoding("utf8");
         res.on("data", (chunk: string) => this.onChunk(chunk));
         res.on("end", () => {
           this.opts.channel.appendLine(`[sse] stream ended; will retry`);
+          this.liveness?.noteDisconnected();
           this.scheduleReconnect();
         });
         res.on("error", (err) => {
           this.opts.channel.appendLine(`[sse] response error: ${err.message}`);
+          this.liveness?.noteDisconnected();
           this.scheduleReconnect();
         });
       },
     );
     req.on("error", (err) => {
       this.opts.channel.appendLine(`[sse] req error: ${err.message}`);
+      this.liveness?.noteDisconnected();
       this.scheduleReconnect();
     });
     req.end();
@@ -109,6 +168,9 @@ export class OpencodeEventClient implements vscode.Disposable {
   }
 
   private onChunk(chunk: string): void {
+    // ANY bytes = the stream is speaking (events or comment-only pings —
+    // the liveness signal the old client discarded, #638)
+    this.liveness?.noteFrame();
     this.buf += chunk;
     // SSE events terminate on a blank line (\n\n).
     let sep: number;
