@@ -1,6 +1,5 @@
 import { For, Show, createEffect, createMemo, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
-import { AmicoMark } from "./spinner"
 import { fetchAmicodeRunSeries, openAmicodeEntity } from "./ui-bridge"
 import { heroPaths, objectivePath } from "./run-plot"
 import {
@@ -157,12 +156,12 @@ export function RunWindow(props: { run: string; lab?: string }) {
         cursor: "pointer",
       }}
     >
-      {/* header: [H] Run · status · iter · metric · elapsed (AMICO wordmark
-          dropped — identity lives in the rail; spec-20260712-amico-third-actor) */}
+      {/* header: Run · status · iter · metric · spark · elapsed. No Amico mark:
+          the wordmark went first (identity lives in the rail —
+          spec-20260712-amico-third-actor) and the H-mark followed it on every
+          amicode surface (Kate 2026-08-23). This panel is unmistakably Amico's
+          without a stamp, and the glyph only repeated what "Run" already says. */}
       <div style={{ display: "flex", "align-items": "center", gap: "8px", "flex-wrap": "wrap", "min-width": "0" }}>
-        <span class="amc-sig">
-          <AmicoMark />
-        </span>
         <span style={{ "font-weight": "600", color: "var(--v2-text-text-base)" }}>Run</span>
         <Show
           when={run()}

@@ -198,6 +198,7 @@ export default {
           \`parent_id\` text,
           \`slug\` text NOT NULL,
           \`directory\` text NOT NULL,
+          \`directories\` text,
           \`path\` text,
           \`title\` text NOT NULL,
           \`version\` text NOT NULL,

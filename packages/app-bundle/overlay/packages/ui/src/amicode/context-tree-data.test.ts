@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildContextTree, contextKind, vaultNodeLocked, vaultRefFromPath, type ContextTurn } from "./context-tree-data"
+import { buildContextTree, contextKind, vaultRefFromPath, type ContextTurn } from "./context-tree-data"
 
 const turn = (id: string, refs: ContextTurn["refs"], busy = false): ContextTurn => ({
   id,
@@ -25,35 +25,6 @@ describe("vaultRefFromPath", () => {
       rel: "insights/x.md",
     })
     expect(vaultRefFromPath("/Users/k/project/src/x.ts")).toBeUndefined()
-  })
-})
-
-// amicode#447: a vault path names the mount by its DIRECTORY segment, which
-// the /amicode/vaults wire may key differently (marker `name`) — the lock
-// decision must reconcile through the wire's dirName before failing closed.
-describe("vaultNodeLocked", () => {
-  const mounts = [
-    { id: "aaron", browsable: true, dirName: "armonia-aaron-trowbridge" },
-    { id: "armonissima", browsable: false, dirName: "armonissima" },
-  ]
-
-  test("dir≠name mounts unlock through their dirName identity", () => {
-    expect(vaultNodeLocked({ mounts, vaultDir: "armonia-aaron-trowbridge" })).toBe(false)
-  })
-
-  test("non-browsable mounts lock through either identity; unknown locks", () => {
-    expect(vaultNodeLocked({ mounts, vaultDir: "armonissima" })).toBe(true)
-    expect(vaultNodeLocked({ mounts, vaultDir: "secret-mount" })).toBe(true)
-  })
-
-  test("an id-keyed wire without dirName still locks/unlocks by id", () => {
-    const legacy = [{ id: "armonissima", browsable: false }]
-    expect(vaultNodeLocked({ mounts: legacy, vaultDir: "armonissima" })).toBe(true)
-    expect(vaultNodeLocked({ mounts: legacy, vaultDir: "armonia-aaron-trowbridge" })).toBe(true) // unknown → fail closed
-  })
-
-  test("no wire data never locks — the server still enforces the real gate", () => {
-    expect(vaultNodeLocked({ mounts: undefined, vaultDir: "armonia-aaron-trowbridge" })).toBe(false)
   })
 })
 

@@ -61,12 +61,25 @@ export function readClipboardViaBridge(win: Window = window, timeoutMs = BRIDGE_
         resolve(text)
         return
       }
+      // The bridge replied (or timed out) with empty text. Only fall back to
+      // navigator.clipboard.readText() on framed hosts WITHOUT the amicode relay
+      // (e.g. VS Code Simple Browser) — identified by the bridge timing out
+      // (no reply at all). When the bridge DID reply with empty, trust it: the
+      // extension host's vscode.env.clipboard.readText() is authoritative, and
+      // readTextDirect() can spuriously succeed with stale/unrelated text when
+      // the iframe has transient user activation, blocking the image paste path.
+      if (bridgeReplied) {
+        resolve("")
+        return
+      }
       void readTextDirect(win).then(resolve)
     }
 
+    let bridgeReplied = false
     const onMessage = (event: MessageEvent) => {
       const data = event.data as { source?: string; kind?: string; nonce?: string; text?: string } | undefined
       if (data?.source !== "amicode" || data.kind !== "clipboard" || data.nonce !== nonce) return
+      bridgeReplied = true
       finish(typeof data.text === "string" ? data.text : "")
     }
 

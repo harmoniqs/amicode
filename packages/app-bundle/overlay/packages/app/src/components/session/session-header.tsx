@@ -8,8 +8,7 @@ import { Keybind } from "@opencode-ai/ui/keybind"
 import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
 import { showToast } from "@/utils/toast"
 import { Tooltip, TooltipKeybind } from "@opencode-ai/ui/tooltip"
-import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { DialogFooter, DialogHeader, DialogTitleGroup, DialogV2 } from "@opencode-ai/ui/v2/dialog-v2"
+
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { batch, createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js"
@@ -22,8 +21,6 @@ import { useLayout } from "@/context/layout"
 import { usePlatform } from "@/context/platform"
 import { useServer, ServerConnection } from "@/context/server"
 import { useSettings } from "@/context/settings"
-import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
-import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { useSync } from "@/context/sync"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
 import { useTerminal } from "@/context/terminal"
@@ -34,6 +31,8 @@ import { decode64 } from "@/utils/base64"
 import { fileManagerApp } from "@/utils/file-manager"
 import { Persist, persisted } from "@/utils/persist"
 import { sessionTitle } from "@/utils/session-title"
+import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
+import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { StatusPopover, StatusPopoverV2 } from "../status-popover"
 import { statusTriggerVisibility } from "../status-popover-model"
 import { useServerSync } from "@/context/server-sync"
@@ -268,6 +267,7 @@ export function SessionHeader() {
   const v2ActionsState = createMemo<SessionHeaderV2ActionsState>(() => ({
     statusDotVisible: statusVis().healthDot,
     statusLabel: language.t("status.popover.trigger"),
+    currentSessionID: params.id,
     reviewLabel: language.t("command.review.toggle"),
     reviewKeybind: reviewTooltipKeybind(command),
     reviewVisible: isDesktop(),
@@ -567,6 +567,7 @@ type SessionHeaderV2ActionsState = {
    *  show-status setting only drives this health-dot flag. */
   statusDotVisible: boolean
   statusLabel: string
+  currentSessionID?: string
   reviewLabel: string
   reviewKeybind: string[]
   reviewVisible: boolean
@@ -582,11 +583,15 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
     <div class="flex items-center gap-2">
 
       {/* amicode#274: Session Chats Dropdown — chat navigation from within a session */}
-      <SessionChatsDropdown />
+      <span class="flex shrink-0" data-tour-target="sessions">
+        <SessionChatsDropdown currentSessionID={props.state.currentSessionID} />
+      </span>
       <Show when={!AMICODE_HIDE_STATUS_POPOVER}>
-        <TooltipV2 placement="bottom" value={props.state.statusLabel} class="shrink-0">
-          <StatusPopoverV2 healthDot={props.state.statusDotVisible} />
-        </TooltipV2>
+        <span class="flex shrink-0" data-tour-target="status">
+          <TooltipV2 placement="bottom" value={props.state.statusLabel} class="shrink-0">
+            <StatusPopoverV2 healthDot={props.state.statusDotVisible} />
+          </TooltipV2>
+        </span>
       </Show>
       <Show when={props.state.reviewVisible}>
         <TooltipV2
@@ -601,17 +606,19 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
             </>
           }
         >
-          <IconButtonV2
-            type="button"
-            variant="ghost-muted"
-            size="large"
-            class="!w-9 shrink-0"
-            state={props.state.reviewOpened ? "pressed" : undefined}
-            onClick={props.state.onReviewToggle}
-            aria-label={props.state.reviewLabel}
-            aria-controls="review-panel"
-            icon={<IconV2 name="sidebar-right" />}
-          />
+          <span class="flex shrink-0" data-tour-target="side-panel">
+            <IconButtonV2
+              type="button"
+              variant="ghost-muted"
+              size="large"
+              class="!w-9 shrink-0"
+              state={props.state.reviewOpened ? "pressed" : undefined}
+              onClick={props.state.onReviewToggle}
+              aria-label={props.state.reviewLabel}
+              aria-controls="review-panel"
+              icon={<IconV2 name="sidebar-right" />}
+            />
+          </span>
         </TooltipV2>
       </Show>
     </div>
@@ -624,14 +631,13 @@ function SessionHeaderV2Actions(props: { state: SessionHeaderV2ActionsState }) {
 const SESSION_DROPDOWN_ROW =
   "flex min-w-0 w-full shrink-0 cursor-default items-center rounded-sm bg-transparent text-left transition-[background-color,color,box-shadow] duration-[120ms] ease-in-out focus-visible:outline-none h-7 gap-2 px-1.5 [font-weight:440] text-v2-text-text-muted hover:bg-v2-overlay-simple-overlay-hover hover:text-v2-text-text-base focus-visible:bg-v2-overlay-simple-overlay-hover focus-visible:text-v2-text-text-base"
 
-function SessionChatsDropdown() {
+export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) {
   const tabs = useTabs()
   const server = useServer()
   const serverSync = useServerSync()
   const globalCtx = useGlobal()
   const language = useLanguage()
   const navigate = useNavigate()
-  const { params } = useSessionLayout()
 
   const [open, setOpen] = createSignal(false)
   const [flyoutTab, setFlyoutTab] = createSignal<"active" | "archived">("active")
@@ -644,7 +650,7 @@ function SessionChatsDropdown() {
 
   let flyoutRoot: HTMLDivElement | undefined
 
-  const currentSessionID = createMemo(() => params.id)
+  const currentSessionID = createMemo(() => props.currentSessionID)
 
   // Active sessions — only computed when the flyout is open to avoid
   // triggering reactive subscriptions (serverSync().child pins the directory
@@ -788,32 +794,22 @@ function SessionChatsDropdown() {
     }
   }
 
-  // amicode#310: permanently delete an archived session with confirmation dialog.
-  const dialog = useDialog()
-  function deleteArchivedSession(session: Session) {
-    dialog.show(() => (
-      <DialogDeleteArchivedSession
-        session={session}
-        onConfirm={async () => {
-          const ctx = getServerCtx()
-          if (!ctx) return
-          try {
-            await (ctx.sdk.client.session.delete as Function)({
-              sessionID: session.id,
-              directory: session.directory,
-            })
-            setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
-          } catch (cause) {
-            showToast({
-              title: language.t("session.delete.failed.title"),
-              description: String(cause),
-            })
-          }
-          dialog.close()
-        }}
-        onCancel={() => dialog.close()}
-      />
-    ))
+  // amicode#255: permanently delete an archived session (inline confirm in row).
+  async function deleteArchivedSession(session: Session) {
+    const ctx = getServerCtx()
+    if (!ctx) return
+    try {
+      await (ctx.sdk.client.session.delete as Function)({
+        sessionID: session.id,
+        directory: session.directory,
+      })
+      setArchivedSessions((prev) => prev.filter((s) => s.id !== session.id))
+    } catch (cause) {
+      showToast({
+        title: language.t("session.delete.failed.title"),
+        description: String(cause),
+      })
+    }
   }
 
   async function openSession(session: Session) {
@@ -1077,14 +1073,19 @@ function SessionDropdownRow(props: {
 }) {
   const language = useLanguage()
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
-  // The dot used to mean "this session is an open tab" and was therefore always
-  // the same green. It now reports the SAME status the tab strip shows, computed
-  // from the same hook, so a session reads identically in both places.
   const rowServer = useServer()
   const status = useSessionTabAvatarState(
     () => rowServer.key,
     () => props.session.directory,
     () => props.session.id,
+  )
+  const dotStatus = createMemo(() =>
+    sessionTabStatus({
+      loading: status.loading(),
+      needsAttention: status.needsAttention(),
+      hasError: status.hasError(),
+      unread: status.unread(),
+    }),
   )
 
   return (
@@ -1095,14 +1096,9 @@ function SessionDropdownRow(props: {
         class={SESSION_DROPDOWN_ROW}
         onClick={() => props.onOpen(props.session)}
       >
-        <SessionTabStatusDot
-          status={sessionTabStatus({
-            loading: status.loading(),
-            needsAttention: status.needsAttention(),
-            hasError: status.hasError(),
-            unread: status.unread(),
-          })}
-        />
+        <Show when={props.isOpenTab || dotStatus() !== "idle"}>
+          <SessionTabStatusDot status={dotStatus()} />
+        </Show>
         <span class="min-w-0 flex-[1_1_auto] overflow-hidden text-ellipsis whitespace-nowrap">
           {title()}
         </span>
@@ -1134,6 +1130,31 @@ function ArchivedSessionDropdownRow(props: {
   onDelete: (session: Session) => void
 }) {
   const title = createMemo(() => sessionTitle(props.session.title) || props.session.id)
+  const [armed, setArmed] = createSignal(false)
+  let resetTimer: ReturnType<typeof setTimeout> | undefined
+
+  function arm(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    setArmed(true)
+    clearTimeout(resetTimer)
+    resetTimer = setTimeout(() => setArmed(false), 3000)
+  }
+
+  function confirmDelete(event: MouseEvent) {
+    event.preventDefault()
+    event.stopPropagation()
+    clearTimeout(resetTimer)
+    setArmed(false)
+    void props.onDelete(props.session)
+  }
+
+  function disarm() {
+    clearTimeout(resetTimer)
+    setArmed(false)
+  }
+
+  onCleanup(() => clearTimeout(resetTimer))
 
   return (
     <div class="group/archived relative flex h-7 min-w-0 items-center rounded-sm">
@@ -1163,50 +1184,37 @@ function ArchivedSessionDropdownRow(props: {
             }}
           />
         </TooltipV2>
-        <TooltipV2 placement="top" value="Delete permanently">
-          <IconButtonV2
-            data-action="session-dropdown-delete"
-            variant="ghost-muted"
-            size="large"
-            icon={<Icon name="trash" size="small" />}
-            aria-label="Delete permanently"
-            onClick={(event: MouseEvent) => {
-              event.preventDefault()
-              event.stopPropagation()
-              void props.onDelete(props.session)
-            }}
-          />
-        </TooltipV2>
+        <Show
+          when={armed()}
+          fallback={
+            <TooltipV2 placement="top" value="Delete permanently">
+              <IconButtonV2
+                data-action="session-dropdown-delete"
+                variant="ghost-muted"
+                size="large"
+                icon={<Icon name="trash" size="small" />}
+                aria-label="Delete permanently"
+                onClick={arm}
+              />
+            </TooltipV2>
+          }
+        >
+          <ButtonV2
+            data-action="session-dropdown-delete-confirm"
+            variant="danger"
+            size="small"
+            aria-label="Confirm delete"
+            aria-live="polite"
+            onClick={confirmDelete}
+            onBlur={disarm}
+            onKeyDown={(e: KeyboardEvent) => e.key === "Escape" && disarm()}
+          >
+            Delete
+          </ButtonV2>
+        </Show>
       </div>
     </div>
   )
 }
 
-// amicode#310: confirmation dialog for permanently deleting an archived session.
-function DialogDeleteArchivedSession(props: {
-  session: Session
-  onConfirm: () => void
-  onCancel: () => void
-}) {
-  const language = useLanguage()
-  const name = createMemo(() => sessionTitle(props.session.title) || props.session.id)
 
-  return (
-    <DialogV2 fit>
-      <DialogHeader hideClose>
-        <DialogTitleGroup
-          title={language.t("session.delete.title")}
-          description={language.t("session.delete.confirm", { name: name() })}
-        />
-      </DialogHeader>
-      <DialogFooter>
-        <ButtonV2 variant="ghost" onClick={props.onCancel}>
-          {language.t("common.cancel")}
-        </ButtonV2>
-        <ButtonV2 variant="danger" onClick={props.onConfirm}>
-          {language.t("session.delete.button")}
-        </ButtonV2>
-      </DialogFooter>
-    </DialogV2>
-  )
-}

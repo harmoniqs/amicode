@@ -16,8 +16,10 @@ import { join } from "node:path"
 // The current design removes the composers' keydown interception entirely:
 // the window-level fallback is the SOLE ⌘V path in the webview (single
 // insert), and the native paste event path (composer onPaste → handlePaste)
-// remains for chords the fallback doesn't own (⌘⇧V). Image/screenshot paste
-// over ⌘V is knowingly sacrificed — the fallback reads text only.
+// remains for chords the fallback doesn't own (⌘⇧V). Image paste over ⌘V
+// works via the fallback's readClipboardImageViaBridge when text is empty —
+// the extension host reads the clipboard image natively and replies with a
+// data URL.
 //
 // This is a SOURCE assertion rather than a rendered-DOM one because the app has
 // no component-render harness (no @solidjs/testing-library) — the same reason

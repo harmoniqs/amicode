@@ -2,19 +2,19 @@ import { describe, expect, test } from "bun:test"
 import { sessionTabStatus } from "./session-tab-status"
 
 describe("sessionTabStatus precedence", () => {
-  test("blocked beats busy — a spinner must not hide a question", () => {
-    expect(sessionTabStatus({ loading: true, needsAttention: true, unread: true, hasError: true })).toBe("attention")
+  test("error is loudest — red even when running", () => {
+    expect(sessionTabStatus({ loading: true, needsAttention: true, unread: true, hasError: true })).toBe("error")
   })
-  test("running beats error and unread", () => {
-    expect(sessionTabStatus({ loading: true, needsAttention: false, unread: true, hasError: true })).toBe("running")
+  test("running when no error — yellow", () => {
+    expect(sessionTabStatus({ loading: true, needsAttention: false, unread: false, hasError: false })).toBe("running")
   })
-  test("error beats plain unread, which would otherwise swallow it", () => {
-    expect(sessionTabStatus({ loading: false, needsAttention: false, unread: true, hasError: true })).toBe("error")
-  })
-  test("unread when nothing louder", () => {
+  test("done when unread — green", () => {
     expect(sessionTabStatus({ loading: false, needsAttention: false, unread: true, hasError: false })).toBe("done")
   })
-  test("idle", () => {
+  test("done when needs attention — green", () => {
+    expect(sessionTabStatus({ loading: false, needsAttention: true, unread: false, hasError: false })).toBe("done")
+  })
+  test("idle when done and seen — grey", () => {
     expect(sessionTabStatus({ loading: false, needsAttention: false, unread: false, hasError: false })).toBe("idle")
   })
 })

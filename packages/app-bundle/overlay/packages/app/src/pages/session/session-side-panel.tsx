@@ -319,6 +319,8 @@ export function SessionSidePanel(props: {
   const open = createMemo(() => reviewOpen() || fileOpen())
   const fileTreeWidth = createMemo(() => Math.max(FILE_TREE_WIDTH_MIN, layout.fileTree.width()))
   const reviewTab = createMemo(() => isDesktop())
+  // Files Changed closes like any other tab and comes back from the panel menu.
+  const [reviewTabOpen, setReviewTabOpen] = createSignal(true)
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
     // the tabs column owns its width (never flex-fills the window) and can be
@@ -464,6 +466,13 @@ export function SessionSidePanel(props: {
   // Preview are the secondary tabs, and Pulse Inspector is the third requested tab.
   const panelMenuItems = createMemo((): PanelMenuItem[] => [
     {
+      id: "review",
+      label: "Files Changed",
+      icon: "review",
+      available: () => reviewTab() && props.canReview(),
+      active: reviewTabOpen,
+    },
+    {
       id: "context",
       label: "Context",
       icon: "context-ring",
@@ -488,6 +497,14 @@ export function SessionSidePanel(props: {
   ])
 
   const handlePanelMenuSelect = (id: string) => {
+    // Files Changed is the panel's own trigger, not a managed tab — reopening
+    // it is just clearing the closed flag.
+    if (id === "review") {
+      setReviewTabOpen(true)
+      tabs().setActive("review")
+      openReviewPanel()
+      return
+    }
     tabs().open(id)
     tabs().setActive(id)
     openReviewPanel()
@@ -868,11 +885,33 @@ export function SessionSidePanel(props: {
                                 <div>Home</div>
                               </div>
                             </Tabs.Trigger>
-                            <Show when={reviewTab() && props.canReview()}>
+                            <Show when={reviewTab() && props.canReview() && reviewTabOpen()}>
                               <Tabs.Trigger
                                 value="review"
                                 id={reviewTabID}
                                 aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                closeButton={
+                                  <TooltipV2
+                                    value={
+                                      <>
+                                        {language.t("common.closeTab")}
+                                        <Show when={closeTabKeybind().length > 0}>
+                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                        </Show>
+                                      </>
+                                    }
+                                    placement="bottom"
+                                    gutter={10}
+                                  >
+                                    <IconButton
+                                      icon="close-small"
+                                      variant="ghost"
+                                      class="h-5 w-5"
+                                      onClick={() => setReviewTabOpen(false)}
+                                      aria-label={language.t("common.closeTab")}
+                                    />
+                                  </TooltipV2>
+                                }
                               >
                                 <div class="flex items-center gap-1.5">
                                   <Icon name="review" size="small" />

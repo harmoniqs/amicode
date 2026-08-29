@@ -248,9 +248,9 @@ function PrimaryButton(props: { children: JSX.Element; onClick: () => void; slot
 // MEET AMICO — static identity + capabilities (the H-bot's home)
 // ---------------------------------------------------------------------------
 const AMICO_CAN = [
-  "run automated experiments from a conversation",
-  "verify results independently before trusting them",
-  "remember your work and build on prior results",
+  "design pulses from a conversation",
+  "optimize for fidelity, speed, or robustness",
+  "warm-start from your pulse bank",
   "tune & calibrate on real hardware",
 ]
 

@@ -15,6 +15,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useServerSDK } from "@/context/server-sdk"
 import { ScopedKey } from "@/utils/server-scope"
 import { questionCustomRow, questionText, questionTextReady } from "./session-question-dock.helpers"
+import { isTourRequest, setTourQuestionIndex } from "./session-tour"
 
 const cache = new Map<string, { tab: number; answers: QuestionAnswer[]; custom: string[]; customOn: boolean[] }>()
 
@@ -85,6 +86,10 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
     optionsHeight: 180,
   })
 
+  // Publish which question is showing so the onboarding tour's spotlight can
+  // follow a multi-question card as the reader steps through it.
+  createEffect(() => setTourQuestionIndex(store.tab))
+
   let root: HTMLDivElement | undefined
   let optionsRef: HTMLDivElement | undefined
   let customRef: HTMLButtonElement | undefined
@@ -104,8 +109,13 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
   const customRow = createMemo(() => questionCustomRow(question()))
   const count = createMemo(() => (text() ? 0 : options().length + 1))
 
+  // A walkthrough stop narrates; it is not a question being put to the reader.
+  // It gets prose, a Next button and a way out — no options, no answer hint,
+  // no "N questions" framing.
+  const isTour = createMemo(() => isTourRequest(props.request))
   const summary = createMemo(() => {
     const n = Math.min(store.tab + 1, total())
+    if (isTour()) return `Stop ${n} of ${total()}`
     return language.t("session.question.progress", { current: n, total: total() })
   })
   const customLabel = () => language.t("ui.messagePart.option.typeOwnAnswer")
@@ -517,7 +527,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
                   ·
                 </span>{" "}
                 <span style={{ color: "var(--v2-text-text-base)", "letter-spacing": "normal", "font-weight": "600" }}>
-                  Question
+                  {isTour() ? "Walkthrough" : "Question"}
                 </span>
               </div>
               {summary()}
@@ -559,7 +569,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         footer={
           <>
             <Button variant="ghost" size="large" disabled={sending()} onClick={reject} aria-keyshortcuts="Escape">
-              {language.t("ui.common.dismiss")}
+              {isTour() ? "Skip walkthrough" : language.t("ui.common.dismiss")}
             </Button>
             <div data-slot="question-footer-actions">
               <Show when={store.tab > 0}>
@@ -568,13 +578,19 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
                 </Button>
               </Show>
               <Button
-                variant={last() ? "primary" : "secondary"}
+                variant={last() || isTour() ? "primary" : "secondary"}
                 size="large"
                 disabled={sending() || (text() && !questionTextReady(input()))}
                 onClick={next}
                 aria-keyshortcuts="Meta+Enter Control+Enter"
               >
-                {last() ? language.t("ui.common.submit") : language.t("ui.common.next")}
+                {isTour()
+                  ? last()
+                    ? "Finish"
+                    : language.t("ui.common.next")
+                  : last()
+                    ? language.t("ui.common.submit")
+                    : language.t("ui.common.next")}
               </Button>
             </div>
           </>
@@ -591,11 +607,12 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
         >
           {question()?.question}
         </div>
-        <Show when={!store.minimized && !text()}>
+        <Show when={!store.minimized && !text() && !isTour()}>
           <Show when={multi()} fallback={<div data-slot="question-hint">{language.t("ui.question.singleHint")}</div>}>
             <div data-slot="question-hint">{language.t("ui.question.multiHint")}</div>
           </Show>
         </Show>
+        <Show when={!isTour()}>
         <div
           ref={(el) => (optionsRef = el)}
           data-slot="question-options"
@@ -730,6 +747,7 @@ export const SessionQuestionDock: Component<{ request: QuestionRequest; onSubmit
             </Show>
           </Show>
         </div>
+        </Show>
       </DockPrompt>
     </div>
   )

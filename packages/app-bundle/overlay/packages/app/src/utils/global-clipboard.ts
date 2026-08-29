@@ -24,6 +24,12 @@ export function setClipboardImageHandler(handler?: (file: File) => void): void {
   clipboardImageHandler = handler
 }
 
+/** Clear the handler only if it's still the given reference — prevents a
+ *  disposing component from wiping a newer component's handler. */
+export function clearClipboardImageHandler(handler: (file: File) => void): void {
+  if (clipboardImageHandler === handler) clipboardImageHandler = undefined
+}
+
 // Session copy provider: registered by the session page to serialize the full
 // session from the data model (messages + parts → text). The clipboard handler
 // calls this on Cmd+C after a "select all" instead of reading from the DOM
@@ -44,6 +50,13 @@ let fullSessionCopyPending = false
 // still mirror to the OS clipboard even inside marked subtrees — otherwise
 // copying from the prompt would paste stale content.
 export const CLIPBOARD_SELF_SELECTOR = '[data-amc-clipboard="self"]'
+
+// When a file is copied in Finder, the clipboard carries both the image data
+// AND the filename as plain text. Detect this so we prefer the image.
+const IMAGE_FILENAME_RE = /^[^\n]{1,255}\.(png|jpe?g|gif|webp|avif|tiff?|bmp|svg|ico|heic)$/i
+function looksLikeImageFilename(text: string): boolean {
+  return IMAGE_FILENAME_RE.test(text.trim())
+}
 
 type FormField = HTMLInputElement | HTMLTextAreaElement
 
@@ -256,7 +269,20 @@ export function installGlobalClipboardFallback(win: Window = window): () => void
         }
         return
       }
-      // V/Z/Y on non-editables: no-op (nothing to paste into or undo)
+      // V/Z/Y on non-editables: paste still works for images (screenshots
+      // pasted while reading chat), undo/redo are no-ops.
+      if (key === "v") {
+        event.preventDefault()
+        void readClipboardViaBridge(win).then(async (text) => {
+          if (text && !looksLikeImageFilename(text)) {
+            // Text paste on non-editable: no-op (nowhere to insert)
+            return
+          }
+          if (!clipboardImageHandler) return
+          const file = await readClipboardImageViaBridge(win)
+          if (file) clipboardImageHandler(file)
+        })
+      }
       return
     }
 
@@ -317,17 +343,25 @@ export function installGlobalClipboardFallback(win: Window = window): () => void
       // an empty or dead bridge reply degrades to a no-op (see clipboard-bridge).
       event.preventDefault()
       void readClipboardViaBridge(win).then(async (text) => {
-        if (text) {
+        if (text && !looksLikeImageFilename(text)) {
           insertTextAtSelection(target, text)
           return
         }
-        // No text on the clipboard: offer media. Mirrors the composer's own
-        // handlePaste precedence (image only when there is no plain text), so
-        // text pastes keep their exact single-value sequence with no extra
-        // round-trip.
-        if (!clipboardImageHandler) return
+        // No text on the clipboard, OR the text is just an image filename
+        // (Finder file copy puts the filename as text alongside the image data).
+        // Try the image bridge — if it has an image, prefer that.
+        if (!clipboardImageHandler) {
+          // No image handler registered; insert text if we have any
+          if (text) insertTextAtSelection(target, text)
+          return
+        }
         const file = await readClipboardImageViaBridge(win)
-        if (file) clipboardImageHandler(file)
+        if (file) {
+          clipboardImageHandler(file)
+        } else if (text) {
+          // Image bridge returned nothing — fall back to the text
+          insertTextAtSelection(target, text)
+        }
       })
       return
     }

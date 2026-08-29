@@ -3,6 +3,8 @@ import { onMount, splitProps, type ComponentProps } from "solid-js"
 const icons = {
   // AMICODE entity glyphs (Kate 2026-07-24): drawn to match the family's line
   // aesthetic (20×20, currentColor). target → System, activity → Pulse in the rail.
+  home: `<path d="M3.33 11.25V17.08H8.33V12.92H11.67V17.08H16.67V11.25M1.67 10L10 2.92L18.33 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>`,
+  "context-ring": `<circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5" fill="none"/>`,
   target: `<circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.25"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.25"/><circle cx="10" cy="10" r="1" fill="currentColor"/>`,
   activity: `<path d="M2 11H5L7 6.5L10 15.5L12.5 9H15L16.5 11H18" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>`,
   pulse: `<path d="M2 10C2 4 6 4 10 10C14 16 18 16 18 10" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" fill="none"/>`,

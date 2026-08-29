@@ -19,7 +19,8 @@ import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@opencode-ai/ui/accordion"
 import { AmicodeEntityRail } from "@opencode-ai/ui/amicode-entity-rail"
-import { ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
+import { DEFAULT_DOT_CENTRE, ThoughtRail, ThoughtRailLabel, THOUGHT_RAIL_INSET, shouldRenderRail } from "./thought-rail"
+import { formatElapsed, formatTokens, turnTokens } from "@opencode-ai/ui/amicode-thinking"
 import {
   AmicodeEntityView,
   entityLabel,
@@ -31,12 +32,17 @@ import { Button } from "@opencode-ai/ui/button"
 import { Card } from "@opencode-ai/ui/card"
 import {
   ContextToolGroup,
+  EditToolGroup,
   Message,
   MessageDivider,
   Part as MessagePart,
   partDefaultOpen,
+  renderable,
+  ShellToolGroup,
   type UserActions,
 } from "@opencode-ai/session-ui/message-part"
+import { readPartText, settledChunkBoundary } from "@opencode-ai/session-ui/message-part-text"
+import { buildTrace } from "@opencode-ai/session-ui/build-trace"
 import { DiffChanges } from "@opencode-ai/ui/diff-changes"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -84,12 +90,12 @@ import { useTabs } from "@/context/tabs"
 import { amicodeGet, amicodePost } from "@/utils/amicode-fetch"
 import { draftPrompt } from "@/utils/start-prompt"
 import { inAmicode, postAmicode } from "@/pages/session/use-amicode-commands"
+import { writeClipboardViaBridge } from "@/components/prompt-input/clipboard-bridge"
 import { legacySessionHref, requireServerKey, sessionHref } from "@/utils/session-route"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
 import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
-import { serializeSession } from "@/utils/serialize-session"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
 import { createTimelineProjection } from "./projection"
@@ -147,11 +153,54 @@ const markBoundaryGesture = (input: {
   }
 }
 
-function TimelineThinkingRow(props: { reasoningHeading?: string; showReasoningSummaries: boolean; tokens?: number }) {
-  // Simple version - just show the ThinkingLine without collapsible dropdown
+function TimelineThinkingRow(_props: { reasoningHeading?: string; showReasoningSummaries: boolean }) {
   return (
     <div data-slot="session-turn-thinking">
-      <ThinkingLine tokens={props.tokens} />
+      <span class="min-w-0 flex items-center gap-2 text-14-medium text-text-strong leading-[22px]">
+        <span class="shrink-0">Thinking</span>
+      </span>
+    </div>
+  )
+}
+
+function TimelineThinkingMetaRow(props: { turnDurationMs?: number; tokens?: number; onCopy?: () => void }) {
+  const language = useLanguage()
+  const [copied, setCopied] = createSignal(false)
+
+  const handleCopy = () => {
+    props.onCopy?.()
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <div data-slot="session-turn-thinking-meta">
+      <TooltipV2
+        value={copied() ? language.t("ui.message.copied") : language.t("ui.message.copyTrace")}
+        placement="bottom"
+        gutter={4}
+      >
+        <IconButtonV2
+          icon={<IconV2 name={copied() ? "check" : "outline-copy"} size="small" />}
+          size="normal"
+          variant="ghost-muted"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handleCopy}
+          aria-label={copied() ? language.t("ui.message.copied") : language.t("ui.message.copyTrace")}
+        />
+      </TooltipV2>
+      <Show when={props.turnDurationMs != null}>
+        <span class="amc-thinking" data-slot="amc-thinking">
+          <span class="amc-thinking-meta" aria-hidden="true">
+            <span class="amc-thinking-sep">·</span>
+            <span class="amc-thinking-elapsed">{formatElapsed(props.turnDurationMs!)}</span>
+            <Show when={props.tokens != null}>
+              <span class="amc-thinking-sep">·</span>
+              <span class="amc-thinking-tokens">↑ {formatTokens(props.tokens!)} tokens</span>
+            </Show>
+          </span>
+        </span>
+      </Show>
     </div>
   )
 }
@@ -372,6 +421,11 @@ export function MessageTimeline(props: {
   // Hide the scroll container for the first frame on cold-bottom-mount to prevent
   // a flash of content at the top before scrollToEnd fires.
   const [scrollReady, setScrollReady] = createSignal(!coldBottomMount)
+  // The open cascade holds until the virtualizer has settled at the bottom —
+  // entering rows sit paused at opacity 0 (see [data-entrance-pending] in
+  // design-polish.css) so the entrance never plays behind the opacity veil or
+  // during the initial scroll jump. Flipped one frame after the mount scroll.
+  const [entranceReady, setEntranceReady] = createSignal(false)
   const platform = usePlatform()
 
   const [listRoot, setListRoot] = createSignal<HTMLDivElement>()
@@ -421,6 +475,25 @@ export function MessageTimeline(props: {
     if (start === -1) return 0
     return turnTokens(msgs.slice(start + 1).filter((m) => m.role === "assistant"))
   }
+
+  // Copy the full assistant trace for a turn to the clipboard.
+  const copyTraceForTurn = (userMessageID: string) => {
+    const msgs = sessionMessages()
+    const start = msgs.findIndex((m) => m.id === userMessageID)
+    if (start === -1) return
+    const assistantMsgs = msgs.slice(start + 1).filter((m): m is AssistantMessage => m.role === "assistant")
+    const content = buildTrace(assistantMsgs, getMsgParts)
+    if (!content) return
+    if (!writeClipboardViaBridge(content)) void navigator.clipboard?.writeText(content)
+  }
+  /** True when at least one AssistantPart ROW exists in the projected timeline
+   *  for this turn — meaning renderable, settled output is visible. Reasoning
+   *  parts withheld while streaming do NOT count (they produce no row until
+   *  they settle), which prevents the harmonic dot from leaving the Thinking
+   *  row prematurely. */
+  const hasAssistantParts = (userMessageID: string) => {
+    return timelineRows().some((row) => row._tag === "AssistantPart" && row.userMessageID === userMessageID)
+  }
   const getMsgPart = (messageID: string, partID: string) => getMsgParts(messageID).find((part) => part.id === partID)
   const childTaskDescription = createMemo(() => {
     const id = sessionID()
@@ -438,6 +511,24 @@ export function MessageTimeline(props: {
     return language.t("command.session.new")
   })
   const showHeader = createMemo(() => !!(titleValue() || parentID()))
+  // The chunk gate for a streaming prose tail (Kate 2026-08-25: replies land
+  // in chunks). rows.ts withholds the tail only until its FIRST chunk settles
+  // — but the freshest streamed text lives in part_text_accum_delta (part.text
+  // lags during delta streaming), which the pure row construction cannot see.
+  // Computed here as a boolean memo so the per-token recomputation stops at an
+  // unchanged value instead of rebuilding the whole row projection per delta.
+  const tailProseSettled = createMemo(() => {
+    const last = sessionMessages().findLast(
+      (message): message is AssistantMessage => message.role === "assistant",
+    )
+    if (!last || typeof last.time.completed === "number") return false
+    const tail = getMsgParts(last.id)
+      .filter((part) => renderable(part, settings.general.showReasoningSummaries()))
+      .at(-1)
+    if (!tail || tail.type !== "text" || tail.time?.end) return false
+    const text = readPartText(sync().data.part_text_accum_delta, tail)
+    return settledChunkBoundary(text) > 0
+  })
   const projection = createTimelineProjection({
     messages: sessionMessages,
     userMessages: () => props.userMessages,
@@ -446,6 +537,7 @@ export function MessageTimeline(props: {
     status: sessionStatus,
     showReasoningSummaries: settings.general.showReasoningSummaries,
     inlineComments: settings.general.newLayoutDesigns,
+    tailProseSettled,
   })
   const activeMessageID = projection.activeMessageID
   const assistantMessagesByParent = projection.assistantMessagesByParent
@@ -455,6 +547,52 @@ export function MessageTimeline(props: {
   const messageRowIndex = projection.messageRowIndex
   const timelineRowByKey = projection.rowByKey
   const timelineRows = projection.rows
+
+  // Entrance bookkeeping (Kate 2026-08-24/25: "all the elements fade in from
+  // the bottom", blocks land whole, crisply). Two moments animate, nothing
+  // else ever does:
+  //
+  // 1. THE OPEN CASCADE — every session open / switch / reload cascades the
+  //    initially rendered rows in, staggered top-to-bottom. Rows arming
+  //    inside the first CASCADE_WINDOW_MS after the per-session reset are the
+  //    initial batch; each takes an animation-delay step. The cascade holds
+  //    paused behind [data-entrance-pending] until the virtualizer settles at
+  //    the bottom, which also removes the old unanimated flash-jump (history
+  //    used to paint one frame at the top, then teleport to the bottom).
+  //
+  // 2. THE LIVE TURN — after the open, only rows of the ACTIVE turn enter
+  //    (the just-sent bubble, Thinking, the settled reply blocks). Settled
+  //    history joining later — scroll-back remounts, pagination prepends,
+  //    far jumps — lands silently by rule, which closes the whole class of
+  //    replay/burn bugs the per-key ledger alone could not (an audit found
+  //    prepends animating a full page, and off-screen mounts burning their
+  //    once-only entrance invisibly).
+  //
+  // Each key still animates at most once (virtual rows remount on every
+  // scroll-back, so mount alone must never trigger the entrance).
+  const CASCADE_WINDOW_MS = 600
+  const CASCADE_STEP_MS = 40
+  const CASCADE_MAX_STEPS = 12
+  let enteredFor: string | undefined
+  let enteredAt = 0
+  let cascadeStep = 0
+  const enteredKeys = new Set<string>()
+  const shouldAnimateEnter = (rowKey: string, row: TimelineRow.TimelineRow): number | false => {
+    const sid = sessionID()
+    if (enteredFor !== sid) {
+      enteredFor = sid
+      enteredKeys.clear()
+      enteredAt = performance.now()
+      cascadeStep = 0
+    }
+    if (enteredKeys.has(rowKey)) return false
+    enteredKeys.add(rowKey)
+    if (performance.now() - enteredAt < CASCADE_WINDOW_MS) {
+      return Math.min(cascadeStep++, CASCADE_MAX_STEPS) * CASCADE_STEP_MS
+    }
+    if (row.userMessageID === activeMessageID()) return 0
+    return false
+  }
 
   let prependAnchor: { key: string; offset: number } | undefined
   let prependAnchorFrame: number | undefined
@@ -553,7 +691,7 @@ export function MessageTimeline(props: {
       return showHeader() ? 64 : 0
     },
     overscan: 50,
-    paddingEnd: 64,
+    paddingEnd: 24,
     rangeExtractor: (range) => {
       const id = activeMessageID()
       const active = id ? (messageLastRowIndex().get(id) ?? -1) : -1
@@ -693,6 +831,9 @@ export function MessageTimeline(props: {
       if (renderOverscan() < 20) setRenderOverscan(20)
       if (props.shouldAnchorBottom()) virtualizer.scrollToEnd()
       if (!scrollReady()) setScrollReady(true)
+      // one more frame so measurement-driven scroll corrections land before
+      // the cascade is released
+      requestAnimationFrame(() => setEntranceReady(true))
     })
   })
 
@@ -906,56 +1047,6 @@ export function MessageTimeline(props: {
           description: errorMessage(err),
         }),
       )
-  }
-  const downloadSession = () => {
-    const id = sessionID()
-    if (!id) return
-    const messages = sync().data.message[id] ?? []
-    const text = serializeSession(messages, (msgId) => sync().data.part[msgId] ?? [])
-    if (!text.trim()) {
-      showToast({
-        title: language.t("session.download.empty.title") ?? "Nothing to export",
-        description: language.t("session.download.empty.description") ?? "This session has no text to download.",
-        variant: "error",
-      })
-      return
-    }
-    const rawTitle = sessionTitle(sync().session.get(id)?.title) ?? childTitle() ?? "session"
-    const safe = rawTitle.replace(/[^\w.-]+/g, "-").slice(0, 64) || "session"
-    const filename = `${safe}-${id.slice(0, 8)}.md`
-    // VS Code webview (iframe): route through the extension's save-file bridge
-    // so the host writes the file with a save dialog. Plain browser: blob download.
-    if (window.parent !== window) {
-      try {
-        const dataUrl = `data:text/markdown;base64,${btoa(unescape(encodeURIComponent(text)))}`
-        window.parent.postMessage(
-          { source: "amicode", kind: "save-file", filename, dataUrl, mime: "text/markdown" },
-          "*",
-        )
-        showToast({
-          variant: "success",
-          title: language.t("session.download.success.title") ?? "Download started",
-          description: filename,
-        })
-        return
-      } catch {
-        // fall through to blob
-      }
-    }
-    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement("a")
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    setTimeout(() => URL.revokeObjectURL(url), 1000)
-    showToast({
-      variant: "success",
-      title: language.t("session.download.success.title") ?? "Download started",
-      description: filename,
-    })
   }
   const selectShareUrlText: JSX.EventHandler<HTMLDivElement, MouseEvent> = (event) => {
     const selection = window.getSelection()
@@ -1268,6 +1359,50 @@ export function MessageTimeline(props: {
       )
     }
 
+    // Shell and edit groups (≥2 consecutive bash / file-mutation calls,
+    // message-part-groups.ts). These MUST render: rows.ts makes every group a
+    // rail node and lets it claim lastAssistantPart, so a group that fell
+    // through to the part branch below rendered nothing — a phantom node.
+    // The step before it then drew a MID segment down its full height (the
+    // "line extends past the last dot" report), and the turn's spine ended in
+    // thin air where the contentless row sat (the "missing node" report).
+    if (row().group.type === "shell") {
+      const parts = createMemo(() => {
+        const group = row().group
+        if (group.type !== "shell") return emptyTools
+        return group.refs
+          .map((ref) => getMsgPart(ref.messageID, ref.partID))
+          .filter((part): part is ToolPart => part?.type === "tool")
+      })
+      return (
+        <ShellToolGroup
+          parts={parts()}
+          busy={
+            workingTurn(row().userMessageID) && lastAssistantGroupKey().get(row().userMessageID) === row().group.key
+          }
+          onSizeChange={onSizeChange}
+        />
+      )
+    }
+    if (row().group.type === "edit") {
+      const parts = createMemo(() => {
+        const group = row().group
+        if (group.type !== "edit") return emptyTools
+        return group.refs
+          .map((ref) => getMsgPart(ref.messageID, ref.partID))
+          .filter((part): part is ToolPart => part?.type === "tool")
+      })
+      return (
+        <EditToolGroup
+          parts={parts()}
+          busy={
+            workingTurn(row().userMessageID) && lastAssistantGroupKey().get(row().userMessageID) === row().group.key
+          }
+          onSizeChange={onSizeChange}
+        />
+      )
+    }
+
     const message = createMemo(() => {
       const group = row().group
       if (group.type !== "part") return
@@ -1316,8 +1451,90 @@ export function MessageTimeline(props: {
     }
     const previousAssistantPart = () => {
       const row = input.row()
-      return row._tag === "AssistantPart" && row.previousAssistantPart
+      if (row._tag === "ThinkingMeta") return false
+      if (row._tag !== "AssistantPart") return false
+      // Gap above if there's a previous assistant part, OR if Thinking row
+      // sits above (always true since Thinking is always first)
+      return true
     }
+    const assistantPart = () => {
+      const tag = input.row()._tag
+      return tag === "AssistantPart" || tag === "Thinking" || tag === "ThinkingMeta"
+    }
+    const railLabel = () => {
+      const row = input.row()
+      if (row._tag === "AssistantPart") return row.railLabel
+      return undefined
+    }
+    // The thought rail: a spine down a turn's assistant steps. Drawn per-row
+    // because the timeline is virtualised and consecutive rows share no ancestor.
+    //
+    // The harmonic dot TRAVELS down the rail:
+    //   - No output yet: dot on Thinking (model is thinking, nothing to show)
+    //   - Output has landed: dot moves to the LAST AssistantPart (current step)
+    //   - Turn complete: all dots are static done dots
+    // ThinkingMeta does NOT participate in the rail (no dot).
+    const rail = () => {
+      const row = input.row()
+      if (row._tag === "Thinking") {
+        const hasOutput = hasAssistantParts(row.userMessageID)
+        // Dot stays on Thinking only while no output exists
+        return { first: true, last: !hasOutput, running: row.turnRunning && !hasOutput }
+      }
+      if (row._tag !== "AssistantPart") return undefined
+      if (!shouldRenderRail(row)) return undefined
+      // Last AssistantPart gets the dot when the turn is still running
+      return { first: false, last: row.lastAssistantPart, running: row.turnRunning && row.lastAssistantPart }
+    }
+
+    // The dot sits on the row's FIRST TEXT LINE, wherever the content puts it
+    // (Kate 2026-08-24: dots must line up with the text they coincide with).
+    // Prose and rail-label rows put it at the default 11px; rows that open
+    // with a card (a tool chip, a group header, a widget preview) start their
+    // first line lower by that card's own padding — measured, not tabulated,
+    // because the set of card species is open-ended. The ResizeObserver
+    // re-measures when async card content mounts (deferToolContent) or
+    // streaming reflows the row; observers exist only on rendered rows, so
+    // the count is bounded by the virtualizer's window.
+    let turnEl: HTMLDivElement | undefined
+    const [dotCentre, setDotCentre] = createSignal(DEFAULT_DOT_CENTRE)
+    const [dotSettled, setDotSettled] = createSignal(false)
+    const measureDotCentre = () => {
+      if (!turnEl || !rail()) return
+      const hostTop = turnEl.getBoundingClientRect().top
+      // Travelling dot (#265): ONLY the running dot tracks the last
+      // prose-fragment card. The done-dot stays at the first text line
+      // (top of the row) so the rail reads as a sequence of origin marks.
+      const r = rail()
+      const isRunning = r && r.last && r.running
+      const fragments = isRunning ? turnEl.querySelectorAll("[data-prose-fragment]") : undefined
+      const lastFragment = fragments && fragments.length > 0 ? (fragments[fragments.length - 1] as HTMLElement) : null
+      const target = lastFragment ?? turnEl
+      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+      let node: Node | null
+      while ((node = walker.nextNode())) {
+        if (!node.textContent?.trim()) continue
+        const range = document.createRange()
+        range.selectNodeContents(node)
+        const rect = range.getClientRects()[0]
+        if (!rect || rect.height === 0) continue
+        const centre = rect.top + rect.height / 2 - hostTop
+        // When targeting a fragment, the dot can be anywhere down the row
+        // (no ceiling). For non-fragment rows the 80px ceiling guards against
+        // mid-virtualisation nonsense measurements.
+        const maxCentre = lastFragment ? Infinity : 80
+        if (centre > 0 && centre < maxCentre) setDotCentre(Math.max(DEFAULT_DOT_CENTRE, Math.round(centre * 2) / 2))
+        if (!dotSettled()) setDotSettled(true)
+        return
+      }
+    }
+    onMount(() => {
+      if (!rail()) return
+      measureDotCentre()
+      const observer = new ResizeObserver(() => measureDotCentre())
+      if (turnEl) observer.observe(turnEl)
+      onCleanup(() => observer.disconnect())
+    })
 
     return (
       <div
@@ -1331,8 +1548,33 @@ export function MessageTimeline(props: {
           "pt-3": previousAssistantPart(),
         }}
       >
-        <div data-component="session-turn" class="min-w-0 w-full relative" style={{ height: "auto" }}>
-          {input.children}
+        <div
+          ref={turnEl}
+          data-component="session-turn"
+          class="min-w-0 w-full relative"
+          style={{ height: "auto" }}
+        >
+          <Show when={rail()}>
+            {(r) => (
+              <ThoughtRail
+                first={r().first}
+                last={r().last}
+                running={r().running}
+                dotCentre={dotCentre()}
+                settled={dotSettled()}
+                turnStartedAt={"turnStartedAt" in input.row() ? (input.row() as any).turnStartedAt : undefined}
+                tokens={r().running && r().last ? assistantTokensForTurn(input.row().userMessageID) || undefined : undefined}
+              />
+            )}
+          </Show>
+          {/* The gutter is reserved for EVERY assistant part, not only the ones
+              that draw a rail. Gating it on rail() left a single-step turn's
+              content 16px to the left of a multi-step turn's, so the column
+              stepped in and out as turns changed length. */}
+          <div classList={{ "min-w-0 w-full": true, [THOUGHT_RAIL_INSET]: assistantPart() }}>
+            <Show when={rail() && railLabel()}>{(label) => <ThoughtRailLabel label={label()} />}</Show>
+            {input.children}
+          </div>
         </div>
       </div>
     )
@@ -1451,15 +1693,30 @@ export function MessageTimeline(props: {
         const thinkingRow = row as Accessor<TimelineRowByTag<"Thinking">>
         return (
           <TimelineRowFrame row={thinkingRow}>
-            <div 
-              data-slot="session-turn-message-container" 
-              class="w-full px-4 md:px-5"
-              style={{ position: "relative" }}
+            <div
+              data-slot="session-turn-message-container"
+              class="w-full px-4 md:px-5 relative"
             >
               <TimelineThinkingRow
                 reasoningHeading={thinkingRow().reasoningHeading}
                 showReasoningSummaries={settings.general.showReasoningSummaries()}
-                tokens={assistantTokensForTurn(thinkingRow().userMessageID) || undefined}
+              />
+            </div>
+          </TimelineRowFrame>
+        )
+      }
+      case "ThinkingMeta": {
+        const metaRow = row as Accessor<TimelineRowByTag<"ThinkingMeta">>
+        return (
+          <TimelineRowFrame row={metaRow}>
+            <div
+              data-slot="session-turn-message-container"
+              class="w-full px-4 md:px-5 relative"
+            >
+              <TimelineThinkingMetaRow
+                turnDurationMs={metaRow().turnDurationMs}
+                tokens={assistantTokensForTurn(metaRow().userMessageID) || undefined}
+                onCopy={() => copyTraceForTurn(metaRow().userMessageID)}
               />
             </div>
           </TimelineRowFrame>
@@ -1508,6 +1765,9 @@ export function MessageTimeline(props: {
     let element: HTMLDivElement
     const initialItem = virtualItemByKey().get(props.rowKey)!
     const initialRow = timelineRowByKey().get(props.rowKey)!
+    // Decided once at creation — remounts of an already-entered row get false.
+    // A number is the cascade's per-row animation-delay in ms (0 for live rows).
+    const enterDelay = shouldAnimateEnter(props.rowKey, initialRow)
     const item = createMemo(() => virtualItemByKey().get(props.rowKey) ?? initialItem)
     const row = createMemo(() => timelineRowByKey().get(props.rowKey) ?? initialRow)
     const tool = () => {
@@ -1534,6 +1794,15 @@ export function MessageTimeline(props: {
 
     onCleanup(() => {
       if (contentMeasureFrame !== undefined) cancelAnimationFrame(contentMeasureFrame)
+      // NO exit ghost. The site's exit grammar (GONE: up + re-blur) was tried
+      // here as a positioned clone of the departing Thinking row and misfired
+      // in real use: a body-appended clone escapes the app's theme scope (its
+      // color var fell back to the dark-scheme yellow inside a light webview)
+      // and the rect captured at cleanup lags the virtualizer's relayout —
+      // a wrong-colored flash in the wrong place (Kate 2026-08-25). Removed
+      // rows are replaced instantly; the replacing block's entrance carries
+      // the transition. Exits in a virtualized timeline need real FLIP
+      // machinery or nothing — this is nothing, on purpose.
     })
 
     return (
@@ -1547,7 +1816,12 @@ export function MessageTimeline(props: {
           height: `${item().size}px`,
           overflow: "clip",
           // Rounded virtual measurements can otherwise clip a framed row's outer paint.
-          "overflow-clip-margin": row()._tag === "TurnGap" ? undefined : "0.5px",
+          // 24px, not 0.5px: the live rail dot breathes by a 0→4px ring
+          // (index.css thought-rail-breathe; found clipped in PR #246's
+          // testing), an entering row rides the 8px --motion-enter-rise
+          // translate, and the entrance's blur(8px) paints a halo well past
+          // the border box — the margin must cover ring + rise + halo.
+          "overflow-clip-margin": row()._tag === "TurnGap" ? undefined : "24px",
         }}
       >
         <div
@@ -1555,7 +1829,11 @@ export function MessageTimeline(props: {
             element = value
           }}
           data-index={item().index}
-          style={{ "min-height": ready() ? undefined : `${initialItem.size}px` }}
+          data-timeline-enter={enterDelay !== false ? "" : undefined}
+          style={{
+            "min-height": ready() ? undefined : `${initialItem.size}px`,
+            "animation-delay": enterDelay !== false && enterDelay > 0 ? `${enterDelay}ms` : undefined,
+          }}
         >
           <TimelineRowView
             row={row()}
@@ -1637,6 +1915,7 @@ export function MessageTimeline(props: {
         onScroll={handleListScroll}
         onClick={props.onAutoScrollInteraction}
         class="relative min-w-0 w-full h-full"
+        data-entrance-pending={entranceReady() ? undefined : ""}
         style={{
           "--sticky-accordion-top": showHeader() ? "48px" : "0px",
           opacity: scrollReady() ? undefined : "0",
@@ -1821,16 +2100,6 @@ export function MessageTimeline(props: {
                                 >
                                   <DropdownMenu.ItemLabel>{language.t("common.rename")}</DropdownMenu.ItemLabel>
                                 </DropdownMenu.Item>
-                                <DropdownMenu.Item
-                                  onSelect={() => {
-                                    setTitle("menuOpen", false)
-                                    downloadSession()
-                                  }}
-                                >
-                                  <DropdownMenu.ItemLabel>
-                                    {language.t("session.download.action") ?? "Download"}
-                                  </DropdownMenu.ItemLabel>
-                                </DropdownMenu.Item>
                                 <Show when={shareEnabled()}>
                                   <DropdownMenu.Item
                                     onSelect={() => {
@@ -1838,7 +2107,7 @@ export function MessageTimeline(props: {
                                     }}
                                   >
                                     <DropdownMenu.ItemLabel>
-                                      {language.t("session.share.action.publish") ?? "Publish…"}
+                                      {language.t("session.share.action.share")}
                                     </DropdownMenu.ItemLabel>
                                   </DropdownMenu.Item>
                                 </Show>
@@ -1913,21 +2182,13 @@ export function MessageTimeline(props: {
                               >
                                 {language.t("common.rename")}
                               </MenuV2.Item>
-                              <MenuV2.Item
-                                onSelect={() => {
-                                  setTitle("menuOpen", false)
-                                  downloadSession()
-                                }}
-                              >
-                                {language.t("session.download.action") ?? "Download"}...
-                              </MenuV2.Item>
                               <Show when={shareEnabled()}>
                                 <MenuV2.Item
                                   onSelect={() => {
                                     setTitle({ pendingShare: true, menuOpen: false })
                                   }}
                                 >
-                                  {language.t("session.share.action.publish") ?? "Publish"}...
+                                  {language.t("session.share.action.share")}...
                                 </MenuV2.Item>
                               </Show>
                               <Show
@@ -2225,8 +2486,12 @@ export function MessageTimeline(props: {
                     type="button"
                     class="ml-auto block w-fit max-w-[min(75%,56ch)] text-left cursor-pointer border-none rounded-lg px-3 py-1.5 text-[13px] leading-[18px] font-normal truncate backdrop-blur-[2px]"
                     style={{
-                      background: "color-mix(in srgb, var(--v2-background-bg-layer-02) 90%, transparent)",
-                      color: "var(--v2-text-text-muted)",
+                      // the ghost of the prompt bubble keeps the bubble's own
+                      // ground, translucent — one grammar for the user's
+                      // words on every surface (--prompt-bubble-*: the
+                      // inverse, seated per scheme in design-polish.css)
+                      background: "color-mix(in srgb, var(--prompt-bubble-bg) 90%, transparent)",
+                      color: "var(--prompt-bubble-ink)",
                       "box-shadow": "0 1px 3px color-mix(in srgb, var(--v2-background-bg-base) 40%, transparent)",
                     }}
                     onClick={scrollToBubbleMessage}
@@ -2254,8 +2519,12 @@ export function MessageTimeline(props: {
                   type="button"
                   class="ml-auto block w-fit max-w-[min(75%,56ch)] text-left cursor-pointer border-none rounded-lg px-3 py-1.5 text-[13px] leading-[18px] font-normal truncate backdrop-blur-[2px]"
                   style={{
-                    background: "color-mix(in srgb, var(--v2-background-bg-layer-02) 90%, transparent)",
-                    color: "var(--v2-text-text-muted)",
+                    // the ghost of the prompt bubble keeps the bubble's own
+                    // ground, translucent — one grammar for the user's
+                    // words on every surface (--prompt-bubble-*: the
+                    // inverse, seated per scheme in design-polish.css)
+                    background: "color-mix(in srgb, var(--prompt-bubble-bg) 90%, transparent)",
+                    color: "var(--prompt-bubble-ink)",
                     "box-shadow": "0 1px 3px color-mix(in srgb, var(--v2-background-bg-base) 40%, transparent)",
                   }}
                   onClick={scrollToBubbleMessage}
@@ -2285,8 +2554,8 @@ export function MessageTimeline(props: {
             <div
               data-timeline-row="bottom-spacer"
               aria-hidden="true"
-              class="h-16 absolute top-0 left-0 w-full"
-              style={{ transform: `translateY(${virtualizer.getTotalSize() - 64}px)` }}
+              class="h-6 absolute top-0 left-0 w-full"
+              style={{ transform: `translateY(${virtualizer.getTotalSize() - 24}px)` }}
             />
           </Show>
         </div>

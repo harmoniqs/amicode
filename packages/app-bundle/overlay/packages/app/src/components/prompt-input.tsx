@@ -83,7 +83,7 @@ import { createPromptInputTransientState } from "./prompt-input/transient-state"
 import { showToast } from "@/utils/toast"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
 import { ImagePreview } from "@opencode-ai/ui/image-preview"
-import { setClipboardImageHandler } from "@/utils/global-clipboard"
+import { clearClipboardImageHandler, setClipboardImageHandler } from "@/utils/global-clipboard"
 import type { ReferenceInfo } from "@opencode-ai/sdk/v2/client"
 
 export { createPromptInputHistory }
@@ -1168,8 +1168,9 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   // Framed webview: the window-level fallback (global-clipboard.ts) is the
   // sole ⌘V owner. When the clipboard carries no text it offers the media to
   // this slot, landing it in the composer's attachment pipeline (mirrors v2).
-  setClipboardImageHandler((file) => void addAttachments([file]))
-  onCleanup(() => setClipboardImageHandler(undefined))
+  const imageHandler = (file: File) => void addAttachments([file])
+  setClipboardImageHandler(imageHandler)
+  onCleanup(() => clearClipboardImageHandler(imageHandler))
 
   const fileAttachmentInput = () => (
     <input

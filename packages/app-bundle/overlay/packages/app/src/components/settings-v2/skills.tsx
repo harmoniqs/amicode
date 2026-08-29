@@ -102,7 +102,7 @@ export const SettingsSkillsV2: Component = () => {
                     description={provider.path ?? provider.url ?? ""}
                   >
                     <ButtonV2
-                      size="xs"
+                      size="small"
                       variant="ghost"
                       onClick={() => ctrl.removeProvider(provider.id)}
                       aria-label={`Remove ${provider.id}`}
@@ -117,11 +117,11 @@ export const SettingsSkillsV2: Component = () => {
         </SettingsListV2>
 
         <div style="display:flex;gap:8px;margin-top:12px;">
-          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.addDirectory()}>
+          <ButtonV2 size="small" variant="outline" onClick={() => ctrl.addDirectory()}>
             <Icon name="plus" />
             {language.t("settings.skills.action.add_directory")}
           </ButtonV2>
-          <ButtonV2 size="sm" variant="secondary" onClick={() => ctrl.autodiscover()}>
+          <ButtonV2 size="small" variant="outline" onClick={() => ctrl.autodiscover()}>
             <Icon name="magnifying-glass" />
             Autodiscover
           </ButtonV2>
@@ -139,8 +139,8 @@ export const SettingsSkillsV2: Component = () => {
                     description={item.path}
                   >
                     <ButtonV2
-                      size="xs"
-                      variant="secondary"
+                      size="small"
+                      variant="outline"
                       onClick={() =>
                         ctrl.addProvider({
                           id: item.name,

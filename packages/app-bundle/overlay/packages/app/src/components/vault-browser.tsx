@@ -15,7 +15,7 @@ import { ServerConnection, useServer } from "@/context/server"
 import { useGlobal } from "@/context/global"
 import { amicodeGet } from "@/utils/amicode-fetch"
 import { announceChromeDropdown } from "@/utils/chrome-dropdown"
-import { pickVaultServer, vaultMountsState, effectiveMount } from "@/components/vault-browser-model"
+import { pickVaultServer, vaultMountsState } from "@/components/vault-browser-model"
 import { vaultPanel } from "@/context/vault-panel"
 
 type Mount = { id: string; kind: string; writable: boolean }
@@ -79,11 +79,11 @@ export function VaultBrowser(props: {
   })
 
   const [chosenMount, setChosenMount] = createSignal<string | undefined>(undefined)
-  // amicode#447: the chosen mount goes to the fetches VERBATIM even when the
-  // mounts list keys it differently (a deep-link target carries the vault's
-  // DIRECTORY identity; the server resolves both) — silently swapping it for
-  // the first listed mount fetched the wrong vault on any other kind mix.
-  const mount = createMemo(() => effectiveMount(chosenMount(), mounts()))
+  const mount = createMemo(() => {
+    const chosen = chosenMount()
+    if (chosen && mounts().some((m) => m.id === chosen)) return chosen
+    return mounts()[0]?.id
+  })
 
   const [listingRaw, { refetch: refetchListing }] = createResource(
     () => (vaultPanel.opened() && mount() && picked() ? { conn: picked()!, mount: mount()! } : undefined),

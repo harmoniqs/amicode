@@ -17,9 +17,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { vaultFileBody } from "../src/amicode_service/vault_browser"
-// the pure client modules, by overlay path (no runtime deps of their own)
-import { vaultRefFromPath, vaultNodeLocked } from "../../app-bundle/overlay/packages/ui/src/amicode/context-tree-data"
-import { effectiveMount } from "../../app-bundle/overlay/packages/app/src/components/vault-browser-model"
+// the pure client modules, by overlay path (no runtime deps of their own).
+// NOTE (fork pin v1.18.10-amicode.18): the .16 helpers `vaultNodeLocked` and
+// `effectiveMount` no longer exist — the lock decision became the injected
+// `opts.vaultLocked(mount)` callback in context-tree-data (covered by the
+// fork's own context-tree-data.test.ts), and the deep-link mount choice was
+// inlined into vault-browser.tsx's `mount` memo (chosen ?? mounts[0], with
+// membership validation). The extension pins the surviving seam: path →
+// vault ref, and the drawer's fetch rendering markdown.
+import { vaultRefFromPath } from "../../app-bundle/overlay/packages/ui/src/amicode/context-tree-data"
 
 const NOTE_PATH = "/Users/aaron/.amico/vaults/armonia-aaron-trowbridge/amicode/memory/MEMORY.md"
 
@@ -45,29 +51,6 @@ describe("knowledge-graph note click → rendered markdown (amicode#447)", () =>
       mount: "armonia-aaron-trowbridge",
       rel: "amicode/memory/MEMORY.md",
     })
-  })
-
-  test("the note node is NOT locked on the standard dir≠name layout", () => {
-    // pre-fix this was locked: the browsable map keys by marker name, the
-    // node carries the directory identity, map.has() missed → fail-closed
-    expect(vaultNodeLocked({ mounts: WIRE_MOUNTS, vaultDir: "armonia-aaron-trowbridge" })).toBe(false)
-  })
-
-  test("a genuinely non-browsable mount stays locked through either identity", () => {
-    expect(vaultNodeLocked({ mounts: WIRE_MOUNTS, vaultDir: "armonissima" })).toBe(true)
-    expect(vaultNodeLocked({ mounts: WIRE_MOUNTS, vaultDir: "unknown-vault" })).toBe(true)
-  })
-
-  test("no wire data never locks (the fetch failed — clicks may try)", () => {
-    expect(vaultNodeLocked({ mounts: undefined, vaultDir: "armonia-aaron-trowbridge" })).toBe(false)
-  })
-
-  test("the drawer asks for the deep-link mount verbatim, not mounts[0]", () => {
-    // pre-fix the unlisted chosen mount was swapped for the first listed one —
-    // correct only while personal happens to sort first
-    expect(effectiveMount("armonia-aaron-trowbridge", WIRE_MOUNTS)).toBe("armonia-aaron-trowbridge")
-    expect(effectiveMount(undefined, WIRE_MOUNTS)).toBe("aaron")
-    expect(effectiveMount(undefined, [])).toBeUndefined()
   })
 
   test("the drawer's fetch with that payload returns the markdown that renders", () => {
