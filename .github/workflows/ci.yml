@@ -17,6 +17,26 @@ jobs:
         with: { node-version: 20 }
       - name: drift gate — overlay/manifest sync (committed state; re-derivation when the fork is reachable)
         run: node packages/app-bundle/scripts/drift_gate.mjs
+  bundle-build-gate:
+    # #643: the CLI bundles (packages/amico-run/dist/*.js) are gitignored build
+    # artifacts — the deployed verb-router bundle sat 46 days stale because
+    # nothing gated the build. This lane builds every declared bundle from
+    # current source on every push/PR: a broken entry or unresolvable import
+    # fails the build step (esbuild exits non-zero), and a build that silently
+    # drops or truncates a bundle reds the assert step, which also smoke-runs
+    # the built verb router (--help must exit 0) — the vitest suite transpiles
+    # and never executes the shipped artifact, so this is where a
+    # builds-but-dies bundle is caught.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6   # version pinned by packageManager in package.json
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @amicode/amico-run build
+      - name: bundle-gate — every declared bundle built + the verb-router smoke answers (#643)
+        run: node packages/amico-run/scripts/assert_built_bundles.mjs
   fast:
     runs-on: ubuntu-latest
     steps:
