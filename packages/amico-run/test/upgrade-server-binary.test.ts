@@ -9,7 +9,7 @@
 // --running-binary path; the health stub shapes the verify phases.
 import { describe, test, expect } from "vitest";
 import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { surfaceInventory, fileSha, type SurfaceRecord } from "../src/surfaces.js";
 import { upgradeVerb } from "../src/upgrade.js";
@@ -337,6 +337,22 @@ describe("upgrade server-binary — the verb-router dist rebuild (#643)", () => 
     expect(r.code).toBe(1);
     expect((r.json as Record<string, any>).outcome).toBe("aborted-build");
     expect((r.json as Record<string, any>).detail.join(" ")).toMatch(/amico-pasqal/);
+    cleanup();
+  });
+
+  test("invoking the refreshed extension-side bundle emits no module-type reparse warning (#643)", async () => {
+    const w = stageVersionStale();
+    const r = await upgradeVerb(successArgs(w, freshArtifact()));
+    expect(r.code).toBe(0);
+
+    // the staged stub bundle is ESM-only (`export {};`); the fixture's
+    // packages/extension/package.json (like the real VS Code manifest) has no
+    // "type" field — without a scoped marker, node reparse-warns on EVERY
+    // invocation (the deployed live machine paid exactly this).
+    const stagedRouter = join(w.repoAmicode, "packages", "extension", "bin", "dist", "amico.js");
+    const run = spawnSync(process.execPath, [stagedRouter, "--help"], { encoding: "utf8" });
+    expect(run.status).toBe(0);
+    expect(run.stderr).not.toMatch(/MODULE_TYPELESS_PACKAGE_JSON/);
     cleanup();
   });
 });

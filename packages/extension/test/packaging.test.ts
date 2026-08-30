@@ -21,6 +21,12 @@ const REQUIRED = [
   "extension/bin/launcher/amico-git-credential",
   "extension/bin/dist/gh.js",
   "extension/bin/launcher/gh",
+  // #643 — the bin/-scoped module-type marker: the ESM CLI bundles sit under
+  // the typeless VS Code extension manifest; without this file every packaged
+  // invocation pays a MODULE_TYPELESS_PACKAGE_JSON reparse. Both refresh
+  // paths write it (the extension build's staging AND the server-binary
+  // upgrade's dist rebuild) — this pin is the packaged side of that contract.
+  "extension/bin/package.json",
   // Pasqal connector assets — staged to <opsDir>/scripts/pasqal-connector at
   // activation (the Connections panel's default validator path, #161). Kept in
   // the vsix by explicit .vscodeignore negations against scripts/**.

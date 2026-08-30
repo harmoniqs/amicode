@@ -861,11 +861,19 @@ async function rebuildVerbRouterDists(
   }
 
   // refresh the extension-side byte-copy (the PATH-first launcher's target)
-  const extBinDist = join(rootRepoAmicode, "packages", "extension", "bin", "dist");
+  const extBin = join(rootRepoAmicode, "packages", "extension", "bin");
+  const extBinDist = join(extBin, "dist");
   await mkdir(extBinDist, { recursive: true });
   for (const b of declared) {
     await copyFile(join(distDir, `${b}.js`), join(extBinDist, `${b}.js`));
   }
+  // the module-type marker: the ESM bundle under a typeless package.json (the
+  // VS Code extension manifest — never add "type" there; it would flip the
+  // CJS extension-host entry) reparse-warns on EVERY invocation. The
+  // bin/-scoped {"type":"module"} marker is the same convention the extension
+  // build's staging writes (esbuild.config.mjs) — identical bytes, so a
+  // refresh by this hook and a refresh by the extension build converge.
+  await writeFile(join(extBin, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
 
   // verify the refresh: every staged copy byte-matches the build output;
   // the router's pair becomes the receipt's evidence
