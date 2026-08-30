@@ -193,6 +193,27 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
     "opencode",
     "1.18.10",
   );
+  // the amico-run package with its REAL bin map (#643): the server-binary
+  // upgrade's dist-rebuild reads this map to know which bundles to verify +
+  // refresh, exactly as the extension staging and assert_packaged_cli.mjs do.
+  mkdirSync(join(repoAmicode, "packages", "amico-run"), { recursive: true });
+  writeFileSync(
+    join(repoAmicode, "packages", "amico-run", "package.json"),
+    JSON.stringify(
+      {
+        name: "@amicode/amico-run",
+        bin: {
+          "amico-run": "./launcher/amico-run",
+          amico: "./launcher/amico",
+          "amico-pasqal": "./launcher/amico-pasqal",
+          "amico-git-credential": "./launcher/amico-git-credential",
+        },
+        amicode: { shadowBins: { gh: "./launcher/gh" } },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
   fixtureGit(repoAmicode, ["init", "-b", "main"]);
   fixtureGit(repoAmicode, ["add", "-A"]);
   fixtureGit(repoAmicode, ["commit", "-m", "amicode fixture"]);

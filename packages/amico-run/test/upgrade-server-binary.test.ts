@@ -9,6 +9,7 @@
 // --running-binary path; the health stub shapes the verify phases.
 import { describe, test, expect } from "vitest";
 import { readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { surfaceInventory, fileSha, type SurfaceRecord } from "../src/surfaces.js";
 import { upgradeVerb } from "../src/upgrade.js";
@@ -20,6 +21,7 @@ import {
   fakeBin,
   fixtureGit,
   bumpForkHead,
+  sha256File,
   FUTURE_BUILD,
   PAST_BUILD,
   type DoctorWorld,
@@ -41,6 +43,15 @@ const HEALTH_FAIL_VERIFY_ONLY =
   'case "$AMICO_UPGRADE_PHASE" in verify*) exit 1;; *) exit 0;; esac';
 const HEALTH_FAIL_ALWAYS = "exit 1";
 
+/** THE DIST-BUILD STUB (#643): fabricates every declared bundle in the
+ * fixture checkout's packages/amico-run/dist — the hermetic seam for the
+ * verb-router dist rebuild the server-binary upgrade now performs (the real
+ * build is `pnpm run build` in that dir; CI's bundle-build-gate lane proves
+ * the real one on every push). Each stub bundle is ESM (`export {};`) so the
+ * module-type warning test discriminates. */
+const DIST_BUILD_STUB =
+  'mkdir -p dist && for n in amico-run amico amico-pasqal amico-git-credential gh; do printf "export {};\\n" > "dist/$n.js"; done';
+
 function verbArgs(w: DoctorWorld, extra: string[]): string[] {
   return [
     "server-binary",
@@ -51,6 +62,7 @@ function verbArgs(w: DoctorWorld, extra: string[]): string[] {
     "--root-repo-fork", w.repoFork,
     "--root-staging", w.staging,
     "--running-binary", w.running,
+    "--dist-build-command", DIST_BUILD_STUB,
     ...extra,
   ];
 }
@@ -247,6 +259,84 @@ describe("upgrade server-binary — --no-kick (freeze only)", () => {
     // the post record is honest: restart pending (running ≠ frozen)
     expect(bySurface(receipt.post, "server-binary").verdict).toBe("stale");
     expect(bySurface(receipt.post, "server-binary").evidence.join(" ")).toMatch(/restart pending/);
+    cleanup();
+  });
+});
+
+// ── the verb-router dist rebuild (#643) ──────────────────────────────────────
+
+describe("upgrade server-binary — the verb-router dist rebuild (#643)", () => {
+  test("a deployed upgrade rebuilds the dists and refreshes BOTH copies, with receipt evidence", async () => {
+    const w = stageVersionStale();
+    const artifact = freshArtifact();
+
+    const r = await upgradeVerb(successArgs(w, artifact));
+    expect(r.code).toBe(0);
+    const receipt = r.json as Record<string, any>;
+    expect(receipt.outcome).toBe("upgraded");
+
+    // BOTH copies refreshed: the build output AND the extension-side byte-copy
+    // the PATH-first launcher execs — byte-identical, for every declared bundle
+    const arDist = join(w.repoAmicode, "packages", "amico-run", "dist");
+    const extBin = join(w.repoAmicode, "packages", "extension", "bin");
+    for (const n of ["amico-run", "amico", "amico-pasqal", "amico-git-credential", "gh"]) {
+      const built = readFileSync(join(arDist, `${n}.js`));
+      const staged = readFileSync(join(extBin, "dist", `${n}.js`));
+      expect(staged.equals(built)).toBe(true);
+    }
+
+    // receipt evidence: the router's sha on BOTH sides + the source commit
+    const routerSha = sha256File(join(arDist, "amico.js"));
+    expect(receipt.source_digests.verb_router_sha256).toBe(routerSha);
+    expect(receipt.source_digests.verb_router_staged_sha256).toBe(routerSha);
+    expect(receipt.source_digests.amicode_head).toBe(
+      execFileSync("git", ["-C", w.repoAmicode, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+    );
+    // the human story names the refresh
+    expect(receipt.detail.join(" ")).toMatch(/verb-router|dist/i);
+    cleanup();
+  });
+
+  test("dist build failure → aborted-build BEFORE the freeze: server surface untouched, no receipt lie", async () => {
+    const w = stageVersionStale();
+    const frozenShaBefore = await fileSha(join(w.server, "bin", "opencode"));
+    const args = verbArgs(w, [
+      "--root-receipts", receiptsDir(w),
+      "--skip-build", freshArtifact(),
+      "--kick-command", KICK_STUB,
+      "--health-command", HEALTH_OK,
+      "--verify-timeout-ms", "2000",
+      "--dist-build-command", "exit 3",
+    ]);
+
+    const r = await upgradeVerb(args);
+    expect(r.code).toBe(1);
+    const receipt = r.json as Record<string, any>;
+    expect(receipt.outcome).toBe("aborted-build");
+    // nothing frozen: the old binary + sidecar still agree, no prev, no staged copy
+    expect(await fileSha(join(w.server, "bin", "opencode"))).toBe(frozenShaBefore);
+    expect(readFileSync(join(w.server, "bin", "opencode.sha256"), "utf8")).toContain(frozenShaBefore!);
+    expect(existsSync(join(w.server, "bin", "opencode.prev"))).toBe(false);
+    expect(existsSync(join(w.repoAmicode, "packages", "extension", "bin", "dist", "amico.js"))).toBe(false);
+    expect(lastReceipt(w).outcome).toBe("aborted-build");
+    cleanup();
+  });
+
+  test("a half-built dist set (declared bundle missing) → aborted-build", async () => {
+    const w = stageVersionStale();
+    const args = verbArgs(w, [
+      "--root-receipts", receiptsDir(w),
+      "--skip-build", freshArtifact(),
+      "--kick-command", KICK_STUB,
+      "--health-command", HEALTH_OK,
+      "--verify-timeout-ms", "2000",
+      "--dist-build-command", 'mkdir -p dist && printf "export {};\\n" > dist/amico.js',
+    ]);
+
+    const r = await upgradeVerb(args);
+    expect(r.code).toBe(1);
+    expect((r.json as Record<string, any>).outcome).toBe("aborted-build");
+    expect((r.json as Record<string, any>).detail.join(" ")).toMatch(/amico-pasqal/);
     cleanup();
   });
 });
