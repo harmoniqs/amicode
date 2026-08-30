@@ -1,6 +1,6 @@
 // Contract suite for coordination ledger (spec #318) — runs against both cloud and sqlite ref
-import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { coordinationService, SqliteCoordinationService, workId } from "../src/coordination_ledger.js";
@@ -21,10 +21,29 @@ const PRODUCTION_CLAIMS = join(homedir(), ".amico", "ledger", "claims.jsonl");
 const productionSnapshot = existsSync(PRODUCTION_CLAIMS)
   ? readFileSync(PRODUCTION_CLAIMS).toString("base64")
   : null;
-const ISOLATED_CLAIMS = join(mkdtempSync(join(tmpdir(), "amico-claims-iso-")), "claims.jsonl");
+const ISO_ROOT = mkdtempSync(join(tmpdir(), "amico-claims-iso-"));
+const ISOLATED_CLAIMS = join(ISO_ROOT, "claims.jsonl");
 
 const productionNow = (): string | null =>
   existsSync(PRODUCTION_CLAIMS) ? readFileSync(PRODUCTION_CLAIMS).toString("base64") : null;
+
+// The bridge itself: route EVERY service construction in this file at the
+// isolated partition. The env is the seam claimsFile() reads per append, so
+// bare constructions and future ones are covered equally; production callers
+// never set it and keep their default path.
+const prevClaimsEnv = process.env.AMICO_CLAIMS_FILE;
+beforeAll(() => {
+  process.env.AMICO_CLAIMS_FILE = ISOLATED_CLAIMS;
+});
+afterAll(() => {
+  // Suite-wide guard, order-robust: after every test has run, the production
+  // ledger is still pristine (byte-identical, or still absent — CI and local).
+  expect(productionNow()).toBe(productionSnapshot);
+  // Never leak process state across suites (vitest reuses forked workers).
+  if (prevClaimsEnv === undefined) delete process.env.AMICO_CLAIMS_FILE;
+  else process.env.AMICO_CLAIMS_FILE = prevClaimsEnv;
+  rmSync(ISO_ROOT, { recursive: true, force: true });
+});
 
 describe("coordination ledger — claim serialization (spec §3)", () => {
   it("simultaneous claims serialize by receipt order; loser gets holder", async () => {
