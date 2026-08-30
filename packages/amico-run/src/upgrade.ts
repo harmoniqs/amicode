@@ -2,7 +2,8 @@
 // D2): the four upgrade chains as receipt-emitting, idempotent runbooks.
 //
 //   amico upgrade server-binary [--skip-build <path>] [--ref <rev>] [--kick-command <cmd>]
-//                               [--health-command <cmd>] [--no-kick] [--root-server <dir>]
+//                               [--health-command <cmd>] [--no-kick] [--dist-build-command <cmd>]
+//                               [--root-server <dir>]
 //   amico upgrade extension    [--package-command <cmd>] [--install-command <cmd>]
 //                               [--root-vscext <dir>] [--root-repo-amicode <dir>]
 //   amico upgrade agents       [--root-config <dir>] [--root-staging <dir>] [--root-repo-amicode <dir>]
@@ -28,7 +29,7 @@
 //     and matches it field-for-field.
 //
 // STUB COMMAND CONTRACT (the hermetic seams; tokens + env, both available):
-//   {frozen} {running} {prev} {server} {version} {vsix} {vsix} {repo} {amicoRun}
+//   {frozen} {running} {prev} {server} {version} {vscext} {vsix} {repo} {amicoRun}
 //   AMICO_UPGRADE_FROZEN_BIN / _RUNNING_BIN / _PREV_BIN / _ROOT_SERVER /
 //   AMICO_UPGRADE_ROOT_VSCEXT / _TARGET_VERSION / _REPO_AMICODE / _VSIX /
 //   AMICO_UPGRADE_AMICO_RUN_DIR /
