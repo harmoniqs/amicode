@@ -59,6 +59,7 @@ import {
 import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
@@ -1381,6 +1382,66 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   };
 
   ctx.subscriptions.push(vscode.commands.registerCommand("amicode.fleet.goStandalone", () => void runFleetGoStandalone()));
+
+  // amicode#649: "Amicode: Restart Hub Server" — fleet clients restart the
+  // canonical hub over SSH by driving ops/hub-restart.sh (the one restart-safe
+  // path: atomic rename swap, single-verb restart, trap-verified). Initiated
+  // from the CLIENT's extension host, which is not hosted on the hub, so the
+  // restart can never kill its own runtime — the 2026-08-30 self-host trap.
+  const runRestartHub = async (): Promise<void> => {
+    if (getFleetRole() !== "client") {
+      void vscode.window.showInformationMessage(
+        "Amicode: this machine is not a fleet client — use 'Amicode: Restart opencode server' for the local server.",
+      );
+      return;
+    }
+    const target = resolveHubTarget(readFleetConfig());
+    if (!target) {
+      void vscode.window.showErrorMessage("Amicode: fleet config has no canonical sshAlias — run 'Amicode: Fleet Repair'.");
+      return;
+    }
+    const runSsh = async (cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> => {
+      const { execFile } = await import("node:child_process");
+      return new Promise((resolve) => {
+        execFile(
+          cmd[0]!,
+          cmd.slice(1),
+          { timeout: 90_000, encoding: "utf8" },
+          (error: (Error & { code?: number | string }) | null, stdout: string | Buffer, stderr: string | Buffer) => {
+            const code = error ? (typeof error.code === "number" ? error.code : 1) : 0;
+            resolve({ code, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
+          },
+        );
+      });
+    };
+    await vscode.window.withProgress(
+      { location: vscode.ProgressLocation.Notification, title: "Amicode: restarting hub", cancellable: false },
+      async (progress) => {
+        progress.report({ message: `verifying ${target.alias}…` });
+        const result = await restartHub(
+          target,
+          runSsh,
+          async (url) => {
+            try {
+              const r = await fetch(url);
+              return r.status;
+            } catch {
+              return 0;
+            }
+          },
+        );
+        for (const step of result.steps) progress.report({ message: `${step.step}: ${step.detail}` });
+        if (result.ok) {
+          void vscode.window.showInformationMessage("Amicode: hub restarted and verified (unit active, tunnel answering).");
+        } else {
+          const detail = result.steps.map((s) => `${s.step}: ${s.detail}`).join(" | ");
+          void vscode.window.showErrorMessage(`Amicode: hub restart failed — ${detail}`);
+        }
+        opencodeChannel.appendLine(`[hub-restart] ${result.steps.map((s) => `${s.step} ok=${s.ok} ${s.detail}`).join(" | ")}`);
+      },
+    );
+  };
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.restartHub", () => void runRestartHub()));
 
   // Activation-time fleet drift warning (darwin only). If this machine is a fleet
   // client but the guard is missing/stale or the tunnel is mis-tuned, surface

@@ -221,6 +221,10 @@
         "command": "amicode.workspace.addFolder",
         "title": "Add Folder to Workspace",
         "icon": "$(root-folder-opened)"
+      },
+      {
+        "command": "amicode.restartHub",
+        "title": "Amicode: Restart Hub Server (fleet)"
       }
     ],
     "configuration": {
