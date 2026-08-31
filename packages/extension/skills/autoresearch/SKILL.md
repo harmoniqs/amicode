@@ -3,55 +3,51 @@ name: autoresearch
 description: The director's loop protocol for autonomous research sessions — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming an autoresearch loop.
 agents: [hypothesizer, experimenter, analyzer]
 surface: public
-vault_contract:
-  folders: [sessions, experiments, specs]
-  note_types: [session, experiment, spec, hypothesis]
-  frontmatter: [session_id, status, tags]
 project_contract:
   folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, reports, config]
 ---
 
 # Autoresearch — the director's protocol
 
-> **Install conventions** — this skill references *your personal vault* (the writable
-> vault your Amicode studio mounts) for the session ledger, experiment notes, and specs,
-> and your compute fleet where one exists. **When operating on a Research Project**
-> (detected by `research-project.toml` in the workspace), use project paths instead of vault paths
-> — see the path resolution table below. The protocol is engine- and install-neutral;
-> bindings for a given engine stay engine-side (the opencode binding of the director role
-> is the `autoresearch` primary agent card).
+> **Install conventions** — this skill operates on a **Research Project** (detected by
+> `research-project.toml` in the workspace). All load-bearing state — campaign ledgers,
+> hypotheses, observations, specs, scripts, data, and reports — lives in the project
+> directory. The protocol is engine- and install-neutral; bindings for a given engine stay
+> engine-side (the opencode binding of the director role is the `autoresearch` primary
+> agent card).
 
 **Entry points:** the `autoresearch` primary agent (Tab-switch into research mode —
 its prompt embeds this spine), direct invocation of this skill, or the standing line in
 the user's autoresearch kickoff prompts. All three lead here; this file is the protocol.
 
-The operating principle: **the context window is a cache; the vault is the database.**
-Every piece of load-bearing state lives in a vault note; the context window holds only the
-working set. Compaction (manual or auto) then costs nothing but a cache refill.
+The operating principle: **the context window is a cache; the project is the database.**
+Every piece of load-bearing state lives in project files — campaign ledgers, hypotheses,
+observations, scripts. The context window holds only the working set. Compaction (manual
+or auto) then costs nothing but a cache refill.
 
-## Path resolution (project-aware)
+## Project paths
 
-When the system prompt includes an `## Active Research Project` block (injected by
-`stack_state.ts` when a workspace folder has `research-project.toml`), use project paths.
-When no project is bound, use vault paths. The checkout registry is always vault-based
-(fleet-wide coordination).
+All artifacts live inside the Research Project directory. The `## Active Research Project`
+block in the system prompt (injected by `stack_state.ts` when a workspace folder has
+`research-project.toml`) confirms the project root.
 
-| Artifact | Project-bound | Vault (no project) |
-|----------|---------------|--------------------|
-| Campaign ledger | `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md` | `<personal vault>/sessions/session-<YYYYMMDD>-<slug>.md` |
-| Hypotheses | `<project>/ledger/hypotheses/` | `<vault>/hypotheses/` |
-| Observations | `<project>/ledger/observations/` | `<vault>/experiments/` |
-| Experiment scripts | `<project>/scripts/experiment/` — optimization solves, gate synthesis | (none) |
-| Analysis scripts | `<project>/scripts/analysis/` — post-processing, plotting, comparison | (none) |
-| Testbed | `<project>/scripts/testbed/` — simulated gym environments, hardware interfaces | (none) |
-| Data | `<project>/data/` | (none) |
-| Config | `<project>/config/` | (none) |
-| Reports | `<project>/reports/` | (none) |
-| Checkout registry | `<personal vault>/sessions/CHECKOUTS.md` | `<personal vault>/sessions/CHECKOUTS.md` |
+| Artifact | Path |
+|----------|------|
+| Campaign ledger | `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md` |
+| Hypotheses | `<project>/ledger/hypotheses/` |
+| Observations | `<project>/ledger/observations/` |
+| Spec cards | `<project>/config/specs/` |
+| Experiment scripts | `<project>/scripts/experiment/` — optimization solves, gate synthesis |
+| Analysis scripts | `<project>/scripts/analysis/` — post-processing, plotting, comparison |
+| Testbed | `<project>/scripts/testbed/` — simulated gym environments, hardware interfaces |
+| Data | `<project>/data/` |
+| Config | `<project>/config/` |
+| Reports | `<project>/reports/` |
+| Checkout registry | `<project>/ledger/campaigns/CHECKOUTS.md` |
 
-## The session ledger (create at kickoff, before any work)
+## The campaign ledger (create at kickoff, before any work)
 
-Path: `<personal vault>/sessions/session-<YYYYMMDD>-<slug>.md`. Nine sections, in order:
+Path: `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md`. Nine sections, in order:
 
 1. Objective & standing directives
 2. Hypothesis ledger (H# → verdict → evidence → wiki-links)
@@ -59,7 +55,7 @@ Path: `<personal vault>/sessions/session-<YYYYMMDD>-<slug>.md`. Nine sections, i
    in-flight subagent cast (role, session id, spec id, assigned env, expected artifacts)
 4. Blocked & reasons
 5. Next queue
-6. Checkout topology (mirror of this session's rows in `sessions/CHECKOUTS.md`)
+6. Checkout topology (mirror of this session's rows in `ledger/campaigns/CHECKOUTS.md`)
 7. Gotchas & methodology
 8. Loop log (append-only, one row per loop: date, H#, spec_id, review verdict, plan hash,
    experimenter session id, gate verdicts, advisory closures)
@@ -79,12 +75,12 @@ reference the in-flight casts? Append the audit row to §9.
 1. **Re-read the ledger** — from disk, never from memory.
 2. **Hypothesis queue thin?** Cast the **hypothesizer** (read-only subagent): ranked
    hypotheses + a spec-card draft. Parent picks the winner.
-3. **Spec gate (deliberate):** file the spec card to `<personal vault>/specs/`, run
+3. **Spec gate (deliberate):** file the spec card to `<project>/config/specs/`, run
    `amico spec review <path>` — resolve blocking findings, re-run (round budget 3).
    `--allow-unreviewed` is FORBIDDEN for launch-shaped work (spends compute); if compile
    refuses for want of review, the fix is to review, never the flag.
 4. **Ledger the cast, THEN cast the experimenter** (one experiment per spec, assigned env
-   per `sessions/CHECKOUTS.md`; claim the checkout row first). Parallel experimenters only
+   per `ledger/campaigns/CHECKOUTS.md`; claim the checkout row first). Parallel experimenters only
    where the registry says files are disjoint.
 5. **Run the gates yourself (parent, via bash):** test suites, `amico plan status` where a
    compiled plan exists. Verdicts are DERIVED, never self-reported. No LLM — including
@@ -135,10 +131,10 @@ experiment, only the parent's own working notes); re-read + audit after every co
 
 ## Parallel sessions & shared checkouts
 
-`sessions/CHECKOUTS.md` is the fleet-wide claim registry. Re-read it before casting any
-experimenter; claim your row; release it when work lands. First-writer-wins, propagated by
-the ~15-min sync; races inside the window are possible and visible — a visible conflict
-beats a silent double-ownership every time.
+`ledger/campaigns/CHECKOUTS.md` is the project-wide claim registry. Re-read it before
+casting any experimenter; claim your row; release it when work lands. First-writer-wins;
+races are possible and visible — a visible conflict beats a silent double-ownership every
+time.
 
 ## Standing anti-gaming contract
 

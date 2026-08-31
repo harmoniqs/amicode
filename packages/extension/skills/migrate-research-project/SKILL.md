@@ -115,9 +115,9 @@ Read the file content — do not classify by filename alone.
 - Contains dated summaries aimed at an audience (team, PI, collaborators)
 - Distinct from observations (observations record data; reports communicate it)
 
-**Literature** — stays or → `papers/` (no prescribed move)
-- PDFs of referenced papers
-- Already in `papers/` or `references/` → leave as-is
+**Literature** — destination: `ledger/literature/`
+- PDFs of referenced papers, reading notes
+- Already in `papers/` or `references/` → move to `ledger/literature/`
 
 **Source code** — stays as-is
 - `src/`, `lib/` with Julia modules, utility functions

@@ -4,8 +4,8 @@ description: "Use before any substantial work — a spec, adversarial review by 
 agents: [researcher, experimenter, engineer]
 surface: public
 scenarios: [spec-underspecified-must-block, spec-adequate-must-pass]
-vault_contract:
-  folders: [specs, plans]
+project_contract:
+  folders: [config/specs]
   note_types: [spec, plan, spec-review]
   tags: [deliberation]
 ---
@@ -48,7 +48,7 @@ by hand, which is a weaker claim and should read as one.
 One dialogue rule: **ask one question at a time.** A wall of questions gets a wall of shallow
 answers.
 
-Write to `<vault>/specs/spec-<YYYYMMDD-HHMMSS>-<slug>.md`:
+Write to `<project>/config/specs/spec-<YYYYMMDD-HHMMSS>-<slug>.md`:
 
 ```yaml
 ---
@@ -249,6 +249,6 @@ on **both** sides actually are — and whether the spec ever says.
 
 ## Related
 
-- `amico-vault` — where specs and plans live, and the frontmatter schema
+- `config/specs/` — where specs and plans live in a Research Project
 - `break-into-subissues`, `implement-issue` — the issue-tracker path, once a plan exists
 - `verification` — what a gate is and how to choose one
