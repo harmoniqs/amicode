@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+import { detectProjectType, type ProjectType } from "../project/detect"
 
 /** The default parent when the client sends none — the webview doesn't know the
  *  user's home dir, so the server owns the default (created on first use). */
@@ -109,7 +110,7 @@ export function createProject(rawBody: string): string {
   return JSON.stringify(createProjectAt(plan.target, plan.slug))
 }
 
-export type ProjectDirEntry = { slug: string; path: string }
+export type ProjectDirEntry = { slug: string; path: string; type: ProjectType }
 
 /** Enumerate the immediate subdirectories of the projects parent — each folder
  *  IS a project (amicode is folder-first). This is the source of truth for the
@@ -132,7 +133,7 @@ export function listProjectDirs(
   if (!exists(parentDir)) return []
   return readEntries(parentDir)
     .filter((e) => e.isDirectory && !e.name.startsWith("."))
-    .map((e) => ({ slug: e.name, path: path.join(parentDir, e.name) }))
+    .map((e) => ({ slug: e.name, path: path.join(parentDir, e.name), type: detectProjectType(path.join(parentDir, e.name)) }))
     .sort((a, b) => a.slug.localeCompare(b.slug))
 }
 
