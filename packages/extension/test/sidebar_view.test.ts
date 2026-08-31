@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 
 function makeWebviewView() {
   const messageCbs: Array<(msg: unknown) => void> = [];
+  const disposeCbs: Array<() => void> = [];
   let html = "";
   return {
     webview: {
@@ -22,7 +23,12 @@ function makeWebviewView() {
       postMessage: vi.fn().mockResolvedValue(true),
       _simulateMessage(msg: unknown) { for (const cb of messageCbs) cb(msg); },
     },
+    onDidDispose: (cb: () => void) => {
+      disposeCbs.push(cb);
+      return { dispose() {} };
+    },
     _messageCbs: messageCbs,
+    _disposeCbs: disposeCbs,
   };
 }
 
@@ -139,5 +145,160 @@ describe("sidebar build pipeline", () => {
       m.when && m.when.includes("amicode.workspace"),
     );
     expect(wsMenus).toHaveLength(0);
+  });
+});
+
+// ── Project tree scanning (#675) ─────────────────────────────────────────────
+
+describe("sidebar bridge — project tree scanning", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  it("get-roots returns workspace folders classified by project type, research first", () => {
+    const openChat = vi.fn();
+    const newProject = vi.fn();
+    const postMessage = vi.fn();
+
+    // Mock workspace folders: one research, one dev
+    const getRoots = vi.fn().mockReturnValue([
+      { path: "/projects/quantum-sim", name: "quantum-sim", projectType: "research", metadata: { phase: "running" } },
+      { path: "/projects/my-app", name: "my-app", projectType: "dev" },
+    ]);
+
+    handleSidebarMessage(
+      { kind: "get-roots" },
+      { openChat, newProject, getRoots, getChildren: vi.fn(), openFile: vi.fn(), postMessage },
+    );
+
+    expect(getRoots).toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "roots",
+        roots: expect.arrayContaining([
+          expect.objectContaining({ path: "/projects/quantum-sim", projectType: "research" }),
+          expect.objectContaining({ path: "/projects/my-app", projectType: "dev" }),
+        ]),
+      }),
+    );
+  });
+
+  it("get-children returns directory entries sorted dirs-first, .git filtered", async () => {
+    const openChat = vi.fn();
+    const newProject = vi.fn();
+    const postMessage = vi.fn();
+
+    const getChildren = vi.fn().mockResolvedValue([
+      { name: "src", type: "directory" },
+      { name: "alpha.ts", type: "file" },
+      { name: "beta.ts", type: "file" },
+    ]);
+
+    await handleSidebarMessage(
+      { kind: "get-children", path: "/projects/quantum-sim" },
+      { openChat, newProject, getRoots: vi.fn(), getChildren, openFile: vi.fn(), postMessage },
+    );
+
+    expect(getChildren).toHaveBeenCalledWith("/projects/quantum-sim");
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "children",
+        path: "/projects/quantum-sim",
+        entries: [
+          expect.objectContaining({ name: "src", type: "directory" }),
+          expect.objectContaining({ name: "alpha.ts", type: "file" }),
+          expect.objectContaining({ name: "beta.ts", type: "file" }),
+        ],
+      }),
+    );
+  });
+
+  it("open-file triggers the openFile handler", () => {
+    const openFile = vi.fn();
+    handleSidebarMessage(
+      { kind: "open-file", path: "/projects/quantum-sim/solve.jl" },
+      { openChat: vi.fn(), newProject: vi.fn(), getRoots: vi.fn(), getChildren: vi.fn(), openFile, postMessage: vi.fn() },
+    );
+
+    expect(openFile).toHaveBeenCalledWith("/projects/quantum-sim/solve.jl");
+  });
+});
+
+// ── Tree service (#675) ──────────────────────────────────────────────────────
+
+describe("SidebarTreeService", () => {
+  let SidebarTreeService: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_tree_service");
+    SidebarTreeService = mod.SidebarTreeService;
+  });
+
+  it("getRoots classifies workspace folders, research first", () => {
+    const folders = [
+      { uri: vscode.Uri.file("/dev-app"), name: "dev-app", index: 0 },
+      { uri: vscode.Uri.file("/quantum-sim"), name: "quantum-sim", index: 1 },
+    ];
+
+    const service = new SidebarTreeService({
+      detectProjectType: (dir: string) =>
+        dir === "/quantum-sim" ? "research" : "dev",
+      readToml: () => ({ name: "Quantum Sim", status: "running" }),
+      getWorkspaceFolders: () => folders,
+    });
+
+    const roots = service.getRoots();
+    // Research projects come first
+    expect(roots[0]).toMatchObject({
+      path: "/quantum-sim",
+      projectType: "research",
+      name: "Quantum Sim",
+    });
+    expect(roots[1]).toMatchObject({
+      path: "/dev-app",
+      projectType: "dev",
+      name: "dev-app",
+    });
+  });
+
+  it("getChildren returns entries with .git filtered and dirs-first sort", async () => {
+    const service = new SidebarTreeService({
+      detectProjectType: () => "dev",
+      readToml: () => ({}),
+      readDirectory: async () => [
+        { name: "beta.ts", type: "file" },
+        { name: ".git", type: "directory" },
+        { name: "src", type: "directory" },
+        { name: "alpha.ts", type: "file" },
+      ],
+      getExcludePatterns: () => [],
+    });
+
+    const entries = await service.getChildren("/project");
+    const names = entries.map((e: any) => e.name);
+    // .git excluded, dirs first, then alphabetical
+    expect(names).toEqual(["src", "alpha.ts", "beta.ts"]);
+  });
+
+  it("getChildren respects files.exclude patterns", async () => {
+    const service = new SidebarTreeService({
+      detectProjectType: () => "dev",
+      readToml: () => ({}),
+      readDirectory: async () => [
+        { name: "src", type: "directory" },
+        { name: "node_modules", type: "directory" },
+        { name: "main.ts", type: "file" },
+      ],
+      getExcludePatterns: () => ["node_modules"],
+    });
+
+    const entries = await service.getChildren("/project");
+    const names = entries.map((e: any) => e.name);
+    expect(names).toEqual(["src", "main.ts"]);
   });
 });
