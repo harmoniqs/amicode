@@ -22,6 +22,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private extensionUri: vscode.Uri;
   private view?: vscode.WebviewView;
   private chatActive = false;
+  private activeProjectPath: string | null | undefined = undefined;
   private watcher?: vscode.FileSystemWatcher;
   private workspaceSub?: vscode.Disposable;
   private treeService: SidebarTreeService;
@@ -102,6 +103,17 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.chatActive = active;
       this.postDown({ kind: "chat-active", active });
     }
+  }
+
+  /**
+   * Set the active project path (from the active session's binding).
+   * Posts active-project to the webview for highlight + auto-expand.
+   * Pass null to clear (no session or no project binding).
+   */
+  setActiveProject(projectPath: string | null): void {
+    if (this.activeProjectPath === projectPath) return; // deduplicate
+    this.activeProjectPath = projectPath;
+    this.postDown({ kind: "active-project", path: projectPath });
   }
 
   private postDown(msg: SidebarDownMessage): void {

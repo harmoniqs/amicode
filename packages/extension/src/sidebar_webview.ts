@@ -274,6 +274,41 @@ interface TreeEntry {
         }
         break;
       }
+
+      case "active-project": {
+        // Update highlight: find all root nodes, toggle the "active" class
+        const activePath: string | null = msg.path;
+        const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
+        for (const node of allRootNodes) {
+          const el = node as HTMLElement;
+          const nodePath = el.dataset.path;
+          const row = el.querySelector(".tree-node") as HTMLElement | null;
+          if (!row) continue;
+
+          if (nodePath === activePath) {
+            row.style.borderLeft = "2px solid var(--vscode-focusBorder)";
+            row.style.background = "var(--vscode-list-activeSelectionBackground)";
+            // Auto-expand the active project root (not deeper)
+            if (!expanded[nodePath!]) {
+              expanded[nodePath!] = true;
+              saveExpandedState();
+              const icon = row.querySelector(".icon") as HTMLElement | null;
+              if (icon) icon.textContent = "\u25BE";
+              const childrenEl = el.querySelector(".children") as HTMLElement | null;
+              if (childrenEl) {
+                childrenEl.style.display = "block";
+                if (!childrenCache[nodePath!]) {
+                  vscode.postMessage({ kind: "get-children", path: nodePath });
+                }
+              }
+            }
+          } else {
+            row.style.borderLeft = "";
+            row.style.background = "";
+          }
+        }
+        break;
+      }
     }
   });
 

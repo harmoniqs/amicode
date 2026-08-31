@@ -400,3 +400,73 @@ describe("sidebar bridge — file operations", () => {
     );
   });
 });
+
+// ── Session-aware highlighting (#677) ────────────────────────────────────────
+
+describe("SidebarViewProvider — session awareness", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("setActiveProject posts active-project message to the webview", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setActiveProject("/projects/quantum-sim");
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      kind: "active-project",
+      path: "/projects/quantum-sim",
+    });
+  });
+
+  it("setActiveProject with null clears the highlight", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setActiveProject(null);
+
+    expect(view.webview.postMessage).toHaveBeenCalledWith({
+      kind: "active-project",
+      path: null,
+    });
+  });
+
+  it("setActiveProject switches highlight from one project to another", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setActiveProject("/projects/quantum-sim");
+    provider.setActiveProject("/projects/other");
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    expect(activeProjectCalls).toHaveLength(2);
+    expect(activeProjectCalls[0][0].path).toBe("/projects/quantum-sim");
+    expect(activeProjectCalls[1][0].path).toBe("/projects/other");
+  });
+
+  it("setActiveProject deduplicates same path", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setActiveProject("/projects/quantum-sim");
+    provider.setActiveProject("/projects/quantum-sim");
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    expect(activeProjectCalls).toHaveLength(1);
+  });
+});
