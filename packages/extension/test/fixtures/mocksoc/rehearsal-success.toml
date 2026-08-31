@@ -1,0 +1,10 @@
+schema_version = "1"
+
+[rehearsal]
+kind = "mocksoc"
+sim = true
+outcome = "success"
+pulse_hash = "sha256:5dfda7a190c26ef78bd5dfaa1f5d21db2b84f557ca45911c0b3951006240cb8e"
+mismatch = "delta × 1.05 (mock truth vs nominal model)"
+step_outcome = "IdentityStrategy step: 1 measurement(s), J_exp=0.665, accepted=true"
+recorded = "2026-08-31T21:28:34Z"

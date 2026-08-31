@@ -1,0 +1,11 @@
+# A minimal run-dir result record ([params] is what the rehearsal reads — the
+# same shape every amico-run solve writes, self-describing its regime).
+fidelity = 0.9999786189131341
+iterations = 60
+
+[params]
+levels = 3
+drive_max = 0.2
+T = 10.0
+N = 50
+delta = 0.2

@@ -326,7 +326,7 @@ export interface RunRef {
 
 /** Stage-8 guided stub (amicode_to_hardware): records intent to send a pulse to
  *  a device. THIS BUILD PERFORMS NO DEVICE I/O — `gate` and `checks` are fixed
- *  by the serializer (pending-human-signoff + the auto-check list), never
+ *  by the serializer (pending-human-sign-off + the auto-check list), never
  *  caller-supplied, so a stub can't claim an approval that didn't happen. */
 export interface DeviceSessionStub {
   /** The solved pulse artifact (pulse.jld2) if known. */
@@ -334,6 +334,70 @@ export interface DeviceSessionStub {
   /** The run directory the pulse came from, if known. */
   run_dir?: string;
   note?: string;
+  /** SEAM 1 (#680): the MockSoc rehearsal record — the solved pulse's run
+   *  through the Strumento.jl transport path, honestly labeled sim. Parsed +
+   *  validated from the rehearsal.toml artifact (./rehearsal.ts); additive —
+   *  a stub without it is the pre-SEAM-1 honest stub, unchanged. */
+  rehearsal?: RehearsalRecord;
+}
+
+/** SEAM 1 (#680): what the MockSoc rehearsal actually produced. NO `sim` field
+ *  by design — the serializer PINS `sim = true` on the record (a rehearsal is
+ *  a sim preview, never a hardware claim), so a caller cannot label it
+ *  otherwise. Outcome-gated: `rehearsalSatisfiesStage` is the only satisfier
+ *  of the hardware stage — a failed rehearsal records honestly and does NOT
+ *  satisfy it. */
+export interface RehearsalRecord {
+  /** The transport path: "mocksoc" — Strumento's Piccolo-extension MockSoc
+   *  (translate → envelopes → execute! → synthetic IQ → Measurement → one
+   *  strategy step). The only kind today; anything else is not a rehearsal. */
+  kind: "mocksoc";
+  outcome: "success" | "failed";
+  /** Content-hash (sha256:<hex>) of the pulse.jld2 bytes the rehearsal ran. */
+  pulse_hash: string;
+  /** The mock system's mismatch declaration (e.g. "delta × 1.05 …"). */
+  mismatch: string;
+  /** The strategy-step outcome. REQUIRED when outcome === "success". */
+  step_outcome?: string;
+  /** What failed. REQUIRED when outcome === "failed". */
+  error?: string;
+  /** ISO-8601, from the artifact (quoted string — same rule as `recorded`). */
+  recorded?: string;
+}
+
+/** The outcome gate (SEAM 1 AC): a rehearsal satisfies the hardware stage ONLY
+ *  on success. A failed rehearsal is surfaced distinctly and leaves the stage
+ *  an honest stub — never a costume of progress. */
+export function rehearsalSatisfiesStage(rec: RehearsalRecord): boolean {
+  return rec.outcome === "success";
+}
+
+/** Human-readable problems for a RehearsalRecord (shaped for readRehearsalRecord
+ *  in ./rehearsal.ts, which normalizes the parsed artifact into one). [] = valid. */
+export function validateRehearsalRecord(rec: Partial<RehearsalRecord>): string[] {
+  const problems: string[] = [];
+  if (rec.kind !== "mocksoc") {
+    problems.push(`kind must be "mocksoc" (the Strumento transport path), got ${JSON.stringify(rec.kind)}`);
+  }
+  if (rec.outcome !== "success" && rec.outcome !== "failed") {
+    problems.push(`outcome must be "success" | "failed", got ${JSON.stringify(rec.outcome)}`);
+  }
+  if (typeof rec.pulse_hash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(rec.pulse_hash)) {
+    problems.push(`pulse_hash must be a sha256 content-hash ("sha256:<64 hex>"), got ${JSON.stringify(rec.pulse_hash)}`);
+  }
+  if (typeof rec.mismatch !== "string" || rec.mismatch.trim() === "") {
+    problems.push("mismatch must be a non-empty declaration of the mock system's mismatch");
+  }
+  if (rec.outcome === "success" && (typeof rec.step_outcome !== "string" || rec.step_outcome.trim() === "")) {
+    problems.push("step_outcome is required on success — a success must have proven the strategy step");
+  }
+  if (rec.outcome === "failed" && (typeof rec.error !== "string" || rec.error.trim() === "")) {
+    problems.push("error is required on a failed rehearsal (what failed)");
+  }
+  if (rec.recorded !== undefined && typeof rec.recorded !== "string") {
+    problems.push("recorded must be a string when given");
+  }
+  return problems;
 }
 
 /** Guided follow-up stub (amicode_calibrate): the calibration loop that follows
@@ -1112,10 +1176,17 @@ function requireNonEmptyRef(name: string, value: string | undefined): void {
 const HARDWARE_CHECKS = ["fidelity>=threshold", "|drive|<=cap", "bandwidth", "leakage"] as const;
 
 /** Serialize the DeviceSession stub under [device_session]. `gate` is pinned to
- *  "pending-human-signoff" and `checks` to HARDWARE_CHECKS (see interface note). */
+ *  "pending-human-sign-off" and `checks` to HARDWARE_CHECKS (see interface note).
+ *  A rehearsal record lands under [device_session.rehearsal] with `sim = true`
+ *  PINNED by this serializer (the record type has no sim field to lie with). */
 export function deviceSessionStubToml(stub: DeviceSessionStub, now?: Date): string {
   requireNonEmptyRef("pulse_ref", stub.pulse_ref);
   requireNonEmptyRef("run_dir", stub.run_dir);
+  if (stub.rehearsal !== undefined && validateRehearsalRecord(stub.rehearsal).length > 0) {
+    throw new Error(
+      `invalid rehearsal record: ${validateRehearsalRecord(stub.rehearsal).join("; ")}`,
+    );
+  }
   const lines = ["[device_session]"];
   if (stub.pulse_ref !== undefined) lines.push(`pulse_ref = ${tomlEscape(stub.pulse_ref)}`);
   if (stub.run_dir !== undefined) lines.push(`run_dir = ${tomlEscape(stub.run_dir)}`);
@@ -1123,6 +1194,19 @@ export function deviceSessionStubToml(stub: DeviceSessionStub, now?: Date): stri
   lines.push(`checks = [${HARDWARE_CHECKS.map(tomlEscape).join(", ")}]`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  if (stub.rehearsal !== undefined) {
+    const reh = stub.rehearsal;
+    lines.push("");
+    lines.push("[device_session.rehearsal]");
+    lines.push(`kind = ${tomlEscape(reh.kind)}`);
+    lines.push("sim = true"); // PINNED, bare TOML boolean — sim is part of the trust chain
+    lines.push(`outcome = ${tomlEscape(reh.outcome)}`);
+    lines.push(`pulse_hash = ${tomlEscape(reh.pulse_hash)}`);
+    lines.push(`mismatch = ${tomlEscape(reh.mismatch)}`);
+    if (reh.step_outcome !== undefined) lines.push(`step_outcome = ${tomlEscape(reh.step_outcome)}`);
+    if (reh.error !== undefined) lines.push(`error = ${tomlEscape(reh.error)}`);
+    if (reh.recorded !== undefined) lines.push(`recorded = ${tomlEscape(reh.recorded)}`);
+  }
   return lines.join("\n") + "\n";
 }
 
