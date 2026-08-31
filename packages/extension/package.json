@@ -225,6 +225,11 @@
       {
         "command": "amicode.restartHub",
         "title": "Amicode: Restart Hub Server (fleet)"
+      },
+      {
+        "command": "amicode.selectHarness",
+        "title": "Select Harness",
+        "category": "Amicode"
       }
     ],
     "configuration": {
@@ -239,6 +244,24 @@
           "type": "string",
           "default": "",
           "description": "Override path to the opencode CLI (dev only). Empty = use the vendored binary."
+        },
+        "amicode.harness": {
+          "type": "string",
+          "enum": [
+            "opencode",
+            "telaio"
+          ],
+          "default": "opencode",
+          "enumDescriptions": [
+            "The default harness \u2014 vendored binary, full amicode tool surface.",
+            "The subscription harness (Telaio.jl). Requires amicode.telaioBinary. Sessions are harness-local \u2014 switching harnesses switches session history."
+          ],
+          "description": "Which chat harness serves the Amicode UI. Sessions are harness-local: switching harnesses switches session history."
+        },
+        "amicode.telaioBinary": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the telaio harness binary (Telaio.jl's serve daemon). Required when amicode.harness = telaio."
         },
         "amicode.devAssetRoot": {
           "type": "string",

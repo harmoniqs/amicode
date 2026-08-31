@@ -4,6 +4,7 @@ import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
 import { fetchProviderSignal } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
+import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
 import { registerWorkspaceTree } from "./workspace_tree";
@@ -471,15 +472,32 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // watcher, commands) still activates.
   let binary: string | undefined;
   try {
-    const resolved = resolveOpencodeBinary(
-      ctx.extensionPath,
-      vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", ""),
-    );
-    binary = resolved.path;
+    // The adapter seam (ADR-0011, #659): the SELECTED harness resolves the
+    // launch. Default (opencode) delegates to the same resolver with the same
+    // inputs — byte-identical. A selected-but-unlaunchable harness (telaio
+    // without its binary) falls back to the default, warned, never silent.
+    const bootCfg = vscode.workspace.getConfiguration("amicode");
+    const harnessId = bootCfg.get<string>("harness", "opencode");
+    const launch = resolveSelectedLaunch({
+      harnessId,
+      opencodeBinary: bootCfg.get<string>("opencodeBinary", ""),
+      telaioBinary: bootCfg.get<string>("telaioBinary", ""),
+      extensionPath: ctx.extensionPath,
+    });
+    if (launch.fellBack) {
+      opencodeChannel.appendLine(
+        `[boot] harness "${harnessId}" not launchable — falling back to opencode (set amicode.telaioBinary, or use the Select Harness picker)`,
+      );
+    } else if (launch.descriptor.id !== "opencode") {
+      opencodeChannel.appendLine(`[boot] harness: ${launch.descriptor.displayName}`);
+    }
+    binary = launch.binary;
     opencodeChannel.appendLine(
-      resolved.source === "config-override"
+      bootCfg.get<string>("opencodeBinary", "").trim() !== "" && launch.descriptor.id === "opencode"
         ? `[boot] OVERRIDE: amicode.opencodeBinary = ${binary}`
-        : `[boot] vendored opencode: ${binary}`,
+        : launch.descriptor.id === "opencode"
+          ? `[boot] vendored opencode: ${binary}`
+          : `[boot] harness binary: ${binary}`,
     );
   } catch (e) {
     if (e instanceof OpencodeMissingError) {
@@ -1337,11 +1355,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = undefined;
       // Stop the fleet client poll if running
       if (fleetClientPoll) { clearInterval(fleetClientPoll); fleetClientPoll = undefined; }
-      // Spawn a fresh local server (vendored binary, ephemeral port)
-      const resolved = resolveOpencodeBinary(ctx.extensionPath, "");
+      // Spawn a fresh local server (selected harness, fresh resolution — the
+      // standalone path deliberately re-resolves, ephemeral port)
+      const standaloneCfg = vscode.workspace.getConfiguration("amicode");
+      const standaloneLaunch = resolveSelectedLaunch({
+        harnessId: standaloneCfg.get<string>("harness", "opencode"),
+        opencodeBinary: "", // standalone drops the override by design
+        telaioBinary: standaloneCfg.get<string>("telaioBinary", ""),
+        extensionPath: ctx.extensionPath,
+      });
       const amicoRunBinDir2 = resolveAmicoRunBinDir(ctx.extensionPath);
       const freshManager = new ServerManager({
-        binary: resolved.path,
+        binary: standaloneLaunch.binary,
         cwd: opencodeProject.projectDir,
         port: undefined, // ephemeral — standalone
         env: spawnEnv({
@@ -1518,6 +1543,60 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   );
 
   // 5. Commands
+  ctx.subscriptions.push(
+    // The harness picker (ADR-0011, #659): the registry IS the menu. Entries
+    // carry honest availability; an unavailable option routes to guidance
+    // instead of switching. The disclosure rides every entry: sessions are
+    // harness-local — switching harnesses switches session history. Switch =
+    // persist + the existing restartServer respawn path.
+    vscode.commands.registerCommand("amicode.selectHarness", async () => {
+      const cfg = vscode.workspace.getConfiguration("amicode");
+      const current = cfg.get<string>("harness", "opencode");
+      const settingsBag = {
+        opencodeBinary: cfg.get<string>("opencodeBinary", ""),
+        telaioBinary: cfg.get<string>("telaioBinary", ""),
+      };
+      const items = HARNESS_REGISTRY.map((d) => {
+        const avail = d.availability(settingsBag);
+        const isCurrent = d.id === current;
+        return {
+          descriptor: d,
+          avail,
+          label: isCurrent ? `$(check) ${d.displayName}` : d.displayName,
+          description: isCurrent ? "current" : avail.state,
+          detail: `${avail.detail} Sessions are harness-local — switching switches session history.`,
+        };
+      });
+      const pick = await vscode.window.showQuickPick(items, {
+        placeHolder: "Amicode: select the chat harness",
+      });
+      if (!pick || pick.descriptor.id === current) return;
+      if (pick.avail.state === "needs-setup") {
+        const action = await vscode.window.showWarningMessage(
+          `${pick.descriptor.displayName} isn't ready yet`,
+          { modal: false },
+          "Open Settings",
+        );
+        if (action === "Open Settings") {
+          void vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            pick.descriptor.id === "telaio" ? "amicode.telaioBinary" : "amicode.harness",
+          );
+        }
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        `Switch to ${pick.descriptor.displayName}? Sessions are harness-local — the new harness starts with its own (empty) history.`,
+        { modal: true },
+        "Switch & Restart",
+      );
+      if (confirm !== "Switch & Restart") return;
+      await cfg.update("harness", pick.descriptor.id, vscode.ConfigurationTarget.Global);
+      opencodeChannel.appendLine(`[harness] selected: ${pick.descriptor.id} — restarting the server`);
+      void vscode.commands.executeCommand("amicode.restartServer");
+    }),
+  );
+
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.openChat", async () => {
       // Snapshot the ready URL before any await: restartServer nulls
