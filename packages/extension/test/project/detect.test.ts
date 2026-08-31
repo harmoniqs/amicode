@@ -1,5 +1,5 @@
 // Project type detection tests — #666.
-// detectProjectType(dir) returns "research" if .amico exists, "dev" otherwise.
+// detectProjectType(dir) returns "research" if research-project.toml exists, "dev" otherwise.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -18,12 +18,12 @@ describe("detectProjectType", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns 'research' when .amico exists at the root", () => {
-    writeFileSync(join(tmpDir, ".amico"), 'schema_version = 1\nname = "test"\n');
+  it("returns 'research' when research-project.toml exists at the root", () => {
+    writeFileSync(join(tmpDir, "research-project.toml"), 'schema_version = 1\nname = "test"\n');
     expect(detectProjectType(tmpDir)).toBe("research");
   });
 
-  it("returns 'dev' when .amico does not exist", () => {
+  it("returns 'dev' when research-project.toml does not exist", () => {
     expect(detectProjectType(tmpDir)).toBe("dev");
   });
 
@@ -31,9 +31,9 @@ describe("detectProjectType", () => {
     expect(detectProjectType(join(tmpDir, "nope"))).toBe("dev");
   });
 
-  it("detects type change: directory gains .amico after first resolution", () => {
+  it("detects type change: directory gains research-project.toml after first resolution", () => {
     expect(detectProjectType(tmpDir)).toBe("dev");
-    writeFileSync(join(tmpDir, ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(tmpDir, "research-project.toml"), 'schema_version = 1\n');
     expect(detectProjectType(tmpDir)).toBe("research");
   });
 });
@@ -46,7 +46,7 @@ describe("listProjectDirs with type detection", () => {
   beforeEach(() => {
     parentDir = mkdtempSync(join(tmpdir(), "amicode-list-"));
     mkdirSync(join(parentDir, "research-proj"));
-    writeFileSync(join(parentDir, "research-proj", ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(parentDir, "research-proj", "research-project.toml"), 'schema_version = 1\n');
     mkdirSync(join(parentDir, "dev-proj"));
   });
 
@@ -54,14 +54,14 @@ describe("listProjectDirs with type detection", () => {
     rmSync(parentDir, { recursive: true, force: true });
   });
 
-  it("returns type 'research' for project with .amico", () => {
+  it("returns type 'research' for project with research-project.toml", () => {
     const projects = listProjectDirs(parentDir);
     const research = projects.find((p) => p.slug === "research-proj");
     expect(research).toBeDefined();
     expect(research!.type).toBe("research");
   });
 
-  it("returns type 'dev' for project without .amico", () => {
+  it("returns type 'dev' for project without research-project.toml", () => {
     const projects = listProjectDirs(parentDir);
     const dev = projects.find((p) => p.slug === "dev-proj");
     expect(dev).toBeDefined();

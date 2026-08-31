@@ -25,7 +25,7 @@ describe("resolveProjectSkills", () => {
   it("discovers skills from a research project's skills/ directory", () => {
     const projectDir = join(tmpDir, "my-research");
     mkdirSync(join(projectDir, "skills", "my-analysis"), { recursive: true });
-    writeFileSync(join(projectDir, ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(projectDir, "research-project.toml"), 'schema_version = 1\n');
     writeFileSync(join(projectDir, "skills", "my-analysis", "SKILL.md"), `---
 name: my-analysis
 description: Custom analysis skill for this project
@@ -60,7 +60,7 @@ agents: []
   it("returns empty for a research project with no skills/ directory", () => {
     const projectDir = join(tmpDir, "no-skills-proj");
     mkdirSync(projectDir);
-    writeFileSync(join(projectDir, ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(projectDir, "research-project.toml"), 'schema_version = 1\n');
 
     const skills = resolveProjectSkills([projectDir]);
     expect(skills).toHaveLength(0);
@@ -71,8 +71,8 @@ agents: []
     const proj2 = join(tmpDir, "proj2");
     mkdirSync(join(proj1, "skills", "skill-a"), { recursive: true });
     mkdirSync(join(proj2, "skills", "skill-b"), { recursive: true });
-    writeFileSync(join(proj1, ".amico"), 'schema_version = 1\n');
-    writeFileSync(join(proj2, ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(proj1, "research-project.toml"), 'schema_version = 1\n');
+    writeFileSync(join(proj2, "research-project.toml"), 'schema_version = 1\n');
     writeFileSync(join(proj1, "skills", "skill-a", "SKILL.md"), `---
 name: skill-a
 description: Skill A

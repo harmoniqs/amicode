@@ -87,7 +87,7 @@ export function resolveWorkspaceSkills(wsSkillsDir: string): SkillIndexEntry[] {
 }
 
 /** Resolve project skills from research project workspace folders (#668).
- *  For each folder with `.amico`, scan its `skills/` directory.
+ *  For each folder with `research-project.toml`, scan its `skills/` directory.
  *  Non-research directories are skipped. Order-preserving: first folder wins
  *  on name collision (consistent with workspace-folder order). */
 export function resolveProjectSkills(workspaceFolders: string[]): SkillIndexEntry[] {

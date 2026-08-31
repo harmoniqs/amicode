@@ -51,8 +51,8 @@ export function projectCreate(argv: string[]): VerbResult {
   const defaultPath = join(homedir(), "projects", slug);
   const projectDir = resolve(flagValue(argv, "--path") ?? defaultPath);
 
-  // Idempotent: if .amico already exists, validate and return
-  const tomlPath = join(projectDir, ".amico");
+  // Idempotent: if research-project.toml already exists, validate and return
+  const tomlPath = join(projectDir, "research-project.toml");
   if (existsSync(tomlPath)) {
     try {
       const existing = parseToml(readFileSync(tomlPath, "utf8")) as unknown as ProjectToml;
@@ -167,9 +167,9 @@ export function projectImport(argv: string[]): VerbResult {
 
   if (!existsSync(dir)) return fail(`directory not found: ${dir}`);
 
-  const tomlPath = join(dir, ".amico");
+  const tomlPath = join(dir, "research-project.toml");
 
-  // Idempotent: if .amico already exists, validate and return
+  // Idempotent: if research-project.toml already exists, validate and return
   if (existsSync(tomlPath)) {
     try {
       const existing = parseToml(readFileSync(tomlPath, "utf8")) as unknown as ProjectToml;
