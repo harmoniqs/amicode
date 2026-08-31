@@ -21,3 +21,13 @@ process.env.AMICO_CRITIC_BIN = "/nonexistent/amico-test-guard/no-real-model-call
 if (!process.env.AMICO_LEDGER) {
   process.env.AMICO_LEDGER = "/nonexistent/amico-test-guard/ledger.jsonl";
 }
+
+// And for the coordination claims ledger ($AMICO_CLAIMS_FILE → ~/.amico/ledger/claims.jsonl):
+// the coordination-ledger contract suite constructed its service bare, and every run appended
+// fixture rows to the real claims ledger — 176 rows before ops archived it 2026-08-30 as
+// claims.jsonl.archive-20260830-test-pollution (#642; no in-repo action needed beyond this
+// guard). The suite now routes its writes through its own per-run tmp partition; this backstop
+// fails closed for the next suite that forgets.
+if (!process.env.AMICO_CLAIMS_FILE) {
+  process.env.AMICO_CLAIMS_FILE = "/nonexistent/amico-test-guard/claims.jsonl";
+}
