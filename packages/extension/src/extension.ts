@@ -7,7 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerWorkspaceTree } from "./workspace_tree";
+import { SidebarViewProvider } from "./sidebar_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -377,10 +377,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6)
-  const workspaceTree = registerWorkspaceTree(ctx);
+  // 1. UI surfaces — Workspace sidebar (webview, #673)
+  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider),
+  );
   // Mute the "Chat with Amico" button when a chat panel is open
-  ChatPanel.onLiveChange((count) => workspaceTree.setChatActive(count > 0));
+  ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
