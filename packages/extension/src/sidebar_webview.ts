@@ -19,7 +19,97 @@ interface TreeEntry {
   name: string;
   type: "file" | "directory";
   path: string;
+  gitStatus?: string;
 }
+
+// ── File icon color mapping ──────────────────────────────────────────────────
+
+const FILE_ICON_COLORS: Record<string, string> = {
+  ts: "#3178c6", tsx: "#3178c6", mts: "#3178c6", cts: "#3178c6",
+  js: "#f1e05a", jsx: "#f1e05a", mjs: "#f1e05a", cjs: "#f1e05a",
+  jl: "#9558b2",
+  py: "#3572A5", pyi: "#3572A5",
+  json: "#e8d44d", jsonc: "#e8d44d", json5: "#e8d44d",
+  toml: "#9c4221",
+  yaml: "#cb171e", yml: "#cb171e",
+  md: "#519aba", mdx: "#519aba",
+  txt: "#8b8b8b", log: "#8b8b8b", csv: "#8b8b8b",
+  sh: "#89e051", bash: "#89e051", zsh: "#89e051", fish: "#89e051",
+  html: "#e34c26", htm: "#e34c26",
+  css: "#563d7c", scss: "#c6538c", less: "#1d365d", sass: "#c6538c",
+  rs: "#dea584",
+  go: "#00ADD8",
+  c: "#555555", h: "#555555", cpp: "#f34b7d", hpp: "#f34b7d", cc: "#f34b7d",
+  java: "#b07219",
+  rb: "#701516",
+  svg: "#ffb13b",
+  png: "#a074c4", jpg: "#a074c4", jpeg: "#a074c4", gif: "#a074c4", ico: "#a074c4", webp: "#a074c4",
+  pdf: "#db1818",
+  zip: "#afb42b", gz: "#afb42b", tar: "#afb42b",
+  lock: "#6d8086",
+  xml: "#e44d26",
+  sql: "#e38c00",
+  graphql: "#e10098", gql: "#e10098",
+  vue: "#41b883",
+  svelte: "#ff3e00",
+  r: "#198ce7", R: "#198ce7",
+  lua: "#000080",
+  zig: "#f69a1b",
+  nim: "#ffe953",
+  swift: "#f05138",
+  kt: "#A97BFF", kts: "#A97BFF",
+  dart: "#00B4AB",
+  ex: "#6e4a7e", exs: "#6e4a7e",
+  tf: "#5c4ee5", hcl: "#5c4ee5",
+  dockerfile: "#2496ed",
+};
+
+const EXACT_FILE_COLORS: Record<string, string> = {
+  ".gitignore": "#f54d27", ".gitmodules": "#f54d27", ".gitattributes": "#f54d27",
+  ".env": "#ecd53f", ".env.local": "#ecd53f",
+  "Dockerfile": "#2496ed", "docker-compose.yml": "#2496ed", "docker-compose.yaml": "#2496ed",
+  "Makefile": "#6d8086", "CMakeLists.txt": "#6d8086",
+  "Cargo.toml": "#dea584", "Cargo.lock": "#dea584",
+  "package.json": "#e8d44d", "package-lock.json": "#6d8086",
+  "tsconfig.json": "#3178c6", "tsconfig.node.json": "#3178c6",
+  "Manifest.toml": "#9558b2", "Project.toml": "#9558b2",
+  "LICENSE": "#6d8086", "LICENSE.md": "#6d8086",
+  "README.md": "#519aba", "CHANGELOG.md": "#519aba",
+};
+
+function getFileIconColor(name: string): string {
+  if (EXACT_FILE_COLORS[name]) return EXACT_FILE_COLORS[name];
+  const dot = name.lastIndexOf(".");
+  if (dot >= 0) {
+    const ext = name.slice(dot + 1).toLowerCase();
+    if (FILE_ICON_COLORS[ext]) return FILE_ICON_COLORS[ext];
+  }
+  return "#8b8b8b"; // default gray
+}
+
+// ── SVG icon templates ───────────────────────────────────────────────────────
+
+function fileIconSvg(color: string): string {
+  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
+    + `<path d="M4.5 1.5h4.8L13 5.2V13.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-opacity="0.8"/>`
+    + `<path d="M9.3 1.5V5h3.7" fill="none" stroke="${color}" stroke-opacity="0.5"/>`
+    + `</svg>`;
+}
+
+function folderClosedSvg(): string {
+  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
+    + `<path d="M1.5 2.5h4l1.5 2H14a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-.75.75H2a.75.75 0 0 1-.75-.75V3.25A.75.75 0 0 1 2 2.5z" fill="#c09553" fill-opacity="0.85"/>`
+    + `</svg>`;
+}
+
+function folderOpenSvg(): string {
+  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
+    + `<path d="M1.5 2.5h4l1.5 2H14a.75.75 0 0 1 .75.75V7H2.5L1 13V3.25A.75.75 0 0 1 1.5 2.5z" fill="#c09553" fill-opacity="0.85"/>`
+    + `<path d="M1 13l1.5-6h13l-1.5 6z" fill="#dcb67a" fill-opacity="0.7"/>`
+    + `</svg>`;
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 (function () {
   const vscode = acquireVsCodeApi();
@@ -46,11 +136,285 @@ interface TreeEntry {
     vscode.postMessage({ kind: "new-project" });
   });
 
+  // ── Fleet section toggle ──────────────────────────────────────────────────
+
+  const fleetToggle = document.getElementById("fleet-toggle");
+  const fleetChevron = document.getElementById("fleet-chevron");
+  const fleetBody = document.getElementById("fleet-body");
+  const fleetSection = document.getElementById("fleet-section");
+  let fleetExpanded = false;
+
+  fleetToggle?.addEventListener("click", () => {
+    fleetExpanded = !fleetExpanded;
+    if (fleetChevron) fleetChevron.textContent = fleetExpanded ? "\u25BE" : "\u25B8"; // ▾ / ▸
+    if (fleetBody) fleetBody.style.display = fleetExpanded ? "block" : "none";
+    fleetSection?.classList.toggle("expanded", fleetExpanded);
+    resetSectionSizes();
+  });
+
+  // ── Context menu ──────────────────────────────────────────────────────────
+
+  let activeMenu: HTMLElement | null = null;
+
+  function dismissMenu(): void {
+    if (activeMenu) {
+      activeMenu.remove();
+      activeMenu = null;
+    }
+  }
+
+  document.addEventListener("click", dismissMenu);
+  document.addEventListener("contextmenu", (e) => {
+    // Only handle right-clicks on tree nodes (not buttons, fleet, etc.)
+    const target = e.target as HTMLElement;
+    const treeNode = target.closest(".tree-node") as HTMLElement | null;
+    if (!treeNode) return;
+
+    e.preventDefault();
+    dismissMenu();
+
+    // Resolve the data element — for files data-path is on the tree-node itself;
+    // for directories it's on the parent container wrapping .tree-node + .children.
+    const dataEl = treeNode.dataset.path ? treeNode : treeNode.parentElement;
+    const nodePath = dataEl?.dataset.path;
+    const nodeType = dataEl?.dataset.type; // "file" or "directory"
+    if (!nodePath) return;
+
+    // Determine if this is a workspace root
+    const isRoot = currentRoots.some((r) => r.path === nodePath);
+
+    // Build menu items
+    interface MenuItem { label: string; op?: string; separator?: boolean }
+    const items: MenuItem[] = [];
+
+    if (nodeType === "directory") {
+      items.push({ label: "New File", op: "new-file" });
+      items.push({ label: "New Folder", op: "new-folder" });
+      items.push({ separator: true });
+    }
+
+    items.push({ label: "Rename", op: "rename" });
+    items.push({ label: "Delete", op: "delete" });
+    items.push({ separator: true });
+    items.push({ label: "Copy Path", op: "copy-path" });
+    items.push({ label: "Copy Relative Path", op: "copy-relative-path" });
+    items.push({ separator: true });
+    items.push({ label: "Reveal in Finder", op: "reveal-in-os" });
+    items.push({ label: "Open in Terminal", op: "open-in-terminal" });
+
+    if (nodeType === "file") {
+      items.push({ label: "Open to the Side", op: "open-to-side" });
+    }
+
+    if (isRoot) {
+      items.push({ separator: true });
+      items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+    }
+
+    // Render menu
+    const menu = document.createElement("div");
+    menu.className = "context-menu";
+    menu.style.left = `${e.clientX}px`;
+    menu.style.top = `${e.clientY}px`;
+
+    for (const item of items) {
+      if (item.separator) {
+        const sep = document.createElement("div");
+        sep.className = "context-menu-separator";
+        menu.appendChild(sep);
+        continue;
+      }
+      const el = document.createElement("div");
+      el.className = "context-menu-item";
+      el.textContent = item.label;
+      el.addEventListener("click", () => {
+        dismissMenu();
+        // ALL operations delegate to the host — no window.prompt() in webviews
+        vscode.postMessage({ kind: "file-op", op: item.op, path: nodePath });
+      });
+      menu.appendChild(el);
+    }
+
+    document.body.appendChild(menu);
+    activeMenu = menu;
+
+    // Clamp to viewport bounds
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) {
+      menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+    }
+    if (rect.bottom > window.innerHeight) {
+      menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+    }
+  });
+
+  // ── Drag and drop ─────────────────────────────────────────────────────────
+
+  let dragSourcePath: string | null = null;
+  let currentDropTarget: HTMLElement | null = null;
+
+  function clearDropTarget(): void {
+    if (currentDropTarget) {
+      currentDropTarget.classList.remove("drop-target");
+      currentDropTarget = null;
+    }
+  }
+
+  // ── Sash resize between sections ────────────────────────────────────────────
+
+  const MIN_SECTION_HEIGHT = 28; // ~section header height
+  const sidebarSections = document.querySelector(".sidebar-sections");
+  let activeSash: {
+    sash: HTMLElement;
+    above: HTMLElement;
+    below: HTMLElement;
+    startY: number;
+    startAboveH: number;
+    startBelowH: number;
+  } | null = null;
+
+  /** Collect all .section elements in visual order (tree-root has display:contents). */
+  function getAllSections(): HTMLElement[] {
+    const sections: HTMLElement[] = [];
+    if (treeRoot) {
+      for (const child of Array.from(treeRoot.children)) {
+        if ((child as HTMLElement).classList?.contains("section")) {
+          sections.push(child as HTMLElement);
+        }
+      }
+    }
+    if (fleetSection) sections.push(fleetSection);
+    return sections;
+  }
+
+  /** Remove old sashes and insert fresh ones between adjacent sections. */
+  function updateSashes(): void {
+    document.querySelectorAll(".sash").forEach((s) => s.remove());
+    const sections = getAllSections();
+    for (let i = 0; i < sections.length - 1; i++) {
+      const above = sections[i];
+      const below = sections[i + 1];
+      const sash = document.createElement("div");
+      sash.className = "sash";
+
+      // Active only when both neighbours are expanded
+      const setActive = () => {
+        const bothExpanded = above.classList.contains("expanded") && below.classList.contains("expanded");
+        sash.classList.toggle("inactive", !bothExpanded);
+      };
+      setActive();
+      (sash as any)._setActive = setActive;
+
+      sash.addEventListener("mousedown", (e) => {
+        if (sash.classList.contains("inactive")) return;
+        e.preventDefault();
+        activeSash = {
+          sash, above, below,
+          startY: e.clientY,
+          startAboveH: above.getBoundingClientRect().height,
+          startBelowH: below.getBoundingClientRect().height,
+        };
+        sash.classList.add("active");
+        document.body.classList.add("sash-dragging");
+      });
+
+      // Insert after the 'above' section in the DOM
+      above.parentElement!.insertBefore(sash, above.nextSibling);
+    }
+  }
+
+  /** Clear explicit sizes so CSS flex:1 re-distributes equally; refresh sash states. */
+  function resetSectionSizes(): void {
+    for (const el of getAllSections()) {
+      el.style.flex = "";
+    }
+    document.querySelectorAll(".sash").forEach((s) => {
+      (s as any)._setActive?.();
+    });
+  }
+
+  // Global mousemove / mouseup for sash dragging
+  document.addEventListener("mousemove", (e) => {
+    if (!activeSash) return;
+    const { above, below, startY, startAboveH, startBelowH } = activeSash;
+    const delta = e.clientY - startY;
+    const total = startAboveH + startBelowH;
+    const newAbove = Math.max(MIN_SECTION_HEIGHT, Math.min(startAboveH + delta, total - MIN_SECTION_HEIGHT));
+    const newBelow = total - newAbove;
+    above.style.flex = `0 0 ${newAbove}px`;
+    below.style.flex = `0 0 ${newBelow}px`;
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!activeSash) return;
+    activeSash.sash.classList.remove("active");
+    document.body.classList.remove("sash-dragging");
+    activeSash = null;
+  });
+
   // ── Tree rendering ─────────────────────────────────────────────────────────
 
   let currentRoots: TreeRoot[] = [];
   // Cache children per directory path
   const childrenCache: Record<string, TreeEntry[]> = {};
+
+  // Restore section expanded state (separate from tree node expanded state)
+  const sectionExpanded: Record<string, boolean> = savedState?.expanded
+    ? { research: savedState.expanded["__section_research"] !== false, dev: savedState.expanded["__section_dev"] !== false }
+    : { research: true, dev: true };
+
+  function saveSectionState(): void {
+    expanded["__section_research"] = sectionExpanded.research;
+    expanded["__section_dev"] = sectionExpanded.dev;
+    saveExpandedState();
+  }
+
+  function renderSectionHeader(title: string, sectionKey: string): { section: HTMLElement; body: HTMLElement } {
+    const section = document.createElement("div");
+    section.className = sectionExpanded[sectionKey] ? "section expanded" : "section";
+
+    const header = document.createElement("div");
+    header.className = "tree-section-label";
+
+    const chevron = document.createElement("span");
+    chevron.className = "section-chevron";
+    chevron.textContent = sectionExpanded[sectionKey] ? "\u25BE" : "\u25B8"; // ▾ / ▸
+
+    const titleEl = document.createElement("span");
+    titleEl.className = "section-title";
+    titleEl.textContent = title;
+
+    const addBtn = document.createElement("button");
+    addBtn.className = "section-add-btn";
+    addBtn.textContent = "+";
+    addBtn.title = "Add existing project";
+    addBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      vscode.postMessage({ kind: "add-existing" });
+    });
+
+    header.appendChild(chevron);
+    header.appendChild(titleEl);
+    header.appendChild(addBtn);
+
+    const body = document.createElement("div");
+    body.className = "section-body";
+    body.style.display = sectionExpanded[sectionKey] ? "block" : "none";
+
+    section.appendChild(header);
+    section.appendChild(body);
+
+    header.addEventListener("click", () => {
+      sectionExpanded[sectionKey] = !sectionExpanded[sectionKey];
+      saveSectionState();
+      chevron.textContent = sectionExpanded[sectionKey] ? "\u25BE" : "\u25B8";
+      body.style.display = sectionExpanded[sectionKey] ? "block" : "none";
+      section.classList.toggle("expanded", sectionExpanded[sectionKey]);
+      resetSectionSizes();
+    });
+
+    return { section, body };
+  }
 
   function renderRoots(roots: TreeRoot[]): void {
     if (!treeRoot) return;
@@ -62,24 +426,22 @@ interface TreeEntry {
     const dev = roots.filter((r) => r.projectType === "dev");
 
     if (research.length > 0) {
-      const label = document.createElement("div");
-      label.className = "tree-section-label";
-      label.textContent = "Research Projects";
-      treeRoot.appendChild(label);
+      const { section, body } = renderSectionHeader("Research Projects", "research");
       for (const root of research) {
-        treeRoot.appendChild(renderRootNode(root, 0));
+        body.appendChild(renderRootNode(root, 0));
       }
+      treeRoot.appendChild(section);
     }
 
     if (dev.length > 0) {
-      const label = document.createElement("div");
-      label.className = "tree-section-label";
-      label.textContent = "Development";
-      treeRoot.appendChild(label);
+      const { section, body } = renderSectionHeader("Development Projects", "dev");
       for (const root of dev) {
-        treeRoot.appendChild(renderRootNode(root, 0));
+        body.appendChild(renderRootNode(root, 0));
       }
+      treeRoot.appendChild(section);
     }
+
+    updateSashes();
   }
 
   function renderRootNode(root: TreeRoot, depth: number): HTMLElement {
@@ -91,16 +453,22 @@ interface TreeEntry {
     row.className = "tree-node";
     row.style.paddingLeft = `${8 + depth * 16}px`;
 
-    // Chevron
-    const icon = document.createElement("span");
-    icon.className = "icon";
-    icon.textContent = expanded[root.path] ? "\u25BE" : "\u25B8"; // ▾ / ▸
+    // Chevron (expand/collapse indicator)
+    const chevronEl = document.createElement("span");
+    chevronEl.className = "chevron";
+    chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8"; // ▾ / ▸
+
+    // Folder icon
+    const iconEl = document.createElement("span");
+    iconEl.className = "icon";
+    iconEl.innerHTML = expanded[root.path] ? folderOpenSvg() : folderClosedSvg();
 
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = root.name;
 
-    row.appendChild(icon);
+    row.appendChild(chevronEl);
+    row.appendChild(iconEl);
     row.appendChild(label);
 
     // Research metadata pill
@@ -112,6 +480,9 @@ interface TreeEntry {
     }
 
     container.appendChild(row);
+
+    // Drag-and-drop: roots are drop targets
+    setupDirectoryDropTarget(row, root.path);
 
     // Children container
     const childrenEl = document.createElement("div");
@@ -127,7 +498,8 @@ interface TreeEntry {
     row.addEventListener("click", () => {
       expanded[root.path] = !expanded[root.path];
       saveExpandedState();
-      icon.textContent = expanded[root.path] ? "\u25BE" : "\u25B8";
+      chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8";
+      iconEl.innerHTML = expanded[root.path] ? folderOpenSvg() : folderClosedSvg();
       childrenEl.style.display = expanded[root.path] ? "block" : "none";
 
       if (expanded[root.path] && !childrenCache[root.path]) {
@@ -163,18 +535,33 @@ interface TreeEntry {
     const row = document.createElement("div");
     row.className = "tree-node";
     row.style.paddingLeft = `${8 + depth * 16}px`;
+    row.draggable = true;
 
-    const icon = document.createElement("span");
-    icon.className = "icon";
-    icon.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+    // Chevron
+    const chevronEl = document.createElement("span");
+    chevronEl.className = "chevron";
+    chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+
+    // Folder icon
+    const iconEl = document.createElement("span");
+    iconEl.className = "icon";
+    iconEl.innerHTML = expanded[entry.path] ? folderOpenSvg() : folderClosedSvg();
 
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = entry.name;
+    if (entry.gitStatus) {
+      label.classList.add(`git-${entry.gitStatus}`);
+    }
 
-    row.appendChild(icon);
+    row.appendChild(chevronEl);
+    row.appendChild(iconEl);
     row.appendChild(label);
     container.appendChild(row);
+
+    // Drag-and-drop: directories are both draggable sources and drop targets
+    setupDragSource(row, entry.path);
+    setupDirectoryDropTarget(row, entry.path);
 
     const childrenEl = document.createElement("div");
     childrenEl.className = "children";
@@ -188,7 +575,8 @@ interface TreeEntry {
     row.addEventListener("click", () => {
       expanded[entry.path] = !expanded[entry.path];
       saveExpandedState();
-      icon.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+      chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+      iconEl.innerHTML = expanded[entry.path] ? folderOpenSvg() : folderClosedSvg();
       childrenEl.style.display = expanded[entry.path] ? "block" : "none";
 
       if (expanded[entry.path] && !childrenCache[entry.path]) {
@@ -209,23 +597,83 @@ interface TreeEntry {
     row.dataset.path = entry.path;
     row.dataset.type = "file";
     row.style.paddingLeft = `${8 + depth * 16}px`;
+    row.draggable = true;
 
-    const icon = document.createElement("span");
-    icon.className = "icon";
-    icon.textContent = "\u{1F4C4}"; // 📄
+    // Spacer (same width as chevron, for alignment with directories)
+    const spacer = document.createElement("span");
+    spacer.className = "chevron";
+
+    // File icon (colored by extension)
+    const iconEl = document.createElement("span");
+    iconEl.className = "icon";
+    iconEl.innerHTML = fileIconSvg(getFileIconColor(entry.name));
 
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = entry.name;
+    if (entry.gitStatus) {
+      label.classList.add(`git-${entry.gitStatus}`);
+    }
 
-    row.appendChild(icon);
+    row.appendChild(spacer);
+    row.appendChild(iconEl);
     row.appendChild(label);
+
+    // Drag source
+    setupDragSource(row, entry.path);
 
     row.addEventListener("click", () => {
       vscode.postMessage({ kind: "open-file", path: entry.path });
     });
 
     return row;
+  }
+
+  // ── Drag-and-drop helpers ─────────────────────────────────────────────────
+
+  function setupDragSource(el: HTMLElement, sourcePath: string): void {
+    el.addEventListener("dragstart", (e) => {
+      dragSourcePath = sourcePath;
+      el.classList.add("dragging");
+      e.dataTransfer!.effectAllowed = "move";
+      e.dataTransfer!.setData("text/plain", sourcePath);
+    });
+    el.addEventListener("dragend", () => {
+      el.classList.remove("dragging");
+      dragSourcePath = null;
+      clearDropTarget();
+    });
+  }
+
+  function setupDirectoryDropTarget(el: HTMLElement, targetDir: string): void {
+    el.addEventListener("dragover", (e) => {
+      if (!dragSourcePath) return;
+      // Don't allow dropping on self or on a parent of the source
+      if (dragSourcePath === targetDir) return;
+      if (dragSourcePath.startsWith(targetDir + "/")) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      if (currentDropTarget !== el) {
+        clearDropTarget();
+        currentDropTarget = el;
+        el.classList.add("drop-target");
+      }
+    });
+    el.addEventListener("dragleave", (e) => {
+      // Only clear if we're really leaving (not entering a child)
+      const related = e.relatedTarget as HTMLElement | null;
+      if (related && el.contains(related)) return;
+      if (currentDropTarget === el) {
+        clearDropTarget();
+      }
+    });
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      clearDropTarget();
+      const sourcePath = e.dataTransfer?.getData("text/plain");
+      if (!sourcePath || sourcePath === targetDir) return;
+      vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
+    });
   }
 
   // ── Host → Webview messages ────────────────────────────────────────────────
@@ -292,8 +740,10 @@ interface TreeEntry {
             if (!expanded[nodePath!]) {
               expanded[nodePath!] = true;
               saveExpandedState();
-              const icon = row.querySelector(".icon") as HTMLElement | null;
-              if (icon) icon.textContent = "\u25BE";
+              const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+              if (chevronSpan) chevronSpan.textContent = "\u25BE";
+              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+              if (iconSpan) iconSpan.innerHTML = folderOpenSvg();
               const childrenEl = el.querySelector(".children") as HTMLElement | null;
               if (childrenEl) {
                 childrenEl.style.display = "block";

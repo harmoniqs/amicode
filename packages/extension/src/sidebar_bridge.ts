@@ -17,15 +17,17 @@ export interface TreeEntry {
   name: string;
   type: "file" | "directory";
   path: string;
+  gitStatus?: "modified" | "added" | "deleted" | "untracked" | "ignored" | "conflict";
 }
 
 // ── File operation types ─────────────────────────────────────────────────────
 
 export interface FileOpRequest {
-  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session";
+  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session" | "move";
   path: string;
   newName?: string;
   name?: string;
+  targetDir?: string;
 }
 
 export interface FileOpResult {
@@ -54,6 +56,7 @@ export type SidebarDownMessage =
 
 export type OpenChatMessage = { kind: "open-chat" };
 export type NewProjectMessage = { kind: "new-project" };
+export type AddExistingMessage = { kind: "add-existing" };
 export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
@@ -62,6 +65,7 @@ export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SidebarUpMessage =
   | OpenChatMessage
   | NewProjectMessage
+  | AddExistingMessage
   | GetRootsMessage
   | GetChildrenMessage
   | OpenFileMessage
@@ -76,6 +80,7 @@ export type SidebarMessage = SidebarUpMessage | SidebarDownMessage;
 export interface SidebarMessageHandlers {
   openChat: () => void;
   newProject: () => void;
+  addExisting: () => void;
   getRoots: () => TreeRoot[];
   getChildren: (path: string) => Promise<TreeEntry[]>;
   openFile: (path: string) => void;
@@ -98,6 +103,9 @@ export function handleSidebarMessage(
       break;
     case "new-project":
       handlers.newProject();
+      break;
+    case "add-existing":
+      handlers.addExisting();
       break;
     case "get-roots": {
       const roots = handlers.getRoots();
