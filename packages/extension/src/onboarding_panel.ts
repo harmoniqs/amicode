@@ -11,6 +11,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 import * as vscode from "vscode";
+import { execFile, execFileSync } from "node:child_process";
 
 import {
   scanCredentials,
@@ -23,6 +24,13 @@ import {
   type DetectedCredential,
 } from "./credential_scanner";
 import { ChatPanel } from "./chat_panel";
+import { resolveOpencodeBinary } from "./opencode_binary";
+import { resolveAmicoCli } from "./fleet_panel";
+import {
+  discoverExternalSkillPaths,
+  addSkillProvider,
+  friendlyProviderName,
+} from "./scores/user_skill_providers";
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -496,7 +504,7 @@ export function releaseOnboardingPanel(): void {
  *  background. Used as an immediate visual while the server restarts. The exact
  *  same SVG + CSS appears in ChatPanel.renderTransitionHtml's overlay, so when
  *  adopt() fires there's no visible flash (same pixels). */
-function splashHtml(fontUri?: vscode.Uri, cspSource?: string): string {
+function splashHtml(fontUri?: vscode.Uri, cspSource?: string, subtitle?: string): string {
   // The face is inlined as its own @font-face rather than via brand.css so the
   // splash stays a single self-contained string; without it the handoff screen
   // renders in the editor UI font while everything around it is DM Sans.
@@ -540,6 +548,11 @@ ${fontFace}
     color: var(--vscode-foreground, #ccc);
     font-family: "DM Sans", var(--vscode-font-family, system-ui);
   }
+  .splash-subtitle {
+    margin-top: 8px; font-size: 0.95rem;
+    color: var(--vscode-descriptionForeground, #999);
+    font-family: "DM Sans", var(--vscode-font-family, system-ui);
+  }
 </style>
 </head><body>
   <svg class="splash-mark" viewBox="2 74 3596 3212" xmlns="http://www.w3.org/2000/svg">
@@ -564,7 +577,108 @@ ${fontFace}
     </g>
   </svg>
   <div class="splash-text">Getting Amico ready...</div>
+  ${subtitle ? `<div class="splash-subtitle">${subtitle}</div>` : ""}
 </body></html>`;
+}
+
+// ─── Sessions + skills import ────────────────────────────────────────────────
+
+interface SessionsSkillsScan {
+  claude: number;
+  codex: number;
+  skillPaths: { path: string; name: string }[];
+}
+
+/** Scan for importable sessions (Claude/Codex) and external skill directories.
+ *  Sessions come from `amico sessions preview --json`; skills from the known
+ *  engine auto-load paths (~/.claude/skills, ~/.agents/skills, ~/.config/opencode/skills). */
+function scanSessionsSkills(extensionRoot: string): SessionsSkillsScan {
+  const amicoCli = resolveAmicoCli(extensionRoot);
+  let claude = 0;
+  let codex = 0;
+  try {
+    const out = execFileSync(amicoCli, ["sessions", "preview", "--json"], { encoding: "utf8", timeout: 30_000 });
+    const parsed = JSON.parse(out) as { sources?: { claude?: { count?: number }; codex?: { count?: number } } };
+    claude = parsed.sources?.claude?.count ?? 0;
+    codex = parsed.sources?.codex?.count ?? 0;
+  } catch {
+    // discovery failed — report zero; the webview renders "none found"
+  }
+  const skillPaths = discoverExternalSkillPaths(os.homedir()).map((p) => ({ path: p, name: friendlyProviderName(p) }));
+  return { claude, codex, skillPaths };
+}
+
+/** Register the selected skill directories synchronously, then fire the sessions
+ *  import in the background (fire-and-forget). Skills land immediately; sessions
+ *  trickle in as `opencode import` completes per file. `onDone` fires when the
+ *  sessions import finishes — for logging, never to block onboarding. */
+function runSessionsSkillsImport(
+  extensionRoot: string,
+  selection: { importClaude: boolean; importCodex: boolean; skillPaths: string[] },
+  onDone: (summary: { sessionsImported: number; sessionsFailed: number; skillsImported: number }) => void,
+): void {
+  const amicoCli = resolveAmicoCli(extensionRoot);
+  const sources: string[] = [];
+  if (selection.importClaude) sources.push("claude");
+  if (selection.importCodex) sources.push("codex");
+
+  // Skills register synchronously — fast, just writes skill-providers.json.
+  const providersPath = path.join(os.homedir(), ".amico", "amicode", "skill-providers.json");
+  let skillsImported = 0;
+  for (const p of selection.skillPaths) {
+    addSkillProvider(providersPath, { id: friendlyProviderName(p), type: "directory", path: p, added: new Date().toISOString() });
+    skillsImported++;
+  }
+
+  if (sources.length === 0) {
+    onDone({ sessionsImported: 0, sessionsFailed: 0, skillsImported });
+    return;
+  }
+
+  let opencodeBinary: string | undefined;
+  try {
+    opencodeBinary = resolveOpencodeBinary(
+      extensionRoot,
+      vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "") ?? "",
+    ).path;
+  } catch {
+    opencodeBinary = undefined;
+  }
+
+  const args = ["sessions", "import", "--source", sources.join(","), "--json"];
+  if (opencodeBinary) args.push("--opencode", opencodeBinary);
+
+  execFile(amicoCli, args, { timeout: 10 * 60_000, maxBuffer: 64 * 1024 * 1024, encoding: "utf8" }, (err, stdout) => {
+    let imported = 0;
+    let failed = 0;
+    if (!err && stdout) {
+      try {
+        const parsed = JSON.parse(stdout) as { summary?: { imported?: number; failed?: number } };
+        imported = parsed.summary?.imported ?? 0;
+        failed = parsed.summary?.failed ?? 0;
+      } catch {
+        // unparseable output — report zero
+      }
+    } else if (err) {
+      failed = 1;
+    }
+    onDone({ sessionsImported: imported, sessionsFailed: failed, skillsImported });
+  });
+}
+
+/** Finish onboarding: clear the stale model pin, swap to the splash, fire the
+ *  completion listeners, and restart the server so it picks up the new config.
+ *  `importingSessions` adds a "importing in the background" note to the splash. */
+function completeOnboarding(panel: vscode.WebviewPanel, ctx: vscode.ExtensionContext, importingSessions = false): void {
+  void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
+  panel.webview.html = splashHtml(
+    panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+    panel.webview.cspSource,
+    importingSessions ? "Your sessions are importing in the background" : undefined,
+  );
+  ChatPanel.setPendingOnboardingGreeting(true);
+  fireOnboardingComplete();
+  void vscode.commands.executeCommand("amicode.restartServer");
 }
 
 /** Register the onboarding panel command. Call from extension.ts activate(). */
@@ -605,20 +719,9 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
           } else if (msg.type === "config-success") {
             const payload = msg.payload as OnboardingConfig;
             writeOnboardingConfig(payload);
-            // Clear stale model pin — the old provider may no longer be connected.
-            // The server will resolve the new provider's default on its own.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash (same as confirm-import)
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
+            // Advance to the sessions+skills page — the splash (and server restart)
+            // happen after the user imports or skips.
+            panel.webview.postMessage({ type: "show-sessions-page" });
           } else if (msg.type === "cancel") {
             // User cancelled onboarding — close panel, re-open chat
             panel.dispose();
@@ -708,21 +811,25 @@ export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
             heldCredentials = [];
             testResults.clear();
             validatedModels.clear();
-            // Clear stale model pin — the old provider may no longer be connected.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash — no webview-side
-            // DOM manipulation, so there's no flash when adopt() fires later
-            // (adopt's overlay uses the exact same SVG + CSS).
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
+            // Advance to the sessions+skills page — the splash (and server restart)
+            // happen after the user imports or skips.
+            panel.webview.postMessage({ type: "show-sessions-page" });
+          } else if (msg.type === "scan-sessions-skills") {
+            const scan = scanSessionsSkills(ctx.extensionPath);
+            panel.webview.postMessage({
+              type: "sessions-skills-scan-results",
+              payload: scan,
+            });
+          } else if (msg.type === "confirm-sessions-skills-import") {
+            const payload = msg.payload as { importClaude: boolean; importCodex: boolean; skillPaths: string[] };
+            // Fire the import in the background — onboarding completes immediately;
+            // sessions trickle in as `opencode import` finishes per file.
+            runSessionsSkillsImport(ctx.extensionPath, payload, () => {
+              // background completion — nothing to post; the webview is transitioning.
+            });
+            completeOnboarding(panel, ctx, true);
+          } else if (msg.type === "skip-sessions-skills") {
+            completeOnboarding(panel, ctx);
           } else if (msg.type === "transition-complete") {
             // The extension signals that the chat panel is ready — dispose the
             // splash now. This is posted by the extension host after app-ready.
@@ -800,6 +907,7 @@ function buildWebviewHtml(
 <button id="cancel-btn" class="cancel-btn" title="Skip onboarding">&times;</button>
 <div id="animation" class="animation-container"></div>
 <div id="form" class="form-container"></div>
+<div id="sessions" class="form-container"></div>
 <script nonce="${nonce}">
 window.__PROVIDERS__ = ${JSON.stringify(PROVIDER_MODELS)};
 window.__PROVIDER_NAMES__ = ${JSON.stringify(PROVIDER_DISPLAY_NAMES)};

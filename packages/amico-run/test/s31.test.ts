@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
 
 // S31 / spec §4: no PHYSICS flag parsing, no MCP, no HTTP in the orchestrator.
 // (The original /SolveSpec/ ban is lifted by spec C: amico-run is now the
@@ -21,9 +21,19 @@ const EXEMPT = new Set(["cloud_client.ts"]);
 describe("S31 grep rule", () => {
   it("src/ contains no forbidden tool-layer patterns", () => {
     const srcDir = join(__dirname, "..", "src");
-    for (const f of readdirSync(srcDir)) {
+    const walk = (dir: string): string[] => {
+      const out: string[] = [];
+      for (const f of readdirSync(dir)) {
+        const full = join(dir, f);
+        if (statSync(full).isDirectory()) out.push(...walk(full));
+        else out.push(full);
+      }
+      return out;
+    };
+    for (const full of walk(srcDir)) {
+      const f = relative(srcDir, full);
       if (EXEMPT.has(f)) continue;
-      const text = readFileSync(join(srcDir, f), "utf8");
+      const text = readFileSync(full, "utf8");
       for (const re of FORBIDDEN) {
         expect(text, `${f} matches forbidden ${re}`).not.toMatch(re);
       }

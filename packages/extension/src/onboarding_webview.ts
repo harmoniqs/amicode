@@ -910,6 +910,166 @@ function buildForm(): void {
   });
 }
 
+// ─── Sessions + skills page ──────────────────────────────────────────────────
+
+const sessionsEl = document.getElementById("sessions")!;
+
+function ensureScanStyles(): void {
+  if (document.getElementById("scan-styles")) return;
+  const style = document.createElement("style");
+  style.id = "scan-styles";
+  style.textContent = `
+    @keyframes scan-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .scan-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+    .scan-dot--searching { background: #f5a623; animation: scan-pulse 1.5s ease-in-out infinite; }
+    .scan-dot--found { background: #73c991; }
+    .scan-dot--failed { background: #f14c4c; }
+    .import-provider-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--vscode-input-border, #3c3c3c); border-radius: 4px; margin-bottom: 8px; font-size: 13px; }
+    .import-provider-row label { flex: 1; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+  `;
+  document.head.appendChild(style);
+}
+
+/** Render the sessions+skills page (the step between auth and the splash) and
+ *  kick off the scan. Import runs in the background, so "Import & continue"
+ *  proceeds straight to the splash without waiting. */
+function buildSessionsPage(): void {
+  ensureScanStyles();
+  sessionsEl.innerHTML = `
+    <div class="onboarding-form" style="max-width: 480px; margin: 0 auto; padding: 24px;
+      display: flex; flex-direction: column; justify-content: center; min-height: 100vh;">
+      <h2 style="margin: 0 0 8px; font-size: 1.35em; font-weight: 650; letter-spacing: -0.01em;">Bring your history into Amicode</h2>
+      <p style="color: var(--vscode-descriptionForeground); margin-bottom: 24px;">
+        Import previous Claude Code and Codex sessions, plus any skills you've already built.
+      </p>
+      <div id="sessions-status" style="display: flex; align-items: center; gap: 8px; justify-content: center;">
+        <span class="scan-dot scan-dot--searching"></span>
+        <span style="font-size: 13px; color: var(--vscode-descriptionForeground);">Searching...</span>
+      </div>
+      <div id="sessions-preview" style="display: none; margin-top: 16px; text-align: left;"></div>
+    </div>
+  `;
+  vscodeApi.postMessage({ type: "scan-sessions-skills" });
+}
+
+window.addEventListener("message", (event) => {
+  const msg = event.data;
+
+  if (msg?.type === "show-sessions-page") {
+    formEl.classList.remove("visible");
+    formEl.style.display = "none";
+    sessionsEl.classList.add("visible");
+    buildSessionsPage();
+  }
+
+  if (msg?.type === "sessions-skills-scan-results") {
+    const { claude, codex, skillPaths } = msg.payload as {
+      claude: number;
+      codex: number;
+      skillPaths: Array<{ path: string; name: string }>;
+    };
+    const statusEl = document.getElementById("sessions-status") as HTMLDivElement;
+    const previewEl = document.getElementById("sessions-preview") as HTMLDivElement;
+    const hasSessions = claude > 0 || codex > 0;
+    const hasSkills = skillPaths.length > 0;
+
+    if (!hasSessions && !hasSkills) {
+      statusEl.innerHTML = `<span style="font-size: 13px; color: var(--vscode-descriptionForeground);">No previous sessions or skills found.</span>`;
+      previewEl.style.display = "block";
+      previewEl.innerHTML = `
+        <button id="sessions-skip-btn"
+          style="width:100%; padding: 10px 16px; cursor: pointer;
+          background: var(--color-accent-fill, #FFE614); color: var(--color-on-accent, #111);
+          border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+          border-radius: var(--border-radius, 4px); font-size: 14px; font-weight: 500;">
+          Continue
+        </button>
+      `;
+      (document.getElementById("sessions-skip-btn") as HTMLButtonElement).addEventListener("click", () => {
+        vscodeApi.postMessage({ type: "skip-sessions-skills" });
+      });
+      return;
+    }
+
+    statusEl.innerHTML = `
+      <span class="scan-dot scan-dot--found"></span>
+      <span style="font-size: 13px; color: var(--vscode-testing-iconPassed, #73c991);">Found importable history!</span>
+    `;
+
+    const sessionRows = [
+      claude > 0
+        ? `<div class="import-provider-row">
+            <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" name="sessions-include" value="claude" checked />
+              <span><strong>Claude Code sessions</strong></span>
+              <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${claude} found</span>
+            </label>
+          </div>`
+        : "",
+      codex > 0
+        ? `<div class="import-provider-row">
+            <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="checkbox" name="sessions-include" value="codex" checked />
+              <span><strong>Codex sessions</strong></span>
+              <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${codex} found</span>
+            </label>
+          </div>`
+        : "",
+    ].join("");
+
+    const skillRows = skillPaths
+      .map(
+        (s) => `<div class="import-provider-row">
+          <label style="flex: 1; display: flex; align-items: center; gap: 8px; cursor: pointer;">
+            <input type="checkbox" name="skills-include" value="${s.path}" checked />
+            <span><strong>${s.name}</strong></span>
+            <span style="color: var(--vscode-descriptionForeground); font-size: 12px;">${s.path}</span>
+          </label>
+        </div>`,
+      )
+      .join("");
+
+    previewEl.style.display = "block";
+    previewEl.innerHTML = `
+      <div style="margin-bottom: 12px;">
+        ${sessionRows}
+        ${skillRows}
+      </div>
+      <button id="sessions-import-btn"
+        style="width:100%; padding: 10px 16px; cursor: pointer;
+        background: var(--color-accent-fill, #FFE614); color: var(--color-on-accent, #111);
+        border: var(--border-width, 1px) solid var(--color-on-accent, #000);
+        border-radius: var(--border-radius, 4px); font-size: 14px; font-weight: 500;">
+        Import &amp; continue
+      </button>
+      <a id="sessions-skip-link" href="#" style="display: block; text-align: center; margin-top: 12px;
+        font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
+        Skip for now
+      </a>
+      <p style="font-size: 11px; color: var(--vscode-descriptionForeground); margin-top: 16px; text-align: center; opacity: 0.8;">
+        Import runs in the background — you can start using Amico right away.
+      </p>
+    `;
+
+    (document.getElementById("sessions-import-btn") as HTMLButtonElement).addEventListener("click", () => {
+      const importClaude = (document.querySelector('input[name="sessions-include"][value="claude"]') as HTMLInputElement)?.checked ?? false;
+      const importCodex = (document.querySelector('input[name="sessions-include"][value="codex"]') as HTMLInputElement)?.checked ?? false;
+      const skillPathsSelected = Array.from(
+        document.querySelectorAll<HTMLInputElement>('input[name="skills-include"]:checked'),
+      ).map((cb) => cb.value);
+      vscodeApi.postMessage({
+        type: "confirm-sessions-skills-import",
+        payload: { importClaude, importCodex, skillPaths: skillPathsSelected },
+      });
+    });
+
+    (document.getElementById("sessions-skip-link") as HTMLAnchorElement).addEventListener("click", (e) => {
+      e.preventDefault();
+      vscodeApi.postMessage({ type: "skip-sessions-skills" });
+    });
+  }
+});
+
 // ─── Boot ────────────────────────────────────────────────────────────────────
 
 // Listen for the transition-state signal from the host (after confirm-import).

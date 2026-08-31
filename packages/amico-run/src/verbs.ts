@@ -24,6 +24,7 @@ import { fleetVerb } from "./fleet_verb.js";
 import { specVerb } from "./spec_verb.js";
 import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
+import { sessionsVerb } from "./sessions_import/sessions_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -201,4 +202,15 @@ const papers: Verb = {
   run: papersVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers];
+// sessions — import previous Claude/Codex sessions into the opencode DB by
+// shelling out to the vendored binary's canonical `import` command. Discovery +
+// parse live here; the write is opencode's own, so shapes are always correct.
+const sessions: Verb = {
+  name: "sessions",
+  summary: "discover + import previous Claude/Codex sessions into the opencode DB (preview | import)",
+  generalizes: "the onboarding sessions-import checkbox (Claude/Codex → opencode)",
+  slice: "onboarding sessions import",
+  run: (args) => sessionsVerb(args),
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers, sessions];
