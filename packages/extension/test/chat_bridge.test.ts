@@ -306,8 +306,10 @@ describe("amicode bridge — reportBug model handoff (amicode#277)", () => {
 
   it("no additional command gains a payload channel and the allowlist is unchanged in size (AC7)", async () => {
     const { BRIDGE_ALLOWED_COMMANDS } = await import("../src/chat_bridge");
-    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(10);
+    // amicode#653 added amicode.restartHub (payload-free, like restartServer).
+    expect(BRIDGE_ALLOWED_COMMANDS.size).toBe(11);
     expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.reportBug")).toBe(true);
+    expect(BRIDGE_ALLOWED_COMMANDS.has("amicode.restartHub")).toBe(true);
     // other allowlisted commands ignore model payload
     const host = io();
     let received: unknown = "sentinel";

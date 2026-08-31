@@ -3,6 +3,7 @@ import { createStore } from "solid-js/store"
 import { TabsInfoPopup } from "@/components/help-button"
 import { Titlebar, type TitlebarUpdate } from "@/components/titlebar"
 import { SolverSwitchBanner } from "@/components/solver-switch-banner"
+import { ConnectionBanner } from "@/components/connection-banner"
 import { VaultPanel } from "@/components/vault-panel"
 import { usePlatform } from "@/context/platform"
 import { setV2Toast, ToastRegion } from "@/utils/toast"
@@ -48,9 +49,15 @@ export default function NewLayout(props: ParentProps) {
           reaches (VaultPanel was invisible here). */}
       <VaultPanel />
       {/* opencode#78 follow-up: a solver switch restarts the opencode server
-          under the webview. Speaks only for switches the app requested — unlike
-          the removed ConnectionBanner, silence is still the default. */}
+          under the webview. Speaks only for switches the app requested — the
+          OLD ConnectionBanner spoke for every drop; its successor speaks only
+          after the grace window, with an exit (amicode#653). */}
       <SolverSwitchBanner />
+      {/* amicode#653: hub-down truth with a Restart Hub exit. Silent for
+          blips and the boot transient; surfaces only a persistent disconnect
+          (the 2026-08-30 incidents: panels read a dead hub as an eternal
+          loading screen while the journal held the answer). */}
+      <ConnectionBanner />
       {/* DebugBar removed with the fork's debug-bar deletion (kept during the
           upstream merge) — the debugTools toggle state stays for the titlebar's
           channel indicator. */}
