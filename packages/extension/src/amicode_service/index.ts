@@ -27,6 +27,7 @@ import {
   runSeriesResponse,
   runStatusResponse,
 } from "./problems";
+import { campaignResponse, campaignsResponse } from "./campaign_ledger";
 import { libraryBody, saveLibraryFile } from "./library";
 import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry } from "./widgets";
 import { dashboardResponse, saveDashboardResponse } from "./dashboard";
@@ -122,6 +123,19 @@ export function registerLibraryRoutes(server: AmicodeServiceServer): AmicodeServ
   return server;
 }
 
+// Campaign routes (issue #658): read-only projections of the personal vault's
+// session ledgers — the Campaign Inspector's data path. Same family pattern
+// as the problem routes: one success shape per route, slug rides the query.
+export function registerCampaignRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/campaigns", () => ({ body: campaignsResponse() }));
+
+  server.add("GET", "/amicode/campaign", ({ url }) => ({
+    body: campaignResponse(url.searchParams.get("slug") ?? undefined),
+  }));
+
+  return server;
+}
+
 export function registerWidgetRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/widgets", () => ({ body: widgetsResponse() }));
 
@@ -201,6 +215,7 @@ export function createAmicodeService(opts: { password?: string } = {}): AmicodeS
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);
+  registerCampaignRoutes(server);
   registerLibraryRoutes(server);
   registerWidgetRoutes(server);
   registerProjectRoutes(server);
