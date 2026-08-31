@@ -99,6 +99,9 @@ export interface StagedChain {
   humanGate: string;
   /** The chain entity's TOML ref (its recorded fingerprint). */
   chainRef: string;
+  /** The chain entity's event receipt (the wrapper renders the AMICODE_DIFF
+   *  sentinel from it — same idiom as every entity write in the tool pack). */
+  chainEvent: { action: "created" | "updated"; seq: number; diff: Record<string, { from: unknown; to: unknown }> };
 }
 
 export type RecordCalibChainResult =
@@ -113,7 +116,7 @@ export interface CompleteCalibChainInput {
 }
 
 export type CompleteCalibChainResult =
-  | { ok: true; executed_on_mock: boolean; already?: boolean }
+  | { ok: true; executed_on_mock: boolean; already?: boolean; chainEvent: { action: "created" | "updated"; seq: number; diff: Record<string, { from: unknown; to: unknown }> } }
   | { ok: false; problem: string };
 
 /** Read an entity's JSON sidecar (the plugin is TOML-writer-only; reads go
@@ -137,13 +140,13 @@ function recordEntity(
   entity: Record<string, unknown>,
   toml: string,
   source: { tool: string; stage?: string },
-): { action: "created" | "updated"; diff: Record<string, { from: unknown; to: unknown }> } {
+): { action: "created" | "updated"; seq: number; diff: Record<string, { from: unknown; to: unknown }> } {
   const before = readEntityJson<Record<string, unknown>>(slug, kind);
   const action: "created" | "updated" = before ? "updated" : "created";
   writeEntityFiles(slug, kind, toml, JSON.stringify(entity, null, 2) + "\n");
   const diff = entityDiff(before, entity);
-  appendEvent(slug, { entity: kind, action, diff, hash: entityHash(entity), source });
-  return { action, diff };
+  const seq = appendEvent(slug, { entity: kind, action, diff, hash: entityHash(entity), source });
+  return { action, seq, diff };
 }
 
 /** The staged re-bank command — the chain's provenance flags riding `amico
@@ -256,9 +259,13 @@ export function recordCalibChain(input: RecordCalibChainInput): RecordCalibChain
     stage: "solve",
   });
   const chainRef = path.join(dir, "entities", "calib_chain.toml");
-  recordEntity(input.slug, "calib_chain", chain as unknown as Record<string, unknown>, calibChainToml(chain), {
-    tool: "amicode_calib_chain",
-  });
+  const chainEvent = recordEntity(
+    input.slug,
+    "calib_chain",
+    chain as unknown as Record<string, unknown>,
+    calibChainToml(chain),
+    { tool: "amicode_calib_chain" },
+  );
 
   return {
     ok: true,
@@ -266,6 +273,7 @@ export function recordCalibChain(input: RecordCalibChainInput): RecordCalibChain
       rebankCommand: rebankCommand(mergedForm, platform, chain, chainRef),
       humanGate: HUMAN_GATE_NOTE,
       chainRef,
+      chainEvent: { action: chainEvent.action, seq: chainEvent.seq, diff: chainEvent.diff },
     },
   };
 }
@@ -348,7 +356,7 @@ export function completeCalibChain(input: CompleteCalibChainInput): CompleteCali
     chain.rebank !== undefined && chain.rebank.catalog_entry === entryId && chain.rebank.provenance.warm_start === provenance.warm_start;
   const completed: CalibChainRecord = { ...chain, rebank: { catalog_entry: entryId, provenance } };
 
-  const action = recordEntity(
+  const chainEvent = recordEntity(
     input.slug,
     "calib_chain",
     completed as unknown as Record<string, unknown>,
@@ -366,6 +374,10 @@ export function completeCalibChain(input: CompleteCalibChainInput): CompleteCali
       source: { tool: "amicode_calib_chain" },
     });
   }
-  void action;
-  return { ok: true, executed_on_mock: true, ...(already ? { already: true } : {}) };
+  return {
+    ok: true,
+    executed_on_mock: true,
+    ...(already ? { already: true } : {}),
+    chainEvent: { action: chainEvent.action, seq: chainEvent.seq, diff: chainEvent.diff },
+  };
 }
