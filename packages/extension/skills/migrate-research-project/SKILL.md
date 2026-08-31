@@ -1,5 +1,5 @@
 ---
-name: migrate-project
+name: migrate-research-project
 description: Convert an existing research repo into a Research Project — scan, infer, interview, scaffold, verify. Use when a user opens a bare git repo and wants to adopt the prescribed layout without losing existing work.
 agents: []
 surface: public
