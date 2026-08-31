@@ -28,6 +28,7 @@ export type PromptProject = {
   sandboxes?: string[]
   icon?: { color?: string; url?: string; override?: string }
   server?: { key: string; name: string }
+  type?: "research" | "dev"
 }
 
 export type PromptProjectControls = {
