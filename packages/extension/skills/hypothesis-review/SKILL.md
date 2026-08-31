@@ -10,13 +10,15 @@ vault_contract:
 
 # Hypothesis Review
 
-Rank open vault hypotheses to identify the highest-value experiments.
+Rank open hypotheses to identify the highest-value experiments.
 
 ## Process
 
-1. Glob `hypotheses/` across **every mounted vault** in the Armonia stack (see the
-   `amico-vault` skill for the mount set and read precedence) for notes with
-   `status: open` or `status: untested`
+1. **Locate hypotheses.** When the system prompt includes an `## Active Research
+   Project` block, read from `<project>/ledger/hypotheses/`. Otherwise, glob
+   `hypotheses/` across **every mounted vault** in the Armonia stack (see the
+   `amico-vault` skill for the mount set and read precedence). Filter for notes
+   with `status: open` or `status: untested`.
 2. For each hypothesis, read the body and assess:
    - **Impact if confirmed** (numeric): high=3 (unlocks fidelity breakthrough or new platform), medium=2 (improves existing result), low=1 (incremental or niche)
    - **Ease of test** (numeric): easy=3 (1 cold-start experiment), moderate=2 (needs specific setup or 2-3 experiments), hard=1 (requires engineering or new infrastructure)

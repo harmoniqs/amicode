@@ -7,13 +7,17 @@ vault_contract:
   folders: [sessions, experiments, specs]
   note_types: [session, experiment, spec, hypothesis]
   frontmatter: [session_id, status, tags]
+project_contract:
+  folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, config]
 ---
 
 # Autoresearch — the director's protocol
 
 > **Install conventions** — this skill references *your personal vault* (the writable
 > vault your Amicode studio mounts) for the session ledger, experiment notes, and specs,
-> and your compute fleet where one exists. The protocol is engine- and install-neutral;
+> and your compute fleet where one exists. **When operating on a Research Project**
+> (detected by `project.toml` in the workspace), use project paths instead of vault paths
+> — see the path resolution table below. The protocol is engine- and install-neutral;
 > bindings for a given engine stay engine-side (the opencode binding of the director role
 > is the `autoresearch` primary agent card).
 
@@ -24,6 +28,23 @@ the user's autoresearch kickoff prompts. All three lead here; this file is the p
 The operating principle: **the context window is a cache; the vault is the database.**
 Every piece of load-bearing state lives in a vault note; the context window holds only the
 working set. Compaction (manual or auto) then costs nothing but a cache refill.
+
+## Path resolution (project-aware)
+
+When the system prompt includes an `## Active Research Project` block (injected by
+`stack_state.ts` when a workspace folder has `project.toml`), use project paths.
+When no project is bound, use vault paths. The checkout registry is always vault-based
+(fleet-wide coordination).
+
+| Artifact | Project-bound | Vault (no project) |
+|----------|---------------|--------------------|
+| Campaign ledger | `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md` | `<personal vault>/sessions/session-<YYYYMMDD>-<slug>.md` |
+| Hypotheses | `<project>/ledger/hypotheses/` | `<vault>/hypotheses/` |
+| Observations | `<project>/ledger/observations/` | `<vault>/experiments/` |
+| Scripts | `<project>/scripts/` | (none — vault has no scripts) |
+| Data | `<project>/data/` | (none) |
+| Config | `<project>/config/` | (none) |
+| Checkout registry | `<personal vault>/sessions/CHECKOUTS.md` | `<personal vault>/sessions/CHECKOUTS.md` |
 
 ## The session ledger (create at kickoff, before any work)
 
