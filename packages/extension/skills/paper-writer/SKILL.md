@@ -89,7 +89,8 @@ The agent MUST NOT:
 4. **Select emphasis** — do not add "importantly," "notably," "remarkably" or
    similar editorial emphasis not present in the outline
 5. **Invent methodology details** — only include methods described in the
-   outline or referenced in `scripts/`
+   outline or referenced in `scripts/experiment/` (optimization solves) and
+   `scripts/testbed/` (system environment)
 6. **Hallucinate citations** — only cite references that exist in
    `paper/references.bib`
 

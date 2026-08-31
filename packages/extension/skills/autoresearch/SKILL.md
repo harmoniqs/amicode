@@ -41,7 +41,9 @@ When no project is bound, use vault paths. The checkout registry is always vault
 | Campaign ledger | `<project>/ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md` | `<personal vault>/sessions/session-<YYYYMMDD>-<slug>.md` |
 | Hypotheses | `<project>/ledger/hypotheses/` | `<vault>/hypotheses/` |
 | Observations | `<project>/ledger/observations/` | `<vault>/experiments/` |
-| Scripts | `<project>/scripts/` | (none — vault has no scripts) |
+| Experiment scripts | `<project>/scripts/experiment/` — optimization solves, gate synthesis | (none) |
+| Analysis scripts | `<project>/scripts/analysis/` — post-processing, plotting, comparison | (none) |
+| Testbed | `<project>/scripts/testbed/` — simulated gym environments, hardware interfaces | (none) |
 | Data | `<project>/data/` | (none) |
 | Config | `<project>/config/` | (none) |
 | Reports | `<project>/reports/` | (none) |
