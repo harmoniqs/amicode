@@ -29,15 +29,17 @@ describe("resolveLlmCreds — pure signal from opencode-resolved providers", () 
     });
     expect(r).toMatchObject({ ok: true, provider: "anthropic", source: "env" });
   });
-  it("mismatch → explicit fail when the model points at an unresolved provider", () => {
+  it("mismatch → ok with warning when the model points at an unresolved provider (falls back to first resolved)", () => {
     const r = resolveLlmCreds({
       providers: [{ id: "anthropic", source: "env" }],
       model: "amazon-bedrock/us.anthropic.claude-sonnet-4-6",
     });
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.reason).toMatch(/amazon-bedrock/);
-      expect(r.reason).toMatch(/no resolved credentials|resolved:/i);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.provider).toBe("anthropic");
+      expect(r.source).toBe("env");
+      expect(r.warning).toMatch(/amazon-bedrock/);
+      expect(r.warning).toMatch(/falling back/i);
     }
   });
   it('ignores a model with no provider prefix (falls back to "any resolved")', () => {
@@ -94,13 +96,17 @@ describe("fetchProviderSignal — async, against a stubbed opencode server", () 
     expect(sig.ok).toBe(false);
     if (!sig.ok) expect(sig.reason).toMatch(/not configured/i);
   });
-  it("mismatch surfaces through the async path too", async () => {
+  it("mismatch is a soft warning through the async path too (chat still opens)", async () => {
     const fetchImpl = stub({
       "/config/providers": { providers: [{ id: "anthropic", source: "env" }] },
       "/config": { model: "amazon-bedrock/x" },
     });
     const sig = await fetchProviderSignal("http://127.0.0.1:9", { fetchImpl });
-    expect(sig.ok).toBe(false);
+    expect(sig.ok).toBe(true);
+    if (sig.ok) {
+      expect(sig.provider).toBe("anthropic");
+      expect(sig.warning).toMatch(/amazon-bedrock/);
+    }
   });
   it("not-ok (not a throw) when /config/providers is unreachable", async () => {
     const fetchImpl = (async () => {

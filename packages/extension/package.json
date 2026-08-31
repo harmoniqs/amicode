@@ -50,7 +50,7 @@
       "activitybar": [
         {
           "id": "amicode",
-          "title": "Amicode",
+          "title": "AMICODE",
           "icon": "media/amico_reduced.svg"
         }
       ]
@@ -59,7 +59,7 @@
       "amicode": [
         {
           "id": "amicode.workspace",
-          "name": "Workspace",
+          "name": "AMICODE",
           "type": "webview"
         }
       ]

@@ -900,6 +900,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
             : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
         );
+        if (sig.ok && sig.warning) {
+          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
+        }
       });
     });
 
@@ -1616,11 +1619,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // providers, so a missing credential would otherwise sail past the ready
       // check and silently hang at the chat box (Q129). Ask opencode's own live
       // resolution (/config/providers, same signal the healthcheck uses) so the
-      // cause is named, not hidden. Key-free.
+      // cause is named, not hidden. Key-free. A model/provider mismatch is a
+      // soft warning (ok:true + warning) — the chat still opens.
       const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
       if (!creds.ok) {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
+      }
+      if (creds.warning) {
+        opencodeChannel.appendLine(`[openChat] ${creds.warning}`);
       }
       ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
