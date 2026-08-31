@@ -3,9 +3,8 @@ name: analyze
 description: Post-experiment analysis and insight extraction — stagnation detection, failure classification, hyperparameter comparison. Use after optimization runs to extract patterns and generate insights.
 agents: [researcher, librarian, dreamer]
 surface: public
-vault_contract:
-  folders: [experiments, insights]
-  catalog: [pulses]
+project_contract:
+  folders: [ledger/observations, ledger/campaigns, scripts/analysis, data]
 ---
 
 Post-experiment analysis for Amico optimization results.
@@ -23,8 +22,8 @@ The argument is: $ARGUMENTS
 After a batch of optimization experiments (3+), or when STRATEGY.md priorities need updating.
 
 ### Step 1: Gather Data
-- Read recent experiment notes in `experiments/` across **every mounted vault** (read precedence per the `amico-vault` skill)
-- Read catalog entries in `catalog/pulses/*/metadata.toml` from whichever mount holds the catalog
+- Read recent experiment notes in `<project>/ledger/observations/`
+- Read catalog entries in `catalog/pulses/*/metadata.toml` if the project has a catalog
 - Group by (platform, gate) pairs
 
 ### Step 2: Stagnation Detection
@@ -56,9 +55,8 @@ Trace chains via `warm_started_from` in catalog:
 - Flag chains where cold restart might beat continuing
 
 ### Step 6: Generate Outputs
-- **Insight notes**: Create in `<vault>/insights/` (route per amico-vault) when patterns are clear (3+ supporting experiments)
+- **Insight notes**: Create in `<project>/ledger/observations/` when patterns are clear (3+ supporting experiments)
 - **Strategy suggestions**: Note which STRATEGY.md priorities are progressing vs stuck
-- Use `/amico-vault` skill for correct frontmatter
 
 > **Fidelity convention:** Always report both fixed-phase and free-phase fidelity for multi-subsystem gates. Free-phase is the primary metric. Fixed-phase routinely underreports by 6–80 pp for entangling gates. Ref: [[insight-20260412-054400-synthesis-free-phase-gap-scales-with-gate-type]].
 
