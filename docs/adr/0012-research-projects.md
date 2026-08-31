@@ -10,7 +10,7 @@
 
 ## Decision
 
-Introduce "Research Project" as a structured flavor of the existing Project concept. A Research Project is a self-contained, git-backed directory identified by `research-project.toml`, with a prescribed layout (`scripts/`, `data/`, `analysis/`, `paper/`, `ledger/`, `reports/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). The existing git-repo model continues as "Dev Project."
+Introduce "Research Project" as a structured flavor of the existing Project concept. A Research Project is a self-contained, git-backed directory identified by `research-project.toml`, with a prescribed layout (`scripts/`, `data/`, `paper/`, `ledger/`, `reports/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). The existing git-repo model continues as "Dev Project."
 
 ### Alternatives considered
 

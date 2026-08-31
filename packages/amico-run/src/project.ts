@@ -103,7 +103,6 @@ export const SCAFFOLD_DIRS = [
   "data/raw",
   "data/processed",
   "data/plots",
-  "analysis",
   "paper/figures",
   "paper/supplementary",
   "ledger/hypotheses",
@@ -307,9 +306,8 @@ ${question}
 
 ## Layout
 
-- \`scripts/\` — experiment scripts (\`testbed/\` for scratch work)
+- \`scripts/\` — experiment and analysis scripts (\`testbed/\` for scratch work)
 - \`data/\` — raw, processed, and plot outputs
-- \`analysis/\` — analysis notebooks and post-processing
 - \`paper/\` — manuscript (\`outline.md\` → \`main.tex\`)
 - \`ledger/\` — hypotheses, observations, literature, and campaign logs
 - \`reports/\` — weekly updates, presentations, and milestone reports

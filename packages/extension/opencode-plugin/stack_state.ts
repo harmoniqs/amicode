@@ -641,7 +641,7 @@ function buildActiveProjectSection(): string | null {
       `**Question:** ${question}`,
       `**Path:** \`${folder}\``,
       "",
-      "Layout: `scripts/`, `data/{raw,processed,plots}`, `analysis/`, `paper/`, " +
+      "Layout: `scripts/`, `data/{raw,processed,plots}`, `paper/`, " +
         "`ledger/{hypotheses,observations,campaigns}`, `reports/{weekly,presentations,milestones}`, `config/`, `skills/`",
       "",
       "When operating on this project, use project paths (not vault paths):",

@@ -318,7 +318,7 @@ describe("projectCreate", () => {
 
     // Verify prescribed directories
     for (const dir of ["scripts", "scripts/testbed", "data/raw", "data/processed",
-      "data/plots", "analysis", "paper/figures", "paper/supplementary",
+      "data/plots", "paper/figures", "paper/supplementary",
       "ledger/hypotheses", "ledger/observations", "ledger/literature",
       "ledger/campaigns", "reports/weekly", "reports/presentations",
       "reports/milestones", "config", "skills"]) {
