@@ -95,9 +95,16 @@ describe("allowFetch", () => {
     expect(allowFetch("/amicode/run-series?run=r1&lab=default")).toBe(true)
     expect(allowFetch("/amicode/dashboard")).toBe(true)
   })
+  test("campaign routes pass (list + drill-down with query)", () => {
+    expect(allowFetch("/amicode/campaigns")).toBe(true)
+    expect(allowFetch("/amicode/campaign?slug=session-20260830-skill-health")).toBe(true)
+  })
   test("prefix rides and foreign paths rejected", () => {
     expect(allowFetch("/amicode/problem-x")).toBe(false)
     expect(allowFetch("/amicode/problemx?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/campaign-x")).toBe(false)
+    expect(allowFetch("/amicode/campaignx?slug=s")).toBe(false)
+    expect(allowFetch("/amicode/campaigns-extra")).toBe(false)
     expect(allowFetch("/session")).toBe(false)
     expect(allowFetch("http://evil.example/amicode/profile")).toBe(false)
     expect(allowFetch(42)).toBe(false)
