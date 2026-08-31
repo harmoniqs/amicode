@@ -1,5 +1,5 @@
 // Skill auto-loading from research project directories — #668.
-// resolveProjectSkills scans workspace folders with project.toml for skills/.
+// resolveProjectSkills scans workspace folders with .amico for skills/.
 // mergeSkillEntries extended with project source (highest priority).
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
@@ -25,7 +25,7 @@ describe("resolveProjectSkills", () => {
   it("discovers skills from a research project's skills/ directory", () => {
     const projectDir = join(tmpDir, "my-research");
     mkdirSync(join(projectDir, "skills", "my-analysis"), { recursive: true });
-    writeFileSync(join(projectDir, "project.toml"), 'schema_version = 1\n');
+    writeFileSync(join(projectDir, ".amico"), 'schema_version = 1\n');
     writeFileSync(join(projectDir, "skills", "my-analysis", "SKILL.md"), `---
 name: my-analysis
 description: Custom analysis skill for this project
@@ -42,7 +42,7 @@ surface: public
     expect(skills[0].description).toBe("Custom analysis skill for this project");
   });
 
-  it("ignores directories without project.toml (dev projects)", () => {
+  it("ignores directories without .amico (dev projects)", () => {
     const devDir = join(tmpDir, "dev-repo");
     mkdirSync(join(devDir, "skills", "some-skill"), { recursive: true });
     writeFileSync(join(devDir, "skills", "some-skill", "SKILL.md"), `---
@@ -60,7 +60,7 @@ agents: []
   it("returns empty for a research project with no skills/ directory", () => {
     const projectDir = join(tmpDir, "no-skills-proj");
     mkdirSync(projectDir);
-    writeFileSync(join(projectDir, "project.toml"), 'schema_version = 1\n');
+    writeFileSync(join(projectDir, ".amico"), 'schema_version = 1\n');
 
     const skills = resolveProjectSkills([projectDir]);
     expect(skills).toHaveLength(0);
@@ -71,8 +71,8 @@ agents: []
     const proj2 = join(tmpDir, "proj2");
     mkdirSync(join(proj1, "skills", "skill-a"), { recursive: true });
     mkdirSync(join(proj2, "skills", "skill-b"), { recursive: true });
-    writeFileSync(join(proj1, "project.toml"), 'schema_version = 1\n');
-    writeFileSync(join(proj2, "project.toml"), 'schema_version = 1\n');
+    writeFileSync(join(proj1, ".amico"), 'schema_version = 1\n');
+    writeFileSync(join(proj2, ".amico"), 'schema_version = 1\n');
     writeFileSync(join(proj1, "skills", "skill-a", "SKILL.md"), `---
 name: skill-a
 description: Skill A
