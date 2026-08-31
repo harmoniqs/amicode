@@ -267,6 +267,8 @@ describe("Active Research Project injection (#670)", () => {
       expect(block).toContain("**Question:** Does it work?");
       expect(block).toContain(`**Path:** \`${projDir}\``);
       expect(block).toContain("Hypotheses: `<project>/ledger/hypotheses/`");
+      expect(block).toContain("Reports: `<project>/reports/`");
+      expect(block).toContain("`reports/{weekly,presentations,milestones}`");
     } finally {
       restoreSeams(stubs);
     }

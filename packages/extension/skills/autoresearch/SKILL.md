@@ -8,7 +8,7 @@ vault_contract:
   note_types: [session, experiment, spec, hypothesis]
   frontmatter: [session_id, status, tags]
 project_contract:
-  folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, config]
+  folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, reports, config]
 ---
 
 # Autoresearch — the director's protocol
@@ -44,6 +44,7 @@ When no project is bound, use vault paths. The checkout registry is always vault
 | Scripts | `<project>/scripts/` | (none — vault has no scripts) |
 | Data | `<project>/data/` | (none) |
 | Config | `<project>/config/` | (none) |
+| Reports | `<project>/reports/` | (none) |
 | Checkout registry | `<personal vault>/sessions/CHECKOUTS.md` | `<personal vault>/sessions/CHECKOUTS.md` |
 
 ## The session ledger (create at kickoff, before any work)
