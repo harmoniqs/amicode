@@ -24,6 +24,7 @@ import { fleetVerb } from "./fleet_verb.js";
 import { specVerb } from "./spec_verb.js";
 import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
+import { projectVerb } from "./project_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -201,4 +202,14 @@ const papers: Verb = {
   run: papersVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers];
+// project — the research-project entity: create (scaffold + git init) and
+// import (non-destructive scaffold over an existing directory). Part of #665.
+const project: Verb = {
+  name: "project",
+  summary: "create a scaffolded research project / import an existing directory as a research project",
+  generalizes: "the amicode research-project entity lifecycle (PRD #663)",
+  slice: "research projects (#665)",
+  run: projectVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers, project];
