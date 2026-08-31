@@ -8,6 +8,21 @@ source of truth; `~/.amico/ops/` on the mini is a **deploy target** — deploy w
 
 | script | cadence (launchd) | reads | writes / posts |
 |---|---|---|---|
+| `hub-restart.sh` | on demand (the `Amicode: Restart Hub Server` command drives it over SSH; agents may call it directly) | systemd --user unit state, `curl 127.0.0.1:4096` | atomic binary swap (stage → rename, no service stop), single-verb restart, verification line |
+
+### The hub restart law (amicode#649, learned 2026-08-30 the hard way)
+
+**Never inline `systemctl stop`/`restart` for the hub from an agent shell.** A
+session hosted ON the hub kills its own runtime mid-command — an interruption
+between a `stop` and the rest of the sequence overrides `Restart=always` and
+leaves the hub down (14-minute incident, every client panel stuck at boot).
+Always go through `hub-restart.sh` (trap-verified: the hub is never left down
+by it) or, when inline is unavoidable, schedule it out-of-process:
+`systemd-run --user --on-active=5s systemctl --user restart …`. The swap is
+rename(2) over the running executable — atomic, no stop, ever.
+
+| script | cadence (launchd) | reads | writes / posts |
+|---|---|---|---|
 | `fleet-status.sh` | every 5 min (`co.harmoniqs.fleet-status`) | ssh probes (mini/macbook/erlich), canonical chat DB, server lsof, `~/.amico/sync.log`, local repo scan | `~/.amico/ops/fleet-status.json` (the dashboard widget's input); macOS notification on server-guard state change |
 | `fleet-alert.sh` | every 15 min (`co.harmoniqs.fleet-alert`) | `fleet-status.json`, state file | **Slack `#fleet`** — device transitions only (noise-gated; always-on hosts `mini erlich` notify, laptops never do); down->24h re-reminds once daily |
 | `papers-digest/daily.sh` | daily ~09:00 (`co.harmoniqs.amicode-papers-digest`) | the frozen bundle | **Slack `#papers`** — top-5 quant-ph digest; appends to `papers-digest/log.txt` |
