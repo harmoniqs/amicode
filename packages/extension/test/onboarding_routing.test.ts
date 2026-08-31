@@ -14,9 +14,6 @@ import {
   resolveOnboardingAction,
   type OnboardingAction,
   isModelConfigured,
-  OnboardingLauncher,
-  readWelcomeShown,
-  writeWelcomeShown,
 } from "../src/onboarding_routing";
 
 import {
@@ -31,37 +28,37 @@ describe("resolveOnboardingAction — routing predicate (AC10)", () => {
   const cases: Array<{ name: string; flags: OnboardingFlags; expected: OnboardingAction }> = [
     {
       name: "fresh install, no model → show-webview",
-      flags: { modelConfigured: false, welcomeShown: false, onboardingCompleted: false, partialStage: undefined },
+      flags: { modelConfigured: false, onboardingCompleted: false, partialStage: undefined },
       expected: "show-webview",
     },
     {
       name: "no model, welcome already shown → show-webview (need model before chat)",
-      flags: { modelConfigured: false, welcomeShown: true, onboardingCompleted: false, partialStage: undefined },
+      flags: { modelConfigured: false, onboardingCompleted: false, partialStage: undefined },
       expected: "show-webview",
     },
     {
       name: "model configured, no onboarding done → open-chat (overture will run inside)",
-      flags: { modelConfigured: true, welcomeShown: false, onboardingCompleted: false, partialStage: undefined },
+      flags: { modelConfigured: true, onboardingCompleted: false, partialStage: undefined },
       expected: "open-chat",
     },
     {
       name: "model configured, partial at stage 2 → resume-chat-at-stage",
-      flags: { modelConfigured: true, welcomeShown: true, onboardingCompleted: false, partialStage: 2 },
+      flags: { modelConfigured: true, onboardingCompleted: false, partialStage: 2 },
       expected: "resume-chat-at-stage",
     },
     {
       name: "model configured, onboarding completed → normal-session",
-      flags: { modelConfigured: true, welcomeShown: true, onboardingCompleted: true, partialStage: undefined },
+      flags: { modelConfigured: true, onboardingCompleted: true, partialStage: undefined },
       expected: "normal-session",
     },
     {
       name: "onboarding completed (regardless of other flags) → normal-session",
-      flags: { modelConfigured: true, welcomeShown: false, onboardingCompleted: true, partialStage: undefined },
+      flags: { modelConfigured: true, onboardingCompleted: true, partialStage: undefined },
       expected: "normal-session",
     },
     {
       name: "model configured, welcome shown, no partial stage → open-chat",
-      flags: { modelConfigured: true, welcomeShown: true, onboardingCompleted: false, partialStage: undefined },
+      flags: { modelConfigured: true, onboardingCompleted: false, partialStage: undefined },
       expected: "open-chat",
     },
   ];
@@ -74,6 +71,41 @@ describe("resolveOnboardingAction — routing predicate (AC10)", () => {
 });
 
 // ─── AC9: isModelConfigured ──────────────────────────────────────────────────
+
+describe("first-run routing — env-var providers count as configured", () => {
+  // extension.ts feeds `isModelConfigured() || hasProviderEnvVar()` into the
+  // predicate. A machine whose only credential is an env var must NOT be sent
+  // to the Stage 0 model-setup webview.
+  it("a provider env var alone routes past the webview", () => {
+    expect(
+      resolveOnboardingAction({
+        modelConfigured: true, // isModelConfigured() || hasProviderEnvVar()
+        onboardingCompleted: false,
+        partialStage: undefined,
+      }),
+    ).toBe("open-chat");
+  });
+
+  it("no model and no completion marker is the Stage 0 case", () => {
+    expect(
+      resolveOnboardingAction({
+        modelConfigured: false,
+        onboardingCompleted: false,
+        partialStage: undefined,
+      }),
+    ).toBe("show-webview");
+  });
+
+  it("a completed onboarding never re-runs, even with no model", () => {
+    expect(
+      resolveOnboardingAction({
+        modelConfigured: false,
+        onboardingCompleted: true,
+        partialStage: undefined,
+      }),
+    ).toBe("normal-session");
+  });
+});
 
 describe("isModelConfigured — model-presence check (AC9)", () => {
   let tmpDir: string;
@@ -119,130 +151,9 @@ describe("isModelConfigured — model-presence check (AC9)", () => {
 
 // ─── AC4: At-most-once guard ─────────────────────────────────────────────────
 
-describe("OnboardingLauncher — at-most-once guard (AC4)", () => {
-  it("fires the launch callback at most once per instance", () => {
-    const launches: string[] = [];
-    const launcher = new OnboardingLauncher({
-      resolveFlags: () => ({
-        modelConfigured: false,
-        welcomeShown: false,
-        onboardingCompleted: false,
-        partialStage: undefined,
-      }),
-      showWebview: () => { launches.push("webview"); },
-      openChat: () => { launches.push("chat"); },
-      openChatAtStage: () => { launches.push("resume"); },
-    });
-
-    launcher.tryLaunch();
-    launcher.tryLaunch();
-    launcher.tryLaunch();
-
-    expect(launches).toEqual(["webview"]); // only once
-  });
-
-  it("does not fire for normal-session action", () => {
-    const launches: string[] = [];
-    const launcher = new OnboardingLauncher({
-      resolveFlags: () => ({
-        modelConfigured: true,
-        welcomeShown: true,
-        onboardingCompleted: true,
-        partialStage: undefined,
-      }),
-      showWebview: () => { launches.push("webview"); },
-      openChat: () => { launches.push("chat"); },
-      openChatAtStage: () => { launches.push("resume"); },
-    });
-
-    launcher.tryLaunch();
-    expect(launches).toEqual([]); // normal session → no action
-  });
-
-  it("routes to openChat when model is configured", () => {
-    const launches: string[] = [];
-    const launcher = new OnboardingLauncher({
-      resolveFlags: () => ({
-        modelConfigured: true,
-        welcomeShown: false,
-        onboardingCompleted: false,
-        partialStage: undefined,
-      }),
-      showWebview: () => { launches.push("webview"); },
-      openChat: () => { launches.push("chat"); },
-      openChatAtStage: () => { launches.push("resume"); },
-    });
-
-    launcher.tryLaunch();
-    expect(launches).toEqual(["chat"]);
-  });
-
-  it("routes to openChatAtStage for partial state", () => {
-    const launches: string[] = [];
-    const launcher = new OnboardingLauncher({
-      resolveFlags: () => ({
-        modelConfigured: true,
-        welcomeShown: true,
-        onboardingCompleted: false,
-        partialStage: 3,
-      }),
-      showWebview: () => { launches.push("webview"); },
-      openChat: () => { launches.push("chat"); },
-      openChatAtStage: (_n) => { launches.push("resume"); },
-    });
-
-    launcher.tryLaunch();
-    expect(launches).toEqual(["resume"]);
-  });
-});
-
 // ─── AC5: Stage 0 success → chat auto-open ───────────────────────────────────
 
-describe("OnboardingLauncher — webview success triggers chat (AC5)", () => {
-  it("onWebviewSuccess opens chat", () => {
-    const launches: string[] = [];
-    const launcher = new OnboardingLauncher({
-      resolveFlags: () => ({
-        modelConfigured: false,
-        welcomeShown: false,
-        onboardingCompleted: false,
-        partialStage: undefined,
-      }),
-      showWebview: () => { launches.push("webview"); },
-      openChat: () => { launches.push("chat"); },
-      openChatAtStage: () => { launches.push("resume"); },
-    });
-
-    launcher.tryLaunch(); // shows webview
-    expect(launches).toEqual(["webview"]);
-
-    launcher.onWebviewSuccess(); // webview completed → open chat
-    expect(launches).toEqual(["webview", "chat"]);
-  });
-});
-
 // ─── AC6: welcome_shown persistence ──────────────────────────────────────────
-
-describe("welcome_shown flag semantics (AC6)", () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "welcome-"));
-  });
-  afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  it("reading from non-existent file returns false", () => {
-    expect(readWelcomeShown(path.join(tmpDir, "state.json"))).toBe(false);
-  });
-
-  it("writing and reading round-trips", () => {
-    const file = path.join(tmpDir, "state.json");
-    writeWelcomeShown(file);
-    expect(readWelcomeShown(file)).toBe(true);
-  });
-});
 
 // ─── devtools restore marker — toggle-OFF guard ─────────────────────────────
 

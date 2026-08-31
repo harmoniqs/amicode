@@ -39,10 +39,10 @@ import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
-import { amicodeOpsDir } from "./substrate/vault_store";
+import { amicodeOpsDir, onboardingDir, hasOnboardingCompleted } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
-import { isModelConfigured } from "./onboarding_routing";
+import { isModelConfigured, hasProviderEnvVar, resolveOnboardingAction } from "./onboarding_routing";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards } from "./mode_cards";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
@@ -97,6 +97,11 @@ let statusBar: StatusBarManager | undefined;
 let sseClient: OpencodeEventClient | undefined;
 let runsManager: RunsManager | undefined;
 let opencodeReadyUrl: URL | undefined;
+// Post-ready routing (onboarding gate + provider signal). Assigned at boot, and
+// re-invoked by every path that REPLACES serverManager — a replacement registers
+// its own onReady, so without this the boot handler is orphaned and the first
+// run silently loses its Stage 0 surface.
+let routePostReady: ((url: URL) => void) | undefined;
 /** Set once the binary + vault are known; the watcher's onRunFinished closure
  *  and the distillNow command read it lazily (undefined = distiller disabled). */
 let distillerSetup: DistillerSetup | undefined;
@@ -278,10 +283,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           amicoPython = r.pythonPath;
           if (r.provisioned) {
             if (currentSpawnEnv) currentSpawnEnv.AMICO_PYTHON = r.pythonPath;
-            opencodeChannel.appendLine(
-              `[pasqal] python provisioned: ${r.pythonPath} — restarting server to pick it up`,
-            );
-            void vscode.commands.executeCommand("amicode.restartServer");
+            // Never restart out from under a live Stage 0 panel. On a first run
+            // this provisioning lands WHILE the onboarding webview is waiting on
+            // the server, and the restart strands it on the splash. The panel
+            // issues its own `amicode.restartServer` when the user submits the
+            // form, so the fresh AMICO_PYTHON is picked up there instead.
+            if (getOnboardingPanel()) {
+              opencodeChannel.appendLine(
+                `[pasqal] python provisioned: ${r.pythonPath} — restart deferred (onboarding in progress)`,
+              );
+            } else {
+              opencodeChannel.appendLine(
+                `[pasqal] python provisioned: ${r.pythonPath} — restarting server to pick it up`,
+              );
+              void vscode.commands.executeCommand("amicode.restartServer");
+            }
           }
         } else {
           opencodeChannel.appendLine(`[pasqal] ${r.message}`);
@@ -852,15 +868,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push(sseClient);
 
-    serverManager.onReady((url) => {
-      opencodeReadyUrl = url;
-      statusBar?.setServerReady(true);
-      sseClient?.connect(url);
+    routePostReady = (url) => {
       // Onboarding gate: if no model is configured, open the Stage 0 webview
       // instead of chat. The webview will fire onOnboardingComplete when done,
       // which then opens chat.
-      if (!isModelConfigured() && vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-        void vscode.commands.executeCommand("amicode.onboarding.open");
+      const autoOpen = vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true);
+      const onboardingAction = resolveOnboardingAction({
+        modelConfigured: isModelConfigured() || hasProviderEnvVar(),
+        onboardingCompleted: hasOnboardingCompleted(onboardingDir()),
+        partialStage: undefined,
+      });
+      // First-run routing is otherwise invisible: every branch here is silent,
+      // so a first run that lands on an empty chat leaves nothing to explain
+      // why. Log the inputs AND the decision.
+      opencodeChannel.appendLine(
+        `[onboarding] action=${onboardingAction} modelConfigured=${isModelConfigured()} ` +
+          `providerEnv=${hasProviderEnvVar()} completed=${hasOnboardingCompleted(onboardingDir())} autoOpen=${autoOpen}`,
+      );
+      if (onboardingAction === "show-webview" && autoOpen) {
+        void vscode.commands.executeCommand("amicode.onboarding.open").then(
+          () => opencodeChannel.appendLine("[onboarding] Stage 0 webview opened"),
+          (e) => opencodeChannel.appendLine(`[onboarding] Stage 0 webview FAILED to open: ${e}`),
+        );
         // Wire: when onboarding completes, the server restarts and the
         // onReady handler (else-if branch below) opens the chat panel.
         // We do NOT open chat here — that would race the server restart
@@ -869,7 +898,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         onOnboardingCancelled(() => {
           ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         });
-      } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+      } else if (autoOpen) {
         // Normal path: model configured → open chat directly
         // Post-onboarding: adopt the onboarding panel as the chat panel (zero
         // tab switching — the splash overlay fades out revealing the chat).
@@ -898,6 +927,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
         );
       });
+    };
+
+    serverManager.onReady((url) => {
+      opencodeReadyUrl = url;
+      statusBar?.setServerReady(true);
+      sseClient?.connect(url);
+      routePostReady?.(url);
     });
 
     serverManager.start().catch((err) => {
@@ -963,6 +999,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      routePostReady?.(url);
     });
     await serverManager.start();
     if (project2.vaultDir) {
