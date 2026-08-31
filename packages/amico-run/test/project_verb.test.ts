@@ -159,6 +159,28 @@ describe("scaffoldManifest", () => {
     expect(files).toContain("config/system.toml");
     expect(files).toContain("config/lab.toml");
   });
+
+  it("produces reports/ dirs and weekly template", () => {
+    const manifest = scaffoldManifest(project);
+    const dirs = manifest.filter((m) => m.content === null).map((m) => m.path);
+    expect(dirs).toContain("reports/weekly");
+    expect(dirs).toContain("reports/presentations");
+    expect(dirs).toContain("reports/milestones");
+
+    const files = manifest.filter((m) => m.content !== null).map((m) => m.path);
+    expect(files).toContain("reports/weekly/template.md");
+  });
+
+  it("weekly template has YAML frontmatter with date and period fields", () => {
+    const manifest = scaffoldManifest(project);
+    const template = manifest.find((m) => m.path === "reports/weekly/template.md");
+    expect(template).toBeDefined();
+    expect(template!.content).toContain("date:");
+    expect(template!.content).toContain("period:");
+    expect(template!.content).toContain("## Progress");
+    expect(template!.content).toContain("## Key Results");
+    expect(template!.content).toContain("## Blockers");
+  });
 });
 
 // ── pure logic: TOML rendering round-trip ──────────────────────────────────
@@ -298,7 +320,8 @@ describe("projectCreate", () => {
     for (const dir of ["scripts", "scripts/testbed", "data/raw", "data/processed",
       "data/plots", "analysis", "paper/figures", "paper/supplementary",
       "ledger/hypotheses", "ledger/observations", "ledger/literature",
-      "ledger/campaigns", "config", "skills"]) {
+      "ledger/campaigns", "reports/weekly", "reports/presentations",
+      "reports/milestones", "config", "skills"]) {
       expect(existsSync(join(projectDir, dir))).toBe(true);
     }
 

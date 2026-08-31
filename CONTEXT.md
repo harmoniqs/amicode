@@ -30,7 +30,7 @@ _Avoid_: User, tenant, owner (interchangeably)
 
 **Project**:
 The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. Every Session belongs to exactly one Project. Two flavors:
-- **Research Project** — identified by a `project.toml` manifest at its root. Prescribed layout (`scripts/`, `data/`, `analysis/`, `paper/`, `ledger/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). Self-contained: all data, campaign ledgers, and project-specific skills live inside the directory. Created via `amico project create`.
+- **Research Project** — identified by a `project.toml` manifest at its root. Prescribed layout (`scripts/`, `data/`, `analysis/`, `paper/`, `ledger/`, `reports/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). Self-contained: all data, campaign ledgers, and project-specific skills live inside the directory. Created via `amico project create`.
 - **Dev Project** — the existing git-repo model; any registered directory without `project.toml`. Canonical default: `~/armonia/`.
 
 _Avoid_: Workspace, folder (as a concept name), repo, Study (rejected alternative — researchers think in "projects")
@@ -120,6 +120,10 @@ _Avoid_: Dashboard (as the surface name), widget panel
 **Widget**:
 A sandboxed ES-module card rendered in an iframe within Home. Authored by the agent (`amicode_author_widget` tool) or shipped as a builtin. Communicates with the host via the bridge protocol (postMessage). Two size classes: hero (full panel width) and tile (half-width, 2-across). Each has a TOML manifest, a JS module, and optional config fields.
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
+
+**Sidebar**:
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Destinations open in the editor area.
+_Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
 
 ### Orthogonal axes
 

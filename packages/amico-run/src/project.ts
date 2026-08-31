@@ -110,6 +110,9 @@ export const SCAFFOLD_DIRS = [
   "ledger/observations",
   "ledger/literature",
   "ledger/campaigns",
+  "reports/weekly",
+  "reports/presentations",
+  "reports/milestones",
   "config",
   "skills",
 ] as const;
@@ -309,10 +312,35 @@ ${question}
 - \`analysis/\` — analysis notebooks and post-processing
 - \`paper/\` — manuscript (\`outline.md\` → \`main.tex\`)
 - \`ledger/\` — hypotheses, observations, literature, and campaign logs
+- \`reports/\` — weekly updates, presentations, and milestone reports
 - \`config/\` — system and lab configuration
 - \`skills/\` — project-specific Amico skills
 `;
 }
+
+export const WEEKLY_REPORT_TEMPLATE = `---
+date: YYYY-MM-DD
+author: 
+period: YYYY-MM-DD to YYYY-MM-DD
+status: draft
+---
+
+# Weekly Update — [period]
+
+## Progress
+- 
+
+## Key Results
+- 
+
+## Blockers
+- 
+
+## Next Week
+- 
+
+## Notes
+`;
 
 export const ROOT_GITIGNORE = `# Data artifacts (large binary files)
 data/raw/**/*.jld2
@@ -378,6 +406,9 @@ export function scaffoldManifest(
   // config/ stubs
   items.push({ path: "config/system.toml", content: "# System configuration\n" });
   items.push({ path: "config/lab.toml", content: "# Lab configuration\n" });
+
+  // reports/
+  items.push({ path: "reports/weekly/template.md", content: WEEKLY_REPORT_TEMPLATE });
 
   return items;
 }

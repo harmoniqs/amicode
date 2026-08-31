@@ -750,7 +750,7 @@ function buildActiveProjectSection(): string | null {
       `**Path:** \`${folder}\``,
       "",
       "Layout: `scripts/`, `data/{raw,processed,plots}`, `analysis/`, `paper/`, " +
-        "`ledger/{hypotheses,observations,campaigns}`, `config/`, `skills/`",
+        "`ledger/{hypotheses,observations,campaigns}`, `reports/{weekly,presentations,milestones}`, `config/`, `skills/`",
       "",
       "When operating on this project, use project paths (not vault paths):",
       "- Hypotheses: `<project>/ledger/hypotheses/`",
@@ -760,6 +760,7 @@ function buildActiveProjectSection(): string | null {
       "- Data: `<project>/data/`",
       "- Config: `<project>/config/`",
       "- Paper: `<project>/paper/`",
+      "- Reports: `<project>/reports/`",
       "",
       "The checkout registry (`CHECKOUTS.md`) stays vault-based (fleet-wide).",
     ];
