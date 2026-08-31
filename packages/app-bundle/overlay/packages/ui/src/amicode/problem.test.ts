@@ -299,45 +299,6 @@ describe("deviceVerdict (ring-2 Device hero)", () => {
   test("boolean online:false maps to offline", () => {
     expect(deviceVerdict({ online: false })).toMatchObject({ connection: "offline" })
   })
-
-  // SEAM 1 (#680): the MockSoc rehearsal record in the device session —
-  // honestly labeled sim, outcome-gated, surfaced distinctly on failure.
-  test("a rehearsal record surfaces outcome + sim label + mismatch", () => {
-    const v = deviceVerdict({
-      pulse_ref: "/runs/r/pulse.jld2",
-      rehearsal: {
-        kind: "mocksoc",
-        sim: true,
-        outcome: "success",
-        pulse_hash: "sha256:" + "a".repeat(64),
-        mismatch: "delta × 1.05 (mock truth vs nominal model)",
-        step_outcome: "IdentityStrategy step: 1 measurement(s), J_exp=0.665, accepted=true",
-      },
-    })
-    expect(v?.rehearsal).toMatchObject({
-      outcome: "success",
-      sim: true,
-      kind: "mocksoc",
-      mismatch: "delta × 1.05 (mock truth vs nominal model)",
-    })
-  })
-  test("a FAILED rehearsal surfaces its failure distinctly (no costume of progress)", () => {
-    const v = deviceVerdict({
-      rehearsal: {
-        kind: "mocksoc",
-        sim: true,
-        outcome: "failed",
-        pulse_hash: "sha256:" + "b".repeat(64),
-        mismatch: "delta × 1.05 (mock truth vs nominal model)",
-        error: "EOFError: read end of file",
-      },
-    })
-    expect(v?.rehearsal).toMatchObject({ outcome: "failed", sim: true })
-  })
-  test("an entity without a rehearsal table → rehearsal null (pre-SEAM-1 stub unchanged)", () => {
-    const v = deviceVerdict({ pulse_ref: "/a/pulse.jld2" })
-    expect(v?.rehearsal ?? null).toBeNull()
-  })
 })
 
 describe("calibrationVerdict (ring-2 Calibration hero)", () => {

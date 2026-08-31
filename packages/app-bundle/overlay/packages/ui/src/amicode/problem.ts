@@ -330,40 +330,6 @@ export type DeviceVerdict = {
   pulseRef: string | null
   runDir: string | null
   note: string | null
-  /** SEAM 1 (#680): the MockSoc rehearsal record — honestly labeled sim,
-   *  outcome-gated (a failed rehearsal satisfies nothing and is surfaced
-   *  distinctly, never as progress). Null when the entity carries no
-   *  rehearsal (the pre-SEAM-1 honest stub). */
-  rehearsal: DeviceRehearsalVerdict | null
-}
-
-/** The rehearsal verdict — reads the additive device_session.rehearsal record.
- *  `sim` is the honesty label: it rides WITH the outcome (a failed sim is not
- *  a hardware claim either), and the UI surfaces both. */
-export type DeviceRehearsalVerdict = {
-  kind: string
-  sim: boolean
-  outcome: "success" | "failed"
-  pulseHash: string | null
-  mismatch: string | null
-  stepOutcome: string | null
-  error: string | null
-}
-
-function rehearsalVerdict(v: unknown): DeviceRehearsalVerdict | null {
-  if (typeof v !== "object" || v === null) return null
-  const r = v as Record<string, unknown>
-  const outcome = r.outcome === "success" || r.outcome === "failed" ? r.outcome : null
-  if (outcome === null) return null
-  return {
-    kind: str(r.kind) ?? "unknown",
-    sim: r.sim === true,
-    outcome,
-    pulseHash: str(r.pulse_hash) ?? null,
-    mismatch: str(r.mismatch) ?? null,
-    stepOutcome: str(r.step_outcome) ?? null,
-    error: str(r.error) ?? null,
-  }
 }
 
 export function deviceVerdict(entity: Record<string, unknown>): DeviceVerdict | null {
@@ -379,19 +345,8 @@ export function deviceVerdict(entity: Record<string, unknown>): DeviceVerdict | 
   const pulseRef = str(entity.pulse_ref) ?? null
   const runDir = str(entity.run_dir) ?? null
   const note = str(entity.note) ?? str(entity.notes) ?? null
-  const rehearsal = rehearsalVerdict(entity.rehearsal)
-  if (
-    connection === null &&
-    !provider &&
-    ready === null &&
-    !queue &&
-    !pulseRef &&
-    !runDir &&
-    !note &&
-    !rehearsal
-  )
-    return null
-  return { connection, provider, ready, queue, pulseRef, runDir, note, rehearsal }
+  if (connection === null && !provider && ready === null && !queue && !pulseRef && !runDir && !note) return null
+  return { connection, provider, ready, queue, pulseRef, runDir, note }
 }
 
 // --- calibration verdict (ring-2 Calibration dialog hero) --------------------
