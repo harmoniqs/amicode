@@ -124,6 +124,30 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     return obj;
   };
 
+  /** amicode#678: the port ships a campaign-digest BUILT-IN widget the fork
+   *  pin predates (recorded at v1.18.10-amicode.18 with jump-back-in only).
+   *  Dropped from BOTH sides so parity stays comparable across the next pin
+   *  bump; the widget itself is unit-tested in widgets_registry.test.ts.
+   *  Touches the three routes that project the registry: /amicode/widgets
+   *  (top-level `widgets`) and the dashboard GET/POST (the merge appends
+   *  every built-in as a default tile under `dashboard.widget`). */
+  const normalizeBuiltinWidgetDrift = (obj: any): any => {
+    if (obj && typeof obj === "object") {
+      const out = { ...obj };
+      if (Array.isArray(out.widgets)) {
+        out.widgets = out.widgets.filter((w: any) => !(w && w.id === "campaign-digest"));
+      }
+      if (out.dashboard && typeof out.dashboard === "object" && Array.isArray(out.dashboard.widget)) {
+        out.dashboard = {
+          ...out.dashboard,
+          widget: out.dashboard.widget.filter((w: any) => !(w && w.id === "campaign-digest")),
+        };
+      }
+      return out;
+    }
+    return obj;
+  };
+
   const normalizeWallClock = (obj: any): any => {
     if (
       obj &&
@@ -206,7 +230,9 @@ describe("amicode service — golden-fixture parity with the fork", () => {
         // JSON routes: deep-equal on parsed bodies (key order is the port's
         // business; structure and values are the contract).
         const canon = (o: any, seededAt: number) =>
-          normalizePortExtensions(normalizePostPinDrift(normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt)))));
+          normalizeBuiltinWidgetDrift(
+            normalizePortExtensions(normalizePostPinDrift(normalizeListOrder(normalizeWallClock(normalizeFreshTimestamps(o, seededAt))))),
+          );
         expect(canon(JSON.parse(received), testSeededAt)).toEqual(canon(JSON.parse(expected), meta.seededAt));
       } else {
         // Non-JSON routes (the served widget frame): byte-exact after sandbox
