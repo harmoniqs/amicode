@@ -279,6 +279,9 @@ export interface RunStub {
   script_ref?: string;
   /** Resolved env binding kind (spec C). */
   env?: string;
+  /** SEAM 5 (#681): the bank seed this run warm-started from (catalog entry id
+   *  or pulse ref) — the load_traj idiom's recorded half. Additive. */
+  warm_start?: string;
   /** Free-tier re-rollout verification outcome (spec C) — recorded by
    *  amicode_verify after amico-run's harness writes verification.toml. Spec B's
    *  entity view renders it beside the tier; promotion is gated on agree. */
@@ -1161,6 +1164,7 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   if (stub.tier !== undefined) lines.push(`tier = ${tomlEscape(stub.tier)}`);
   if (stub.script_ref !== undefined) lines.push(`script_ref = ${tomlEscape(stub.script_ref)}`);
   if (stub.env !== undefined) lines.push(`env = ${tomlEscape(stub.env)}`);
+  if (stub.warm_start !== undefined) lines.push(`warm_start = ${tomlEscape(stub.warm_start)}`);
   lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
