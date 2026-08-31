@@ -641,14 +641,16 @@ function buildActiveProjectSection(): string | null {
       `**Question:** ${question}`,
       `**Path:** \`${folder}\``,
       "",
-      "Layout: `scripts/`, `data/{raw,processed,plots}`, `paper/`, " +
+      "Layout: `scripts/{experiment,analysis,testbed}`, `data/{raw,processed,plots}`, `paper/`, " +
         "`ledger/{hypotheses,observations,campaigns}`, `reports/{weekly,presentations,milestones}`, `config/`, `skills/`",
       "",
       "When operating on this project, use project paths (not vault paths):",
       "- Hypotheses: `<project>/ledger/hypotheses/`",
       "- Campaign ledgers: `<project>/ledger/campaigns/`",
       "- Observations: `<project>/ledger/observations/`",
-      "- Scripts: `<project>/scripts/`",
+      "- Experiment scripts: `<project>/scripts/experiment/`",
+      "- Analysis scripts: `<project>/scripts/analysis/`",
+      "- Testbed: `<project>/scripts/testbed/` (simulated environments, hardware interfaces)",
       "- Data: `<project>/data/`",
       "- Config: `<project>/config/`",
       "- Paper: `<project>/paper/`",
