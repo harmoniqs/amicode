@@ -180,7 +180,7 @@ describe("mergeSkillEntries (issue #573 — shadow semantics: custom > workspace
       { source: "library", name: "transmon", description: "Transmon physics", path: "/lib/transmon/SKILL.md" },
     ];
 
-    const merged = mergeSkillEntries(custom, workspace, shipped);
+    const merged = mergeSkillEntries([], custom, workspace, shipped);
     // atoms from custom wins, transmon passes through
     expect(merged).toHaveLength(2);
     const atoms = merged.find((e) => e.name === "atoms")!;
@@ -199,7 +199,7 @@ describe("mergeSkillEntries (issue #573 — shadow semantics: custom > workspace
       { source: "library", name: "tdd", description: "Standard TDD", path: "/lib/tdd/SKILL.md" },
     ];
 
-    const merged = mergeSkillEntries(custom, workspace, shipped);
+    const merged = mergeSkillEntries([], custom, workspace, shipped);
     expect(merged).toHaveLength(1);
     expect(merged[0].source).toBe("workspace");
     expect(merged[0].description).toBe("Team TDD rules");
@@ -214,7 +214,7 @@ describe("mergeSkillEntries (issue #573 — shadow semantics: custom > workspace
     ];
     const shipped: SkillIndexEntry[] = [];
 
-    const merged = mergeSkillEntries(custom, workspace, shipped);
+    const merged = mergeSkillEntries([], custom, workspace, shipped);
     expect(merged).toHaveLength(1);
     expect(merged[0].source).toBe("custom");
   });
@@ -227,7 +227,7 @@ describe("mergeSkillEntries (issue #573 — shadow semantics: custom > workspace
       { source: "library", name: "atoms", description: "Original", path: "/lib/atoms/SKILL.md" },
     ];
 
-    const merged = mergeSkillEntries(custom, [], shipped);
+    const merged = mergeSkillEntries([], custom, [], shipped);
     const atoms = merged.find((e) => e.name === "atoms")!;
     // The entry should carry a flag indicating it overrides a platform skill
     expect((atoms as any).overridesShipped).toBe(true);

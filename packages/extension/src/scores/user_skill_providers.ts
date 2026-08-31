@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { parse as parseYaml } from "yaml";
+import { detectProjectType } from "../project/detect";
 import type { SkillIndexEntry } from "./package_skills";
 
 // --- Types ---
@@ -85,17 +86,33 @@ export function resolveWorkspaceSkills(wsSkillsDir: string): SkillIndexEntry[] {
   return scanSkillDirectory(wsSkillsDir, "workspace");
 }
 
+/** Resolve project skills from research project workspace folders (#668).
+ *  For each folder with `project.toml`, scan its `skills/` directory.
+ *  Non-research directories are skipped. Order-preserving: first folder wins
+ *  on name collision (consistent with workspace-folder order). */
+export function resolveProjectSkills(workspaceFolders: string[]): SkillIndexEntry[] {
+  const out: SkillIndexEntry[] = [];
+  for (const folder of workspaceFolders) {
+    if (detectProjectType(folder) !== "research") continue;
+    const skillsDir = path.join(folder, "skills");
+    if (!fs.existsSync(skillsDir)) continue;
+    out.push(...scanSkillDirectory(skillsDir, "project" as SkillIndexEntry["source"]));
+  }
+  return out;
+}
+
 /** A merged entry may carry an `overridesShipped` flag when a custom/workspace
  *  skill shadows a platform (library/package) skill of the same name. */
 export interface MergedSkillEntry extends SkillIndexEntry {
   overridesShipped?: boolean;
 }
 
-/** Merge skill entries with shadow semantics: custom > workspace > shipped.
- *  First match by name wins (resolution order). If a custom or workspace entry
+/** Merge skill entries with shadow semantics: project > custom > workspace > shipped.
+ *  First match by name wins (resolution order). If a higher-priority entry
  *  shadows a shipped skill, the winner carries `overridesShipped: true` so the
  *  Skill Index can label it appropriately. */
 export function mergeSkillEntries(
+  project: SkillIndexEntry[],
   custom: SkillIndexEntry[],
   workspace: SkillIndexEntry[],
   shipped: SkillIndexEntry[],
@@ -104,14 +121,22 @@ export function mergeSkillEntries(
   const shippedNames = new Set(shipped.map((e) => e.name));
   const out: MergedSkillEntry[] = [];
 
-  // Custom first (highest priority)
+  // Project first (highest priority)
+  for (const e of project) {
+    if (seen.has(e.name)) continue;
+    seen.add(e.name);
+    const overrides = shippedNames.has(e.name);
+    if (overrides) console.warn(`amicode: project skill "${e.name}" shadows shipped skill`);
+    out.push(overrides ? { ...e, overridesShipped: true } : e);
+  }
+  // Custom second
   for (const e of custom) {
     if (seen.has(e.name)) continue;
     seen.add(e.name);
     const overrides = shippedNames.has(e.name);
     out.push(overrides ? { ...e, overridesShipped: true } : e);
   }
-  // Workspace second
+  // Workspace third
   for (const e of workspace) {
     if (seen.has(e.name)) continue;
     seen.add(e.name);

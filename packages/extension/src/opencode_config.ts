@@ -16,7 +16,7 @@ import {
   type LibraryRoot,
   type LibraryRootSpec,
 } from "./scores/package_skills";
-import { resolveUserSkills, resolveWorkspaceSkills, mergeSkillEntries } from "./scores/user_skill_providers";
+import { resolveUserSkills, resolveWorkspaceSkills, resolveProjectSkills, mergeSkillEntries } from "./scores/user_skill_providers";
 import { readSolverModeState } from "./solver_mode";
 import { studioPathsOrLegacy } from "@amicode/schema";
 import { opencodeConfigDir } from "./opencode_xdg";
@@ -591,6 +591,10 @@ export interface OpencodeConfigOptions {
   /** Absolute path to the workspace .opencode/skills/ directory (issue #573).
    *  Auto-loaded skills labeled (workspace). Undefined = no workspace skills. */
   workspaceSkillsDir?: string;
+  /** Absolute paths to workspace folders (VS Code multi-root). Used for
+   *  research-project skill discovery (#668): each folder with project.toml
+   *  has its skills/ scanned. Undefined = no project skills. */
+  workspaceFolders?: string[];
   /** Stable project dir to (re)use across activations; created if missing and
    *  safe to re-prepare (every write below is overwrite-idempotent). Default:
    *  a fresh mkdtemp — but note the app PERSISTS the selected project per
@@ -771,7 +775,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const workspaceEntries = opts.workspaceSkillsDir
       ? resolveWorkspaceSkills(opts.workspaceSkillsDir)
       : [];
-    skillEntries = mergeSkillEntries(customEntries, workspaceEntries, shippedEntries);
+    const projectEntries = opts.workspaceFolders
+      ? resolveProjectSkills(opts.workspaceFolders)
+      : [];
+    skillEntries = mergeSkillEntries(projectEntries, customEntries, workspaceEntries, shippedEntries);
     const section = buildSkillIndexSection(skillEntries);
     if (section) finalContent = finalContent + "\n\n" + section;
   } catch (e) {
