@@ -308,7 +308,7 @@ ${question}
 
 ## Layout
 
-- \`scripts/\` — \`experiment/\` for solves, \`analysis/\` for post-processing, \`testbed/\` for scratch
+- \`scripts/\` — \`experiment/\` for solves, \`analysis/\` for post-processing, \`testbed/\` for simulated environments and hardware interfaces
 - \`data/\` — raw, processed, and plot outputs
 - \`paper/\` — manuscript (\`outline.md\` → \`main.tex\`)
 - \`ledger/\` — hypotheses, observations, literature, and campaign logs
@@ -373,7 +373,9 @@ export const PAPER_LATEXMKRC = `$pdflatex = 'pdflatex -interaction=nonstopmode %
 
 export const SCRIPTS_README = `# Scripts
 
-Experiment scripts for this project. Use \`testbed/\` for scratch work and quick experiments.
+- \`experiment/\` — optimization solves, gate synthesis
+- \`analysis/\` — post-processing, plotting, comparison
+- \`testbed/\` — simulated gym environment, hardware-interfacing code
 `;
 
 /** Build the full scaffold manifest: relative paths and their contents. Files

@@ -28,7 +28,7 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
   scripts/                 # all runnable code
     experiment/            # optimization solves, gate synthesis
     analysis/              # post-processing, plotting, comparison
-    testbed/               # scratch work, quick experiments
+    testbed/               # simulated gym environment, hardware-interfacing code
   data/
     raw/                   # optimization output, raw results
     processed/             # post-processed data
