@@ -1,0 +1,10 @@
+schema_version = "1"
+
+[rehearsal]
+kind = "mocksoc"
+sim = true
+outcome = "failed"
+pulse_hash = "sha256:d56b88921154ea0ea97b15397f93a81d59ec3f29aff23839b67275b54a1e71d1"
+mismatch = "delta × 1.05 (mock truth vs nominal model)"
+error = "EOFError: read end of file"
+recorded = "2026-08-31T21:30:02Z"

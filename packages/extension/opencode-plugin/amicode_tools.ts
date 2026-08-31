@@ -70,6 +70,8 @@ import {
   type RunStub,
   type DeviceSessionStub,
   type CalibrationStub,
+  type RehearsalRecord,
+  rehearsalSatisfiesStage,
 } from "./entities";
 import { entityHash } from "./hashes";
 import {
@@ -90,6 +92,7 @@ import {
 } from "./problems";
 import {
   guardAndRecordStage, completeStage } from "./score_guard";
+import { readRehearsalRecord } from "./rehearsal";
 import {
   SPAWN_MAX_COUNT,
   SPAWN_MAX_DEPTH,
@@ -1037,9 +1040,19 @@ export const AmicodeTools = async (input: unknown) => {
 
     amicode_to_hardware: {
       description:
-        "Record the DeviceSession entity stub (interview stage 8: HARDWARE — guided stub). " +
-        "THIS BUILD PERFORMS NO DEVICE I/O: the tool records intent only and returns an " +
-        "explanation of the send-to-device gate. Bookkeeping, not a gate.",
+        "Record the DeviceSession entity (interview stage 8: HARDWARE). Real device I/O " +
+        "stays PROPOSE-ONLY (human sign-off gate). SEAM 1 (#680): the stage gains a REHEARSAL — " +
+        "the solved pulse runs a full sim preview through the ACTUAL Strumento.jl MockSoc transport " +
+        "path (translate → envelopes → execute! → synthetic IQ → Measurement → one strategy step), " +
+        "in pure Julia, no Python, no board. Launch it per the run-launch seam (bash, julia " +
+        "--startup-file=no): julia --startup-file=no --project=<ext>/templates/mocksoc-rehearsal " +
+        "<ext>/templates/mocksoc_rehearsal.jl <pulse.jld2> <result.toml> [out_dir] — it writes " +
+        "rehearsal.toml (honestly labeled sim; carries the pulse content-hash, the mismatch " +
+        "declaration, the strategy-step outcome). Pass that artifact's path as `rehearsal_ref` to " +
+        "record it into the device session. Outcome-gated: a rehearsal with outcome=success " +
+        "SATISFIES the hardware stage (the sim preview part — the send-to-device gate stays " +
+        "pending-human-sign-off); a FAILED rehearsal is surfaced distinctly and does NOT satisfy " +
+        "the stage — it stays an honest stub until a rehearsal passes.",
       args: {
         pulse_ref: {
           type: ["string", "null"],
@@ -1049,12 +1062,23 @@ export const AmicodeTools = async (input: unknown) => {
           type: ["string", "null"],
           description: "The run directory the pulse came from, if known; else null.",
         },
+        rehearsal_ref: {
+          type: ["string", "null"],
+          description:
+            "Path to the rehearsal.toml artifact from the MockSoc rehearsal (the Strumento " +
+            "transport path); null to record intent only (the pre-rehearsal stub).",
+        },
         note: {
           type: ["string", "null"],
           description: "Short free-text note; null for none.",
         },
       },
-      async execute(a: { pulse_ref?: string | null; run_dir?: string | null; note?: string | null }) {
+      async execute(a: {
+        pulse_ref?: string | null;
+        run_dir?: string | null;
+        rehearsal_ref?: string | null;
+        note?: string | null;
+      }) {
         const meta = ensureActiveProblem();
         const dir = problemDir(meta.slug);
         const blocked = guardAndRecordStage(problemsDir(), dir, "hardware");
@@ -1063,6 +1087,23 @@ export const AmicodeTools = async (input: unknown) => {
         if (given(a.pulse_ref)) stub.pulse_ref = a.pulse_ref;
         if (given(a.run_dir)) stub.run_dir = a.run_dir;
         if (given(a.note)) stub.note = a.note;
+        // SEAM 1: the rehearsal artifact — read + validate BEFORE any entity
+        // write. A broken/dishonest artifact records nothing (honest refusal),
+        // never a costume of progress.
+        let rehearsal: RehearsalRecord | undefined;
+        if (given(a.rehearsal_ref)) {
+          const rr = readRehearsalRecord(a.rehearsal_ref);
+          if (!rr.ok) {
+            return (
+              `Cannot record the rehearsal for "${meta.slug}": ${rr.problem}.\n\n` +
+              `Nothing was recorded. Re-run the rehearsal (the artifact must declare ` +
+              `sim = true and carry outcome, pulse_hash, mismatch, and the step outcome) ` +
+              `and pass the fresh rehearsal.toml path as rehearsal_ref.`
+            );
+          }
+          rehearsal = rr.record;
+          stub.rehearsal = rehearsal;
+        }
         let sentinel: string;
         try {
           sentinel = recordEntity(meta.slug, "device_session", stub as any, deviceSessionStubToml(stub), {
@@ -1076,8 +1117,40 @@ export const AmicodeTools = async (input: unknown) => {
           stub.pulse_ref || stub.run_dir
             ? ""
             : " Note: no pulse/run referenced yet — re-record after the solve finishes.";
+        if (rehearsal && rehearsalSatisfiesStage(rehearsal)) {
+          // The outcome gate (SEAM 1 AC): only a PASSED rehearsal satisfies the
+          // stage. The sim preview is satisfied — the send-to-device gate itself
+          // stays pending-human-sign-off (no costume of hardware progress).
+          completeStage(dir, "hardware");
+          return (
+            `MockSoc rehearsal PASSED for "${meta.slug}" — the hardware stage's sim preview is satisfied.\n\n` +
+            `Transport (translate → envelopes → execute! → synthetic IQ → Measurement → one ` +
+            `strategy step) ran through the actual Strumento.jl path; the device session records ` +
+            `it honestly labeled sim: pulse ${rehearsal.pulse_hash}, mismatch "${rehearsal.mismatch}", ` +
+            `step: ${rehearsal.step_outcome}.\n\n` +
+            `Still pending — the send-to-device gate: (1) automated checks — fidelity ≥ threshold, ` +
+            `|drive| ≤ amplitude cap, bandwidth within hardware limits, leakage bounded; ` +
+            `(2) a human eyeballs the pulse and signs off before anything ships. This rehearsal ` +
+            `touched no real silicon — it is the sim preview, not a live session.\n\n${sentinel}`
+          );
+        }
+        if (rehearsal) {
+          // FAILED — surfaced DISTINCTLY; the stage stays an honest stub.
+          return (
+            `MockSoc rehearsal FAILED for "${meta.slug}" — the failure is recorded, but it does ` +
+            `NOT satisfy the hardware stage: the stage stays an honest stub until a rehearsal ` +
+            `passes.\n\nWhat failed: ${rehearsal.error ?? "no error recorded"}\n\n` +
+            `Diagnose (pulse.jld2 readable? result.toml carries [params]? the env resolved?), ` +
+            `re-run the rehearsal, and pass the fresh rehearsal.toml path as rehearsal_ref.\n\n${sentinel}`
+          );
+        }
         return (
           `Hardware intent noted for "${meta.slug}" — pending your sign-off.${warn}\n\n` +
+          `The stage's sim preview (SEAM 1): run the solved pulse through the MockSoc rehearsal ` +
+          `(julia --startup-file=no --project=<ext>/templates/mocksoc-rehearsal ` +
+          `<ext>/templates/mocksoc_rehearsal.jl <pulse.jld2> <result.toml> [out_dir]) and pass the ` +
+          `resulting rehearsal.toml back as rehearsal_ref — a passed rehearsal satisfies the ` +
+          `stage's sim preview; a failed one is surfaced distinctly and satisfies nothing.\n\n` +
           `The send-to-device gate, when wired: (1) automated checks — fidelity ≥ threshold, ` +
           `|drive| ≤ amplitude cap, bandwidth within hardware limits, leakage bounded; ` +
           `(2) a human eyeballs the pulse and signs off before anything ships. ` +
