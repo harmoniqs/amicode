@@ -919,6 +919,8 @@
     "packages/app/public/assets/JuliaMono-Regular.woff2": "43f5dfca02a03035f89799da5af150f28d5c4aff729753076094c687fc61b063",
     "packages/app/public/assets/RacingSansOne-Regular.woff2": "2ff92c8abe7a35962922c54da215d68690f8502463698b1b595bed597b63e3ff",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
+    "packages/app/src/amicode/campaign/campaign-tab-model.ts": "4841be5aa39a36959e94216a052296a7ffdbd2ae4479149f36d8aaef2ee573cb",
+    "packages/app/src/amicode/campaign/campaign-tab-model.test.ts": "3903bfd9f99e5b279e6cb508f27b16f5983c5aaeff121e00f3b2847bc3a136c2",
     "packages/app/src/amicode/inspector/device-inspector.tsx": "5ab63709e88176bb4dad1072ffe28fd59ad67d414c9d844ee6c55353df50df79",
     "packages/app/src/amicode/inspector/inspector-bridge.ts": "460dbf4509b4e56a8eacd6cac7adcb3a63c6cd3e417d851df5f3e3b259095d3e",
     "packages/app/src/amicode/inspector/inspector-context.tsx": "ac81b9e0e2a4035f85b6af68b7f0cefcb9f256a175b244ba13136f3a307c0c77",
