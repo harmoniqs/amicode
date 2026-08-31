@@ -263,6 +263,11 @@
           "default": "",
           "description": "Path to the telaio harness binary (Telaio.jl's serve daemon). Required when amicode.harness = telaio."
         },
+        "amicode.telaioAppDir": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a built app tree (materialize.mjs + the app build) that the telaio harness serves at its origin root. Required for the chat surface under harness = telaio."
+        },
         "amicode.devAssetRoot": {
           "type": "string",
           "default": "",

@@ -37,9 +37,10 @@ describe("opencode descriptor — the byte-identity guarantee", () => {
     expect(opencodeDescriptor.availability(deps).state).toBe("ready");
   });
 
-  it("consumes the opencode config build and carries no entitlement", () => {
+  it("consumes the opencode config build, carries no entitlement, adds no env", () => {
     expect(opencodeDescriptor.consumesOpencodeConfig).toBe(true);
     expect(opencodeDescriptor.requiredEntitlement).toBeUndefined();
+    expect(opencodeDescriptor.spawnEnvAdditions({ telaioAppDir: "/app" })).toEqual({});
   });
 });
 
@@ -51,8 +52,8 @@ describe("telaio descriptor — honest needs-setup until the binary exists", () 
   });
 
   it("is ready once the binary setting is non-empty (whitespace tolerated)", () => {
-    expect(telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: "  " }).state).toBe("needs-setup");
-    expect(telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: " /opt/telaio " }).state).toBe("ready");
+    expect(telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: "  ", telaioAppDir: "" }).state).toBe("needs-setup");
+    expect(telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: " /opt/telaio ", telaioAppDir: "" }).state).toBe("ready");
   });
 
   it("resolveBinary trims the setting; empty throws with the actionable message", () => {
@@ -66,6 +67,34 @@ describe("telaio descriptor — honest needs-setup until the binary exists", () 
   it("skips the opencode config build and carries the entitlement field", () => {
     expect(telaioDescriptor.consumesOpencodeConfig).toBe(false);
     expect(telaioDescriptor.requiredEntitlement).toBe("harness.telaio");
+  });
+
+  it("adds TELAIO_APP_DIR when the app tree is set; nothing when not", () => {
+    expect(telaioDescriptor.spawnEnvAdditions({ telaioAppDir: "/built/app" }))
+      .toEqual({ TELAIO_APP_DIR: "/built/app" });
+    expect(telaioDescriptor.spawnEnvAdditions({ telaioAppDir: "" })).toEqual({});
+    expect(telaioDescriptor.spawnEnvAdditions({ telaioAppDir: "  " })).toEqual({});
+  });
+
+  it("the ready detail distinguishes with-chat from without-chat", () => {
+    const withApp = telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: "/opt/telaio", telaioAppDir: "/built/app" });
+    const noApp = telaioDescriptor.availability({ opencodeBinary: "", telaioBinary: "/opt/telaio", telaioAppDir: "" });
+    expect(withApp.state).toBe("ready");
+    expect(withApp.detail).toContain("chat app from the configured app tree");
+    expect(noApp.state).toBe("ready");
+    expect(noApp.detail).toContain("amicode.telaioAppDir");
+  });
+
+  it("resolveSelectedLaunch threads telaioAppDir into the env additions", () => {
+    const sel = resolveSelectedLaunch({
+      harnessId: "telaio",
+      opencodeBinary: "",
+      telaioBinary: "/opt/telaio",
+      telaioAppDir: "/built/app",
+      extensionPath: "/ext",
+    });
+    expect(sel.descriptor.spawnEnvAdditions({ telaioAppDir: "/built/app" }))
+      .toEqual({ TELAIO_APP_DIR: "/built/app" });
   });
 });
 
@@ -110,6 +139,7 @@ describe("resolveSelectedLaunch — the one call the spawn sites make", () => {
       harnessId: "telaio",
       opencodeBinary: "/custom/opencode",
       telaioBinary: "/opt/telaio",
+      telaioAppDir: "",
       extensionPath: "/ext",
     });
     expect(sel.fellBack).toBe(false);
