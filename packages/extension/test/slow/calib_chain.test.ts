@@ -79,7 +79,7 @@ describe.skipIf(!(SOLVE_PROJECT && REHEARSAL_PROJECT))(
     afterAll(() => {
       if (prevProblemsDir === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
       else process.env.AMICODE_PROBLEMS_DIR = prevProblemsDir;
-      if (root) rmSync(root, { recursive: true, force: true });
+      if (root && !process.env.AMICO_DEBUG_KEEP_DIR) rmSync(root, { recursive: true, force: true });
     });
 
     it(
@@ -172,7 +172,8 @@ describe.skipIf(!(SOLVE_PROJECT && REHEARSAL_PROJECT))(
           ["δ          = 0.2", "δ          = 0.21"],
           [
             "initial = 0.1 * randn(sys.n_drives, N)\nqtraj = UnitaryTrajectory(sys, ZeroOrderPulse(initial, times), op)",
-            `qtraj = load_traj("${bankedSeed}")`,
+            `warm = load_traj("${bankedSeed}")  # the banked pulse, re-wrapped for THIS problem:
+qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(warm), op)`,
           ],
         ]);
         const outB = execFileSync(
