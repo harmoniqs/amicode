@@ -25,9 +25,10 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
   research-project.toml    # manifest (schema_version, name, slug, question, status, created)
   README.md
   .gitignore
-  scripts/                 # experiment and analysis scripts
-    testbed/               # scratch work
-    analysis/              # post-processing, plotting, comparison scripts
+  scripts/                 # all runnable code
+    experiment/            # optimization solves, gate synthesis
+    analysis/              # post-processing, plotting, comparison
+    testbed/               # scratch work, quick experiments
   data/
     raw/                   # optimization output, raw results
     processed/             # post-processed data
@@ -88,10 +89,10 @@ Read the file content — do not classify by filename alone.
 - Defines the physical model, units, conventions
 - Reference material that doesn't change between experiments
 
-**Experiment scripts** — destination: `scripts/`
+**Experiment scripts** — destination: `scripts/experiment/`
 - `.jl` files with `using Piccolo`, `QuantumCollocation`, `Piccolissimo`
 - Contains `solve!`, `UnitarySmoothPulseProblem`, trajectory definitions
-- Already in `scripts/` → stays
+- The bulk of a researcher's scripts — optimization solves, gate synthesis
 
 **Analysis scripts** — destination: `scripts/analysis/`
 - `.jl` or `.py` files that load results and produce plots or tables

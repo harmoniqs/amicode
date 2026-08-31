@@ -99,8 +99,9 @@ export function nameToSlug(name: string): string {
 /** The prescribed directory layout for a Research Project (PRD #663). */
 export const SCAFFOLD_DIRS = [
   "scripts",
-  "scripts/testbed",
+  "scripts/experiment",
   "scripts/analysis",
+  "scripts/testbed",
   "data/raw",
   "data/processed",
   "data/plots",
@@ -307,7 +308,7 @@ ${question}
 
 ## Layout
 
-- \`scripts/\` — experiment and analysis scripts (\`testbed/\` for scratch, \`analysis/\` for post-processing)
+- \`scripts/\` — \`experiment/\` for solves, \`analysis/\` for post-processing, \`testbed/\` for scratch
 - \`data/\` — raw, processed, and plot outputs
 - \`paper/\` — manuscript (\`outline.md\` → \`main.tex\`)
 - \`ledger/\` — hypotheses, observations, literature, and campaign logs
