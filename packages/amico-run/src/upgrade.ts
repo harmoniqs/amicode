@@ -2,7 +2,8 @@
 // D2): the four upgrade chains as receipt-emitting, idempotent runbooks.
 //
 //   amico upgrade server-binary [--skip-build <path>] [--ref <rev>] [--kick-command <cmd>]
-//                               [--health-command <cmd>] [--no-kick] [--root-server <dir>]
+//                               [--health-command <cmd>] [--no-kick] [--dist-build-command <cmd>]
+//                               [--root-server <dir>]
 //   amico upgrade extension    [--package-command <cmd>] [--install-command <cmd>]
 //                               [--root-vscext <dir>] [--root-repo-amicode <dir>]
 //   amico upgrade agents       [--root-config <dir>] [--root-staging <dir>] [--root-repo-amicode <dir>]
@@ -28,9 +29,10 @@
 //     and matches it field-for-field.
 //
 // STUB COMMAND CONTRACT (the hermetic seams; tokens + env, both available):
-//   {frozen} {running} {prev} {server} {version} {vsix} {repo}   (path tokens)
+//   {frozen} {running} {prev} {server} {version} {vscext} {vsix} {repo} {amicoRun}
 //   AMICO_UPGRADE_FROZEN_BIN / _RUNNING_BIN / _PREV_BIN / _ROOT_SERVER /
 //   AMICO_UPGRADE_ROOT_VSCEXT / _TARGET_VERSION / _REPO_AMICODE / _VSIX /
+//   AMICO_UPGRADE_AMICO_RUN_DIR /
 //   AMICO_UPGRADE_PHASE ∈ kick | verify | verify-retry | restore-kick | restore
 //
 //   The KICK STUB's contract (spec D2): make the health command succeed AND
@@ -45,7 +47,7 @@
 import { execFile } from "node:child_process";
 import { mkdir, open, readFile, rm, copyFile, readdir, stat, writeFile, chmod } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
   surfaceInventory,
   newestExtensionDir,
@@ -88,7 +90,7 @@ export interface UpgradeReceipt {
 const USAGE =
   "amico upgrade <server-binary | extension | agents | skills> [--root-…] " +
   "[--skip-build <p>] [--ref <rev>] [--kick-command <c>] [--health-command <c>] [--no-kick] " +
-  "[--package-command <c>] [--install-command <c>] [--root-receipts <dir>]";
+  "[--package-command <c>] [--install-command <c>] [--dist-build-command <c>] [--root-receipts <dir>]";
 
 const SURFACES: readonly UpgradeSurface[] = ["server-binary", "extension", "agents", "skills"];
 
@@ -175,6 +177,7 @@ const TOKEN_ENV: Record<string, string> = {
   vscext: "AMICO_UPGRADE_ROOT_VSCEXT",
   vsix: "AMICO_UPGRADE_VSIX",
   repo: "AMICO_UPGRADE_REPO_AMICODE",
+  amicoRun: "AMICO_UPGRADE_AMICO_RUN_DIR",
 };
 
 async function runShell(cmd: string, opts: ShellOpts = {}): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -243,6 +246,7 @@ export function parseUpgradeArgs(argv: string[]): { ok: true; args: ParsedVerbAr
     "--verify-timeout-ms",
     "--package-command",
     "--install-command",
+    "--dist-build-command",
     "--root-receipts",
     ...Object.keys(ROOT_FLAGS),
     "--running-binary",
@@ -740,7 +744,7 @@ const extensionVerb = (argv: string[]): Promise<VerbResult> =>
   });
 
 /** The stub/live command env contract (see the module header). */
-function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?: string; frozen?: string; running?: string; prev?: string; server?: string; phase?: string }): Record<string, string> {
+function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?: string; frozen?: string; running?: string; prev?: string; server?: string; phase?: string; amicoRun?: string }): Record<string, string> {
   const env: Record<string, string> = {};
   if (vars.repo !== undefined) env.AMICO_UPGRADE_REPO_AMICODE = vars.repo;
   if (vars.version !== undefined) env.AMICO_UPGRADE_TARGET_VERSION = vars.version;
@@ -751,7 +755,148 @@ function stubEnv(vars: { repo?: string; version?: string; vscext?: string; vsix?
   if (vars.prev !== undefined) env.AMICO_UPGRADE_PREV_BIN = vars.prev;
   if (vars.server !== undefined) env.AMICO_UPGRADE_ROOT_SERVER = vars.server;
   if (vars.phase !== undefined) env.AMICO_UPGRADE_PHASE = vars.phase;
+  if (vars.amicoRun !== undefined) env.AMICO_UPGRADE_AMICO_RUN_DIR = vars.amicoRun;
   return env;
+}
+
+// ── the verb-router dist rebuild (#643): a deployed upgrade never leaves a
+// stale verb router behind ───────────────────────────────────────────────────
+//
+// The incident: the deployed amico bundle sat 46 days stale while server-
+// binary upgrades ran — the ledger verbs existed in source, were absent from
+// the deployed binary, and every ledger call silently degraded for weeks.
+// The router's freshness must not depend on whoever last ran a local build,
+// so the server-binary upgrade (the deployed-code lane) rebuilds the CLI
+// bundles from the amicode checkout's current source and refreshes BOTH
+// copies: the build output (packages/amico-run/dist) and the extension-side
+// byte-copy the PATH-first launcher execs (packages/extension/bin/dist).
+//
+// Fail-closed by placement: the rebuild runs BEFORE the freeze, so a failed
+// or incomplete rebuild aborts the upgrade with NO server surface touched —
+// the receipt never has to lie about a half-deployed state. The bin map of
+// packages/amico-run/package.json is the single source of truth for the
+// declared bundle set (the extension staging and CI's bundle-build-gate
+// re-read the same map).
+
+interface DistRebuildFailure {
+  ok: false;
+  outcome: "aborted-environment" | "aborted-build";
+  reason: string;
+}
+
+async function rebuildVerbRouterDists(
+  ctx: VerbCtx,
+  digests: Record<string, string | null>,
+): Promise<{ ok: true } | DistRebuildFailure> {
+  const rootRepoAmicode = ctx.roots.rootRepoAmicode!;
+  const pkgDir = join(rootRepoAmicode, "packages", "amico-run");
+  const buildCommand = ctx.args.flags["--dist-build-command"];
+  const usingBuildStub = buildCommand !== undefined;
+
+  // the declared bundle set — the package's bin map (+ shadowBins), by
+  // launcher basename: the staging convention everywhere in this repo
+  let declared: string[];
+  try {
+    const pkg = JSON.parse(await readFile(join(pkgDir, "package.json"), "utf8")) as {
+      bin?: Record<string, string>;
+      amicode?: { shadowBins?: Record<string, string> };
+    };
+    const basenames = [
+      ...Object.values(pkg.bin ?? {}),
+      ...Object.values(pkg.amicode?.shadowBins ?? {}),
+    ].map((p) => basename(String(p)));
+    declared = [...new Set(basenames)];
+    if (declared.length === 0) throw new Error("no `bin` map");
+  } catch (e) {
+    return {
+      ok: false,
+      outcome: "aborted-environment",
+      reason: `no readable amico-run package (bin map) at ${join(pkgDir, "package.json")}: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  // environment: the live build path needs pnpm; the stub seam does not
+  if (!usingBuildStub) {
+    const pnpm = await runShell("pnpm --version");
+    if (pnpm.code !== 0) {
+      return {
+        ok: false,
+        outcome: "aborted-environment",
+        reason: "pnpm not available on PATH (the verb-router dist rebuild needs it — or pass --dist-build-command <cmd>)",
+      };
+    }
+  }
+
+  // the rebuild itself — from the checkout's CURRENT source (the commit is
+  // recorded below, so the receipt shows exactly what was built)
+  digests.amicode_head = (await runGit(rootRepoAmicode, ["rev-parse", "HEAD"])).stdout.trim() || null;
+  const cmd = buildCommand ?? "pnpm run build";
+  ctx.log(`verb-router dist rebuild: ${cmd} (cwd ${pkgDir}, amicode@${String(digests.amicode_head).slice(0, 12)})`);
+  const build = await runShell(cmd, { cwd: pkgDir, env: stubEnv({ amicoRun: pkgDir }), timeoutMs: 600_000 });
+  if (build.code !== 0) {
+    return {
+      ok: false,
+      outcome: "aborted-build",
+      reason: `verb-router dist rebuild failed (exit ${build.code}): ${firstLine(build.stderr || build.stdout)}`,
+    };
+  }
+
+  // a "successful" build that drops a declared bundle is the stale-bundle
+  // signature — verify the complete set before deploying anything
+  const distDir = join(pkgDir, "dist");
+  const missing: string[] = [];
+  for (const b of declared) {
+    try {
+      const st = await stat(join(distDir, `${b}.js`));
+      if (st.size === 0) missing.push(`${b}.js (empty)`);
+    } catch {
+      missing.push(`${b}.js`);
+    }
+  }
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      outcome: "aborted-build",
+      reason: `dist rebuild produced an incomplete set — missing ${missing.join(", ")}`,
+    };
+  }
+
+  // refresh the extension-side byte-copy (the PATH-first launcher's target)
+  const extBin = join(rootRepoAmicode, "packages", "extension", "bin");
+  const extBinDist = join(extBin, "dist");
+  await mkdir(extBinDist, { recursive: true });
+  for (const b of declared) {
+    await copyFile(join(distDir, `${b}.js`), join(extBinDist, `${b}.js`));
+  }
+  // the module-type marker: the ESM bundle under a typeless package.json (the
+  // VS Code extension manifest — never add "type" there; it would flip the
+  // CJS extension-host entry) reparse-warns on EVERY invocation. The
+  // bin/-scoped {"type":"module"} marker is the same convention the extension
+  // build's staging writes (esbuild.config.mjs) — identical bytes, so a
+  // refresh by this hook and a refresh by the extension build converge.
+  await writeFile(join(extBin, "package.json"), `${JSON.stringify({ type: "module" })}\n`);
+
+  // verify the refresh: every staged copy byte-matches the build output;
+  // the router's pair becomes the receipt's evidence
+  const mismatched: string[] = [];
+  for (const b of declared) {
+    const builtSha = await fileSha(join(distDir, `${b}.js`));
+    const stagedSha = await fileSha(join(extBinDist, `${b}.js`));
+    if (builtSha === null || stagedSha !== builtSha) mismatched.push(b);
+  }
+  if (mismatched.length > 0) {
+    return {
+      ok: false,
+      outcome: "aborted-build",
+      reason: `staged verb-router copies do not byte-match the build output: ${mismatched.join(", ")}`,
+    };
+  }
+  if (declared.includes("amico")) {
+    digests.verb_router_sha256 = await fileSha(join(distDir, "amico.js"));
+    digests.verb_router_staged_sha256 = await fileSha(join(extBinDist, "amico.js"));
+  }
+  ctx.log(`refreshed ${declared.length} CLI bundles → both copies (router sha ${String(digests.verb_router_sha256).slice(0, 12)})`);
+  return { ok: true };
 }
 
 // ── server-binary: the 9-step chain (build → freeze → sidecar → kick) ───────
@@ -885,6 +1030,17 @@ const serverBinaryVerb = (argv: string[]): Promise<VerbResult> =>
     digests.artifact_sha256 = await fileSha(artifact);
     digests.artifact_version = artifactVersion;
     ctx.log(`smoke ok: ${artifact} --version → ${artifactVersion}`);
+
+    // (5b) the verb-router dist rebuild (#643) — BEFORE the freeze, so a
+    // failed or incomplete rebuild aborts with no server surface touched:
+    // a deployed upgrade must never proceed with a stale verb router behind
+    // it. Runs on every path (--skip-build, --no-kick): the router's source
+    // is the amicode checkout, independent of the server-binary artifact.
+    const dist = await rebuildVerbRouterDists(ctx, digests);
+    if (!dist.ok) {
+      ctx.log(dist.reason);
+      return { outcome: dist.outcome, verification: null, post: null, sourceDigests: digests };
+    }
 
     // (6) freeze: preserve the current binary as opencode.prev, copy the new
     // one, write the sidecar — never a live-path swap under a running server
