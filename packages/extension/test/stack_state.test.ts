@@ -255,7 +255,7 @@ describe("Active Research Project injection (#670)", () => {
   it("project-bound session → '## Active Research Project' block in context", () => {
     const projDir = mkTmp("research-proj-");
     fs.writeFileSync(
-      path.join(projDir, ".amico"),
+      path.join(projDir, "research-project.toml"),
       'schema_version = 1\nname = "My Research"\nquestion = "Does it work?"\nstatus = "running"\n',
     );
     const stubs = stubAllSeams({});
@@ -285,7 +285,7 @@ describe("Active Research Project injection (#670)", () => {
     }
   });
 
-  it("dev project (no .amico) → no Active Research Project block", () => {
+  it("dev project (no research-project.toml) → no Active Research Project block", () => {
     const devDir = mkTmp("dev-proj-");
     const stubs = stubAllSeams({});
     process.env.AMICODE_WORKSPACE_FOLDERS = devDir;

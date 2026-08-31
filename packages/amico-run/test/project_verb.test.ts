@@ -132,7 +132,7 @@ describe("scaffoldManifest", () => {
   it("produces .amico, README.md, .gitignore at root", () => {
     const manifest = scaffoldManifest(project);
     const files = manifest.filter((m) => m.content !== null).map((m) => m.path);
-    expect(files).toContain(".amico");
+    expect(files).toContain("research-project.toml");
     expect(files).toContain("README.md");
     expect(files).toContain(".gitignore");
   });
@@ -311,8 +311,8 @@ describe("projectCreate", () => {
     expect(result.code).toBe(0);
 
     // Verify .amico exists and is valid
-    expect(existsSync(join(projectDir, ".amico"))).toBe(true);
-    const tomlContent = readFileSync(join(projectDir, ".amico"), "utf8");
+    expect(existsSync(join(projectDir, "research-project.toml"))).toBe(true);
+    const tomlContent = readFileSync(join(projectDir, "research-project.toml"), "utf8");
     expect(tomlContent).toContain("My Test Project");
     expect(tomlContent).toContain("my-test-project");
 
@@ -392,7 +392,7 @@ describe("projectImport", () => {
     expect(result.code).toBe(0);
 
     // .amico was created
-    expect(existsSync(join(existingDir, ".amico"))).toBe(true);
+    expect(existsSync(join(existingDir, "research-project.toml"))).toBe(true);
 
     // Existing file was NOT overwritten
     expect(readFileSync(join(existingDir, "scripts/my_solve.jl"), "utf8")).toBe("# existing file");

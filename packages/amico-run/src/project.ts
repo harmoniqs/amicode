@@ -59,7 +59,7 @@ const REQUIRED_FIELDS: (keyof ProjectToml)[] = [
 
 export function validateProjectToml(data: unknown): ValidationResult {
   if (typeof data !== "object" || data === null) {
-    return { ok: false, errors: [".amico manifest must be a TOML table (object)"] };
+    return { ok: false, errors: ["research-project.toml must be a TOML table (object)"] };
   }
 
   const obj = data as Record<string, unknown>;
@@ -389,7 +389,7 @@ export function scaffoldManifest(
   }
 
   // root files
-  items.push({ path: ".amico", content: renderProjectToml(p) });
+  items.push({ path: "research-project.toml", content: renderProjectToml(p) });
   items.push({ path: "README.md", content: renderReadme(p.name, p.question) });
   items.push({ path: ".gitignore", content: ROOT_GITIGNORE });
 
