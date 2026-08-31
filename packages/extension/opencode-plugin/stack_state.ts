@@ -617,10 +617,15 @@ function readRecentProblemLines(vault: string, cap: number): string[] {
   }
   const cards: { line: string; lastSeen: string }[] = [];
   for (const file of files) {
-    const text = fs.readFileSync(path.join(dir, file), "utf8");
-    const fm = parseCardFrontmatter(text)!;
-    const slug = !fmAbsent(fm.slug) ? fm.slug : file.replace(/\.md$/, "");
-    cards.push({ line: renderProblemCardLine(slug, fm), lastSeen: fm.last_seen ?? "" });
+    try {
+      const text = fs.readFileSync(path.join(dir, file), "utf8");
+      const fm = parseCardFrontmatter(text);
+      if (!fm) continue; // no well-formed frontmatter block: skip, don't render
+      const slug = !fmAbsent(fm.slug) ? fm.slug : file.replace(/\.md$/, "");
+      cards.push({ line: renderProblemCardLine(slug, fm), lastSeen: fm.last_seen ?? "" });
+    } catch {
+      continue; // unreadable card: skip — never crash the splice on one bad file
+    }
   }
   // last_seen values are ISO dates: lexicographic order is chronological.
   // Empty string (missing last_seen) sorts below any date. Array#sort is

@@ -477,6 +477,72 @@ describe("recent problems derived from problem-card frontmatter (KNOWLEDGE.md zo
       restoreSeams(stubs);
     }
   });
+
+  it("a card missing last_seen sorts last (ties keep filename order)", () => {
+    const root = mkTmp("vaults-");
+    const v = mkVault(root, "nostamp", "personal");
+    fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
+    const base = { type: "amicode-problem", platform: "transmon", problem_kind: "gate_synthesis", status: "solved", solve_count: 1 };
+    mkProblemCard(v, "aaa-nostamp", { ...base, slug: "aaa-nostamp", target: "A" });
+    mkProblemCard(v, "zzz-old", { ...base, slug: "zzz-old", target: "B", last_seen: "2026-07-01" });
+    mkProblemCard(v, "mmm-new", { ...base, slug: "mmm-new", target: "C", last_seen: "2026-08-16" });
+    const stubs = stubAllSeams({ vaultsRoot: root });
+    try {
+      const bullets = recentProblemsSection()
+        .split("\n")
+        .filter((l) => l.startsWith("- ["))
+        .map((l) => l.match(/^- \[([a-z-]+)\]/)?.[1]);
+      expect(bullets).toEqual(["mmm-new", "zzz-old", "aaa-nostamp"]);
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("malformed frontmatter is skipped — a bad card never crashes the splice", () => {
+    const root = mkTmp("vaults-");
+    const v = mkVault(root, "malformed", "personal");
+    fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
+    fs.mkdirSync(path.join(v, "amicode", "problems"), { recursive: true });
+    // A README with no frontmatter block at all.
+    fs.writeFileSync(path.join(v, "amicode", "problems", "README.md"), "# problems\nCards live here.\n");
+    // A card whose frontmatter block never closes.
+    fs.writeFileSync(
+      path.join(v, "amicode", "problems", "truncated.md"),
+      "---\ntype: amicode-problem\nslug: truncated\nplatform: transmon\n",
+    );
+    // One well-formed card, so the section exists to assert against.
+    mkProblemCard(v, "valid", {
+      type: "amicode-problem",
+      slug: "valid",
+      platform: "transmon",
+      problem_kind: "gate_synthesis",
+      target: "X",
+      status: "solved",
+      solve_count: 3,
+      last_seen: "2026-08-01",
+});
+    const stubs = stubAllSeams({ vaultsRoot: root });
+    try {
+      const s = recentProblemsSection();
+      expect(s).toContain("solved 3×");
+      expect(s).not.toContain("truncated");
+      expect(s).not.toContain("README");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("a personal vault with zero problem cards → the section is omitted", () => {
+    const root = mkTmp("vaults-");
+    const v = mkVault(root, "empty-cards", "personal");
+    fs.mkdirSync(path.join(v, "amicode"), { recursive: true });
+    const stubs = stubAllSeams({ vaultsRoot: root });
+    try {
+      expect(recentProblemsSection()).toBe("");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
 });
 
 // ── Env-seam plumbing ────────────────────────────────────────────────────────
