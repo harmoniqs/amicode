@@ -10,7 +10,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage } from "./sidebar_bridge";
+import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult } from "./sidebar_bridge";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { detectProjectType } from "./project/detect";
 
@@ -73,6 +73,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           const uri = vscode.Uri.file(p);
           void vscode.window.showTextDocument(uri);
         },
+        fileOp: (req) => executeFileOp(req),
         postMessage: (m) => {
           void webviewView.webview.postMessage(m);
         },
@@ -297,4 +298,92 @@ function getNonce(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+// ── File operations (extension host, #676) ───────────────────────────────────
+
+/**
+ * Execute a file operation dispatched from the webview context menu.
+ * All operations go through vscode.workspace.fs — the webview never touches
+ * the filesystem directly. Delete always uses useTrash: true.
+ */
+async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
+  try {
+    const uri = vscode.Uri.file(req.path);
+
+    switch (req.op) {
+      case "new-file": {
+        if (!req.name) return { ok: false, message: "No filename provided" };
+        const newUri = vscode.Uri.joinPath(uri, req.name);
+        await vscode.workspace.fs.writeFile(newUri, new Uint8Array());
+        void vscode.window.showTextDocument(newUri);
+        return { ok: true };
+      }
+      case "new-folder": {
+        if (!req.name) return { ok: false, message: "No folder name provided" };
+        const newUri = vscode.Uri.joinPath(uri, req.name);
+        await vscode.workspace.fs.createDirectory(newUri);
+        return { ok: true };
+      }
+      case "rename": {
+        if (!req.newName) return { ok: false, message: "No new name provided" };
+        const dir = vscode.Uri.file(path.dirname(req.path));
+        const newUri = vscode.Uri.joinPath(dir, req.newName);
+        // Check for collision
+        try {
+          await vscode.workspace.fs.stat(newUri);
+          return { ok: false, message: `"${req.newName}" already exists` };
+        } catch {
+          // Target doesn't exist — safe to rename
+        }
+        await vscode.workspace.fs.rename(uri, newUri);
+        return { ok: true };
+      }
+      case "delete": {
+        // Always trash — the permanent delete path does not exist (#673 invariant)
+        await vscode.workspace.fs.delete(uri, { useTrash: true, recursive: true });
+        return { ok: true };
+      }
+      case "copy-path": {
+        await vscode.env.clipboard.writeText(uri.fsPath);
+        return { ok: true };
+      }
+      case "copy-relative-path": {
+        const folder = vscode.workspace.getWorkspaceFolder(uri);
+        const rel = folder ? path.relative(folder.uri.fsPath, uri.fsPath) : uri.fsPath;
+        await vscode.env.clipboard.writeText(rel);
+        return { ok: true };
+      }
+      case "reveal-in-os": {
+        await vscode.commands.executeCommand("revealFileInOS", uri);
+        return { ok: true };
+      }
+      case "open-in-terminal": {
+        const terminal = vscode.window.createTerminal({ cwd: uri.fsPath });
+        terminal.show();
+        return { ok: true };
+      }
+      case "open-to-side": {
+        await vscode.commands.executeCommand("vscode.open", uri, vscode.ViewColumn.Beside);
+        return { ok: true };
+      }
+      case "remove-from-workspace": {
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        const idx = folders.findIndex((f) => f.uri.fsPath === req.path);
+        if (idx >= 0) {
+          vscode.workspace.updateWorkspaceFolders(idx, 1);
+        }
+        return { ok: true };
+      }
+      case "new-session": {
+        // Posts to the session creation flow — the project path is carried
+        void vscode.commands.executeCommand("amicode.newChat");
+        return { ok: true };
+      }
+      default:
+        return { ok: false, message: `Unknown operation: ${req.op}` };
+    }
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
 }

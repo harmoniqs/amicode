@@ -302,3 +302,101 @@ describe("SidebarTreeService", () => {
     expect(names).toEqual(["src", "main.ts"]);
   });
 });
+
+// ── File operations (#676) ───────────────────────────────────────────────────
+
+describe("sidebar bridge — file operations", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  function makeHandlers(overrides: Record<string, any> = {}) {
+    return {
+      openChat: vi.fn(),
+      newProject: vi.fn(),
+      getRoots: vi.fn(),
+      getChildren: vi.fn().mockResolvedValue([]),
+      openFile: vi.fn(),
+      postMessage: vi.fn(),
+      fileOp: vi.fn().mockResolvedValue({ ok: true }),
+      ...overrides,
+    };
+  }
+
+  it("file-op rename dispatches to fileOp handler", async () => {
+    const handlers = makeHandlers();
+    await handleSidebarMessage(
+      { kind: "file-op", op: "rename", path: "/project/old.ts", newName: "new.ts" },
+      handlers,
+    );
+    expect(handlers.fileOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "rename", path: "/project/old.ts", newName: "new.ts" }),
+    );
+  });
+
+  it("file-op delete dispatches to fileOp handler", async () => {
+    const handlers = makeHandlers();
+    await handleSidebarMessage(
+      { kind: "file-op", op: "delete", path: "/project/dead.ts" },
+      handlers,
+    );
+    expect(handlers.fileOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "delete", path: "/project/dead.ts" }),
+    );
+  });
+
+  it("file-op new-file dispatches to fileOp handler", async () => {
+    const handlers = makeHandlers();
+    await handleSidebarMessage(
+      { kind: "file-op", op: "new-file", path: "/project/src", name: "hello.jl" },
+      handlers,
+    );
+    expect(handlers.fileOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "new-file", path: "/project/src", name: "hello.jl" }),
+    );
+  });
+
+  it("file-op new-folder dispatches to fileOp handler", async () => {
+    const handlers = makeHandlers();
+    await handleSidebarMessage(
+      { kind: "file-op", op: "new-folder", path: "/project", name: "utils" },
+      handlers,
+    );
+    expect(handlers.fileOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "new-folder", path: "/project", name: "utils" }),
+    );
+  });
+
+  it("file-op copy-path dispatches to fileOp handler", async () => {
+    const handlers = makeHandlers();
+    await handleSidebarMessage(
+      { kind: "file-op", op: "copy-path", path: "/project/src/main.ts" },
+      handlers,
+    );
+    expect(handlers.fileOp).toHaveBeenCalledWith(
+      expect.objectContaining({ op: "copy-path", path: "/project/src/main.ts" }),
+    );
+  });
+
+  it("file-op error result posts file-op-error back", async () => {
+    const handlers = makeHandlers({
+      fileOp: vi.fn().mockResolvedValue({ ok: false, message: "name collision" }),
+    });
+    await handleSidebarMessage(
+      { kind: "file-op", op: "rename", path: "/project/old.ts", newName: "new.ts" },
+      handlers,
+    );
+    expect(handlers.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "file-op-error",
+        op: "rename",
+        path: "/project/old.ts",
+        message: "name collision",
+      }),
+    );
+  });
+});

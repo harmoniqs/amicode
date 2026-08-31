@@ -19,18 +19,36 @@ export interface TreeEntry {
   path: string;
 }
 
+// ── File operation types ─────────────────────────────────────────────────────
+
+export interface FileOpRequest {
+  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session";
+  path: string;
+  newName?: string;
+  name?: string;
+}
+
+export interface FileOpResult {
+  ok: boolean;
+  message?: string;
+}
+
 // ── Host → Webview (down) ────────────────────────────────────────────────────
 
 export type ChatActiveMessage = { kind: "chat-active"; active: boolean };
 export type RootsMessage = { kind: "roots"; roots: TreeRoot[] };
 export type ChildrenMessage = { kind: "children"; path: string; entries: TreeEntry[] };
 export type FsChangedMessage = { kind: "fs-changed"; folder: string };
+export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: string; message: string };
+export type ActiveProjectMessage = { kind: "active-project"; path: string | null };
 
 export type SidebarDownMessage =
   | ChatActiveMessage
   | RootsMessage
   | ChildrenMessage
-  | FsChangedMessage;
+  | FsChangedMessage
+  | FileOpErrorMessage
+  | ActiveProjectMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
@@ -39,13 +57,15 @@ export type NewProjectMessage = { kind: "new-project" };
 export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
+export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 
 export type SidebarUpMessage =
   | OpenChatMessage
   | NewProjectMessage
   | GetRootsMessage
   | GetChildrenMessage
-  | OpenFileMessage;
+  | OpenFileMessage
+  | FileOpMessage;
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
@@ -59,6 +79,7 @@ export interface SidebarMessageHandlers {
   getRoots: () => TreeRoot[];
   getChildren: (path: string) => Promise<TreeEntry[]>;
   openFile: (path: string) => void;
+  fileOp: (req: FileOpRequest) => Promise<FileOpResult>;
   postMessage: (msg: SidebarDownMessage) => void;
 }
 
@@ -90,12 +111,26 @@ export function handleSidebarMessage(
     case "open-file":
       handlers.openFile(msg.path);
       break;
+    case "file-op": {
+      const { kind: _k, ...req } = msg;
+      return handlers.fileOp(req as FileOpRequest).then((result) => {
+        if (!result.ok) {
+          handlers.postMessage({
+            kind: "file-op-error",
+            op: req.op,
+            path: req.path,
+            message: result.message ?? "Operation failed",
+          });
+        }
+      });
+    }
     case "chat-active":
     case "roots":
     case "children":
     case "fs-changed":
-      // Down-direction messages — no host-side handler needed (the webview
-      // consumes them). If received on the host side, ignore.
+    case "file-op-error":
+    case "active-project":
+      // Down-direction messages — no host-side handler needed.
       break;
   }
 }
