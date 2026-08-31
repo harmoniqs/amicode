@@ -592,7 +592,7 @@ export interface OpencodeConfigOptions {
    *  Auto-loaded skills labeled (workspace). Undefined = no workspace skills. */
   workspaceSkillsDir?: string;
   /** Absolute paths to workspace folders (VS Code multi-root). Used for
-   *  research-project skill discovery (#668): each folder with project.toml
+   *  research-project skill discovery (#668): each folder with .amico
    *  has its skills/ scanned. Undefined = no project skills. */
   workspaceFolders?: string[];
   /** Stable project dir to (re)use across activations; created if missing and

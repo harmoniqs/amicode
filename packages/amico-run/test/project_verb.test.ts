@@ -36,12 +36,12 @@ describe("validateProjectToml", () => {
     domain_pack: { name: "quantum-control" },
   };
 
-  it("accepts a valid project.toml with all required fields", () => {
+  it("accepts a valid .amico with all required fields", () => {
     const result = validateProjectToml(valid);
     expect(result.ok).toBe(true);
   });
 
-  it("accepts a minimal project.toml (required fields only)", () => {
+  it("accepts a minimal .amico (required fields only)", () => {
     const minimal: ProjectToml = {
       schema_version: 1,
       name: "My Project",
@@ -129,10 +129,10 @@ describe("scaffoldManifest", () => {
     }
   });
 
-  it("produces project.toml, README.md, .gitignore at root", () => {
+  it("produces .amico, README.md, .gitignore at root", () => {
     const manifest = scaffoldManifest(project);
     const files = manifest.filter((m) => m.content !== null).map((m) => m.path);
-    expect(files).toContain("project.toml");
+    expect(files).toContain(".amico");
     expect(files).toContain("README.md");
     expect(files).toContain(".gitignore");
   });
@@ -310,9 +310,9 @@ describe("projectCreate", () => {
     expect((result.json as Record<string, unknown>).created).toBe(true);
     expect(result.code).toBe(0);
 
-    // Verify project.toml exists and is valid
-    expect(existsSync(join(projectDir, "project.toml"))).toBe(true);
-    const tomlContent = readFileSync(join(projectDir, "project.toml"), "utf8");
+    // Verify .amico exists and is valid
+    expect(existsSync(join(projectDir, ".amico"))).toBe(true);
+    const tomlContent = readFileSync(join(projectDir, ".amico"), "utf8");
     expect(tomlContent).toContain("My Test Project");
     expect(tomlContent).toContain("my-test-project");
 
@@ -381,7 +381,7 @@ describe("projectImport", () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("creates project.toml and scaffolds missing dirs in an existing directory", () => {
+  it("creates .amico and scaffolds missing dirs in an existing directory", () => {
     const existingDir = join(tmpDir, "existing-project");
     mkdirSync(join(existingDir, "scripts"), { recursive: true });
     writeFileSync(join(existingDir, "scripts/my_solve.jl"), "# existing file");
@@ -391,8 +391,8 @@ describe("projectImport", () => {
     expect((result.json as Record<string, unknown>).imported).toBe(true);
     expect(result.code).toBe(0);
 
-    // project.toml was created
-    expect(existsSync(join(existingDir, "project.toml"))).toBe(true);
+    // .amico was created
+    expect(existsSync(join(existingDir, ".amico"))).toBe(true);
 
     // Existing file was NOT overwritten
     expect(readFileSync(join(existingDir, "scripts/my_solve.jl"), "utf8")).toBe("# existing file");

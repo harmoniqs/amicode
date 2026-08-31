@@ -16,7 +16,7 @@ project_contract:
 > **Install conventions** — this skill references *your personal vault* (the writable
 > vault your Amicode studio mounts) for the session ledger, experiment notes, and specs,
 > and your compute fleet where one exists. **When operating on a Research Project**
-> (detected by `project.toml` in the workspace), use project paths instead of vault paths
+> (detected by `.amico` in the workspace), use project paths instead of vault paths
 > — see the path resolution table below. The protocol is engine- and install-neutral;
 > bindings for a given engine stay engine-side (the opencode binding of the director role
 > is the `autoresearch` primary agent card).
@@ -32,7 +32,7 @@ working set. Compaction (manual or auto) then costs nothing but a cache refill.
 ## Path resolution (project-aware)
 
 When the system prompt includes an `## Active Research Project` block (injected by
-`stack_state.ts` when a workspace folder has `project.toml`), use project paths.
+`stack_state.ts` when a workspace folder has `.amico`), use project paths.
 When no project is bound, use vault paths. The checkout registry is always vault-based
 (fleet-wide coordination).
 

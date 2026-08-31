@@ -718,7 +718,7 @@ function buildMemoryIndexSection(memoryIndexLines: string[]): string {
 // ── Active Research Project injection (#670) ─────────────────────────────────
 
 /** Read workspace folders from AMICODE_WORKSPACE_FOLDERS (colon-separated, set
- *  by the extension at server-spool), find the first with a project.toml, and
+ *  by the extension at server-spool), find the first with a .amico, and
  *  return a context block. Returns null if no research project is bound. */
 function buildActiveProjectSection(): string | null {
   const raw = process.env.AMICODE_WORKSPACE_FOLDERS;
@@ -726,7 +726,7 @@ function buildActiveProjectSection(): string | null {
 
   const folders = raw.split(":").filter(Boolean);
   for (const folder of folders) {
-    const tomlPath = path.join(folder, "project.toml");
+    const tomlPath = path.join(folder, ".amico");
     if (!fs.existsSync(tomlPath)) continue;
 
     // Minimal TOML parsing (no smol-toml in the Bun plugin runtime).
@@ -801,7 +801,7 @@ export function buildStackStateBlock(): string | null {
   if (fleet) parts.push(fleet);
 
   // Active Research Project (#670): inject project metadata when a session
-  // is bound to a workspace folder with project.toml.
+  // is bound to a workspace folder with .amico.
   const project = buildActiveProjectSection();
   if (project) parts.push(project);
 
