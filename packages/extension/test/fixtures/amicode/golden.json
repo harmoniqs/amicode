@@ -885,7 +885,7 @@
       "status": 200,
       "contentType": "application/json",
       "csp": null,
-      "body": "{\"ok\":true,\"parentDir\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects\",\"projects\":[{\"slug\":\"my-new-project\",\"path\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects/my-new-project\"},{\"slug\":\"prior-project\",\"path\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects/prior-project\"}]}"
+      "body": "{\"ok\":true,\"parentDir\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects\",\"projects\":[{\"slug\":\"my-new-project\",\"path\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects/my-new-project\",\"type\":\"dev\"},{\"slug\":\"prior-project\",\"path\":\"/tmp/amicode-fixture-f5CKEm/AmicodeProjects/prior-project\",\"type\":\"dev\"}]}"
     }
   ]
 }
