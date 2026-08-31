@@ -339,6 +339,7 @@ export const dict = {
   "app.server.retrying": "Автоматичне повторення...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
+  "app.server.restartHub": "Restart Hub",
   "app.server.otherServers": "Інші сервери",
 
   "dialog.server.title": "Сервери",

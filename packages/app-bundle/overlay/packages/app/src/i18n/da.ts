@@ -1045,6 +1045,7 @@ export const dict = {
   "app.server.retrying": "Prøver igen automatisk...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
+  "app.server.restartHub": "Restart Hub",
   "app.server.otherServers": "Andre servere",
   "dialog.server.add.usernamePlaceholder": "brugernavn",
   "dialog.server.add.passwordPlaceholder": "adgangskode",

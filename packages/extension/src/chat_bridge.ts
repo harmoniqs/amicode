@@ -37,6 +37,10 @@ export function resolveDbBackupDir(sessionDatabase: string): string {
 // app renders LLM output, so we never executeCommand anything outside this set.
 export const BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
   "amicode.restartServer",
+  // amicode#653: the connection banner's Restart Hub action — the client-
+  // initiated atomic restart over SSH (amicode#649). Initiated from the
+  // extension host, never from the hub itself.
+  "amicode.restartHub",
   "amicode.distillNow",
   "amicode.stopRun",
   "amicode.openRunDir",

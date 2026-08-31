@@ -809,6 +809,7 @@ export const dict = {
   "app.server.retrying": "자동으로 재시도 중...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
+  "app.server.restartHub": "Hub 재시작",
   "app.server.otherServers": "다른 서버",
   "dialog.server.add.usernamePlaceholder": "사용자 이름",
   "dialog.server.add.passwordPlaceholder": "비밀번호",
