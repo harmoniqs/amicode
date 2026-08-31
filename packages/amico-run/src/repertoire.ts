@@ -31,6 +31,14 @@ export interface PulseRecord {
   warm_start?: string; // lineage: the incumbent id this was warm-started from
   tags?: string[];
   date?: string; // ISO date "YYYY-MM-DD"
+  // ── SEAM 5 (amicode #681): the calibrate→pin→re-optimize chain's provenance ──
+  // The chain's re-bank carries its fingerprint — which calibration, which pin,
+  // which warm-start seed — as ADDITIVE metadata fields (`warm_start` above IS
+  // the seed). The recording path (extension opencode-plugin/calib_chain.ts)
+  // VERIFIES these before the chain's executed marker can land. Additive keys:
+  // old entries simply lack them.
+  calibration_ref?: string; // which calibration: the chain record / rehearsal artifact ref
+  pinned_globals?: Record<string, number>; // which pin: global → calibrated value
   dir: string; // ABS path to the entry directory
 }
 
@@ -54,6 +62,19 @@ function dateStr(v: unknown): string | undefined {
   if (typeof v === "string") return v;
   if (v instanceof Date) return v.toISOString().slice(0, 10); // smol-toml bare-date → TomlDate
   return undefined;
+}
+
+/** A `[pinned_globals]`-style inline table: every value a finite number. Returns
+ *  undefined for anything that isn't a clean number table (SEAM 5 #681 — a
+ *  half-parseable pin set is worse than absent). */
+function pinTable(v: unknown): Record<string, number> | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val !== "number" || !Number.isFinite(val)) return undefined;
+    out[k] = val;
+  }
+  return out;
 }
 
 function parseRecord(file: string, dir: string): PulseRecord | undefined {
@@ -85,6 +106,9 @@ function parseRecord(file: string, dir: string): PulseRecord | undefined {
     warm_start: str(parsed.warm_start) ?? str(parsed.warm_started_from),
     tags: Array.isArray(parsed.tags) ? parsed.tags.filter((t): t is string => typeof t === "string") : undefined,
     date: dateStr(parsed.date),
+    // SEAM 5 (#681): the chain provenance — additive, absent on pre-chain entries.
+    calibration_ref: str(parsed.calibration_ref),
+    pinned_globals: pinTable(parsed.pinned_globals),
   };
 }
 

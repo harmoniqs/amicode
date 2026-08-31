@@ -94,6 +94,11 @@ import {
   guardAndRecordStage, completeStage } from "./score_guard";
 import { readRehearsalRecord } from "./rehearsal";
 import {
+  recordCalibChain,
+  completeCalibChain,
+  type ChainLeg,
+} from "./calib_chain";
+import {
   SPAWN_MAX_COUNT,
   SPAWN_MAX_DEPTH,
   parseSpawnArgs,
@@ -1205,6 +1210,128 @@ export const AmicodeTools = async (input: unknown) => {
           `the model-device gap: run the pulse, measure, compare against the model's ` +
           `prediction, update, repeat until the device matches the design on paper. In this build ` +
           `that loop's a recorded follow-up only — nothing actually fires here yet.\n\n${sentinel}`
+        );
+      },
+    },
+
+    // SEAM 5 (#681) — the calibrate→pin→re-optimize→re-bank chain: ONE recorded
+    // verb path composed from existing seams. The recording core (calib_chain.ts)
+    // owns the logic and is unit-tested; this wrapper is the agent-facing
+    // surface (args → core → AMICODE_DIFF receipt), never a launch, never a
+    // promotion (the staged re-bank runs out-of-band, human-gated).
+    amicode_calib_chain: {
+      description:
+        "Record the calibrate→pin→re-optimize→re-bank chain (SEAM 5, #681) — the drift-response " +
+        "tune-up as ONE recorded verb. TWO calls, one chain: STAGE with the calibration + pin + " +
+        "seed; COMPLETE with the promoted entry's metadata once the re-bank ran.\n" +
+        "CALIBRATE (leg=mock): the SEAM 1 MockSoc rehearsal is the calibration data source — " +
+        "run it first per the run-launch seam (bash, julia --startup-file=no): " +
+        "julia --startup-file=no --project=<ext>/templates/mocksoc-rehearsal " +
+        "<ext>/templates/mocksoc_rehearsal.jl <pulse.jld2> <result.toml> [out_dir], and pass the " +
+        "rehearsal.toml as rehearsal_ref (validated through the same reader amicode_to_hardware " +
+        "uses — a dishonest artifact records nothing). leg=hardware is REFUSED: real-board " +
+        "sessions are an enumerated human gate and this build has no real-board session surface.\n" +
+        "PIN: pass `pinned` (global → calibrated value, e.g. {delta: 0.21}) — it lands on the " +
+        "recorded formulation as the existing calibration_pin constraint (the " +
+        "fix_global_variable! path) + solve.pinned_globals; re-staging replaces the pin.\n" +
+        "RE-OPTIMIZE: pass warm_start (the bank seed — catalog entry id or pulse ref); the run " +
+        "stub records it. The re-solve itself launches through the EXISTING solve path (bash " +
+        "amico-run), warm-started via the load_traj idiom; pass its run_dir when known.\n" +
+        "RE-BANK: the tool STAGES the exact `amico catalog ingest` command with the chain's " +
+        "provenance flags (--warm-start/--calibration-ref/--pin — which calibration, which pin, " +
+        "which seed). Promotion is human-gated like all promotions: run it ONLY after the " +
+        "researcher signs off (with verification evidence). Then COMPLETE: pass the promoted " +
+        "entry's metadata.toml path as rebank_metadata_ref — the fingerprint is verified and the " +
+        "executed_on_mock event lands on the provenance spine (the countable execution record).",
+      args: {
+        leg: {
+          type: ["string", "null"],
+          description: 'mock (the only recordable leg) | hardware (refused — real-board sessions are an enumerated human gate). Null = mock.',
+        },
+        rehearsal_ref: {
+          type: ["string", "null"],
+          description: "The SEAM 1 rehearsal.toml artifact — the mock leg's calibration data source. Null to complete a staged chain.",
+        },
+        pinned: {
+          type: ["object", "null"],
+          additionalProperties: { type: "number" },
+          description: "The calibrated globals to pin (global → value), e.g. {delta: 0.21} from a 'delta × 1.05' rehearsal mismatch on a 0.2 nominal.",
+        },
+        warm_start: {
+          type: ["string", "null"],
+          description: "The bank seed the re-solve warm-starts from (catalog entry id or pulse ref).",
+        },
+        run_dir: {
+          type: ["string", "null"],
+          description: "The re-solve's run directory, once launched through the solve path; else null.",
+        },
+        note: {
+          type: ["string", "null"],
+          description: "Short free-text note; null for none.",
+        },
+        rebank_metadata_ref: {
+          type: ["string", "null"],
+          description: "COMPLETE the chain: the promoted catalog entry's metadata.toml path — verified (read-only) against the chain's fingerprint, then the executed_on_mock event is recorded. Null to stage.",
+        },
+      },
+      async execute(a: {
+        leg?: string | null;
+        rehearsal_ref?: string | null;
+        pinned?: Record<string, number> | null;
+        warm_start?: string | null;
+        run_dir?: string | null;
+        note?: string | null;
+        rebank_metadata_ref?: string | null;
+      }) {
+        const meta = ensureActiveProblem();
+
+        // COMPLETE — verify the promoted entry's fingerprint + the execution record.
+        if (given(a.rebank_metadata_ref)) {
+          const res = completeCalibChain({ slug: meta.slug, rebankMetadataRef: a.rebank_metadata_ref });
+          if (!res.ok) {
+            return `Cannot complete the calibrate→pin→re-optimize chain for "${meta.slug}": ${res.problem}`;
+          }
+          const sentinel = sentinelLine(meta.slug, "calib_chain", res.chainEvent.action, res.chainEvent.seq, res.chainEvent.diff);
+          return (
+            `Chain executed on mock for "${meta.slug}"${res.already ? " (re-verified; already complete)" : ""} — the re-bank ` +
+            `carried the chain's fingerprint (which calibration, which pin, which warm-start ` +
+            `seed), the rebank leg is recorded on the chain entity, and the executed_on_mock ` +
+            `event is on the provenance spine. The promotion itself ran out-of-band through the ` +
+            `human-gated ingest — this record is its receipt, not its author.\n\n${sentinel}`
+          );
+        }
+
+        // STAGE — calibrate + pin + re-optimize legs.
+        if (!given(a.rehearsal_ref) || !given(a.pinned) || !given(a.warm_start)) {
+          return (
+            `Cannot stage the chain for "${meta.slug}": rehearsal_ref (the SEAM 1 rehearsal ` +
+            `artifact), pinned (the calibrated globals), and warm_start (the bank seed) are all ` +
+            `required to stage — or pass rebank_metadata_ref alone to complete a staged chain. ` +
+            `Nothing was recorded.`
+          );
+        }
+        const res = recordCalibChain({
+          slug: meta.slug,
+          leg: (a.leg === "hardware" ? "hardware" : "mock") as ChainLeg,
+          rehearsalRef: a.rehearsal_ref,
+          pinned: a.pinned,
+          warmStart: a.warm_start,
+          runDir: given(a.run_dir) ? a.run_dir : undefined,
+          note: given(a.note) ? a.note : undefined,
+        });
+        if (!res.ok) {
+          return `Cannot stage the calibrate→pin→re-optimize chain for "${meta.slug}": ${res.problem}`;
+        }
+        const sentinel = sentinelLine(meta.slug, "calib_chain", res.staged.chainEvent.action, res.staged.chainEvent.seq, res.staged.chainEvent.diff);
+        return (
+          `Chain staged for "${meta.slug}" — calibrated via the MockSoc rehearsal (${res.staged.chainRef} ` +
+          `carries the fingerprint), the pin landed on the formulation (calibration_pin + ` +
+          `pinned_globals), and the re-optimize leg's warm-start seed is on the run stub.\n\n` +
+          `Re-bank when the re-solve finishes — the human-gated promotion, run only after the ` +
+          `researcher signs off:\n  ${res.staged.rebankCommand}\n${res.staged.humanGate}\n\n` +
+          `Then complete the chain: pass the promoted entry's metadata.toml path as ` +
+          `rebank_metadata_ref (the fingerprint gets verified, and the executed_on_mock event ` +
+          `lands on the provenance spine).\n\n${sentinel}`
         );
       },
     },

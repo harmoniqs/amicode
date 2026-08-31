@@ -177,6 +177,30 @@ export function catalogIngest(argv: string[]): VerbResult {
 
   const id = flagValue(argv, "--id") ?? nextVersionId(records, platform, gate);
   const warmStart = flagValue(argv, "--warm-start") ?? incumbent?.id ?? "";
+  // ── SEAM 5 (amicode #681): the chain's provenance flags ─────────────────────
+  // The calibrate→pin→re-optimize chain stages this exact command; the
+  // recording path later VERIFIES the fingerprint these write. Additive —
+  // absent flags write no keys (pre-chain entries unchanged).
+  const calibrationRef = flagValue(argv, "--calibration-ref");
+  const pinRaw = flagValue(argv, "--pin");
+  const pinProblems: string[] = [];
+  const pinnedGlobals: Record<string, number> = {};
+  if (pinRaw !== undefined) {
+    for (const pair of pinRaw.split(",")) {
+      const idx = pair.indexOf("=");
+      const k = pair.slice(0, idx).trim();
+      const v = Number(pair.slice(idx + 1).trim());
+      if (idx === -1 || k === "" || !Number.isFinite(v)) {
+        pinProblems.push(`--pin entries must be name=number (got "${pair.trim()}")`);
+      } else {
+        pinnedGlobals[k] = v;
+      }
+    }
+    if (Object.keys(pinnedGlobals).length === 0 && pinProblems.length === 0) {
+      pinProblems.push("--pin was given but parsed to no globals");
+    }
+  }
+  if (pinProblems.length > 0) return fail(`invalid --pin: ${pinProblems.join("; ")}`);
   const tagsRaw = flagValue(argv, "--tags");
   const tags = tagsRaw
     ? tagsRaw
@@ -206,6 +230,10 @@ export function catalogIngest(argv: string[]): VerbResult {
   meta.path = relPath;
   meta.branch = flagValue(argv, "--branch") ?? "main";
   meta.warm_start = warmStart;
+  // SEAM 5 (#681): the chain's fingerprint — additive metadata (reuse of the
+  // note schema; warm_start above is the seed lineage this chain relies on).
+  if (calibrationRef) meta.calibration_ref = calibrationRef;
+  if (pinRaw !== undefined) meta.pinned_globals = pinnedGlobals;
   if (tags) meta.tags = tags;
   meta.date = new Date().toISOString().slice(0, 10);
 

@@ -279,6 +279,9 @@ export interface RunStub {
   script_ref?: string;
   /** Resolved env binding kind (spec C). */
   env?: string;
+  /** SEAM 5 (#681): the bank seed this run warm-started from (catalog entry id
+   *  or pulse ref) — the load_traj idiom's recorded half. Additive. */
+  warm_start?: string;
   /** Free-tier re-rollout verification outcome (spec C) — recorded by
    *  amicode_verify after amico-run's harness writes verification.toml. Spec B's
    *  entity view renders it beside the tier; promotion is gated on agree. */
@@ -406,6 +409,149 @@ export function validateRehearsalRecord(rec: Partial<RehearsalRecord>): string[]
 export interface CalibrationStub {
   device_session_ref?: string;
   note?: string;
+}
+
+// --- SEAM 5 (#681): the calibrate→pin→re-optimize→re-bank chain record ----------
+
+/** The chain's fingerprint (spec SEAM 5): what the calibration was, which globals
+ *  got pinned, which bank pulse seeded the re-solve, and — once the human-gated
+ *  re-bank is verified — the promoted entry with the provenance its catalog note
+ *  carries. Composes EXISTING seams; the record is the recording path's spine.
+ *
+ *  STRUCTURAL HONESTY: `leg` is the literal "mock" — the ONLY constructible leg.
+ *  The hardware leg is a REFUSAL in the recording path (real-board sessions are
+ *  an enumerated human gate), never a record variant, so no caller can label a
+ *  chain hardware-flavored. `promotion` is NOT a field: the serializer DERIVES it
+ *  (pending-human-sign-off while staged; human-gated-rebank-recorded once the
+ *  verified re-bank leg lands) — the record can never claim an approval that
+ *  didn't happen through the human-gated ingest. */
+export interface CalibChainRecord {
+  leg: "mock";
+  /** The calibration leg — the SEAM 1 rehearsal artifact is the mock calibration
+   *  data source (the cross-seam dependency, explicit). */
+  calibration: {
+    /** The rehearsal.toml artifact the calibration ran on. */
+    source: string;
+    /** Content-hash of the pulse the calibration ran (from the artifact). */
+    pulse_hash: string;
+    /** The calibration's mismatch declaration (mock truth vs nominal model). */
+    mismatch: string;
+  };
+  /** The pin: global → calibrated value. Lands on the formulation as the
+   *  existing `calibration_pin` constraint (params = these values) and as
+   *  `solve.pinned_globals` (the names) — the fix_global_variable! path. */
+  pinned_globals: Record<string, number>;
+  /** The bank seed the re-solve warm-started from (catalog entry id or pulse
+   *  ref) — the load_traj idiom's recorded half. */
+  warm_start: string;
+  /** The re-solve's run directory, once launched through the solve path. */
+  run_dir?: string;
+  note?: string;
+  /** Present ONLY after the human-gated promotion is VERIFIED against the
+   *  promoted entry's catalog note (the fingerprint must match). */
+  rebank?: {
+    catalog_entry: string;
+    /** The provenance the catalog note carries (checked to MATCH this chain
+     *  before the executed marker can land — see ./calib_chain.ts). */
+    provenance: {
+      warm_start: string;
+      calibration_ref: string;
+      pinned_globals: Record<string, number>;
+    };
+  };
+}
+
+/** Human-readable problems for a CalibChainRecord; [] = valid. */
+export function validateCalibChainRecord(rec: Partial<CalibChainRecord>): string[] {
+  const problems: string[] = [];
+  if (rec.leg !== "mock") {
+    problems.push(
+      `leg must be "mock" — the hardware leg runs ONLY inside a real-board session (an enumerated human gate) and is never recordable, got ${JSON.stringify(rec.leg)}`,
+    );
+  }
+  const cal = rec.calibration as CalibChainRecord["calibration"] | undefined;
+  if (!cal || typeof cal.source !== "string" || cal.source.trim() === "") {
+    problems.push("calibration.source must be a non-empty path to the calibration artifact");
+  }
+  if (!cal || typeof cal.pulse_hash !== "string" || !/^sha256:[0-9a-f]{64}$/.test(cal.pulse_hash)) {
+    problems.push(`calibration.pulse_hash must be a sha256 content-hash ("sha256:<64 hex>"), got ${JSON.stringify(cal?.pulse_hash)}`);
+  }
+  if (!cal || typeof cal.mismatch !== "string" || cal.mismatch.trim() === "") {
+    problems.push("calibration.mismatch must be a non-empty declaration of the calibrated mismatch");
+  }
+  const pinProblems = (pin: unknown, field: string): void => {
+    if (typeof pin !== "object" || pin === null || Array.isArray(pin)) {
+      problems.push(`${field} must be a table of global → calibrated value`);
+      return;
+    }
+    const entries = Object.entries(pin as Record<string, unknown>);
+    if (entries.length === 0) problems.push(`${field} must pin at least one global`);
+    for (const [k, v] of entries) {
+      if (typeof v !== "number" || !Number.isFinite(v)) {
+        problems.push(`${field}["${k}"] must be a finite number, got ${JSON.stringify(v)}`);
+      }
+    }
+  };
+  pinProblems(rec.pinned_globals, "pinned_globals");
+  if (typeof rec.warm_start !== "string" || rec.warm_start.trim() === "") {
+    problems.push("warm_start must be a non-empty bank seed (catalog entry id or pulse ref)");
+  }
+  if (rec.run_dir !== undefined && (typeof rec.run_dir !== "string" || rec.run_dir.trim() === "")) {
+    problems.push("run_dir must be a non-empty path when given");
+  }
+  if (rec.rebank !== undefined) {
+    const rb = rec.rebank;
+    if (typeof rb.catalog_entry !== "string" || rb.catalog_entry.trim() === "") {
+      problems.push("rebank.catalog_entry must be a non-empty catalog entry id");
+    }
+    const prov = rb.provenance as CalibChainRecord["rebank"]["provenance"] | undefined;
+    if (!prov || typeof prov.warm_start !== "string" || prov.warm_start.trim() === "") {
+      problems.push("rebank.provenance.warm_start must be a non-empty seed");
+    }
+    if (!prov || typeof prov.calibration_ref !== "string" || prov.calibration_ref.trim() === "") {
+      problems.push("rebank.provenance.calibration_ref must be a non-empty calibration ref");
+    }
+    pinProblems(prov?.pinned_globals, "rebank.provenance.pinned_globals");
+  }
+  return problems;
+}
+
+/** Serialize the chain record under [calib_chain]. `leg` is pinned "mock" and
+ *  `promotion` DERIVED (staged → "pending-human-signoff"; verified re-bank →
+ *  "human-gated-rebank-recorded") — neither is caller data, mirroring the
+ *  rehearsal record's pinned `sim = true`. Throws on an invalid record. */
+export function calibChainToml(rec: CalibChainRecord, now?: Date): string {
+  const problems = validateCalibChainRecord(rec);
+  if (problems.length > 0) throw new Error(`invalid calib chain: ${problems.join("; ")}`);
+  const inlineNum = (p: Record<string, number>): string => {
+    const entries = Object.entries(p);
+    return entries.length === 0 ? "{}" : `{ ${entries.map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`).join(", ")} }`;
+  };
+  const lines = ["[calib_chain]"];
+  lines.push(`leg = ${tomlEscape(rec.leg)}`); // pinned — the record has no hardware variant
+  lines.push(`promotion = ${tomlEscape(rec.rebank ? "human-gated-rebank-recorded" : "pending-human-signoff")}`);
+  lines.push(`warm_start = ${tomlEscape(rec.warm_start)}`);
+  if (rec.run_dir !== undefined) lines.push(`run_dir = ${tomlEscape(rec.run_dir)}`);
+  if (rec.note !== undefined) lines.push(`note = ${tomlEscape(rec.note)}`);
+  lines.push(`recorded = ${tomlEscape(isoNow(now))}`);
+  lines.push("", "[calib_chain.calibration]");
+  lines.push(`source = ${tomlEscape(rec.calibration.source)}`);
+  lines.push(`pulse_hash = ${tomlEscape(rec.calibration.pulse_hash)}`);
+  lines.push(`mismatch = ${tomlEscape(rec.calibration.mismatch)}`);
+  lines.push("", "[calib_chain.pinned_globals]");
+  lines.push(...Object.entries(rec.pinned_globals).map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`));
+  if (rec.rebank !== undefined) {
+    lines.push("", "[calib_chain.rebank]");
+    lines.push(`catalog_entry = ${tomlEscape(rec.rebank.catalog_entry)}`);
+    lines.push("", "[calib_chain.rebank.provenance]");
+    lines.push(`warm_start = ${tomlEscape(rec.rebank.provenance.warm_start)}`);
+    lines.push(`calibration_ref = ${tomlEscape(rec.rebank.provenance.calibration_ref)}`);
+    lines.push("", "[calib_chain.rebank.provenance.pinned_globals]");
+    lines.push(
+      ...Object.entries(rec.rebank.provenance.pinned_globals).map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`),
+    );
+  }
+  return lines.join("\n") + "\n";
 }
 
 /** Platforms with built-in affordances (Hamiltonian LaTeX, defaults). NOT a
@@ -1018,6 +1164,7 @@ export function runStubToml(stub: RunStub, now?: Date): string {
   if (stub.tier !== undefined) lines.push(`tier = ${tomlEscape(stub.tier)}`);
   if (stub.script_ref !== undefined) lines.push(`script_ref = ${tomlEscape(stub.script_ref)}`);
   if (stub.env !== undefined) lines.push(`env = ${tomlEscape(stub.env)}`);
+  if (stub.warm_start !== undefined) lines.push(`warm_start = ${tomlEscape(stub.warm_start)}`);
   lines.push(`launched_via = ${tomlEscape("bash amico-run")}`);
   if (stub.note !== undefined) lines.push(`note = ${tomlEscape(stub.note)}`);
   lines.push(`recorded = ${tomlEscape(isoNow(now))}`);

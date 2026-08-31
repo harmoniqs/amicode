@@ -264,4 +264,71 @@ describe("amico catalog ingest (bundle) — the promotion gate", () => {
     expect(r.code).toBe(64);
     expect(JSON.parse(r.stdout).error).toMatch(/not found/);
   });
+
+  // ── SEAM 5 (amicode #681): the chain's provenance rides the catalog note ─────
+  // The calibrate→pin→re-optimize chain's re-bank carries its fingerprint —
+  // which calibration, which pin, which warm-start seed — as ADDITIVE metadata
+  // fields (the note schema's open growth; the existing warm_start field IS the
+  // seed). The chain stages this exact command; the recording path (extension
+  // side, calib_chain.ts) later VERIFIES the fingerprint against these fields.
+  it("--calibration-ref + --pin + --warm-start write the chain's fingerprint (which calibration, which pin, which seed); loadRepertoire reads all three back", () => {
+    seedEntry(pulses, "transmon-X-v1", { platform: "transmon", gate: "X", fidelity: 0.98 });
+    const newPulse = join(pulses, "..", "chain-pulse.jld2");
+    writeFileSync(newPulse, "calibrated-pulse");
+    const r = run(
+      [
+        "catalog", "ingest",
+        "--platform", "transmon", "--kind", "X",
+        "--artifact", newPulse, "--fidelity", "0.9995",
+        "--agree", "true",
+        "--warm-start", "transmon-X-v1",
+        "--calibration-ref", "/problems/chain/entities/calib_chain.toml",
+        "--pin", "delta=0.21",
+      ],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).promoted).toBe(true);
+    const meta = readToml(join(pulses, "transmon-X-v2", "metadata.toml"));
+    expect(meta.warm_start).toBe("transmon-X-v1"); // which seed (the existing lineage field)
+    expect(meta.calibration_ref).toBe("/problems/chain/entities/calib_chain.toml"); // which calibration
+    expect(meta.pinned_globals).toEqual({ delta: 0.21 }); // which pin
+    // round-trip: the repertoire loader surfaces the fingerprint (additive fields)
+    const rec = queryIncumbent(loadRepertoire(pulses), "transmon", "X").incumbent;
+    expect(rec?.warm_start).toBe("transmon-X-v1");
+    expect(rec?.calibration_ref).toBe("/problems/chain/entities/calib_chain.toml");
+    expect(rec?.pinned_globals).toEqual({ delta: 0.21 });
+  });
+
+  it("--pin parses multi-global comma lists; a malformed pin value is refused honestly (exit 64, no write)", () => {
+    const newPulse = join(pulses, "..", "p.jld2");
+    writeFileSync(newPulse, "x");
+    const r = run(
+      [
+        "catalog", "ingest",
+        "--platform", "transmon", "--kind", "X",
+        "--artifact", newPulse, "--fidelity", "0.9999", "--agree", "true",
+        "--pin", "delta=0.21,omega=4.9",
+      ],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r.code).toBe(0);
+    expect(readToml(join(pulses, "transmon-X-v1", "metadata.toml")).pinned_globals).toEqual({ delta: 0.21, omega: 4.9 });
+
+    const bad = join(pulses, "..", "p2.jld2");
+    writeFileSync(bad, "x");
+    const r2 = run(
+      [
+        "catalog", "ingest",
+        "--platform", "transmon", "--kind", "X",
+        "--artifact", bad, "--fidelity", "0.99995", "--agree", "true",
+        "--id", "transmon-X-v2",
+        "--pin", "delta=not-a-number",
+      ],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r2.code).toBe(64);
+    expect(JSON.parse(r2.stdout).error).toMatch(/--pin/);
+    expect(existsSync(join(pulses, "transmon-X-v2"))).toBe(false);
+  });
 });
