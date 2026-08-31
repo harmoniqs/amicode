@@ -30,7 +30,12 @@ Read the directory tree (max depth 3) and classify what exists:
 |----------|---------|
 | `*.jl` scripts (especially with `using Piccolo`, `QuantumCollocation`) | `scripts/` |
 | `data/`, `results/`, `output/`, `runs/` | `data/` |
-| `report/`, `reports/`, `docs/`, `notes/` | `reports/` or `analysis/` |
+| `report/`, `reports/` | `reports/` |
+| `docs/` — classify each file by content: | (see below) |
+|   - results summaries, experiment records | `ledger/observations/` |
+|   - future directions, open questions, ideas | `ledger/hypotheses/` |
+|   - methodology notes, "what worked" guides | `analysis/` |
+|   - system model, hardware specs, reference | `config/` (or keep as `docs/`) |
 | `paper/`, `manuscript/`, `tex/`, `*.tex` files | `paper/` |
 | `*.pdf` in a papers/ or references/ folder | existing literature |
 | `src/`, `lib/` (Julia modules) | source code (stays as-is) |
