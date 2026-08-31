@@ -88,7 +88,20 @@ import {
   lastEventSeq,
   migrateLegacyEntities,
 } from "./problems";
-import { guardAndRecordStage, completeStage } from "./score_guard";
+import {
+  guardAndRecordStage, completeStage } from "./score_guard";
+import {
+  SPAWN_MAX_COUNT,
+  SPAWN_MAX_DEPTH,
+  parseSpawnArgs,
+  computeDepth,
+  depthRefusal,
+  defaultTitle,
+  childTitle,
+  unwrap,
+  summarizeSpawned,
+  type SpawnedChild,
+} from "./session_spawn";
 import {
   onboardingStreamDir,
   isOnboardingEntity,
@@ -242,8 +255,26 @@ const RYDBERG_SCOPE_NOTE =
   "honest about the tier — and do NOT tell the user Rydberg is unsupported, because it isn't.";
 
 // The plugin: exactly one export (see header). opencode calls it on session
-// creation with PluginInput; we need nothing from it today.
-export const AmicodeTools = async (_input: unknown) => ({
+// creation with PluginInput. We need exactly one thing from it today: the
+// server-bound SDK `client` the engine builds per plugin load (fork
+// packages/opencode/src/plugin/index.ts — createOpencodeClient({baseUrl,
+// directory, headers})). amicode_session is the first tool in this pack that
+// talks to the server; every other tool below stays local bookkeeping. When
+// a loader passes no input (legacy/odd paths), the tool degrades to an
+// honest refusal rather than throwing at import time.
+export const AmicodeTools = async (input: unknown) => {
+  const engineClient = (input as { client?: unknown } | undefined)?.client as
+    | {
+        session: {
+          get: (o: unknown) => Promise<unknown>;
+          create: (o: unknown) => Promise<unknown>;
+          update: (o: unknown) => Promise<unknown>;
+          fork: (o: unknown) => Promise<unknown>;
+          promptAsync: (o: unknown) => Promise<unknown>;
+        };
+      }
+    | undefined;
+  return {
   tool: {
     // Capability warrant request (spec-20260727-164748 §9.5 / G-9). The CARD is the
     // point: this tool exists so a refusal from amico-run's --spec gate becomes a
@@ -1369,6 +1400,152 @@ export const AmicodeTools = async (_input: unknown) => ({
     // The policy itself (auto-accept HIGH-confidence downstream params; resource
     // gates always confirm; interrupt-off) is prompt-level in SCORE.md; this tool
     // makes the mode durable + inspectable (⚡ badge) and returns current state.
+    // Session spawn (amicode#639) — the FIRST tool in this pack that mutates
+    // server state. Everything above is local bookkeeping; this one creates
+    // live sessions that immediately spend model budget, so the policy (caps,
+    // depth, force) lives in ./session_spawn.ts and is unit-tested there.
+    // Children stamp metadata {spawned_by, spawned_depth}: the app's session
+    // route watches for that stamp and opens each child as a background tab
+    // in the pane showing THIS session (addSessionTab — no focus steal).
+    amicode_session: {
+      description:
+        "Spawn one or a few NEW chat sessions that appear as background tabs beside this one. " +
+        "Each child starts working on `prompt` immediately (its first turn is posted at spawn); " +
+        "tabs open in this session's pane without stealing focus. This is the FIRST " +
+        "server-mutating tool in this pack — everything else here is local bookkeeping — and " +
+        "each spawned session runs on the user's model budget, so fan out deliberately (hard " +
+        "cap " + SPAWN_MAX_COUNT + " per call). mode='fork' seeds the child from THIS session's " +
+        "history instead of a blank start. A session that was itself spawned cannot spawn again " +
+        "past depth " + SPAWN_MAX_DEPTH + " unless force=true. Do NOT use this for subagent-style " +
+        "work the user need not steer (use the Task tool) — sessions are for parallel or " +
+        "branching work the USER should see and interact with.",
+      args: {
+        prompt: {
+          type: "string",
+          description: "The first message for each spawned session — what it should work on.",
+        },
+        count: {
+          type: ["integer", "null"],
+          description: "How many sessions to spawn (1-" + SPAWN_MAX_COUNT + "). Null = 1.",
+        },
+        title: {
+          type: ["string", "null"],
+          description: "Tab/session title. Null = derived from the prompt.",
+        },
+        agent: {
+          type: ["string", "null"],
+          description: "Agent for the child session (e.g. 'plan', 'build'). Null = server default.",
+        },
+        model: {
+          type: ["string", "null"],
+          description: "'providerID/modelID' for the child. Null = this session's model.",
+        },
+        mode: {
+          type: ["string", "null"],
+          enum: ["fresh", "fork"],
+          description: "fresh (blank session; default) | fork (seeded from this session's history).",
+        },
+        force: {
+          type: ["boolean", "null"],
+          description: "Overrule the spawn-depth cap. Null = false.",
+        },
+      },
+      async execute(
+        a: {
+          prompt: string;
+          count?: number | null;
+          title?: string | null;
+          agent?: string | null;
+          model?: string | null;
+          mode?: string | null;
+          force?: boolean | null;
+        },
+        ctx: { sessionID: string; directory: string },
+      ) {
+        if (!engineClient) {
+          return "Cannot spawn: the engine did not hand this plugin a server client (legacy load path).";
+        }
+        const parsed = parseSpawnArgs(a);
+        if (!parsed.ok) return `Cannot spawn: ${parsed.error}.`;
+        const args = parsed.args;
+        // Depth comes from THIS session's own stamp — never from the caller's
+        // claim — so the cap is enforced by construction, not by politeness.
+        let own: { metadata?: unknown; model?: { providerID?: string; modelID?: string } } | undefined;
+        try {
+          own = unwrap<typeof own>(
+            await engineClient.session.get({ path: { id: ctx.sessionID }, query: { directory: ctx.directory } }),
+          );
+        } catch {
+          own = undefined;
+        }
+        const depth = computeDepth(own?.metadata);
+        if (depth >= SPAWN_MAX_DEPTH && !args.force) return depthRefusal(depth);
+        // Model precedence: explicit arg > this session's model > server default.
+        const model =
+          args.model ??
+          (own?.model?.providerID && own?.model?.modelID
+            ? { providerID: own.model.providerID, modelID: own.model.modelID }
+            : null);
+        const base = args.title ?? defaultTitle(args.prompt);
+        const spawnMeta = { spawned_by: ctx.sessionID, spawned_depth: depth + 1 };
+        const children: SpawnedChild[] = [];
+        try {
+          for (let i = 0; i < args.count; i++) {
+            const title = childTitle(base, i, args.count);
+            let id: string | undefined;
+            if (args.mode === "fork") {
+              const forked = unwrap<{ id?: string }>(
+                await engineClient.session.fork({
+                  path: { id: ctx.sessionID },
+                  query: { directory: ctx.directory },
+                  body: {},
+                }),
+              );
+              id = forked?.id;
+              if (id) {
+                // The fork endpoint carries history but not our stamp; PATCH
+                // metadata so the parent's route can auto-open the tab.
+                // Tolerated failure: the child still runs, it just won't
+                // auto-open — the summary below lists it either way.
+                await engineClient.session
+                  .update({ path: { id }, query: { directory: ctx.directory }, body: { metadata: spawnMeta } })
+                  .catch(() => undefined);
+              }
+            } else {
+              const created = unwrap<{ id?: string }>(
+                await engineClient.session.create({
+                  query: { directory: ctx.directory },
+                  body: {
+                    title,
+                    metadata: spawnMeta,
+                    ...(args.agent ? { agent: args.agent } : {}),
+                    ...(model ? { model } : {}),
+                  },
+                }),
+              );
+              id = created?.id;
+            }
+            if (!id) throw new Error(`session ${args.mode === "fork" ? "fork" : "create"} returned no id`);
+            await engineClient.session.promptAsync({
+              path: { id },
+              query: { directory: ctx.directory },
+              body: {
+                parts: [{ type: "text", text: args.prompt }],
+                ...(model ? { model } : {}),
+                ...(args.agent ? { agent: args.agent } : {}),
+              },
+            });
+            children.push({ id, title });
+          }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (children.length > 0) return `${summarizeSpawned(children, args.mode)}\nStopped early: ${msg}`;
+          return `Cannot spawn: ${msg}`;
+        }
+        return summarizeSpawned(children, args.mode);
+      },
+    },
+
     amicode_veloce: {
       description:
         "Turn Amico Veloce on/off, or read its state. Veloce auto-accepts HIGH-confidence " +
@@ -1415,4 +1592,5 @@ export const AmicodeTools = async (_input: unknown) => ({
       },
     },
   },
-});
+  };
+};

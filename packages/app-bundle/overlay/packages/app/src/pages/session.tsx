@@ -108,6 +108,7 @@ import { serializeSession } from "@/utils/serialize-session"
 import { useUsageExceededDialogs } from "./session/usage-exceeded-dialogs"
 import { createSessionOwnership } from "./session/session-ownership"
 import { createSessionLineage } from "./session/session-lineage"
+import { collectSpawnedChildren } from "./session/spawn-tabs"
 
 type FollowupItem = FollowupDraft & { id: string }
 type FollowupEdit = Pick<FollowupItem, "id" | "prompt" | "context">
@@ -264,6 +265,23 @@ function ResolvedTargetSessionRoute() {
       server: serverKey(),
       sessionId: session.root.id,
     })
+  })
+
+  // amicode#639: children spawned by THIS session (the amicode_session tool
+  // stamps metadata.spawned_by) land here as background tabs. The server
+  // session store (sync().session) remembers every session.created with full
+  // metadata, so the spawn stamp arrives on the same stream the tab list
+  // already rides — no new subscription. addSessionTab never navigates, so
+  // spawning never moves focus; openedSpawns makes the effect idempotent.
+  const openedSpawns = new Set<string>()
+  createEffect(() => {
+    const parent = params.id
+    if (!parent) return
+    const fresh = collectSpawnedChildren(sync().session.data.info, parent, openedSpawns)
+    for (const id of fresh) {
+      openedSpawns.add(id)
+      tabs.addSessionTab({ server: serverKey(), sessionId: id })
+    }
   })
 
   return (
