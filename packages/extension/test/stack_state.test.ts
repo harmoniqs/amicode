@@ -276,6 +276,53 @@ describe("user-memory section text (parity oracle vs the retired user_splice.ts)
   });
 });
 
+// ── Active Research Project injection (#670) ─────────────────────────────────
+
+describe("Active Research Project injection (#670)", () => {
+  it("project-bound session → '## Active Research Project' block in context", () => {
+    const projDir = mkTmp("research-proj-");
+    fs.writeFileSync(
+      path.join(projDir, "project.toml"),
+      'schema_version = 1\nname = "My Research"\nquestion = "Does it work?"\nstatus = "running"\n',
+    );
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_WORKSPACE_FOLDERS = projDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).toContain("## Active Research Project");
+      expect(block).toContain("**My Research** (running)");
+      expect(block).toContain("**Question:** Does it work?");
+      expect(block).toContain(`**Path:** \`${projDir}\``);
+      expect(block).toContain("Hypotheses: `<project>/ledger/hypotheses/`");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("non-project session → no Active Research Project block", () => {
+    const stubs = stubAllSeams({});
+    // No AMICODE_WORKSPACE_FOLDERS set (cleared by stubAllSeams)
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).not.toContain("## Active Research Project");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("dev project (no project.toml) → no Active Research Project block", () => {
+    const devDir = mkTmp("dev-proj-");
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_WORKSPACE_FOLDERS = devDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).not.toContain("## Active Research Project");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+});
+
 // ── Caps + composition ───────────────────────────────────────────────────────
 
 describe("caps + composition", () => {
@@ -564,6 +611,7 @@ const SEAM_KEYS = [
   "AMICODE_CONNECTIONS_FILE",
   "AMICODE_PROBLEMS_DIR",
   "AMICODE_RUNS_DIR",
+  "AMICODE_WORKSPACE_FOLDERS",
 ] as const;
 
 let fixtureRoot: string | undefined;
