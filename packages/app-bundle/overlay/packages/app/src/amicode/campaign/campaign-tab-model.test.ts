@@ -10,6 +10,7 @@ import {
   pickCampaign,
   statusTone,
   type CampaignDetailPayload,
+  type CampaignSummary,
 } from "./campaign-tab-model"
 
 const detail = (over: Partial<CampaignDetailPayload> = {}): CampaignDetailPayload => ({
@@ -57,16 +58,22 @@ describe("campaignPromptSlug — the digest tile's click-path deep link", () => 
 })
 
 describe("pickCampaign — same rule as the digest tile (newest ACTIVE, newest fallback)", () => {
+  const entry = (slug: string, status: string | null): CampaignSummary => ({
+    slug,
+    date: null,
+    campaign: null,
+    status,
+    type: null,
+    objective: "",
+  })
+
   test("prefers the newest ACTIVE entry; the list is newest-first", () => {
-    const list = [
-      { slug: "a", status: "FINISHED" },
-      { slug: "b", status: "ACTIVE" },
-    ]
+    const list = [entry("a", "FINISHED"), entry("b", "ACTIVE")]
     expect(pickCampaign(list)?.slug).toBe("b")
   })
 
   test("falls back to the newest overall when none is ACTIVE", () => {
-    const list = [{ slug: "a", status: "FINISHED" }, { slug: "b", status: null }]
+    const list = [entry("a", "FINISHED"), entry("b", null)]
     expect(pickCampaign(list)?.slug).toBe("a")
   })
 
