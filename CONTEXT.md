@@ -30,7 +30,7 @@ _Avoid_: User, tenant, owner (interchangeably)
 
 **Project**:
 The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. Every Session belongs to exactly one Project. Two flavors:
-- **Research Project** — identified by a `research-project.toml` manifest at its root. Prescribed layout (`scripts/`, `data/`, `analysis/`, `paper/`, `ledger/`, `reports/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). Self-contained: all data, campaign ledgers, and project-specific skills live inside the directory. Created via `amico project create`.
+- **Research Project** — identified by a `research-project.toml` manifest at its root. Prescribed layout (`scripts/`, `data/`, `paper/`, `ledger/`, `reports/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). Self-contained: all data, campaign ledgers, and project-specific skills live inside the directory. Created via `amico project create`.
 - **Dev Project** — the existing git-repo model; any registered directory without `research-project.toml`. Canonical default: `~/armonia/`.
 
 _Avoid_: Workspace, folder (as a concept name), repo, Study (rejected alternative — researchers think in "projects")

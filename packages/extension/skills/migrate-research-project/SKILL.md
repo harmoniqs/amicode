@@ -25,13 +25,12 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
   research-project.toml    # manifest (schema_version, name, slug, question, status, created)
   README.md
   .gitignore
-  scripts/                 # experiment scripts
+  scripts/                 # experiment and analysis scripts
     testbed/               # scratch work
   data/
     raw/                   # optimization output, raw results
     processed/             # post-processed data
     plots/                 # generated figures
-  analysis/                # methodology notes, post-processing notebooks
   paper/                   # manuscript (outline.md → main.tex)
     outline.md
     main.tex
@@ -40,7 +39,7 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
     supplementary/
   ledger/
     hypotheses/            # open questions, future directions
-    observations/          # experiment records, results summaries
+    observations/          # experiment records, results summaries, methodology notes
     literature/            # reading notes
     campaigns/             # autoresearch campaign ledgers
   reports/
@@ -75,11 +74,12 @@ Read the file content — do not classify by filename alone.
 - Uses speculative language ("could", "might", "worth trying", "if we")
 - References work not yet done
 
-**Methodology / analysis** — destination: `analysis/`
+**Methodology / lessons learned** — destination: `ledger/observations/`
 - Contains "what worked", "guide", "optimization", "approach"
 - Documents parameter choices and their rationale
 - Compares approaches ("we tried X, but Y worked better")
 - Has lessons-learned character ("the key insight was")
+- These are durable records of what was learned — they go with observations
 
 **System reference / hardware** — destination: `config/`
 - Contains Hamiltonian definitions (`$H$`, `\hat H`, `H =`)
@@ -180,13 +180,12 @@ Format:
 | 2 | `data/x_gate/` | `data/raw/x_gate/` | move | raw optimization output (.jld2 files) |
 | 3 | `docs/results_summary.md` | `ledger/observations/results_summary.md` | move | fidelity numbers, verification results |
 | 4 | `docs/future_directions.md` | `ledger/hypotheses/future_directions.md` | move | deferred ideas, speculative language |
-| 5 | `docs/optimization_guide.md` | `analysis/optimization_guide.md` | move | methodology notes, "what worked" |
+| 5 | `docs/optimization_guide.md` | `ledger/observations/optimization_guide.md` | move | methodology notes, "what worked" |
 | 6 | `docs/system_model.md` | `config/system_model.md` | move | Hamiltonian, hardware params |
 | 7 | `report/` | `reports/` | rename | singular → plural to match layout |
 | 8 | `src/` | `src/` | stays | Julia modules, outside prescribed layout |
 | 9 | `papers/yang_2020.pdf` | `papers/yang_2020.pdf` | stays | literature, keep as-is |
 | 10 | `Project.toml` | `Project.toml` | stays | Julia package manifest |
-| — | `analysis/` | — | scaffold | empty, new directory |
 | — | `paper/outline.md` | — | scaffold | template with inferred question |
 | — | `paper/main.tex` | — | scaffold | minimal article template |
 | — | `ledger/campaigns/` | — | scaffold | empty, for autoresearch |
