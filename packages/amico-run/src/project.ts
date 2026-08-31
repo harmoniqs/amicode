@@ -100,6 +100,7 @@ export function nameToSlug(name: string): string {
 export const SCAFFOLD_DIRS = [
   "scripts",
   "scripts/testbed",
+  "scripts/analysis",
   "data/raw",
   "data/processed",
   "data/plots",
@@ -306,7 +307,7 @@ ${question}
 
 ## Layout
 
-- \`scripts/\` — experiment and analysis scripts (\`testbed/\` for scratch work)
+- \`scripts/\` — experiment and analysis scripts (\`testbed/\` for scratch, \`analysis/\` for post-processing)
 - \`data/\` — raw, processed, and plot outputs
 - \`paper/\` — manuscript (\`outline.md\` → \`main.tex\`)
 - \`ledger/\` — hypotheses, observations, literature, and campaign logs
