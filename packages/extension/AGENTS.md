@@ -168,4 +168,5 @@ answers like a well-written engineering doc, not a terminal log:
 > - fleet: `~/.amico/ops/fleet/fleet.json` and `~/.amico/ops/fleet-status.json`.
 > - profile, problems, demos, mounts, memory: the personal Armonia mount (first
 >   `kind = "personal"` dir under `~/.amico/vaults/`) — its `amicode/PROFILE.md`,
->   `amicode/KNOWLEDGE.md`, `amicode/DEMOS.md`, and `amicode/memory/MEMORY.md`.
+>   `amicode/problems/` (problem-card frontmatter), `amicode/DEMOS.md`, and
+>   `amicode/memory/MEMORY.md`.

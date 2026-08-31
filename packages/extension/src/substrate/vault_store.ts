@@ -1,11 +1,12 @@
 /** Vault resolution + onboarding-stream readers (spec-20260705-002847 §2, §3
- *  routing). The user-memory section BUILDERS + index readers (KNOWLEDGE /
- *  DEMOS / memory index) moved to the amicode_context plugin's live
- *  stack_state.ts (injected per-prompt); what remains here is what prep-time
- *  code still needs — the personal-vault resolver, PROFILE.md presence (the
- *  onboarding routing predicate), and the onboarding-stream marker. Everything
- *  is read-only and failure-tolerant: a missing vault, file, or stream simply
- *  yields the empty value and the session proceeds unpersonalized. */
+ *  routing). The user-memory section BUILDERS + index readers (problem-card
+ *  frontmatter / DEMOS / memory index) moved to the amicode_context plugin's
+ *  live stack_state.ts (injected per-prompt); what remains here is what
+ *  prep-time code still needs — the personal-vault resolver, PROFILE.md
+ *  presence (the onboarding routing predicate), and the onboarding-stream
+ *  marker. Everything is read-only and failure-tolerant: a missing vault,
+ *  file, or stream simply yields the empty value and the session proceeds
+ *  unpersonalized. */
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
