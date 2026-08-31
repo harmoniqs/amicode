@@ -603,8 +603,10 @@ function renderProblemCardLine(slug: string, fm: Record<string, string>): string
 
 /** Recent-problem bullets from the personal vault's problem cards
  *  (amicode/problems/*.md frontmatter — the distiller-maintained source of
- *  truth), NOT the frozen KNOWLEDGE.md index. Capped at the same line budget
- *  the index read used. */
+ *  truth), NOT the frozen KNOWLEDGE.md index. Sorted by last_seen, freshest
+ *  first (missing last_seen sorts last; ties keep filename order), and capped
+ *  at the same line budget the index read used — so the 50 most recently
+ *  touched cards survive the cut. */
 function readRecentProblemLines(vault: string, cap: number): string[] {
   const dir = path.join(vault, "amicode", "problems");
   let files: string[];
@@ -613,14 +615,18 @@ function readRecentProblemLines(vault: string, cap: number): string[] {
   } catch {
     return []; // no problems dir (or unreadable) → section omitted
   }
-  const cards: string[] = [];
+  const cards: { line: string; lastSeen: string }[] = [];
   for (const file of files) {
     const text = fs.readFileSync(path.join(dir, file), "utf8");
     const fm = parseCardFrontmatter(text)!;
     const slug = !fmAbsent(fm.slug) ? fm.slug : file.replace(/\.md$/, "");
-    cards.push(renderProblemCardLine(slug, fm));
+    cards.push({ line: renderProblemCardLine(slug, fm), lastSeen: fm.last_seen ?? "" });
   }
-  return cards.slice(0, cap);
+  // last_seen values are ISO dates: lexicographic order is chronological.
+  // Empty string (missing last_seen) sorts below any date. Array#sort is
+  // stable (ES2019+), so same-last_seen cards keep their filename order.
+  cards.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+  return cards.slice(0, cap).map((c) => c.line);
 }
 
 /** Section builders — text pinned by test/stack_state.test.ts (golden strings). */

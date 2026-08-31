@@ -451,6 +451,32 @@ describe("recent problems derived from problem-card frontmatter (KNOWLEDGE.md zo
       restoreSeams(stubs);
     }
   });
+
+  it("cards sort by last_seen, freshest first (filename order is irrelevant)", () => {
+    const root = mkTmp("vaults-");
+    const v = mkVault(root, "order", "personal");
+    fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
+    const base = {
+      type: "amicode-problem",
+      platform: "transmon",
+      problem_kind: "gate_synthesis",
+      status: "solved",
+      solve_count: 1,
+    };
+    mkProblemCard(v, "beta", { ...base, slug: "beta", target: "Y", last_seen: "2026-07-04" });
+    mkProblemCard(v, "alpha", { ...base, slug: "alpha", target: "X", last_seen: "2026-08-16" });
+    mkProblemCard(v, "gamma", { ...base, slug: "gamma", target: "Z", last_seen: "2026-07-10" });
+    const stubs = stubAllSeams({ vaultsRoot: root });
+    try {
+      const bullets = recentProblemsSection()
+        .split("\n")
+        .filter((l) => l.startsWith("- ["))
+        .map((l) => l.match(/^- \[([a-z]+)\]/)?.[1]);
+      expect(bullets).toEqual(["alpha", "gamma", "beta"]);
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
 });
 
 // ── Env-seam plumbing ────────────────────────────────────────────────────────
