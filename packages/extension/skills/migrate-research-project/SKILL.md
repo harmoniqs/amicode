@@ -237,7 +237,7 @@ Once the researcher approves the plan, execute it in this order:
    - docs/results_summary.md → ledger/observations/
    - docs/future_directions.md → ledger/hypotheses/
    - ...
-   Scaffolded: analysis/, paper/, ledger/, reports/, config/, skills/
+   Scaffolded: paper/, ledger/, reports/, config/, skills/
    ```
 
 ### Phase 5 — Verify and orient
@@ -276,7 +276,7 @@ propose per-file moves in the plan table — never move the whole directory.
 
 **Name collision on move:**
 If a destination file already exists (e.g., the researcher already has
-`analysis/optimization_guide.md`), flag it in the plan: "destination exists
+`ledger/observations/optimization_guide.md`), flag it in the plan: "destination exists
 — skip or overwrite?" Default: skip.
 
 **Large data directories:**
