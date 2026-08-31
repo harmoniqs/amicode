@@ -526,6 +526,114 @@ function readIndexLines(vaultDir: string, file: string, cap: number): string[] {
     .slice(0, cap);
 }
 
+// ── Problem-card frontmatter (the recent-problems source of truth) ───────────
+//
+// "Your recent problems" used to be spliced from the personal vault's
+// amicode/KNOWLEDGE.md — a flat index the distiller FROZE (it no longer writes
+// it), so its lines went stale the day they were written: the index claimed a
+// problem was "solved 20×" while the card it links recorded 29 solves. The
+// cards themselves (amicode/problems/*.md frontmatter) are the maintained
+// source of truth — derive the bullets from them instead.
+
+/** Scalar frontmatter fields of a problem card, parsed leniently: top-level
+ *  `key: value` lines between `---` delimiters, quotes unquoted, inline
+ *  comments stripped (outside quotes). Block scalars and lists are ignored —
+ *  only the scalar fields the splice renders matter here. Returns undefined
+ *  when the file has no well-formed frontmatter block; call sites skip such
+ *  cards rather than rendering them. Deliberately hand-rolled: stack_state.ts
+ *  stays node-builtin-only (the plugin's Bun runtime has no `yaml` package —
+ *  same reason parseMarker above is a regex-lite TOML parse). */
+function parseCardFrontmatter(text: string): Record<string, string> | undefined {
+  const m = text.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!m) return undefined;
+  const fm: Record<string, string> = {};
+  for (const line of m[1].split(/\r?\n/)) {
+    const kv = line.match(/^([A-Za-z_][\w-]*):(?:\s+(.*))?$/);
+    if (!kv) continue; // blank lines, list items, indented blocks (sys_params…)
+    let v = kv[2] ?? "";
+    const quoted = v.match(/^"((?:[^"\\]|\\.)*)"(?:\s+#.*)?$/) ?? v.match(/^'([^']*)'(?:\s+#.*)?$/);
+    if (quoted) v = quoted[1];
+    else v = v.replace(/\s+#.*$/, "").trim();
+    fm[kv[1]] = v;
+  }
+  return fm;
+}
+
+/** Frontmatter scalar absent per the distiller contract: missing, empty, or a
+ *  literal YAML null (which parses here as the string "null"). */
+function fmAbsent(v: string | undefined): boolean {
+  return v === undefined || v === "" || v === "null";
+}
+
+/** Render one problem card as the reader-facing bullet — the same line shape
+ *  the frozen KNOWLEDGE.md index carried (DISTILLER.md's "historical line
+ *  shape"), now derived from the card's own frontmatter so the numbers can
+ *  never go stale: `- [slug](problems/slug.md) — platform kind target, status
+ *  (+count), best F=…, pulse: …`. best_fidelity is rendered verbatim from the
+ *  card — the splice never re-rounds a number. */
+function renderProblemCardLine(slug: string, fm: Record<string, string>): string {
+  const n = Number(fm.solve_count);
+  const count = Number.isFinite(n) && !fmAbsent(fm.solve_count) ? Math.trunc(n) : undefined;
+  let statusText: string;
+  switch (fm.status) {
+    case "solved":
+      statusText = count !== undefined ? `solved ${count}×` : "solved";
+      break;
+    case "attempted":
+      statusText = count !== undefined ? `ATTEMPTED (${count} failed)` : "ATTEMPTED";
+      break;
+    case "failed":
+      statusText = count !== undefined ? `FAILED (${count} failed)` : "FAILED";
+      break;
+    default:
+      statusText = fmAbsent(fm.status) ? "" : (fm.status ?? "");
+  }
+  const desc = [fm.platform, fm.problem_kind, fm.target]
+    .filter((v) => !fmAbsent(v))
+    .join(" ");
+  const tail: string[] = [];
+  if (desc || statusText) tail.push([desc, statusText].filter(Boolean).join(", "));
+  if (!fmAbsent(fm.best_fidelity)) tail.push(`best F=${fm.best_fidelity}`);
+  if (!fmAbsent(fm.pulse_ref)) tail.push(`pulse: ${fm.pulse_ref.replace(/^pulses\//, "")}`);
+  else if (fm.status === "attempted" || fm.status === "failed") tail.push("no pulse yet");
+  let line = `- [${slug}](problems/${slug}.md)`;
+  if (tail.length > 0) line += ` — ${tail.join(", ")}`;
+  return line;
+}
+
+/** Recent-problem bullets from the personal vault's problem cards
+ *  (amicode/problems/*.md frontmatter — the distiller-maintained source of
+ *  truth), NOT the frozen KNOWLEDGE.md index. Sorted by last_seen, freshest
+ *  first (missing last_seen sorts last; ties keep filename order), and capped
+ *  at the same line budget the index read used — so the 50 most recently
+ *  touched cards survive the cut. */
+function readRecentProblemLines(vault: string, cap: number): string[] {
+  const dir = path.join(vault, "amicode", "problems");
+  let files: string[];
+  try {
+    files = fs.readdirSync(dir).filter((f) => f.endsWith(".md")).sort();
+  } catch {
+    return []; // no problems dir (or unreadable) → section omitted
+  }
+  const cards: { line: string; lastSeen: string }[] = [];
+  for (const file of files) {
+    try {
+      const text = fs.readFileSync(path.join(dir, file), "utf8");
+      const fm = parseCardFrontmatter(text);
+      if (!fm) continue; // no well-formed frontmatter block: skip, don't render
+      const slug = !fmAbsent(fm.slug) ? fm.slug : file.replace(/\.md$/, "");
+      cards.push({ line: renderProblemCardLine(slug, fm), lastSeen: fm.last_seen ?? "" });
+    } catch {
+      continue; // unreadable card: skip — never crash the splice on one bad file
+    }
+  }
+  // last_seen values are ISO dates: lexicographic order is chronological.
+  // Empty string (missing last_seen) sorts below any date. Array#sort is
+  // stable (ES2019+), so same-last_seen cards keep their filename order.
+  cards.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+  return cards.slice(0, cap).map((c) => c.line);
+}
+
 /** Section builders — text pinned by test/stack_state.test.ts (golden strings). */
 
 function buildAboutUserSection(profileMd: string): string {
@@ -639,7 +747,7 @@ export function buildStackStateBlock(): string | null {
   if (vault) {
     const about = buildAboutUserSection(readProfileMd(vault));
     if (about) parts.push(about);
-    const recent = buildRecentProblemsSection(readIndexLines(vault, "KNOWLEDGE.md", 50));
+    const recent = buildRecentProblemsSection(readRecentProblemLines(vault, 50));
     if (recent) parts.push(recent);
     const demos = buildReferenceDemosSection(readIndexLines(vault, "DEMOS.md", 30));
     if (demos) parts.push(demos);

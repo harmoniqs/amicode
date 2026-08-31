@@ -172,9 +172,10 @@ New `-v<N+1>` ONLY when fidelity strictly improves on the card's
 
 ### `KNOWLEDGE.md` — FROZEN (read-only; superseded by the typed memory store)
 
-`KNOWLEDGE.md` is **no longer written**. It stays readable for back-compat — the
-session bootstrap still splices its existing lines as "Your recent problems" —
-but the distiller does not append to it. Problem cards are still written to
+`KNOWLEDGE.md` is **no longer written**. It is also no longer read: the session
+bootstrap derives "Your recent problems" from the problem cards' frontmatter
+(`problems/*.md`) directly, so the frozen index's lines reach no session —
+but the distiller does not append to it either. Problem cards are still written to
 `problems/` (the card frontmatter is the source of truth, Hard rule 7); only the
 flat index is frozen. Durable *facts* now live in the typed memory store
 (`memory/`, see below). Historical line shape, for reading only:
