@@ -33,10 +33,37 @@ function mkFixtureVault(root: string): string {
   const v = mkVault(root, "armonia-fixture", "personal");
   fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
   fs.writeFileSync(path.join(v, "amicode", "PROFILE.md"), "# Profile — Fixture\n- Role: researcher\n");
-  fs.writeFileSync(path.join(v, "amicode", "KNOWLEDGE.md"), "- [p1](problems/p1.md) — thing one\n");
+  mkProblemCard(v, "p1", {
+    type: "amicode-problem",
+    slug: "p1",
+    platform: "transmon",
+    problem_kind: "gate_synthesis",
+    target: "X",
+    status: "solved",
+    best_fidelity: "0.99995",
+    solve_count: 8,
+    first_seen: "2026-07-03",
+    last_seen: "2026-07-04",
+    pulse_ref: "pulses/p1-v1",
+  });
   fs.writeFileSync(path.join(v, "amicode", "DEMOS.md"), "- [d1](demos/d1.md) — demo one\n");
   fs.writeFileSync(path.join(v, "amicode", "memory", "MEMORY.md"), "- [m1](m1.md) — fact one\n");
   return v;
+}
+
+/** Write a distiller-shaped problem card (frontmatter + body) into the vault. */
+function mkProblemCard(
+  vault: string,
+  slug: string,
+  frontmatter: Record<string, string | number>,
+  body = `# ${slug}\n`,
+): void {
+  const dir = path.join(vault, "amicode", "problems");
+  fs.mkdirSync(dir, { recursive: true });
+  const fm = Object.entries(frontmatter)
+    .map(([k, val]) => `${k}: ${val}`)
+    .join("\n");
+  fs.writeFileSync(path.join(dir, `${slug}.md`), `---\n${fm}\n---\n\n${body}`);
 }
 
 // ── Fleet section ────────────────────────────────────────────────────────────
@@ -179,15 +206,15 @@ describe("user-memory section text (parity oracle vs the retired user_splice.ts)
       restoreSeams(stubs);
     }
   });
-  it("## Your recent problems carries the warm-start guidance", () => {
-    const stubs = stubAllSeams({ vault: "knowledge" });
+  it("## Your recent problems carries the warm-start guidance (derived from the p1 card)", () => {
+    const stubs = stubAllSeams({ vault: "problems" });
     try {
       const block = buildStackStateBlock() ?? "";
       expect(block).toContain(
         [
           "## Your recent problems",
           "",
-          "- [p1](problems/p1.md) — thing one",
+          "- [p1](problems/p1.md) — transmon gate_synthesis X, solved 8×, best F=0.99995, pulse: p1-v1",
           "",
           "Before recommending parameters, check whether the user's target matches one",
           "of these cards (read the card file on demand for details). If a prior",
@@ -252,19 +279,30 @@ describe("user-memory section text (parity oracle vs the retired user_splice.ts)
 // ── Caps + composition ───────────────────────────────────────────────────────
 
 describe("caps + composition", () => {
-  it("KNOWLEDGE/DEMOS/MEMORY list lines are capped (50/30/50)", () => {
+  it("problem cards/DEMOS/MEMORY bullets are capped (50/30/50)", () => {
     const root = mkTmp("vaults-");
     const v = mkVault(root, "capped", "personal");
     fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
+    for (let i = 0; i < 60; i++) {
+      const date = new Date(Date.UTC(2026, 0, 1 + i)).toISOString().slice(0, 10);
+      mkProblemCard(v, `card${i}`, {
+        slug: `card${i}`,
+        platform: "transmon",
+        problem_kind: "gate_synthesis",
+        target: `G${i}`,
+        status: "solved",
+        solve_count: i + 1,
+        last_seen: date,
+      });
+    }
     const mk = (n: number, t: (i: number) => string) => Array.from({ length: n }, (_, i) => t(i)).join("\n");
-    fs.writeFileSync(path.join(v, "amicode", "KNOWLEDGE.md"), mk(60, (i) => `- k${i}`));
     fs.writeFileSync(path.join(v, "amicode", "DEMOS.md"), mk(40, (i) => `- d${i}`));
     fs.writeFileSync(path.join(v, "amicode", "memory", "MEMORY.md"), mk(60, (i) => `- m${i}`));
     const stubs = stubAllSeams({ vaultsRoot: root });
     try {
       const block = buildStackStateBlock() ?? "";
       const count = (re: RegExp) => (block.match(re) ?? []).length;
-      expect(count(/^- k\d+$/gm)).toBe(50);
+      expect(count(/^- \[card\d+\]/gm)).toBe(50);
       expect(count(/^- d\d+$/gm)).toBe(30);
       expect(count(/^- m\d+$/gm)).toBe(50);
     } finally {
@@ -370,6 +408,51 @@ describe("buildLiveRunsBlock (live individually, zombies flagged, backlog summar
   });
 });
 
+// ── Recent problems: derived from problem-card frontmatter ───────────────────
+
+describe("recent problems derived from problem-card frontmatter (KNOWLEDGE.md zombie dead)", () => {
+  /** Extract just the recent-problems section from the composed block. */
+  function recentProblemsSection(): string {
+    const block = buildStackStateBlock() ?? "";
+    const m = block.match(/## Your recent problems[\s\S]*?(?=\n\n## |\n*$)/);
+    return m ? m[0] : "";
+  }
+
+  it("a card recording 29 solves is reported even when the frozen index still claims 20", () => {
+    const root = mkTmp("vaults-");
+    const v = mkVault(root, "zombie", "personal");
+    fs.mkdirSync(path.join(v, "amicode", "memory"), { recursive: true });
+    // The frozen index — the distiller stopped writing it; its lines lie.
+    fs.writeFileSync(
+      path.join(v, "amicode", "KNOWLEDGE.md"),
+      "- [x-gate-transmon](problems/x-gate-transmon.md) — transmon gate X, solved 20×, best F=0.999986, pulse: x-gate-transmon-v6\n",
+    );
+    // The card — the distiller-maintained frontmatter, 29 solves as of Aug 16.
+    mkProblemCard(v, "x-gate-transmon", {
+      type: "amicode-problem",
+      slug: "x-gate-transmon",
+      platform: "transmon",
+      problem_kind: "gate_synthesis",
+      target: "X",
+      status: "solved",
+      best_fidelity: "0.9999858416888963",
+      best_run: "r20260713-142744Z-d508",
+      pulse_ref: "pulses/x-gate-transmon-v6",
+      solve_count: 29,
+      first_seen: "2026-07-03",
+      last_seen: "2026-08-16",
+    });
+    const stubs = stubAllSeams({ vaultsRoot: root });
+    try {
+      const s = recentProblemsSection();
+      expect(s).toContain("solved 29×");
+      expect(s).not.toContain("20×");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+});
+
 // ── Env-seam plumbing ────────────────────────────────────────────────────────
 
 interface SeamOpts {
@@ -378,7 +461,7 @@ interface SeamOpts {
   fleetStatus?: string;
   runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
-  vault?: "profile" | "knowledge" | "demos" | "memory";
+  vault?: "profile" | "problems" | "demos" | "memory";
 }
 
 const SEAM_KEYS = [
@@ -410,8 +493,20 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
     if (opts.vault === "profile") {
       fs.writeFileSync(path.join(v, "amicode", "PROFILE.md"), "# Profile — Fixture\n- Role: researcher\n");
     }
-    if (opts.vault === "knowledge") {
-      fs.writeFileSync(path.join(v, "amicode", "KNOWLEDGE.md"), "- [p1](problems/p1.md) — thing one\n");
+    if (opts.vault === "problems") {
+      mkProblemCard(v, "p1", {
+        type: "amicode-problem",
+        slug: "p1",
+        platform: "transmon",
+        problem_kind: "gate_synthesis",
+        target: "X",
+        status: "solved",
+        best_fidelity: "0.99995",
+        solve_count: 8,
+        first_seen: "2026-07-03",
+        last_seen: "2026-07-04",
+        pulse_ref: "pulses/p1-v1",
+      });
     }
     if (opts.vault === "demos") {
       fs.writeFileSync(path.join(v, "amicode", "DEMOS.md"), "- [d1](demos/d1.md) — demo one\n");
