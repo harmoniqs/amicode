@@ -270,6 +270,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // existing restart command, so a fresh install self-heals without a reload.
   let amicoPython: string | undefined;
   let currentSpawnEnv: Record<string, string> | undefined;
+  // The selected harness's spawn-env additions + its config appetite
+  // (ADR-0011's adapter seam, #682): set at the resolution sites, consumed
+  // by spawnEnv — ONE integration point instead of four site merges.
+  // Defaults keep the opencode path byte-identical.
+  let harnessEnvCurrent: Record<string, string> = {};
+  let harnessConsumesOpencodeConfig = true;
   try {
     if (needsProvision()) {
       opencodeChannel.appendLine(`[pasqal] python provisioning (background): ${pasqalVenvDir()}`);
@@ -312,11 +318,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const spawnEnv = (
     o: Omit<Parameters<typeof buildServerSpawnEnv>[0], "amicoPython" | "telemetry">,
   ): Record<string, string> => {
+    // The harness gate (#682): a harness that doesn't consume the opencode
+    // config-content injection gets none — behavior-as-files is that
+    // harness's own contract. The default (true) passes through untouched.
+    const gated = harnessConsumesOpencodeConfig ? o : { ...o, configContent: "" };
     const env = buildServerSpawnEnv({
-      ...o,
+      ...gated,
       amicoPython,
       telemetry: resolveTelemetryContext(ctx, { sessionId: telemetrySessionId }),
     });
+    // the harness's own additions (telaio: TELAIO_APP_DIR — the app shelf)
+    Object.assign(env, harnessEnvCurrent);
     // Data & Storage overrides (#378): inject OPENCODE_DB / OPENCODE_CONFIG_DIR
     // from the user's VS Code settings when non-empty. On cold start + on
     // restartServer, the new env reaches the fresh server process.
@@ -482,8 +494,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       harnessId,
       opencodeBinary: bootCfg.get<string>("opencodeBinary", ""),
       telaioBinary: bootCfg.get<string>("telaioBinary", ""),
+      telaioAppDir: bootCfg.get<string>("telaioAppDir", ""),
       extensionPath: ctx.extensionPath,
     });
+    // (the additions + config gate land in spawnEnv via the closure vars above)
     if (launch.fellBack) {
       opencodeChannel.appendLine(
         `[boot] harness "${harnessId}" not launchable — falling back to opencode (set amicode.telaioBinary, or use the Select Harness picker)`,
@@ -491,6 +505,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     } else if (launch.descriptor.id !== "opencode") {
       opencodeChannel.appendLine(`[boot] harness: ${launch.descriptor.displayName}`);
     }
+    harnessEnvCurrent = launch.descriptor.spawnEnvAdditions({
+      telaioAppDir: bootCfg.get<string>("telaioAppDir", ""),
+    });
+    harnessConsumesOpencodeConfig = launch.descriptor.consumesOpencodeConfig;
     binary = launch.binary;
     opencodeChannel.appendLine(
       bootCfg.get<string>("opencodeBinary", "").trim() !== "" && launch.descriptor.id === "opencode"
@@ -1362,8 +1380,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         harnessId: standaloneCfg.get<string>("harness", "opencode"),
         opencodeBinary: "", // standalone drops the override by design
         telaioBinary: standaloneCfg.get<string>("telaioBinary", ""),
+        telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
         extensionPath: ctx.extensionPath,
       });
+      harnessEnvCurrent = standaloneLaunch.descriptor.spawnEnvAdditions({
+        telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
+      });
+      harnessConsumesOpencodeConfig = standaloneLaunch.descriptor.consumesOpencodeConfig;
       const amicoRunBinDir2 = resolveAmicoRunBinDir(ctx.extensionPath);
       const freshManager = new ServerManager({
         binary: standaloneLaunch.binary,
@@ -1555,6 +1578,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       const settingsBag = {
         opencodeBinary: cfg.get<string>("opencodeBinary", ""),
         telaioBinary: cfg.get<string>("telaioBinary", ""),
+        telaioAppDir: cfg.get<string>("telaioAppDir", ""),
       };
       const items = HARNESS_REGISTRY.map((d) => {
         const avail = d.availability(settingsBag);

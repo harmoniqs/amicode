@@ -32,10 +32,13 @@ export interface HarnessDescriptor {
    *  it when it lands. Undefined = no entitlement required. */
   requiredEntitlement?: string;
   /** Honest availability for the picker, from the settings that matter. */
-  availability(deps: { opencodeBinary: string; telaioBinary: string }): HarnessAvailability;
+  availability(deps: { opencodeBinary: string; telaioBinary: string; telaioAppDir: string }): HarnessAvailability;
   /** Resolve the launch binary. Throws an actionable error when the harness
    *  is selected but unlaunchable (the caller surfaces it, boot-style). */
   resolveBinary(deps: { extensionPath: string; opencodeBinary: string; telaioBinary: string }): string;
+  /** Harness-level env additions for the spawn (e.g. TELAIO_APP_DIR — the
+   *  app-bundle shelf). The default contributes none: byte-identity. */
+  spawnEnvAdditions(deps: { telaioAppDir: string }): Record<string, string>;
 }
 
 const TELAIO_SETUP_DETAIL =
@@ -53,6 +56,9 @@ export const opencodeDescriptor: HarnessDescriptor = {
     // inputs, the same errors (OpencodeMissingError surfaces boot's toast).
     return resolveOpencodeBinary(deps.extensionPath, deps.opencodeBinary).path;
   },
+  spawnEnvAdditions(_deps): Record<string, string> {
+    return {};   // the default harness contributes nothing — byte-identity
+  },
 };
 
 export const telaioDescriptor: HarnessDescriptor = {
@@ -63,10 +69,19 @@ export const telaioDescriptor: HarnessDescriptor = {
   // so gating is a one-line change, not a schema change.
   requiredEntitlement: "harness.telaio",
   availability(deps): HarnessAvailability {
-    if (deps.telaioBinary.trim() !== "") {
-      return { state: "ready", detail: "Serves the Harness Contract v1 surface. Sessions are harness-local." };
+    if (deps.telaioBinary.trim() === "") {
+      return { state: "needs-setup", detail: TELAIO_SETUP_DETAIL };
     }
-    return { state: "needs-setup", detail: TELAIO_SETUP_DETAIL };
+    if (deps.telaioAppDir.trim() === "") {
+      return {
+        state: "ready",
+        detail: "Serves the Harness Contract v1 API. The chat surface needs a built app tree — set `amicode.telaioAppDir` (see the telaio-app probe for the recipe). Sessions are harness-local.",
+      };
+    }
+    return {
+      state: "ready",
+      detail: "Serves the Harness Contract v1 API with the chat app from the configured app tree. Sessions are harness-local.",
+    };
   },
   resolveBinary(deps): string {
     const bin = deps.telaioBinary.trim();
@@ -76,6 +91,10 @@ export const telaioDescriptor: HarnessDescriptor = {
       );
     }
     return bin;
+  },
+  spawnEnvAdditions(deps): Record<string, string> {
+    const dir = deps.telaioAppDir.trim();
+    return dir === "" ? {} : { TELAIO_APP_DIR: dir };
   },
 };
 
@@ -107,6 +126,7 @@ export function resolveSelectedLaunch(deps: {
   harnessId: string;
   opencodeBinary: string;
   telaioBinary: string;
+  telaioAppDir: string;
   extensionPath: string;
 }): SelectedLaunch {
   // An unset setting ("") is the default, not a fallback — no warning. An
@@ -122,8 +142,11 @@ export function resolveSelectedLaunch(deps: {
     };
   }
   if (selected.id !== "opencode" &&
-      selected.availability({ opencodeBinary: deps.opencodeBinary, telaioBinary: deps.telaioBinary })
-        .state === "needs-setup") {
+      selected.availability({
+        opencodeBinary: deps.opencodeBinary,
+        telaioBinary: deps.telaioBinary,
+        telaioAppDir: deps.telaioAppDir,
+      }).state === "needs-setup") {
     return {
       descriptor: opencodeDescriptor,
       binary: resolveOpencodeBinary(deps.extensionPath, deps.opencodeBinary).path,
