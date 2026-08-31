@@ -29,8 +29,11 @@ _Avoid_: User, tenant, owner (interchangeably)
 ### Work organization
 
 **Project**:
-The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. The canonical default Project is `~/armonia/` (the armonia workspace created by bootstrap-armonia.sh); the agent session cwd resolves there unless overridden. Every Session belongs to exactly one Project.
-_Avoid_: Workspace, folder (as a concept name), repo
+The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. Every Session belongs to exactly one Project. Two flavors:
+- **Research Project** — identified by a `project.toml` manifest at its root. Prescribed layout (`scripts/`, `data/`, `analysis/`, `paper/`, `ledger/`, `config/`, `skills/`) and a linear lifecycle (proposing → designing → running → analyzing → writing → complete). Self-contained: all data, campaign ledgers, and project-specific skills live inside the directory. Created via `amico project create`.
+- **Dev Project** — the existing git-repo model; any registered directory without `project.toml`. Canonical default: `~/armonia/`.
+
+_Avoid_: Workspace, folder (as a concept name), repo, Study (rejected alternative — researchers think in "projects")
 
 **Session**:
 One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
@@ -68,8 +71,8 @@ The development mode: issue DAG → TDD slices → CI/review → landed delta �
 _Avoid_: autobuild ("build" already means CI to everyone)
 
 **Campaign**:
-One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the artifact banks.
-_Avoid_: session (a copilot session is never a campaign)
+One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the artifact banks. Within a Research Project, campaign ledgers live at `ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md`; outside a project, they live in the personal vault's `sessions/` directory.
+_Avoid_: session (a copilot session is never a campaign; a campaign ledger is never a session ledger)
 
 **Gate pack**:
 The typed set of gates + phase templates an autonomous mode binds — the entire mode-specific part of the loop, held as committed data rather than prose, so the same director core runs any pack.
