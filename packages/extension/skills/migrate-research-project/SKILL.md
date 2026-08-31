@@ -27,6 +27,7 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
   .gitignore
   scripts/                 # experiment and analysis scripts
     testbed/               # scratch work
+    analysis/              # post-processing, plotting, comparison scripts
   data/
     raw/                   # optimization output, raw results
     processed/             # post-processed data
@@ -91,6 +92,12 @@ Read the file content — do not classify by filename alone.
 - `.jl` files with `using Piccolo`, `QuantumCollocation`, `Piccolissimo`
 - Contains `solve!`, `UnitarySmoothPulseProblem`, trajectory definitions
 - Already in `scripts/` → stays
+
+**Analysis scripts** — destination: `scripts/analysis/`
+- `.jl` or `.py` files that load results and produce plots or tables
+- Contains `load`, `JLD2`, `CairoMakie`, `plot`, `DataFrame`
+- Post-processing, comparison, Pareto-frontier scripts
+- Distinct from experiment scripts: these read data, not produce it
 
 **Raw data / run output** — destination: `data/raw/`
 - `.jld2`, `.hdf5`, `.h5` files
