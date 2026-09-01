@@ -23,7 +23,7 @@
     "build": "node esbuild.config.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
-    "test:slow": "vitest run test/slow"
+    "test:slow": "vitest run --config vitest.slow.config.ts"
   },
   "dependencies": {
     "@amicode/schema": "workspace:*",
