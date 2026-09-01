@@ -444,3 +444,36 @@ describe("amicode bridge — add-workspace-project (#663)", () => {
     expect(true).toBe(true);
   });
 });
+
+describe("amicode bridge — project-selected (#663)", () => {
+  it("consumes project-selected and calls onProjectSelected with the path", () => {
+    const selected: string[] = [];
+    const host = { ...io(), onProjectSelected: (p: string) => selected.push(p) };
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(selected).toEqual(["/Users/jj/harmoniqs"]);
+  });
+
+  it("consumes the message even without onProjectSelected wired", () => {
+    const host = io();
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "project-selected", path: "/some/path" },
+      host,
+    );
+    expect(handled).toBe(true);
+  });
+
+  it("ignores project-selected with a non-string path", () => {
+    const selected: string[] = [];
+    const host = { ...io(), onProjectSelected: (p: string) => selected.push(p) };
+    const handled = handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "project-selected", path: 42 },
+      host,
+    );
+    expect(handled).toBe(true);
+    expect(selected).toEqual([]);
+  });
+});

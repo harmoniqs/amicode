@@ -44,6 +44,9 @@ export class ChatPanel {
   private static readonly live = new Set<ChatPanel>();
   /** Callback fired whenever the number of live chat panels changes. */
   private static onLiveChangeCallback?: (count: number) => void;
+  /** Callback fired when the user selects a project in the composer dropdown.
+   *  The extension wires this to sidebar focus (collapse others, expand selected). */
+  private static onProjectSelectedCallback?: (path: string) => void;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
@@ -59,6 +62,11 @@ export class ChatPanel {
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
     ChatPanel.onLiveChangeCallback = cb;
+  }
+
+  /** Subscribe to project-selected events from the composer dropdown (#663). */
+  static onProjectSelected(cb: ((path: string) => void) | undefined): void {
+    ChatPanel.onProjectSelectedCallback = cb;
   }
 
   private constructor(
@@ -116,6 +124,10 @@ export class ChatPanel {
           // bug-report-closed route to the window's manager (undefined until
           // activation registers it; the bridge consumes the kinds regardless).
           bugReport: getBugReport()?.sink,
+          // #663: project-selected → sidebar focus (collapse others, expand selected).
+          onProjectSelected: ChatPanel.onProjectSelectedCallback
+            ? (p) => ChatPanel.onProjectSelectedCallback!(p)
+            : undefined,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
       },
@@ -387,7 +399,7 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
             vscode.postMessage(d);
           }
           return;
@@ -548,7 +560,7 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
             vscode.postMessage(d);
           }
           return;

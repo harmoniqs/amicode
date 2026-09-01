@@ -1145,12 +1145,17 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "active-project": {
-        // Update highlight: find all root nodes, toggle the "active" class
+        // Update highlight: find all root nodes, toggle the "active" class.
+        // #663: collapse every OTHER root and expand the selected one, so the
+        // sidebar focuses on the project the user just chose in the composer.
         const activePath: string | null = msg.path;
+        // Only operate on root-level project nodes (not nested child dirs).
+        const rootPaths = new Set(currentRoots.map((r) => r.path));
         const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
         for (const node of allRootNodes) {
           const el = node as HTMLElement;
           const nodePath = el.dataset.path;
+          if (!nodePath || !rootPaths.has(nodePath)) continue;
           const row = el.querySelector(".tree-node") as HTMLElement | null;
           if (!row) continue;
 
@@ -1158,11 +1163,11 @@ function createIconEl(icon: string): HTMLElement {
             row.style.borderLeft = "2px solid var(--vscode-focusBorder)";
             row.style.background = "var(--vscode-list-activeSelectionBackground)";
             // Auto-expand the active project root (not deeper)
-            if (!expanded[nodePath!]) {
-              expanded[nodePath!] = true;
+            if (!expanded[nodePath]) {
+              expanded[nodePath] = true;
               saveExpandedState();
               const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
-        if (chevronSpan) chevronSpan.classList.add("expanded");
+              if (chevronSpan) chevronSpan.classList.add("expanded");
               const iconSpan = row.querySelector(".icon") as HTMLElement | null;
               if (iconSpan) {
                 const newIcon = createFolderIconEl(true);
@@ -1171,7 +1176,7 @@ function createIconEl(icon: string): HTMLElement {
               const childrenEl = el.querySelector(".children") as HTMLElement | null;
               if (childrenEl) {
                 childrenEl.style.display = "block";
-                if (!childrenCache[nodePath!]) {
+                if (!childrenCache[nodePath]) {
                   vscode.postMessage({ kind: "get-children", path: nodePath });
                 }
               }
@@ -1179,6 +1184,20 @@ function createIconEl(icon: string): HTMLElement {
           } else {
             row.style.borderLeft = "";
             row.style.background = "";
+            // Collapse non-active roots so the sidebar focuses on the chosen project
+            if (expanded[nodePath]) {
+              expanded[nodePath] = false;
+              saveExpandedState();
+              const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+              if (chevronSpan) chevronSpan.classList.remove("expanded");
+              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+              if (iconSpan) {
+                const newIcon = createFolderIconEl(false);
+                if (newIcon) iconSpan.replaceWith(newIcon);
+              }
+              const childrenEl = el.querySelector(".children") as HTMLElement | null;
+              if (childrenEl) childrenEl.style.display = "none";
+            }
           }
         }
         break;

@@ -356,6 +356,40 @@ describe("ChatPanel — workspace-projects bridge relay (#663)", () => {
     const html = cap.created[0].webview.html;
     expect(html).toContain('"add-workspace-project"');
   });
+
+  it("the upstream relay admits 'project-selected' messages (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"project-selected"');
+  });
+});
+
+describe("ChatPanel — onProjectSelected callback (#663)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.onProjectSelected(undefined as unknown as (path: string) => void);
+  });
+
+  it("fires the registered callback when a project-selected message arrives from the iframe", () => {
+    const selected: string[] = [];
+    ChatPanel.onProjectSelected((p) => selected.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // Simulate the iframe sending a project-selected envelope
+    const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+    panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
+    expect(selected).toEqual(["/Users/jj/harmoniqs"]);
+  });
 });
 
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
