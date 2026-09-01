@@ -658,7 +658,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     /* ── Drag and drop ─────────────────────────────────────────── */
     .tree-node.drop-target {
       background: var(--vscode-list-dropBackground, rgba(83, 89, 93, 0.5));
-      outline: 1px dashed var(--vscode-focusBorder);
     }
     .tree-node.dragging {
       opacity: 0.4;

@@ -1498,3 +1498,62 @@ describe("sidebar — inline editing", () => {
     expect(src).toMatch(/includes.*[/\\]|[/\\]/);
   });
 });
+
+// ── Drag-and-drop: file-row and gap drop targeting ───────────────────────────
+
+describe("sidebar — drag drop target resolution", () => {
+  it("file rows resolve drop target to parent directory via setupFileDropTarget", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // File nodes must wire a drop-target helper (resolving to parent dir)
+    expect(src).toContain("setupFileDropTarget");
+    // The helper must walk up to the nearest directory ancestor
+    expect(src).toMatch(/closest.*data-type.*directory|parentElement/);
+  });
+
+  it("setupFileDropTarget highlights the parent directory row, not the file row", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The drop-target class must be applied to the resolved directory row
+    // (not the file row itself) — look for the dir row getting the class
+    expect(src).toMatch(/dirRow.*classList.*add.*drop-target|\.drop-target/);
+  });
+
+  it("file rows are wired with setupFileDropTarget in renderFileNode", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // renderFileNode must call setupFileDropTarget
+    const start = src.indexOf("function renderFileNode");
+    const fileNodeSection = src.slice(start, start + 1000);
+    expect(fileNodeSection).toContain("setupFileDropTarget");
+  });
+
+  it("children container is a drop target for its parent directory", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The outer directory container (which wraps .children) must be wired
+    // as a drop target, with the row as the highlight element
+    expect(src).toMatch(/setupDirectoryDropTarget\(container,.*entry\.path.*row\)/);
+  });
+
+  it("drop-target CSS uses only background fill — no dashed outline", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // Must use VS Code's list drop background
+    expect(html).toContain("--vscode-list-dropBackground");
+    // Must NOT have a dashed outline on drop-target
+    expect(html).not.toMatch(/\.tree-node\.drop-target[^}]*outline.*dashed/s);
+  });
+});

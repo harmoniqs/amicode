@@ -721,9 +721,11 @@ function createIconEl(icon: string): HTMLElement {
     row.appendChild(label);
     container.appendChild(row);
 
-    // Drag-and-drop: directories are both draggable sources and drop targets
+    // Drag-and-drop: directories are both draggable sources and drop targets.
+    // Wire the row (header) and the outer container (covers the .children gap).
     setupDragSource(row, entry.path);
     setupDirectoryDropTarget(row, entry.path);
+    setupDirectoryDropTarget(container, entry.path, row);
 
     const childrenEl = document.createElement("div");
     childrenEl.className = "children";
@@ -777,8 +779,9 @@ function createIconEl(icon: string): HTMLElement {
     row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Drag source
+    // Drag source + drop resolves to parent directory
     setupDragSource(row, entry.path);
+    setupFileDropTarget(row);
 
     row.addEventListener("click", () => {
       vscode.postMessage({ kind: "open-file", path: entry.path });
@@ -803,7 +806,8 @@ function createIconEl(icon: string): HTMLElement {
     });
   }
 
-  function setupDirectoryDropTarget(el: HTMLElement, targetDir: string): void {
+  function setupDirectoryDropTarget(el: HTMLElement, targetDir: string, highlightEl?: HTMLElement): void {
+    const highlight = highlightEl ?? el;
     el.addEventListener("dragover", (e) => {
       if (!dragSourcePath) return;
       // Don't allow dropping on self or on a parent of the source
@@ -811,17 +815,17 @@ function createIconEl(icon: string): HTMLElement {
       if (dragSourcePath.startsWith(targetDir + "/")) return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "move";
-      if (currentDropTarget !== el) {
+      if (currentDropTarget !== highlight) {
         clearDropTarget();
-        currentDropTarget = el;
-        el.classList.add("drop-target");
+        currentDropTarget = highlight;
+        highlight.classList.add("drop-target");
       }
     });
     el.addEventListener("dragleave", (e) => {
       // Only clear if we're really leaving (not entering a child)
       const related = e.relatedTarget as HTMLElement | null;
       if (related && el.contains(related)) return;
-      if (currentDropTarget === el) {
+      if (currentDropTarget === highlight) {
         clearDropTarget();
       }
     });
@@ -830,6 +834,46 @@ function createIconEl(icon: string): HTMLElement {
       clearDropTarget();
       const sourcePath = e.dataTransfer?.getData("text/plain");
       if (!sourcePath || sourcePath === targetDir) return;
+      vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
+    });
+  }
+
+  /** Resolve the nearest directory ancestor from a file row and wire it as a drop target. */
+  function setupFileDropTarget(el: HTMLElement): void {
+    el.addEventListener("dragover", (e) => {
+      if (!dragSourcePath) return;
+      const dirContainer = el.closest("[data-type=\"directory\"]") as HTMLElement | null;
+      if (!dirContainer) return;
+      const dirPath = dirContainer.dataset.path!;
+      if (dragSourcePath === dirPath) return;
+      if (dragSourcePath.startsWith(dirPath + "/")) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "move";
+      const dirRow = dirContainer.querySelector(":scope > .tree-node") as HTMLElement | null;
+      if (!dirRow) return;
+      if (currentDropTarget !== dirRow) {
+        clearDropTarget();
+        currentDropTarget = dirRow;
+        dirRow.classList.add("drop-target");
+      }
+    });
+    el.addEventListener("dragleave", (e) => {
+      const related = e.relatedTarget as HTMLElement | null;
+      if (related && el.contains(related)) return;
+      // Only clear if nothing else has claimed the target
+      const dirContainer = el.closest("[data-type=\"directory\"]") as HTMLElement | null;
+      const dirRow = dirContainer?.querySelector(":scope > .tree-node") as HTMLElement | null;
+      if (currentDropTarget === dirRow) {
+        clearDropTarget();
+      }
+    });
+    el.addEventListener("drop", (e) => {
+      e.preventDefault();
+      clearDropTarget();
+      const sourcePath = e.dataTransfer?.getData("text/plain");
+      const dirContainer = el.closest("[data-type=\"directory\"]") as HTMLElement | null;
+      const targetDir = dirContainer?.dataset.path;
+      if (!sourcePath || !targetDir || sourcePath === targetDir) return;
       vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
     });
   }
