@@ -69,6 +69,49 @@ describe("AMICODE_TOOLS (the core tool table)", () => {
   });
 });
 
+// SEAM 6 (#703) — the tool-surface half of the autonomy datum: the
+// amicode_request_approval tool's `bounds` are validated against the SCHEMA
+// PACKAGE's warrant-bounds enum (@amicode/schema's $defs.bounds via
+// validateBounds), never against a free-text restatement. The datum is one
+// knob: a device value outside {none, ro, rw} or a second device-shaped
+// field is refused before the card ever renders.
+describe("amicode_request_approval — bounds validate against the schema package's datum", () => {
+  const def = () => CORE.AMICODE_TOOLS["amicode_request_approval"] as AmicodeToolDef;
+
+  it("renders the ask for valid bounds, for each of the datum's three states", async () => {
+    for (const device of ["none", "ro", "rw", undefined]) {
+      const bounds = device === undefined ? { max_solves: 2 } : { max_solves: 2, device };
+      const out = await def().execute({ plan_hash: "9f2c", bounds }, {});
+      expect(out, String(device)).toMatch(/Approval requested/);
+    }
+  });
+
+  it("REFUSES a device value outside the enum — the datum is not a free string", async () => {
+    const out = await def().execute({ plan_hash: "9f2c", bounds: { max_solves: 2, device: "write" } }, {});
+    expect(out).toMatch(/Cannot request approval/);
+    expect(out).toMatch(/'none'\|'ro'\|'rw'/);
+  });
+
+  it("REFUSES a second device-shaped knob riding beside the datum (no second knob)", async () => {
+    const out = await def().execute(
+      { plan_hash: "9f2c", bounds: { device: "ro", device_access: "rw" } },
+      {},
+    );
+    expect(out).toMatch(/Cannot request approval/);
+    // the refusal names the impostor field, not just "bounds"
+    expect(out).toMatch(/device_access/);
+  });
+
+  it("the bounds arg cites the schema package's formal enum (one definition, not free text)", () => {
+    const desc = (CORE.AMICODE_TOOLS["amicode_request_approval"].args as Record<string, { description: string }>)
+      .bounds.description;
+    expect(desc).toMatch(/@amicode\/schema/);
+    expect(desc).toMatch(/none/);
+    expect(desc).toMatch(/\bro\b/);
+    expect(desc).toMatch(/\brw\b/);
+  });
+});
+
 describe("the naming contract (canonical product name stored once, #700 director decision)", () => {
   it("mcpBareName strips exactly the amicode_ prefix; mcpProductName restores it", () => {
     expect(CORE.mcpBareName("amicode_pick_system")).toBe("pick_system");

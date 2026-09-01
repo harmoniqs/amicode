@@ -15,6 +15,10 @@ import { spawnSync } from "node:child_process"
 import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
+// SEAM 6 (#703): bounds validate against @amicode/schema's $defs.bounds (the
+// ONE definition — the device datum {none|ro|rw} lives there), never against a
+// free-text restatement of the vocabulary here.
+import { validateBounds } from "@amicode/schema"
 
 export interface WarrantRow {
   plan_hash: string
@@ -91,6 +95,15 @@ export function approveArgv(input: ApproveInput): string[] | { error: string } {
   const argv = ["ledger", "approve", "--plan-hash", plan]
 
   const b = typeof input.bounds === "object" && input.bounds !== null ? (input.bounds as Record<string, unknown>) : {}
+  // SEAM 6 (#703): refuse invalid bounds rather than silently dropping them —
+  // a dropped key would silently under-authorise the minted warrant, and a
+  // second device-shaped knob must never reach the mint. Validation is the
+  // schema package's ($defs.bounds): one definition.
+  if (Object.keys(b).length > 0) {
+    const r = validateBounds(b)
+    if (!r.ok)
+      return { error: `bounds are invalid against the @amicode/schema warrant-bounds schema — ${r.errors.join("; ")}` }
+  }
   if (typeof b.max_solves === "number" && Number.isInteger(b.max_solves) && b.max_solves >= 1)
     argv.push("--max-solves", String(b.max_solves))
   if (typeof b.tier === "string" && b.tier.trim()) argv.push("--tier", b.tier.trim())
