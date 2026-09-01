@@ -78,7 +78,7 @@ const stop = () => { try { child.kill("SIGTERM"); } catch { /* already gone */ }
 process.on("exit", stop);
 
 let up = false;
-for (let i = 0; i < 40 && !up; i++) {
+for (let i = 0; i < 160 && !up; i++) {   // 40s — a julia harness boots slower than a node one
   await new Promise((r) => setTimeout(r, 250));
   try {
     const r = await fetch(`http://127.0.0.1:${port}/health`, { headers: { Authorization: AUTH } });
@@ -144,7 +144,8 @@ for (const probe of ROUTE_AUDIT) {
     method: probe.method,
     headers: probe.body ? { "Content-Type": "application/json" } : undefined,
     body: probe.body ? JSON.stringify(probe.body) : undefined,
-  }).catch((e) => null);
+    signal: AbortSignal.timeout(20_000),   // a credential-less prompt route can legitimately take a while to fail — never wedge the probe
+  }).catch((e) => (console.log(`      (${probe.name}: ${e.name === "TimeoutError" ? "20s timeout" : e.message})`), null));
   const verdict = r === null ? "request failed" : `${r.status}${r.ok ? " ok" : ""}`;
   console.log(`  ${r?.ok ? "✓" : "·"} ${probe.name} → ${verdict}  [${probe.verdict}]`);
 }
