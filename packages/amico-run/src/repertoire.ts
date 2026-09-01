@@ -39,7 +39,60 @@ export interface PulseRecord {
   // old entries simply lack them.
   calibration_ref?: string; // which calibration: the chain record / rehearsal artifact ref
   pinned_globals?: Record<string, number>; // which pin: global → calibrated value
+  // ── SEAM 3 (amicode #714): the shape quartet, REFERENCED from the promoted
+  // run's result.toml params.shape_metrics (PR #713's emission — Piccolo's
+  // definition is the one; the stamp cites the source, never re-computes).
+  // ── #711 (F-709-2): the device the entry was tuned against, flag-sourced
+  // (`catalog ingest --device`) — no record kind carries a device field, so the
+  // flag is the honest source. Both additive: old entries simply lack them.
+  shape_metrics?: ShapeQuartet;
+  device?: string;
   dir: string; // ABS path to the entry directory
+}
+
+// ── the shape quartet (SEAM 3, amicode #714) ─────────────────────────────────
+/** Piccolo.shape_metrics over the SOLVED pulse — bend (∫|u″|²dt), int_u2 (the
+ *  Bloch–Siegert proxy), max_du (intra-span slew), crest (hardware ACDR check),
+ *  plus the carried T + parameterization. REFERENCED, never re-defined: the
+ *  stamp is a validated copy of what the run's result payload carries, with
+ *  the citation in `source`. A half-parseable quartet is worse than absent —
+ *  `parseShapeQuartet` returns undefined unless all four arrays are clean. */
+export interface ShapeQuartet {
+  bend: number[];
+  int_u2: number[];
+  max_du: number[];
+  crest: number[];
+  T?: number;
+  parameterization?: string;
+  source?: string; // the citation the stamp carries (who computed it, where it rode)
+}
+
+/** The citation every quartet stamp carries — the metric vocabulary is
+ *  Piccolo's (shape_metrics), the payload path is the run's result.toml
+ *  `params.shape_metrics`. Never re-computed downstream. */
+export const SHAPE_METRICS_SOURCE = "Piccolo.shape_metrics (the run's result.toml params.shape_metrics)";
+
+function finiteNumArray(v: unknown): number[] | undefined {
+  if (!Array.isArray(v) || v.length === 0) return undefined;
+  return v.every((n) => typeof n === "number" && Number.isFinite(n)) ? [...(v as number[])] : undefined;
+}
+
+/** Validate + copy a quartet-shaped value (a result payload or a metadata
+ *  table). Returns undefined for anything that isn't a clean quartet —
+ *  absent-means-absent, never a half-stamp, never an error. */
+export function parseShapeQuartet(v: unknown): ShapeQuartet | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return undefined;
+  const t = v as Record<string, unknown>;
+  const bend = finiteNumArray(t.bend);
+  const int_u2 = finiteNumArray(t.int_u2);
+  const max_du = finiteNumArray(t.max_du);
+  const crest = finiteNumArray(t.crest);
+  if (!bend || !int_u2 || !max_du || !crest) return undefined;
+  const out: ShapeQuartet = { bend, int_u2, max_du, crest };
+  if (typeof t.T === "number" && Number.isFinite(t.T)) out.T = t.T;
+  if (typeof t.parameterization === "string" && t.parameterization !== "") out.parameterization = t.parameterization;
+  if (typeof t.source === "string" && t.source !== "") out.source = t.source;
+  return out;
 }
 
 /** The repertoire's `pulses/` directory. `$AMICO_CATALOG_DIR` overrides it (tests
@@ -109,6 +162,9 @@ function parseRecord(file: string, dir: string): PulseRecord | undefined {
     // SEAM 5 (#681): the chain provenance — additive, absent on pre-chain entries.
     calibration_ref: str(parsed.calibration_ref),
     pinned_globals: pinTable(parsed.pinned_globals),
+    // SEAM 3 (#714) + #711: additive, absent on entries promoted before them.
+    shape_metrics: parseShapeQuartet(parsed.shape_metrics),
+    device: str(parsed.device),
   };
 }
 

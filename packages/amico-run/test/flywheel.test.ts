@@ -171,6 +171,26 @@ describe("SEAM 7 derivation (c) — store provenance → campaign family (the so
     expect(r.lineage.calibration_ref).toContain("rehearsal.toml");
     expect(r.lineage.warm_start).toBe("transmon-CZ-v2"); // the seed still carried
   });
+
+  // ── #711 (F-709-2's follow-up): the device stamp ──────────────────────────
+  // `catalog ingest --device` stamps the device into metadata.toml; the
+  // derivation reads it so the device-touching store families key on THEIR
+  // device instead of degrading to bank scope.
+  it("a device-stamped entry carries its device — read from metadata.toml, listed in fields_read (#711)", () => {
+    const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v4"));
+    expect(r?.kind).toBe("store-entry");
+    if (!r || r.kind !== "store-entry") return;
+    expect(r.family).toBe("tune-up"); // warm_start lineage, no calibration_ref
+    expect(r.device).toBe("qick-fx-01");
+    expect(r.fields_read.join(" ")).toMatch(/device/);
+  });
+
+  it("a device-less entry still derives — empty device, never an error (absent-means-absent)", () => {
+    const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v2"));
+    expect(r?.kind).toBe("store-entry");
+    if (!r || r.kind !== "store-entry") return;
+    expect(r.device).toBe("");
+  });
 });
 
 describe("SEAM 7 — the decay computation (campaign grouping + the trend)", () => {
@@ -247,13 +267,32 @@ describe("SEAM 7 — the decay computation (campaign grouping + the trend)", () 
     expect(series!.campaigns[0].iterations).toBeNull();
     expect(series!.campaigns[0].wall_s).toBeNull();
     expect(series!.campaigns[0].decay).toBe("baseline");
-    // tune-up + drift-response entries are device-touching families with NO
-    // device field in metadata.toml — they degrade per F-709-2 and still compute
+    // tune-up + drift-response entries are device-touching families; the
+    // DEVICE-LESS ones (v2 tune-up, v3 drift-response — pre-#711 entries) have
+    // no device field in metadata.toml — they degrade per F-709-2 and still
+    // compute.
     const tuneup = report.families.find((f) => f.family === "tune-up");
-    expect(tuneup!.scopes[0].scope).toBe("bank:transmon");
+    expect(tuneup!.scopes.find((s) => s.scope === "bank:transmon")).toBeDefined();
     const drift = report.families.find((f) => f.family === "drift-response");
     expect(drift!.scopes[0].campaigns).toHaveLength(1);
     expect(report.findings.join(" ")).toMatch(/F-709-2/);
+  });
+
+  it("a device-stamped tune-up entry keys device:<device> (scope_kind device) — the F-709-2 degradation stops for stamped entries (#711)", () => {
+    const report = computeDecay({ storeRoots: [STORE_FIXTURE] });
+    const tuneup = report.families.find((f) => f.family === "tune-up")!;
+    expect(tuneup).toBeDefined();
+    const devScope = tuneup.scopes.find((s) => s.scope === "device:qick-fx-01");
+    expect(devScope).toBeDefined();
+    expect(devScope!.scope_kind).toBe("device");
+    expect(devScope!.record_kind).toBe("store-entry");
+    expect(devScope!.campaigns[0].records).toBe(1); // v4, the stamped entry
+    // the device-less tune-up (v2) still degrades to bank scope — same family,
+    // DIFFERENT series (pre-#711 entries keep the F-709-2 degradation)
+    const bankScope = tuneup.scopes.find((s) => s.scope === "bank:transmon");
+    expect(bankScope).toBeDefined();
+    expect(bankScope!.scope_kind).toBe("bank");
+    expect(bankScope!.campaigns[0].records).toBe(1);
   });
 
   it("a sim-only family with no device field anywhere computes — never vacuously fails (the spec's scoping)", () => {
@@ -300,6 +339,9 @@ describe("SEAM 7 doc of record — the derivation is grep-pinned, not vibes (fly
     for (const field of ["`warm_start`", "`calibration_ref`", "`date`", "`platform`"]) {
       expect(note).toContain(field);
     }
+    // #711: derivation (c) reads the device stamp too — and the doc says WHERE
+    // it comes from (the ingest flag, the finding's follow-up)
+    expect(note).toMatch(/`device` \(→ the device key, when stamped — F-709-2's follow-up, `catalog ingest --device`/);
   });
 
   it("the family mapping is stated per family — all eight, with the underivable two honestly named", () => {
@@ -323,6 +365,11 @@ describe("SEAM 7 doc of record — the derivation is grep-pinned, not vibes (fly
     for (const id of ["F-709-1", "F-709-2", "F-709-3", "F-709-4", "F-709-5", "F-709-6"]) {
       expect(computeDecay({}).findings.join(" ")).toContain(id);
     }
+    // #711: the two stamping follow-ups LANDED — the doc of record says so
+    // (F-709-1: wall_seconds standing on every bundled emitter; F-709-2: the
+    // --device stamp), while pre-stamping records keep the labeled degradation.
+    expect(note).toMatch(/F-709-1[\s\S]*?Landed \(amicode #711\): `wall_seconds` is a standing field/);
+    expect(note).toMatch(/F-709-2[\s\S]*?Landed \(amicode #711\): `catalog ingest --device`/);
   });
 
   it("the device-key scoping is stated (device-touching families vs workspace+platform)", () => {

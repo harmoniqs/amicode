@@ -47,6 +47,7 @@ import {
   type ExperimentFields,
 } from "./note.js";
 import { resolveMountStack } from "./mounts.js";
+import { parseShapeQuartet } from "./repertoire.js";
 import { vaultDir } from "./vault_query.js";
 import type { VerbResult } from "./verbs.js";
 
@@ -92,6 +93,18 @@ export function noteWrite(argv: string[]): VerbResult {
   const durRaw = flagValue(argv, "--duration-us");
   const duration_us = durRaw !== undefined ? Number(durRaw) : num(result?.duration_us);
 
+  // ── SEAM 3 (amicode #714): the shape quartet rides the EXISTING --from-run
+  // read (no new flag). Present only when the run's result.toml carries it
+  // under params.shape_metrics (PR #713's emission); REFERENCED, never
+  // re-computed. Absent-means-absent: an older run writes the note cleanly
+  // with no Metrics block — and a malformed table degrades to absent, never
+  // a half-stamp, never an error.
+  const params = result?.params;
+  const shape_metrics =
+    typeof params === "object" && params !== null && !Array.isArray(params)
+      ? parseShapeQuartet((params as Record<string, unknown>).shape_metrics)
+      : undefined;
+
   const fields: ExperimentFields = {
     platform,
     gate,
@@ -106,6 +119,7 @@ export function noteWrite(argv: string[]): VerbResult {
     device: flagValue(argv, "--device-note"),
     branch: flagValue(argv, "--branch"),
     desc: flagValue(argv, "--desc"),
+    shape_metrics,
   };
 
   const id = flagValue(argv, "--id") ?? experimentId(fields);

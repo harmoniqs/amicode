@@ -47,7 +47,7 @@ The strumento TaskRecord shape (`task.toml` + `progress.jsonl` + `result.toml` �
 
 ## Derivation (c) — store provenance → family (the source stamp)
 
-**Fields read (the exact set):** the pulse bank entry's `metadata.toml` (amico-catalog Phase-0 schema): `id`, `platform`, `date` (→ campaign day), `warm_start`, `calibration_ref` (the source stamp — SEAM 5's chain fingerprint rides the same fields).
+**Fields read (the exact set):** the pulse bank entry's `metadata.toml` (amico-catalog Phase-0 schema): `id`, `platform`, `date` (→ campaign day), `warm_start`, `calibration_ref` (the source stamp — SEAM 5's chain fingerprint rides the same fields), `device` (→ the device key, when stamped — F-709-2's follow-up, `catalog ingest --device`; empty on pre-#711 entries).
 
 **Mapping onto the families (the most specific stamp present wins):**
 
@@ -64,7 +64,7 @@ The banked artifact carries none of the three cost metrics — store-derived cam
 **Scope key** (the spec's scoping):
 
 - sim families (first-pulse, regime-sweep, robustness) → **workspace + platform**: run dirs give `sim:<lab_id>/<platform>`; store entries give `bank:<platform>` (the bank is one workspace).
-- device-touching families (bring-up, tune-up, drift-response) → **device**: task records give `device:<task.toml device>`. Store entries have NO device field (finding F-709-2) — their device key degrades to the bank scope, stated, and the campaign still computes (a sim-only family with no device field must compute, never vacuously fail).
+- device-touching families (bring-up, tune-up, drift-response) → **device**: task records give `device:<task.toml device>`; store entries give `device:<metadata.toml device>` when the entry carries the #711 stamp (`catalog ingest --device`). A store entry with NO device field (pre-#711, finding F-709-2) degrades to the bank scope, stated, and the campaign still computes (a sim-only family with no device field must compute, never vacuously fail).
 
 ## The decay metrics (exact formulas)
 
@@ -73,7 +73,7 @@ Per campaign, per metric — the metrics the records carry; **absent ≠ 0**:
 - **acquisitions** = Σ over the campaign's task records of the count of `progress.jsonl` events with `ev = "progress"` AND `label = "acquire"`. Run dirs and store entries carry no acquisition counts → stated-absent (F-709-3).
 - **iterations** = Σ over the campaign's run dirs of `result.toml` `iterations`. Task records carry solve-iterations only in prose → stated-absent (F-709-4).
 - **wall clock (wall_s)** = Σ per-record wall clock:
-  - run dir: `result.toml wall_seconds` when present (record-carried; 2/358 on the real backlog); else `FINISHED` mtime − `run.toml created_at` — the fs fallback, source-labeled per campaign (`wall_source: "record" | "finished-mtime" | "mixed"`), fragile under copy/rsync (finding F-709-1);
+  - run dir: `result.toml wall_seconds` when present (record-carried; standing on every bundled emitter since #711 — F-709-1's landed follow-up; 2/358 on the real backlog at the finding's census); else `FINISHED` mtime − `run.toml created_at` — the fs fallback, source-labeled per campaign (`wall_source: "record" | "finished-mtime" | "mixed"`), fragile under copy/rsync (finding F-709-1);
   - task record: `result.toml ended` − `task.toml created` (both record-carried);
   - store entry: not carried → stated-absent.
 
@@ -81,8 +81,8 @@ Per campaign, per metric — the metrics the records carry; **absent ≠ 0**:
 
 ## The F4 findings (named, never silently degraded)
 
-- **F-709-1 wall-clock** — the run-dir contract carries NO end-time field: `FINISHED` is `status` + `exit_code` only (`writeFinished`, `run_dir.ts`), and `result.toml wall_seconds` is optional (2/358 on the real backlog). The wall-clock metric degrades to the `FINISHED` mtime fallback, source-labeled per campaign and fragile under copy/rsync. Follow-up: honest stamping (an end timestamp in `FINISHED`, or `wall_seconds` as a standing result contract field).
-- **F-709-2 device key** — `metadata.toml` carries NO device field: the device key for device-touching store-derived families (tune-up, drift-response) degrades to the bank scope. Follow-up: stamp `device` into the catalog entry schema.
+- **F-709-1 wall-clock** — the run-dir contract carried no end-time field at the finding's census: `FINISHED` is `status` + `exit_code` only (`writeFinished`, `run_dir.ts`), and `result.toml wall_seconds` was optional (2/358 on the real backlog). Pre-standing records degrade to the `FINISHED` mtime fallback, source-labeled per campaign and fragile under copy/rsync. Landed (amicode #711): `wall_seconds` is a standing field of every bundled contract emitter (the solve's own elapsed time, `wall = time() - t0`), pinned by `packages/extension/test/run_dir_emitters.test.ts` — new campaigns take the record-carried primary path; old records keep the labeled fallback.
+- **F-709-2 device key** — `metadata.toml` carried no device field at the finding's census: the device key for device-touching store-derived families (tune-up, drift-response) degraded to the bank scope. Landed (amicode #711): `catalog ingest --device` stamps `device` into the catalog entry metadata, so stamped entries key on their device (`device:<metadata.toml device>`); pre-stamp entries keep the bank-scope degradation, stated.
 - **F-709-3 acquisitions** — run dirs carry no acquisition counts (a sim solve acquires nothing on record). The acquisitions metric is stated-absent for run-dir campaigns; it is a task-record metric.
 - **F-709-4 iterations** — task records carry solve-iterations only in prose (`result.toml summary`). The iterations metric is stated-absent for task-record campaigns.
 - **F-709-5 pre-v4 run dirs** — a run dir whose `script_path` is an authored `.jl` carries no in-dir `(system, goal)` spec (the bridge fixture is exactly this shape). The family is underivable; the record is listed unattributed, never forced.

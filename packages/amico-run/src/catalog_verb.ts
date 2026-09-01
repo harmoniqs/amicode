@@ -31,7 +31,9 @@ import {
   catalogPulsesDir,
   loadRepertoire,
   nextVersionId,
+  parseShapeQuartet,
   queryIncumbent,
+  SHAPE_METRICS_SOURCE,
   type PulseRecord,
 } from "./repertoire.js";
 import type { VerbResult } from "./verbs.js";
@@ -112,6 +114,26 @@ export function catalogIngest(argv: string[]): VerbResult {
 
   const runDir = flagValue(argv, "--from-run");
   const result = runDir ? readTomlSafe(join(runDir, "result.toml")) : undefined;
+
+  // ── SEAM 3 (amicode #714): the shape quartet rides the EXISTING ingest ────
+  // (no new flag). When the promoted run's result.toml carries the quartet
+  // under params.shape_metrics (PR #713's emission), the promoted metadata
+  // gains it additively — REFERENCED (the stamp cites Piccolo.shape_metrics +
+  // the payload path), never re-computed: this is a validated copy, no code
+  // derives bend/du/ddu values from raw data. Absent-means-absent: an older
+  // run without the quartet promotes cleanly, no error, no backfill.
+  const shapeQuartet = isRecord(result?.params) ? parseShapeQuartet(result.params.shape_metrics) : undefined;
+
+  // ── #711 (F-709-2): the device stamp. No record kind carries a device field
+  // (run dirs, result.toml — neither), so the flag is the honest source; it
+  // stamps into the metadata so the flywheel's device key stops degrading to
+  // bank scope for store-derived device-touching families. Additive: absent
+  // flag → no key.
+  const deviceFlag = flagValue(argv, "--device");
+  if (deviceFlag !== undefined && deviceFlag.trim() === "") {
+    return fail("--device must be a non-empty device name (a blank device key would silently degrade)");
+  }
+  const device = deviceFlag?.trim() || undefined;
 
   // Pulse source: explicit --artifact, else <runDir>/pulse.jld2.
   const pulse = flagValue(argv, "--artifact") ?? (runDir ? join(runDir, "pulse.jld2") : undefined);
@@ -235,6 +257,10 @@ export function catalogIngest(argv: string[]): VerbResult {
   if (calibrationRef) meta.calibration_ref = calibrationRef;
   if (pinRaw !== undefined) meta.pinned_globals = pinnedGlobals;
   if (tags) meta.tags = tags;
+  // SEAM 3 (#714): the quartet stamp, cited (referenced — Piccolo's definition,
+  // the result payload's path); #711 (F-709-2): the device stamp.
+  if (shapeQuartet) meta.shape_metrics = { ...shapeQuartet, source: SHAPE_METRICS_SOURCE };
+  if (device) meta.device = device;
   meta.date = new Date().toISOString().slice(0, 10);
 
   if (dryRun) {
@@ -284,6 +310,10 @@ export function catalogIngest(argv: string[]): VerbResult {
 
 function num(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 // ── dispatch ─────────────────────────────────────────────────────────────────
