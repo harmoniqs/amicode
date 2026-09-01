@@ -41,6 +41,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { selectRecommendations, type LedgerQueryResult } from "./ledger_client";
+import { normalizeSystem } from "./entities";
+import { problemDir } from "./problems";
 
 // ── the schema's vocabulary ─────────────────────────────────────────────────
 
@@ -529,5 +531,118 @@ export function auditRegimePriors(input: {
     audited,
     violations,
     ...(stale !== undefined ? { stale } : {}),
+  };
+}
+
+// ── the workspace wrapper — the audit query the tool shells ──────────────────
+
+/** The workspace-scoped audit result: the pure audit + the scoping facts it
+ * ran against (the session's platform + family) + the applied count (the
+ * outcome pairs — the flywheel's input side, recorded through the EXISTING
+ * amico_recommend outcome mechanics). */
+export interface WorkspaceAuditResult extends AuditResult {
+  /** The workspace's recorded platform (undefined when no system is recorded). */
+  platform?: string;
+  family?: PlatformFamily;
+  /** Regime-prior applications that landed (paired outcome events). */
+  applied: number;
+  /** The table's own load problems — an unloadable table fails the audit
+   * honestly (a broken sensor never silently passes). */
+  tableProblems?: string[];
+}
+
+interface RecordedEvent {
+  seq?: number;
+  entity?: string;
+  action?: string;
+  diff?: Record<string, unknown>;
+}
+
+function readEvents(slug: string): RecordedEvent[] {
+  const file = join(problemDir(slug), "events.jsonl");
+  if (!existsSync(file)) return [];
+  const out: RecordedEvent[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      out.push(JSON.parse(line) as RecordedEvent);
+    } catch {
+      /* malformed line — skip (events.jsonl is append-only by our own tools) */
+    }
+  }
+  return out;
+}
+
+function readSystemPlatform(slug: string): string | undefined {
+  const file = join(problemDir(slug), "entities", "system.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    return normalizeSystem(JSON.parse(readFileSync(file, "utf8"))).platform;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The audit query over a problem workspace's prior-application events (the
+ * `amicode_recommend action:"audit"` core): reads the workspace's recorded
+ * platform (the session's scoping), its events.jsonl (the regime-prior
+ * propose events + their outcome pairs the EXISTING mechanics recorded), and
+ * runs the pure audit. An unloadable table fails the audit honestly with its
+ * problems surfaced. */
+export function auditRegimePriorApplications(
+  slug: string,
+  opts?: { currentCensus?: CensusStamp },
+): WorkspaceAuditResult {
+  const load = loadRegimePriorsTable();
+  if (!load.ok) {
+    return { ok: false, audited: 0, violations: [], applied: 0, tableProblems: load.problems };
+  }
+
+  const platform = readSystemPlatform(slug);
+  const family = platform !== undefined ? platformFamily(platform) : undefined;
+
+  // Build the applications: regime-prior `proposed` events, paired with their
+  // `outcome` events (the applied count is the flywheel's input side).
+  const applications: PriorApplication[] = [];
+  const pending = new Map<string, PriorApplication>();
+  for (const ev of readEvents(slug)) {
+    if (ev.entity !== "recommendation") continue;
+    const diff = ev.diff ?? {};
+    const key = typeof diff.key === "string" ? diff.key : `${String(diff.stage ?? "?")}/${String(diff.param ?? "?")}`;
+    if (ev.action === "proposed") {
+      const provenance = Array.isArray(diff.provenance) ? (diff.provenance as PriorApplication["provenance"]) : [];
+      if (provenance.some((p) => p?.source === "regime-prior")) {
+        const app: PriorApplication = {
+          seq: typeof ev.seq === "number" ? ev.seq : 0,
+          key,
+          param: typeof diff.param === "string" ? diff.param : "?",
+          provenance,
+        };
+        applications.push(app);
+        pending.set(key, app);
+      }
+    } else if (ev.action === "outcome") {
+      const app = pending.get(key);
+      if (app) {
+        app.outcome = {
+          outcome: typeof diff.outcome === "string" ? diff.outcome : "?",
+          ...(diff.applied_value !== undefined ? { applied_value: diff.applied_value } : {}),
+        };
+        pending.delete(key);
+      }
+    }
+  }
+
+  const res = auditRegimePriors({
+    table: load.table,
+    family,
+    applications,
+    ...(opts?.currentCensus !== undefined ? { currentCensus: opts.currentCensus } : {}),
+  });
+  return {
+    ...res,
+    applied: applications.filter((a) => a.outcome !== undefined).length,
+    ...(platform !== undefined ? { platform } : {}),
+    ...(family !== undefined ? { family } : {}),
   };
 }
