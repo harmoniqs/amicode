@@ -77,14 +77,15 @@ afterAll(async () => {
 });
 
 describe("MCP round-trip against the spawned server", () => {
-  it("initializes and lists the amicode_* tools", async () => {
+  it("initializes and lists the amicode_* tools under their BARE wire names", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name);
-    expect(names).toContain("amicode_pick_system");
+    expect(names).toContain("pick_system"); // bare: the client (opencode) namespaces by server
+    expect(names).not.toContain("amicode_pick_system"); // the server does not double-prefix
     expect(names.length).toBeGreaterThanOrEqual(17);
   });
 
-  it("tools/call amicode_pick_system records the SAME entity, events, and return as the plugin path", async () => {
+  it("tools/call pick_system records the SAME entity, events, and return as the plugin path", async () => {
     // ── the plugin path (the reference recording) ──
     process.env.AMICODE_PROBLEMS_DIR = pluginRoot;
     const PLUGIN = await import("../opencode-plugin/amicode_tools");
@@ -96,9 +97,9 @@ describe("MCP round-trip against the spawned server", () => {
       { sessionID: "sess-test", directory: "/tmp/amicode-rt" },
     );
 
-    // ── the MCP path (the same call over the wire) ──
+    // ── the MCP path (the same call over the wire, under the bare name) ──
     const result = await client.callTool({
-      name: "amicode_pick_system",
+      name: "pick_system",
       arguments: { platform: "transmon", omega: 4.8, delta: -0.2 },
     });
     expect(result.isError).toBeFalsy();

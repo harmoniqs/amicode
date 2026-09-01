@@ -1,10 +1,16 @@
 // Parity test — the two-transport drift guard (#700 A3).
 //
-// ONE source of truth: the core's tool table (src/amicode_tools_core.ts). Two
-// projections must agree:
-//   - the opencode plugin adapter's registrations (opencode-plugin/amicode_tools.ts),
-//   - the MCP server's tools/list (src/mcp_amico_server.ts).
-// If either transport adds, drops, renames, or reshapes a tool, this reds.
+// ONE source of truth: the core's tool table (src/amicode_tools_core.ts),
+// keyed by each tool's canonical PRODUCT name (amicode_pick_system, …). Two
+// projections must agree on the PRODUCT-IDENTICAL view:
+//   - the opencode plugin adapter registers the canonical name verbatim;
+//   - the MCP server serves the BARE name (pick_system) — the MCP-native
+//     client-namespaces pattern — and opencode's fork renders it back as
+//     `<serverName>_<bare>` = `amicode_pick_system` (McpCatalog.toolName,
+//     server registered as "amicode").
+// So for every core tool: plugin name ≡ "amicode" + "_" + MCP wire name ≡ the
+// canonical name, with descriptions and schemas identical throughout. If
+// either transport adds, drops, renames, or reshapes a tool, this reds.
 //
 // The env override is set BEFORE the dynamic imports: the plugin adapter still
 // carries its module-scope load line + legacy-migration one-shot, and the
@@ -31,28 +37,39 @@ const pluginTool = async (name: string) => {
 };
 
 describe("MCP tools/list ≡ the plugin's registrations (drift guard)", () => {
+  const OPENCODE_SERVER_NAME = "amicode"; // the name the injected config registers (opencode_config.ts)
+
   it("same names, in both projections, from the one core table", () => {
     const mcp = SERVER.listAmicodeMcpTools().map((t: McpTool) => t.name);
     const core = Object.keys(CORE.AMICODE_TOOLS);
-    expect(mcp.sort()).toEqual([...core].sort());
+    expect(mcp.sort()).toEqual([...core].sort().map((n: string) => CORE.mcpBareName(n)));
+  });
+
+  it("the PRODUCT-IDENTICAL view: opencode's rendered MCP name ≡ the plugin's registered name, for all 17", () => {
+    const canonical = Object.keys(CORE.AMICODE_TOOLS);
+    const rendered = SERVER.listAmicodeMcpTools().map((t: McpTool) => `${OPENCODE_SERVER_NAME}_${t.name}`);
+    // bijective: what opencode renders after namespacing the bare names IS the
+    // canonical set the plugin registers — the model-visible surface is unchanged.
+    expect(rendered.sort()).toEqual([...canonical].sort());
+    for (const r of rendered) expect(r, `rendered name ${r} carries the product prefix`).toMatch(/^amicode_/);
   });
 
   it("same descriptions, verbatim", () => {
     for (const t of SERVER.listAmicodeMcpTools() as McpTool[]) {
-      expect(t.description).toBe(CORE.AMICODE_TOOLS[t.name]?.description);
+      expect(t.description).toBe(CORE.AMICODE_TOOLS[CORE.mcpProductName(t.name)]?.description);
     }
   });
 
   it("same schemas: inputSchema.properties ≡ the plugin's args, required ≡ every declared key", async () => {
     for (const t of SERVER.listAmicodeMcpTools() as McpTool[]) {
-      const def = CORE.AMICODE_TOOLS[t.name];
+      const def = CORE.AMICODE_TOOLS[CORE.mcpProductName(t.name)];
       expect(t.inputSchema.type).toBe("object");
       expect(JSON.parse(JSON.stringify(t.inputSchema.properties))).toEqual(
         JSON.parse(JSON.stringify(def.args)),
       );
       expect(t.inputSchema.required).toEqual(Object.keys(def.args).sort());
       // and the plugin side agrees — the projection goes through the adapter
-      const p = await pluginTool(t.name);
+      const p = await pluginTool(CORE.mcpProductName(t.name));
       expect(JSON.parse(JSON.stringify(p.args))).toEqual(JSON.parse(JSON.stringify(def.args)));
       expect(p.description).toBe(t.description);
     }

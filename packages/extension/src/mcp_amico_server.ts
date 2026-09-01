@@ -8,12 +8,15 @@
 // host's injected config points opencode's MCP client at it; any other MCP
 // client can spawn the same file).
 //
-// PROJECTION (what opencode's fork v1.18.10 does with it — packages/opencode/
-// src/mcp/catalog.ts): tools/list defs become session tools keyed by
-// `McpCatalog.toolName(serverName, def.name)`, so the model-visible name under
-// opencode is `<server>_<tool>`. This server serves the tools under their FULL
-// core-table names (amicode_pick_system, …) — the parity test pins tools/list ≡
-// the plugin's registrations verbatim.
+// PROJECTION (the naming decision, #700 A3 director ruling): the core table is
+// keyed by each tool's canonical PRODUCT name (amicode_pick_system, …); this
+// server serves the BARE name (pick_system) — the MCP-native pattern where the
+// CLIENT namespaces by server. opencode's fork v1.18.10 does exactly that
+// (packages/opencode/src/mcp/catalog.ts: McpCatalog.toolName =
+// sanitize(serverName) + "_" + sanitize(name)), so with the server registered
+// as "amicode" the model sees `amicode_pick_system` — the product-identical
+// view. Other MCP clients see clean bare names under whatever they call us.
+// The parity test pins both views against the one core table.
 //
 // WIRE HYGIENE: stdout is the protocol channel — every diagnostic goes to
 // stderr. The startup ritual mirrors the plugin's (stderr load line + the
@@ -29,15 +32,17 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { pathToFileURL } from "node:url";
-import { AMICODE_TOOLS } from "./amicode_tools_core";
+import { AMICODE_TOOLS, mcpBareName, mcpProductName } from "./amicode_tools_core";
 import { migrateLegacyEntities, problemsDir } from "../opencode-plugin/problems";
 
 export const AMICODE_MCP_SERVER_NAME = "amicode";
 export const AMICODE_MCP_SERVER_VERSION = "0.3.1";
 
 /** A tool as tools/list serves it: the core def projected onto the MCP wire
- *  shape. `required` lists EVERY declared key — the plugin's args-schema
- *  decision (all args required; optional ones nullable) mirrors 1:1. */
+ *  shape. `name` is the BARE wire name (canonical product name minus the
+ *  `amicode_` prefix — see the naming contract in the core); `required` lists
+ *  EVERY declared key — the plugin's args-schema decision (all args required;
+ *  optional ones nullable) mirrors 1:1. */
 export interface AmicodeMcpTool {
   name: string;
   description: string;
@@ -48,10 +53,11 @@ export interface AmicodeMcpTool {
   };
 }
 
-/** The MCP projection of the core table — the parity test's server half. */
+/** The MCP projection of the core table — the parity test's server half. Names
+ *  are the bare wire names; descriptions/schemas carry over verbatim. */
 export function listAmicodeMcpTools(): AmicodeMcpTool[] {
-  return Object.entries(AMICODE_TOOLS).map(([name, def]) => ({
-    name,
+  return Object.entries(AMICODE_TOOLS).map(([productName, def]) => ({
+    name: mcpBareName(productName),
     description: def.description,
     inputSchema: {
       type: "object",
@@ -73,11 +79,14 @@ export async function serveAmicodeMcp(): Promise<void> {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: listAmicodeMcpTools() }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const name = request.params.name;
-    const def = AMICODE_TOOLS[name];
+    // The wire carries the BARE name; the implementation lives under the
+    // canonical product name. A bare name that doesn't round-trip (including
+    // a full product name passed as bare) resolves to "unknown" honestly.
+    const product = mcpProductName(request.params.name);
+    const def = AMICODE_TOOLS[product];
     if (!def) {
       return {
-        content: [{ type: "text", text: `Unknown tool: ${name}` }],
+        content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }],
         isError: true,
       };
     }
@@ -90,7 +99,7 @@ export async function serveAmicodeMcp(): Promise<void> {
       // Tool-level failure: same honesty contract as the plugin transport —
       // the error text travels to the caller, the process stays up.
       const msg = err instanceof Error ? err.message : String(err);
-      return { content: [{ type: "text", text: `Tool ${name} failed: ${msg}` }], isError: true };
+      return { content: [{ type: "text", text: `Tool ${request.params.name} failed: ${msg}` }], isError: true };
     }
   });
 

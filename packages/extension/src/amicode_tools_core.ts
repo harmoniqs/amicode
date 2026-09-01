@@ -160,6 +160,36 @@ export interface AmicodeToolDef {
   execute(a: any, ctx: AmicodeToolContext): Promise<string>;
 }
 
+// ── The naming contract (one canonical name per tool, two transport views) ────
+//
+// The table is keyed by each tool's CANONICAL PRODUCT NAME (`amicode_pick_system`,
+// …) — the name the product has always surfaced, stored exactly once, here.
+// The transports derive their wire names from it (#700 A3, director decision
+// on the #700 escalation):
+//   - the opencode plugin registers the canonical name verbatim;
+//   - the MCP server serves the BARE name (`pick_system`) — the MCP-native
+//     pattern, where each CLIENT namespaces by server. opencode's fork does
+//     exactly that (McpCatalog.toolName = sanitize(serverName) + "_" + name),
+//     so a server named "amicode" renders `amicode_pick_system` — the
+//     product-identical view. Non-opencode clients see clean bare names
+//     namespaced by whatever they call the server.
+
+/** The MCP wire name of a tool: the canonical product name minus the
+ *  `amicode_` prefix (the server's own namespace is not repeated in the tool
+ *  name — the client adds it back). Throws on a non-prefixed key: the table's
+ *  naming contract is that every canonical name carries the product prefix. */
+export function mcpBareName(productName: string): string {
+  if (!productName.startsWith("amicode_") || productName.length === "amicode_".length) {
+    throw new Error(`tool "${productName}" violates the naming contract: canonical names are "amicode_"-prefixed`);
+  }
+  return productName.slice("amicode_".length);
+}
+
+/** The inverse: the canonical product name for a bare MCP wire name. */
+export function mcpProductName(bareName: string): string {
+  return "amicode_" + bareName;
+}
+
 
 
 // Domain-pack gate (ADR 0008): quantum-control-specific tools (amicode_pick_system,

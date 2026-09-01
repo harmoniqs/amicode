@@ -69,6 +69,26 @@ describe("AMICODE_TOOLS (the core tool table)", () => {
   });
 });
 
+describe("the naming contract (canonical product name stored once, #700 director decision)", () => {
+  it("mcpBareName strips exactly the amicode_ prefix; mcpProductName restores it", () => {
+    expect(CORE.mcpBareName("amicode_pick_system")).toBe("pick_system");
+    expect(CORE.mcpBareName("amicode_ask")).toBe("ask");
+    expect(CORE.mcpProductName("pick_system")).toBe("amicode_pick_system");
+    expect(CORE.mcpProductName(CORE.mcpBareName("amicode_veloce"))).toBe("amicode_veloce");
+  });
+
+  it("mcpBareName refuses a non-prefixed canonical name (the table's naming contract)", () => {
+    expect(() => CORE.mcpBareName("pick_system")).toThrow(/naming contract/);
+    expect(() => CORE.mcpBareName("amicode_")).toThrow(/naming contract/);
+  });
+
+  it("every canonical key round-trips bare → product", () => {
+    for (const name of Object.keys(CORE.AMICODE_TOOLS)) {
+      expect(CORE.mcpProductName(CORE.mcpBareName(name))).toBe(name);
+    }
+  });
+});
+
 describe("the opencode plugin is a thin adapter over the core", () => {
   it("AmicodeTools projects the core table with identical names, descriptions, and args", async () => {
     const pack = (await PLUGIN.AmicodeTools({})) as {
