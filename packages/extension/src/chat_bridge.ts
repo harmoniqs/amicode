@@ -1123,6 +1123,33 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #663: add a directory to the VS Code workspace. The chat iframe's project
+  // selector posts this when the user clicks "Add project". The extension
+  // shows a native folder picker, and on selection adds it as a workspace
+  // folder — the workspace-change listener then pushes an updated
+  // workspace-projects message back to the iframe.
+  if (msg.kind === "add-workspace-project") {
+    void vscode.window
+      .showOpenDialog({
+        canSelectFolders: true,
+        canSelectFiles: false,
+        canSelectMany: false,
+        openLabel: "Add Project",
+      })
+      .then((uris) => {
+        if (uris && uris.length > 0) {
+          const uri = uris[0];
+          // Avoid duplicates — check existing workspace folders first
+          const existing = vscode.workspace.workspaceFolders ?? [];
+          const already = existing.some((f) => f.uri.fsPath === uri.fsPath);
+          if (!already) {
+            vscode.workspace.updateWorkspaceFolders(existing.length, 0, { uri });
+          }
+        }
+      });
+    return true;
+  }
+
   return false;
 }
 

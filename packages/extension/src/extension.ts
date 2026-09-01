@@ -43,6 +43,8 @@ import { amicodeOpsDir } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
+import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
+import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards } from "./mode_cards";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
@@ -458,6 +460,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // no-workspace windows. F5 dev hosts never showed this because their
     // webview storage is ephemeral.
     projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+    // amicode#663/#668: workspace folders for research-project skill discovery.
+    workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
@@ -775,6 +779,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
           projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+          workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
         });
         ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
         await serverManager?.stop();
@@ -912,6 +917,47 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
   }
 
+  // ── #663: workspace-projects bridge ──────────────────────────────────────
+  // Push workspace folder data to the chat iframe's project selector.
+  // Sent on app-ready (initial paint) and on workspace-folder change (live).
+  const readResearchToml = (dir: string): { name?: string; status?: string } => {
+    try {
+      const tomlPath = path.join(dir, "research-project.toml");
+      const content = fs.readFileSync(tomlPath, "utf8");
+      const name = content.match(/^\s*name\s*=\s*"([^"]*)"/m)?.[1];
+      const status = content.match(/^\s*status\s*=\s*"([^"]*)"/m)?.[1];
+      return { name, status };
+    } catch { return {}; }
+  };
+
+  const workspaceProjectDeps: WorkspaceProjectDeps = {
+    getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
+    detectProjectType,
+    readToml: readResearchToml,
+  };
+
+  /** Build and push the workspace-projects message to the chat panel. */
+  const pushWorkspaceProjects = () => {
+    const panel = ChatPanel.peek();
+    if (!panel) return;
+    const projects = getWorkspaceProjects(workspaceProjectDeps);
+    void panel.postMessage({
+      source: "amicode",
+      kind: "workspace-projects",
+      projects,
+    });
+  };
+
+  // On app-ready: push the initial project list.
+  ChatPanel.onAppReady(pushWorkspaceProjects);
+
+  // On workspace folder change: push the updated list.
+  ctx.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      pushWorkspaceProjects();
+    }),
+  );
+
   // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
   // a LOCAL personal vault (dotfolder-style; no GitHub). This is the first step of
   // a broader workspace setup — synced tiers (team/public) and the Julia env are
@@ -939,6 +985,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       skillLibraryRoots: cfgLibraryRoots(),
       vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
       projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+      workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
     });
     ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
     await serverManager.stop();

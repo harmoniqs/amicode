@@ -5,6 +5,7 @@ import { type Accessor, createMemo } from "solid-js"
 import type { PromptInputControls } from "@/components/prompt-input/contracts"
 import type { PromptProjectControls } from "@/components/prompt-project-selector"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
+import { workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { useGlobal } from "@/context/global"
 import { useLayout } from "@/context/layout"
@@ -74,6 +75,20 @@ export function createPromptProjectControls() {
   const projectServer = () => serverSDK().server
   const projectServerCtx = createMemo(() => global.ensureServerCtx(projectServer()))
   const projects = createMemo(() => {
+    // amicode#663: when the extension host pushes workspace folder data, use
+    // it as the canonical project list (type-grouped, workspace-backed). The
+    // signal is empty until the first push — standalone opencode never pushes,
+    // so the fallback below handles it.
+    const wsProjects = workspaceProjects()
+    if (wsProjects.length > 0) {
+      return wsProjects.map((p) => ({
+        name: p.name,
+        worktree: p.worktree,
+        type: p.type as "research" | "dev",
+        status: p.status,
+      }))
+    }
+    // Fallback: opencode-native project discovery (standalone / no extension).
     const list =
       server.list.length <= 1
         ? search.draftId
@@ -118,6 +133,16 @@ export function createPromptProjectControls() {
   }
 
   const addProject = (title: string, serverKey?: string) => {
+    // amicode#663: when workspace-backed (running inside the amicode
+    // extension webview), delegate folder picking to the extension host —
+    // it shows VS Code's native showOpenDialog and adds the result as a
+    // workspace folder. The workspace-change listener then pushes an
+    // updated project list via postMessage.
+    if (hiddenProjectWorktree()) {
+      requestAddWorkspaceProject()
+      return
+    }
+    // Standalone opencode: use the server's directory picker.
     const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
     if (!conn) return
     pickDirectory({

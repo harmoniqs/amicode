@@ -329,6 +329,35 @@ describe("ChatPanel.adopt — transforms an existing panel into the chat singlet
   });
 });
 
+describe("ChatPanel — workspace-projects bridge relay (#663)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+  });
+
+  it("the downstream relay admits 'workspace-projects' messages (extension → iframe)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"workspace-projects"');
+  });
+
+  it("the upstream relay admits 'add-workspace-project' messages (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"add-workspace-project"');
+  });
+});
+
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];
