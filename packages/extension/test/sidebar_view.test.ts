@@ -321,6 +321,22 @@ describe("sidebar bridge — project tree scanning", () => {
     );
   });
 
+  it("get-children sends empty entries on rejection instead of dropping the response", async () => {
+    const postMessage = vi.fn();
+    const getChildren = vi.fn().mockRejectedValue(new Error("ENOENT"));
+
+    await handleSidebarMessage(
+      { kind: "get-children", path: "/projects/gone" },
+      { openChat: vi.fn(), newProject: vi.fn(), getRoots: vi.fn(), getChildren, openFile: vi.fn(), postMessage },
+    );
+
+    expect(postMessage).toHaveBeenCalledWith({
+      kind: "children",
+      path: "/projects/gone",
+      entries: [],
+    });
+  });
+
   it("open-file triggers the openFile handler", () => {
     const openFile = vi.fn();
     handleSidebarMessage(
@@ -329,6 +345,44 @@ describe("sidebar bridge — project tree scanning", () => {
     );
 
     expect(openFile).toHaveBeenCalledWith("/projects/quantum-sim/solve.jl");
+  });
+});
+
+// ── Section reorder — bridge protocol (#708) ─────────────────────────────────
+
+describe("sidebar bridge — section reorder", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  it("set-section-order calls setSectionOrder handler with the order array", () => {
+    const setSectionOrder = vi.fn();
+    handleSidebarMessage(
+      { kind: "set-section-order", order: ["fleet", "dev", "research"] },
+      {
+        openChat: vi.fn(), newProject: vi.fn(), addExisting: vi.fn(),
+        getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(),
+        fileOp: vi.fn(), postMessage: vi.fn(), setSectionOrder,
+      },
+    );
+    expect(setSectionOrder).toHaveBeenCalledWith(["fleet", "dev", "research"]);
+  });
+
+  it("set-section-order with default order calls handler correctly", () => {
+    const setSectionOrder = vi.fn();
+    handleSidebarMessage(
+      { kind: "set-section-order", order: ["research", "dev", "fleet"] },
+      {
+        openChat: vi.fn(), newProject: vi.fn(), addExisting: vi.fn(),
+        getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(),
+        fileOp: vi.fn(), postMessage: vi.fn(), setSectionOrder,
+      },
+    );
+    expect(setSectionOrder).toHaveBeenCalledWith(["research", "dev", "fleet"]);
   });
 });
 
@@ -590,6 +644,186 @@ describe("SidebarViewProvider — session awareness", () => {
     const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
     expect(activeProjectCalls).toHaveLength(1);
   });
+
+  it("replays stored activeProjectPath when the webview resolves after setActiveProject", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+
+    // setActiveProject BEFORE the webview is resolved — message is dropped
+    provider.setActiveProject("/projects/diraq-esr-demo");
+
+    // Now resolve the webview — the stored path should be replayed
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    expect(activeProjectCalls).toHaveLength(1);
+    expect(activeProjectCalls[0][0].path).toBe("/projects/diraq-esr-demo");
+  });
+});
+
+// ── Section order persistence (#708) ─────────────────────────────────────────
+
+function makeGlobalState(initial: Record<string, unknown> = {}): { get: any; update: any; keys: any; setKeysForSync: any } {
+  const store = new Map<string, unknown>(Object.entries(initial));
+  return {
+    get: vi.fn((key: string, fallback?: unknown) => store.has(key) ? store.get(key) : fallback),
+    update: vi.fn((key: string, value: unknown) => { store.set(key, value); return Promise.resolve(); }),
+    keys: vi.fn(() => [...store.keys()]),
+    setKeysForSync: vi.fn(),
+  };
+}
+
+describe("SidebarViewProvider — section order persistence", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("replays saved section order from globalState on resolveWebviewView", () => {
+    const gs = makeGlobalState({ "amicode.sectionOrder": ["fleet", "dev", "research"] });
+    const provider = new SidebarViewProvider(makeExtensionUri(), gs);
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const orderCalls = calls.filter((c: any) => c[0]?.kind === "section-order");
+    expect(orderCalls).toHaveLength(1);
+    expect(orderCalls[0][0].order).toEqual(["fleet", "dev", "research"]);
+  });
+
+  it("replays default order when globalState has no saved order", () => {
+    const gs = makeGlobalState({});
+    const provider = new SidebarViewProvider(makeExtensionUri(), gs);
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const orderCalls = calls.filter((c: any) => c[0]?.kind === "section-order");
+    expect(orderCalls).toHaveLength(1);
+    expect(orderCalls[0][0].order).toEqual(["research", "dev", "fleet"]);
+  });
+
+  it("setSectionOrder persists to globalState", () => {
+    const gs = makeGlobalState({});
+    const provider = new SidebarViewProvider(makeExtensionUri(), gs);
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setSectionOrder(["dev", "fleet", "research"]);
+
+    expect(gs.update).toHaveBeenCalledWith("amicode.sectionOrder", ["dev", "fleet", "research"]);
+  });
+});
+
+// ── Section order resolution logic (#708) ────────────────────────────────────
+
+describe("resolveSectionOrder", () => {
+  let resolveSectionOrder: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    resolveSectionOrder = mod.resolveSectionOrder;
+  });
+
+  it("returns saved order filtered to available keys", () => {
+    expect(resolveSectionOrder(["fleet", "dev", "research"], ["research", "dev", "fleet"]))
+      .toEqual(["fleet", "dev", "research"]);
+  });
+
+  it("skips keys that have no content (disappeared section)", () => {
+    // Saved order has research, but no research projects exist
+    expect(resolveSectionOrder(["research", "dev", "fleet"], ["dev", "fleet"]))
+      .toEqual(["dev", "fleet"]);
+  });
+
+  it("appends new keys not in saved order at the end", () => {
+    // Saved order is ["dev", "fleet"], research is new
+    expect(resolveSectionOrder(["dev", "fleet"], ["research", "dev", "fleet"]))
+      .toEqual(["dev", "fleet", "research"]);
+  });
+
+  it("preserves disappeared key's position when it reappears", () => {
+    // First: user reordered to fleet, research, dev
+    // Then research disappeared, saved = ["fleet", "research", "dev"]
+    // Now research reappears → it should be back at position 1
+    expect(resolveSectionOrder(["fleet", "research", "dev"], ["research", "dev", "fleet"]))
+      .toEqual(["fleet", "research", "dev"]);
+  });
+
+  it("returns default order when saved is empty", () => {
+    expect(resolveSectionOrder([], ["research", "dev", "fleet"]))
+      .toEqual(["research", "dev", "fleet"]);
+  });
+
+  it("returns empty when no keys are available", () => {
+    expect(resolveSectionOrder(["research", "dev", "fleet"], []))
+      .toEqual([]);
+  });
+});
+
+// ── Fleet unification + drag reorder — structural (#708) ─────────────────────
+
+describe("sidebar webview — section reorder structure", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRoots renders Fleet section dynamically via renderSectionHeader", () => {
+    // Fleet is rendered through the same renderSectionHeader function as Research and Dev
+    expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Fleet["']\s*,\s*["']fleet["']\s*\)/);
+  });
+
+  it("Fleet section expand/collapse state uses the shared sectionExpanded system", () => {
+    // Fleet's expand state is in sectionExpanded, not a separate variable
+    expect(src).toMatch(/sectionExpanded\.(fleet|["']fleet["'])/);
+    // The old standalone fleetExpanded variable should not exist
+    expect(src).not.toMatch(/let\s+fleetExpanded\b/);
+  });
+
+  it("renderRoots uses resolveSectionOrder to determine section order", () => {
+    expect(src).toContain("resolveSectionOrder");
+  });
+
+  it("renderRoots respects section-order message to set currentSectionOrder", () => {
+    // The section-order message handler updates the ordering state
+    expect(src).toMatch(/["']section-order["']/);
+  });
+
+  it("section header drag uses a 4px movement threshold before initiating", () => {
+    // DRAG_THRESHOLD constant of 4 pixels
+    expect(src).toMatch(/DRAG_THRESHOLD\s*=\s*4/);
+  });
+
+  it("drop indicator is created with 2px height and accent color", () => {
+    expect(src).toMatch(/2px/);
+    expect(src).toMatch(/focusBorder|--vscode-focusBorder/);
+  });
+
+  it("dragged section header gets reduced opacity", () => {
+    expect(src).toMatch(/opacity.*0\.5|0\.5.*opacity/);
+  });
+
+  it("Escape key cancels an active drag", () => {
+    expect(src).toContain("Escape");
+  });
+
+  it("drag completion posts set-section-order message", () => {
+    expect(src).toMatch(/set-section-order/);
+  });
+
+  it("getAllSections collects all sections uniformly from treeRoot children", () => {
+    // After Fleet unification, getAllSections no longer special-cases fleetSection
+    expect(src).not.toMatch(/if\s*\(\s*fleetSection\s*\)\s*sections\.push/);
+  });
 });
 
 // ── Section labels and text (#673 polish) ────────────────────────────────────
@@ -655,7 +889,7 @@ describe("sidebar webview — section labels", () => {
     const html = view.webview.html;
     // Section labels use border-top (not margin-top) so collapsed headers are tight
     expect(html).toMatch(/\.tree-section-label\s*\{[^}]*border-top:/);
-    expect(html).toMatch(/\.fleet-section-label\s*\{[^}]*border-top:/);
+    // Fleet section now uses the same .tree-section-label class (no separate .fleet-section-label)
     expect(html).not.toMatch(/\.tree-section-label\s*\{[^}]*margin-top:/);
     // Pixel-positioned layout: .sidebar-sections is position:relative
     expect(html).toMatch(/\.sidebar-sections\s*\{[^}]*position:\s*relative/);
@@ -667,23 +901,25 @@ describe("sidebar webview — section labels", () => {
     expect(html).toMatch(/\.section-body\.expanded\s*\{[^}]*overflow-y:\s*auto/);
   });
 
-  it("fleet section is a collapsible section with 'Coming soon' body, not a static div", () => {
+  it("fleet section is rendered dynamically via renderSectionHeader, not as static HTML", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
 
     const html = view.webview.html;
-    // Has a fleet section label with the collapsible class
-    expect(html).toContain("fleet-section-label");
-    // Contains Fleet text as a section header
-    expect(html).toMatch(/Fleet/);
-    // Contains "Coming soon" body text
-    expect(html).toContain("Coming soon");
-    // Has a chevron for expand/collapse
-    expect(html).toContain("fleet-chevron");
-    // No longer uses the old static fleet-placeholder
-    expect(html).not.toContain("fleet-placeholder");
+    // Fleet is no longer in the static HTML template — it's rendered by JS
+    expect(html).not.toContain("fleet-section-label");
+    expect(html).not.toContain("fleet-chevron");
+    expect(html).not.toContain('id="fleet-section"');
+    // The webview source renders Fleet via renderSectionHeader("Fleet", "fleet")
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Fleet["']\s*,\s*["']fleet["']\s*\)/);
+    // Contains "Coming soon" as dynamically inserted text
+    expect(src).toContain("Coming soon");
   });
 });
 
@@ -1857,16 +2093,21 @@ describe("sidebar — chevron style", () => {
     expect(src).not.toContain("\\u25BE");
   });
 
-  it("fleet chevron in static HTML does not use filled triangle entity", async () => {
+  it("fleet chevron is now rendered dynamically (no static HTML entity to check)", async () => {
     vi.resetModules();
     const { SidebarViewProvider } = await import("../src/sidebar_view");
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
     const html = view.webview.html;
-    // Must not contain the old filled triangle HTML entity
-    expect(html).not.toContain("&#9656;");
-    expect(html).not.toContain("&#9662;");
+    // Fleet section is no longer in static HTML — no fleet-chevron entity to check
+    expect(html).not.toContain("fleet-chevron");
+    // The webview JS uses the same \\u203A chevron as all sections
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    expect(src).toContain("\\u203A");
   });
 });
 

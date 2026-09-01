@@ -114,20 +114,21 @@ function createIconEl(icon: string): HTMLElement {
   });
 
   // ── Fleet section toggle ──────────────────────────────────────────────────
+  // (Fleet is now rendered dynamically by renderRoots — no static toggle needed)
 
-  const fleetToggle = document.getElementById("fleet-toggle");
-  const fleetChevron = document.getElementById("fleet-chevron");
-  const fleetBody = document.getElementById("fleet-body");
-  const fleetSection = document.getElementById("fleet-section");
-  let fleetExpanded = false;
+  // ── Section order state ──────────────────────────────────────────────────
+  let currentSectionOrder: string[] = ["research", "dev", "fleet"];
 
-  fleetToggle?.addEventListener("click", () => {
-    fleetExpanded = !fleetExpanded;
-    if (fleetChevron) fleetChevron.classList.toggle("expanded", fleetExpanded);
-    if (fleetBody && fleetSection) {
-      toggleSectionBody(fleetBody, fleetExpanded, fleetSection);
+  /** Resolve rendering order: saved keys filtered to available, new keys appended. */
+  function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
+    const availableSet = new Set(available);
+    const ordered = savedOrder.filter((key) => availableSet.has(key));
+    const orderedSet = new Set(ordered);
+    for (const key of available) {
+      if (!orderedSet.has(key)) ordered.push(key);
     }
-  });
+    return ordered;
+  }
 
   // ── Inline editing (VS Code explorer-style) ────────────────────────────────
 
@@ -454,7 +455,6 @@ function createIconEl(icon: string): HTMLElement {
         }
       }
     }
-    if (fleetSection) sections.push(fleetSection);
     return sections;
   }
 
@@ -646,12 +646,17 @@ function createIconEl(icon: string): HTMLElement {
 
   // Restore section expanded state (separate from tree node expanded state)
   const sectionExpanded: Record<string, boolean> = savedState?.expanded
-    ? { research: savedState.expanded["__section_research"] !== false, dev: savedState.expanded["__section_dev"] !== false }
-    : { research: true, dev: true };
+    ? {
+        research: savedState.expanded["__section_research"] !== false,
+        dev: savedState.expanded["__section_dev"] !== false,
+        fleet: savedState.expanded["__section_fleet"] !== false,
+      }
+    : { research: true, dev: true, fleet: false };
 
   function saveSectionState(): void {
     expanded["__section_research"] = sectionExpanded.research;
     expanded["__section_dev"] = sectionExpanded.dev;
+    expanded["__section_fleet"] = sectionExpanded.fleet;
     saveExpandedState();
   }
 
@@ -753,11 +758,16 @@ function createIconEl(icon: string): HTMLElement {
     section.appendChild(body);
 
     header.addEventListener("click", () => {
+      // Only toggle if not coming from a drag
+      if (dragState?.active) return;
       sectionExpanded[sectionKey] = !sectionExpanded[sectionKey];
       saveSectionState();
       chevron.classList.toggle("expanded", sectionExpanded[sectionKey]);
       toggleSectionBody(body, sectionExpanded[sectionKey], section);
     });
+
+    // Wire drag-reorder on section headers
+    setupSectionDrag(header, sectionKey, section);
 
     return { section, body };
   }
@@ -767,29 +777,173 @@ function createIconEl(icon: string): HTMLElement {
     currentRoots = roots;
     treeRoot.innerHTML = "";
 
-    // Group: research first, then dev
+    // Group roots by project type
     const research = roots.filter((r) => r.projectType === "research");
     const dev = roots.filter((r) => r.projectType === "dev");
 
-    if (research.length > 0) {
-      const { section, body } = renderSectionHeader("Research Projects", "research");
-      for (const root of research) {
-        body.appendChild(renderRootNode(root, 0));
-      }
-      treeRoot.appendChild(section);
-    }
+    // Determine which section keys have content right now
+    const available: string[] = [];
+    if (research.length > 0) available.push("research");
+    if (dev.length > 0) available.push("dev");
+    available.push("fleet"); // Fleet always has content (Coming soon placeholder)
 
-    if (dev.length > 0) {
-      const { section, body } = renderSectionHeader("Development Projects", "dev");
-      for (const root of dev) {
-        body.appendChild(renderRootNode(root, 0));
+    // Resolve rendering order using persisted section order
+    const renderOrder = resolveSectionOrder(currentSectionOrder, available);
+
+    for (const key of renderOrder) {
+      if (key === "research" && research.length > 0) {
+        const { section, body } = renderSectionHeader("Research Projects", "research");
+        for (const root of research) {
+          body.appendChild(renderRootNode(root, 0));
+        }
+        treeRoot.appendChild(section);
+      } else if (key === "dev" && dev.length > 0) {
+        const { section, body } = renderSectionHeader("Development Projects", "dev");
+        for (const root of dev) {
+          body.appendChild(renderRootNode(root, 0));
+        }
+        treeRoot.appendChild(section);
+      } else if (key === "fleet") {
+        const { section, body } = renderSectionHeader("Fleet", "fleet");
+        const placeholder = document.createElement("div");
+        placeholder.className = "fleet-placeholder-text";
+        placeholder.textContent = "Coming soon";
+        body.appendChild(placeholder);
+        treeRoot.appendChild(section);
       }
-      treeRoot.appendChild(section);
     }
 
     updateSashes();
     layoutSections();
   }
+
+  // ── Section drag-reorder (#708) ──────────────────────────────────────────
+
+  const DRAG_THRESHOLD = 4; // px of vertical movement before drag initiates
+  let dragState: {
+    sectionKey: string;
+    sectionEl: HTMLElement;
+    headerEl: HTMLElement;
+    startY: number;
+    active: boolean;
+    indicator: HTMLElement | null;
+  } | null = null;
+
+  function setupSectionDrag(headerEl: HTMLElement, sectionKey: string, sectionEl: HTMLElement): void {
+    headerEl.addEventListener("mousedown", (e: MouseEvent) => {
+      if (e.button !== 0) return; // left-click only
+      dragState = {
+        sectionKey,
+        sectionEl,
+        headerEl,
+        startY: e.clientY,
+        active: false,
+        indicator: null,
+      };
+
+      const onMouseMove = (me: MouseEvent) => {
+        if (!dragState) return;
+
+        if (!dragState.active) {
+          // Check threshold
+          if (Math.abs(me.clientY - dragState.startY) < DRAG_THRESHOLD) return;
+          dragState.active = true;
+          dragState.headerEl.style.opacity = "0.5";
+
+          // Create drop indicator
+          const indicator = document.createElement("div");
+          indicator.className = "section-drop-indicator";
+          indicator.style.cssText = "position:absolute;left:0;right:0;height:2px;background:var(--vscode-focusBorder);z-index:100;pointer-events:none;display:none;";
+          sidebarSections?.appendChild(indicator);
+          dragState.indicator = indicator;
+        }
+
+        // Position the drop indicator
+        if (dragState.indicator && sidebarSections) {
+          const sections = getAllSections();
+          let insertBeforeIdx = sections.length; // default: end
+          for (let i = 0; i < sections.length; i++) {
+            const rect = sections[i].getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (me.clientY < midY) {
+              insertBeforeIdx = i;
+              break;
+            }
+          }
+          // Skip if dropping onto self (no visual change)
+          const currentIdx = sections.indexOf(dragState.sectionEl);
+          if (insertBeforeIdx === currentIdx || insertBeforeIdx === currentIdx + 1) {
+            dragState.indicator.style.display = "none";
+          } else {
+            // Position the indicator at the gap
+            const targetSection = sections[insertBeforeIdx] ?? sections[sections.length - 1];
+            if (targetSection && insertBeforeIdx < sections.length) {
+              dragState.indicator.style.top = targetSection.style.top;
+            } else if (sections.length > 0) {
+              const last = sections[sections.length - 1];
+              dragState.indicator.style.top = `${parseFloat(last.style.top) + parseFloat(last.style.height)}px`;
+            }
+            dragState.indicator.style.display = "block";
+          }
+        }
+      };
+
+      const completeDrag = (me: MouseEvent) => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", completeDrag);
+
+        if (!dragState) return;
+        const wasActive = dragState.active;
+
+        // Clean up visuals
+        dragState.headerEl.style.opacity = "";
+        dragState.indicator?.remove();
+
+        if (wasActive) {
+          // Compute new order
+          const sections = getAllSections();
+          let insertBeforeIdx = sections.length;
+          for (let i = 0; i < sections.length; i++) {
+            const rect = sections[i].getBoundingClientRect();
+            const midY = rect.top + rect.height / 2;
+            if (me.clientY < midY) {
+              insertBeforeIdx = i;
+              break;
+            }
+          }
+
+          const currentIdx = sections.indexOf(dragState.sectionEl);
+          if (insertBeforeIdx !== currentIdx && insertBeforeIdx !== currentIdx + 1) {
+            // Build new order from DOM sections
+            const keys = sections.map((s) => s.dataset.sectionKey!);
+            const draggedKey = keys.splice(currentIdx, 1)[0];
+            const adjustedIdx = insertBeforeIdx > currentIdx ? insertBeforeIdx - 1 : insertBeforeIdx;
+            keys.splice(adjustedIdx, 0, draggedKey);
+
+            // Update state and re-render
+            currentSectionOrder = keys;
+            vscode.postMessage({ kind: "set-section-order", order: keys });
+            renderRoots(currentRoots);
+          }
+        }
+
+        dragState = null;
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", completeDrag);
+    });
+  }
+
+  // Cancel drag on Escape key
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
+    if (e.key === "Escape" && dragState?.active) {
+      dragState.headerEl.style.opacity = "";
+      dragState.indicator?.remove();
+      dragState = null;
+    }
+  });
+
 
   function renderRootNode(root: TreeRoot, depth: number): HTMLElement {
     const container = document.createElement("div");
@@ -1180,6 +1334,16 @@ function createIconEl(icon: string): HTMLElement {
                   vscode.postMessage({ kind: "get-children", path: nodePath });
                 }
               }
+            } else {
+              // Safety net: the node was already expanded (persisted state or
+              // prior click), but the children container may still be empty —
+              // e.g. the initial renderRootNode's get-children hasn't resolved
+              // yet, or a roots re-render invalidated the DOM. If the cache is
+              // empty and no children are rendered, ensure a request is in flight.
+              const childrenEl = el.querySelector(".children") as HTMLElement | null;
+              if (childrenEl && !childrenEl.hasChildNodes() && !childrenCache[nodePath]) {
+                vscode.postMessage({ kind: "get-children", path: nodePath });
+              }
             }
           } else {
             row.style.borderLeft = "";
@@ -1275,12 +1439,25 @@ function createIconEl(icon: string): HTMLElement {
         }
         break;
       }
+
+      case "section-order": {
+        // Host replays the persisted section order on webview resolve
+        if (Array.isArray(msg.order)) {
+          currentSectionOrder = msg.order;
+          // Re-render with the new order if we already have roots
+          if (currentRoots.length > 0) {
+            renderRoots(currentRoots);
+          }
+        }
+        break;
+      }
     }
   });
 
   // ── Initial load ───────────────────────────────────────────────────────────
 
-  // Position the fleet section immediately (roots arrive async via get-roots)
-  layoutSections();
+  // Sections are now all dynamic (rendered by renderRoots). Roots arrive async
+  // via get-roots; the section-order message from the host sets currentSectionOrder
+  // before roots arrive so they render in the saved order.
   vscode.postMessage({ kind: "get-roots" });
 })();

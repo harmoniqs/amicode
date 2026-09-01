@@ -287,9 +287,14 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private workspaceSub?: vscode.Disposable;
   private gitSubs: vscode.Disposable[] = [];
   private treeService: SidebarTreeService;
+  private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
 
-  constructor(extensionUri: vscode.Uri) {
+  static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
+  private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
+
+  constructor(extensionUri: vscode.Uri, globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> }) {
     this.extensionUri = extensionUri;
+    this.globalState = globalState;
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
@@ -358,6 +363,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         postMessage: (m) => {
           void webviewView.webview.postMessage(m);
         },
+        setSectionOrder: (order) => this.setSectionOrder(order),
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -381,6 +387,23 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       this.gitSubs = [];
       this.view = undefined;
     });
+
+    // Replay stored active-project state. setActiveProject may have been
+    // called before the webview was resolved (sidebar hidden, or the chat
+    // selected a project before the sidebar mounted). The postDown at that
+    // time was a no-op (this.view was undefined). Now that the view exists,
+    // push the stored path so the webview highlights + expands it.
+    if (this.activeProjectPath !== undefined) {
+      this.postDown({ kind: "active-project", path: this.activeProjectPath });
+    }
+
+    // Replay saved section order so the webview renders sections in the
+    // user's preferred order. Falls back to the default if nothing is saved.
+    const savedOrder = this.globalState?.get(
+      SidebarViewProvider.SECTION_ORDER_KEY,
+      SidebarViewProvider.DEFAULT_SECTION_ORDER,
+    ) as string[] | undefined;
+    this.postDown({ kind: "section-order", order: savedOrder ?? SidebarViewProvider.DEFAULT_SECTION_ORDER });
   }
 
   /** Push chat-active state to the webview so it can dim the button. */
@@ -400,6 +423,17 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     if (this.activeProjectPath === projectPath) return; // deduplicate
     this.activeProjectPath = projectPath;
     this.postDown({ kind: "active-project", path: projectPath });
+  }
+
+  /**
+   * Persist a new section order to globalState and push it to the webview.
+   * Called when the user completes a drag-reorder in the sidebar.
+   */
+  setSectionOrder(order: string[]): void {
+    if (this.globalState) {
+      void this.globalState.update(SidebarViewProvider.SECTION_ORDER_KEY, order);
+    }
+    this.postDown({ kind: "section-order", order });
   }
 
   private postDown(msg: SidebarDownMessage): void {
@@ -799,38 +833,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .section-add-btn:hover {
       background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
     }
-    .fleet-section-label {
-      display: flex;
-      align-items: center;
-      cursor: pointer;
-      user-select: none;
-      font-size: 11px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      padding: 6px 8px 4px 2px;
-      border-top: 1px solid var(--vscode-sideBarSectionHeader-border, var(--vscode-panel-border));
-      color: var(--vscode-sideBarSectionHeader-foreground, var(--vscode-descriptionForeground));
-      font-weight: 600;
-      flex-shrink: 0;
-    }
-    .fleet-section-label:hover {
-      background: var(--vscode-list-hoverBackground);
-    }
-    .fleet-section-label .fleet-chevron {
-      width: 16px;
-      height: 16px;
-      margin-right: 4px;
-      flex-shrink: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      transition: transform 0.15s ease;
-    }
-    .fleet-section-label .fleet-chevron.expanded {
-      transform: rotate(90deg);
-    }
-    .fleet-body {
+    .fleet-placeholder-text {
       padding: 8px 12px 8px 32px;
       font-size: 12px;
       color: var(--vscode-descriptionForeground);
@@ -896,13 +899,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   </div>
   <div class="sidebar-sections">
     <div id="tree-root"></div>
-    <div id="fleet-section" class="section" data-section-key="fleet">
-      <div class="fleet-section-label" id="fleet-toggle">
-        <span class="fleet-chevron" id="fleet-chevron">&#8250;</span>
-        <span>Fleet</span>
-      </div>
-      <div class="fleet-body section-body" id="fleet-body" style="display:none;">Coming soon</div>
-    </div>
   </div>
   <script nonce="${nonce}">window.__iconTheme = ${iconThemeJson};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>

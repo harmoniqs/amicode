@@ -45,6 +45,7 @@ export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: stri
 export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
+export type SectionOrderMessage = { kind: "section-order"; order: string[] };
 
 export type SidebarDownMessage =
   | ChatActiveMessage
@@ -54,7 +55,8 @@ export type SidebarDownMessage =
   | FileOpErrorMessage
   | FileOpOkMessage
   | ActiveProjectMessage
-  | GitStatusMessage;
+  | GitStatusMessage
+  | SectionOrderMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
@@ -65,6 +67,7 @@ export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
 export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
+export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
 
 export type SidebarUpMessage =
   | OpenChatMessage
@@ -73,11 +76,34 @@ export type SidebarUpMessage =
   | GetRootsMessage
   | GetChildrenMessage
   | OpenFileMessage
-  | FileOpMessage;
+  | FileOpMessage
+  | SetSectionOrderMessage;
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
 export type SidebarMessage = SidebarUpMessage | SidebarDownMessage;
+
+// ── Section order resolution ─────────────────────────────────────────────────
+
+/**
+ * Resolve the rendering order for sidebar sections.
+ *
+ * @param savedOrder  The persisted order array (may contain keys not currently available).
+ * @param available   The set of section keys that currently have content.
+ * @returns           The order in which sections should render — saved keys filtered to
+ *                    available, then any new keys appended at the end.
+ */
+export function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
+  const availableSet = new Set(available);
+  // Start with saved keys that are currently available (preserves user order + position)
+  const ordered = savedOrder.filter((key) => availableSet.has(key));
+  // Append any available keys not in the saved order (new sections)
+  const orderedSet = new Set(ordered);
+  for (const key of available) {
+    if (!orderedSet.has(key)) ordered.push(key);
+  }
+  return ordered;
+}
 
 // ── Handler ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +116,7 @@ export interface SidebarMessageHandlers {
   openFile: (path: string) => void;
   fileOp: (req: FileOpRequest) => Promise<FileOpResult>;
   postMessage: (msg: SidebarDownMessage) => void;
+  setSectionOrder: (order: string[]) => void;
 }
 
 /**
@@ -119,9 +146,18 @@ export function handleSidebarMessage(
     case "get-children":
       return handlers.getChildren(msg.path).then((entries) => {
         handlers.postMessage({ kind: "children", path: msg.path, entries });
+      }).catch(() => {
+        // Never silently drop a response — the webview would show an empty
+        // expanded folder forever. Send an empty array so the cache is at
+        // least populated and a retry (fs-changed, active-project safety net)
+        // can recover.
+        handlers.postMessage({ kind: "children", path: msg.path, entries: [] });
       });
     case "open-file":
       handlers.openFile(msg.path);
+      break;
+    case "set-section-order":
+      handlers.setSectionOrder(msg.order);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;
@@ -150,6 +186,7 @@ export function handleSidebarMessage(
     case "file-op-ok":
     case "active-project":
     case "git-status":
+    case "section-order":
       // Down-direction messages — no host-side handler needed.
       break;
   }
