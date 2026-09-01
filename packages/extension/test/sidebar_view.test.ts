@@ -1869,3 +1869,120 @@ describe("sidebar — chevron style", () => {
     expect(html).not.toContain("&#9662;");
   });
 });
+
+// ── New Project command (#698) ───────────────────────────────────────────────
+
+describe("createNewProject — command flow", () => {
+  let createNewProject: any;
+  let vs: typeof vscode;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vs = await import("vscode") as typeof vscode;
+    const mod = await import("../src/sidebar_view");
+    createNewProject = mod.createNewProject;
+  });
+
+  it("shows a warning and returns when the server is not ready", async () => {
+    const warn = vi.spyOn(vs.window, "showWarningMessage");
+    const dialog = vi.spyOn(vs.window, "showSaveDialog");
+
+    await createNewProject({ isServerReady: () => false, launchSession: vi.fn() });
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("server"));
+    expect(dialog).not.toHaveBeenCalled();
+  });
+
+  it("opens a save dialog so the user can type a project folder name", async () => {
+    const dialog = vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(undefined);
+
+    await createNewProject({ isServerReady: () => true, launchSession: vi.fn() });
+
+    expect(dialog).toHaveBeenCalledWith(
+      expect.objectContaining({ saveLabel: "Create" }),
+    );
+  });
+
+  it("cancelling the dialog is a silent no-op", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(undefined);
+    const launch = vi.fn();
+
+    await createNewProject({ isServerReady: () => true, launchSession: launch });
+
+    expect(launch).not.toHaveBeenCalled();
+  });
+
+  it("creates the directory and adds it to the workspace", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/home/user/quantum-sim") as any);
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    const mkdir = vi.fn();
+
+    await createNewProject({ isServerReady: () => true, launchSession: vi.fn(), mkdirSync: mkdir });
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user/quantum-sim", expect.objectContaining({ recursive: true }));
+    expect(updateFolders).toHaveBeenCalledWith(
+      expect.any(Number), 0,
+      expect.objectContaining({ uri: expect.objectContaining({ fsPath: "/home/user/quantum-sim" }) }),
+    );
+  });
+
+  it("launches a session with /create-research-project carrying the selected path", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/home/user/quantum-sim") as any);
+    const launch = vi.fn();
+
+    await createNewProject({ isServerReady: () => true, launchSession: launch, mkdirSync: vi.fn() });
+
+    expect(launch).toHaveBeenCalledWith(expect.stringContaining("/create-research-project"));
+    const prompt = launch.mock.calls[0][0] as string;
+    expect(prompt).toContain("--path");
+    expect(prompt).toContain("/home/user/quantum-sim");
+  });
+
+  it("warns but still launches when the folder is already in the workspace", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/existing/project") as any);
+    (vs.workspace as any).workspaceFolders = [
+      { uri: vs.Uri.file("/existing/project"), name: "project", index: 0 },
+    ];
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    const warn = vi.spyOn(vs.window, "showWarningMessage");
+    const launch = vi.fn();
+
+    await createNewProject({ isServerReady: () => true, launchSession: launch, mkdirSync: vi.fn() });
+
+    expect(updateFolders).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("already"));
+    expect(launch).toHaveBeenCalledWith(expect.stringContaining("/create-research-project"));
+
+    (vs.workspace as any).workspaceFolders = [];
+  });
+
+  it("does not show an input box — the skill interview handles the project name", async () => {
+    vi.spyOn(vs.window, "showSaveDialog").mockResolvedValue(vs.Uri.file("/home/user/quantum-sim") as any);
+    const inputBox = vi.spyOn(vs.window, "showInputBox");
+
+    await createNewProject({ isServerReady: () => true, launchSession: vi.fn(), mkdirSync: vi.fn() });
+
+    expect(inputBox).not.toHaveBeenCalled();
+  });
+});
+
+// ── New Project wiring in extension.ts (#698) ────────────────────────────────
+
+describe("amicode.newProject command wiring", () => {
+  it("uses openOrReveal (current tab) and posts a navigate envelope", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "extension.ts"),
+      "utf8",
+    );
+    const cmdStart = src.indexOf('"amicode.newProject"');
+    expect(cmdStart).toBeGreaterThan(-1);
+    const cmdBlock = src.slice(cmdStart, cmdStart + 800);
+
+    expect(cmdBlock).toContain("openOrReveal");
+    expect(cmdBlock).not.toContain("openNew");
+    expect(cmdBlock).toContain('"navigate"');
+    expect(cmdBlock).toContain("autoSend=1");
+    expect(cmdBlock).toContain("postMessage");
+    expect(cmdBlock).toContain("onAppReady");
+  });
+});

@@ -7,7 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { SidebarViewProvider } from "./sidebar_view";
+import { SidebarViewProvider, createNewProject } from "./sidebar_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -1655,6 +1655,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       draftUrl.hash = "";
       ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
+    // New Project: sidebar button → save dialog (user types folder name) →
+    // mkdir → workspace → session with /create-research-project auto-sent.
+    // Session opens in the CURRENT chat tab (openOrReveal); the navigate
+    // envelope tells the iframe's AmicodeNavigateBridge to create a new
+    // in-app draft tab. Dual-send: immediate (existing panel) + onAppReady
+    // (new panel). Only one path fires per case.
+    vscode.commands.registerCommand("amicode.newProject", () =>
+      createNewProject({
+        isServerReady: () => !!opencodeReadyUrl,
+        launchSession: (prompt: string) => {
+          const readyUrl = opencodeReadyUrl;
+          if (!readyUrl) return;
+          const panel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          const encodedPrompt = encodeURIComponent(prompt);
+          const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+          const envelope = { source: "amicode", kind: "navigate", path: navPath };
+          const send = () => void panel.postMessage(envelope);
+          send();                        // immediate — existing panel (app loaded)
+          ChatPanel.onAppReady(send);    // deferred — new panel (app mounting)
+        },
+      }),
+    ),
     // Chat Deck: MANY panes inside ONE editor tab — tab strips, drag-to-split,
     // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
     // other chat entries. The deck shares the one server with every ChatPanel.

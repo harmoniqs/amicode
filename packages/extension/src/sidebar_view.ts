@@ -10,6 +10,7 @@
 import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry } from "./sidebar_bridge";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { detectProjectType } from "./project/detect";
@@ -966,6 +967,58 @@ function getNonce(): string {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return result;
+}
+
+// ── New project command (#698) ────────────────────────────────────────────────
+
+/** Context dependencies injected by extension.ts when registering the command. */
+export interface NewProjectContext {
+  isServerReady: () => boolean;
+  launchSession: (prompt: string) => void;
+  /** Override for testing — defaults to fs.mkdirSync. */
+  mkdirSync?: (dir: string, opts?: { recursive?: boolean }) => void;
+}
+
+/**
+ * "New Project" flow: save-dialog (user types folder name) → mkdir → workspace → session.
+ * Exported for testing; the amicode.newProject command delegates here.
+ */
+export async function createNewProject(ctx: NewProjectContext): Promise<void> {
+  if (!ctx.isServerReady()) {
+    void vscode.window.showWarningMessage(
+      "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+    );
+    return;
+  }
+
+  const uri = await vscode.window.showSaveDialog({
+    title: "Name your new project",
+    saveLabel: "Create",
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), "my-project")),
+  });
+  if (!uri) return;
+
+  const dir = uri.fsPath;
+  const mkdir = ctx.mkdirSync ?? ((d: string, o?: { recursive?: boolean }) => fs.mkdirSync(d, o));
+  try {
+    mkdir(dir, { recursive: true });
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Amicode: could not create project directory — ${(e as Error).message}`);
+    return;
+  }
+
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const alreadyInWorkspace = folders.some((f) => f.uri.fsPath === dir);
+  if (alreadyInWorkspace) {
+    void vscode.window.showWarningMessage(
+      `"${path.basename(dir)}" is already in the workspace — opening a session for it.`,
+    );
+  } else {
+    vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(dir) });
+  }
+
+  const prompt = `/create-research-project --path "${dir}"`;
+  ctx.launchSession(prompt);
 }
 
 /** Open a folder picker and add selected folder(s) to the workspace. */

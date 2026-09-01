@@ -37,6 +37,7 @@
   "activationEvents": [
     "onCommand:amicode.openChat",
     "onCommand:amicode.newChat",
+    "onCommand:amicode.newProject",
     "onCommand:amicode.chatDeck",
     "onView:amicode.workspace",
     "onStartupFinished"
@@ -81,6 +82,11 @@
         "command": "amicode.newChat",
         "title": "Amicode: New Chat (Side by Side)",
         "icon": "$(add)"
+      },
+      {
+        "command": "amicode.newProject",
+        "title": "Amicode: New Project",
+        "icon": "$(new-folder)"
       },
       {
         "command": "amicode.chatDeck",
