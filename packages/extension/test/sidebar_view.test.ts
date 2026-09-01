@@ -1662,17 +1662,19 @@ describe("sidebar — drag image pill", () => {
 // ── Section collapse/expand animation ────────────────────────────────────────
 
 describe("sidebar — section toggle animation", () => {
-  it("section body CSS has transition on height for animated expand/collapse", async () => {
-    vi.resetModules();
-    const { SidebarViewProvider } = await import("../src/sidebar_view");
-    const provider = new SidebarViewProvider(makeExtensionUri());
-    const view = makeWebviewView();
-    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
-    const html = view.webview.html;
-    // section-body must have a transition property for smooth expand/collapse
-    expect(html).toMatch(/\.section-body[^}]*transition/s);
+  it("webview uses requestAnimationFrame for section expand/collapse, not CSS transitions", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must use requestAnimationFrame for smooth animation
+    expect(src).toContain("requestAnimationFrame");
+    // Must have an animation helper
+    expect(src).toMatch(/toggleSectionBody/);
     // Must use overflow hidden during animation
-    expect(html).toMatch(/\.section-body[^}]*overflow/s);
+    expect(src).toMatch(/overflow.*hidden/);
+    // Must measure content height via scrollHeight or offsetHeight
+    expect(src).toMatch(/scrollHeight|offsetHeight/);
   });
 
   it("webview uses animated toggle for section expand/collapse, not instant display swap", () => {
@@ -1680,11 +1682,9 @@ describe("sidebar — section toggle animation", () => {
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // Must have an animation helper (toggleSectionAnimated or similar)
+    // Must have the animation helper
     expect(src).toMatch(/toggleSection|animateSection|section.*animate/i);
-    // Must NOT use bare display none/block for section body toggle
-    // (the old pattern was: body.style.display = ... ? "block" : "none")
-    // New pattern should use height transition (not max-height)
+    // Must animate height
     expect(src).toMatch(/\.height\s*=|offsetHeight|scrollHeight/);
   });
 

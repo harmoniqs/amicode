@@ -613,7 +613,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       flex: 1;
       overflow: hidden;
       min-height: 0;
-      transition: height 0.2s cubic-bezier(0.1, 0.9, 0.2, 1);
     }
     .section-body.expanded {
       overflow-y: auto;

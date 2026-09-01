@@ -534,73 +534,76 @@ function createIconEl(icon: string): HTMLElement {
 
   /**
    * Animated expand/collapse for section bodies (RESEARCH PROJECTS,
-   * DEVELOPMENT PROJECTS, FLEET). Uses a height CSS transition that
-   * works WITH the flex layout instead of fighting it.
-   *
-   * Expand: add .expanded to section first (so flex allocates space),
-   * measure the flex-computed target height, animate body from 0 to
-   * that target, then release the explicit height so flex owns it.
-   *
-   * Collapse: pin the body's current height, remove .expanded (flex
-   * releases), animate body to 0, then hide.
+   * DEVELOPMENT PROJECTS, FLEET). Driven by requestAnimationFrame so
+   * we have full control over every frame — CSS transitions fought the
+   * flex layout and caused jitter.
    *
    * File tree .children toggling remains instant (display none/block).
    */
+  const SECTION_ANIM_MS = 200;
+
+  function easeOutCubic(t: number): number {
+    return 1 - Math.pow(1 - t, 3);
+  }
+
   function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
     // Cancel any in-flight animation
-    if ((body as any)._sectionAnimEnd) {
-      body.removeEventListener("transitionend", (body as any)._sectionAnimEnd);
-      (body as any)._sectionAnimEnd = null;
+    if ((body as any)._sectionAnimId) {
+      cancelAnimationFrame((body as any)._sectionAnimId);
+      (body as any)._sectionAnimId = null;
     }
 
     if (expanding) {
-      // 1. Show the body and add .expanded to section so flex allocates space
+      // Measure content height before animation
       body.style.display = "block";
-      body.classList.remove("expanded");
-      section.classList.add("expanded");
-      resetSectionSizes();
-
-      // 2. Let flex compute the target height
-      //    (body has flex:1 inside section.expanded, so it fills the space)
-      void body.offsetHeight;
-      const targetHeight = body.offsetHeight;
-
-      // 3. Pin at 0 and animate to the flex-computed target
+      body.style.height = "auto";
+      body.style.overflow = "hidden";
+      const targetHeight = body.scrollHeight;
       body.style.height = "0px";
-      void body.offsetHeight;
-      body.style.height = targetHeight + "px";
 
-      const onEnd = () => {
-        body.removeEventListener("transitionend", onEnd);
-        (body as any)._sectionAnimEnd = null;
-        // Release explicit height — flex takes over seamlessly (same value)
-        body.style.height = "";
-        body.classList.add("expanded");
+      const start = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min((now - start) / SECTION_ANIM_MS, 1);
+        body.style.height = (targetHeight * easeOutCubic(t)) + "px";
+        if (t < 1) {
+          (body as any)._sectionAnimId = requestAnimationFrame(tick);
+        } else {
+          (body as any)._sectionAnimId = null;
+          // Release to flex
+          body.style.height = "";
+          body.style.overflow = "";
+          body.classList.add("expanded");
+          section.classList.add("expanded");
+          resetSectionSizes();
+        }
       };
-      (body as any)._sectionAnimEnd = onEnd;
-      body.addEventListener("transitionend", onEnd);
-    } else {
-      // 1. Pin the body at its current flex-computed height
-      body.classList.remove("expanded");
-      const currentHeight = body.offsetHeight;
-      body.style.height = currentHeight + "px";
+      (body as any)._sectionAnimId = requestAnimationFrame(tick);
 
-      // 2. Remove flex:1 — but the pinned height holds the size stable
+    } else {
+      // Pin current height before collapsing
+      body.classList.remove("expanded");
+      const startHeight = body.offsetHeight;
+      body.style.overflow = "hidden";
+      body.style.height = startHeight + "px";
+
+      // Remove flex immediately — pinned height holds size stable
       section.classList.remove("expanded");
       resetSectionSizes();
 
-      // 3. Force reflow then animate to 0
-      void body.offsetHeight;
-      body.style.height = "0px";
-
-      const onEnd = () => {
-        body.removeEventListener("transitionend", onEnd);
-        (body as any)._sectionAnimEnd = null;
-        body.style.display = "none";
-        body.style.height = "";
+      const start = performance.now();
+      const tick = (now: number) => {
+        const t = Math.min((now - start) / SECTION_ANIM_MS, 1);
+        body.style.height = (startHeight * (1 - easeOutCubic(t))) + "px";
+        if (t < 1) {
+          (body as any)._sectionAnimId = requestAnimationFrame(tick);
+        } else {
+          (body as any)._sectionAnimId = null;
+          body.style.display = "none";
+          body.style.height = "";
+          body.style.overflow = "";
+        }
       };
-      (body as any)._sectionAnimEnd = onEnd;
-      body.addEventListener("transitionend", onEnd);
+      (body as any)._sectionAnimId = requestAnimationFrame(tick);
     }
   }
 
