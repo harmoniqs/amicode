@@ -124,9 +124,9 @@ function createIconEl(icon: string): HTMLElement {
   fleetToggle?.addEventListener("click", () => {
     fleetExpanded = !fleetExpanded;
     if (fleetChevron) fleetChevron.textContent = fleetExpanded ? "\u25BE" : "\u25B8"; // ▾ / ▸
-    if (fleetBody) fleetBody.style.display = fleetExpanded ? "block" : "none";
-    fleetSection?.classList.toggle("expanded", fleetExpanded);
-    resetSectionSizes();
+    if (fleetBody && fleetSection) {
+      toggleSectionBody(fleetBody, fleetExpanded, fleetSection);
+    }
   });
 
   // ── Inline editing (VS Code explorer-style) ────────────────────────────────
@@ -532,6 +532,49 @@ function createIconEl(icon: string): HTMLElement {
     saveExpandedState();
   }
 
+  /**
+   * Animated expand/collapse for section bodies (RESEARCH PROJECTS,
+   * DEVELOPMENT PROJECTS, FLEET). Uses a max-height CSS transition.
+   * File tree .children toggling remains instant (display none/block).
+   */
+  function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
+    if (expanding) {
+      // Show the element so we can measure it
+      body.style.display = "block";
+      body.style.maxHeight = "0px";
+      body.classList.remove("expanded");
+      // Force reflow so the browser registers maxHeight: 0
+      void body.offsetHeight;
+      // Animate to content height
+      body.style.maxHeight = body.scrollHeight + "px";
+      const onEnd = () => {
+        body.removeEventListener("transitionend", onEnd);
+        // Remove the fixed max-height so the section can flex freely
+        body.style.maxHeight = "";
+        body.classList.add("expanded");
+        section.classList.add("expanded");
+        resetSectionSizes();
+      };
+      body.addEventListener("transitionend", onEnd);
+    } else {
+      // Pin current height so we can transition from it
+      body.classList.remove("expanded");
+      body.style.maxHeight = body.offsetHeight + "px";
+      // Force reflow
+      void body.offsetHeight;
+      // Animate to 0
+      body.style.maxHeight = "0px";
+      section.classList.remove("expanded");
+      resetSectionSizes();
+      const onEnd = () => {
+        body.removeEventListener("transitionend", onEnd);
+        body.style.display = "none";
+        body.style.maxHeight = "";
+      };
+      body.addEventListener("transitionend", onEnd);
+    }
+  }
+
   function renderSectionHeader(title: string, sectionKey: string): { section: HTMLElement; body: HTMLElement } {
     const section = document.createElement("div");
     section.className = sectionExpanded[sectionKey] ? "section expanded" : "section";
@@ -561,7 +604,7 @@ function createIconEl(icon: string): HTMLElement {
     header.appendChild(addBtn);
 
     const body = document.createElement("div");
-    body.className = "section-body";
+    body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";
     body.style.display = sectionExpanded[sectionKey] ? "block" : "none";
 
     section.appendChild(header);
@@ -571,9 +614,7 @@ function createIconEl(icon: string): HTMLElement {
       sectionExpanded[sectionKey] = !sectionExpanded[sectionKey];
       saveSectionState();
       chevron.textContent = sectionExpanded[sectionKey] ? "\u25BE" : "\u25B8";
-      body.style.display = sectionExpanded[sectionKey] ? "block" : "none";
-      section.classList.toggle("expanded", sectionExpanded[sectionKey]);
-      resetSectionSizes();
+      toggleSectionBody(body, sectionExpanded[sectionKey], section);
     });
 
     return { section, body };

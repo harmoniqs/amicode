@@ -660,7 +660,8 @@ describe("sidebar webview — section labels", () => {
     // Accordion layout: body is full-height flex, sections flex-grow when expanded
     expect(html).toContain("sidebar-sections");
     expect(html).toMatch(/\.section\.expanded\s*\{[^}]*flex:\s*1/);
-    expect(html).toMatch(/\.section-body\s*\{[^}]*overflow-y:\s*auto/);
+    // section-body gets overflow-y: auto when expanded (animated toggle adds .expanded class)
+    expect(html).toMatch(/\.section-body\.expanded\s*\{[^}]*overflow-y:\s*auto/);
   });
 
   it("fleet section is a collapsible section with 'Coming soon' body, not a static div", () => {
@@ -1654,5 +1655,50 @@ describe("sidebar — drag image pill", () => {
     expect(html).toMatch(/\.drag-image\s*\{/);
     // Uses VS Code theme tokens (not hardcoded colors)
     expect(html).toMatch(/\.drag-image[^}]*--vscode-/s);
+  });
+});
+
+// ── Section collapse/expand animation ────────────────────────────────────────
+
+describe("sidebar — section toggle animation", () => {
+  it("section body CSS has transition on max-height for animated expand/collapse", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // section-body must have a transition property for smooth expand/collapse
+    expect(html).toMatch(/\.section-body[^}]*transition/s);
+    // Must use overflow hidden during animation
+    expect(html).toMatch(/\.section-body[^}]*overflow/s);
+  });
+
+  it("webview uses animated toggle for section expand/collapse, not instant display swap", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must have an animation helper (toggleSectionAnimated or similar)
+    expect(src).toMatch(/toggleSection|animateSection|section.*animate/i);
+    // Must NOT use bare display none/block for section body toggle
+    // (the old pattern was: body.style.display = ... ? "block" : "none")
+    // New pattern should use max-height or height transition
+    expect(src).toMatch(/maxHeight|max-height|scrollHeight/);
+  });
+
+  it("section body transition does NOT apply to tree-node .children (file tree stays instant)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // .children container toggling must still use the instant display swap
+    // (not the animated toggleSectionBody helper)
+    // Find a ternary toggle line for childrenEl: display = expanded ? "block" : "none"
+    expect(src).toMatch(/childrenEl\.style\.display\s*=\s*expanded.*\?\s*"block"\s*:\s*"none"/);
+    // toggleSectionBody must NOT appear near childrenEl
+    const childrenToggleLines = src.split("\n").filter(l => l.includes("childrenEl"));
+    const usesAnimatedToggle = childrenToggleLines.some(l => l.includes("toggleSection"));
+    expect(usesAnimatedToggle).toBe(false);
   });
 });
