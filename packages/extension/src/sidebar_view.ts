@@ -662,6 +662,27 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .tree-node.dragging {
       opacity: 0.4;
     }
+    .drag-image {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--vscode-list-activeSelectionBackground, #094771);
+      color: var(--vscode-list-activeSelectionForeground, #fff);
+      font-family: var(--vscode-font-family, sans-serif);
+      font-size: var(--vscode-font-size, 13px);
+      white-space: nowrap;
+      pointer-events: none;
+    }
+    .drag-image .icon {
+      width: 16px;
+      height: 16px;
+      flex-shrink: 0;
+    }
+    .drag-image .label {
+      color: inherit;
+    }
     /* ── Sash (resize handle between sections) ─────────────────── */
     .sash {
       height: 0;

@@ -793,16 +793,49 @@ function createIconEl(icon: string): HTMLElement {
   // ── Drag-and-drop helpers ─────────────────────────────────────────────────
 
   function setupDragSource(el: HTMLElement, sourcePath: string): void {
+    let dragImage: HTMLElement | null = null;
+
     el.addEventListener("dragstart", (e) => {
       dragSourcePath = sourcePath;
       el.classList.add("dragging");
       e.dataTransfer!.effectAllowed = "move";
       e.dataTransfer!.setData("text/plain", sourcePath);
+
+      // Create a floating pill (VS Code explorer-style drag image)
+      dragImage = document.createElement("div");
+      dragImage.className = "drag-image";
+
+      // Clone the icon if present
+      const iconSrc = el.querySelector(".icon") as HTMLElement | null;
+      if (iconSrc) {
+        dragImage.appendChild(iconSrc.cloneNode(true));
+      }
+
+      // Clone the label
+      const labelSrc = el.querySelector(".label") as HTMLElement | null;
+      if (labelSrc) {
+        const labelClone = labelSrc.cloneNode(true) as HTMLElement;
+        // Strip git-status classes so the pill uses neutral text
+        labelClone.className = "label";
+        dragImage.appendChild(labelClone);
+      }
+
+      // Position off-screen so it's invisible in the DOM but renderable for setDragImage
+      dragImage.style.position = "absolute";
+      dragImage.style.top = "-1000px";
+      dragImage.style.left = "-1000px";
+      document.body.appendChild(dragImage);
+      e.dataTransfer!.setDragImage(dragImage, 16, 12);
     });
+
     el.addEventListener("dragend", () => {
       el.classList.remove("dragging");
       dragSourcePath = null;
       clearDropTarget();
+      if (dragImage) {
+        dragImage.remove();
+        dragImage = null;
+      }
     });
   }
 

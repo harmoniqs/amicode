@@ -1557,3 +1557,44 @@ describe("sidebar — drag drop target resolution", () => {
     expect(html).not.toMatch(/\.tree-node\.drop-target[^}]*outline.*dashed/s);
   });
 });
+
+// ── Drag image (floating pill) ───────────────────────────────────────────────
+
+describe("sidebar — drag image pill", () => {
+  it("setupDragSource creates a custom drag image with setDragImage", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must call setDragImage to replace the default browser screenshot
+    expect(src).toContain("setDragImage");
+    // Must create a drag-image element
+    expect(src).toContain("drag-image");
+  });
+
+  it("drag image is removed on dragend", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // dragend handler must clean up the drag image element
+    const dragendSection = src.slice(
+      src.indexOf("dragend"),
+      src.indexOf("dragend") + 600,
+    );
+    expect(dragendSection).toMatch(/drag-image|dragImage|remove/);
+  });
+
+  it("CSS includes drag-image pill styling", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // Must have a .drag-image class with pill-like styling
+    expect(html).toMatch(/\.drag-image\s*\{/);
+    // Uses VS Code theme tokens (not hardcoded colors)
+    expect(html).toMatch(/\.drag-image[^}]*--vscode-/s);
+  });
+});
