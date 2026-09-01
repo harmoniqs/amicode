@@ -3,5 +3,5 @@
 # makes the pack BROKEN — reported, never silently trusted.
 # Regenerate: shasum -a 256 <path> from packages/extension/
 [files]
-"../../scores/pulse-designer/templates/solve.jl" = "b285f55f445bdfec7533cc8558b72cd262f3a2a84aa5d48147d58617c867ace8"
+"../../scores/pulse-designer/templates/solve.jl" = "41caa8b0bd8318b9e551cceefc260e36870f34fd03e228d0c992d96f6f795153"
 "../../exemplars/index.json" = "0d187afd4d1efc0109b63740859eb8e3dc5c2eceafa163e3d63c487d3576d2af"
