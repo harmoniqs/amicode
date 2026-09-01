@@ -96,21 +96,29 @@ initial = 0.1 * randn(sys.n_drives, N)
 # LINEAR spline at R-from-the-grid — semantics-equivalent to the shipped
 # 1.19/0.9.7 behavior by the DTO #122 construction (see R above): the linear
 # SplinePulseProblem resolves R_u = R_du = R on this family, the du variables are
-# constrained to the inter-knot slopes (DerivativeIntegrator), and the rollout
-# below measures the same linear waveform the dynamics integrate.
+# constrained to the inter-knot slopes (DerivativeIntegrator), and the dynamics
+# run on the SAME PWC (BilinearIntegrator) collocation the shipped SmoothPulse
+# problem used — the #275 guard's acknowledged `integrator_type = :pwc` path
+# (the near-isomorphic NLP: u + constrained slopes + R-regularized, PWC
+# propagation). The rollout below measures the linear waveform of the shipped
+# pulse artifact, exactly as the shipped template's rollout did.
 #
 # The cubic/bend parameterization move (CubicSplinePulse + R_bend riding
 # Piccolo #312's landed default) MISSED the family bar on our template —
 # X at F = 0.7918 in 60 iterations (run r20260901-191606Z-5393, still mid-descent
 # with inf_du = 1.6 at max_iter) — and is parked as a named follow-up (F1: a miss
-# reverts, it does not retune). The SplineIntegrator stays on both families:
-# the #275 guard's spline-faithful pairing (a linear spline under it integrates
-# exactly what the rollout measures; a cubic under it is the follow-up's config).
+# reverts, it does not retune). A first fallback attempt with the
+# spline-faithful SplineIntegrator (linear family) ALSO missed — X at
+# F = 0.9974 (run r20260901-191807Z-9f22), monotone descent but a slower NLP
+# class than the shipped Bilinear collocation — so the fallback uses the
+# equivalence-faithful PWC dynamics the spec's "semantics-equivalent to the
+# shipped behavior" construction names. No parameter retuned anywhere
+# (max_iter/N/R/Q at the FILL-IN defaults throughout).
 pulse = LinearSplinePulse(initial, times)
 qtraj = UnitaryTrajectory(sys, pulse, op)
 qcp = SplinePulseProblem(qtraj, N;
     Q = 100.0, R = R,
-    integrator = SplineIntegrator(qtraj, N),
+    integrator_type = :pwc,
     piccolo_options = PiccoloOptions(timesteps_all_equal = true))
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
