@@ -15,7 +15,11 @@
       "description": "subspace gate fidelity (rollout-based; allow a few ulp over 1 for numerical noise, reject gross out-of-range)"
     },
     "iterations": { "type": "integer", "minimum": 0 },
-    "wall_seconds": { "type": "number", "minimum": 0 },
+    "wall_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Standing on every bundled contract emitter (amicode #711, F-709-1's landed follow-up): the solve's own elapsed time. Optional on read — pre-standing records omit it, and the flywheel's wall metric then degrades to the labeled FINISHED-mtime fallback."
+    },
     "pulse_kind": {
       "enum": ["spline", "pwc"],
       "description": "Declared pulse parameterization (spec-20260704-113005 §6). Absent = pwc. The verification harness dispatches on this — never inferred."

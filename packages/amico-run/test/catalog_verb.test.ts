@@ -300,6 +300,132 @@ describe("amico catalog ingest (bundle) — the promotion gate", () => {
     expect(rec?.pinned_globals).toEqual({ delta: 0.21 });
   });
 
+  // ── SEAM 3 (amicode #714): the shape_metrics quartet rides the ingest ──────
+  // PR #713's emission puts the quartet under params.shape_metrics on every
+  // vetted-template result; the ingest STAMPS it into the promoted metadata
+  // additively — REFERENCED (the stamp cites Piccolo.shape_metrics + the payload
+  // path), never re-computed. Absent-means-absent: an older run without the
+  // quartet promotes cleanly, no error, no backfill.
+  function quartetRunDir(parent: string): string {
+    const runDir = mkdtempSync(join(tmpdir(), parent));
+    writeFileSync(join(runDir, "pulse.jld2"), "quartet-pulse");
+    writeFileSync(
+      join(runDir, "result.toml"),
+      [
+        "fidelity = 0.999995",
+        "duration_us = 0.04",
+        "",
+        "[params]",
+        "delta = 0.2",
+        "levels = 3",
+        "",
+        "[params.shape_metrics]",
+        "bend = [0.001, 0.0012]",
+        "int_u2 = [0.5, 0.55]",
+        "max_du = [0.02, 0.025]",
+        "crest = [0.15, 0.16]",
+        "T = 10.0",
+        'parameterization = "linear"',
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(runDir, "verification.toml"), "agree = true\n");
+    return runDir;
+  }
+
+  it("stamps the quartet into the promoted metadata, cited (referenced, never re-computed); loadRepertoire round-trips it", () => {
+    const runDir = quartetRunDir("amico-run-quartet-");
+    const r = run(["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--from-run", runDir], { AMICO_CATALOG_DIR: pulses });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).promoted).toBe(true);
+    const meta = readToml(join(pulses, "transmon-X-v1", "metadata.toml"));
+    expect(meta.shape_metrics).toMatchObject({
+      bend: [0.001, 0.0012],
+      int_u2: [0.5, 0.55],
+      max_du: [0.02, 0.025],
+      crest: [0.15, 0.16],
+      T: 10.0,
+      parameterization: "linear",
+    });
+    // REFERENCED, never re-defined: the stamp cites the source — Piccolo's
+    // shape_metrics, the payload path it rode.
+    const stamped = meta.shape_metrics as Record<string, unknown>;
+    expect(String(stamped?.source)).toMatch(/Piccolo\.shape_metrics/);
+    expect(String(stamped?.source)).toMatch(/params\.shape_metrics/);
+    // round-trip: the repertoire loader surfaces the quartet (additive field)
+    const rec = queryIncumbent(loadRepertoire(pulses), "transmon", "X").incumbent;
+    expect(rec?.shape_metrics?.bend).toEqual([0.001, 0.0012]);
+    expect(rec?.shape_metrics?.crest).toEqual([0.15, 0.16]);
+    expect(rec?.shape_metrics?.source).toMatch(/Piccolo\.shape_metrics/);
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it("absent-means-absent: an older run without the quartet promotes cleanly — no shape_metrics key, no error, no backfill", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-run-noquartet-"));
+    writeFileSync(join(runDir, "pulse.jld2"), "old-pulse");
+    writeFileSync(join(runDir, "result.toml"), "fidelity = 0.999995\nduration_us = 0.04\n\n[params]\nlevels = 3\n");
+    writeFileSync(join(runDir, "verification.toml"), "agree = true\n");
+    const r = run(["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--from-run", runDir], { AMICO_CATALOG_DIR: pulses });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).promoted).toBe(true);
+    expect(readToml(join(pulses, "transmon-X-v1", "metadata.toml"))).not.toHaveProperty("shape_metrics");
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it("a malformed params.shape_metrics degrades to absent — promotes cleanly, never stamps a half-quartet, never errors", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-run-badquartet-"));
+    writeFileSync(join(runDir, "pulse.jld2"), "bad-pulse");
+    writeFileSync(join(runDir, "result.toml"), 'fidelity = 0.999995\n\n[params]\nshape_metrics = 42\n');
+    writeFileSync(join(runDir, "verification.toml"), "agree = true\n");
+    const r = run(["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--from-run", runDir], { AMICO_CATALOG_DIR: pulses });
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).promoted).toBe(true);
+    expect(readToml(join(pulses, "transmon-X-v1", "metadata.toml"))).not.toHaveProperty("shape_metrics");
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  // ── #711 (F-709-2): the device stamp — additive metadata, flag-sourced ────
+  // No record kind carries a device field (the F-709-2 census: run dirs,
+  // result.toml, neither), so `--device` is the honest source; it stamps into
+  // the promoted metadata so the flywheel's device key stops degrading to bank
+  // scope for store-derived device-touching families.
+  it("--device stamps the device into the promoted metadata; loadRepertoire reads it back", () => {
+    seedEntry(pulses, "transmon-X-v1", { platform: "transmon", gate: "X", fidelity: 0.98 });
+    const newPulse = join(pulses, "..", "device-pulse.jld2");
+    writeFileSync(newPulse, "calibrated-pulse");
+    const r = run(
+      ["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--artifact", newPulse, "--fidelity", "0.999", "--agree", "true", "--device", "qick-fx-01"],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r.code).toBe(0);
+    expect(JSON.parse(r.stdout).promoted).toBe(true);
+    expect(readToml(join(pulses, "transmon-X-v2", "metadata.toml")).device).toBe("qick-fx-01");
+    expect(queryIncumbent(loadRepertoire(pulses), "transmon", "X").incumbent?.device).toBe("qick-fx-01");
+  });
+
+  it("no --device → no device key (additive: entries promoted without it are unchanged)", () => {
+    const newPulse = join(pulses, "..", "nodevice-pulse.jld2");
+    writeFileSync(newPulse, "x");
+    const r = run(
+      ["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--artifact", newPulse, "--fidelity", "0.999", "--agree", "true"],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r.code).toBe(0);
+    expect(readToml(join(pulses, "transmon-X-v1", "metadata.toml"))).not.toHaveProperty("device");
+  });
+
+  it("an empty --device is refused honestly (exit 64, no write) — a blank device key would silently degrade", () => {
+    const newPulse = join(pulses, "..", "empty-device-pulse.jld2");
+    writeFileSync(newPulse, "x");
+    const r = run(
+      ["catalog", "ingest", "--platform", "transmon", "--kind", "X", "--artifact", newPulse, "--fidelity", "0.999", "--agree", "true", "--device", "   "],
+      { AMICO_CATALOG_DIR: pulses },
+    );
+    expect(r.code).toBe(64);
+    expect(JSON.parse(r.stdout).error).toMatch(/--device/);
+    expect(existsSync(join(pulses, "transmon-X-v1"))).toBe(false);
+  });
+
   it("--pin parses multi-global comma lists; a malformed pin value is refused honestly (exit 64, no write)", () => {
     const newPulse = join(pulses, "..", "p.jld2");
     writeFileSync(newPulse, "x");

@@ -16,6 +16,7 @@
 // untouched. The routing logic here is pure (mount stack + intent in, decision out;
 // clock/fs stay in note_verb.ts).
 import type { Mount } from "./mounts.js";
+import { SHAPE_METRICS_SOURCE, type ShapeQuartet } from "./repertoire.js";
 
 // ── experiment note rendering ─────────────────────────────────────────────────
 
@@ -33,6 +34,7 @@ export interface ExperimentFields {
   device?: string; // wikilink target (default "[[local-workstation]]")
   branch?: string; // default main
   desc?: string; // one-line summary for the H1 + title
+  shape_metrics?: ShapeQuartet; // SEAM 3 (#714): the quartet, referenced + cited
 }
 
 /** `experiment-<date-compact>-<platform>-<gate>` — deterministic id/basename.
@@ -93,6 +95,11 @@ export function renderExperimentNote(f: ExperimentFields): string {
     `- Status: ${status}`,
     f.failure_mode ? `- Failure mode: ${f.failure_mode}` : "",
     "",
+    // SEAM 3 (amicode #714): the shape quartet's metrics block — present ONLY
+    // when the promoted run carried it (absent-means-absent on older runs).
+    // REFERENCED, never re-computed: the block cites the source — Piccolo's
+    // shape_metrics, the result payload path it rode.
+    ...(f.shape_metrics ? shapeMetricsBlock(f.shape_metrics) : []),
     "## Analysis",
     "- (bookkeeping stub written by `amico note write`; extend with interpretation.)",
     "",
@@ -101,6 +108,25 @@ export function renderExperimentNote(f: ExperimentFields): string {
     .join("\n");
 
   return fm + "\n" + body + "\n";
+}
+
+/** The `## Metrics` body block for the shape quartet (#714) — one line per
+ *  metric, plus the source citation. Deterministic; nothing invented. */
+function shapeMetricsBlock(q: ShapeQuartet): string[] {
+  const src = q.source ?? SHAPE_METRICS_SOURCE;
+  const arr = (a: number[]): string => `[${a.join(", ")}]`;
+  const lines = [
+    "## Metrics",
+    `- Shape quartet (source: ${src} — referenced, never re-computed):`,
+    `- bend: ${arr(q.bend)}`,
+    `- int_u2: ${arr(q.int_u2)}`,
+    `- max_du: ${arr(q.max_du)}`,
+    `- crest: ${arr(q.crest)}`,
+  ];
+  if (q.T !== undefined) lines.push(`- T: ${q.T}`);
+  if (q.parameterization !== undefined) lines.push(`- parameterization: ${q.parameterization}`);
+  lines.push("");
+  return lines;
 }
 
 // ── best_gates bump ───────────────────────────────────────────────────────────

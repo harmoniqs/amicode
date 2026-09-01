@@ -24,6 +24,7 @@ import {
   type BestGate,
 } from "../src/note.js";
 import type { Mount } from "../src/mounts.js";
+import { loadNotes } from "../src/vault_query.js";
 
 // ── pure logic (note.ts) ────────────────────────────────────────────────────────
 describe("renderExperimentNote + experimentId", () => {
@@ -212,6 +213,92 @@ describe("amico note write (bundle)", () => {
   });
   it("missing fidelity + no run → 64", () => {
     expect(run(["note", "write", "--platform", "fluxonium", "--kind", "X"], { AMICO_VAULT_DIR: vault }).code).toBe(64);
+  });
+
+  // ── SEAM 3 (amicode #714): the shape quartet in the experiment note's metrics
+  // block — stamped from a quartet-carrying result.toml, cited (referenced, never
+  // re-computed), absent-means-absent on older runs.
+  it("--from-run with params.shape_metrics stamps a ## Metrics block citing the source", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-note-quartet-"));
+    writeFileSync(
+      join(runDir, "result.toml"),
+      [
+        "fidelity = 0.999995",
+        "duration_us = 0.04",
+        "",
+        "[params]",
+        "",
+        "[params.shape_metrics]",
+        "bend = [0.001, 0.0012]",
+        "int_u2 = [0.5, 0.55]",
+        "max_du = [0.02, 0.025]",
+        "crest = [0.15, 0.16]",
+        "T = 10.0",
+        'parameterization = "linear"',
+        "",
+      ].join("\n"),
+    );
+    const r = run(["note", "write", "--platform", "transmon", "--kind", "X", "--from-run", runDir, "--date", "2026-09-01"], { AMICO_VAULT_DIR: vault });
+    expect(r.code).toBe(0);
+    const text = readFileSync(join(vault, "experiments", "experiment-20260901-transmon-X.md"), "utf8");
+    expect(text).toMatch(/## Metrics/);
+    expect(text).toMatch(/Piccolo\.shape_metrics/); // the note cites the source
+    expect(text).toMatch(/params\.shape_metrics/); // …and the payload path
+    expect(text).toMatch(/bend: \[0.001, 0.0012\]/);
+    expect(text).toMatch(/int_u2: \[0.5, 0.55\]/);
+    expect(text).toMatch(/max_du: \[0.02, 0.025\]/);
+    expect(text).toMatch(/crest: \[0.15, 0.16\]/);
+    expect(text).toMatch(/T: 10/);
+    expect(text).toMatch(/parameterization: linear/);
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it("the librarian read path returns the quartet (the metrics block round-trips through loadNotes → `amico vault query`)", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-note-quartet-rt-"));
+    writeFileSync(
+      join(runDir, "result.toml"),
+      [
+        "fidelity = 0.999995",
+        "",
+        "[params.shape_metrics]",
+        "bend = [0.001]",
+        "int_u2 = [0.5]",
+        "max_du = [0.02]",
+        "crest = [0.15]",
+        'parameterization = "linear"',
+        "",
+      ].join("\n"),
+    );
+    const r = run(["note", "write", "--platform", "transmon", "--kind", "H", "--from-run", runDir, "--date", "2026-09-01"], { AMICO_VAULT_DIR: vault });
+    expect(r.code).toBe(0);
+    const recs = loadNotes(vault);
+    const exp = recs.find((n) => n.folder === "experiments");
+    expect(exp).toBeDefined(); // the note IS in the knowledge graph
+    expect(exp!.body).toMatch(/## Metrics/);
+    expect(exp!.body).toMatch(/bend: \[0.001\]/);
+    expect(exp!.body).toMatch(/Piccolo\.shape_metrics/);
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it("an older result.toml (no quartet) writes the note cleanly — no Metrics block (absent-means-absent)", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-note-old-"));
+    writeFileSync(join(runDir, "result.toml"), "fidelity = 0.999995\nduration_us = 0.04\n");
+    const r = run(["note", "write", "--platform", "transmon", "--kind", "Y", "--from-run", runDir, "--date", "2026-09-01"], { AMICO_VAULT_DIR: vault });
+    expect(r.code).toBe(0);
+    const text = readFileSync(join(vault, "experiments", "experiment-20260901-transmon-Y.md"), "utf8");
+    expect(text).not.toMatch(/## Metrics/);
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it("a malformed params.shape_metrics degrades to absent — clean note, no half-quartet, no error", () => {
+    const runDir = mkdtempSync(join(tmpdir(), "amico-note-badq-"));
+    writeFileSync(join(runDir, "result.toml"), 'fidelity = 0.999995\n\n[params]\nshape_metrics = "nope"\n');
+    const r = run(["note", "write", "--platform", "transmon", "--kind", "Z", "--from-run", runDir, "--date", "2026-09-01"], { AMICO_VAULT_DIR: vault });
+    expect(r.code).toBe(0);
+    const text = readFileSync(join(vault, "experiments", "experiment-20260901-transmon-Z.md"), "utf8");
+    expect(text).not.toMatch(/## Metrics/);
+    expect(text).toMatch(/fidelity: 0.999995/); // the note itself is intact
+    rmSync(runDir, { recursive: true, force: true });
   });
 });
 

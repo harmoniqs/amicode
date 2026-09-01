@@ -50,8 +50,8 @@ export const SIM_FAMILIES: readonly FamilyId[] = ["first-pulse", "regime-sweep",
 
 /** The named findings (F4) — grep-pinned in docs/flywheel-decay.md. */
 export const FLYWHEEL_FINDINGS: readonly string[] = [
-  "F-709-1 wall-clock: the run-dir contract carries NO end-time field (FINISHED is status+exit_code only; result.toml wall_seconds is optional — 2/358 on the real backlog) — the wall-clock metric degrades to FINISHED mtime − run.toml created_at, source-labeled per campaign and fragile under copy/rsync; honest stamping is the follow-up",
-  "F-709-2 device key: the pulse bank's metadata.toml carries NO device field — the device key for device-touching store-derived families (tune-up, drift-response) degrades to the store root + platform; stamping `device` into metadata.toml is the follow-up",
+  "F-709-1 wall-clock: the run-dir contract carried no end-time field at the finding's census (FINISHED is status+exit_code only; result.toml wall_seconds on 2/358 real backlog runs) — pre-standing records degrade to FINISHED mtime − run.toml created_at, source-labeled per campaign and fragile under copy/rsync. Landed (amicode #711): `wall_seconds` is a standing field of every bundled contract emitter (the solve's own elapsed time), so new campaigns take the record-carried primary path",
+  "F-709-2 device key: the pulse bank's metadata.toml carried no device field at the finding's census — the device key for device-touching store-derived families (tune-up, drift-response) degraded to the store root + platform. Landed (amicode #711): `catalog ingest --device` stamps `device` into metadata.toml, so stamped entries key on their device; pre-stamp entries keep the bank-scope degradation",
   "F-709-3 acquisitions: run dirs carry no acquisition counts (a sim solve acquires nothing on record) — the acquisitions metric is stated-absent for run-dir campaigns; it is a task-record metric",
   "F-709-4 iterations: task records carry solve-iterations only in prose (result.toml `summary`) — the iterations metric is stated-absent for task-record campaigns",
   "F-709-5 pre-v4 run dirs: a run dir whose script_path is an authored .jl carries no (system, goal) spec — problem.toml/solvespec.json are the v4 problem_spec run shape only — the family is underivable and the record is listed unattributed, never forced",
@@ -402,6 +402,10 @@ export interface StoreEntryAttribution {
   id: string;
   family: FamilyId;
   platform: string;
+  /** #711 (F-709-2's follow-up): the device stamp `catalog ingest --device`
+   *  writes into metadata.toml — empty on entries promoted before it (the
+   *  device-touching scope then degrades to bank, honestly). */
+  device: string;
   day: string;
   lineage: { warm_start?: string; calibration_ref?: string };
   fields_read: string[];
@@ -412,7 +416,8 @@ export interface StoreEntryAttribution {
  * STAMP (the lineage fields of the amico-catalog Phase-0 metadata.toml —
  * SEAM 5's chain fingerprint rides the same fields). Fields (the exact set):
  *   - metadata.toml: id, platform, date (→ campaign day), warm_start,
- *     calibration_ref (the source stamp).
+ *     calibration_ref (the source stamp), device (#711, F-709-2's follow-up:
+ *     the `catalog ingest --device` stamp — empty on pre-#711 entries).
  *
  * Mapping onto the repertoire (stated — the most specific stamp present wins):
  *   - calibration_ref set → drift-response (the SEAM 5 calibrate→pin→
@@ -446,12 +451,13 @@ export function deriveStoreEntryFamily(entryDir: string): StoreEntryAttribution 
     id,
     family,
     platform,
+    device: str(meta.device) ?? "",
     day: dateStr(meta.date) ?? "",
     lineage: {
       ...(warmStart && warmStart !== "" ? { warm_start: warmStart } : {}),
       ...(calibrationRef ? { calibration_ref: calibrationRef } : {}),
     },
-    fields_read: ["metadata.toml: id, platform, date, warm_start, calibration_ref"],
+    fields_read: ["metadata.toml: id, platform, date, warm_start, calibration_ref, device"],
   };
 }
 
@@ -470,7 +476,8 @@ function dateStr(v: unknown): string | undefined {
 //     | metadata.toml date (store entries);
 //   - scope ← sim families: workspace + platform (run dirs: lab_id + template
 //     platform; store entries: the bank itself + platform — F-709-2 degrades
-//     the device-touching store families to the same key, honestly);
+//     the DEVICE-LESS device-touching store families to the same key, honestly;
+//     a #711 device stamp keys them on their device);
 //     device-touching families (task records): task.toml device.
 //   - record kind is part of the campaign identity: a run-dir campaign and a
 //     task-record campaign of the same family are DIFFERENT series (different
@@ -480,8 +487,9 @@ function dateStr(v: unknown): string | undefined {
 //   - acquisitions = Σ progress.jsonl acquire-labeled progress events
 //     (task records only — F-709-3);
 //   - iterations = Σ result.toml iterations (run dirs only — F-709-4);
-//   - wall_s = Σ per-record wall clock (run dirs: result.toml wall_seconds,
-//     else FINISHED mtime − created_at per F-709-1; task records:
+//   - wall_s = Σ per-record wall clock (run dirs: result.toml wall_seconds
+//     (standing on every bundled emitter since #711 — F-709-1's landed
+//     follow-up), else FINISHED mtime − created_at per F-709-1; task records:
 //     result.toml ended − task.toml created; store entries: not carried).
 //
 // The trend: campaign N's delta vs campaign N−1 of the same series, per metric
@@ -700,11 +708,19 @@ export function computeDecay(input: DecayInput): DecayReport {
       store += 1;
       const r = deriveStoreEntryFamily(dir);
       if (!r) continue;
-      // The bank is one workspace: sim families key bank + platform; the
-      // device-touching store families (tune-up, drift-response) have NO
-      // device field in metadata.toml — F-709-2: the key degrades to the same
-      // bank scope (stated), and the campaign still computes.
-      const acc = bucket(r.family, `bank:${r.platform}`, DEVICE_TOUCHING.includes(r.family) ? "bank" : "sim", "store-entry", r.day);
+      // The bank is one workspace: sim families key bank + platform. The
+      // device-touching store families key on their DEVICE when the entry
+      // carries the #711 stamp (`catalog ingest --device`); a device-less
+      // entry (pre-#711) still degrades to the same bank scope — F-709-2,
+      // stated — and the campaign still computes either way.
+      const deviceTouching = DEVICE_TOUCHING.includes(r.family);
+      const acc = bucket(
+        r.family,
+        deviceTouching && r.device ? `device:${r.device}` : `bank:${r.platform}`,
+        deviceTouching && r.device ? "device" : deviceTouching ? "bank" : "sim",
+        "store-entry",
+        r.day,
+      );
       acc.records += 1;
       acc.metrics_absent.add("acquisitions (store records carry no cost metrics)");
       acc.metrics_absent.add("iterations (store records carry no cost metrics)");
