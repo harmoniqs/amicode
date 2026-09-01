@@ -25,7 +25,9 @@
 import { describe, it, expect } from "vitest";
 import {
   loadRegimePriorsTable,
+  validateRegimePriorsTable,
   REGIME_KNOBS,
+  CAVEAT_MARKER,
 } from "../opencode-plugin/regime_priors";
 
 const loaded = loadRegimePriorsTable();
@@ -53,5 +55,69 @@ describe("the committed regime-priors table (SEAM 2 schema)", () => {
       expect.arrayContaining(["tr_frac", "beta", "y_goal", "gls_weighting", "min_contrast"]),
     );
     expect(REGIME_KNOBS.length).toBe(5);
+  });
+
+  it("every committed entry's provenance names its profile scope, the census it distilled from, its evidence chain, and the public-scale caveat", () => {
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    for (const e of loaded.table.priors) {
+      // the profile scope: the platform families the prior covers, named in provenance
+      expect(e.provenance.scope.length).toBeGreaterThan(0);
+      expect([...e.provenance.scope].sort()).toEqual([...e.families].sort());
+      // the census it distilled from (the stamp, verbatim)
+      expect(e.provenance.census).toEqual(loaded.table.census);
+      // the evidence chain — the campaign fixtures / skills / cards it cites
+      expect(e.provenance.sources.length).toBeGreaterThan(0);
+      for (const s of e.provenance.sources) expect(s.trim()).not.toBe("");
+      // the public-scale caveat riding every entry
+      expect(e.provenance.caveat).toContain(CAVEAT_MARKER);
+      expect(e.provenance.caveat).toBe(loaded.table.caveat);
+      // the knob's label carries the issue's NAMED spelling (β, GLS weighting, …)
+      if (e.knob === "beta") expect(e.label).toMatch(/β/);
+      if (e.knob === "gls_weighting") expect(e.label).toMatch(/GLS weighting/);
+    }
+  });
+});
+
+describe("validateRegimePriorsTable — a malformed provenance fails", () => {
+  const base = (): { table: Record<string, unknown>; priors: Record<string, unknown>[] } => {
+    if (!loaded.ok) throw new Error("the committed table must load for the mutation fixtures");
+    const table = JSON.parse(JSON.stringify(loaded.table)) as Record<string, unknown>;
+    return { table, priors: table.priors as Record<string, unknown>[] };
+  };
+  const expectProblem = (problems: string[], re: RegExp) =>
+    expect(problems.some((p) => re.test(p)), `no problem matches ${re}: got ${JSON.stringify(problems)}`).toBe(true);
+
+  it("fails an entry whose provenance lost the caveat (the caveat rides every entry)", () => {
+    const { table, priors } = base();
+    delete priors[0].provenance.caveat;
+    expectProblem(validateRegimePriorsTable(table), /priors\[0\]\.provenance\.caveat/);
+  });
+
+  it("fails an entry whose provenance names a scope that is not its families (scope must be the profile scope)", () => {
+    const { table, priors } = base();
+    (priors[0].provenance as Record<string, unknown>).scope = ["atom"]; // the spin tr_frac entry claiming atom scope
+    expectProblem(validateRegimePriorsTable(table), /priors\[0\]\.provenance\.scope/);
+  });
+
+  it("fails an entry whose provenance cites a census that is not the table's stamp (a stale or fabricated census fails)", () => {
+    const { table, priors } = base();
+    ((priors[0].provenance as Record<string, unknown>).census as Record<string, unknown>).total = 13;
+    expectProblem(validateRegimePriorsTable(table), /priors\[0\]\.provenance\.census/);
+  });
+
+  it("fails an entry with no evidence chain (empty sources fail)", () => {
+    const { table, priors } = base();
+    (priors[0].provenance as Record<string, unknown>).sources = [];
+    expectProblem(validateRegimePriorsTable(table), /priors\[0\]\.provenance\.sources/);
+  });
+
+  it("fails a knob outside the five NAMED knobs, and fails when a family loses knob coverage (regime_rec_priors_live)", () => {
+    const { table, priors } = base();
+    priors[0].knob = "flavour";
+    expectProblem(validateRegimePriorsTable(table), /flavour.*not one of the five NAMED knobs/);
+    const t2 = base();
+    t2.priors.splice(0, 3); // drop the spin tr_frac entries
+    expectProblem(validateRegimePriorsTable(t2.table), /coverage: knob "tr_frac".*"spin"/);
   });
 });
