@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   prepareOpencodeProject,
