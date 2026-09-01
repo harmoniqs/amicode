@@ -131,6 +131,12 @@ function createIconEl(icon: string): HTMLElement {
 
   // ── Inline editing (VS Code explorer-style) ────────────────────────────────
 
+  // Suppresses the blur→cancel path while the children handler is re-rendering
+  // a directory that holds the active inline edit's temp row. Without this,
+  // innerHTML="" detaches the focused input → browser fires blur synchronously
+  // → cancelInlineEdit nulls the state → the re-insert check sees null.
+  let inlineEditRerendering = false;
+
   let activeInlineEdit: {
     input: HTMLInputElement;
     mode: "rename" | "new-file" | "new-folder";
@@ -205,7 +211,9 @@ function createIconEl(icon: string): HTMLElement {
     });
 
     input.addEventListener("blur", () => {
-      // If not committed, treat blur as cancel
+      // If not committed, treat blur as cancel — unless we're in the middle
+      // of a children re-render that will re-insert the temp row.
+      if (inlineEditRerendering) return;
       if (activeInlineEdit && !activeInlineEdit.committed) {
         cancelInlineEdit();
       }
@@ -849,9 +857,14 @@ function createIconEl(icon: string): HTMLElement {
         const container = treeRoot?.querySelector(`[data-path="${CSS.escape(msg.path)}"] > .children`);
         if (container) {
           const depth = Math.round((parseInt((container.parentElement as HTMLElement)?.querySelector('.tree-node')?.style.paddingLeft ?? '8') - 8) / 16) + 1;
+          // Guard the inline edit temp row: innerHTML="" will detach the
+          // focused input, firing blur synchronously — suppress cancel.
+          const hasInlineEdit = activeInlineEdit?.tempRow && activeInlineEdit.path === msg.path;
+          if (hasInlineEdit) inlineEditRerendering = true;
           renderChildren(container as HTMLElement, msg.entries ?? [], depth);
-          // Re-insert the inline edit temp row if one is active for this directory
-          if (activeInlineEdit?.tempRow && activeInlineEdit.path === msg.path) {
+          inlineEditRerendering = false;
+          // Re-insert the inline edit temp row after children are rendered
+          if (hasInlineEdit && activeInlineEdit?.tempRow) {
             container.insertBefore(activeInlineEdit.tempRow, container.firstChild);
             activeInlineEdit.input.focus();
           }
