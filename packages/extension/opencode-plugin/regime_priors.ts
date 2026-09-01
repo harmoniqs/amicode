@@ -443,3 +443,91 @@ export function serveRecommendations(input: ServeRecommendationsInput): ServedRe
 
   return { recommendations, ...(regimeNote !== undefined ? { regimeNote } : {}) };
 }
+
+// ── the audit query (F2's sensor) ────────────────────────────────────────────
+
+/** One prior-application event, as read from the workspace's events.jsonl —
+ * a recommendation `proposed` event whose provenance carries a regime-prior
+ * entry (the served prior's composed provenance string rides the note). */
+export interface PriorApplication {
+  seq: number;
+  key: string;
+  param: string;
+  provenance: Array<{ source?: string; ref?: string; note?: string }>;
+  /** The paired outcome event's applied value, when the application landed
+   * (the flywheel's input side — recorded through the EXISTING amico_recommend
+   * outcome mechanics, no new feed). */
+  outcome?: { outcome: string; applied_value?: unknown };
+}
+
+export interface AuditViolation {
+  seq: number;
+  key: string;
+  reason: string;
+}
+
+export interface AuditResult {
+  ok: boolean;
+  /** Regime-prior applications found and checked. */
+  audited: number;
+  violations: AuditViolation[];
+  /** Census staleness — the dynamic-census contract surfacing (a current
+   * census that differs from the table's stamp makes the table stale). */
+  stale?: { stamped: CensusStamp; current: CensusStamp };
+}
+
+/** Parse the profile-scope marker out of a served provenance string — the
+ * `scope: a, b;` prefix priorProvenanceString composes. Returns undefined when
+ * the provenance does not name its scope (an unverifiable prior). */
+function parseScopeMarker(note: string): PlatformFamily[] | undefined {
+  const m = note.match(/scope:\s*([^;]+);/);
+  if (!m) return undefined;
+  const scope = m[1].split(",").map((s) => s.trim());
+  if (scope.length === 0 || scope.some((s) => !(PLATFORM_FAMILIES as string[]).includes(s))) {
+    return undefined;
+  }
+  return scope as PlatformFamily[];
+}
+
+/** The audit core — F2's mechanical sensor (pure; the workspace wrapper below
+ * feeds it the events the EXISTING mechanics recorded). FAILS when a prior is
+ * applied outside its profile scope without the public-scale caveat surfaced;
+ * the with-caveat case passes (the caveat is the point). Also surfaces census
+ * staleness when handed a current census that differs from the table's stamp. */
+export function auditRegimePriors(input: {
+  table: RegimePriorsTable;
+  /** The session's platform family (undefined when the workspace's platform
+   * does not map — then only the caveat can save an off-census application). */
+  family: PlatformFamily | undefined;
+  applications: PriorApplication[];
+  currentCensus?: CensusStamp;
+}): AuditResult {
+  const violations: AuditViolation[] = [];
+  let audited = 0;
+  for (const app of input.applications) {
+    const regimeEntries = (app.provenance ?? []).filter((p) => p?.source === "regime-prior");
+    if (regimeEntries.length === 0) continue; // not a regime-prior application
+    audited++;
+    const note = regimeEntries.map((p) => p.note ?? "").join(" ");
+    const scope = parseScopeMarker(note);
+    const caveat = note.includes(CAVEAT_MARKER);
+    const inScope = input.family !== undefined && scope !== undefined && scope.includes(input.family);
+    if (!inScope && !caveat) {
+      const reason =
+        scope === undefined
+          ? `the prior's provenance does not name its profile scope, so its scope cannot be verified against this session's platform family, and no public-scale caveat was surfaced`
+          : `the prior was applied outside its profile scope (scope: ${scope.join(", ")}; session family: ${input.family ?? "unmapped"}) without the public-scale caveat surfaced`;
+      violations.push({ seq: app.seq, key: app.key, reason });
+    }
+  }
+  const stale =
+    input.currentCensus !== undefined && !censusEqual(input.currentCensus, input.table.census)
+      ? { stamped: input.table.census, current: input.currentCensus }
+      : undefined;
+  return {
+    ok: violations.length === 0 && stale === undefined,
+    audited,
+    violations,
+    ...(stale !== undefined ? { stale } : {}),
+  };
+}

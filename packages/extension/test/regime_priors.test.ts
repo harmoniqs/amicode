@@ -30,6 +30,7 @@ import {
   priorProvenanceString,
   platformFamily,
   serveRecommendations,
+  auditRegimePriors,
   REGIME_KNOBS,
   CAVEAT_MARKER,
   type PlatformFamily,
@@ -272,5 +273,114 @@ describe("serveRecommendations — regime priors composed with ledger priors", (
     expect(served.recommendations.filter((r) => r.origin === "ledger").length).toBe(2);
     expect(served.recommendations.filter((r) => r.origin === "regime")).toEqual([]);
     expect(served.regimeNote).toMatch(/regime priors table/);
+  });
+});
+
+// ── F2's mechanical sensor: the audit query over prior-application events.
+// A prior applied OUTSIDE its profile scope without the caveat surfaced → the
+// audit FAILS; the WITH-caveat case passes (the caveat is the point).
+// Prior applications ride the EXISTING mechanics: amico_recommend propose
+// events carrying a provenance entry with source "regime-prior" and the served
+// provenance string as its note. ──
+describe("auditRegimePriors — the off-profile sensor", () => {
+  const table = () => {
+    if (!loaded.ok) throw new Error("the committed table must load");
+    return loaded.table;
+  };
+  // a served provenance string, as it rides a propose event's regime-prior entry
+  const servedNote = (knob: string, family: PlatformFamily): string => {
+    const recs = selectRegimePriors(table(), family);
+    return recs.find((r) => r.param === knob)?.provenance ?? "";
+  };
+  const application = (seq: number, key: string, note: string, provenanceSource = "regime-prior") => ({
+    seq,
+    key,
+    param: key.split("/")[1] ?? "?",
+    provenance: [{ source: provenanceSource, ref: "regime_priors_table.json", note }],
+  });
+
+  it("passes an on-scope application (spin prior, spin session, caveat present)", () => {
+    const note = servedNote("tr_frac", "spin");
+    const res = auditRegimePriors({
+      table: table(),
+      family: "spin",
+      applications: [application(1, "calibrate/tr_frac", note)],
+    });
+    expect(res.ok).toBe(true);
+    expect(res.violations).toEqual([]);
+    expect(res.audited).toBe(1);
+  });
+
+  it("FAILS a prior applied outside its profile scope WITHOUT the caveat surfaced (the violation fixture)", () => {
+    // a spin-scoped prior (scope: spin) applied in a transmon session, with
+    // the caveat STRIPPED from the provenance string — the misleading case
+    const stripped = servedNote("tr_frac", "spin").replace(/caveat: [^;]+;?/, "");
+    expect(stripped).not.toContain(CAVEAT_MARKER);
+    const res = auditRegimePriors({
+      table: table(),
+      family: "transmon",
+      applications: [application(1, "calibrate/tr_frac", stripped)],
+    });
+    expect(res.ok).toBe(false);
+    expect(res.violations.length).toBe(1);
+    expect(res.violations[0].seq).toBe(1);
+    expect(res.violations[0].reason).toMatch(/outside its profile scope/);
+    expect(res.violations[0].reason).toMatch(/caveat/);
+  });
+
+  it("PASSES the same off-scope application WITH the caveat surfaced (the caveat is the point)", () => {
+    const note = servedNote("tr_frac", "spin"); // scope: spin — applied in an atom session
+    const res = auditRegimePriors({
+      table: table(),
+      family: "atom",
+      applications: [application(1, "calibrate/tr_frac", note)],
+    });
+    expect(res.ok).toBe(true);
+    expect(res.violations).toEqual([]);
+  });
+
+  it("fails a regime-prior application whose provenance does not name its scope (unverifiable scope)", () => {
+    const noteless = "a hand-written prior with no scope marker and no caveat";
+    const res = auditRegimePriors({
+      table: table(),
+      family: "spin",
+      applications: [application(2, "calibrate/beta", noteless)],
+    });
+    expect(res.ok).toBe(false);
+    expect(res.violations[0].reason).toMatch(/does not name its profile scope/);
+  });
+
+  it("ignores non-regime recommendations (only regime-prior applications are audited)", () => {
+    const res = auditRegimePriors({
+      table: table(),
+      family: "spin",
+      applications: [application(3, "solve/N", "ledger prior", "ledger")],
+    });
+    expect(res.ok).toBe(true);
+    expect(res.audited).toBe(0);
+  });
+
+  it("surfaces census staleness when the current census differs from the table's stamp (the dynamic-census contract)", () => {
+    const res = auditRegimePriors({
+      table: table(),
+      family: "spin",
+      applications: [],
+      currentCensus: { date: "2026-09-15", total: 13, families: { spin: 5, transmon: 4, atom: 4 } },
+    });
+    expect(res.ok).toBe(false);
+    expect(res.stale).toBeDefined();
+    expect(res.stale?.stamped.total).toBe(12);
+    expect(res.stale?.current.total).toBe(13);
+  });
+
+  it("passes with a matching current census (the stamp is live)", () => {
+    const res = auditRegimePriors({
+      table: table(),
+      family: "spin",
+      applications: [],
+      currentCensus: { date: "2026-08-31", total: 12, families: { spin: 4, transmon: 4, atom: 4 } },
+    });
+    expect(res.ok).toBe(true);
+    expect(res.stale).toBeUndefined();
   });
 });
