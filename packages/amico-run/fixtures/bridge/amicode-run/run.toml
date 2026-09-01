@@ -1,0 +1,16 @@
+schema_version = "2"
+tier = "vetted"
+run_id = "r20260831-120000Z-704a"
+script_path = "~/.amico/problems/bridge-fixture/solve.jl"
+lab = "default"
+lab_id = "default"
+created_at = "2026-08-31T12:00:00.000Z"
+orchestrator_version = "0.1.0"
+
+[julia]
+binary = "julia"
+project = "~/.amico/julia"
+
+[hashes]
+system_hash = "sha256:961fc9ee9da49fa56b2d6bdec313cb891db4541f103f4f5d4c98c77cdbed475c"
+formulation_hash = "sha256:de8dbf9890e6699c0cf10bfa14c04397c9cc6cea3bbc3f34e70b05d30f626e54"

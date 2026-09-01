@@ -1,0 +1,19 @@
+{
+  "trajectory_type": "gate",
+  "time_mode": "fixed",
+  "parameterization": "smooth",
+  "robustness": {
+    "kind": "none",
+    "params": {}
+  },
+  "free_phase": false,
+  "leakage": false,
+  "target": "X",
+  "objectives": [],
+  "constraints": [],
+  "solve": {
+    "T": 10,
+    "N": 50,
+    "max_iter": 60
+  }
+}

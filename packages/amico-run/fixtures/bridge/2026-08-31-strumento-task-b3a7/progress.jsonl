@@ -1,0 +1,7 @@
+{"t": "2026-08-31T12:00:01.000Z", "ev": "progress", "step": 1, "of": 6, "label": "acquire", "metrics": {"infidelity": 0.031}}
+{"t": "2026-08-31T12:00:16.000Z", "ev": "heartbeat"}
+{"t": "2026-08-31T12:00:40.000Z", "ev": "progress", "step": 2, "of": 6, "label": "fit", "metrics": {"infidelity": 0.004}}
+{"t": "2026-08-31T12:00:41.000Z", "ev": "artifact", "path": "artifacts/fit_002.json", "kind": "fit"}
+{"t": "2026-08-31T12:01:00.000Z", "ev": "calibration", "content_id": "cfg-7903eff092e653e110bb9470ab0f7fa6e6e0bb996dbb10150e6ae6716c39afff"}
+{"t": "2026-08-31T12:01:20.000Z", "ev": "gate", "name": "fit-recovery", "pass": true, "params": {"metric": "pi_gain_rel_err", "value": 0.004, "tolerance": 0.02}}
+{"t": "2026-08-31T12:01:21.000Z", "ev": "survey", "probe": "opacity", "note": "unknown ev value on purpose — readers skip, never fail (the forward-compat axis, exercised by the fixture)"}

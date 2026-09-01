@@ -1,0 +1,28 @@
+{
+  "platform": "transmon",
+  "components": [
+    {
+      "id": "q1",
+      "role": "qubit",
+      "params": {
+        "omega": 4.5,
+        "delta": 0.2
+      },
+      "levels": 3
+    }
+  ],
+  "couplings": [],
+  "drive": {
+    "arch": "per-component",
+    "bounds": [
+      [
+        -0.2,
+        0.2
+      ],
+      [
+        -0.2,
+        0.2
+      ]
+    ]
+  }
+}

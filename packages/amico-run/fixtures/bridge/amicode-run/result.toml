@@ -1,0 +1,8 @@
+schema_version = "1"
+fidelity = 0.9995
+iterations = 60
+
+[params]
+structure_hash = "sh-bridge-fixture-transmon"
+problem_hash = "ph-bridge-fixture-x"
+converged = true

@@ -1,0 +1,7 @@
+{
+  "system_ref": "entities/system.toml",
+  "formulation_ref": "entities/formulation.toml",
+  "run_dir": "~/.amico/runs/default/r20260831-120000Z-704a",
+  "tier": "vetted",
+  "note": "X gate, T=10ns, N=50, defaults — SEAM 4 bridge fixture (synthetic)"
+}

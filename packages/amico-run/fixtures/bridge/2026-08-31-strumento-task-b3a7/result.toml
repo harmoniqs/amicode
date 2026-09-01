@@ -1,0 +1,6 @@
+schema = 1
+state = "done"
+ended = "2026-08-31T12:01:30.000Z"
+summary = "F = 0.9995 after 60 iters (synthetic bridge fixture — no real experiment)"
+error_kind = ""
+error = ""
