@@ -512,6 +512,7 @@
     "vitest": "^2.1.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "yaml": "^2.9.0"
   }
 }

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir, homedir } from "node:os";
-import { join, isAbsolute } from "node:path";
+import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import {
   prepareOpencodeProject,
@@ -59,20 +59,33 @@ describe("buildOpencodeConfigContent", () => {
     expect(cfg.permission.edit).toBe("allow"); // fills the FILL-IN block
     expect(cfg.permission.webfetch).toBeUndefined(); // unused by the solve flow — dropped
   });
-  it("registers the amicode_* plugin by ABSOLUTE default path — and the file actually exists", () => {
-    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
+  it("RETIRES the amicode_* tool plugin — plugin carries ONLY the extra (context) paths (#700 A3)", () => {
+    const ctx = "/ext/opencode-plugin/amicode_context.ts";
+    const cfg = JSON.parse(
+      buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", undefined, undefined, [], "", "", [], undefined, false, [ctx]),
+    );
     expect(Array.isArray(cfg.plugin)).toBe(true);
-    expect(cfg.plugin).toHaveLength(1);
-    expect(isAbsolute(cfg.plugin[0])).toBe(true); // opencode imports it by abs path
-    expect(cfg.plugin[0].endsWith(join("opencode-plugin", "amicode_tools.ts"))).toBe(true);
-    expect(existsSync(cfg.plugin[0])).toBe(true); // __dirname default resolves to the real file
-    expect(existsSync(join(cfg.plugin[0], "..", "entities.ts"))).toBe(true); // its relative import target too
+    expect(cfg.plugin).toEqual([ctx]); // amicode_tools.ts is gone; amicode_context still loads
   });
-  it("honors an explicit pluginPath (the follow-up extension.ts wiring)", () => {
+  it("the retired pluginPath parameter no longer registers anything (the tools ride the MCP server)", () => {
     const cfg = JSON.parse(
       buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default", "/elsewhere/amicode_tools.ts"),
     );
-    expect(cfg.plugin).toEqual(["/elsewhere/amicode_tools.ts"]);
+    expect(cfg.plugin).toEqual([]);
+  });
+  it("injects the amicode MCP server: local spawn of the bundled stdio entry, enabled, with the workspace root in its environment (#700 A3)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
+    const mcp = cfg.mcp?.amicode;
+    expect(mcp).toBeDefined();
+    expect(mcp.type).toBe("local"); // the fork v1.18's McpLocalConfig shape
+    expect(mcp.enabled).toBe(true);
+    expect(Array.isArray(mcp.command)).toBe(true);
+    expect(mcp.command[0]).toBe("node");
+    expect(mcp.command[1].endsWith(join("bin", "dist", "mcp-amico.mjs"))).toBe(true);
+    expect(mcp.command[1]).not.toContain(".."); // resolved absolute, not relative
+    // the tools resolve slugs against the SAME problems root the grant uses —
+    // threaded through the MCP environment, pinned explicitly (never ambient).
+    expect(mcp.environment.AMICODE_PROBLEMS_DIR).toBe(join(homedir(), ".amico", "problems"));
   });
   it("registers skills.paths only when a stage dir is given (opencode-native skills)", () => {
     const without = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
@@ -98,15 +111,17 @@ describe("buildOpencodeConfigContent", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(cfg.default_agent).toBe("plan"); // plan first; Agent.list keeps default first then alphabetical (custom sort makes build second)
   });
-  it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override)", () => {
+  it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override), and the MCP server's environment follows BOTH", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(cfg.permission.external_directory[defGrant]).toBe("allow");
+    expect(cfg.mcp.amicode.environment.AMICODE_PROBLEMS_DIR).toBe(join(homedir(), ".amico", "problems"));
     const prev = process.env.AMICODE_PROBLEMS_DIR;
     process.env.AMICODE_PROBLEMS_DIR = "/custom/problems";
     try {
       const cfg2 = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
       expect(cfg2.permission.external_directory["/custom/problems/**"]).toBe("allow"); // grant follows the plugin
+      expect(cfg2.mcp.amicode.environment.AMICODE_PROBLEMS_DIR).toBe("/custom/problems"); // so does the MCP transport
     } finally {
       if (prev === undefined) delete process.env.AMICODE_PROBLEMS_DIR;
       else process.env.AMICODE_PROBLEMS_DIR = prev;
@@ -241,10 +256,14 @@ describe.skipIf(!existsSync(OC_BIN))("opencode config injection + merge (1.17.3)
     // L0 registration survived resolution against the REAL binary.
     // NOTE: `debug config` IMPORTS listed plugins before printing JSON to stdout
     // (verified on 1.17.3) — so JSON.parse(out) succeeding above doubles as a
-    // regression guard that amicode_tools.ts loads cleanly AND never writes to
-    // stdout at module scope (its load line must stay on stderr).
-    expect(cfg.plugin).toHaveLength(1);
-    expect(cfg.plugin[0].endsWith(join("opencode-plugin", "amicode_tools.ts"))).toBe(true);
+    // regression guard that any listed plugin loads cleanly AND never writes to
+    // stdout at module scope. (#700 A3: the amicode_* tool plugin is retired —
+    // the tools ride the mcp.amicode local server; nothing tool-shaped is
+    // listed as a plugin anymore, so the default call lists none.)
+    expect(cfg.plugin).toEqual([]);
+    // the MCP transport is declared for the REAL binary to consume:
+    expect(cfg.mcp?.amicode?.type).toBe("local");
+    expect(cfg.mcp?.amicode?.command?.[1]?.endsWith(join("bin", "dist", "mcp-amico.mjs"))).toBe(true);
     // #389: the pulse-designer agent shell is retired; default is plan (ordered picker plan → build → autodev → autoresearch).
     expect(cfg.agent?.["pulse-designer"]).toBeUndefined();
     expect(cfg.default_agent).toBe("plan");

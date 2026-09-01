@@ -100,13 +100,15 @@ export function resolveJuliaProject(configValue: string): string {
  *  L0 pulse-designer additions (night build 2026-07-03; registration mechanism
  *  probed on the stock vendored 1.17.3 — see opencode-plugin/amicode_tools.ts
  *  header for the full T8 decision record):
- *    - `plugin: [<abs path to opencode-plugin/amicode_tools.ts>]` — the
- *      amicode_* tool pack, executed by opencode's embedded Bun runtime (it is
- *      NOT part of the extension bundle). The path defaults from __dirname
- *      (works from both src/ under vitest and dist/ in the cjs bundle — the
- *      plugin dir is a sibling of both). TODO(follow-up): extension.ts should
- *      pass this explicitly once .vsix packaging of opencode-plugin/ is
- *      verified; the default keeps existing call sites working unchanged.
+ *    - `mcp: { amicode: { type: "local", … } }` (#700 A3) — the amicode_* tool
+ *      pack as a local MCP stdio server (bin/dist/mcp-amico.mjs, built by the
+ *      esbuild config's 4th target from src/mcp_amico_server.ts over the
+ *      harness-neutral core src/amicode_tools_core.ts). The tool IMPLEMENTATION
+ *      is product-owned and harness-neutral; the plugin transport
+ *      (opencode-plugin/amicode_tools.ts) is retired from this config — it
+ *      remains on disk as the behavioral reference the parity test pins the
+ *      MCP projection against. The MCP environment carries AMICODE_PROBLEMS_DIR
+ *      so the server resolves the same workspace root the grants use.
  *    - `default_agent: "plan"` — plan-first posture: new sessions open on
  *      opencode's plan agent; the ordered picker is plan → build → autodev →
  *      autoresearch (opencode's Agent.list keeps the default first, then
@@ -138,10 +140,12 @@ function problemsRoot(): string {
   return studioPathsOrLegacy().problems;
 }
 
-/** Default location of the amicode_* opencode plugin: a sibling directory of
- *  both src/ (vitest) and dist/ (the bundled extension), so __dirname/.. works
- *  from either. */
-const DEFAULT_PLUGIN_PATH = path.resolve(__dirname, "..", "opencode-plugin", "amicode_tools.ts");
+/** Absolute path of the amicode MCP stdio server bundle (#700 A3): the
+ *  amicode_* tools' portable carrier, built by esbuild.config.mjs's 4th target.
+ *  Same __dirname trick as the other defaults — works from both src/ under
+ *  vitest and dist/ in the cjs bundle (bin/ is a sibling of both). The .vsix
+ *  ships bin/ (see .vscodeignore), so a packaged runtime spawns the same file. */
+const DEFAULT_MCP_DIST_PATH = path.resolve(__dirname, "..", "bin", "dist", "mcp-amico.mjs");
 
 /** Default scores repertoire root — same sibling-of-src-and-dist trick as the
  *  plugin path. Holds SCORE.md manifests, score-local templates, memory hooks. */
@@ -431,7 +435,12 @@ export function buildOpencodeConfigContent(
   agentsPath: string,
   templatePath: string,
   runsRoot: string,
-  pluginPath: string = DEFAULT_PLUGIN_PATH,
+  /** RETIRED (#700 A3): the amicode_* tool plugin is no longer registered — the
+   *  tools ride the `mcp.amicode` local MCP server (see the L0 block below).
+   *  The parameter stays positional-compatible so existing call sites (which
+   *  pass `undefined`) keep their arg slots; passing a path here does nothing.
+   *  (Underscore-prefixed: deliberately unused, per noUnusedParameters.) */
+  _pluginPath: string = "",
   scoresRoot: string = DEFAULT_SCORES_ROOT,
   skillPaths: string[] = [],
   skillsStageDir: string = "",
@@ -447,7 +456,8 @@ export function buildOpencodeConfigContent(
    *  When false we OMIT the key entirely (rather than force it false) so a user's
    *  own global `experimental.openTelemetry` is never clobbered by the deep-merge. */
   telemetryOpen: boolean = false,
-  /** Additional plugin paths to register alongside pluginPath. Each entry is an
+  /** Additional plugin paths to register (the ONLY plugin registrations left
+   *  after #700 retired the tool pack). Each entry is an
    *  absolute path to a .ts plugin file. Used to register the amicode_context
    *  plugin (experimental.chat.system.transform hook) without touching the
    *  single-export amicode_tools pack. */
@@ -478,7 +488,32 @@ export function buildOpencodeConfigContent(
     default_agent: "plan",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
-    plugin: [pluginPath, ...extraPluginPaths],
+    // #700 A3: the amicode_* tool plugin is RETIRED — the tools come from the
+    // `mcp.amicode` local MCP server below. `plugin` carries ONLY the extra
+    // paths (today: amicode_context.ts, the prompt-time context splice, which
+    // is harness-coupled by nature and stays a plugin).
+    plugin: [...extraPluginPaths],
+    // The MCP transport of the amicode_* tool surface (harness-contract A3):
+    // opencode v1.18's fork supports local MCP servers in config (verified in
+    // the fork's McpLocalConfig shape — command array, optional environment,
+    // enabled flag). The server resolves problem slugs against the SAME
+    // workspace root the plugin used — threaded explicitly through the MCP
+    // environment (never ambient), derivation-identical to problemsDir() in
+    // opencode-plugin/problems.ts via problemsRoot() (the #402 ladder).
+    mcp: {
+      amicode: {
+        type: "local",
+        command: ["node", DEFAULT_MCP_DIST_PATH],
+        enabled: true,
+        environment: {
+          AMICODE_PROBLEMS_DIR: problemsRoot(),
+          // The legacy-migration skip flag, when the host set one (test
+          // harnesses) — the MCP server runs the same one-shot migration as
+          // the plugin did, and must skip it for the same reason.
+          ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
+        },
+      },
+    },
     ...(skills ? { skills } : {}),
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
     // into cfg.experimental alongside any user keys (see telemetryOpen above).

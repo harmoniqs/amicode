@@ -56,7 +56,7 @@ function resolveAmicoBin(): string {
  *  avoids arg-length/quoting limits on large `summary`/`errors` payloads).
  *  Returns false (never throws) on any failure — a ledger append must never
  *  break the tool call that triggered it. */
-export function appendStanza(rec: Record<string, unknown>): boolean {
+export function appendStanza(rec: object): boolean {
   try {
     execFileSync(resolveAmicoBin(), ["ledger", "append"], {
       input: JSON.stringify(rec),

@@ -155,7 +155,10 @@ function rebankCommand(
   form: FormulationEntity,
   platform: string,
   chain: CalibChainRecord,
-  chainRef: string,
+  // The chain ref rides the caller's StagedChain (recordCalibChain); the command
+  // text itself carries only the provenance flags. Kept in the signature for
+  // the call-site symmetry; deliberately unused (tsc-noUnusedParameters).
+  _chainRef: string,
 ): string {
   const pin = Object.entries(chain.pinned_globals)
     .map(([k, v]) => `${k}=${v}`)

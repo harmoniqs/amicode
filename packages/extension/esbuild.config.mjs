@@ -98,6 +98,23 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // The MCP stdio transport of the amicode_* tool surface (#700): bundles the
+  // harness-neutral core (src/amicode_tools_core.ts) + the official MCP SDK
+  // into ONE self-contained ESM file opencode's `mcp.amicode` local config
+  // spawns with plain `node` — the portable carrier (any MCP client can drive
+  // it), not an opencode-specific plugin. .mjs keeps parse-mode explicit under
+  // the extension's CJS root package.json regardless of bin/package.json.
+  {
+    entryPoints: ["src/mcp_amico_server.ts"],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outfile: "bin/dist/mcp-amico.mjs",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {
