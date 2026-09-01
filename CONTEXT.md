@@ -28,22 +28,30 @@ _Avoid_: User, tenant, owner (interchangeably)
 
 ### Work organization
 
-**Project**:
-The unit of work organization — a directory registered with amicode where files, solves, and Sessions live. The canonical default Project is `~/armonia/` (the armonia workspace created by bootstrap-armonia.sh); the agent session cwd resolves there unless overridden. Every Session belongs to exactly one Project.
-_Avoid_: Workspace, folder (as a concept name), repo
+**Workspace**:
+The single local checkout you open (e.g. `~/armonia`) — repos, mounted vaults, and the managed data dir (`~/.amico` → `~/armonia/data`). One per machine in normal use; the dashboard has no project switcher. The opencode engine still stores a worktree string per Session for compatibility, but it is not a user-facing switch.
+_Avoid_: Project, folder (as a concept name)
+
+**Problem**:
+The pulse-design unit — a named directory under `~/.amico/problems` (mirrored as `~/armonia/data/problems`) where the System, Formulation, `solve.jl`, and Runs live. Created and tracked via `amicode_problem` and the Amico interview, not via an engine picker. The Problems surface (not the engine's picker) is where you switch designs.
+_Avoid_: Project, workspace, folder (as a concept name)
 
 **Session**:
-One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
+One agent conversation, bound to exactly one Workspace at creation and never re-parented. Sessions surface as a global, chronologically ordered list — optionally grouped by Problem — not nested under a selectable Project.
 _Avoid_: Chat (as a concept name), conversation
 
 **Bug session**:
-A single-purpose Session spawned by the Report-a-Bug entry point. Bound to the active Project like any Session, but machine-managed: archived once its report is filed, deleted if abandoned before filing, and kept out of the Project's session history in every state.
+A single-purpose Session spawned by the Report-a-Bug entry point. Bound to the active Workspace like any Session, but machine-managed: archived once its report is filed, deleted if abandoned before filing, and kept out of the Workspace's session history in every state.
 _Avoid_: chat, side chat, ticket
+
+**Project** *(deprecated — internal only)*:
+Legacy engine term for a registered worktree. Retained for storage compatibility (`Session.directory`, `LocalProject.worktree`) but not surfaced in product language. Use **Workspace** for the single checkout and **Problem** for the design unit.
+_Avoid_: using "Project" for anything user-facing
 
 ### Knowledge
 
 **Armonia**:
-The canonical workspace and knowledge system. As a workspace: the `~/armonia/` directory tree (`repos/{packages,demos}`, `data/{env,problems,runs,vaults}`) surfaced as the structured "Armonia" sidebar panel via ArmoniaService. As a knowledge system: the precedence-ordered stack of mounted Vaults under `data/vaults/` (personal → project → team) that the agent reads for context. The sidebar panel shows both — semantic buckets for the full workspace, with Vaults as one bucket.
+The knowledge system amicode reads for context — a precedence-ordered stack of mounted Vaults (personal → project → team). Surfaced as the "Armonia" sidebar panel; backed by ArmoniaService. Distinct from a Workspace: Armonia is shared knowledge that mounts in, a Workspace is the directory you work in. Vault `project` scope is a *mount tier within Armonia*, not the deprecated engine Project.
 _Avoid_: Vault (as the system name), knowledge base
 
 **Vault**:
