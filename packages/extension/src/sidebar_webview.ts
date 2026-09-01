@@ -530,6 +530,21 @@ function createIconEl(icon: string): HTMLElement {
       s.style.height = h + "px";
       top += h;
     }
+
+    // Position sashes at section boundaries (between each pair of sections).
+    const sashes = document.querySelectorAll(".sash");
+    let sashIdx = 0;
+    let boundary = Math.max(0, totalHeight - totalUsed);
+    for (let i = 0; i < sections.length; i++) {
+      const h = sections[i].classList.contains("expanded")
+        ? (expandedHeights.get(sections[i]) ?? HEADER_HEIGHT)
+        : HEADER_HEIGHT;
+      boundary += h;
+      if (i < sections.length - 1 && sashIdx < sashes.length) {
+        (sashes[sashIdx] as HTMLElement).style.top = boundary + "px";
+        sashIdx++;
+      }
+    }
   }
 
   /** Check if the user prefers reduced motion. */

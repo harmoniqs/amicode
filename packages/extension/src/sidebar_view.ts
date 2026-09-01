@@ -719,8 +719,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     /* ── Sash (resize handle between sections) ─────────────────── */
     .sash {
       height: 0;
-      position: relative;
-      flex-shrink: 0;
+      position: absolute;
+      left: 0;
+      right: 0;
       z-index: 1;
     }
     .sash::after {

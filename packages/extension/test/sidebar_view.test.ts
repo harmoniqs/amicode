@@ -1425,7 +1425,7 @@ describe("sidebar — reactive git status", () => {
 // ── Sash resize between sections (#673) ──────────────────────────────────────
 
 describe("sidebar — sash resize between sections", () => {
-  it("CSS has sash styles with VS Code sash hover color and ns-resize cursor", async () => {
+  it("CSS has sash styles with position:absolute, VS Code sash hover color and ns-resize cursor", async () => {
     vi.resetModules();
     const { SidebarViewProvider } = await import("../src/sidebar_view");
     const provider = new SidebarViewProvider(makeExtensionUri());
@@ -1433,6 +1433,8 @@ describe("sidebar — sash resize between sections", () => {
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
     const html = view.webview.html;
     expect(html).toMatch(/\.sash/);
+    // Sash must be position:absolute to sit at section boundaries in pixel layout
+    expect(html).toMatch(/\.sash\s*\{[^}]*position:\s*absolute/);
     expect(html).toContain("ns-resize");
     expect(html).toContain("#fff676");
     expect(html).toContain("sash-dragging");
@@ -1451,6 +1453,19 @@ describe("sidebar — sash resize between sections", () => {
     expect(src).toContain("mouseup");
     // Section toggle calls layoutSections
     expect(src).toContain("layoutSections");
+  });
+
+  it("layoutSections positions sashes at section boundaries via style.top", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // layoutSections must also position sash elements, not just sections
+    // Find the layoutSections function body and check it touches sash.style.top
+    const fnStart = src.indexOf("function layoutSections");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = src.slice(fnStart, fnStart + 3000);
+    expect(fnBody).toMatch(/sash.*style\.top|\.sash/);
   });
 });
 
