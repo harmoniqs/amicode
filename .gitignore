@@ -3,6 +3,7 @@ dist/
 *.vsix
 .vscode-test/
 *.log
+!packages/amico-run/fixtures/bridge/**/*.log
 !packages/extension/demo/run/run.log
 packages/extension/vendor/
 packages/extension/bin/

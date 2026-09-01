@@ -1,0 +1,14 @@
+AMICODE_PULSE_META drives=2 knots=50 labels="a_1","a_2" bounds=-0.2:0.2,-0.2:0.2
+This is Ipopt version 3.14.14, running with linear solver MUMPS.
+Number of nonzeros in equality constraint Jacobian...: 0
+AMICODE_ITER iter=1 f=0.98765 inf_pr=1.4e-01 inf_du=5.2e-02
+AMICODE_PULSE iter=1 dt=0.2 a=0.01,-0.01,0.00;0.02,0.00,0.00
+iter 1 | objective 0.98765
+AMICODE_ITER iter=30 f=0.00231 inf_pr=4.1e-04 inf_du=8.7e-05
+AMICODE_PULSE iter=30 dt=0.2 a=0.05,0.03,-0.01;0.04,0.01,0.00
+iter 30 | objective 0.00231
+AMICODE_ITER iter=60 f=0.00012 inf_pr=1.7e-05 inf_du=3.3e-06
+AMICODE_PULSE iter=60 dt=0.2 a=0.06,0.02,-0.02;0.05,0.02,-0.01
+iter 60 | objective 0.00012
+EXIT: Optimal Solution Found.
+DONE fidelity=0.9995
