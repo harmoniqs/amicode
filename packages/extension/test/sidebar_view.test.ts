@@ -1811,6 +1811,25 @@ describe("sidebar — sash resize with pixel layout", () => {
     // Must shrink sections to absorb the overflow (reduce heights, not just clamp up)
     expect(fnBody).toMatch(/overflow.*>.*0|overshoot.*>.*0/i);
   });
+
+  it("toggleSectionBody clears ALL sectionSizes so sections split equally after topology change", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // After sash drag writes large pixel weights (e.g. 300) into sectionSizes,
+    // a re-expanded section with no entry gets weight 1 — a 300:1 ratio that
+    // starves it to header-only height. toggleSectionBody must clear the ENTIRE
+    // sectionSizes map (not just delete the toggled section's entry) so all
+    // expanded sections split equally after any topology change.
+    const fnStart = src.indexOf("function toggleSectionBody");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = src.slice(fnStart, fnStart + 1500);
+
+    // Must use sectionSizes.clear(), not sectionSizes.delete(id)
+    expect(fnBody).toContain("sectionSizes.clear()");
+    expect(fnBody).not.toMatch(/sectionSizes\.delete\s*\(/);
+  });
 });
 
 // ── Chevron style: CSS-rotated outline chevrons, not filled triangles ────────

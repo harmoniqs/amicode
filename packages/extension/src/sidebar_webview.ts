@@ -671,14 +671,15 @@ function createIconEl(icon: string): HTMLElement {
       body.style.display = "block";
       section.classList.add("expanded");
       body.classList.add("expanded");
-      // Clear any cached sash-drag size so expanded sections split equally
-      sectionSizes.delete(id);
     } else {
       section.classList.remove("expanded");
       body.classList.remove("expanded");
-      // Clear cached size
-      sectionSizes.delete(id);
     }
+
+    // Clear ALL cached sash-drag sizes so expanded sections split equally
+    // after the topology change. Old pixel weights (e.g. 300 vs 1) would
+    // starve the re-expanded section to header-only height.
+    sectionSizes.clear();
 
     // Refresh sash active states
     document.querySelectorAll(".sash").forEach((s) => {
