@@ -23,7 +23,22 @@ export const TASKS_FIXTURE = join(FLYWHEEL_FIXTURES, "tasks");
 export const STORE_FIXTURE = join(FLYWHEEL_FIXTURES, "store");
 export const BRIDGE_FIXTURES = join(PKG_ROOT, "fixtures", "bridge");
 
-import { deriveRunDirFamily, deriveTaskRecordFamily, deriveStoreEntryFamily } from "../src/flywheel.js";
+import { deriveRunDirFamily, deriveTaskRecordFamily, deriveStoreEntryFamily, computeDecay } from "../src/flywheel.js";
+
+/** Copy the committed runs fixture to tmp with the FINISHED mtime of the
+ *  no-wall_seconds run pinned (fa02 → created+200s), so the mtime-fallback
+ *  campaign math is deterministic — committed fixture bytes are never touched
+ *  and a checkout's clone-time mtimes never leak into an assertion. */
+function pinnedRunsFixture(): string {
+  const root = mkdtempSync(join(tmpdir(), "flywheel-runs-"));
+  cpSync(RUNS_FIXTURE, root, { recursive: true });
+  utimesSync(
+    join(root, "lab-fx", "r20260801-020000Z-fa02", "FINISHED"),
+    new Date("2026-08-01T02:03:20Z"),
+    new Date("2026-08-01T02:03:20Z"),
+  );
+  return root;
+}
 
 describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a plain fixed-time gate-synthesis run (TransmonSystem + unitary CZ) is first-pulse", () => {
@@ -155,5 +170,105 @@ describe("SEAM 7 derivation (c) — store provenance → campaign family (the so
     expect(r.family).toBe("drift-response");
     expect(r.lineage.calibration_ref).toContain("rehearsal.toml");
     expect(r.lineage.warm_start).toBe("transmon-CZ-v2"); // the seed still carried
+  });
+});
+
+describe("SEAM 7 — the decay computation (campaign grouping + the trend)", () => {
+  it("groups same-family run dirs into per-day campaigns and computes the trend vs the PRIOR campaign", () => {
+    const report = computeDecay({ runsRoots: [pinnedRunsFixture()] });
+    const fp = report.families.find((f) => f.family === "first-pulse");
+    expect(fp).toBeDefined();
+    const series = fp!.scopes.find((s) => s.record_kind === "run-dir");
+    expect(series).toBeDefined();
+    expect(series!.scope).toBe("sim:lab-fx/transmon"); // sim families key workspace + platform
+    expect(series!.scope_kind).toBe("sim");
+    expect(series!.campaigns.map((c) => c.day)).toEqual(["2026-08-01", "2026-08-02", "2026-08-03"]);
+    // day 1: fa01 (iters 40, wall 100 record) + fa02 (iters 60, wall 200 mtime)
+    const d1 = series!.campaigns[0];
+    expect(d1.records).toBe(2);
+    expect(d1.iterations).toBe(100);
+    expect(d1.wall_s).toBe(300);
+    expect(d1.wall_source).toBe("mixed"); // one record-carried + one fs-mtime fallback
+    expect(d1.acquisitions).toBeNull(); // F-709-3: run dirs carry no acquisitions
+    expect(d1.metrics_absent.join(" ")).toMatch(/F-709-3/);
+    expect(d1.decay).toBe("baseline"); // the FIRST campaign has no decay — stated, not zero-division
+    expect(d1.deltas).toBeNull();
+    // day 2 vs day 1: the three metrics' deltas (acquisitions stated-absent)
+    const d2 = series!.campaigns[1];
+    expect(d2.decay).toBe("trend");
+    expect(d2.deltas!.iterations).toBe(30 - 100);
+    expect(d2.deltas!.wall_s).toBe(50 - 300);
+    expect(d2.deltas!.iterations_pct).toBeCloseTo(-70, 6);
+    expect(d2.deltas!.acquisitions).toBeNull();
+    // day 3 (the ket run — same family, one-shot synthesis) vs day 2
+    const d3 = series!.campaigns[2];
+    expect(d3.records).toBe(1);
+    expect(d3.deltas!.iterations).toBe(70 - 30);
+  });
+
+  it("a family with a single campaign is a stated baseline — no delta is faked", () => {
+    const report = computeDecay({ runsRoots: [pinnedRunsFixture()] });
+    const sweep = report.families.find((f) => f.family === "regime-sweep");
+    expect(sweep!.scopes[0].campaigns).toHaveLength(1);
+    expect(sweep!.scopes[0].campaigns[0].decay).toBe("baseline");
+    const robust = report.families.find((f) => f.family === "robustness");
+    expect(robust!.scopes[0].campaigns).toHaveLength(1);
+    expect(robust!.scopes[0].campaigns[0].decay).toBe("baseline");
+  });
+
+  it("task records form device-keyed campaigns: bring-up day 2 is cheaper than day 1 (acquisitions, wall clock)", () => {
+    const report = computeDecay({ taskRoots: [TASKS_FIXTURE, BRIDGE_FIXTURES] });
+    const bringup = report.families.find((f) => f.family === "bring-up");
+    expect(bringup).toBeDefined();
+    const series = bringup!.scopes.find((s) => s.record_kind === "task-record");
+    expect(series!.scope).toBe("device:qick-fx-01"); // device-touching families key on the device
+    expect(series!.scope_kind).toBe("device");
+    const [d1, d2] = series!.campaigns;
+    expect(d1.acquisitions).toBe(2);
+    expect(d1.wall_s).toBe(600);
+    expect(d1.iterations).toBeNull(); // F-709-4: prose-only on task records
+    expect(d1.metrics_absent.join(" ")).toMatch(/F-709-4/);
+    expect(d2.deltas!.acquisitions).toBe(1 - 2);
+    expect(d2.deltas!.wall_s).toBe(240 - 600);
+    expect(d2.deltas!.iterations).toBeNull();
+    // the SEAM 4 strumento fixture rode along as the tune-up family (the sim rehearsal)
+    const tuneup = report.families.find((f) => f.family === "tune-up");
+    expect(tuneup!.scopes[0].scope).toBe("device:loopback_demo");
+    expect(tuneup!.scopes[0].campaigns[0].acquisitions).toBe(1);
+  });
+
+  it("store entries count campaigns per family; their cost metrics are stated-absent (the bank carries lineage, not cost)", () => {
+    const report = computeDecay({ storeRoots: [STORE_FIXTURE] });
+    const fp = report.families.find((f) => f.family === "first-pulse");
+    const series = fp!.scopes.find((s) => s.record_kind === "store-entry");
+    expect(series!.scope).toBe("bank:transmon");
+    expect(series!.campaigns[0].records).toBe(1);
+    expect(series!.campaigns[0].acquisitions).toBeNull();
+    expect(series!.campaigns[0].iterations).toBeNull();
+    expect(series!.campaigns[0].wall_s).toBeNull();
+    expect(series!.campaigns[0].decay).toBe("baseline");
+    // tune-up + drift-response entries are device-touching families with NO
+    // device field in metadata.toml — they degrade per F-709-2 and still compute
+    const tuneup = report.families.find((f) => f.family === "tune-up");
+    expect(tuneup!.scopes[0].scope).toBe("bank:transmon");
+    const drift = report.families.find((f) => f.family === "drift-response");
+    expect(drift!.scopes[0].campaigns).toHaveLength(1);
+    expect(report.findings.join(" ")).toMatch(/F-709-2/);
+  });
+
+  it("a sim-only family with no device field anywhere computes — never vacuously fails (the spec's scoping)", () => {
+    const report = computeDecay({ runsRoots: [pinnedRunsFixture()] });
+    expect(report.families.length).toBeGreaterThan(0);
+    const fp = report.families.find((f) => f.family === "first-pulse")!;
+    expect(fp.scopes.every((s) => s.scope_kind === "sim")).toBe(true);
+  });
+
+  it("pre-v4 and unknown-kind records are listed unattributed, never forced", () => {
+    const report = computeDecay({
+      runsRoots: [BRIDGE_FIXTURES], // the amicode-run bridge fixture (pre-v4 shape)
+      taskRoots: [TASKS_FIXTURE],
+    });
+    expect(report.unattributed.length).toBeGreaterThan(0);
+    expect(report.unattributed.every((u) => u.reason.length > 0)).toBe(true);
   });
 });

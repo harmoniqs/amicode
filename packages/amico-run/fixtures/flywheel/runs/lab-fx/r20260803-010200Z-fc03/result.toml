@@ -1,6 +1,7 @@
 schema_version = "1"
 fidelity = 0.9985
 iterations = 70
+wall_seconds = 150.0
 
 [params]
 structure_hash = "sh-fx-cat-transmon"

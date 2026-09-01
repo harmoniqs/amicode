@@ -460,3 +460,317 @@ function dateStr(v: unknown): string | undefined {
   if (v instanceof Date) return v.toISOString().slice(0, 10); // smol-toml bare-date → TomlDate
   return undefined;
 }
+
+// ── the decay computation ───────────────────────────────────────────────────
+//
+// CAMPAIGN (the named mechanical derivation — no record carries a campaign
+// field, so the grouping is derived, stated, never stamped): a campaign is the
+// set of same-FAMILY, same-SCOPE, same-RECORD-KIND records sharing a UTC day.
+//   - day ← run.toml created_at (run dirs) | task.toml created (task records)
+//     | metadata.toml date (store entries);
+//   - scope ← sim families: workspace + platform (run dirs: lab_id + template
+//     platform; store entries: the bank itself + platform — F-709-2 degrades
+//     the device-touching store families to the same key, honestly);
+//     device-touching families (task records): task.toml device.
+//   - record kind is part of the campaign identity: a run-dir campaign and a
+//     task-record campaign of the same family are DIFFERENT series (different
+//     metric carriers — mixing them would average stated-absent metrics).
+//
+// Per-campaign metrics (the metrics the records carry; absent ≠ 0):
+//   - acquisitions = Σ progress.jsonl acquire-labeled progress events
+//     (task records only — F-709-3);
+//   - iterations = Σ result.toml iterations (run dirs only — F-709-4);
+//   - wall_s = Σ per-record wall clock (run dirs: result.toml wall_seconds,
+//     else FINISHED mtime − created_at per F-709-1; task records:
+//     result.toml ended − task.toml created; store entries: not carried).
+//
+// The trend: campaign N's delta vs campaign N−1 of the same series, per metric
+// present on BOTH sides (absolute + percent). The FIRST campaign of a series
+// is the baseline: decay = "baseline", deltas = null — stated, never a
+// zero-division faked number.
+
+export type RecordKind = "run-dir" | "task-record" | "store-entry";
+export type ScopeKind = "sim" | "device" | "bank";
+export type WallSource = "record" | "finished-mtime" | "mixed" | "unavailable" | "absent";
+
+export interface CampaignRow {
+  day: string;
+  records: number;
+  acquisitions: number | null;
+  iterations: number | null;
+  wall_s: number | null;
+  wall_source: WallSource;
+  /** per-metric absence reasons, each naming its finding (e.g. "acquisitions (F-709-3)"). */
+  metrics_absent: string[];
+  decay: "baseline" | "trend";
+  deltas: null | {
+    acquisitions: number | null;
+    iterations: number | null;
+    wall_s: number | null;
+    acquisitions_pct: number | null;
+    iterations_pct: number | null;
+    wall_s_pct: number | null;
+  };
+}
+
+export interface ScopeTrend {
+  scope: string;
+  scope_kind: ScopeKind;
+  record_kind: RecordKind;
+  campaigns: CampaignRow[];
+}
+
+export interface FamilyTrend {
+  family: FamilyId;
+  scopes: ScopeTrend[];
+}
+
+export interface Unattributed {
+  kind: RecordKind | "run-dir" | "task-record";
+  dir: string;
+  reason: string;
+}
+
+export interface DecayReport {
+  families: FamilyTrend[];
+  unattributed: Unattributed[];
+  findings: string[];
+  scanned: { runs: number; tasks: number; store: number };
+}
+
+export interface DecayInput {
+  /** runs roots: each is either a runs root (dirs of lab dirs) or a lab dir
+   *  (dirs of run dirs). Scanned one level down, never deeper. */
+  runsRoots?: string[];
+  /** task-record roots: dirs containing strumento task-record dirs. */
+  taskRoots?: string[];
+  /** store roots: pulse-bank `pulses/` dirs (entries = <id>/metadata.toml). */
+  storeRoots?: string[];
+}
+
+function listDirs(root: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(root);
+  } catch {
+    return [];
+  }
+  return names
+    .filter((n) => !n.startsWith("."))
+    .map((n) => join(root, n))
+    .filter((p) => {
+      try {
+        return statSync(p).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+}
+
+/** Scan a runs root one level down: lab dirs → run dirs, or the root itself a
+ *  lab dir. Never throws; unreadable roots degrade to []. */
+export function scanRunDirs(runsRoot: string): string[] {
+  const out: string[] = [];
+  for (const child of listDirs(runsRoot)) {
+    if (existsSync(join(child, "run.toml"))) {
+      out.push(child); // the root IS a lab dir; child is a run dir
+      continue;
+    }
+    for (const grandchild of listDirs(child)) {
+      if (existsSync(join(grandchild, "run.toml"))) out.push(grandchild);
+    }
+  }
+  return out;
+}
+
+export function scanTaskDirs(taskRoot: string): string[] {
+  return listDirs(taskRoot).filter((d) => existsSync(join(d, "task.toml")));
+}
+
+/** Scan a store root for pulse-bank entries: the root may be the catalog dir
+ *  (whose `pulses/` child holds the entries — the catalogPulsesDir shape) or
+ *  the `pulses/` dir itself. */
+export function scanStoreEntries(storeRoot: string): string[] {
+  const direct = listDirs(storeRoot).filter((d) => existsSync(join(d, "metadata.toml")));
+  if (direct.length > 0) return direct;
+  const pulses = join(storeRoot, "pulses");
+  if (existsSync(pulses)) return listDirs(pulses).filter((d) => existsSync(join(d, "metadata.toml")));
+  return [];
+}
+
+function pct(cur: number, prev: number): number | null {
+  if (prev === 0) return null; // no zero-division trend for a zero prior — stated by absence
+  return ((cur - prev) / prev) * 100;
+}
+
+interface Acc {
+  records: number;
+  acquisitions: number | null;
+  iterations: number | null;
+  wall_s: number | null;
+  wallSources: WallSource[];
+  metrics_absent: Set<string>;
+}
+
+function newAcc(): Acc {
+  return { records: 0, acquisitions: null, iterations: null, wall_s: null, wallSources: [], metrics_absent: new Set() };
+}
+
+function addWall(acc: Acc, wall_s: number | undefined, source: WallSource): void {
+  if (wall_s === undefined) return;
+  acc.wall_s = (acc.wall_s ?? 0) + wall_s;
+  acc.wallSources.push(source);
+}
+
+function collapseWallSource(sources: WallSource[]): WallSource {
+  if (sources.length === 0) return "unavailable";
+  const set = new Set(sources);
+  if (set.size === 1) return sources[0]!;
+  return "mixed"; // some record-carried, some fs-mtime fallback
+}
+
+/** The decay computation over the three record kinds. Reads existing records
+ *  only; never stamps; never throws. */
+export function computeDecay(input: DecayInput): DecayReport {
+  const seriesMap = new Map<string, Map<string, Acc>>(); // seriesKey → day → acc
+  const seriesMeta = new Map<string, { family: FamilyId; scope: string; scope_kind: ScopeKind; record_kind: RecordKind }>();
+  const unattributed: Unattributed[] = [];
+  let runs = 0;
+  let tasks = 0;
+  let store = 0;
+
+  const seriesKey = (family: string, scope: string, record_kind: string): string => `${family}|${scope}|${record_kind}`;
+  const bucket = (family: FamilyId, scope: string, scope_kind: ScopeKind, record_kind: RecordKind, day: string): Acc => {
+    const key = seriesKey(family, scope, record_kind);
+    let days = seriesMap.get(key);
+    if (!days) {
+      days = new Map();
+      seriesMap.set(key, days);
+      seriesMeta.set(key, { family, scope, scope_kind, record_kind });
+    }
+    let acc = days.get(day);
+    if (!acc) {
+      acc = newAcc();
+      days.set(day, acc);
+    }
+    return acc;
+  };
+
+  for (const root of input.runsRoots ?? []) {
+    for (const dir of scanRunDirs(root)) {
+      runs += 1;
+      const r = deriveRunDirFamily(dir);
+      if (!r) continue;
+      if (r.kind === "run-dir-unattributable") {
+        unattributed.push({ kind: "run-dir", dir, reason: r.reason });
+        continue;
+      }
+      // run dirs are solves: always sim families keyed workspace + platform.
+      const acc = bucket(r.family, `sim:${r.workspace}/${r.platform}`, "sim", "run-dir", r.day);
+      acc.records += 1;
+      if (r.metrics.iterations !== undefined) acc.iterations = (acc.iterations ?? 0) + r.metrics.iterations;
+      else acc.metrics_absent.add("iterations (result.toml missing)");
+      addWall(acc, r.metrics.wall_s, r.metrics.wall_source === "record" ? "record" : "finished-mtime");
+      acc.metrics_absent.add("acquisitions (F-709-3)"); // run dirs carry no acquisition counts
+    }
+  }
+
+  for (const root of input.taskRoots ?? []) {
+    for (const dir of scanTaskDirs(root)) {
+      tasks += 1;
+      const r = deriveTaskRecordFamily(dir);
+      if (!r) continue;
+      if (r.kind === "task-record-unattributable") {
+        unattributed.push({ kind: "task-record", dir, reason: r.reason });
+        continue;
+      }
+      // task records are device experiments: the device-touching families key
+      // on task.toml device (the record carries it).
+      const acc = bucket(r.family, `device:${r.device || "unknown"}`, "device", "task-record", r.day);
+      acc.records += 1;
+      if (r.metrics.acquisitions !== undefined) acc.acquisitions = (acc.acquisitions ?? 0) + r.metrics.acquisitions;
+      else acc.metrics_absent.add("acquisitions (progress.jsonl missing)");
+      addWall(acc, r.metrics.wall_s, "record");
+      acc.metrics_absent.add("iterations (F-709-4)"); // prose-only on task records
+    }
+  }
+
+  for (const root of input.storeRoots ?? []) {
+    for (const dir of scanStoreEntries(root)) {
+      store += 1;
+      const r = deriveStoreEntryFamily(dir);
+      if (!r) continue;
+      // The bank is one workspace: sim families key bank + platform; the
+      // device-touching store families (tune-up, drift-response) have NO
+      // device field in metadata.toml — F-709-2: the key degrades to the same
+      // bank scope (stated), and the campaign still computes.
+      const acc = bucket(r.family, `bank:${r.platform}`, DEVICE_TOUCHING.includes(r.family) ? "bank" : "sim", "store-entry", r.day);
+      acc.records += 1;
+      acc.metrics_absent.add("acquisitions (store records carry no cost metrics)");
+      acc.metrics_absent.add("iterations (store records carry no cost metrics)");
+      acc.metrics_absent.add("wall_s (store records carry no cost metrics)");
+    }
+  }
+
+  // ── the trend: per series, per campaign, deltas vs the PRIOR campaign ──
+  const families = new Map<string, FamilyTrend>();
+  for (const [key, days] of seriesMap) {
+    const meta = seriesMeta.get(key)!;
+    const dayList = [...days.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    const campaigns: CampaignRow[] = dayList.map(([day, acc], i) => {
+      const wall_source: WallSource = acc.wallSources.length === 0 ? "absent" : collapseWallSource(acc.wallSources);
+      const metrics_absent = [...acc.metrics_absent];
+      if (i === 0) {
+        return {
+          day,
+          records: acc.records,
+          acquisitions: acc.acquisitions,
+          iterations: acc.iterations,
+          wall_s: acc.wall_s,
+          wall_source,
+          metrics_absent,
+          decay: "baseline", // the FIRST campaign of a series: no prior — stated
+          deltas: null,
+        };
+      }
+      const prev = dayList[i - 1]![1];
+      const both = (a: number | null, b: number | null): number | null => (a !== null && b !== null ? a - b : null);
+      return {
+        day,
+        records: acc.records,
+        acquisitions: acc.acquisitions,
+        iterations: acc.iterations,
+        wall_s: acc.wall_s,
+        wall_source,
+        metrics_absent,
+        decay: "trend",
+        deltas: {
+          acquisitions: both(acc.acquisitions, prev.acquisitions),
+          iterations: both(acc.iterations, prev.iterations),
+          wall_s: both(acc.wall_s, prev.wall_s),
+          acquisitions_pct: acc.acquisitions !== null && prev.acquisitions !== null ? pct(acc.acquisitions, prev.acquisitions) : null,
+          iterations_pct: acc.iterations !== null && prev.iterations !== null ? pct(acc.iterations, prev.iterations) : null,
+          wall_s_pct: acc.wall_s !== null && prev.wall_s !== null ? pct(acc.wall_s, prev.wall_s) : null,
+        },
+      };
+    });
+    let ft = families.get(meta.family);
+    if (!ft) {
+      ft = { family: meta.family, scopes: [] };
+      families.set(meta.family, ft);
+    }
+    ft.scopes.push({
+      scope: meta.scope,
+      scope_kind: meta.scope_kind,
+      record_kind: meta.record_kind,
+      campaigns,
+    });
+  }
+
+  return {
+    families: [...families.values()],
+    unattributed,
+    findings: [...FLYWHEEL_FINDINGS],
+    scanned: { runs, tasks, store },
+  };
+}
