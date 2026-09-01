@@ -327,10 +327,62 @@ function createIconEl(icon: string): HTMLElement {
     // Suppress context menu while inline edit is active
     if (activeInlineEdit) return;
 
-    // Only handle right-clicks on tree nodes (not buttons, fleet, etc.)
     const target = e.target as HTMLElement;
+
+    // Suppress default context menu on the sidebar header (Chat + New Project
+    // buttons) and section headers (RESEARCH PROJECTS / DEVELOPMENT PROJECTS
+    // label bars) — no custom menu needed, just prevent the browser default.
+    if (target.closest(".sidebar-header") || target.closest(".tree-section-label")) {
+      e.preventDefault();
+      return;
+    }
+
+    // Handle right-clicks on tree nodes
     const treeNode = target.closest(".tree-node") as HTMLElement | null;
-    if (!treeNode) return;
+    if (!treeNode) {
+      // Right-click on empty section body → show section-level menu
+      const sectionBody = target.closest(".section-body") as HTMLElement | null;
+      if (sectionBody) {
+        e.preventDefault();
+        dismissMenu();
+
+        const menu = document.createElement("div");
+        menu.className = "context-menu";
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+
+        const addItem = document.createElement("div");
+        addItem.className = "context-menu-item";
+        addItem.textContent = "Add Existing Project";
+        addItem.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "add-existing" });
+        });
+        menu.appendChild(addItem);
+
+        const newItem = document.createElement("div");
+        newItem.className = "context-menu-item";
+        newItem.textContent = "New Project";
+        newItem.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "new-project" });
+        });
+        menu.appendChild(newItem);
+
+        document.body.appendChild(menu);
+        activeMenu = menu;
+
+        // Clamp to viewport bounds
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+          menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+          menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+        }
+      }
+      return;
+    }
 
     e.preventDefault();
     dismissMenu();

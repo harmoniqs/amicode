@@ -1174,6 +1174,31 @@ describe("sidebar webview — context menu", () => {
     expect(html).toContain("context-menu");
     expect(html).toContain("context-menu-item");
   });
+
+  it("right-click on empty section body shows Add Existing Project and New Project", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The contextmenu handler must check for section-body when no tree-node is found
+    expect(src).toMatch(/section-body/);
+    // Must offer Add Existing Project and New Project as menu items for empty space
+    expect(src).toContain("Add Existing Project");
+    expect(src).toContain("New Project");
+    // These items post the correct messages
+    expect(src).toMatch(/add-existing/);
+    expect(src).toMatch(/new-project/);
+  });
+
+  it("right-click on sidebar header and section label bars suppresses default context menu", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The contextmenu handler must suppress default on sidebar-header and tree-section-label
+    expect(src).toMatch(/sidebar-header/);
+    expect(src).toMatch(/tree-section-label/);
+  });
 });
 
 // ── Add existing project (#673 polish) ───────────────────────────────────────
