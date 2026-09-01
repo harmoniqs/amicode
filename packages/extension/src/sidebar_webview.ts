@@ -850,6 +850,11 @@ function createIconEl(icon: string): HTMLElement {
         if (container) {
           const depth = Math.round((parseInt((container.parentElement as HTMLElement)?.querySelector('.tree-node')?.style.paddingLeft ?? '8') - 8) / 16) + 1;
           renderChildren(container as HTMLElement, msg.entries ?? [], depth);
+          // Re-insert the inline edit temp row if one is active for this directory
+          if (activeInlineEdit?.tempRow && activeInlineEdit.path === msg.path) {
+            container.insertBefore(activeInlineEdit.tempRow, container.firstChild);
+            activeInlineEdit.input.focus();
+          }
         }
         break;
       }
