@@ -29,10 +29,12 @@ import {
   selectRegimePriors,
   priorProvenanceString,
   platformFamily,
+  serveRecommendations,
   REGIME_KNOBS,
   CAVEAT_MARKER,
   type PlatformFamily,
 } from "../opencode-plugin/regime_priors";
+import type { LedgerQueryResult } from "../opencode-plugin/ledger_client";
 
 const loaded = loadRegimePriorsTable();
 
@@ -198,5 +200,77 @@ describe("platformFamily — the coarse platform axis (family keying, never vend
     expect(platformFamily("cavity")).toBeUndefined();
     expect(platformFamily("bosonic")).toBeUndefined();
     expect(platformFamily("fluxonium")).toBeUndefined();
+  });
+});
+
+// ── the serving seam: amicode_recommend action="query" composes these static
+// priors (scoped by the session's platform family) with the existing ledger
+// priors — the EXISTING mechanics own confidence capping (ledger-sourced caps
+// at medium; static priors state their confidence explicitly). ──
+describe("serveRecommendations — regime priors composed with ledger priors", () => {
+  const ledger = (): LedgerQueryResult => ({
+    key: "primary",
+    structure_hash: "sh-x",
+    total: 3,
+    verified: 2,
+    params: {
+      N: { value: 50, iqr: [50, 50], n: 3 },
+      max_iter: { value: 60, iqr: [60, 80], n: 3 },
+    },
+    provenance: "3 runs, 2 verified",
+    confidence: "high",
+  });
+  const table = () => loaded; // the committed table's LoadResult (ok: true)
+
+  it("serves the five regime priors (platform-scoped) ALONGSIDE the ledger priors, the ledger still capped at medium", () => {
+    const served = serveRecommendations({ table: table(), platform: "transmon", ledger: ledger() });
+    const regime = served.recommendations.filter((r) => r.origin === "regime");
+    const fromLedger = served.recommendations.filter((r) => r.origin === "ledger");
+    // the five NAMED knobs, scoped to the session's platform family
+    expect(regime.map((r) => r.param).sort()).toEqual([...REGIME_KNOBS].sort());
+    for (const r of regime) {
+      expect(r.provenance).toMatch(/^scope: /);
+      expect(r.provenance).toContain(CAVEAT_MARKER);
+    }
+    // the ledger priors ride along, their confidence CAPPED at medium (the
+    // existing interim guard — high on the wire, medium at the surface)
+    expect(fromLedger.map((r) => r.param).sort()).toEqual(["N", "max_iter"]);
+    expect(fromLedger.every((r) => r.confidence === "medium")).toBe(true);
+    // the static priors state their own confidence explicitly (never capped up)
+    expect(regime.find((r) => r.param === "min_contrast")?.confidence).toBe("high");
+  });
+
+  it("serves the regime priors even without ledger history (the static priors are not run-gated)", () => {
+    const served = serveRecommendations({ table: table(), platform: "spin" });
+    expect(served.recommendations.filter((r) => r.origin === "regime").length).toBe(5);
+    expect(served.regimeNote).toBeUndefined();
+  });
+
+  it("honestly notes absence for an unmapped platform (no nearest-guess prior)", () => {
+    const served = serveRecommendations({ table: table(), platform: "cavity", ledger: ledger() });
+    expect(served.recommendations.filter((r) => r.origin === "regime")).toEqual([]);
+    expect(served.regimeNote).toMatch(/no regime priors for platform "cavity"/);
+    expect(served.recommendations.filter((r) => r.origin === "ledger").length).toBe(2);
+  });
+
+  it("projects the params selection onto BOTH sources", () => {
+    const served = serveRecommendations({
+      table: table(),
+      platform: "transmon",
+      ledger: ledger(),
+      params: ["min_contrast", "N"],
+    });
+    expect(served.recommendations.map((r) => r.param).sort()).toEqual(["N", "min_contrast"]);
+  });
+
+  it("degrades honestly on an invalid table (the ledger still serves; the regime notes the failure)", () => {
+    const served = serveRecommendations({
+      table: { ok: false, problems: ["schema: expected amicode.regime-priors/v0"] },
+      platform: "transmon",
+      ledger: ledger(),
+    });
+    expect(served.recommendations.filter((r) => r.origin === "ledger").length).toBe(2);
+    expect(served.recommendations.filter((r) => r.origin === "regime")).toEqual([]);
+    expect(served.regimeNote).toMatch(/regime priors table/);
   });
 });

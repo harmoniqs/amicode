@@ -40,6 +40,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { selectRecommendations, type LedgerQueryResult } from "./ledger_client";
 
 // ── the schema's vocabulary ─────────────────────────────────────────────────
 
@@ -361,4 +362,84 @@ export function selectRegimePriors(
     });
   }
   return out;
+}
+
+// ── the serving path — composition with the existing ledger priors ──────────
+
+/** A composed recommendation on the serving seam — regime (static, table-
+ * sourced, explicit confidence) or ledger (run-history-sourced, confidence
+ * capped at medium by the existing interim guard inside
+ * ledger_client.selectRecommendations). */
+export interface ServedRecommendation {
+  param: string;
+  value: number | string;
+  confidence: "high" | "medium" | "low";
+  provenance: string;
+  origin: "regime" | "ledger";
+}
+
+export interface ServeRecommendationsInput {
+  /** The table's load result. When omitted the committed table is loaded
+   * (and an invalid one degrades honestly to a note, never a served lie). */
+  table?: LoadResult;
+  /** The session's platform (raw, open string — the interview's axis). */
+  platform?: string;
+  /** The ledger query result, when the workspace has ledger history. */
+  ledger?: LedgerQueryResult;
+  /** Knob/param projection, mirroring the query path's `params` selection. */
+  params?: string[];
+}
+
+export interface ServedRecommendations {
+  recommendations: ServedRecommendation[];
+  /** Why the regime priors are absent (no mapped family, no recorded system,
+   * or an invalid table) — honest absence, never a silent gap. */
+  regimeNote?: string;
+}
+
+/** Compose the static regime priors (scoped by the session's platform FAMILY)
+ * with the existing ledger priors — the pure core behind `amicode_recommend
+ * action:"query"`. The existing mechanics own confidence capping: ledger
+ * recs flow through selectRecommendations (high → medium), regime recs state
+ * the table's explicit confidence. Regime first (the static priors are the
+ * anchor), ledger after (the run-history refinement). */
+export function serveRecommendations(input: ServeRecommendationsInput): ServedRecommendations {
+  const recommendations: ServedRecommendation[] = [];
+  let regimeNote: string | undefined;
+
+  const load = input.table ?? loadRegimePriorsTable();
+  if (!load.ok) {
+    regimeNote = `the regime priors table is invalid (${load.problems[0] ?? "unknown problem"}) — no static calibration priors served`;
+  } else if (input.platform === undefined) {
+    regimeNote = "no system recorded yet — the regime priors scope by the session's platform family";
+  } else {
+    const family = platformFamily(input.platform);
+    if (family === undefined) {
+      regimeNote = `no regime priors for platform "${input.platform}" — the census covers the spin / transmon / atom families only`;
+    } else {
+      for (const r of selectRegimePriors(load.table, family, input.params)) {
+        recommendations.push({
+          param: r.param,
+          value: r.value,
+          confidence: r.confidence,
+          provenance: r.provenance,
+          origin: "regime",
+        });
+      }
+    }
+  }
+
+  if (input.ledger !== undefined) {
+    for (const r of selectRecommendations(input.ledger, input.params)) {
+      recommendations.push({
+        param: r.param,
+        value: r.value,
+        confidence: r.confidence,
+        provenance: r.provenance,
+        origin: "ledger",
+      });
+    }
+  }
+
+  return { recommendations, ...(regimeNote !== undefined ? { regimeNote } : {}) };
 }
