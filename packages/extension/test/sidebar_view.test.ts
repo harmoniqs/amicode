@@ -67,7 +67,8 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain("sidebar_webview.js");
     // Both header buttons present
     expect(html).toContain("Chat with Amico");
-    expect(html).toContain("New Project");
+    expect(html).toContain("+ New");
+    expect(html).toContain("+ Existing");
   });
 
   it("embeds icon theme data as window.__iconTheme in a nonce-guarded script", () => {
@@ -154,6 +155,17 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain(".btn-chat.muted .btn-icon rect");
     expect(html).toContain("fill: #fff676");
 
+    // ── Project button row ──
+    // Both project buttons sit in a flex row that splits 50/50
+    expect(html).toContain('class="btn-row"');
+    expect(html).toMatch(/\.btn-row\s*\{[^}]*display:\s*flex/);
+    expect(html).toMatch(/\.btn-row\s*\{[^}]*gap:\s*6px/);
+    // Both buttons exist inside the row
+    expect(html).toContain('id="btn-new-project"');
+    expect(html).toContain('id="btn-existing-project"');
+    // Buttons use flex: 1 to share width equally
+    expect(html).toMatch(/\.btn-row\s+button\s*\{[^}]*flex:\s*1/);
+
     // ── New Project button ──
     // Forest green outline (#2B382B), not bold
     expect(html).toMatch(/\.btn-new-project\s*\{[^}]*border:\s*1px solid #2B382B/);
@@ -161,6 +173,11 @@ describe("SidebarViewProvider", () => {
     expect(html).toMatch(/\.btn-new-project:focus\s*\{[^}]*outline:\s*none/);
     // No yellow border on new-project
     expect(html).not.toMatch(/\.btn-new-project\s*\{[^}]*#fff676/);
+
+    // ── Existing Project button ──
+    // Same styling as new-project (forest green outline, not bold)
+    expect(html).toContain("+ Existing");
+    expect(html).toMatch(/\.btn-existing-project\s*\{[^}]*border:\s*1px solid #2B382B/);
   });
 });
 
@@ -1281,14 +1298,23 @@ describe("sidebar — add existing project", () => {
     expect(src).toContain("section-add-btn");
   });
 
-  it("header does NOT contain an add-existing button (moved to section headers)", () => {
+  it("header contains an existing-project button", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
     provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
 
     const html = view.webview.html;
-    expect(html).not.toContain("btn-add-existing");
+    expect(html).toContain("btn-existing-project");
+  });
+
+  it("webview wires btn-existing-project click to post add-existing", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    expect(src).toContain("btn-existing-project");
+    expect(src).toMatch(/btn-existing-project[\s\S]*add-existing/);
   });
 
   it("bridge handles add-existing message", () => {

@@ -103,6 +103,7 @@ function createIconEl(icon: string): HTMLElement {
 
   const chatBtn = document.getElementById("btn-chat");
   const newProjectBtn = document.getElementById("btn-new-project");
+  const existingProjectBtn = document.getElementById("btn-existing-project");
   const treeRoot = document.getElementById("tree-root");
 
   chatBtn?.addEventListener("click", () => {
@@ -111,6 +112,10 @@ function createIconEl(icon: string): HTMLElement {
 
   newProjectBtn?.addEventListener("click", () => {
     vscode.postMessage({ kind: "new-project" });
+  });
+
+  existingProjectBtn?.addEventListener("click", () => {
+    vscode.postMessage({ kind: "add-existing" });
   });
 
   // ── Fleet section toggle ──────────────────────────────────────────────────
