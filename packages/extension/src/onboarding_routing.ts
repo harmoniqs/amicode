@@ -50,7 +50,7 @@ export function resolveOnboardingAction(flags: OnboardingFlags): OnboardingActio
 
 /** Check if the opencode config has a model/provider configured.
  *  Reads the config file at the given path (default: ~/.config/opencode/opencode.json[c]).
- *  Returns true if there's at least one provider entry. */
+ *  Returns true if there's at least one provider entry OR a model field is set. */
 export function isModelConfigured(
   configPath?: string,
 ): boolean {
@@ -68,9 +68,15 @@ export function isModelConfigured(
       // Strip single-line comments for JSONC tolerance
       const stripped = content.replace(/^\s*\/\/.*$/gm, "");
       const config = JSON.parse(stripped) as Record<string, unknown>;
+
+      // A non-empty provider block is the primary signal
       const provider = config.provider;
-      if (!provider || typeof provider !== "object") continue;
-      if (Object.keys(provider as object).length > 0) return true;
+      if (provider && typeof provider === "object" && Object.keys(provider as object).length > 0) return true;
+
+      // A model field (e.g. "anthropic/claude-sonnet-4") is a secondary signal —
+      // the user has configured a model even if the provider block is empty
+      // (opencode resolves the provider at runtime via env vars or defaults)
+      if (typeof config.model === "string" && config.model.trim() !== "") return true;
     } catch {
       continue;
     }

@@ -14,7 +14,6 @@ import {
   PromptProjectSelector,
   type PromptProjectController,
 } from "@/components/prompt-project-selector"
-import { inAmicode } from "@/pages/session/use-amicode-commands"
 import { StatusPopoverV2 } from "@/components/status-popover"
 import { SessionChatsDropdown } from "@/components/session/session-header"
 import { useLanguage } from "@/context/language"
@@ -74,11 +73,9 @@ export function NewSessionView(props: {
               <Show when={props.project.empty()}>
                 <PromptProjectAddButton controller={props.project} />
               </Show>
-              {/* amicode#326: hide the breadcrumb bar (project selector +
-                  workspace selector + git status) inside the Amicode webview —
-                  sessions already scope to all workspace folders via the
-                  multi-directory engine (opencode#215). */}
-              <Show when={!inAmicode() && props.project.selected()}>
+              {/* amicode#663: un-gated — the project selector now renders inside
+                  the Amicode webview with type grouping (Research/Dev). */}
+              <Show when={props.project.selected()}>
                 <div class="flex min-h-7 min-w-0 flex-col items-center justify-center gap-0 text-v2-text-text-faint sm:flex-row">
                   <PromptProjectSelector controller={props.project} placement="bottom" />
                   <Show

@@ -44,6 +44,12 @@ export class ChatPanel {
   private static readonly live = new Set<ChatPanel>();
   /** Callback fired whenever the number of live chat panels changes. */
   private static onLiveChangeCallback?: (count: number) => void;
+  /** Callback fired when the user selects a project in the composer dropdown.
+   *  The extension wires this to sidebar focus (collapse others, expand selected).
+   *  Accepts null to clear the highlight (e.g. when switching to a session
+   *  that has no project selected). autoExpand distinguishes explicit selection
+   *  (true) from session/tab switch (false). */
+  private static onProjectSelectedCallback?: (path: string | null, autoExpand?: boolean) => void;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
@@ -55,10 +61,19 @@ export class ChatPanel {
   /** Callbacks fired when the app signals ready (app-ready message from iframe). */
   private static appReadyCallbacks: Array<() => void> = [];
   private readonly disposables: vscode.Disposable[] = [];
+  /** Last project path selected in THIS session's composer dropdown.
+   *  Re-emitted when the panel gains focus so the sidebar highlight tracks
+   *  the active tab. null = no selection yet (clears stale highlights). */
+  private lastProjectPath: string | null = null;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
     ChatPanel.onLiveChangeCallback = cb;
+  }
+
+  /** Subscribe to project-selected events from the composer dropdown (#663). */
+  static onProjectSelected(cb: ((path: string | null, autoExpand?: boolean) => void) | undefined): void {
+    ChatPanel.onProjectSelectedCallback = cb;
   }
 
   private constructor(
@@ -116,8 +131,27 @@ export class ChatPanel {
           // bug-report-closed route to the window's manager (undefined until
           // activation registers it; the bridge consumes the kinds regardless).
           bugReport: getBugReport()?.sink,
+          // #663: project-selected → sidebar focus (collapse others, expand selected).
+          // Also cache the selection per-instance so the view-state listener can
+          // re-emit it when this tab regains focus.
+          onProjectSelected: ChatPanel.onProjectSelectedCallback
+            ? (p, ae) => { this.lastProjectPath = p; ChatPanel.onProjectSelectedCallback!(p, ae); }
+            : undefined,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
+      },
+      null,
+      this.disposables,
+    );
+    // Tab-switch highlight: when this panel gains focus, re-emit its project
+    // selection (or null) so the sidebar highlight tracks the active tab.
+    // autoExpand=false: tab switch should only update the highlight, never
+    // force-expand/collapse folders the user arranged deliberately.
+    this.panel.onDidChangeViewState(
+      (e) => {
+        if (e.webviewPanel.active) {
+          ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath, false);
+        }
       },
       null,
       this.disposables,
@@ -387,7 +421,7 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
             vscode.postMessage(d);
           }
           return;
@@ -396,7 +430,7 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
@@ -548,12 +582,12 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
             vscode.postMessage(d);
           }
           return;
         }
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, origin);
         }

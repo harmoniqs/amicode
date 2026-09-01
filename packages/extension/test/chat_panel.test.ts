@@ -329,6 +329,124 @@ describe("ChatPanel.adopt — transforms an existing panel into the chat singlet
   });
 });
 
+describe("ChatPanel — workspace-projects bridge relay (#663)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+  });
+
+  it("the downstream relay admits 'workspace-projects' messages (extension → iframe)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"workspace-projects"');
+  });
+
+  it("the upstream relay admits 'add-workspace-project' messages (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"add-workspace-project"');
+  });
+
+  it("the upstream relay admits 'project-selected' messages (iframe → extension)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = cap.created[0].webview.html;
+    expect(html).toContain('"project-selected"');
+  });
+});
+
+describe("ChatPanel — onProjectSelected callback (#663)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.onProjectSelected(undefined as unknown as (path: string) => void);
+  });
+
+  it("fires the registered callback when a project-selected message arrives from the iframe", () => {
+    const selected: string[] = [];
+    ChatPanel.onProjectSelected((p) => selected.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // Simulate the iframe sending a project-selected envelope
+    const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+    panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
+    expect(selected).toEqual(["/Users/jj/harmoniqs"]);
+  });
+
+  it("re-emits last project selection when the panel gains focus (tab switch)", () => {
+    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
+    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // Simulate project selection
+    const panel = cap.created[0] as unknown as {
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
+    selected.length = 0; // clear
+
+    // Simulate tab gaining focus (user switches back)
+    panel._simulateViewState(true, true);
+    expect(selected).toHaveLength(1);
+    expect(selected[0].path).toBe("/Users/jj/harmoniqs");
+    // Tab switch must NOT auto-expand — only highlight
+    expect(selected[0].autoExpand).toBe(false);
+  });
+
+  it("emits null when a panel with no project selection gains focus (clears stale highlight)", () => {
+    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
+    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // No project-selected message — this session never picked a project
+    const panel = cap.created[0] as unknown as {
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    panel._simulateViewState(true, true);
+    expect(selected).toHaveLength(1);
+    expect(selected[0].path).toBeNull();
+    expect(selected[0].autoExpand).toBe(false);
+  });
+
+  it("explicit dropdown selection passes autoExpand true through the callback", () => {
+    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
+    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
+    // Simulate the iframe sending a project-selected envelope (explicit click)
+    panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
+    expect(selected).toHaveLength(1);
+    expect(selected[0].path).toBe("/Users/jj/harmoniqs");
+    expect(selected[0].autoExpand).toBe(true);
+  });
+});
+
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];

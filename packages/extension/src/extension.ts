@@ -7,7 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { registerWorkspaceTree } from "./workspace_tree";
+import { SidebarViewProvider, createNewProject } from "./sidebar_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -43,6 +43,8 @@ import { amicodeOpsDir } from "./substrate/vault_store";
 import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
+import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
+import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards } from "./mode_cards";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
@@ -389,10 +391,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     },
   });
 
-  // 1. UI surfaces — Workspace sidebar (opencode#215 AC6)
-  const workspaceTree = registerWorkspaceTree(ctx);
+  // 1. UI surfaces — Workspace sidebar (webview, #673)
+  const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
+  ctx.subscriptions.push(
+    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider),
+  );
   // Mute the "Chat with Amico" button when a chat panel is open
-  ChatPanel.onLiveChange((count) => workspaceTree.setChatActive(count > 0));
+  ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));
+  // #663: when the user picks a project in the composer dropdown, collapse
+  // other roots in the sidebar and expand the selected one. autoExpand
+  // distinguishes explicit selection from session/tab switch (highlight only).
+  ChatPanel.onProjectSelected((path, autoExpand) => sidebarProvider.setActiveProject(path, autoExpand));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
@@ -467,6 +476,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // no-workspace windows. F5 dev hosts never showed this because their
     // webview storage is ephemeral.
     projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+    // amicode#663/#668: workspace folders for research-project skill discovery.
+    workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
   });
   opencodeChannel.appendLine(`[boot] opencode project dir: ${opencodeProject.projectDir}`);
   opencodeChannel.appendLine(`[boot] AGENTS.md: ${opencodeProject.agentsPath}`);
@@ -790,6 +801,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           skillLibraryRoots: cfgLibraryRoots(),
           vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
           projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+          workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
         });
         ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
         await serverManager?.stop();
@@ -915,6 +927,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
             : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
         );
+        if (sig.ok && sig.warning) {
+          opencodeChannel.appendLine(`[boot] LLM provider warning: ${sig.warning}`);
+        }
       });
     });
 
@@ -923,6 +938,47 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
     });
   }
+
+  // ── #663: workspace-projects bridge ──────────────────────────────────────
+  // Push workspace folder data to the chat iframe's project selector.
+  // Sent on app-ready (initial paint) and on workspace-folder change (live).
+  const readResearchToml = (dir: string): { name?: string; status?: string } => {
+    try {
+      const tomlPath = path.join(dir, "research-project.toml");
+      const content = fs.readFileSync(tomlPath, "utf8");
+      const name = content.match(/^\s*name\s*=\s*"([^"]*)"/m)?.[1];
+      const status = content.match(/^\s*status\s*=\s*"([^"]*)"/m)?.[1];
+      return { name, status };
+    } catch { return {}; }
+  };
+
+  const workspaceProjectDeps: WorkspaceProjectDeps = {
+    getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
+    detectProjectType,
+    readToml: readResearchToml,
+  };
+
+  /** Build and push the workspace-projects message to the chat panel. */
+  const pushWorkspaceProjects = () => {
+    const panel = ChatPanel.peek();
+    if (!panel) return;
+    const projects = getWorkspaceProjects(workspaceProjectDeps);
+    void panel.postMessage({
+      source: "amicode",
+      kind: "workspace-projects",
+      projects,
+    });
+  };
+
+  // On app-ready: push the initial project list.
+  ChatPanel.onAppReady(pushWorkspaceProjects);
+
+  // On workspace folder change: push the updated list.
+  ctx.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      pushWorkspaceProjects();
+    }),
+  );
 
   // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
   // a LOCAL personal vault (dotfolder-style; no GitHub). This is the first step of
@@ -951,6 +1007,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       skillLibraryRoots: cfgLibraryRoots(),
       vaultDir: vscode.workspace.getConfiguration("amicode").get<string>("vaultDir", "") || undefined,
       projectDir: path.join((ctx.storageUri ?? ctx.globalStorageUri).fsPath, "opencode-project"),
+      workspaceFolders: vscode.workspace.workspaceFolders?.map((f) => f.uri.fsPath),
     });
     ChatPanel.setBugReportAvailable(bugReportSkillStaged(project2.skillPaths)); // #250 AC5
     await serverManager.stop();
@@ -1637,11 +1694,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // providers, so a missing credential would otherwise sail past the ready
       // check and silently hang at the chat box (Q129). Ask opencode's own live
       // resolution (/config/providers, same signal the healthcheck uses) so the
-      // cause is named, not hidden. Key-free.
+      // cause is named, not hidden. Key-free. A model/provider mismatch is a
+      // soft warning (ok:true + warning) — the chat still opens.
       const creds = await fetchProviderSignal(readyUrl.toString(), { headers: serverAuthHeaders });
       if (!creds.ok) {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
+      }
+      if (creds.warning) {
+        opencodeChannel.appendLine(`[openChat] ${creds.warning}`);
       }
       ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
@@ -1669,6 +1730,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       draftUrl.hash = "";
       ChatPanel.openNew(ctx, draftUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
+    // New Project: sidebar button → save dialog (user types folder name) →
+    // mkdir → workspace → session with /create-research-project auto-sent.
+    // Session opens in the CURRENT chat tab (openOrReveal); the navigate
+    // envelope tells the iframe's AmicodeNavigateBridge to create a new
+    // in-app draft tab. Dual-send: immediate (existing panel) + onAppReady
+    // (new panel). Only one path fires per case.
+    vscode.commands.registerCommand("amicode.newProject", () =>
+      createNewProject({
+        isServerReady: () => !!opencodeReadyUrl,
+        launchSession: (prompt: string) => {
+          const readyUrl = opencodeReadyUrl;
+          if (!readyUrl) return;
+          const panel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          const encodedPrompt = encodeURIComponent(prompt);
+          const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+          const envelope = { source: "amicode", kind: "navigate", path: navPath };
+          const send = () => void panel.postMessage(envelope);
+          send();                        // immediate — existing panel (app loaded)
+          ChatPanel.onAppReady(send);    // deferred — new panel (app mounting)
+        },
+      }),
+    ),
     // Chat Deck: MANY panes inside ONE editor tab — tab strips, drag-to-split,
     // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
     // other chat entries. The deck shares the one server with every ChatPanel.

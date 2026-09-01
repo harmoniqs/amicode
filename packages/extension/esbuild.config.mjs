@@ -115,6 +115,18 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // Sidebar webview bundle — workspace panel (#673)
+  {
+    entryPoints: ["src/sidebar_webview.ts"],
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    outfile: "dist/sidebar_webview.js",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
 ];
 
 if (watch) {

@@ -31,10 +31,13 @@ export const window = {
   }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
-  createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
+   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
     const messageCbs: Array<(msg: unknown) => void> = [];
-    return {
+    const viewStateCbs: Array<(e: unknown) => void> = [];
+    const panel = {
+      visible: true,
+      active: true,
       webview: {
         html: "",
         cspSource: "test:",
@@ -54,10 +57,20 @@ export const window = {
         disposeCbs.push(cb);
         return { dispose() {} };
       },
+      onDidChangeViewState(cb: (e: unknown) => void, _thisArg?: unknown, _subs?: unknown) {
+        viewStateCbs.push(cb);
+        return { dispose() {} };
+      },
+      _simulateViewState(active: boolean, visible: boolean) {
+        panel.active = active;
+        panel.visible = visible;
+        for (const cb of viewStateCbs) cb({ webviewPanel: panel });
+      },
       dispose() {
         for (const cb of disposeCbs) cb();
       },
     };
+    return panel;
   },
 };
 const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();
@@ -96,6 +109,10 @@ export const env = {
     },
   },
 };
+export const extensions = {
+  all: [] as unknown[],
+  getExtension: (_id: string): unknown => undefined,
+};
 export const workspace = {
   workspaceFolders: [] as unknown[],
   configUpdates: [] as Array<[string, unknown]>,
@@ -118,7 +135,14 @@ export const workspace = {
     dispose() {},
   }),
   updateWorkspaceFolders: (_start: number, _deleteCount: number | null, ..._adds: unknown[]) => true,
-  onDidChangeWorkspaceFolders: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
+  _workspaceFoldersCbs: [] as Array<() => void>,
+  onDidChangeWorkspaceFolders: (cb: () => void, _thisArg?: unknown, _subs?: unknown) => {
+    (workspace as any)._workspaceFoldersCbs.push(cb);
+    return { dispose() {} };
+  },
+  _fireWorkspaceFoldersChange() {
+    for (const cb of (workspace as any)._workspaceFoldersCbs) cb();
+  },
   fs: {
     writeFile: (_u: unknown, _b: unknown) => Promise.resolve(),
     readDirectory: (_u: unknown): Promise<Array<[string, number]>> => Promise.resolve([]),

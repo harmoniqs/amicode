@@ -715,6 +715,68 @@ function buildMemoryIndexSection(memoryIndexLines: string[]): string {
 
 // ── Public: compose the full per-session block ───────────────────────────────
 
+// ── Active Research Project injection (#670) ─────────────────────────────────
+
+/** Read workspace folders from AMICODE_WORKSPACE_FOLDERS (colon-separated, set
+ *  by the extension at server-spool), find the first with a research-project.toml, and
+ *  return a context block. Returns null if no research project is bound. */
+function buildActiveProjectSection(): string | null {
+  const raw = process.env.AMICODE_WORKSPACE_FOLDERS;
+  if (!raw || !raw.trim()) return null;
+
+  const folders = raw.split(":").filter(Boolean);
+  for (const folder of folders) {
+    const tomlPath = path.join(folder, "research-project.toml");
+    if (!fs.existsSync(tomlPath)) continue;
+
+    // Minimal TOML parsing (no smol-toml in the Bun plugin runtime).
+    // Extract name, question, status from the flat top-level fields.
+    let tomlText: string;
+    try {
+      tomlText = fs.readFileSync(tomlPath, "utf8");
+    } catch {
+      continue;
+    }
+
+    const name = extractTomlString(tomlText, "name") ?? path.basename(folder);
+    const question = extractTomlString(tomlText, "question") ?? "";
+    const status = extractTomlString(tomlText, "status") ?? "unknown";
+
+    const lines = [
+      "## Active Research Project",
+      "",
+      `**${name}** (${status})`,
+      `**Question:** ${question}`,
+      `**Path:** \`${folder}\``,
+      "",
+      "Layout: `scripts/{experiment,analysis,testbed}`, `data/{raw,processed,plots}`, `paper/`, " +
+        "`ledger/{hypotheses,observations,campaigns}`, `reports/{weekly,presentations,milestones}`, `config/`, `skills/`",
+      "",
+      "When operating on this project, use project paths (not vault paths):",
+      "- Hypotheses: `<project>/ledger/hypotheses/`",
+      "- Campaign ledgers: `<project>/ledger/campaigns/`",
+      "- Observations: `<project>/ledger/observations/`",
+      "- Experiment scripts: `<project>/scripts/experiment/`",
+      "- Analysis scripts: `<project>/scripts/analysis/`",
+      "- Testbed: `<project>/scripts/testbed/` (simulated environments, hardware interfaces)",
+      "- Data: `<project>/data/`",
+      "- Config: `<project>/config/`",
+      "- Paper: `<project>/paper/`",
+      "- Reports: `<project>/reports/`",
+      "- Checkout registry: `<project>/ledger/campaigns/CHECKOUTS.md`",
+    ];
+    return lines.join("\n");
+  }
+  return null;
+}
+
+/** Extract a simple string value from TOML text (regex, not a full parser).
+ *  Only handles `key = "value"` at the top level. */
+function extractTomlString(text: string, key: string): string | undefined {
+  const m = text.match(new RegExp(`^${key}\\s*=\\s*"([^"]*)"`, "m"));
+  return m?.[1];
+}
+
 /** Read the current stack state (solver mode, routing, active problem, live
  *  runs, fleet, and the personal-vault user-memory sections) and compose a
  *  markdown block to inject into the agent's system prompt. Returns null
@@ -738,6 +800,11 @@ export function buildStackStateBlock(): string | null {
 
   const fleet = buildFleetSection();
   if (fleet) parts.push(fleet);
+
+  // Active Research Project (#670): inject project metadata when a session
+  // is bound to a workspace folder with research-project.toml.
+  const project = buildActiveProjectSection();
+  if (project) parts.push(project);
 
   // User-memory sections (live reads from the personal vault — splice order
   // parity with the retired boot-time file splice: about → recent → demos →

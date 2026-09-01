@@ -16,7 +16,6 @@ import { ProjectAvatar } from "@opencode-ai/ui/v2/project-avatar-v2"
 import { getProjectAvatarVariant } from "@/context/layout"
 import { useLanguage } from "@/context/language"
 import { displayName, getProjectAvatarSource } from "@/pages/layout/helpers"
-import { inAmicode } from "@/pages/session/use-amicode-commands"
 import { pathKey } from "@/utils/path-key"
 import { handleDocumentSearchKeydown } from "@/utils/search-keydown"
 import { createMenuDismissController } from "@/utils/menu-dismiss-controller"
@@ -28,6 +27,8 @@ export type PromptProject = {
   sandboxes?: string[]
   icon?: { color?: string; url?: string; override?: string }
   server?: { key: string; name: string }
+  type?: "research" | "dev"
+  status?: string // research project lifecycle status (proposing/designing/running/analyzing/writing/complete)
 }
 
 export type PromptProjectControls = {
@@ -362,11 +363,27 @@ export function PromptProjectSelector(props: {
                 when={props.controller.servers().length > 1}
                 fallback={
                   <DropdownMenu.RadioGroup value={selectedValue()}>
-                    <For each={props.controller.projects()}>
-                      {(project) => (
-                        <ProjectItem project={project} controller={props.controller} onSelect={selectProject} />
-                      )}
-                    </For>
+                    {/* amicode#663: type-grouped listing (Research then Dev) */}
+                    <Show when={props.controller.projects().some((p) => p.type === "research")}>
+                      <div class="flex h-6 select-none items-center pl-3 text-[11px] font-[530] leading-none tracking-[0.05px] text-v2-text-text-faint">
+                        Research
+                      </div>
+                      <For each={props.controller.projects().filter((p) => p.type === "research")}>
+                        {(project) => (
+                          <ProjectItem project={project} controller={props.controller} onSelect={selectProject} />
+                        )}
+                      </For>
+                    </Show>
+                    <Show when={props.controller.projects().some((p) => p.type !== "research")}>
+                      <div class="flex h-6 select-none items-center pl-3 text-[11px] font-[530] leading-none tracking-[0.05px] text-v2-text-text-faint">
+                        Development
+                      </div>
+                      <For each={props.controller.projects().filter((p) => p.type !== "research")}>
+                        {(project) => (
+                          <ProjectItem project={project} controller={props.controller} onSelect={selectProject} />
+                        )}
+                      </For>
+                    </Show>
                   </DropdownMenu.RadioGroup>
                 }
               >
@@ -493,14 +510,11 @@ function ProjectTrigger(props: ComponentProps<"button"> & { controller: PromptPr
           />
         )}
       </Show>
-      {/* amicode#203 (Kate): don't show the project name in the chat — the folder
-          icon + chevron keep the switcher reachable without naming the project.
-          Only suppressed inside the amicode webview. */}
-      <Show when={!inAmicode()}>
-        <span class="min-w-0 truncate leading-5">
-          {project() ? displayName(project()!) : local.controller.labels.new()}
-        </span>
-      </Show>
+      {/* amicode#663: project name now always shown — the selector is enriched
+          with type grouping and status badges, so the name provides context. */}
+      <span class="min-w-0 truncate leading-5">
+        {project() ? displayName(project()!) : local.controller.labels.new()}
+      </span>
       <Icon name="chevron-down" size="small" class="shrink-0 text-v2-icon-icon-muted" />
     </button>
   )
@@ -541,6 +555,13 @@ function ProjectItem(props: {
         variant={getProjectAvatarVariant(props.project.icon?.color)}
       />
       <DropdownMenu.ItemLabel class="min-w-0 truncate leading-5">{displayName(props.project)}</DropdownMenu.ItemLabel>
+      {/* amicode#663: research status badge */}
+      <Show when={props.project.type === "research" && props.project.status}>
+        <span class="ml-auto shrink-0 rounded-sm px-1 text-[10px] font-[500] leading-4 tracking-[0.02em] text-v2-text-text-faint"
+          style={{ background: "var(--v2-overlay-simple-overlay-hover)" }}>
+          {props.project.status}
+        </span>
+      </Show>
       <DropdownMenu.ItemIndicator style={{ width: "14px", height: "14px", right: "12px" }}>
         <IconV2 name="check" size="small" class="shrink-0 text-v2-icon-icon-base" />
       </DropdownMenu.ItemIndicator>

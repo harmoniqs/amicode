@@ -22,7 +22,7 @@ import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
-  source: "library" | "package" | "custom" | "workspace"; // platform | co-located | user-added | workspace .opencode/skills/
+  source: "library" | "package" | "custom" | "workspace" | "project"; // platform | co-located | user-added | workspace .opencode/skills/ | research project skills/
   package?: string; // absent for library entries (spec §3)
   name: string;
   description: string;
@@ -256,6 +256,7 @@ export function stageOpencodeSkills(stageRoot: string, entries: SkillIndexEntry[
 export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return ""; // no section at all (spec §3)
   const platform = entries.filter((e) => e.source === "library");
+  const project = entries.filter((e) => e.source === "project");
   const custom = entries.filter((e) => e.source === "custom");
   const workspace = entries.filter((e) => e.source === "workspace");
   const pkg = entries.filter((e) => e.source === "package");
@@ -272,6 +273,10 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
       (e) =>
         `- **${e.name}** (platform reference) — ${e.description}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
     ),
+    ...project.map((e) => {
+      const label = (e as any).overridesShipped ? "(project, overrides platform)" : "(project)";
+      return `- **${e.name}** ${label} — ${e.description}`;
+    }),
     ...custom.map((e) => {
       const label = (e as any).overridesShipped ? "(custom, overrides platform)" : "(custom)";
       return `- **${e.name}** ${label} — ${e.description}`;
