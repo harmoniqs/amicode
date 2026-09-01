@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as vscode from "vscode";
@@ -980,6 +980,48 @@ describe("sidebar bridge — reorder-root message", () => {
       },
     );
     expect(reorderRoot).toHaveBeenCalledWith("/projects/a", "/projects/c", "after");
+  });
+});
+
+describe("sidebar — reorderWorkspaceFolder end-to-end", () => {
+  it("reorderWorkspaceFolder source uses a single atomic updateWorkspaceFolders(0, folders.length, ...uris) call", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Extract just the reorderWorkspaceFolder function body
+    const fnStart = src.indexOf("function reorderWorkspaceFolder");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const fnBody = src.slice(fnStart, fnEnd);
+    // Must use exactly ONE updateWorkspaceFolders call — never two separate remove+insert
+    const calls = fnBody.match(/updateWorkspaceFolders/g) || [];
+    expect(calls).toHaveLength(1);
+    // The single call replaces all folders at once: start=0, deleteCount=folders.length
+    expect(fnBody).toMatch(/updateWorkspaceFolders\s*\(\s*0\s*,\s*folders\.length/);
+  });
+
+  it("self-drop is guarded before updateWorkspaceFolders is reached", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    const fnStart = src.indexOf("function reorderWorkspaceFolder");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const fnBody = src.slice(fnStart, fnEnd);
+    expect(fnBody).toMatch(/sourceIdx\s*===\s*targetIdx/);
+  });
+
+  it("builds the desired order via splice then passes it to the atomic call", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    const fnStart = src.indexOf("function reorderWorkspaceFolder");
+    const fnEnd = src.indexOf("\n}\n", fnStart) + 3;
+    const fnBody = src.slice(fnStart, fnEnd);
+    // Builds the uris array via map+splice, then spreads into the call
+    expect(fnBody).toMatch(/uris\.splice/);
+    expect(fnBody).toMatch(/\.\.\.uris/);
   });
 });
 

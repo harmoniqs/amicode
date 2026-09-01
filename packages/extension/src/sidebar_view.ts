@@ -1010,9 +1010,12 @@ export async function createNewProject(ctx: NewProjectContext): Promise<void> {
 }
 
 /**
- * Reorder a workspace folder by removing it and re-inserting at the position
- * relative to the target folder. Uses vscode.workspace.updateWorkspaceFolders
- * splice semantics (#712).
+ * Reorder a workspace folder by building the desired final order and replacing
+ * all folders in a single atomic updateWorkspaceFolders call (#712).
+ *
+ * Two separate calls (remove then insert) are NOT atomic — the first triggers
+ * onDidChangeWorkspaceFolders before the second runs, causing the folder to
+ * disappear.
  */
 function reorderWorkspaceFolder(sourcePath: string, targetPath: string, position: "before" | "after"): void {
   const folders = vscode.workspace.workspaceFolders;
@@ -1022,17 +1025,16 @@ function reorderWorkspaceFolder(sourcePath: string, targetPath: string, position
   const targetIdx = folders.findIndex((f) => f.uri.fsPath === targetPath);
   if (sourceIdx < 0 || targetIdx < 0 || sourceIdx === targetIdx) return;
 
-  // Compute the insertion index after the source is removed
-  let insertIdx = position === "before" ? targetIdx : targetIdx + 1;
-  if (sourceIdx < insertIdx) insertIdx--; // adjust for removal shift
+  // Build the desired order: remove source, insert at the target position
+  const uris = folders.map((f) => ({ uri: f.uri }));
+  const [moved] = uris.splice(sourceIdx, 1);
+  let insertAt = position === "before" ? targetIdx : targetIdx + 1;
+  if (sourceIdx < insertAt) insertAt--; // adjust for removal shift
+  if (sourceIdx === insertAt) return; // no-op
+  uris.splice(insertAt, 0, moved);
 
-  if (sourceIdx === insertIdx) return; // no-op
-
-  const sourceFolder = folders[sourceIdx];
-  // Remove then insert in two calls — VS Code applies them atomically within
-  // the same event loop tick.
-  vscode.workspace.updateWorkspaceFolders(sourceIdx, 1);
-  vscode.workspace.updateWorkspaceFolders(insertIdx, 0, { uri: sourceFolder.uri });
+  // Single atomic call: replace ALL workspace folders at once
+  vscode.workspace.updateWorkspaceFolders(0, folders.length, ...uris);
 }
 
 /** Open a folder picker and add selected folder(s) to the workspace. */
