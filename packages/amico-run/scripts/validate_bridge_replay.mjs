@@ -25,18 +25,45 @@
 // Plain JavaScript on purpose (the .mjs runs under bare `node` — TS syntax
 // belongs to the .d.mts surface next to it, the assert_built_bundles.mjs
 // pattern).
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
 
 const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
+const sha256Hex = (s) => createHash("sha256").update(s, "utf8").digest("hex");
+const SHA256_RE = /^sha256:[0-9a-f]{64}$/;
+const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
+
+/** amicode's canonical JSON (entities.ts, mirrored): recursively key-sorted,
+ * `recorded`/`notes` excluded (clock + prose never churn identity), undefined
+ * dropped. The hash input behind every `sha256:` content hash in the record. */
+function canonicalJson(value) {
+  const HASH_EXCLUDED_KEYS = new Set(["recorded", "notes"]);
+  const rec = (v) => {
+    if (v === null || typeof v !== "object") return v;
+    if (Array.isArray(v)) return v.map(rec);
+    const out = {};
+    for (const key of Object.keys(v).sort()) {
+      if (HASH_EXCLUDED_KEYS.has(key)) continue;
+      const val = v[key];
+      if (val === undefined) continue;
+      out[key] = rec(val);
+    }
+    return out;
+  };
+  return JSON.stringify(rec(value));
+}
+
+const entityHash = (v) => "sha256:" + sha256Hex(canonicalJson(v));
+
 /** The committed fixtures this validator checks by default (no-args CLI). */
 export function defaultFixtureDirs() {
   return [
     { kind: "amicode-run", dir: join(PKG_ROOT, "fixtures", "bridge", "amicode-run") },
-    { kind: "strumento-task", dir: join(PKG_ROOT, "fixtures", "bridge", "strumento-task") },
+    { kind: "strumento-task", dir: join(PKG_ROOT, "fixtures", "bridge", "2026-08-31-strumento-task-b3a7") },
   ];
 }
 
@@ -108,7 +135,7 @@ function readJsonlFile(rel, dir, errors) {
 function validateAmicodeRun(dir, errors) {
   // Terminal markers: result.toml (the solve script's own, atomic) + FINISHED
   // (the harness's, written LAST — its existence is the durable terminal signal).
-  readTomlFile("run.toml", dir, errors);
+  const manifest = readTomlFile("run.toml", dir, errors);
   const result = readTomlFile("result.toml", dir, errors);
   const finished = readTomlFile("FINISHED", dir, errors);
   if (result !== undefined) {
@@ -129,16 +156,115 @@ function validateAmicodeRun(dir, errors) {
       errors.push("FINISHED: exit_code missing or not an integer");
     }
   }
-  readJsonlFile("events.jsonl", dir, errors);
+  const events = readJsonlFile("events.jsonl", dir, errors);
+
+  // Append-only shape: monotonic seq from 1 (seq IS the line count at write
+  // time — a gap or repeat is an append-only violation, not a cosmetic issue).
+  // Unknown entity/action values are opaque: they skip, never fail.
+  const lastHashByEntity = new Map();
+  if (events !== undefined) {
+    events.forEach((e, i) => {
+      if (e.seq !== i + 1) errors.push(`events.jsonl: line ${i + 1} seq is ${e.seq} — seq is monotonic from 1 (append-only)`);
+      if (typeof e.ts !== "string" || !ISO_RE.test(e.ts)) errors.push(`events.jsonl: line ${i + 1} ts missing or not ISO-8601`);
+      if (typeof e.entity !== "string" || e.entity === "") errors.push(`events.jsonl: line ${i + 1} entity missing`);
+      if (typeof e.action !== "string" || e.action === "") errors.push(`events.jsonl: line ${i + 1} action missing`);
+      if (e.hash !== undefined) {
+        if (typeof e.hash !== "string" || !SHA256_RE.test(e.hash)) errors.push(`events.jsonl: line ${i + 1} hash is not sha256:<64 hex>`);
+        else if (typeof e.entity === "string") lastHashByEntity.set(e.entity, e.hash);
+      }
+    });
+  }
+
+  // Content hashes: the entity sidecars are the recorded state; the LAST event
+  // per entity kind must hash to exactly them, and run.toml [hashes] (stamped at
+  // launch from the same events) must match the last event's hash too.
+  for (const kind of ["system", "formulation", "run"]) {
+    const file = join(dir, "entities", `${kind}.json`);
+    if (!existsSync(file)) continue;
+    let entity;
+    try {
+      entity = JSON.parse(readFileSync(file, "utf8"));
+    } catch (e) {
+      errors.push(`entities/${kind}.json: not parseable JSON (${e instanceof Error ? e.message : String(e)})`);
+      continue;
+    }
+    const expected = entityHash(entity);
+    const last = lastHashByEntity.get(kind);
+    if (last === undefined) errors.push(`entities/${kind}.json: no ${kind} event carries a hash — the spine does not cover the recorded entity`);
+    else if (last !== expected) errors.push(`events.jsonl: last ${kind} event hash ${last} ≠ sha256 over entities/${kind}.json (${expected}) — content hash broken`);
+  }
+  if (manifest !== undefined && manifest.hashes !== undefined && typeof manifest.hashes === "object") {
+    for (const kind of ["system", "formulation"]) {
+      const declared = manifest.hashes[`${kind}_hash`];
+      if (declared === undefined) continue;
+      const last = lastHashByEntity.get(kind);
+      if (typeof declared !== "string" || !SHA256_RE.test(declared)) errors.push(`run.toml: ${kind}_hash is not sha256:<64 hex>`);
+      else if (last === undefined) errors.push(`run.toml: ${kind}_hash present but no ${kind} event carries a hash`);
+      else if (declared !== last) errors.push(`run.toml: ${kind}_hash ${declared} ≠ the last ${kind} event's hash ${last} — the launch stamps from the spine`);
+    }
+  }
+
   if (!existsSync(join(dir, "run.log"))) errors.push("run.log: missing — the stdout contract is part of the record");
 }
 
 // ─── strumento TaskRecord contract ──────────────────────────────────────────
 
 function validateStrumentoTask(dir, errors) {
-  readTomlFile("task.toml", dir, errors);
+  const manifest = readTomlFile("task.toml", dir, errors);
   readTomlFile("result.toml", dir, errors);
-  readJsonlFile("progress.jsonl", dir, errors);
+  const events = readJsonlFile("progress.jsonl", dir, errors);
+
+  // The manifest: the id IS the directory basename (one identity, not two that
+  // can disagree); unknown manifest fields and unknown `kind` axis values are
+  // opaque — readers derive and list, never fail (forward compat is contract).
+  if (manifest !== undefined) {
+    if (typeof manifest.id !== "string" || manifest.id !== basename(resolve(dir))) {
+      errors.push("task.toml: id missing or ≠ the directory basename — the id is always the basename");
+    }
+    if (typeof manifest.created !== "string" || !ISO_RE.test(manifest.created)) {
+      errors.push("task.toml: created missing or not ISO-8601");
+    }
+    if (typeof manifest.kind !== "string" || manifest.kind === "") {
+      errors.push("task.toml: kind missing — the kind axis is part of the manifest");
+    }
+    if (manifest.config_content_id !== undefined && manifest.config_content_id !== "") {
+      if (typeof manifest.config_content_id !== "string" || !/^cfg-[0-9a-f]{64}$/.test(manifest.config_content_id)) {
+        errors.push("task.toml: config_content_id is not cfg-<sha256> — the calibration provenance is content-addressed");
+      }
+    }
+  }
+
+  // The event stream: known kinds carry their payload shape; unknown `ev`
+  // values are carried (skip, never fail). t is ISO-8601 on every line.
+  if (events !== undefined) {
+    events.forEach((e, i) => {
+      const at = `progress.jsonl: line ${i + 1}`;
+      if (typeof e.t !== "string" || !ISO_RE.test(e.t)) errors.push(`${at}: t missing or not ISO-8601`);
+      if (typeof e.ev !== "string" || e.ev === "") errors.push(`${at}: ev missing — unknown ev VALUES skip, but ev itself is required`);
+      else if (e.ev === "artifact") {
+        if (typeof e.path !== "string" || e.path === "") errors.push(`${at}: artifact event without a path`);
+        else {
+          const resolved = resolve(dir, e.path);
+          if (e.path.includes("..") || !resolved.startsWith(resolve(dir) + "/")) errors.push(`${at}: artifact path escapes the task dir — recorded paths must resolve inside`);
+          else if (!existsSync(resolved)) errors.push(`${at}: artifact path does not resolve to a real file — an artifact event means something was saved`);
+        }
+      } else if (e.ev === "calibration") {
+        if (typeof e.content_id !== "string" || !/^cfg-[0-9a-f]{64}$/.test(e.content_id)) {
+          errors.push(`${at}: calibration event content_id is not cfg-<sha256> — the store pointer is content-addressed`);
+        }
+      } else if (e.ev === "gate") {
+        if (typeof e.name !== "string" || e.name === "") errors.push(`${at}: gate event without a name`);
+        if (typeof e.pass !== "boolean") errors.push(`${at}: gate event without a boolean pass — a verdict is routed, not prose`);
+      } else if (e.ev === "progress") {
+        if (e.step !== undefined && (typeof e.step !== "number" || !Number.isInteger(e.step) || e.step < 0)) {
+          errors.push(`${at}: progress step is not a non-negative integer`);
+        }
+        if (e.of !== undefined && (typeof e.of !== "number" || !Number.isInteger(e.of) || e.of < 0)) {
+          errors.push(`${at}: progress of is not a non-negative integer`);
+        }
+      }
+    });
+  }
 }
 
 /** Validate one record directory against the bridge doctrine. Pure: reads the

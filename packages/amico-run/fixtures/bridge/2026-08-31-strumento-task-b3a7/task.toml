@@ -1,0 +1,22 @@
+schema = 1
+id = "2026-08-31-strumento-task-b3a7"
+title = "SEAM 4 ledger-bridge replay fixture (synthetic)"
+kind = "experiment"
+task_type = "experiment"
+target = "sim"
+gates = ["fit", "fit-recovery"]
+script = "scripts/bridge_fixture.py"
+workdir = "/labs/bridge-fixture"
+language = "python"
+device = "loopback_demo"
+created = "2026-08-31T12:00:00.000Z"
+pid = 8123
+host = "fixture-host"
+heartbeat_interval_s = 15
+config_content_id = "cfg-7903eff092e653e110bb9470ab0f7fa6e6e0bb996dbb10150e6ae6716c39afff"
+
+[authored_by]
+profile = ""
+model = ""
+variant = ""
+session_id = ""

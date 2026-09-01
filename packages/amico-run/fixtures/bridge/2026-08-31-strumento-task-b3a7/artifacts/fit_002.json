@@ -1,0 +1,6 @@
+{
+  "infidelity": 0.004,
+  "pi_gain_rel_err": 0.004,
+  "synthetic": true,
+  "note": "SEAM 4 bridge fixture artifact — the artifact event's path must resolve to a real file inside the task dir, so it does."
+}
