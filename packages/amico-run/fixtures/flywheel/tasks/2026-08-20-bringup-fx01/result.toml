@@ -1,0 +1,6 @@
+schema = 1
+state = "done"
+ended = "2026-08-20T10:10:00.000Z"
+summary = "bring-up day 1 (synthetic flywheel fixture — no real experiment)"
+error_kind = ""
+error = ""

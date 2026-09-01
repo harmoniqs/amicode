@@ -261,3 +261,135 @@ export function deriveRunDirFamily(runDir: string): RunDirFamilyResult {
     fields_read,
   };
 }
+
+// ── derivation (b): task record → family ───────────────────────────────────
+
+export interface TaskRecordMetrics {
+  /** acquisitions = the count of progress.jsonl events with
+   *  ev="progress" AND label="acquire" (the acquisition-count source). */
+  acquisitions?: number;
+  /** F-709-4: solve-iterations are prose-only on task records
+   *  (result.toml `summary`) — stated-absent, never a faked number. */
+  iterations?: undefined;
+  /** wall clock: result.toml `ended` − task.toml `created` (both
+   *  record-carried ISO timestamps — the honest source exists here). */
+  wall_s?: number;
+  wall_source: "record" | "unavailable";
+}
+
+export interface TaskRecordAttribution {
+  kind: "task-record";
+  dir: string;
+  id: string;
+  family: FamilyId;
+  device: string;
+  day: string;
+  metrics: TaskRecordMetrics;
+  fields_read: string[];
+}
+
+export interface TaskRecordUnattributable {
+  kind: "task-record-unattributable";
+  dir: string;
+  id: string;
+  reason: string;
+}
+
+export type TaskRecordFamilyResult = TaskRecordAttribution | TaskRecordUnattributable | undefined;
+
+/**
+ * The task-record → family derivation (strumento TaskRecord shape:
+ * task.toml + progress.jsonl + result.toml — the SEAM 4 bridge doctrine's
+ * canonical shape). Fields (the exact set, per docs/flywheel-decay.md):
+ *   - task.toml: kind (the manifest's kind axis — REQUIRED by the bridge
+ *     contract), device (→ the device key), created (→ campaign day);
+ *   - result.toml: ended (→ wall clock, with task.toml created);
+ *   - progress.jsonl: ev="progress" + label="acquire" (→ acquisitions).
+ *
+ * Mapping onto the repertoire (stated):
+ *   - kind matching /bring-?up/ → bring-up (the BringupPlan graph tasks);
+ *   - kind "experiment" → tune-up — the closed-loop family (journey §5: board
+ *     experiments AND their sim rehearsal, which is all this build claims
+ *     pre-P4);
+ *   - any other kind value is an unknown axis value — the bridge contract's
+ *     forward-compat rule: derive-and-list, never fail, never force.
+ */
+export function deriveTaskRecordFamily(taskDir: string): TaskRecordFamilyResult {
+  const manifest = readTomlSafe(join(taskDir, "task.toml"));
+  if (!manifest) return undefined; // not a task record dir — the caller skips it
+  const id = str(manifest.id) ?? "";
+  const kind = str(manifest.kind);
+  if (!kind) {
+    return {
+      kind: "task-record-unattributable",
+      dir: taskDir,
+      id,
+      reason: "task.toml kind missing — the kind axis is part of the manifest",
+    };
+  }
+  let family: FamilyId | undefined;
+  if (/bring-?up/i.test(kind)) family = "bring-up";
+  else if (kind === "experiment") family = "tune-up";
+  if (!family) {
+    return {
+      kind: "task-record-unattributable",
+      dir: taskDir,
+      id,
+      reason: `unknown task.toml kind "${kind}" — the kind axis is open (forward compat); listed, never forced`,
+    };
+  }
+
+  // acquisitions: count the acquire-labeled progress events.
+  let acquisitions = 0;
+  let sawProgressEvents = false;
+  const progressPath = join(taskDir, "progress.jsonl");
+  if (existsSync(progressPath)) {
+    for (const line of readFileSync(progressPath, "utf8").split("\n")) {
+      const t = line.trim();
+      if (t === "") continue;
+      let ev: unknown;
+      try {
+        ev = JSON.parse(t) as Record<string, unknown>;
+      } catch {
+        continue; // a live reader skips a torn line; so does the derivation
+      }
+      if (isRecord(ev) && ev.ev === "progress") {
+        sawProgressEvents = true;
+        if (str(ev.label) === "acquire") acquisitions += 1;
+      }
+    }
+  }
+
+  // wall clock: ended − created (both carried).
+  const created = str(manifest.created);
+  const ended = readTomlSafe(join(taskDir, "result.toml"))?.ended;
+  let wall_s: number | undefined;
+  let wall_source: TaskRecordMetrics["wall_source"] = "unavailable";
+  if (created && str(ended)) {
+    const a = Date.parse(created);
+    const b = Date.parse(str(ended)!);
+    if (Number.isFinite(a) && Number.isFinite(b) && b >= a) {
+      wall_s = (b - a) / 1000;
+      wall_source = "record";
+    }
+  }
+
+  return {
+    kind: "task-record",
+    dir: taskDir,
+    id,
+    family,
+    device: str(manifest.device) ?? "",
+    day: utcDay(created ?? "") ?? "",
+    metrics: {
+      acquisitions: sawProgressEvents || existsSync(progressPath) ? acquisitions : undefined,
+      wall_s,
+      wall_source,
+    },
+    fields_read: [
+      "task.toml: kind, device, created",
+      "result.toml: ended",
+      'progress.jsonl: ev="progress" + label="acquire"',
+    ],
+  };
+}

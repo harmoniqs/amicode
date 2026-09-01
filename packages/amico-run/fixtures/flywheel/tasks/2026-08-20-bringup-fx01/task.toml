@@ -1,0 +1,19 @@
+schema = 1
+id = "2026-08-20-bringup-fx01"
+title = "flywheel fixture: bring-up task day 1 (synthetic)"
+kind = "bringup"
+task_type = "bringup"
+target = "sim"
+gates = ["fit", "fit-recovery"]
+script = "scripts/bringup_fixture.py"
+workdir = "/labs/flywheel-fixture"
+language = "python"
+device = "qick-fx-01"
+created = "2026-08-20T10:00:00.000Z"
+heartbeat_interval_s = 15
+
+[authored_by]
+profile = ""
+model = ""
+variant = ""
+session_id = ""
