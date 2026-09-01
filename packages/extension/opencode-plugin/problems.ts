@@ -184,7 +184,12 @@ export function ensureActiveProblem(): ProblemMeta {
 export interface EventInput {
   entity: string;
   action: string;
-  diff?: Record<string, { from: unknown; to: unknown }>;
+  // The structured convention for ENTITY events is { from, to } per key
+  // (entityDiff); the recommend/veloce events deliberately write FLAT diffs
+  // (their readers key on the flat fields — e.g. e.diff.mode). The input type
+  // accepts both (#700: the tool bodies moved under tsc and the flat form is
+  // the recorded runtime reality).
+  diff?: Record<string, unknown>;
   hash?: string;
   source?: { tool?: string; stage?: string; session?: string };
 }

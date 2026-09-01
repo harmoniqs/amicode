@@ -164,9 +164,9 @@ export function normalizeFormulation(raw: unknown): FormulationEntity {
   // Already structured → normalize sub-shapes, fill defaults, pass through.
   if (typeof r.trajectory_type === "string") {
     const out: FormulationEntity = {
-      trajectory_type: r.trajectory_type,
+      trajectory_type: r.trajectory_type as TrajectoryType,
       time_mode: r.time_mode === "min_time" ? "min_time" : "fixed",
-      parameterization: typeof r.parameterization === "string" ? r.parameterization : "smooth",
+      parameterization: typeof r.parameterization === "string" ? (r.parameterization as Parameterization) : "smooth",
       robustness: normRobustness(r.robustness),
       free_phase: r.free_phase === true,
       leakage: r.leakage === true,
@@ -504,7 +504,7 @@ export function validateCalibChainRecord(rec: Partial<CalibChainRecord>): string
     if (typeof rb.catalog_entry !== "string" || rb.catalog_entry.trim() === "") {
       problems.push("rebank.catalog_entry must be a non-empty catalog entry id");
     }
-    const prov = rb.provenance as CalibChainRecord["rebank"]["provenance"] | undefined;
+    const prov = rb.provenance as NonNullable<CalibChainRecord["rebank"]>["provenance"] | undefined;
     if (!prov || typeof prov.warm_start !== "string" || prov.warm_start.trim() === "") {
       problems.push("rebank.provenance.warm_start must be a non-empty seed");
     }
@@ -523,10 +523,6 @@ export function validateCalibChainRecord(rec: Partial<CalibChainRecord>): string
 export function calibChainToml(rec: CalibChainRecord, now?: Date): string {
   const problems = validateCalibChainRecord(rec);
   if (problems.length > 0) throw new Error(`invalid calib chain: ${problems.join("; ")}`);
-  const inlineNum = (p: Record<string, number>): string => {
-    const entries = Object.entries(p);
-    return entries.length === 0 ? "{}" : `{ ${entries.map(([k, v]) => `${tomlKey(k)} = ${tomlNumber(v)}`).join(", ")} }`;
-  };
   const lines = ["[calib_chain]"];
   lines.push(`leg = ${tomlEscape(rec.leg)}`); // pinned — the record has no hardware variant
   lines.push(`promotion = ${tomlEscape(rec.rebank ? "human-gated-rebank-recorded" : "pending-human-signoff")}`);
