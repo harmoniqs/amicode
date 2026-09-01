@@ -18,8 +18,10 @@ using Printf
 #   - R below is computed from the grid for the post-DTO-#122 single-Δt
 #     QuadraticRegularizer weighting; under the OLD Δt² weighting that R would
 #     be 5× under-regularized at the default grid (every non-default grid worse).
-#   - The cubic move rides `SplineIntegrator` and the shape quartet rides
-#     `Piccolo.shape_metrics` — both are 2.x-only surfaces.
+#   - The quartet emission rides `Piccolo.shape_metrics`, and the template
+#     family's spline-faithful integrator (`SplineIntegrator` — the parked
+#     cubic/bend follow-up's dynamics, and the probe's forward guard for it)
+#     is a 2.x-only surface.
 if !(isdefined(Piccolo, :SplineIntegrator) && isdefined(Piccolo, :shape_metrics))
     error(
         "Amicode vetted template requires Piccolo ≥ 2.1 (DirectTrajOpt ≥ 0.10, " *
