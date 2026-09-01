@@ -943,6 +943,18 @@ describe("sidebar webview — root folders cannot be moved into directories", ()
     expect(dragoverSection).toMatch(/currentRoots/);
     expect(dropSection).toMatch(/currentRoots/);
   });
+
+  it("setupFileDropTarget also guards against root sources in both dragover and drop", () => {
+    // Files inside directories are wired with setupFileDropTarget, which resolves
+    // to the nearest parent directory on drop. This handler must ALSO reject
+    // root paths as drag sources — otherwise dragging a root over a file inside
+    // another root bypasses the setupDirectoryDropTarget guard entirely.
+    const fnBody = src.slice(src.indexOf("function setupFileDropTarget"));
+    const dragoverSection = fnBody.slice(0, fnBody.indexOf("\"drop\""));
+    const dropSection = fnBody.slice(fnBody.indexOf("\"drop\""));
+    expect(dragoverSection).toMatch(/currentRoots/);
+    expect(dropSection).toMatch(/currentRoots/);
+  });
 });
 
 describe("sidebar bridge — reorder-root message", () => {

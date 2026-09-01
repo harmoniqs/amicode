@@ -1275,6 +1275,8 @@ function createIconEl(icon: string): HTMLElement {
   function setupFileDropTarget(el: HTMLElement): void {
     el.addEventListener("dragover", (e) => {
       if (!dragSourcePath) return;
+      // Root workspace folders are structural — never allow them to be moved (#712)
+      if (currentRoots.some((r) => r.path === dragSourcePath)) return;
       const dirContainer = el.closest("[data-type=\"directory\"]") as HTMLElement | null;
       if (!dirContainer) return;
       const dirPath = dirContainer.dataset.path!;
@@ -1304,9 +1306,12 @@ function createIconEl(icon: string): HTMLElement {
       e.preventDefault();
       clearDropTarget();
       const sourcePath = e.dataTransfer?.getData("text/plain");
+      if (!sourcePath) return;
+      // Root workspace folders are structural — never allow them to be moved (#712)
+      if (currentRoots.some((r) => r.path === sourcePath)) return;
       const dirContainer = el.closest("[data-type=\"directory\"]") as HTMLElement | null;
       const targetDir = dirContainer?.dataset.path;
-      if (!sourcePath || !targetDir || sourcePath === targetDir) return;
+      if (!targetDir || sourcePath === targetDir) return;
       vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
     });
   }
