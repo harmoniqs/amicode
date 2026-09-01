@@ -533,77 +533,68 @@ function createIconEl(icon: string): HTMLElement {
   }
 
   /**
-   * Animated expand/collapse for section bodies (RESEARCH PROJECTS,
-   * DEVELOPMENT PROJECTS, FLEET). Driven by requestAnimationFrame so
-   * we have full control over every frame — CSS transitions fought the
-   * flex layout and caused jitter.
+   * Animated expand/collapse for section bodies. Mirrors VS Code's
+   * PaneView approach: temporarily enable CSS transitions on explicit
+   * heights, let the browser interpolate, then restore flex.
    *
    * File tree .children toggling remains instant (display none/block).
    */
-  const SECTION_ANIM_MS = 200;
-
-  function easeOutCubic(t: number): number {
-    return 1 - Math.pow(1 - t, 3);
-  }
+  const SECTION_ANIM_MS = 150;
 
   function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
-    // Cancel any in-flight animation
-    if ((body as any)._sectionAnimId) {
-      cancelAnimationFrame((body as any)._sectionAnimId);
-      (body as any)._sectionAnimId = null;
-    }
-
     if (expanding) {
-      // Measure content height before animation
+      // 1. Show body and let flex compute the final layout
       body.style.display = "block";
-      body.style.height = "auto";
-      body.style.overflow = "hidden";
-      const targetHeight = body.scrollHeight;
-      body.style.height = "0px";
+      section.classList.add("expanded");
+      resetSectionSizes();
+      void body.offsetHeight; // force layout with flex
+      const targetHeight = body.offsetHeight;
 
-      const start = performance.now();
-      const tick = (now: number) => {
-        const t = Math.min((now - start) / SECTION_ANIM_MS, 1);
-        body.style.height = (targetHeight * easeOutCubic(t)) + "px";
-        if (t < 1) {
-          (body as any)._sectionAnimId = requestAnimationFrame(tick);
-        } else {
-          (body as any)._sectionAnimId = null;
-          // Release to flex
-          body.style.height = "";
-          body.style.overflow = "";
-          body.classList.add("expanded");
-          section.classList.add("expanded");
-          resetSectionSizes();
-        }
+      // 2. Pin at 0 without the browser seeing the expanded state
+      section.classList.remove("expanded");
+      body.style.height = "0px";
+      body.style.overflow = "hidden";
+      body.style.transition = `height ${SECTION_ANIM_MS}ms ease-out`;
+      void body.offsetHeight; // commit the 0px state
+
+      // 3. Set target — CSS transition handles the interpolation
+      section.classList.add("expanded");
+      resetSectionSizes();
+      body.style.height = targetHeight + "px";
+
+      const onEnd = () => {
+        body.removeEventListener("transitionend", onEnd);
+        body.style.height = "";
+        body.style.overflow = "";
+        body.style.transition = "";
+        body.classList.add("expanded");
       };
-      (body as any)._sectionAnimId = requestAnimationFrame(tick);
+      body.addEventListener("transitionend", onEnd);
 
     } else {
-      // Pin current height before collapsing
+      // 1. Pin current height
       body.classList.remove("expanded");
       const startHeight = body.offsetHeight;
-      body.style.overflow = "hidden";
       body.style.height = startHeight + "px";
+      body.style.overflow = "hidden";
+      body.style.transition = `height ${SECTION_ANIM_MS}ms ease-out`;
 
-      // Remove flex immediately — pinned height holds size stable
+      // 2. Remove flex — pinned height holds stable
       section.classList.remove("expanded");
       resetSectionSizes();
+      void body.offsetHeight; // commit
 
-      const start = performance.now();
-      const tick = (now: number) => {
-        const t = Math.min((now - start) / SECTION_ANIM_MS, 1);
-        body.style.height = (startHeight * (1 - easeOutCubic(t))) + "px";
-        if (t < 1) {
-          (body as any)._sectionAnimId = requestAnimationFrame(tick);
-        } else {
-          (body as any)._sectionAnimId = null;
-          body.style.display = "none";
-          body.style.height = "";
-          body.style.overflow = "";
-        }
+      // 3. Animate to 0
+      body.style.height = "0px";
+
+      const onEnd = () => {
+        body.removeEventListener("transitionend", onEnd);
+        body.style.display = "none";
+        body.style.height = "";
+        body.style.overflow = "";
+        body.style.transition = "";
       };
-      (body as any)._sectionAnimId = requestAnimationFrame(tick);
+      body.addEventListener("transitionend", onEnd);
     }
   }
 

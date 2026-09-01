@@ -1662,19 +1662,21 @@ describe("sidebar — drag image pill", () => {
 // ── Section collapse/expand animation ────────────────────────────────────────
 
 describe("sidebar — section toggle animation", () => {
-  it("webview uses requestAnimationFrame for section expand/collapse, not CSS transitions", () => {
+  it("webview uses inline CSS transitions for section expand/collapse with height measurement", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // Must use requestAnimationFrame for smooth animation
-    expect(src).toContain("requestAnimationFrame");
     // Must have an animation helper
     expect(src).toMatch(/toggleSectionBody/);
     // Must use overflow hidden during animation
     expect(src).toMatch(/overflow.*hidden/);
-    // Must measure content height via scrollHeight or offsetHeight
-    expect(src).toMatch(/scrollHeight|offsetHeight/);
+    // Must measure content height via offsetHeight
+    expect(src).toMatch(/offsetHeight/);
+    // Must set an inline CSS transition on the body during animation
+    expect(src).toMatch(/style\.transition/);
+    // Must listen for transitionend to clean up
+    expect(src).toContain("transitionend");
   });
 
   it("webview uses animated toggle for section expand/collapse, not instant display swap", () => {
