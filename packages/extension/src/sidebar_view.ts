@@ -284,6 +284,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private activeProjectPath: string | null | undefined = undefined;
   private watcher?: vscode.FileSystemWatcher;
   private workspaceSub?: vscode.Disposable;
+  private gitSubs: vscode.Disposable[] = [];
   private treeService: SidebarTreeService;
 
   constructor(extensionUri: vscode.Uri) {
@@ -357,6 +358,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // FileSystemWatcher — refresh subtrees on changes.
     this.setupWatcher(webviewView);
 
+    // Git extension — subscribe to repository state changes for reactive coloring.
+    this.setupGitWatcher();
+
     // Refresh when workspace folders change.
     this.workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
       this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
@@ -365,6 +369,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       this.watcher?.dispose();
       this.workspaceSub?.dispose();
+      for (const sub of this.gitSubs) sub.dispose();
+      this.gitSubs = [];
       this.view = undefined;
     });
   }
@@ -406,6 +412,64 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.watcher.onDidCreate(onFsEvent);
     this.watcher.onDidChange(onFsEvent);
     this.watcher.onDidDelete(onFsEvent);
+  }
+
+  /**
+   * Subscribe to git extension repository state changes.
+   * When any repo's state changes, push a git-status message to the webview
+   * with the full status map so it can re-color all visible labels.
+   * Debounced (300ms) to avoid flooding on rapid git operations.
+   */
+  private setupGitWatcher(): void {
+    try {
+      const gitExt = vscode.extensions.getExtension("vscode.git");
+      if (!gitExt) return;
+
+      const wireApi = (api: any) => {
+        if (!api) return;
+
+        let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+        const pushStatus = () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => {
+            const statusMap = buildGitStatusMap(api);
+            this.postDown({ kind: "git-status", statusMap });
+          }, 300);
+        };
+
+        // Subscribe to each existing repository's state changes
+        for (const repo of api.repositories ?? []) {
+          if (repo?.state?.onDidChange) {
+            this.gitSubs.push(repo.state.onDidChange(pushStatus));
+          }
+        }
+
+        // Subscribe to newly opened repositories
+        if (api.onDidOpenRepository) {
+          this.gitSubs.push(api.onDidOpenRepository((repo: any) => {
+            if (repo?.state?.onDidChange) {
+              this.gitSubs.push(repo.state.onDidChange(pushStatus));
+            }
+            // Push immediately for the new repo's current state
+            pushStatus();
+          }));
+        }
+
+        // Fire once immediately so the sidebar gets git colors on load
+        pushStatus();
+      };
+
+      if (gitExt.isActive) {
+        wireApi(gitExt.exports?.getAPI?.(1));
+      } else {
+        // Git extension not active yet — activate and wire when ready
+        gitExt.activate().then(() => {
+          wireApi(gitExt.exports?.getAPI?.(1));
+        });
+      }
+    } catch {
+      // Graceful fallback — sidebar works without git colors
+    }
   }
 
   private buildHtml(
@@ -855,6 +919,29 @@ function classifyGitStatus(status: number): TreeEntry["gitStatus"] {
 }
 
 /**
+ * Pure function: build a path → git-status record from the Git extension API.
+ * Working-tree changes take precedence over index (staged) changes for the same path.
+ * Exported for testing and for the reactive git-status push.
+ */
+export function buildGitStatusMap(api: any): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const repo of api.repositories ?? []) {
+    const state = repo?.state;
+    if (!state) continue;
+    for (const change of state.workingTreeChanges ?? []) {
+      map[change.uri.fsPath] = classifyGitStatus(change.status);
+    }
+    // Index changes (staged) — working tree takes precedence
+    for (const change of state.indexChanges ?? []) {
+      if (!map[change.uri.fsPath]) {
+        map[change.uri.fsPath] = classifyGitStatus(change.status);
+      }
+    }
+  }
+  return map;
+}
+
+/**
  * Annotate tree entries with git status from the Git extension.
  * Falls back gracefully if the git extension is unavailable.
  */
@@ -865,23 +952,10 @@ function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
     const api = gitExt.exports?.getAPI?.(1);
     if (!api) return entries;
 
-    // Build a path → status map from all repositories
-    const statusMap = new Map<string, TreeEntry["gitStatus"]>();
-    for (const repo of api.repositories ?? []) {
-      const state = repo?.state;
-      if (!state) continue;
-      for (const change of state.workingTreeChanges ?? []) {
-        statusMap.set(change.uri.fsPath, classifyGitStatus(change.status));
-      }
-      // Index changes (staged) — working tree takes precedence
-      for (const change of state.indexChanges ?? []) {
-        if (!statusMap.has(change.uri.fsPath)) {
-          statusMap.set(change.uri.fsPath, classifyGitStatus(change.status));
-        }
-      }
-    }
+    const statusRecord = buildGitStatusMap(api);
+    if (Object.keys(statusRecord).length === 0) return entries;
 
-    if (statusMap.size === 0) return entries;
+    const statusMap = new Map(Object.entries(statusRecord));
 
     // Annotate files with exact matches, then propagate to directories
     const annotated = entries.map((entry) => {

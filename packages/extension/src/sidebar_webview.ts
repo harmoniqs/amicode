@@ -734,6 +734,56 @@ function createIconEl(icon: string): HTMLElement {
         }
         break;
       }
+
+      case "git-status": {
+        // Reactive git coloring: walk all rendered nodes and apply/remove git classes.
+        const statusMap: Record<string, string> = msg.statusMap ?? {};
+        const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
+
+        const allNodes = treeRoot?.querySelectorAll("[data-path]") ?? [];
+        for (const node of allNodes) {
+          const el = node as HTMLElement;
+          const nodePath = el.dataset.path;
+          if (!nodePath) continue;
+
+          const label = el.querySelector(".tree-node .label") as HTMLElement | null;
+          if (!label) continue;
+
+          // Remove any existing git class
+          for (const cls of gitClasses) label.classList.remove(cls);
+
+          // Direct match (files)
+          const directStatus = statusMap[nodePath];
+          if (directStatus) {
+            label.classList.add(`git-${directStatus}`);
+            continue;
+          }
+
+          // Directory propagation: find the most notable child status
+          const isDir = el.dataset.type === "directory";
+          if (isDir) {
+            const prefix = nodePath + "/";
+            const statusPriority: Record<string, number> = {
+              conflict: 5, modified: 4, deleted: 3, untracked: 2, added: 1, ignored: 0,
+            };
+            let bestStatus = "";
+            let bestPri = -1;
+            for (const [filePath, status] of Object.entries(statusMap)) {
+              if (filePath.startsWith(prefix)) {
+                const pri = statusPriority[status] ?? 0;
+                if (pri > bestPri) {
+                  bestPri = pri;
+                  bestStatus = status;
+                }
+              }
+            }
+            if (bestStatus) {
+              label.classList.add(`git-${bestStatus}`);
+            }
+          }
+        }
+        break;
+      }
     }
   });
 

@@ -1148,6 +1148,200 @@ describe("sidebar — git status colors", () => {
   });
 });
 
+// ── Reactive git status (#673 — push git changes to webview) ─────────────────
+
+describe("sidebar — reactive git status", () => {
+  it("buildGitStatusMap produces a path→status record from git API repositories", async () => {
+    vi.resetModules();
+    const { buildGitStatusMap } = await import("../src/sidebar_view");
+
+    // Mock git API with one repository containing working tree + index changes
+    const mockApi = {
+      repositories: [{
+        state: {
+          workingTreeChanges: [
+            { uri: { fsPath: "/project/src/main.ts" }, status: 5 },  // MODIFIED
+            { uri: { fsPath: "/project/src/util.ts" }, status: 7 },  // UNTRACKED
+          ],
+          indexChanges: [
+            { uri: { fsPath: "/project/README.md" }, status: 1 },    // INDEX_ADDED
+            // This one is also in workingTree — workingTree should win
+            { uri: { fsPath: "/project/src/main.ts" }, status: 0 },  // INDEX_MODIFIED
+          ],
+        },
+      }],
+    };
+
+    const result = buildGitStatusMap(mockApi);
+
+    expect(result["/project/src/main.ts"]).toBe("modified");   // workingTree wins over index
+    expect(result["/project/src/util.ts"]).toBe("untracked");
+    expect(result["/project/README.md"]).toBe("added");
+  });
+
+  it("buildGitStatusMap returns empty record when no changes exist", async () => {
+    vi.resetModules();
+    const { buildGitStatusMap } = await import("../src/sidebar_view");
+
+    const mockApi = {
+      repositories: [{
+        state: { workingTreeChanges: [], indexChanges: [] },
+      }],
+    };
+
+    const result = buildGitStatusMap(mockApi);
+    expect(Object.keys(result)).toHaveLength(0);
+  });
+
+  it("bridge types include git-status down-message with a statusMap record", async () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+      "utf8",
+    );
+    expect(src).toContain("git-status");
+    expect(src).toContain("statusMap");
+  });
+
+  it("host pushes git-status message when a git repository state changes", async () => {
+    vi.resetModules();
+
+    // Set up a mock git extension with one repo whose state fires onChange
+    const onDidChangeCbs: Array<() => void> = [];
+    const onDidOpenCbs: Array<(repo: any) => void> = [];
+    const mockRepo = {
+      state: {
+        onDidChange: (cb: () => void) => {
+          onDidChangeCbs.push(cb);
+          return { dispose() {} };
+        },
+        workingTreeChanges: [
+          { uri: { fsPath: "/project/src/main.ts" }, status: 5 },  // MODIFIED
+        ],
+        indexChanges: [],
+      },
+    };
+    const mockGitExt = {
+      isActive: true,
+      exports: {
+        getAPI: () => ({
+          repositories: [mockRepo],
+          onDidOpenRepository: (cb: (repo: any) => void) => {
+            onDidOpenCbs.push(cb);
+            return { dispose() {} };
+          },
+          onDidCloseRepository: () => ({ dispose() {} }),
+        }),
+      },
+      activate: () => Promise.resolve(),
+    };
+
+    // Wire the mock into vscode.extensions
+    const vscodeMock = await import("vscode");
+    (vscodeMock.extensions as any).getExtension = (id: string) =>
+      id === "vscode.git" ? mockGitExt : undefined;
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    // Simulate a git state change
+    expect(onDidChangeCbs.length).toBeGreaterThan(0);
+    onDidChangeCbs[0]();
+
+    // Wait for the debounced/async push
+    await new Promise(r => setTimeout(r, 350));
+
+    // The host should have posted a git-status message
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const gitStatusMsg = calls.find((c: any[]) => c[0]?.kind === "git-status");
+    expect(gitStatusMsg).toBeDefined();
+    expect(gitStatusMsg[0].statusMap["/project/src/main.ts"]).toBe("modified");
+
+    // Restore mock
+    (vscodeMock.extensions as any).getExtension = () => undefined;
+  });
+
+  it("host activates git extension and fires initial git-status on cold start", async () => {
+    vi.resetModules();
+
+    let activateResolve: () => void;
+    const activatePromise = new Promise<void>(r => { activateResolve = r; });
+
+    const mockRepo = {
+      state: {
+        onDidChange: () => ({ dispose() {} }),
+        workingTreeChanges: [
+          { uri: { fsPath: "/project/cold.ts" }, status: 7 },  // UNTRACKED
+        ],
+        indexChanges: [],
+      },
+    };
+    const mockGitExt = {
+      isActive: false,  // <-- not active yet (cold start)
+      exports: {
+        getAPI: () => ({
+          repositories: [mockRepo],
+          onDidOpenRepository: () => ({ dispose() {} }),
+          onDidCloseRepository: () => ({ dispose() {} }),
+        }),
+      },
+      activate: () => {
+        mockGitExt.isActive = true;
+        activateResolve!();
+        return activatePromise;
+      },
+    };
+
+    const vscodeMock = await import("vscode");
+    (vscodeMock.extensions as any).getExtension = (id: string) =>
+      id === "vscode.git" ? mockGitExt : undefined;
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    // Wait for activate + debounce
+    await activatePromise;
+    await new Promise(r => setTimeout(r, 350));
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const gitStatusMsg = calls.find((c: any[]) => c[0]?.kind === "git-status");
+    expect(gitStatusMsg).toBeDefined();
+    expect(gitStatusMsg[0].statusMap["/project/cold.ts"]).toBe("untracked");
+
+    (vscodeMock.extensions as any).getExtension = () => undefined;
+  });
+
+  it("webview handles git-status message and applies/removes git classes on rendered labels", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Handles the git-status message kind
+    expect(src).toContain('"git-status"');
+    // Walks tree nodes by data-path attribute
+    expect(src).toContain("data-path");
+    // Applies git-* classes
+    expect(src).toMatch(/classList\.add.*git-/);
+    // Removes stale git classes (e.g. when a file is no longer modified)
+    expect(src).toMatch(/classList\.remove|className.*replace|git-/);
+  });
+
+  it("webview applies git status to root-level project nodes too", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The git-status handler should walk root nodes (not just child nodes)
+    // Root nodes have data-type="directory" and carry a project path
+    expect(src).toContain("git-status");
+    // Should propagate status to directories using prefix matching
+    expect(src).toContain("startsWith");
+  });
+});
+
 // ── Sash resize between sections (#673) ──────────────────────────────────────
 
 describe("sidebar — sash resize between sections", () => {

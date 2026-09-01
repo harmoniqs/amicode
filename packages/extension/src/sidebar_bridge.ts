@@ -43,6 +43,7 @@ export type ChildrenMessage = { kind: "children"; path: string; entries: TreeEnt
 export type FsChangedMessage = { kind: "fs-changed"; folder: string };
 export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: string; message: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null };
+export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
 
 export type SidebarDownMessage =
   | ChatActiveMessage
@@ -50,7 +51,8 @@ export type SidebarDownMessage =
   | ChildrenMessage
   | FsChangedMessage
   | FileOpErrorMessage
-  | ActiveProjectMessage;
+  | ActiveProjectMessage
+  | GitStatusMessage;
 
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
@@ -138,6 +140,7 @@ export function handleSidebarMessage(
     case "fs-changed":
     case "file-op-error":
     case "active-project":
+    case "git-status":
       // Down-direction messages — no host-side handler needed.
       break;
   }
