@@ -27,3 +27,11 @@ describe("question text-card CSS (amicode#349 regression)", () => {
     expect(css).toMatch(/question-text-form.*background.*bg-layer-02/s)
   })
 })
+
+describe("skill-only pill alignment (#672)", () => {
+  test("user-message-body without text bubble overrides collapsible width to fit-content", () => {
+    expect(css).toMatch(
+      /user-message-body.*:not\(:has\(.*user-message-text.*\)\).*\bwidth:\s*fit-content\b/s,
+    )
+  })
+})

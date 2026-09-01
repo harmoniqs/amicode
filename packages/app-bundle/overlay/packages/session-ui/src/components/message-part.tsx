@@ -74,6 +74,7 @@ import { patchFiles } from "./apply-patch-file"
 import { animate } from "motion"
 import { attached, inline, kind, typeLabel } from "./message-file"
 import { readPartText, splitSettledChunks } from "./message-part-text"
+import { shouldShowUserMessageText } from "./message-part-user"
 import { buildTrace } from "./build-trace"
 import { SessionProgressIndicatorV2 } from "../v2/components/session-progress-indicator-v2"
 
@@ -1853,12 +1854,14 @@ export function UserMessageDisplay(props: {
               </BasicTool>
             )}
           </For>
-          <div data-slot="user-message-text" data-comments={messageComments().length > 0 ? "true" : undefined}>
-            <HighlightedText text={text()} references={inlineFiles()} agents={agents()} />
-            <Show when={messageComments().length > 0}>
-              <UserMessageComments comments={messageComments()} bounded />
-            </Show>
-          </div>
+          <Show when={shouldShowUserMessageText(text(), messageComments().length)}>
+            <div data-slot="user-message-text" data-comments={messageComments().length > 0 ? "true" : undefined}>
+              <HighlightedText text={text()} references={inlineFiles()} agents={agents()} />
+              <Show when={messageComments().length > 0}>
+                <UserMessageComments comments={messageComments()} bounded />
+              </Show>
+            </div>
+          </Show>
         </div>
       </Show>
       <Show when={props.useV2Actions}>{renderAttachments()}</Show>
