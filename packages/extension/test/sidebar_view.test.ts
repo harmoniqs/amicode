@@ -1464,7 +1464,7 @@ describe("sidebar — sash resize between sections", () => {
     // Find the layoutSections function body and check it touches sash.style.top
     const fnStart = src.indexOf("function layoutSections");
     expect(fnStart).toBeGreaterThan(-1);
-    const fnBody = src.slice(fnStart, fnStart + 3000);
+    const fnBody = src.slice(fnStart, fnStart + 4000);
     expect(fnBody).toMatch(/sash.*style\.top|\.sash/);
   });
 });
@@ -1791,6 +1791,25 @@ describe("sidebar — sash resize with pixel layout", () => {
     expect(src).toContain("sectionSizes");
     // Must NOT set style.flex during drag (old approach)
     expect(src).not.toMatch(/\.style\.flex\s*=/);
+  });
+
+  it("layoutSections has overflow mop-up that shrinks sections when HEADER_HEIGHT clamp causes overshoot", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // After the proportional allocation loop, layoutSections must check whether
+    // the total expanded height exceeds availableForExpanded (which happens when
+    // Math.max(HEADER_HEIGHT, h) inflates small sections). If so, it must shrink
+    // oversized sections to compensate — the VS Code "distributeEmptySpace" pattern.
+    const fnStart = src.indexOf("function layoutSections");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = src.slice(fnStart, fnStart + 3500);
+
+    // Must compute overflow/overshoot after the proportional pass
+    expect(fnBody).toMatch(/overflow|overshoot/i);
+    // Must shrink sections to absorb the overflow (reduce heights, not just clamp up)
+    expect(fnBody).toMatch(/overflow.*>.*0|overshoot.*>.*0/i);
   });
 });
 

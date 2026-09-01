@@ -511,6 +511,26 @@ function createIconEl(icon: string): HTMLElement {
         expandedHeights.set(s, Math.max(HEADER_HEIGHT, h));
         remaining -= expandedHeights.get(s)!;
       }
+
+      // Mop-up pass (VS Code "distributeEmptySpace" pattern):
+      // Math.max(HEADER_HEIGHT, h) can inflate small sections without shrinking
+      // others, causing total to overshoot availableForExpanded. Absorb the
+      // overflow by trimming the largest sections (they have the most room above
+      // HEADER_HEIGHT).
+      let overflow = 0;
+      for (const h of expandedHeights.values()) overflow += h;
+      overflow -= availableForExpanded;
+      if (overflow > 0) {
+        // Sort expanded sections by height descending — shrink largest first
+        const sorted = [...expandedHeights.entries()].sort((a, b) => b[1] - a[1]);
+        for (const [s, h] of sorted) {
+          if (overflow <= 0) break;
+          const shrinkable = h - HEADER_HEIGHT;
+          const take = Math.min(shrinkable, overflow);
+          expandedHeights.set(s, h - take);
+          overflow -= take;
+        }
+      }
     }
 
     // Write pixel positions — bottom-aligned (pixel equivalent of flex justify-content: flex-end).
