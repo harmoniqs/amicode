@@ -282,3 +282,67 @@ export function loadRegimePriorsTable(): LoadResult {
   if (problems.length > 0) return { ok: false, problems };
   return { ok: true, table: raw as RegimePriorsTable };
 }
+
+// ── the serving selection (AC1: regime_rec_priors_live == 5) ─────────────────
+
+/** A served regime prior — the shape that rides the recommendation surface
+ * (amicode_recommend action="query"). `provenance` is the composed, shippable
+ * string (scope + census + sources + caveat); `scope` and `ref` stay
+ * machine-readable so the propose events the agent records through the
+ * EXISTING mechanics are audit-parseable (see auditRegimePriors). */
+export interface RegimePriorRec {
+  param: RegimeKnob;
+  label: string;
+  value: number | string;
+  confidence: "high" | "medium" | "low";
+  provenance: string;
+  scope: PlatformFamily[];
+  ref: string;
+  note?: string;
+}
+
+/** The served provenance string — the shippable face of the A1 boundary:
+ * profile scope + the census stamp + the evidence chain + the public-scale
+ * caveat riding every served string. Composed here (never stored) so every
+ * consumer of a prior names its sources identically — the audit parses these
+ * markers back out of prior-application events. */
+export function priorProvenanceString(entry: RegimePriorEntry, table: RegimePriorsTable): string {
+  const census = table.census;
+  const families = PLATFORM_FAMILIES.filter((f) => census.families[f] !== undefined)
+    .map((f) => `${census.families[f]} ${f}`)
+    .join(" / ");
+  return (
+    `scope: ${entry.provenance.scope.join(", ")}; ` +
+    `census: ${census.date}, ${census.total} profiles: ${families}; ` +
+    `sources: ${entry.provenance.sources.join("; ")}; ` +
+    `caveat: ${entry.provenance.caveat}`
+  );
+}
+
+/** Select the regime priors for a platform family — ONE per NAMED knob
+ * (exactly the five, per issue #699 AC1). `knobs` (optional) projects to the
+ * requested knob names, mirroring the query path's `params` selection. */
+export function selectRegimePriors(
+  table: RegimePriorsTable,
+  family: PlatformFamily,
+  knobs?: readonly string[],
+): RegimePriorRec[] {
+  const wanted = knobs && knobs.length > 0 ? (knobs as readonly string[]) : REGIME_KNOBS;
+  const out: RegimePriorRec[] = [];
+  for (const knob of wanted) {
+    if (!(REGIME_KNOBS as readonly string[]).includes(knob)) continue;
+    const entry = table.priors.find((e) => e.knob === knob && e.families.includes(family));
+    if (!entry) continue; // the schema validator guarantees coverage; a gap degrades honestly
+    out.push({
+      param: entry.knob,
+      label: entry.label ?? entry.knob,
+      value: entry.value,
+      confidence: entry.confidence,
+      provenance: priorProvenanceString(entry, table),
+      scope: entry.provenance.scope,
+      ref: `regime_priors_table.json#${entry.knob}@${family}`,
+      ...(entry.note !== undefined ? { note: entry.note } : {}),
+    });
+  }
+  return out;
+}

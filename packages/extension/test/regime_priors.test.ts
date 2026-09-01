@@ -26,8 +26,11 @@ import { describe, it, expect } from "vitest";
 import {
   loadRegimePriorsTable,
   validateRegimePriorsTable,
+  selectRegimePriors,
+  priorProvenanceString,
   REGIME_KNOBS,
   CAVEAT_MARKER,
+  type PlatformFamily,
 } from "../opencode-plugin/regime_priors";
 
 const loaded = loadRegimePriorsTable();
@@ -119,5 +122,64 @@ describe("validateRegimePriorsTable — a malformed provenance fails", () => {
     const t2 = base();
     t2.priors.splice(0, 3); // drop the spin tr_frac entries
     expectProblem(validateRegimePriorsTable(t2.table), /coverage: knob "tr_frac".*"spin"/);
+  });
+});
+
+// ── AC1: regime_rec_priors_live == 5 — one servable prior per NAMED knob,
+// for every census family (not one for the family) ──
+describe("selectRegimePriors — the five-knob serving selection", () => {
+  it("regime_rec_priors_live == 5: every NAMED knob is servable for every census family, each with value + confidence + its composed provenance", () => {
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    for (const family of ["spin", "transmon", "atom"] as PlatformFamily[]) {
+      const recs = selectRegimePriors(loaded.table, family);
+      // ONE per NAMED knob — exactly the five, no gaps, no dupes
+      expect(recs.map((r) => r.param).sort()).toEqual([...REGIME_KNOBS].sort());
+      expect(recs.length).toBe(5);
+      // the fixture-validated min_contrast is the number 2.5 across families
+      const mc = recs.find((r) => r.param === "min_contrast");
+      expect(mc?.value).toBe(2.5);
+      expect(mc?.confidence).toBe("high");
+      // the low-confidence starting points state that honestly
+      expect(recs.find((r) => r.param === "tr_frac")?.confidence).toBe("low");
+      for (const r of recs) {
+        expect(["high", "medium", "low"]).toContain(r.confidence);
+        expect(r.value !== undefined && r.value !== "").toBe(true);
+      }
+    }
+  });
+
+  it("params selection filters the knobs (the query path's param projection)", () => {
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const recs = selectRegimePriors(loaded.table, "spin", ["tr_frac", "min_contrast"]);
+    expect(recs.map((r) => r.param).sort()).toEqual(["min_contrast", "tr_frac"]);
+  });
+});
+
+describe("priorProvenanceString — the served provenance names scope + census + sources + caveat", () => {
+  it("composes the shippable provenance: profile scope, the census stamp, the evidence chain, and the public-scale caveat riding it", () => {
+    expect(loaded.ok).toBe(true);
+    if (!loaded.ok) return;
+    const spinTrFrac = loaded.table.priors.find((e) => e.knob === "tr_frac" && e.families.includes("spin"));
+    expect(spinTrFrac).toBeDefined();
+    if (!spinTrFrac) return;
+    const s = priorProvenanceString(spinTrFrac, loaded.table);
+    // the profile scope, named
+    expect(s).toMatch(/scope: spin\b/);
+    // the census it distilled from (families + count + date)
+    expect(s).toMatch(/census: 2026-08-31, 12 profiles/);
+    expect(s).toMatch(/4 spin \/ 4 transmon \/ 4 atom/);
+    // the evidence chain it cites
+    expect(s).toMatch(/arXiv:2410\.15590/);
+    // the public-scale caveat, riding the served string
+    expect(s).toContain(CAVEAT_MARKER);
+    // the min_contrast evidence chain cites the Intonatissimo issue numbers (not the code)
+    const mc = loaded.table.priors.find((e) => e.knob === "min_contrast");
+    expect(mc).toBeDefined();
+    if (mc) {
+      expect(priorProvenanceString(mc, loaded.table)).toMatch(/Intonatissimo issues #65 \+ #81/);
+      expect(priorProvenanceString(mc, loaded.table)).toMatch(/#83 \+ #84/);
+    }
   });
 });
