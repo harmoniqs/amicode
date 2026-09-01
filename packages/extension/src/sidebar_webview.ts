@@ -1033,8 +1033,11 @@ function createIconEl(icon: string): HTMLElement {
 
     container.appendChild(row);
 
-    // Drag-and-drop: roots are drop targets
+    // Drag-and-drop: roots are draggable sources AND drop targets (#712)
+    row.draggable = true;
+    setupDragSource(row, root.path);
     setupDirectoryDropTarget(row, root.path);
+    setupRootReorderDropTarget(row, root);
 
     // Children container
     const childrenEl = document.createElement("div");
@@ -1299,6 +1302,96 @@ function createIconEl(icon: string): HTMLElement {
       const targetDir = dirContainer?.dataset.path;
       if (!sourcePath || !targetDir || sourcePath === targetDir) return;
       vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
+    });
+  }
+
+  // ── Root reorder drop target (#712) ──────────────────────────────────────
+
+  /** Active root-insert indicator element (removed on dragleave/drop). */
+  let rootInsertIndicator: HTMLElement | null = null;
+
+  function clearRootInsertIndicator(): void {
+    rootInsertIndicator?.remove();
+    rootInsertIndicator = null;
+  }
+
+  /**
+   * Wire a root node row as a reorder drop target. When the dragged item is
+   * itself a root in the same section (same projectType), show a 2px insertion
+   * line above or below this root. When the dragged item is a child file/folder,
+   * the existing setupDirectoryDropTarget handles it (drop-into behavior).
+   */
+  function setupRootReorderDropTarget(row: HTMLElement, root: TreeRoot): void {
+    row.addEventListener("dragover", (e) => {
+      if (!dragSourcePath) return;
+      // Is the drag source a root node?
+      const sourceRoot = currentRoots.find((r) => r.path === dragSourcePath);
+      if (!sourceRoot) return; // Not a root — let setupDirectoryDropTarget handle it
+      // Same section? (same projectType)
+      if (sourceRoot.projectType !== root.projectType) return;
+
+      e.preventDefault();
+      e.stopPropagation(); // Prevent setupDirectoryDropTarget from also handling
+      e.dataTransfer!.dropEffect = "move";
+
+      // Don't show indicator for self-drop
+      if (sourceRoot.path === root.path) {
+        clearRootInsertIndicator();
+        return;
+      }
+
+      // Compute top-half vs bottom-half
+      const rect = row.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position: "before" | "after" = e.clientY < midY ? "before" : "after";
+
+      // Show insertion indicator
+      clearRootInsertIndicator();
+      const indicator = document.createElement("div");
+      indicator.className = "root-insert-indicator";
+      indicator.style.cssText = `position:absolute;left:8px;right:8px;height:2px;background:var(--vscode-focusBorder);z-index:100;pointer-events:none;`;
+
+      // Position relative to the row's parent (section-body)
+      const sectionBody = row.closest(".section-body") as HTMLElement | null;
+      if (sectionBody) {
+        const bodyRect = sectionBody.getBoundingClientRect();
+        if (position === "before") {
+          indicator.style.top = `${rect.top - bodyRect.top}px`;
+        } else {
+          indicator.style.top = `${rect.bottom - bodyRect.top}px`;
+        }
+        sectionBody.style.position = "relative";
+        sectionBody.appendChild(indicator);
+        rootInsertIndicator = indicator;
+      }
+    });
+
+    row.addEventListener("dragleave", (e) => {
+      const related = e.relatedTarget as HTMLElement | null;
+      if (related && row.contains(related)) return;
+      clearRootInsertIndicator();
+    });
+
+    row.addEventListener("drop", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      clearRootInsertIndicator();
+      clearDropTarget();
+
+      const sourcePath = e.dataTransfer?.getData("text/plain");
+      if (!sourcePath) return;
+
+      // Is the source a root?
+      const sourceRoot = currentRoots.find((r) => r.path === sourcePath);
+      if (!sourceRoot) return; // Not a root — setupDirectoryDropTarget handles file move
+      if (sourceRoot.projectType !== root.projectType) return;
+      if (sourcePath === root.path) return; // Self-drop no-op
+
+      const rect = row.getBoundingClientRect();
+      const midY = rect.top + rect.height / 2;
+      const position: "before" | "after" = e.clientY < midY ? "before" : "after";
+
+      vscode.postMessage({ kind: "reorder-root", sourcePath, targetPath: root.path, position });
     });
   }
 

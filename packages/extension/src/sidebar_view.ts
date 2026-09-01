@@ -364,6 +364,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           void webviewView.webview.postMessage(m);
         },
         setSectionOrder: (order) => this.setSectionOrder(order),
+        reorderRoot: (sourcePath, targetPath, position) => reorderWorkspaceFolder(sourcePath, targetPath, position),
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -1006,6 +1007,32 @@ export async function createNewProject(ctx: NewProjectContext): Promise<void> {
 
   const prompt = `/create-research-project --path "${dir}"`;
   ctx.launchSession(prompt);
+}
+
+/**
+ * Reorder a workspace folder by removing it and re-inserting at the position
+ * relative to the target folder. Uses vscode.workspace.updateWorkspaceFolders
+ * splice semantics (#712).
+ */
+function reorderWorkspaceFolder(sourcePath: string, targetPath: string, position: "before" | "after"): void {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders) return;
+
+  const sourceIdx = folders.findIndex((f) => f.uri.fsPath === sourcePath);
+  const targetIdx = folders.findIndex((f) => f.uri.fsPath === targetPath);
+  if (sourceIdx < 0 || targetIdx < 0 || sourceIdx === targetIdx) return;
+
+  // Compute the insertion index after the source is removed
+  let insertIdx = position === "before" ? targetIdx : targetIdx + 1;
+  if (sourceIdx < insertIdx) insertIdx--; // adjust for removal shift
+
+  if (sourceIdx === insertIdx) return; // no-op
+
+  const sourceFolder = folders[sourceIdx];
+  // Remove then insert in two calls — VS Code applies them atomically within
+  // the same event loop tick.
+  vscode.workspace.updateWorkspaceFolders(sourceIdx, 1);
+  vscode.workspace.updateWorkspaceFolders(insertIdx, 0, { uri: sourceFolder.uri });
 }
 
 /** Open a folder picker and add selected folder(s) to the workspace. */

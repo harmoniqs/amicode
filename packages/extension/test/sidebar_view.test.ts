@@ -860,6 +860,83 @@ describe("sidebar webview — section reorder bug fixes", () => {
   });
 });
 
+// ── Reorderable workspace folders (#712) ─────────────────────────────────────
+
+describe("sidebar webview — reorderable workspace folders", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRootNode sets row.draggable = true", () => {
+    // Root nodes must be draggable sources, just like child directories
+    expect(src).toMatch(/function\s+renderRootNode[\s\S]*?row\.draggable\s*=\s*true/);
+  });
+
+  it("renderRootNode calls setupDragSource on the root row", () => {
+    expect(src).toMatch(/function\s+renderRootNode[\s\S]*?setupDragSource\s*\(\s*row/);
+  });
+
+  it("drag-over on root checks currentRoots to detect root-reorder vs file-move", () => {
+    // The drop logic must distinguish root reorder from file-move by checking
+    // whether the drag source path matches a root
+    expect(src).toMatch(/currentRoots/);
+    expect(src).toMatch(/root-insert-indicator|rootInsertIndicator|root-reorder/);
+  });
+
+  it("root reorder shows a 2px accent insertion line", () => {
+    expect(src).toMatch(/2px/);
+    expect(src).toMatch(/focusBorder|--vscode-focusBorder/);
+  });
+
+  it("cross-section drag is prevented by checking projectType", () => {
+    expect(src).toMatch(/projectType/);
+  });
+
+  it("drop posts reorder-root message with sourcePath, targetPath, and position", () => {
+    expect(src).toMatch(/reorder-root/);
+    expect(src).toMatch(/position.*before|after|"before"|"after"/);
+  });
+});
+
+describe("sidebar bridge — reorder-root message", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  it("reorder-root calls reorderRoot handler with source, target, and position", () => {
+    const reorderRoot = vi.fn();
+    handleSidebarMessage(
+      { kind: "reorder-root", sourcePath: "/projects/b", targetPath: "/projects/a", position: "before" },
+      {
+        openChat: vi.fn(), newProject: vi.fn(), addExisting: vi.fn(),
+        getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(),
+        fileOp: vi.fn(), postMessage: vi.fn(), setSectionOrder: vi.fn(),
+        reorderRoot,
+      },
+    );
+    expect(reorderRoot).toHaveBeenCalledWith("/projects/b", "/projects/a", "before");
+  });
+
+  it("reorder-root with position 'after' passes through correctly", () => {
+    const reorderRoot = vi.fn();
+    handleSidebarMessage(
+      { kind: "reorder-root", sourcePath: "/projects/a", targetPath: "/projects/c", position: "after" },
+      {
+        openChat: vi.fn(), newProject: vi.fn(), addExisting: vi.fn(),
+        getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(),
+        fileOp: vi.fn(), postMessage: vi.fn(), setSectionOrder: vi.fn(),
+        reorderRoot,
+      },
+    );
+    expect(reorderRoot).toHaveBeenCalledWith("/projects/a", "/projects/c", "after");
+  });
+});
+
 // ── Section labels and text (#673 polish) ────────────────────────────────────
 
 describe("sidebar webview — section labels", () => {

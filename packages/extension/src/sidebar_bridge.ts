@@ -68,6 +68,7 @@ export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
 export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
+export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; targetPath: string; position: "before" | "after" };
 
 export type SidebarUpMessage =
   | OpenChatMessage
@@ -77,7 +78,8 @@ export type SidebarUpMessage =
   | GetChildrenMessage
   | OpenFileMessage
   | FileOpMessage
-  | SetSectionOrderMessage;
+  | SetSectionOrderMessage
+  | ReorderRootMessage;
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
@@ -117,6 +119,7 @@ export interface SidebarMessageHandlers {
   fileOp: (req: FileOpRequest) => Promise<FileOpResult>;
   postMessage: (msg: SidebarDownMessage) => void;
   setSectionOrder: (order: string[]) => void;
+  reorderRoot: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
 }
 
 /**
@@ -158,6 +161,9 @@ export function handleSidebarMessage(
       break;
     case "set-section-order":
       handlers.setSectionOrder(msg.order);
+      break;
+    case "reorder-root":
+      handlers.reorderRoot(msg.sourcePath, msg.targetPath, msg.position);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;
