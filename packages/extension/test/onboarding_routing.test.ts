@@ -89,8 +89,8 @@ describe("isModelConfigured — model-presence check (AC9)", () => {
     expect(isModelConfigured(path.join(tmpDir, "nonexistent.json"))).toBe(false);
   });
 
-  it("returns false when config has no provider section", () => {
-    fs.writeFileSync(path.join(tmpDir, "config.json"), JSON.stringify({ model: "x/y" }));
+  it("returns false when config has no provider and no model", () => {
+    fs.writeFileSync(path.join(tmpDir, "config.json"), JSON.stringify({ permission: {} }));
     expect(isModelConfigured(path.join(tmpDir, "config.json"))).toBe(false);
   });
 
@@ -114,6 +114,22 @@ describe("isModelConfigured — model-presence check (AC9)", () => {
       '{\n  "provider": { "anthropic": {} }\n}\n',
     );
     expect(isModelConfigured(path.join(tmpDir, "config.json"))).toBe(true);
+  });
+
+  it("returns true when provider is empty but model field is set", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({ provider: {}, model: "anthropic/claude-sonnet-4" }),
+    );
+    expect(isModelConfigured(path.join(tmpDir, "config.json"))).toBe(true);
+  });
+
+  it("returns false when both provider and model are absent", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, "config.json"),
+      JSON.stringify({ permission: {} }),
+    );
+    expect(isModelConfigured(path.join(tmpDir, "config.json"))).toBe(false);
   });
 });
 
