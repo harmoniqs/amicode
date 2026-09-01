@@ -28,6 +28,7 @@ import {
   validateRegimePriorsTable,
   selectRegimePriors,
   priorProvenanceString,
+  platformFamily,
   REGIME_KNOBS,
   CAVEAT_MARKER,
   type PlatformFamily,
@@ -181,5 +182,21 @@ describe("priorProvenanceString — the served provenance names scope + census +
       expect(priorProvenanceString(mc, loaded.table)).toMatch(/Intonatissimo issues #65 \+ #81/);
       expect(priorProvenanceString(mc, loaded.table)).toMatch(/#83 \+ #84/);
     }
+  });
+});
+
+describe("platformFamily — the coarse platform axis (family keying, never vendor keying)", () => {
+  it("maps the interview's platform strings onto the census families", () => {
+    expect(platformFamily("transmon")).toBe("transmon");
+    expect(platformFamily("rydberg")).toBe("atom");
+    expect(platformFamily("neutral-atom Rydberg")).toBe("atom");
+    expect(platformFamily("silicon spin qubits")).toBe("spin");
+    expect(platformFamily("exchange-coupled spin")).toBe("spin");
+  });
+
+  it("honestly returns undefined outside the census families (no prior is served off-census)", () => {
+    expect(platformFamily("cavity")).toBeUndefined();
+    expect(platformFamily("bosonic")).toBeUndefined();
+    expect(platformFamily("fluxonium")).toBeUndefined();
   });
 });

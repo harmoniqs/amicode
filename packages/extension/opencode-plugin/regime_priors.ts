@@ -283,6 +283,22 @@ export function loadRegimePriorsTable(): LoadResult {
   return { ok: true, table: raw as RegimePriorsTable };
 }
 
+// ── the coarse platform axis ─────────────────────────────────────────────────
+
+/** Map an open platform string (the interview's platform axis — spec A keeps
+ * it open) onto a census FAMILY. Family keying, never vendor keying (issue
+ * #699 Key Decision): the recommendation surface is coarse, so the vendor
+ * profiles aggregate into family priors. Returns undefined outside the
+ * census families — an unmapped platform serves NO prior (honest absence,
+ * never a nearest-guess). */
+export function platformFamily(platform: string): PlatformFamily | undefined {
+  const p = platform.toLowerCase();
+  if (p.includes("transmon")) return "transmon";
+  if (p.includes("rydberg") || p.includes("atom")) return "atom";
+  if (p.includes("spin")) return "spin";
+  return undefined;
+}
+
 // ── the serving selection (AC1: regime_rec_priors_live == 5) ─────────────────
 
 /** A served regime prior — the shape that rides the recommendation surface
