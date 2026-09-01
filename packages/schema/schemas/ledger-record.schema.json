@@ -29,7 +29,8 @@
             "none",
             "ro",
             "rw"
-          ]
+          ],
+          "description": "THE autonomy datum (codesign SEAM 6, the one-autonomy doctrine): the SINGLE switch for what a warrant may do to a device — one enum, one definition (this schema), three documented meanings, no second knob (any other device-permission-shaped field in bounds is rejected by additionalProperties:false; any value outside this enum is rejected here). none = no device access; ro = read-only device access; rw = device writes permitted — and even then only inside a real-board session, which is an enumerated human gate, never a schema-granted right. Three-systems contract, stated once with each counterpart's criterion NAMED under its own owner (never claimed as another's): amicode's bounds are THIS schema (the one definition); the P4 gate's end-to-end read is merge-gated on strumento #75 MERGED (not verified here); Telaio's warrant-bounds deserialization conformance is their campaign's criterion."
         }
       }
     }
@@ -752,7 +753,7 @@
     },
     {
       "title": "approval",
-      "description": "A capability warrant (spec-20260727-164748 \u00a75): the record that lets a gated launch through amico-run's --spec gate. `plan_hash` is what was approved; `bounds` is what it authorises. DELIBERATELY UNSIGNED \u2014 the threat model is drift, not an adversary (spec \u00a73), and the product agent holds unrestricted bash, so a signature would defend against an attacker this layer could not stop anyway. Absent bounds keys do NOT default to allow: \u00a75.1 rule 2 refuses a launch needing a bound the warrant omits, which is why an empty `bounds` object is legal (it authorises nothing beyond the ungated free set) rather than a hole. `device` uses the fleet spec \u00a72.1 permission vocabulary.",
+      "description": "A capability warrant (spec-20260727-164748 \u00a75): the record that lets a gated launch through amico-run's --spec gate. `plan_hash` is what was approved; `bounds` is what it authorises. DELIBERATELY UNSIGNED \u2014 the threat model is drift, not an adversary (spec \u00a73), and the product agent holds unrestricted bash, so a signature would defend against an attacker this layer could not stop anyway. Absent bounds keys do NOT default to allow: \u00a75.1 rule 2 refuses a launch needing a bound the warrant omits, which is why an empty `bounds` object is legal (it authorises nothing beyond the ungated free set) rather than a hole. `device` is the autonomy datum \u2014 the enum {none, ro, rw} with its documented semantics in $defs.bounds (codesign SEAM 6: one definition, this schema \u2014 the fleet \u00a72.1 vocabulary it once pointed at, formalized).",
       "type": "object",
       "additionalProperties": false,
       "required": [
