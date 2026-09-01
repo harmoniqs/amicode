@@ -645,6 +645,12 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .btn-existing-project:focus {
       outline: none;
     }
+    .btn-existing-project .btn-icon {
+      width: 12px;
+      height: 12px;
+      vertical-align: -1px;
+      margin-right: 3px;
+    }
     .btn-row {
       display: flex;
       gap: 6px;
@@ -918,8 +924,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   <div class="sidebar-header">
     <button class="btn-chat" id="btn-chat"><svg class="btn-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><rect x="1" y="2" width="14" height="10" rx="3" fill="#fff676"/><polygon points="5,12 8,12 5,15" fill="#fff676"/><path d="M5 6.5h6M5 9h4" stroke="#111" stroke-width="1.2" stroke-linecap="round"/></svg>Chat with Amico</button>
     <div class="btn-row">
-      <button class="btn-new-project" id="btn-new-project">+ New</button>
-      <button class="btn-existing-project" id="btn-existing-project">+ Existing</button>
+      <button class="btn-new-project" id="btn-new-project">+ New Project</button>
+      <button class="btn-existing-project" id="btn-existing-project"><svg class="btn-icon" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none"><path d="M1.5 3.5A1 1 0 0 1 2.5 2.5h3.59a1 1 0 0 1 .7.29L8.5 4.5h5a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>Add Existing</button>
     </div>
   </div>
   <div class="sidebar-sections">

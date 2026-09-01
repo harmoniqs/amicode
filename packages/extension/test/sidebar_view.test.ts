@@ -67,8 +67,8 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain("sidebar_webview.js");
     // Both header buttons present
     expect(html).toContain("Chat with Amico");
-    expect(html).toContain("+ New");
-    expect(html).toContain("+ Existing");
+    expect(html).toContain("+ New Project");
+    expect(html).toContain("Add Existing");
   });
 
   it("embeds icon theme data as window.__iconTheme in a nonce-guarded script", () => {
@@ -175,8 +175,9 @@ describe("SidebarViewProvider", () => {
     expect(html).not.toMatch(/\.btn-new-project\s*\{[^}]*#fff676/);
 
     // ── Existing Project button ──
-    // Same styling as new-project (forest green outline, not bold)
-    expect(html).toContain("+ Existing");
+    // Folder icon SVG + label, same outline styling as new-project
+    expect(html).toContain("Add Existing");
+    expect(html).toMatch(/btn-existing-project[^>]*>.*<svg/s);
     expect(html).toMatch(/\.btn-existing-project\s*\{[^}]*border:\s*1px solid #2B382B/);
   });
 });
