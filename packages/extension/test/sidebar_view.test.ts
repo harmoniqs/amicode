@@ -921,6 +921,30 @@ describe("sidebar webview — root reorder prevents file-move", () => {
   });
 });
 
+describe("sidebar webview — root folders cannot be moved into directories", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("setupDirectoryDropTarget checks currentRoots and skips when drag source is a root", () => {
+    // The directory drop target must refuse to accept root paths as drag sources
+    // by checking currentRoots before allowing the drop-into behavior
+    const fnBody = src.slice(src.indexOf("function setupDirectoryDropTarget"));
+    expect(fnBody).toMatch(/currentRoots/);
+  });
+
+  it("file-move drop handler in setupDirectoryDropTarget guards against root sources", () => {
+    // The drop handler must also check — not just dragover
+    const fnBody = src.slice(src.indexOf("function setupDirectoryDropTarget"));
+    // Both the dragover and drop paths must have the root guard
+    const dragoverSection = fnBody.slice(0, fnBody.indexOf("\"drop\""));
+    const dropSection = fnBody.slice(fnBody.indexOf("\"drop\""));
+    expect(dragoverSection).toMatch(/currentRoots/);
+    expect(dropSection).toMatch(/currentRoots/);
+  });
+});
+
 describe("sidebar bridge — reorder-root message", () => {
   let handleSidebarMessage: any;
 

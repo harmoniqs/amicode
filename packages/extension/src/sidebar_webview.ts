@@ -1239,6 +1239,8 @@ function createIconEl(icon: string): HTMLElement {
     const highlight = highlightEl ?? el;
     el.addEventListener("dragover", (e) => {
       if (!dragSourcePath) return;
+      // Root workspace folders are structural — never allow them to be moved into a directory (#712)
+      if (currentRoots.some((r) => r.path === dragSourcePath)) return;
       // Don't allow dropping on self or on a parent of the source
       if (dragSourcePath === targetDir) return;
       if (dragSourcePath.startsWith(targetDir + "/")) return;
@@ -1263,6 +1265,8 @@ function createIconEl(icon: string): HTMLElement {
       clearDropTarget();
       const sourcePath = e.dataTransfer?.getData("text/plain");
       if (!sourcePath || sourcePath === targetDir) return;
+      // Root workspace folders are structural — never move them into a directory (#712)
+      if (currentRoots.some((r) => r.path === sourcePath)) return;
       vscode.postMessage({ kind: "file-op", op: "move", path: sourcePath, targetDir });
     });
   }
