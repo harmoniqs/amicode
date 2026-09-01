@@ -2,13 +2,33 @@
 # Amicode solve template — fill in the `# FILL IN` block, then:
 #   amico-run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
-# Vetted against Piccolo 1.19 (the version `Pkg.add Piccolo` installs today): a
-# single-qubit X gate on a 3-level transmon converges to subspace fidelity ~1.0.
+# Vetted against Piccolo 2.1 / DirectTrajOpt 0.10 / NamedTrajectories 0.9.4 (the
+# provisioned env refresh, #540): a single-qubit X gate on a 3-level transmon
+# converges to subspace fidelity > 0.999 on the cubic-spline parameterization
+# with R_bend on (Piccolo #312's landed default).
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
 using TOML
 using Printf
+
+# ── version probe (#540, plan step 5) ─────────────────────────────────────
+# This template REQUIRES Piccolo ≥ 2.1 (DTO ≥ 0.10, NT ≥ 0.9.4). On a pre-2.x
+# Piccolo it refuses to run — never silently misbehaves:
+#   - R below is computed from the grid for the post-DTO-#122 single-Δt
+#     QuadraticRegularizer weighting; under the OLD Δt² weighting that R would
+#     be 5× under-regularized at the default grid (every non-default grid worse).
+#   - The cubic move rides `SplineIntegrator` and the shape quartet rides
+#     `Piccolo.shape_metrics` — both are 2.x-only surfaces.
+if !(isdefined(Piccolo, :SplineIntegrator) && isdefined(Piccolo, :shape_metrics))
+    error(
+        "Amicode vetted template requires Piccolo ≥ 2.1 (DirectTrajOpt ≥ 0.10, " *
+        "NamedTrajectories ≥ 0.9.4); this environment has an older Piccolo. The " *
+        "template's grid-computed R assumes the post-#122 Δt-weighted " *
+        "QuadraticRegularizer — on a pre-2.x Piccolo it would run 5× under-regularized. " *
+        "Point --project at the provisioned env (see the #540 env refresh).",
+    )
+end
 
 # ── FILL IN ──────────────────────────────────────────────────────────────
 δ          = 0.2        # anharmonicity (GHz, positive convention)
@@ -25,6 +45,15 @@ SOLVER in (:ipopt, :altissimo) || error("SOLVER must be :ipopt or :altissimo, go
 if SOLVER === :altissimo
     @eval using Piccolissimo   # AltissimoOptions lives here, not in Piccolo
 end
+
+# ── R FROM THE GRID (#540, plan step 2 — DTO #122) ────────────────────────
+# DTO #122 changed QuadraticRegularizer weighting from Δt² to a single Δt:
+#   old: J = Σₜ ½ · Δt² · Δvᵀ R Δv        new: J = Σₜ ½ · Δt · Δvᵀ R Δv
+# The shipped 1.19/0.9.7 template's R = 1e-2 (Δt² weighting) is reproduced on
+# the new semantics by R_new = R_old · Δt on a uniform grid. So R is COMPUTED
+# from the FILL-IN values — exact at every Δt, never a hard-coded constant (a
+# frozen 2e-3 would silently mis-compensate every non-default T/N solve).
+R = 1e-2 * (T / N)   # = R_old · Δt; 1e-2 · (10/50) = 2e-3 on the default grid
 
 # ── telemetry sink ───────────────────────────────────────────────────────────
 # Every AMICODE_* line goes to stdout AND, on a cloud run, to `run.log` in the
@@ -63,10 +92,23 @@ op  = size(gate, 1) == sys.levels ? gate : EmbeddedOperator(gate, sys)
 
 times   = collect(range(0.0, T, length = N))
 initial = 0.1 * randn(sys.n_drives, N)
-qtraj = UnitaryTrajectory(sys, ZeroOrderPulse(initial, times), op)
-qcp = SmoothPulseProblem(qtraj, N;
-    piccolo_options = PiccoloOptions(timesteps_all_equal = true),
-    Q = 100.0, R = 1e-2)
+# ── the parameterization move (#540, plan step 3) ──────────────────────────
+# Cubic Hermite spline (the tangents :du are independent DOF — the zero-tangent
+# initial guess below is only the seed), carried through a cubic SplinePulseProblem
+# with R_bend riding Piccolo #312's landed default (1e-3, ON for cubic — the
+# opt-out, R_bend = 0, is the A/B's arm, not the template's). On the cubic family
+# R_u/R_du resolve to 0 by Piccolo's design (the L2 penalty biases flat pulses and
+# stalls fidelity); R (from the grid, above) is the weight the LINEAR fallback
+# family resolves to — both branches of the template compute it the same way.
+# The #275 guard refuses cubic + the default PWC BilinearIntegrator (it never
+# reads :du — the spline optimized would not be the spline named), so the
+# spline-faithful integrator is EXPLICIT — Piccolo 2.x ships SplineIntegrator.
+pulse = CubicSplinePulse(initial, times)
+qtraj = UnitaryTrajectory(sys, pulse, op)
+qcp = SplinePulseProblem(qtraj, N;
+    Q = 100.0, R = R,
+    integrator = SplineIntegrator(qtraj, N),
+    piccolo_options = PiccoloOptions(timesteps_all_equal = true))
 prob = hasproperty(qcp, :prob) ? qcp.prob : qcp
 
 # Per-iter live plot flows through Piccolo's `LivePulsePlotCallback`, an
@@ -89,8 +131,8 @@ struct PulseEmitCallback <: AbstractIntermediateCallback
 end
 function (cb::PulseEmitCallback)(primal, iter)
     # Cooperative stop: the Run Inspector's Stop button drops a STOP file into the
-    # run dir (== cwd). Returning false from Ipopt's intermediate_callback halts
-    # the solve (User_Requested_Stop) at the next iteration; solve! returns
+    # run dir (== cwd). Returning false from the intermediate callback halts the
+    # solve (User_Requested_Stop) at the next iteration; solve! returns
     # normally, so the partial pulse.jld2/result.toml still get written below.
     if isfile("STOP")
         emit("AMICODE_STOPPED")
@@ -133,8 +175,9 @@ end
 # On IPOPT, AMICODE_ITER rides the RAW Ipopt callback — it needs the rich IPM
 # state (obj_value/inf_pr/inf_du) that the agnostic `(primal, iter)` contract
 # doesn't carry. Both callbacks fire once per iteration (DTO composes the raw
-# callback with `intermediate_callback`).
-const CB = Piccolo.Callbacks
+# callback with `intermediate_callback` — the raw channel's factory lives at
+# DirectTrajOpt.Callbacks since DTO 0.10; Piccolo no longer re-homes it).
+const CB = DirectTrajOpt.Callbacks
 iters = Ref(0)
 function cb_log(optimizer, st; kwargs...)
     k = Int(st.iter_count); iters[] = k
@@ -181,14 +224,52 @@ end
 wall = time() - t0
 
 # Fidelity over the COMPUTATIONAL subspace, from a fresh high-tolerance rollout.
-# Two reasons this is the right metric:
+# Three reasons this is the right metric:
 #   - subspace (not full-space): the embedded goal pins identity on the leakage
 #     level, which the solve doesn't enforce — full-space would read ~0.44 even
 #     for a perfect qubit gate. We want the gate fidelity on {|0>,|1>}.
 #   - rollout (not the raw final propagator): re-integrating at 1e-8 yields a
 #     clean unitary, avoiding the ~1e-6 norm-drift that made the raw block read >1.
-Uroll = iso_vec_to_operator(unitary_rollout(get_trajectory(qcp), sys)[:, end])
+#   - cubic interpolation: the rollout integrates the SAME Hermite spline the
+#     SplineIntegrator constrained (:u and :du) — the pairing the #275 guard
+#     exists to keep honest. A :constant/:linear rollout would measure a
+#     different waveform than the one the optimizer scored.
+Uroll = iso_vec_to_operator(unitary_rollout(get_trajectory(qcp), sys;
+        state_name = state_name(qtraj), interpolation = :cubic)[:, end])
 fid   = unitary_fidelity(Uroll, op.operator; subspace = op.subspace)
+
+# ── the shape quartet (SEAM 3, #540 plan step 4) ───────────────────────────
+# Piccolo.shape_metrics over the SOLVED pulse: bend (∫|u″|²dt — the transfer
+# predictor), int_u2 (the Bloch–Siegert proxy), max_du (intra-span slew), crest
+# (hardware ACDR check, never a selection rule). Feature-gated by the SAME
+# 2.x probe as the version gate (a pre-2.x env skips the emission — never
+# errors) and try/catch-wrapped so the emission can never break the run.
+# Emitted under `params.shape_metrics` — the run-dir result schema pins its
+# top level closed (additionalProperties: false) and the Inspector's
+# readTerminalState drops fidelity on a schema-invalid result.toml, while
+# `params` is lenient by design: the quartet rides the self-describing params
+# section, additive, zero field loss for any consumer.
+# `let` (a hard scope): at top level a bare `if`/`try` reassignment of a global
+# is soft-scope-ambiguous — the first micro-run silently dropped the quartet
+# that way (local `shape_quartet` shadowed the global, params carried nothing).
+shape_quartet = let result = nothing
+    if isdefined(Piccolo, :shape_metrics)
+        try
+            sm = Piccolo.shape_metrics(extract_pulse(qtraj, prob.trajectory); mesh = 2^16)
+            result = Dict{String,Any}(
+                "bend" => collect(sm.bend),
+                "int_u2" => collect(sm.int_u2),
+                "max_du" => collect(sm.max_du),
+                "crest" => collect(sm.crest),
+                "T" => sm.T,
+                "parameterization" => sm.parameterization,
+            )
+        catch e
+            @warn "shape_metrics emission failed" exception = e maxlog = 3
+        end
+    end
+    result
+end
 
 # End-of-solve guarantee frame — STILL through LivePulsePlotCallback (no bespoke
 # plot). The live callback fires at iters 0, PLOT_EVERY, 2·PLOT_EVERY, …; a solve
@@ -207,11 +288,15 @@ JLD2.save("pulse.jld2", "traj", prob.trajectory)   # key "traj" so `load_traj` c
 open("result.toml.tmp", "w") do io
     # Record the regime each run actually solved (scalar FILL-IN params), so the
     # result is self-describing — not just fidelity/iterations.
+    params = Dict{String,Any}("delta" => δ, "levels" => levels, "T" => T, "N" => N,
+                              "drive_max" => drive_max, "max_iter" => max_iter)
+    if shape_quartet !== nothing
+        params["shape_metrics"] = shape_quartet
+    end
     TOML.print(io, Dict(
         "schema_version" => "1",   # run-dir contract version (@amicode/schema result schema)
         "fidelity" => fid, "iterations" => iters[], "wall_seconds" => wall,
-        "params" => Dict("delta" => δ, "levels" => levels, "T" => T, "N" => N,
-                         "drive_max" => drive_max, "max_iter" => max_iter),
+        "params" => params,
     ))
 end
 mv("result.toml.tmp", "result.toml"; force = true)
