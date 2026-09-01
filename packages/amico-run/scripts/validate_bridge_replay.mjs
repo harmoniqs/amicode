@@ -204,7 +204,67 @@ function validateAmicodeRun(dir, errors) {
     }
   }
 
+  // run.log — the stdout contract (the live Inspector's data source; a script
+  // that skips these lines gets a dead plot, so a canonical record carries them).
+  // Grammar mirrors the extension's run_dir_reader: NUM accepts Julia's %e
+  // output plus Inf/NaN (stagnation and blow-up iters stay visible).
   if (!existsSync(join(dir, "run.log"))) errors.push("run.log: missing — the stdout contract is part of the record");
+  else {
+    const NUM = String.raw`-?(?:Inf|NaN|\d+(?:\.\d+)?(?:[eE][-+]?\d+)?)`;
+    const ITER_RE = new RegExp(String.raw`^AMICODE_ITER\s+iter=(\d+)\s+f=${NUM}\s+inf_pr=${NUM}\s+inf_du=${NUM}$`);
+    const PULSE_RE = new RegExp(String.raw`^AMICODE_PULSE\s+iter=(\d+)\s+dt=${NUM}\s+a=${NUM}(?:,${NUM})*(?:;${NUM}(?:,${NUM})*)$`);
+    const lines = readFileSync(join(dir, "run.log"), "utf8").split("\n");
+    while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop();
+    const metaIdx = [];
+    let firstSignalIdx = -1;
+    const iters = [];
+    const pulseIters = [];
+    lines.forEach((l, i) => {
+      if (l.startsWith("AMICODE_PULSE_META")) metaIdx.push(i);
+      const m = ITER_RE.exec(l);
+      if (m) {
+        if (firstSignalIdx === -1) firstSignalIdx = i;
+        iters.push(Number(m[1]));
+        return;
+      }
+      const p = PULSE_RE.exec(l);
+      if (p) {
+        if (firstSignalIdx === -1) firstSignalIdx = i;
+        pulseIters.push(Number(p[1]));
+        return;
+      }
+      if (l.startsWith("AMICODE_ITER") || l.startsWith("AMICODE_PULSE ")) {
+        if (firstSignalIdx === -1) firstSignalIdx = i;
+        errors.push(`run.log: malformed contract line: "${l}" — the grammar is pinned (iter/f/inf_pr/inf_du; iter/dt/a)`);
+      }
+    });
+    if (metaIdx.length === 0) errors.push("run.log: no AMICODE_PULSE_META — the live pulse plot is dead without it");
+    if (metaIdx.length > 1) errors.push(`run.log: ${metaIdx.length} AMICODE_PULSE_META lines — it is emitted exactly once, before the solve`);
+    if (metaIdx.length === 1 && firstSignalIdx !== -1 && metaIdx[0] > firstSignalIdx) {
+      errors.push("run.log: AMICODE_PULSE_META appears after iteration lines — it is emitted once, before the solve");
+    }
+    if (iters.length === 0) errors.push("run.log: no AMICODE_ITER lines — the stats row has nothing to replay");
+    if (pulseIters.length === 0) errors.push("run.log: no AMICODE_PULSE lines — the live plot has no pulse to render");
+    for (const [label, arr] of [["AMICODE_ITER", iters], ["AMICODE_PULSE", pulseIters]]) {
+      for (let i = 1; i < arr.length; i++) {
+        if (arr[i] <= arr[i - 1]) {
+          errors.push(`run.log: ${label} iter ${arr[i]} after ${arr[i - 1]} — the streams replay in solve order`);
+          break;
+        }
+      }
+    }
+    if (lines.length === 0) errors.push("run.log: empty — no DONE line");
+    else {
+      const done = lines[lines.length - 1];
+      if (!/^DONE\s+fidelity=/.test(done)) errors.push(`run.log: last line is not "DONE fidelity=<f>" (got: "${done}")`);
+      else if (result !== undefined && typeof result.fidelity === "number") {
+        const f = Number(done.slice("DONE fidelity=".length));
+        if (!Number.isFinite(f) || Math.abs(f - result.fidelity) > 1e-12) {
+          errors.push(`run.log: DONE fidelity=${f} ≠ result.toml fidelity=${result.fidelity} — the number never travels without its pair`);
+        }
+      }
+    }
+  }
 }
 
 // ─── strumento TaskRecord contract ──────────────────────────────────────────

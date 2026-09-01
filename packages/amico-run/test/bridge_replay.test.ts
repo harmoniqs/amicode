@@ -102,6 +102,119 @@ describe("SEAM 4 corruption detection — the validator fails doctrine violation
     });
     expectNotOk(dir, "strumento-task", /content_id|calibration/);
   });
+
+  it("amicode: a torn final events.jsonl line (in-flight write never terminalized) reds", () => {
+    const dir = mutatedFixture("torn-events", "amicode-run", (d) => {
+      edit(d, "events.jsonl", (s) => s.slice(0, s.length - 30)); // cut mid-line, no trailing newline
+    });
+    expectNotOk(dir, "amicode-run", /torn|events\.jsonl/);
+  });
+
+  it("strumento: a torn final progress.jsonl line reds for a completed record (a live reader skips it; conformance does not)", () => {
+    const dir = mutatedFixture("torn-progress", "strumento-task", (d) => {
+      edit(d, "progress.jsonl", (s) => s.slice(0, s.length - 20));
+    });
+    expectNotOk(dir, "strumento-task", /torn|progress\.jsonl/);
+  });
+
+  it("amicode: a non-contiguous seq (an append-only violation: a dropped or replayed line) reds", () => {
+    const dir = mutatedFixture("seq-gap", "amicode-run", (d) => {
+      edit(d, "events.jsonl", (s) => s.replace('"seq":4', '"seq":9'));
+    });
+    expectNotOk(dir, "amicode-run", /seq/);
+  });
+
+  it("strumento: an artifact event whose path escapes the task dir reds at every boundary", () => {
+    const dir = mutatedFixture("artifact-escape", "strumento-task", (d) => {
+      edit(d, "progress.jsonl", (s) =>
+        s.replace('"path": "artifacts/fit_002.json"', '"path": "../escape.json"'),
+      );
+    });
+    expectNotOk(dir, "strumento-task", /escapes|artifact/);
+  });
+
+  it("strumento: an artifact event whose path does not resolve to a real file reds", () => {
+    const dir = mutatedFixture("artifact-void", "strumento-task", (d) => {
+      rmSync(join(d, "artifacts", "fit_002.json"));
+    });
+    expectNotOk(dir, "strumento-task", /does not resolve|artifact/);
+  });
+});
+
+describe("SEAM 4 opacity — unknown-but-well-formed values skip, never fail (the forward-compat axis)", () => {
+  it("amicode: an appended event with an unknown entity/action still validates (readers pass through)", () => {
+    const dir = mutatedFixture("unknown-entity", "amicode-run", (d) => {
+      edit(d, "events.jsonl", (s) =>
+        s +
+        '{"seq":7,"ts":"2026-08-31T12:05:00.000Z","entity":"campaign","action":"noted","diff":{"topic":{"from":null,"to":"future-kind"}},"provenance":null}\n',
+      );
+    });
+    const r = validateBridgeRecord(dir, "amicode-run");
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("strumento: an unknown manifest kind still validates (a future axis value reads, derives, and lists)", () => {
+    const dir = mutatedFixture("unknown-kind", "strumento-task", (d) => {
+      edit(d, "task.toml", (s) => s.replace('kind = "experiment"', 'kind = "monitor"'));
+    });
+    const r = validateBridgeRecord(dir, "strumento-task");
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("strumento: the canonical fixture's own unknown ev value (the carried forward-compat probe) validates by design", () => {
+    // the committed progress.jsonl ends with an unknown "survey" event — the
+    // fixture EXERCISES the opacity rule so the fold's replay is held to it
+    const raw = readFileSync(join(STRUMENTO_FIXTURE, "progress.jsonl"), "utf8");
+    expect(raw).toContain('"ev": "survey"');
+    const r = validateBridgeRecord(STRUMENTO_FIXTURE, "strumento-task");
+    expect(r.ok).toBe(true);
+  });
+});
+
+describe("SEAM 4 amicode stdout contract — run.log carries the live-telemetry lines", () => {
+  it("a missing AMICODE_PULSE_META reds (the Inspector's live plot is dead without it)", () => {
+    const dir = mutatedFixture("no-meta", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace(/^AMICODE_PULSE_META.*\n/m, ""));
+    });
+    expectNotOk(dir, "amicode-run", /AMICODE_PULSE_META/);
+  });
+
+  it("two AMICODE_PULSE_META lines red (it is emitted exactly once, before the solve)", () => {
+    const dir = mutatedFixture("double-meta", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace("AMICODE_ITER iter=1", s.split("\n")[0] + "\nAMICODE_ITER iter=1"));
+    });
+    expectNotOk(dir, "amicode-run", /AMICODE_PULSE_META/);
+  });
+
+  it("an AMICODE_ITER line torn out of grammar reds", () => {
+    const dir = mutatedFixture("bad-iter", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace("AMICODE_ITER iter=30", "AMICODE_ITER iteration=30"));
+    });
+    expectNotOk(dir, "amicode-run", /AMICODE_ITER/);
+  });
+
+  it("a DONE fidelity that disagrees with result.toml reds (the number never travels without its pair)", () => {
+    const dir = mutatedFixture("done-mismatch", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace("DONE fidelity=0.9995", "DONE fidelity=0.4242"));
+    });
+    expectNotOk(dir, "amicode-run", /DONE|fidelity/);
+  });
+
+  it("iter numbers that go backwards red (the stats row replays the stream in order)", () => {
+    const dir = mutatedFixture("iter-regress", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace("AMICODE_ITER iter=30", "AMICODE_ITER iter=1")); // 1,1,60 — a replayed iter
+    });
+    expectNotOk(dir, "amicode-run", /iter/);
+  });
+
+  it("a DONE line that is not the last stdout line reds", () => {
+    const dir = mutatedFixture("late-done", "amicode-run", (d) => {
+      edit(d, "run.log", (s) => s.replace("DONE fidelity=0.9995", "DONE fidelity=0.9995\npost-done noise"));
+    });
+    expectNotOk(dir, "amicode-run", /DONE/);
+  });
 });
 
 describe("SEAM 4 replay fixtures — the canonical records validate", () => {
