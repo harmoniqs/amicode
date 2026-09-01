@@ -1,6 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
+import { adoptWorkspaceProjects } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -425,7 +426,14 @@ function AmicodeThemeBridge() {
     if (d.kind === "open-bug-report" || d.kind === "close-bug-report") {
       bugDockController.handleBridgeMessage(d)
       return
-    }    if (d.kind !== "theme") return
+    }
+    // amicode#663: workspace-projects push from the extension host — the
+    // project selector below the composer reads from this signal.
+    if (d.kind === "workspace-projects") {
+      adoptWorkspaceProjects((d as { projects?: unknown[] }).projects as Parameters<typeof adoptWorkspaceProjects>[0])
+      return
+    }
+    if (d.kind !== "theme") return
     if (d.colorScheme === "light" || d.colorScheme === "dark") theme.setColorScheme(d.colorScheme)
   }
   window.addEventListener("message", onMsg)

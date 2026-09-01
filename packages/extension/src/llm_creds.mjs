@@ -36,16 +36,21 @@ export function resolveLlmCreds({ providers, model }) {
     };
   }
   // A configured model selects which provider chat uses; if set, that provider
-  // must be among the resolved ones (else chat picks an unresolved provider and
-  // fails at the box — the mismatch case).
+  // must be among the resolved ones. When it isn't, this is a SOFT mismatch —
+  // other providers ARE live, so the chat can still work (opencode falls back or
+  // the in-app picker overrides). Blocking the panel on a stale model field
+  // (e.g. onboarding wrote "anthropic/..." but the user later connected
+  // amazon-bedrock) is worse than letting them in with a heads-up.
   if (typeof model === "string" && model.includes("/")) {
     const want = model.split("/")[0];
     const hit = list.find((p) => p.id === want);
     if (!hit) {
+      const first = list[0];
       return {
-        ok: false,
-        reason: `opencode model provider "${want}" has no resolved credentials (resolved: ${list.map((p) => p.id).join(", ")})`,
-        fix: "set creds for that provider, or point the opencode model at a resolved one (RUNBOOK §4)",
+        ok: true,
+        provider: first.id,
+        source: first.source,
+        warning: `opencode model provider "${want}" has no resolved credentials (resolved: ${list.map((p) => p.id).join(", ")}) — falling back to ${first.id}`,
       };
     }
     return { ok: true, provider: hit.id, source: hit.source };
