@@ -338,7 +338,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         openChat: () => vscode.commands.executeCommand("amicode.openChat"),
         newProject: () => vscode.commands.executeCommand("amicode.newProject"),
         addExisting: () => addExistingProject(),
-        getRoots: () => this.treeService.getRoots(),
+        getRoots: () => {
+          const roots = this.treeService.getRoots();
+          // Schedule a git-status push so colors survive the DOM wipe
+          // that renderRoots() causes in the webview.
+          queueMicrotask(() => this.pushGitStatus());
+          return roots;
+        },
         getChildren: async (p) => {
           const entries = await this.treeService.getChildren(p);
           return annotateGitStatus(entries);
@@ -364,6 +370,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // Refresh when workspace folders change.
     this.workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
       this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
+      this.pushGitStatus();
     });
 
     webviewView.onDidDispose(() => {
@@ -396,6 +403,23 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
   private postDown(msg: SidebarDownMessage): void {
     this.view?.webview.postMessage(msg);
+  }
+
+  /**
+   * Push current git status to the webview immediately (no debounce).
+   * Called after every roots re-render so git colors survive the DOM wipe.
+   */
+  private pushGitStatus(): void {
+    try {
+      const gitExt = vscode.extensions.getExtension("vscode.git");
+      if (!gitExt?.isActive) return;
+      const api = gitExt.exports?.getAPI?.(1);
+      if (!api) return;
+      const statusMap = buildGitStatusMap(api);
+      this.postDown({ kind: "git-status", statusMap });
+    } catch {
+      // Graceful — sidebar works without git colors
+    }
   }
 
   private setupWatcher(webviewView: vscode.WebviewView): void {

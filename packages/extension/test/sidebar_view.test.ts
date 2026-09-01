@@ -1357,6 +1357,64 @@ describe("sidebar — reactive git status", () => {
     // Should propagate status to directories using prefix matching
     expect(src).toContain("startsWith");
   });
+
+  it("host pushes git-status after every roots re-render to prevent color loss", async () => {
+    vi.resetModules();
+
+    const mockRepo = {
+      state: {
+        onDidChange: () => ({ dispose() {} }),
+        workingTreeChanges: [
+          { uri: { fsPath: "/project/src/main.ts" }, status: 5 },  // MODIFIED
+        ],
+        indexChanges: [],
+      },
+    };
+    const mockGitExt = {
+      isActive: true,
+      exports: {
+        getAPI: () => ({
+          repositories: [mockRepo],
+          onDidOpenRepository: () => ({ dispose() {} }),
+          onDidCloseRepository: () => ({ dispose() {} }),
+        }),
+      },
+      activate: () => Promise.resolve(),
+    };
+
+    const vscodeMock = await import("vscode");
+    (vscodeMock.extensions as any).getExtension = (id: string) =>
+      id === "vscode.git" ? mockGitExt : undefined;
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    // Wait for initial debounced git-status push to settle
+    await new Promise(r => setTimeout(r, 350));
+
+    // Clear call history
+    (view.webview.postMessage as any).mockClear();
+
+    // Simulate workspace folder change — which sends "roots" then should push git-status
+    (vscodeMock.workspace as any)._fireWorkspaceFoldersChange?.();
+
+    // Wait for the git-status push (may be debounced up to 300ms)
+    await new Promise(r => setTimeout(r, 350));
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const rootsMsg = calls.find((c: any[]) => c[0]?.kind === "roots");
+    const gitStatusMsg = calls.find((c: any[]) => c[0]?.kind === "git-status");
+
+    // roots must fire (existing behavior)
+    expect(rootsMsg).toBeDefined();
+    // git-status must follow (the fix)
+    expect(gitStatusMsg).toBeDefined();
+    expect(gitStatusMsg[0].statusMap["/project/src/main.ts"]).toBe("modified");
+
+    (vscodeMock.extensions as any).getExtension = () => undefined;
+  });
 });
 
 // ── Sash resize between sections (#673) ──────────────────────────────────────

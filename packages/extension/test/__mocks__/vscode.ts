@@ -122,7 +122,14 @@ export const workspace = {
     dispose() {},
   }),
   updateWorkspaceFolders: (_start: number, _deleteCount: number | null, ..._adds: unknown[]) => true,
-  onDidChangeWorkspaceFolders: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
+  _workspaceFoldersCbs: [] as Array<() => void>,
+  onDidChangeWorkspaceFolders: (cb: () => void, _thisArg?: unknown, _subs?: unknown) => {
+    (workspace as any)._workspaceFoldersCbs.push(cb);
+    return { dispose() {} };
+  },
+  _fireWorkspaceFoldersChange() {
+    for (const cb of (workspace as any)._workspaceFoldersCbs) cb();
+  },
   fs: {
     writeFile: (_u: unknown, _b: unknown) => Promise.resolve(),
     readDirectory: (_u: unknown): Promise<Array<[string, number]>> => Promise.resolve([]),
