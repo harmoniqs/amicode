@@ -15,6 +15,7 @@ instead, see [`AGENTS.md`](../AGENTS.md).
 | [Features](./features.md) | A guided tour of every surface — conversational solves, platform skills, Armonia, the Run Inspector, the Pulse Catalog, and hardware. |
 | [Hardware](./hardware.md) | The QICK / RFSoC path in depth: the three-verb boundary, the pure-Julia mock loop, and swapping to a real board. |
 | [Ledger bridge contract](./ledger-bridge-contract.md) | SEAM 4: the shared record doctrine (append-only, atomic terminal markers, content hashes) across amicode run dirs, strumento task records, and the Telaio event spine — plus the replay fixtures the fold must replay. |
+| [Flywheel decay](./flywheel-decay.md) | SEAM 7: the campaign-family derivation per record kind (run dirs, task records, store provenance) and the decay computation — per family, the (acquisitions, iterations, wall clock) trend vs prior same-family campaigns, with the F4 findings the records force. |
 
 ## New here?
 

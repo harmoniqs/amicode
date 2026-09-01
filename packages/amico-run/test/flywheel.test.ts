@@ -272,3 +272,62 @@ describe("SEAM 7 — the decay computation (campaign grouping + the trend)", () 
     expect(report.unattributed.every((u) => u.reason.length > 0)).toBe(true);
   });
 });
+
+describe("SEAM 7 doc of record — the derivation is grep-pinned, not vibes (flywheel_derivation_specified_per_record_kind == 3)", () => {
+  const REPO_ROOT = join(PKG_ROOT, "..", "..");
+  const NOTE = join(REPO_ROOT, "docs", "flywheel-decay.md");
+  const note = readFileSync(NOTE, "utf8");
+
+  it("the note exists and is published in the docs contents", () => {
+    expect(note.length).toBeGreaterThan(0);
+    const readme = readFileSync(join(REPO_ROOT, "docs", "README.md"), "utf8");
+    expect(readme).toContain("flywheel-decay.md");
+  });
+
+  it("THREE named derivations, each documented with the EXACT fields it reads", () => {
+    expect(note).toMatch(/Derivation \(a\) — run dir/);
+    expect(note).toMatch(/Derivation \(b\) — task record/);
+    expect(note).toMatch(/Derivation \(c\) — store provenance/);
+    // derivation (a): the exact run-dir fields
+    for (const field of ["[system].template", "[goal].kind", "[goal].gate", "[problem].free_dt", "lab_id", "created_at", "iterations", "wall_seconds"]) {
+      expect(note).toContain(field);
+    }
+    // derivation (b): the exact task-record fields
+    for (const field of ["`kind`", "`device`", "`created`", "`ended`", '"acquire"']) {
+      expect(note).toContain(field);
+    }
+    // derivation (c): the exact store fields
+    for (const field of ["`warm_start`", "`calibration_ref`", "`date`", "`platform`"]) {
+      expect(note).toContain(field);
+    }
+  });
+
+  it("the family mapping is stated per family — all eight, with the underivable two honestly named", () => {
+    for (const family of ["first-pulse", "regime-sweep", "robustness", "bring-up", "tune-up", "drift-response", "team-ops", "night-runs"]) {
+      expect(note).toContain(family);
+    }
+    expect(note).toMatch(/NOT derivable from existing records/); // team-ops/night-runs honesty
+  });
+
+  it("the decay formulas are stated (Σ per campaign, delta vs prior, baseline not zero)", () => {
+    expect(note).toMatch(/first campaign of a series is the baseline/);
+    expect(note).toMatch(/absent ≠ 0/);
+    expect(note).toMatch(/zero-division/);
+  });
+
+  it("every F4 finding is named in the note (the findings the director files)", () => {
+    for (const id of ["F-709-1", "F-709-2", "F-709-3", "F-709-4", "F-709-5", "F-709-6"]) {
+      expect(note).toContain(id);
+    }
+    // the emitted findings and the note's IDs agree (no silent divergence)
+    for (const id of ["F-709-1", "F-709-2", "F-709-3", "F-709-4", "F-709-5", "F-709-6"]) {
+      expect(computeDecay({}).findings.join(" ")).toContain(id);
+    }
+  });
+
+  it("the device-key scoping is stated (device-touching families vs workspace+platform)", () => {
+    expect(note).toMatch(/device-touching families \(bring-up, tune-up, drift-response\) → \*\*device\*\*/);
+    expect(note).toMatch(/sim families \(first-pulse, regime-sweep, robustness\) → \*\*workspace \+ platform\*\*/);
+    expect(note).toMatch(/a sim-only family with no device field must compute, never vacuously fail/);
+  });
+});
