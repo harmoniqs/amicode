@@ -1,0 +1,648 @@
+// ============================================================================
+// SEAM 2 (amicode #699) — regime rules as recommendations: the five-knob
+// priors table's schema, serving path, and audit query (F2's sensor).
+//
+// SIBLING-MODULE RULES (same as ./calib_chain): this module runs inside
+// opencode's embedded Bun runtime via a relative `./regime_priors` import —
+// node: builtins + the ./ledger_client sibling only, no other npm packages,
+// never anything from ../src/. Its data file
+// (./regime_priors_table.json) is committed GENERATED content: distilled from
+// the internal tier's profile census by an internal-env distiller script (the
+// regeneration wiring to the freshness cadence is a named follow-up, not this
+// slice), and re-validated here on every load.
+//
+// THE A1 BOUNDARY (the whole point of this module's shape): prior VALUES +
+// provenance strings ship; the regime-rule ENGINE and the VENDOR_PROFILES
+// internals never do. The table CITES its sources (public-scale arXiv/meeting
+// citations, demo cards, skill doctrine, issue/PR numbers — all shippable);
+// it does not include or re-implement them: no crossover logic, no per-vendor
+// drift scales or trust geometry, no vendor attribution. The public-scale
+// caveat ("do not cite as device data") rides the table and every entry's
+// provenance — validateRegimePriorsTable enforces that, and the test suite's
+// leak guard enforces the attribution-free line mechanically.
+//
+// Serving seam: amicode_recommend action="query" composes these static
+// priors (scoped by the session's platform FAMILY — spin / transmon / atom,
+// never a vendor) with the existing ledger priors. The existing mechanics
+// own confidence capping (ledger-sourced caps at medium; static priors state
+// their confidence explicitly — high for fixture-validated values, low for
+// starting-point ranges).
+//
+// The audit (amicode_recommend action="audit") is F2's mechanical sensor: a
+// query over prior-application events (the propose/outcome events the
+// EXISTING amico_recommend mechanics append to the workspace's events.jsonl
+// — the flywheel's input side, no new feed) that FAILS when a prior is applied
+// outside its profile scope without the public-scale caveat surfaced; the
+// with-caveat case passes (the caveat is the point). It also surfaces census
+// staleness when handed a current census that differs from the table's stamp.
+// ============================================================================
+
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { selectRecommendations, type LedgerQueryResult } from "./ledger_client";
+import { normalizeSystem } from "./entities";
+import { problemDir } from "./problems";
+
+// ── the schema's vocabulary ─────────────────────────────────────────────────
+
+/** The five NAMED calibration knobs (issue #699 AC1: one prior per NAMED
+ * knob — `regime_rec_priors_live == 5`). `beta` / `y_goal` / `gls_weighting`
+ * are the ASCII param ids for β / y_goal / "GLS weighting"; each entry's
+ * `label` carries the issue's name for it. */
+export const REGIME_KNOBS = [
+  "tr_frac",
+  "beta",
+  "y_goal",
+  "gls_weighting",
+  "min_contrast",
+] as const;
+export type RegimeKnob = (typeof REGIME_KNOBS)[number];
+
+/** Platform FAMILY keying (issue #699 Key Decision): the recommendation
+ * surface is coarse (the interview's platform axis), so vendor profiles
+ * aggregate into family priors with the census + sources in the provenance —
+ * never vendor keying, never vendor attribution. */
+export type PlatformFamily = "spin" | "transmon" | "atom";
+export const PLATFORM_FAMILIES: PlatformFamily[] = ["spin", "transmon", "atom"];
+
+/** The profile census a table was distilled from: families + count + date.
+ * DYNAMIC-CENSUS CONTRACT: a census change makes the table stale (see the
+ * table's `dynamic_census_contract`); the audit surfaces the staleness when
+ * handed a current census that differs from this stamp. */
+export interface CensusStamp {
+  date: string;
+  total: number;
+  families: Partial<Record<PlatformFamily, number>>;
+}
+
+/** One entry's provenance — the shippable face of the A1 boundary: scope
+ * (the platform families the prior covers), the census it distilled from,
+ * its evidence chain (public-scale citations), and the public-scale caveat
+ * riding every entry. */
+export interface PriorProvenance {
+  scope: PlatformFamily[];
+  census: CensusStamp;
+  sources: string[];
+  caveat: string;
+}
+
+export interface RegimePriorEntry {
+  knob: RegimeKnob;
+  label?: string;
+  /** The platform families this entry serves (the lookup key). */
+  families: PlatformFamily[];
+  value: number | string;
+  confidence: "high" | "medium" | "low";
+  note?: string;
+  provenance: PriorProvenance;
+}
+
+export interface RegimePriorsTable {
+  schema: string;
+  dynamic_census_contract: string;
+  caveat: string;
+  census: CensusStamp;
+  priors: RegimePriorEntry[];
+}
+
+export type LoadResult =
+  | { ok: true; table: RegimePriorsTable }
+  | { ok: false; problems: string[] };
+
+/** The public-scale caveat's load-bearing marker — the source profiles' own
+ * rule, enforced on the table, every entry, and every served string. */
+export const CAVEAT_MARKER = "do not cite as device data";
+
+// ── validation (a malformed table fails; a malformed provenance fails) ─────
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function censusEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function validateCensus(v: unknown, where: string, problems: string[]): v is CensusStamp {
+  if (!isRecord(v)) {
+    problems.push(`${where}: census must be an object {date, total, families}`);
+    return false;
+  }
+  if (typeof v.date !== "string" || Number.isNaN(Date.parse(v.date))) {
+    problems.push(`${where}: census.date must be a date string`);
+  }
+  if (typeof v.total !== "number" || !Number.isInteger(v.total) || v.total <= 0) {
+    problems.push(`${where}: census.total must be a positive integer`);
+  }
+  if (!isRecord(v.families) || Object.keys(v.families).length === 0) {
+    problems.push(`${where}: census.families must be a non-empty object`);
+  } else {
+    let sum = 0;
+    for (const [name, count] of Object.entries(v.families)) {
+      if (!(PLATFORM_FAMILIES as string[]).includes(name)) {
+        problems.push(`${where}: census.families has unknown family "${name}"`);
+      }
+      if (typeof count !== "number" || !Number.isInteger(count) || count <= 0) {
+        problems.push(`${where}: census.families.${name} must be a positive integer`);
+      } else {
+        sum += count;
+      }
+    }
+    if (typeof v.total === "number" && sum !== v.total) {
+      problems.push(`${where}: census.total (${v.total}) != the sum of family counts (${sum})`);
+    }
+  }
+  return problems.length === 0;
+}
+
+/** Validate a raw (parsed) priors table against the schema — every problem is
+ * a string; an empty array means the table is servable. Enforces: the schema
+ * id, the dynamic-census contract's presence, the caveat marker, the census
+ * stamp's arithmetic, every entry's provenance (scope == families, census ==
+ * the table's stamp, non-empty sources, the caveat riding it), and the
+ * five-knob coverage per census family (AC1's `regime_rec_priors_live == 5`
+ * made mechanical at the schema level). */
+export function validateRegimePriorsTable(raw: unknown): string[] {
+  const problems: string[] = [];
+  if (!isRecord(raw)) return ["the priors table must be a JSON object"];
+  if (raw.schema !== "amicode.regime-priors/v1") {
+    problems.push(`schema: expected "amicode.regime-priors/v1", got ${JSON.stringify(raw.schema)}`);
+  }
+  if (typeof raw.dynamic_census_contract !== "string" || !/census/i.test(raw.dynamic_census_contract) || !/stale/i.test(raw.dynamic_census_contract)) {
+    problems.push("dynamic_census_contract: must state the dynamic-census contract (naming census + staleness)");
+  }
+  if (typeof raw.caveat !== "string" || !raw.caveat.includes(CAVEAT_MARKER)) {
+    problems.push(`caveat: must carry the public-scale caveat (containing "${CAVEAT_MARKER}")`);
+  }
+  if (!validateCensus(raw.census, "census", problems)) {
+    // census already pushed its problems; entries below still validated best-effort
+  }
+  const censusFamilies = isRecord(raw.census) && isRecord(raw.census.families)
+    ? (Object.keys(raw.census.families) as PlatformFamily[])
+    : [];
+  if (!Array.isArray(raw.priors) || raw.priors.length === 0) {
+    problems.push("priors: must be a non-empty array");
+    return problems;
+  }
+  for (let i = 0; i < raw.priors.length; i++) {
+    const e = raw.priors[i];
+    const where = `priors[${i}]`;
+    if (!isRecord(e)) {
+      problems.push(`${where}: must be an object`);
+      continue;
+    }
+    if (!(REGIME_KNOBS as readonly string[]).includes(e.knob as string)) {
+      problems.push(`${where}: knob "${String(e.knob)}" is not one of the five NAMED knobs`);
+    }
+    const fams = e.families;
+    if (!Array.isArray(fams) || fams.length === 0) {
+      problems.push(`${where}: families must be a non-empty array`);
+    } else {
+      for (const f of fams) {
+        if (!censusFamilies.includes(f)) {
+          problems.push(`${where}: family "${String(f)}" is outside the census families`);
+        }
+      }
+    }
+    if (typeof e.value !== "number" && (typeof e.value !== "string" || e.value.trim() === "")) {
+      problems.push(`${where}: value must be a number or non-empty string`);
+    }
+    if (e.confidence !== "high" && e.confidence !== "medium" && e.confidence !== "low") {
+      problems.push(`${where}: confidence must be high | medium | low`);
+    }
+    // ── provenance: malformed provenance FAILS (the table cites, precisely) ──
+    const p = e.provenance;
+    if (!isRecord(p)) {
+      problems.push(`${where}.provenance: must be an object {scope, census, sources, caveat}`);
+      continue;
+    }
+    const scope = p.scope;
+    if (!Array.isArray(scope) || scope.length === 0) {
+      problems.push(`${where}.provenance.scope: must be a non-empty array`);
+    } else {
+      if (!Array.isArray(fams) || JSON.stringify([...scope].sort()) !== JSON.stringify([...fams].sort())) {
+        problems.push(`${where}.provenance.scope: must name exactly the entry's families (the profile scope)`);
+      }
+      for (const f of scope) {
+        if (!censusFamilies.includes(f)) {
+          problems.push(`${where}.provenance.scope: family "${String(f)}" is outside the census families`);
+        }
+      }
+    }
+    if (!isRecord(p.census) || !censusEqual(p.census, raw.census)) {
+      problems.push(`${where}.provenance.census: must name the table's census stamp exactly`);
+    }
+    if (!Array.isArray(p.sources) || p.sources.length === 0 || p.sources.some((s) => typeof s !== "string" || s.trim() === "")) {
+      problems.push(
+        `${where}.provenance.sources: must be a non-empty array of non-empty strings (the evidence chain)`,
+      );
+    }
+    if (typeof p.caveat !== "string" || !p.caveat.includes(CAVEAT_MARKER) || p.caveat !== raw.caveat) {
+      problems.push(`${where}.provenance.caveat: must be the table's public-scale caveat verbatim`);
+    }
+  }
+  // ── AC1 coverage: every NAMED knob servable for every census family ──
+  for (const knob of REGIME_KNOBS) {
+    for (const fam of censusFamilies) {
+      const covered = (raw.priors as RegimePriorEntry[]).some(
+        (e) => e.knob === knob && Array.isArray(e.families) && e.families.includes(fam),
+      );
+      if (!covered) {
+        problems.push(`coverage: knob "${knob}" has no prior scoped to family "${fam}" (regime_rec_priors_live must be 5 per family)`);
+      }
+    }
+  }
+  return problems;
+}
+
+// ── loading the committed data file ──────────────────────────────────────────
+
+/** The committed table's directory — resolved from THIS module's url so the
+ * load works identically in the Bun plugin runtime, in vitest, and in the
+ * packaged vsix (the whole opencode-plugin dir ships together). */
+export function regimePriorsDir(): string {
+  return dirname(fileURLToPath(import.meta.url));
+}
+
+export function regimePriorsTablePath(): string {
+  return join(regimePriorsDir(), "regime_priors_table.json");
+}
+
+/** Load + validate the committed table. Never throws: a corrupt table is an
+ * honest `{ok:false, problems}` (the serving path degrades to "no regime
+ * priors", never to a served lie). */
+export function loadRegimePriorsTable(): LoadResult {
+  const file = regimePriorsTablePath();
+  if (!existsSync(file)) return { ok: false, problems: [`the regime priors table is missing at ${file}`] };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, "utf8"));
+  } catch (err) {
+    return { ok: false, problems: [`the regime priors table does not parse: ${err instanceof Error ? err.message : String(err)}`] };
+  }
+  const problems = validateRegimePriorsTable(raw);
+  if (problems.length > 0) return { ok: false, problems };
+  return { ok: true, table: raw as RegimePriorsTable };
+}
+
+// ── the coarse platform axis ─────────────────────────────────────────────────
+
+/** Map an open platform string (the interview's platform axis — spec A keeps
+ * it open) onto a census FAMILY. Family keying, never vendor keying (issue
+ * #699 Key Decision): the recommendation surface is coarse, so the vendor
+ * profiles aggregate into family priors. Returns undefined outside the
+ * census families — an unmapped platform serves NO prior (honest absence,
+ * never a nearest-guess). */
+export function platformFamily(platform: string): PlatformFamily | undefined {
+  const p = platform.toLowerCase();
+  if (p.includes("transmon")) return "transmon";
+  if (p.includes("rydberg") || p.includes("atom")) return "atom";
+  if (p.includes("spin")) return "spin";
+  return undefined;
+}
+
+// ── the serving selection (AC1: regime_rec_priors_live == 5) ─────────────────
+
+/** A served regime prior — the shape that rides the recommendation surface
+ * (amicode_recommend action="query"). `provenance` is the composed, shippable
+ * string (scope + census + sources + caveat); `scope` and `ref` stay
+ * machine-readable so the propose events the agent records through the
+ * EXISTING mechanics are audit-parseable (see auditRegimePriors). */
+export interface RegimePriorRec {
+  param: RegimeKnob;
+  label: string;
+  value: number | string;
+  confidence: "high" | "medium" | "low";
+  provenance: string;
+  scope: PlatformFamily[];
+  ref: string;
+  note?: string;
+}
+
+/** The served provenance string — the shippable face of the A1 boundary:
+ * profile scope + the census stamp + the evidence chain + the public-scale
+ * caveat riding every served string. Composed here (never stored) so every
+ * consumer of a prior names its sources identically — the audit parses these
+ * markers back out of prior-application events. */
+export function priorProvenanceString(entry: RegimePriorEntry, table: RegimePriorsTable): string {
+  const census = table.census;
+  const families = PLATFORM_FAMILIES.filter((f) => census.families[f] !== undefined)
+    .map((f) => `${census.families[f]} ${f}`)
+    .join(" / ");
+  return (
+    `scope: ${entry.provenance.scope.join(", ")}; ` +
+    `census: ${census.date}, ${census.total} profiles: ${families}; ` +
+    `sources: ${entry.provenance.sources.join("; ")}; ` +
+    `caveat: ${entry.provenance.caveat}`
+  );
+}
+
+/** Select the regime priors for a platform family — ONE per NAMED knob
+ * (exactly the five, per issue #699 AC1). `knobs` (optional) projects to the
+ * requested knob names, mirroring the query path's `params` selection. */
+export function selectRegimePriors(
+  table: RegimePriorsTable,
+  family: PlatformFamily,
+  knobs?: readonly string[],
+): RegimePriorRec[] {
+  const wanted = knobs && knobs.length > 0 ? (knobs as readonly string[]) : REGIME_KNOBS;
+  const out: RegimePriorRec[] = [];
+  for (const knob of wanted) {
+    if (!(REGIME_KNOBS as readonly string[]).includes(knob)) continue;
+    const entry = table.priors.find((e) => e.knob === knob && e.families.includes(family));
+    if (!entry) continue; // the schema validator guarantees coverage; a gap degrades honestly
+    out.push({
+      param: entry.knob,
+      label: entry.label ?? entry.knob,
+      value: entry.value,
+      confidence: entry.confidence,
+      provenance: priorProvenanceString(entry, table),
+      scope: entry.provenance.scope,
+      ref: `regime_priors_table.json#${entry.knob}@${family}`,
+      ...(entry.note !== undefined ? { note: entry.note } : {}),
+    });
+  }
+  return out;
+}
+
+// ── the serving path — composition with the existing ledger priors ──────────
+
+/** A composed recommendation on the serving seam — regime (static, table-
+ * sourced, explicit confidence) or ledger (run-history-sourced, confidence
+ * capped at medium by the existing interim guard inside
+ * ledger_client.selectRecommendations). */
+export interface ServedRecommendation {
+  param: string;
+  value: number | string;
+  confidence: "high" | "medium" | "low";
+  provenance: string;
+  origin: "regime" | "ledger";
+}
+
+export interface ServeRecommendationsInput {
+  /** The table's load result. When omitted the committed table is loaded
+   * (and an invalid one degrades honestly to a note, never a served lie). */
+  table?: LoadResult;
+  /** The session's platform (raw, open string — the interview's axis). */
+  platform?: string;
+  /** The ledger query result, when the workspace has ledger history. */
+  ledger?: LedgerQueryResult;
+  /** Knob/param projection, mirroring the query path's `params` selection. */
+  params?: string[];
+}
+
+export interface ServedRecommendations {
+  recommendations: ServedRecommendation[];
+  /** Why the regime priors are absent (no mapped family, no recorded system,
+   * or an invalid table) — honest absence, never a silent gap. */
+  regimeNote?: string;
+}
+
+/** Compose the static regime priors (scoped by the session's platform FAMILY)
+ * with the existing ledger priors — the pure core behind `amicode_recommend
+ * action:"query"`. The existing mechanics own confidence capping: ledger
+ * recs flow through selectRecommendations (high → medium), regime recs state
+ * the table's explicit confidence. Regime first (the static priors are the
+ * anchor), ledger after (the run-history refinement). */
+export function serveRecommendations(input: ServeRecommendationsInput): ServedRecommendations {
+  const recommendations: ServedRecommendation[] = [];
+  let regimeNote: string | undefined;
+
+  const load = input.table ?? loadRegimePriorsTable();
+  if (!load.ok) {
+    regimeNote = `the regime priors table is invalid (${load.problems[0] ?? "unknown problem"}) — no static calibration priors served`;
+  } else if (input.platform === undefined) {
+    regimeNote = "no system recorded yet — the regime priors scope by the session's platform family";
+  } else {
+    const family = platformFamily(input.platform);
+    if (family === undefined) {
+      regimeNote = `no regime priors for platform "${input.platform}" — the census covers the spin / transmon / atom families only`;
+    } else {
+      for (const r of selectRegimePriors(load.table, family, input.params)) {
+        recommendations.push({
+          param: r.param,
+          value: r.value,
+          confidence: r.confidence,
+          provenance: r.provenance,
+          origin: "regime",
+        });
+      }
+    }
+  }
+
+  if (input.ledger !== undefined) {
+    for (const r of selectRecommendations(input.ledger, input.params)) {
+      recommendations.push({
+        param: r.param,
+        value: r.value,
+        confidence: r.confidence,
+        provenance: r.provenance,
+        origin: "ledger",
+      });
+    }
+  }
+
+  return { recommendations, ...(regimeNote !== undefined ? { regimeNote } : {}) };
+}
+
+// ── the audit query (F2's sensor) ────────────────────────────────────────────
+
+/** One prior-application event, as read from the workspace's events.jsonl —
+ * a recommendation `proposed` event whose provenance carries a regime-prior
+ * entry (the served prior's composed provenance string rides the note). */
+export interface PriorApplication {
+  seq: number;
+  key: string;
+  param: string;
+  provenance: Array<{ source?: string; ref?: string; note?: string }>;
+  /** The paired outcome event's applied value, when the application landed
+   * (the flywheel's input side — recorded through the EXISTING amico_recommend
+   * outcome mechanics, no new feed). */
+  outcome?: { outcome: string; applied_value?: unknown };
+}
+
+export interface AuditViolation {
+  seq: number;
+  key: string;
+  reason: string;
+}
+
+export interface AuditResult {
+  ok: boolean;
+  /** Regime-prior applications found and checked. */
+  audited: number;
+  violations: AuditViolation[];
+  /** Census staleness — the dynamic-census contract surfacing (a current
+   * census that differs from the table's stamp makes the table stale). */
+  stale?: { stamped: CensusStamp; current: CensusStamp };
+}
+
+/** Parse the profile-scope marker out of a served provenance string — the
+ * `scope: a, b;` prefix priorProvenanceString composes. Returns undefined when
+ * the provenance does not name its scope (an unverifiable prior). */
+function parseScopeMarker(note: string): PlatformFamily[] | undefined {
+  const m = note.match(/scope:\s*([^;]+);/);
+  if (!m) return undefined;
+  const scope = m[1].split(",").map((s) => s.trim());
+  if (scope.length === 0 || scope.some((s) => !(PLATFORM_FAMILIES as string[]).includes(s))) {
+    return undefined;
+  }
+  return scope as PlatformFamily[];
+}
+
+/** The audit core — F2's mechanical sensor (pure; the workspace wrapper below
+ * feeds it the events the EXISTING mechanics recorded). FAILS when a prior is
+ * applied outside its profile scope without the public-scale caveat surfaced;
+ * the with-caveat case passes (the caveat is the point). Also surfaces census
+ * staleness when handed a current census that differs from the table's stamp. */
+export function auditRegimePriors(input: {
+  table: RegimePriorsTable;
+  /** The session's platform family (undefined when the workspace's platform
+   * does not map — then only the caveat can save an off-census application). */
+  family: PlatformFamily | undefined;
+  applications: PriorApplication[];
+  currentCensus?: CensusStamp;
+}): AuditResult {
+  const violations: AuditViolation[] = [];
+  let audited = 0;
+  for (const app of input.applications) {
+    const regimeEntries = (app.provenance ?? []).filter((p) => p?.source === "regime-prior");
+    if (regimeEntries.length === 0) continue; // not a regime-prior application
+    audited++;
+    const note = regimeEntries.map((p) => p.note ?? "").join(" ");
+    const scope = parseScopeMarker(note);
+    const caveat = note.includes(CAVEAT_MARKER);
+    const inScope = input.family !== undefined && scope !== undefined && scope.includes(input.family);
+    if (!inScope && !caveat) {
+      const reason =
+        scope === undefined
+          ? `the prior's provenance does not name its profile scope, so its scope cannot be verified against this session's platform family, and no public-scale caveat was surfaced`
+          : `the prior was applied outside its profile scope (scope: ${scope.join(", ")}; session family: ${input.family ?? "unmapped"}) without the public-scale caveat surfaced`;
+      violations.push({ seq: app.seq, key: app.key, reason });
+    }
+  }
+  const stale =
+    input.currentCensus !== undefined && !censusEqual(input.currentCensus, input.table.census)
+      ? { stamped: input.table.census, current: input.currentCensus }
+      : undefined;
+  return {
+    ok: violations.length === 0 && stale === undefined,
+    audited,
+    violations,
+    ...(stale !== undefined ? { stale } : {}),
+  };
+}
+
+// ── the workspace wrapper — the audit query the tool shells ──────────────────
+
+/** The workspace-scoped audit result: the pure audit + the scoping facts it
+ * ran against (the session's platform + family) + the applied count (the
+ * outcome pairs — the flywheel's input side, recorded through the EXISTING
+ * amico_recommend outcome mechanics). */
+export interface WorkspaceAuditResult extends AuditResult {
+  /** The workspace's recorded platform (undefined when no system is recorded). */
+  platform?: string;
+  family?: PlatformFamily;
+  /** Regime-prior applications that landed (paired outcome events). */
+  applied: number;
+  /** The table's own load problems — an unloadable table fails the audit
+   * honestly (a broken sensor never silently passes). */
+  tableProblems?: string[];
+}
+
+interface RecordedEvent {
+  seq?: number;
+  entity?: string;
+  action?: string;
+  diff?: Record<string, unknown>;
+}
+
+function readEvents(slug: string): RecordedEvent[] {
+  const file = join(problemDir(slug), "events.jsonl");
+  if (!existsSync(file)) return [];
+  const out: RecordedEvent[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (line.trim() === "") continue;
+    try {
+      out.push(JSON.parse(line) as RecordedEvent);
+    } catch {
+      /* malformed line — skip (events.jsonl is append-only by our own tools) */
+    }
+  }
+  return out;
+}
+
+function readSystemPlatform(slug: string): string | undefined {
+  const file = join(problemDir(slug), "entities", "system.json");
+  if (!existsSync(file)) return undefined;
+  try {
+    return normalizeSystem(JSON.parse(readFileSync(file, "utf8"))).platform;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The audit query over a problem workspace's prior-application events (the
+ * `amicode_recommend action:"audit"` core): reads the workspace's recorded
+ * platform (the session's scoping), its events.jsonl (the regime-prior
+ * propose events + their outcome pairs the EXISTING mechanics recorded), and
+ * runs the pure audit. An unloadable table fails the audit honestly with its
+ * problems surfaced. */
+export function auditRegimePriorApplications(
+  slug: string,
+  opts?: { currentCensus?: CensusStamp },
+): WorkspaceAuditResult {
+  const load = loadRegimePriorsTable();
+  if (!load.ok) {
+    return { ok: false, audited: 0, violations: [], applied: 0, tableProblems: load.problems };
+  }
+
+  const platform = readSystemPlatform(slug);
+  const family = platform !== undefined ? platformFamily(platform) : undefined;
+
+  // Build the applications: regime-prior `proposed` events, paired with their
+  // `outcome` events (the applied count is the flywheel's input side).
+  const applications: PriorApplication[] = [];
+  const pending = new Map<string, PriorApplication>();
+  for (const ev of readEvents(slug)) {
+    if (ev.entity !== "recommendation") continue;
+    const diff = ev.diff ?? {};
+    const key = typeof diff.key === "string" ? diff.key : `${String(diff.stage ?? "?")}/${String(diff.param ?? "?")}`;
+    if (ev.action === "proposed") {
+      const provenance = Array.isArray(diff.provenance) ? (diff.provenance as PriorApplication["provenance"]) : [];
+      if (provenance.some((p) => p?.source === "regime-prior")) {
+        const app: PriorApplication = {
+          seq: typeof ev.seq === "number" ? ev.seq : 0,
+          key,
+          param: typeof diff.param === "string" ? diff.param : "?",
+          provenance,
+        };
+        applications.push(app);
+        pending.set(key, app);
+      }
+    } else if (ev.action === "outcome") {
+      const app = pending.get(key);
+      if (app) {
+        app.outcome = {
+          outcome: typeof diff.outcome === "string" ? diff.outcome : "?",
+          ...(diff.applied_value !== undefined ? { applied_value: diff.applied_value } : {}),
+        };
+        pending.delete(key);
+      }
+    }
+  }
+
+  const res = auditRegimePriors({
+    table: load.table,
+    family,
+    applications,
+    ...(opts?.currentCensus !== undefined ? { currentCensus: opts.currentCensus } : {}),
+  });
+  return {
+    ...res,
+    applied: applications.filter((a) => a.outcome !== undefined).length,
+    ...(platform !== undefined ? { platform } : {}),
+    ...(family !== undefined ? { family } : {}),
+  };
+}

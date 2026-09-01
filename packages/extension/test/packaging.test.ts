@@ -67,6 +67,11 @@ const REQUIRED = [
   "extension/opencode-plugin/problems.ts",
   "extension/opencode-plugin/hashes.ts",
   "extension/opencode-plugin/score_guard.ts",
+  // SEAM 2 (#699): the regime priors module + its committed data file — a
+  // dropped pair silently reverts every calibration recommendation to
+  // ledger-only and kills the audit (F2's sensor).
+  "extension/opencode-plugin/regime_priors.ts",
+  "extension/opencode-plugin/regime_priors_table.json",
 ];
 
 // Guards against a silently-dropped runtime asset (the β.2 .gitignore-fallback

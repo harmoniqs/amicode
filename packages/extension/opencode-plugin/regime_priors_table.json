@@ -1,0 +1,204 @@
+{
+  "schema": "amicode.regime-priors/v1",
+  "dynamic_census_contract": "The census stamp names the profile census this table was distilled from (families + count + date). The census is DYNAMIC, never a frozen count: a census change — a new profile family, or a count change within one — makes this table STALE until it is regenerated from the internal distiller and re-stamped. The audit query (amicode_recommend action=audit) surfaces staleness whenever it is given a current census that differs from this stamp.",
+  "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data.",
+  "census": {
+    "date": "2026-08-31",
+    "total": 12,
+    "families": { "spin": 4, "transmon": 4, "atom": 4 }
+  },
+  "priors": [
+    {
+      "knob": "tr_frac",
+      "label": "tr_frac (per-channel trust-box fraction)",
+      "families": ["spin"],
+      "value": "0.05-0.1 (per channel; never one scalar radius)",
+      "confidence": "low",
+      "note": "Starting point only — refined by outcome events (the flywheel). Channels differ 10^2-10^3x in sensitivity; size each channel's trust box, never one scalar radius.",
+      "provenance": {
+        "scope": ["spin"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "arXiv:2410.15590 (silicon spin-qubit operation, public-scale)",
+          "arXiv:2604.16216 (cryoCMOS exchange-only, public-scale)",
+          "arXiv:2604.01063 (Ge-hole spin qubits, public-scale)",
+          "2026-08-05 silicon-spin meeting + 2026-08-04 Ge-hole meeting (public-scale notes)",
+          "spin-qubit-demo + cryocmos-spin demo cards",
+          "hardware-loop skill: per-channel trust boxes, never one scalar radius"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "tr_frac",
+      "label": "tr_frac (per-channel trust-box fraction)",
+      "families": ["transmon"],
+      "value": "0.02-0.05 (per channel; never one scalar radius)",
+      "confidence": "low",
+      "note": "Starting point only — refined by outcome events (the flywheel). Channels differ 10^2-10^3x in sensitivity; size each channel's trust box, never one scalar radius.",
+      "provenance": {
+        "scope": ["transmon"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "arXiv:2408.13687 (surface-code transmon platform class, public-scale)",
+          "arXiv:2101.07746 (tunable-coupler platform class, public-scale)",
+          "arXiv:2603.15758 (cross-resonance gate-synthesis platform class, public-scale)",
+          "arXiv:2603.11018 (public-scale flux-tunable platform class)",
+          "hardware-loop skill: per-channel trust boxes, never one scalar radius"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "tr_frac",
+      "label": "tr_frac (per-channel trust-box fraction)",
+      "families": ["atom"],
+      "value": "0.02-0.05 (per channel; never one scalar radius)",
+      "confidence": "low",
+      "note": "Starting point only — refined by outcome events (the flywheel). Channels differ 10^2-10^3x in sensitivity; size each channel's trust box, never one scalar radius.",
+      "provenance": {
+        "scope": ["atom"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "arXiv:2511.22967 (neutral-atom platform class, public-scale)",
+          "arXiv:2411.11708 (Yb erasure-readout platform class, public-scale)",
+          "arXiv:2606.05060 (neutral-atom lineage, public-scale)",
+          "the /calibrate spec + the Aug-16 campaign's public-scale values (sigma ~ 0.057, V/Omega ~ 98 — public-scale, do not cite as device data)",
+          "atoms-demo card",
+          "hardware-loop skill: per-channel trust boxes, never one scalar radius"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "beta",
+      "label": "β (one-shot damping)",
+      "families": ["spin", "transmon", "atom"],
+      "value": "conservative shrink-only: β-damped apply, no line search on hardware; reject-and-revert on regression",
+      "confidence": "medium",
+      "note": "Doctrine-backed default, not a fixture-quantified optimum — the conservative damping posture across every census family.",
+      "provenance": {
+        "scope": ["spin", "transmon", "atom"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "hardware-loop skill: the one-shot damping doctrine (shrink-only, β-damped applies, no line search on hardware, reject-and-revert)"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "y_goal",
+      "label": "y_goal (fixed campaign contrast target)",
+      "families": ["spin"],
+      "value": "set from the pauli_correlators achievable contrast (high-contrast readout); fixed per campaign, never moved mid-loop",
+      "confidence": "medium",
+      "provenance": {
+        "scope": ["spin"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the spin family reads pauli_correlators (achievable-contrast anchor)",
+          "hardware-loop skill: y_goal is fixed per campaign, never moved mid-loop"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "y_goal",
+      "label": "y_goal (fixed campaign contrast target)",
+      "families": ["transmon"],
+      "value": "set from the bitstring assignment-fidelity contrast; fixed per campaign, never moved mid-loop",
+      "confidence": "medium",
+      "provenance": {
+        "scope": ["transmon"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the transmon family reads bitstrings (assignment-fidelity contrast anchor)",
+          "hardware-loop skill: y_goal is fixed per campaign, never moved mid-loop"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "y_goal",
+      "label": "y_goal (fixed campaign contrast target)",
+      "families": ["atom"],
+      "value": "set from the binomial readout visibility (erasure-aware contrast for multinomial_erasure readouts); fixed per campaign, never moved mid-loop",
+      "confidence": "medium",
+      "provenance": {
+        "scope": ["atom"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the atom family reads binomial (visibility anchor) or multinomial_erasure (erasure-aware anchor)",
+          "hardware-loop skill: y_goal is fixed per campaign, never moved mid-loop"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "gls_weighting",
+      "label": "GLS weighting (measurement-kind → covariance weighting)",
+      "families": ["spin"],
+      "value": "GLS with diagonal weighting over the pauli_correlators covariance",
+      "confidence": "high",
+      "provenance": {
+        "scope": ["spin"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the spin family reads pauli_correlators — GLS weights over its covariance",
+          "amicode PR #36 (the exact-likelihood statistics: binomial_fisher_weights)"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "gls_weighting",
+      "label": "GLS weighting (measurement-kind → covariance weighting)",
+      "families": ["transmon"],
+      "value": "GLS with diagonal weighting over the population/bitstring covariance",
+      "confidence": "high",
+      "provenance": {
+        "scope": ["transmon"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the transmon family reads bitstrings — GLS weights over the population covariance",
+          "amicode PR #36 (the exact-likelihood statistics: binomial_fisher_weights)"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "gls_weighting",
+      "label": "GLS weighting (measurement-kind → covariance weighting)",
+      "families": ["atom"],
+      "value": "binomial Fisher weighting (binomial_fisher_weights, amicode PR #36) for binomial-readout systems; erasure-aware GLS (multinomial) for multinomial_erasure-readout systems",
+      "confidence": "high",
+      "provenance": {
+        "scope": ["atom"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "census measurement-kind mapping: the atom family reads binomial or multinomial_erasure — the weighting follows the readout kind",
+          "amicode PR #36 (the exact-likelihood statistics: binomial_fisher_weights)",
+          "arXiv:2411.11708 (Yb erasure-readout platform class, public-scale)"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    },
+    {
+      "knob": "min_contrast",
+      "label": "min_contrast (null-admission threshold)",
+      "families": ["spin", "transmon", "atom"],
+      "value": 2.5,
+      "confidence": "high",
+      "note": "Fixture-validated threshold, platform-invariant across the census families: zero phantom factors under the null, single-axis factor error <= 0.006, sub-15% drift admission; second-platform confirmation on the Ge-like hole + electron-spin-like fixtures and the cqed pair.",
+      "provenance": {
+        "scope": ["spin", "transmon", "atom"],
+        "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
+        "sources": [
+          "Intonatissimo issues #65 + #81 (the min_contrast fixture campaign: zero phantom under null, single-axis factor error <= 0.006, sub-15% drift admission)",
+          "Intonatissimo issues #83 + #84 (second-platform confirmation: Ge-like hole + electron-spin-like fixtures + the cqed pair)"
+        ],
+        "caveat": "Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data."
+      }
+    }
+  ]
+}
