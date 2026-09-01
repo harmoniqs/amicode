@@ -92,11 +92,11 @@ function createIconEl(icon: string): HTMLElement {
   const vscode = acquireVsCodeApi();
 
   // Restore expanded state from webview state (survives hide/show).
-  const savedState = vscode.getState() as { expanded?: Record<string, boolean> } | undefined;
+  const savedState = vscode.getState() as { expanded?: Record<string, boolean>; sectionOrder?: string[] } | undefined;
   const expanded: Record<string, boolean> = savedState?.expanded ?? {};
 
   function saveExpandedState(): void {
-    vscode.setState({ expanded });
+    vscode.setState({ expanded, sectionOrder: currentSectionOrder });
   }
 
   // ── Button wiring ──────────────────────────────────────────────────────────
@@ -117,7 +117,9 @@ function createIconEl(icon: string): HTMLElement {
   // (Fleet is now rendered dynamically by renderRoots — no static toggle needed)
 
   // ── Section order state ──────────────────────────────────────────────────
-  let currentSectionOrder: string[] = ["research", "dev", "fleet"];
+  // Restore from webview state first (survives hide/show tab switches),
+  // then the host's section-order message from globalState overwrites if needed.
+  let currentSectionOrder: string[] = savedState?.sectionOrder ?? ["research", "dev", "fleet"];
 
   /** Resolve rendering order: saved keys filtered to available, new keys appended. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
@@ -644,6 +646,57 @@ function createIconEl(icon: string): HTMLElement {
   // Cache children per directory path
   const childrenCache: Record<string, TreeEntry[]> = {};
 
+  // Cache the last git-status map so we can reapply colors after renderRoots
+  // (drag-reorder and section-order re-renders bypass the host's pushGitStatus).
+  let lastGitStatusMap: Record<string, string> = {};
+
+  /** Walk all rendered nodes and apply/remove git-status CSS classes. */
+  function applyGitStatus(statusMap: Record<string, string>): void {
+    const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
+    const allNodes = treeRoot?.querySelectorAll("[data-path]") ?? [];
+    for (const node of allNodes) {
+      const el = node as HTMLElement;
+      const nodePath = el.dataset.path;
+      if (!nodePath) continue;
+
+      const label = el.querySelector(".tree-node .label") as HTMLElement | null;
+      if (!label) continue;
+
+      // Remove any existing git class
+      for (const cls of gitClasses) label.classList.remove(cls);
+
+      // Direct match (files)
+      const directStatus = statusMap[nodePath];
+      if (directStatus) {
+        label.classList.add(`git-${directStatus}`);
+        continue;
+      }
+
+      // Directory propagation: find the most notable child status
+      const isDir = el.dataset.type === "directory";
+      if (isDir) {
+        const prefix = nodePath + "/";
+        const statusPriority: Record<string, number> = {
+          conflict: 5, modified: 4, deleted: 3, untracked: 2, added: 1, ignored: 0,
+        };
+        let bestStatus = "";
+        let bestPri = -1;
+        for (const [filePath, status] of Object.entries(statusMap)) {
+          if (filePath.startsWith(prefix)) {
+            const pri = statusPriority[status] ?? 0;
+            if (pri > bestPri) {
+              bestPri = pri;
+              bestStatus = status;
+            }
+          }
+        }
+        if (bestStatus) {
+          label.classList.add(`git-${bestStatus}`);
+        }
+      }
+    }
+  }
+  
   // Restore section expanded state (separate from tree node expanded state)
   const sectionExpanded: Record<string, boolean> = savedState?.expanded
     ? {
@@ -815,6 +868,13 @@ function createIconEl(icon: string): HTMLElement {
 
     updateSashes();
     layoutSections();
+
+    // Reapply cached git-status colors — renderRoots wipes the DOM, so any
+    // git classes from a prior git-status push are lost. This ensures
+    // drag-reorder and section-order re-renders preserve file colors.
+    if (Object.keys(lastGitStatusMap).length > 0) {
+      applyGitStatus(lastGitStatusMap);
+    }
   }
 
   // ── Section drag-reorder (#708) ──────────────────────────────────────────
@@ -922,6 +982,7 @@ function createIconEl(icon: string): HTMLElement {
 
             // Update state and re-render
             currentSectionOrder = keys;
+            saveExpandedState(); // persist new order to webview state
             vscode.postMessage({ kind: "set-section-order", order: keys });
             renderRoots(currentRoots);
           }
@@ -1368,52 +1429,9 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "git-status": {
-        // Reactive git coloring: walk all rendered nodes and apply/remove git classes.
-        const statusMap: Record<string, string> = msg.statusMap ?? {};
-        const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
-
-        const allNodes = treeRoot?.querySelectorAll("[data-path]") ?? [];
-        for (const node of allNodes) {
-          const el = node as HTMLElement;
-          const nodePath = el.dataset.path;
-          if (!nodePath) continue;
-
-          const label = el.querySelector(".tree-node .label") as HTMLElement | null;
-          if (!label) continue;
-
-          // Remove any existing git class
-          for (const cls of gitClasses) label.classList.remove(cls);
-
-          // Direct match (files)
-          const directStatus = statusMap[nodePath];
-          if (directStatus) {
-            label.classList.add(`git-${directStatus}`);
-            continue;
-          }
-
-          // Directory propagation: find the most notable child status
-          const isDir = el.dataset.type === "directory";
-          if (isDir) {
-            const prefix = nodePath + "/";
-            const statusPriority: Record<string, number> = {
-              conflict: 5, modified: 4, deleted: 3, untracked: 2, added: 1, ignored: 0,
-            };
-            let bestStatus = "";
-            let bestPri = -1;
-            for (const [filePath, status] of Object.entries(statusMap)) {
-              if (filePath.startsWith(prefix)) {
-                const pri = statusPriority[status] ?? 0;
-                if (pri > bestPri) {
-                  bestPri = pri;
-                  bestStatus = status;
-                }
-              }
-            }
-            if (bestStatus) {
-              label.classList.add(`git-${bestStatus}`);
-            }
-          }
-        }
+        // Reactive git coloring: cache + apply.
+        lastGitStatusMap = msg.statusMap ?? {};
+        applyGitStatus(lastGitStatusMap);
         break;
       }
 
@@ -1444,6 +1462,7 @@ function createIconEl(icon: string): HTMLElement {
         // Host replays the persisted section order on webview resolve
         if (Array.isArray(msg.order)) {
           currentSectionOrder = msg.order;
+          saveExpandedState(); // persist to webview state for tab-switch survival
           // Re-render with the new order if we already have roots
           if (currentRoots.length > 0) {
             renderRoots(currentRoots);

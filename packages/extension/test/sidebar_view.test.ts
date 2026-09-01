@@ -826,6 +826,40 @@ describe("sidebar webview — section reorder structure", () => {
   });
 });
 
+// ── Section reorder bug fixes (#708) ─────────────────────────────────────────
+
+describe("sidebar webview — section reorder bug fixes", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRoots reapplies cached git status after re-rendering", () => {
+    // An applyGitStatus function exists and is called inside or after renderRoots
+    expect(src).toMatch(/function\s+applyGitStatus/);
+    // renderRoots calls applyGitStatus so drag-reorder doesn't lose colors
+    // Find renderRoots body and check it contains applyGitStatus call
+    expect(src).toMatch(/renderRoots[\s\S]*?applyGitStatus\s*\(/);
+  });
+
+  it("caches the last git-status map for reapplication", () => {
+    // A variable caches the last status map
+    expect(src).toMatch(/lastGitStatusMap/);
+  });
+
+  it("persists currentSectionOrder in webview state via setState", () => {
+    // Section order is saved alongside expanded state
+    expect(src).toMatch(/sectionOrder/);
+    // setState is called with section order data
+    expect(src).toMatch(/setState[\s\S]*?sectionOrder/);
+  });
+
+  it("restores currentSectionOrder from webview state on load", () => {
+    // savedState is read for section order on initialization
+    expect(src).toMatch(/savedState[\s\S]*?sectionOrder/);
+  });
+});
+
 // ── Section labels and text (#673 polish) ────────────────────────────────────
 
 describe("sidebar webview — section labels", () => {
