@@ -513,8 +513,15 @@ function createIconEl(icon: string): HTMLElement {
       }
     }
 
-    // Write pixel positions
-    let top = 0;
+    // Write pixel positions — bottom-aligned (pixel equivalent of flex justify-content: flex-end).
+    // Compute total used height first, then offset so sections sit at the bottom.
+    let totalUsed = 0;
+    for (const s of sections) {
+      totalUsed += s.classList.contains("expanded")
+        ? (expandedHeights.get(s) ?? HEADER_HEIGHT)
+        : HEADER_HEIGHT;
+    }
+    let top = Math.max(0, totalHeight - totalUsed);
     for (const s of sections) {
       const h = s.classList.contains("expanded")
         ? (expandedHeights.get(s) ?? HEADER_HEIGHT)
