@@ -763,8 +763,7 @@ function buildActiveProjectSection(): string | null {
       "- Config: `<project>/config/`",
       "- Paper: `<project>/paper/`",
       "- Reports: `<project>/reports/`",
-      "",
-      "The checkout registry (`CHECKOUTS.md`) stays vault-based (fleet-wide).",
+      "- Checkout registry: `<project>/ledger/campaigns/CHECKOUTS.md`",
     ];
     return lines.join("\n");
   }
