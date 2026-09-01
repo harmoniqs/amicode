@@ -133,6 +133,13 @@ import {
   auditRegimePriorApplications,
   type CensusStamp,
 } from "./regime_priors";
+// SEAM 6 (#703): the plugin twin cannot reach @amicode/schema at runtime
+// (bare specifiers do not resolve in the embedded Bun), so it validates
+// bounds against ./warrant_bounds — the dependency-free twin of the schema's
+// $defs.bounds, PINNED to @amicode/schema's validateBounds by
+// test/warrant_bounds_parity.test.ts. The core table validates against the
+// schema itself; the twin follows it by construction + pin.
+import { validateWarrantBounds, boundsRefusal } from "./warrant_bounds";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -312,10 +319,14 @@ export const AmicodeTools = async (input: unknown) => {
         bounds: {
           type: "object",
           description:
-            "What to authorise. Declare ONLY what the launch needs (the gate refuses a launch " +
-            "needing a bound the warrant omits, so an over-broad warrant is worse than a precise " +
-            "one): {max_solves?: int>=1, tier?: string, max_size_class?: 'SMALL'|'MEDIUM', " +
-            "device?: 'none'|'ro'|'rw'}.",
+            "What to authorise, validated against the @amicode/schema warrant-bounds schema " +
+            "($defs.bounds — the one definition; invalid bounds are refused before the card " +
+            "renders). Declare ONLY what the launch needs (the gate refuses a launch needing a " +
+            "bound the warrant omits, so an over-broad warrant is worse than a precise one): " +
+            "{max_solves?: int>=1, tier?: string, max_size_class?: 'SMALL'|'MEDIUM', " +
+            "device?: 'none'|'ro'|'rw'} — device is the autonomy datum: none = no device access; " +
+            "ro = read-only device access; rw = device writes permitted (real-board sessions " +
+            "remain a human gate). One knob — no other device-permission field validates.",
         },
         rationale: {
           type: "string",
@@ -324,6 +335,14 @@ export const AmicodeTools = async (input: unknown) => {
       },
       async execute(a: { plan_hash: string; bounds?: Record<string, unknown> | null; rationale?: string | null }) {
         if (!a.plan_hash || a.plan_hash.trim() === "") return "Cannot request approval: plan_hash is required.";
+        // SEAM 6 (#703): the twin of the core's validateBounds gate — a device
+        // value outside {none, ro, rw} or a second device-shaped field is
+        // refused BEFORE the card renders. Same refusal bytes as the core
+        // (boundsRefusal is shared; error strings pinned by the parity test).
+        if (a.bounds !== undefined && a.bounds !== null) {
+          const r = validateWarrantBounds(a.bounds);
+          if (!r.ok) return boundsRefusal(r.errors);
+        }
         // Returned text is agent-directed only — the card renders from the tool INPUT
         // (parseApprovalInput), the same way the ask card does.
         const declared = a.bounds && typeof a.bounds === "object" ? Object.keys(a.bounds).join(", ") : "none";

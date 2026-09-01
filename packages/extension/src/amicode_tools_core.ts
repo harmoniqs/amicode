@@ -22,6 +22,16 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
+// The schema package is the ONE definition of the warrant-bounds vocabulary
+// ($defs.bounds of the ledger-record schema, SEAM 6's autonomy datum lives
+// there) — the tool surface validates against it, never a free-text
+// restatement (amicode#703). The refusal MESSAGE comes from the plugin-
+// sibling warrant_bounds.ts so the core and the plugin twin render the
+// identical bytes (the twin's validator is pinned to the schema by
+// test/warrant_bounds_parity.test.ts).
+import { validateBounds } from "@amicode/schema";
+import { boundsRefusal } from "../opencode-plugin/warrant_bounds";
+
 import {
   formulationToml,
   runStubToml,
@@ -342,10 +352,14 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         bounds: {
           type: "object",
           description:
-            "What to authorise. Declare ONLY what the launch needs (the gate refuses a launch " +
-            "needing a bound the warrant omits, so an over-broad warrant is worse than a precise " +
-            "one): {max_solves?: int>=1, tier?: string, max_size_class?: 'SMALL'|'MEDIUM', " +
-            "device?: 'none'|'ro'|'rw'}.",
+            "What to authorise, validated against the @amicode/schema warrant-bounds schema " +
+            "($defs.bounds — the one definition; invalid bounds are refused before the card " +
+            "renders). Declare ONLY what the launch needs (the gate refuses a launch needing a " +
+            "bound the warrant omits, so an over-broad warrant is worse than a precise one): " +
+            "{max_solves?: int>=1, tier?: string, max_size_class?: 'SMALL'|'MEDIUM', " +
+            "device?: 'none'|'ro'|'rw'} — device is the autonomy datum: none = no device access; " +
+            "ro = read-only device access; rw = device writes permitted (real-board sessions " +
+            "remain a human gate). One knob — no other device-permission field validates.",
         },
         rationale: {
           type: "string",
@@ -354,6 +368,16 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
       },
       async execute(a: { plan_hash: string; bounds?: Record<string, unknown> | null; rationale?: string | null }) {
         if (!a.plan_hash || a.plan_hash.trim() === "") return "Cannot request approval: plan_hash is required.";
+        // SEAM 6 (#703): bounds are validated against the SCHEMA PACKAGE's
+        // warrant-bounds enum ($defs.bounds via validateBounds), never against
+        // a free-text restatement here. The device datum is one knob — a value
+        // outside {none, ro, rw} or a second device-shaped field riding beside
+        // it is refused BEFORE the card renders, so a malformed ask can never
+        // become a pressable button.
+        if (a.bounds !== undefined && a.bounds !== null) {
+          const r = validateBounds(a.bounds);
+          if (!r.ok) return boundsRefusal(r.errors);
+        }
         // Returned text is agent-directed only — the card renders from the tool INPUT
         // (parseApprovalInput), the same way the ask card does.
         const declared = a.bounds && typeof a.bounds === "object" ? Object.keys(a.bounds).join(", ") : "none";

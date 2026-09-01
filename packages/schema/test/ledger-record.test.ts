@@ -196,11 +196,21 @@ describe("ledger-record schema — approval (capability warrant)", () => {
     expect(validate({ ...approval(), bounds: { max_solves: 8, nonesuch: 1 } }, "ledger-record").ok).toBe(false);
   });
 
-  it("device bounds use the §2.1 permission vocabulary", () => {
+  it("device bounds are the autonomy datum (SEAM 6): the enum {none, ro, rw} or nothing", () => {
     for (const device of ["none", "ro", "rw"]) {
       expect(validate({ ...approval(), bounds: { device } }, "ledger-record").ok, device).toBe(true);
     }
     expect(validate({ ...approval(), bounds: { device: "yes" } }, "ledger-record").ok).toBe(false);
+  });
+
+  it("an approval record REFUSES a second device knob — the datum is the single switch (SEAM 6)", () => {
+    // device + an unknown device-permission-looking field: the whole record fails,
+    // naming the impostor key — the warrant path never carries two switches.
+    const two = validate({ ...approval(), bounds: { device: "ro", device_access: "rw" } }, "ledger-record");
+    expect(two.ok).toBe(false);
+    expect(hasErr(two.errors, "device_access")).toBe(true);
+    // and the impostor alone is no better
+    expect(validate({ ...approval(), bounds: { device_permissions: "rw" } }, "ledger-record").ok).toBe(false);
   });
 
   it("max_size_class is the cost proxy that exists — G-8 removed max_duration_s", () => {
