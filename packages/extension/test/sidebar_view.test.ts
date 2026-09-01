@@ -503,6 +503,23 @@ describe("sidebar bridge — file operations", () => {
       }),
     );
   });
+
+  it("file-op success result posts file-op-ok back", async () => {
+    const handlers = makeHandlers({
+      fileOp: vi.fn().mockResolvedValue({ ok: true }),
+    });
+    await handleSidebarMessage(
+      { kind: "file-op", op: "new-file", path: "/project/src", name: "hello.jl" },
+      handlers,
+    );
+    expect(handlers.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "file-op-ok",
+        op: "new-file",
+        path: "/project/src",
+      }),
+    );
+  });
 });
 
 // ── Session-aware highlighting (#677) ────────────────────────────────────────
@@ -1371,5 +1388,113 @@ describe("sidebar — sash resize between sections", () => {
     expect(src).toContain("mouseup");
     // Section toggle resets sizes so flex:1 takes over
     expect(src).toContain("resetSectionSizes");
+  });
+});
+
+// ── Inline editing (#673) ────────────────────────────────────────────────────
+
+describe("sidebar — inline editing", () => {
+  let src: string;
+  beforeEach(() => {
+    src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+  });
+
+  // Slice 2: rename inline editing infrastructure
+  it("has startInlineEdit function that creates an input element", () => {
+    expect(src).toContain("startInlineEdit");
+    // Must create an <input> element for inline text entry
+    expect(src).toContain('createElement("input")');
+  });
+
+  it("rename mode swaps label content with a pre-filled input", () => {
+    // Input should be pre-filled with the current name for rename
+    expect(src).toMatch(/input\.value\s*=/);
+    // Selection should be on the stem (not extension) like VS Code
+    expect(src).toContain("setSelectionRange");
+    expect(src).toContain("lastIndexOf");
+  });
+
+  // Slice 3: new-file and new-folder insert a temporary row
+  it("new-file and new-folder modes create a temporary tree row", () => {
+    // Should insert a temporary node at the top of the directory's children
+    expect(src).toMatch(/insertBefore|prepend/);
+    // The temporary row needs a file/folder icon
+    expect(src).toContain("createFileIconEl");
+    expect(src).toContain("createFolderIconEl");
+  });
+
+  it("new-file/new-folder auto-expands the target directory", () => {
+    // When creating a new file in a collapsed directory, it should expand first
+    expect(src).toMatch(/expanded\[.*\]\s*=\s*true/);
+  });
+
+  // Slice 4: Enter commits, Escape cancels
+  it("Enter key commits the inline edit by posting file-op with the name", () => {
+    expect(src).toContain('"Enter"');
+    // Should post a file-op message with the entered name
+    expect(src).toContain("postMessage");
+    expect(src).toMatch(/kind:\s*"file-op"/);
+  });
+
+  it("Escape key cancels the inline edit and restores original state", () => {
+    expect(src).toContain('"Escape"');
+    // Should have a cancel/cleanup function
+    expect(src).toMatch(/cancelInlineEdit|cleanupInlineEdit|cleanup/);
+  });
+
+  it("blur on the input cancels the edit (unless committed)", () => {
+    // The input should listen for blur events
+    expect(src).toContain('"blur"');
+  });
+
+  // Slice 5: file-op-ok and file-op-error handling
+  it("handles file-op-ok message to dismiss the inline editor", () => {
+    expect(src).toContain('"file-op-ok"');
+  });
+
+  it("handles file-op-error message to show error state on the input", () => {
+    expect(src).toContain('"file-op-error"');
+    // Should apply an error visual cue
+    expect(src).toMatch(/inline-error|error/);
+  });
+
+  // Slice 6: context menu wires inline edit for rename/new-file/new-folder
+  it("context menu calls startInlineEdit for rename, new-file, and new-folder", () => {
+    // The context menu handler should call startInlineEdit instead of posting directly
+    expect(src).toMatch(/startInlineEdit.*rename|rename.*startInlineEdit/);
+    expect(src).toMatch(/startInlineEdit.*new-file|new-file.*startInlineEdit/);
+    expect(src).toMatch(/startInlineEdit.*new-folder|new-folder.*startInlineEdit/);
+  });
+
+  it("suppresses context menu and tree clicks while inline edit is active", () => {
+    // Should track whether an inline edit is active
+    expect(src).toMatch(/activeInlineEdit|inlineEditActive|isEditing/);
+    // Context menu should check and bail
+    expect(src).toMatch(/activeInlineEdit|inlineEditActive|isEditing/);
+  });
+
+  // Slice: CSS for inline edit input
+  it("CSS includes inline-edit input styles matching tree row font", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // inline-edit input should have styling
+    expect(html).toMatch(/\.inline-edit-input|inline-edit/);
+    // Should use focusBorder for the input outline
+    expect(html).toContain("focusBorder");
+  });
+
+  // Slice: validation prevents empty names and path separators
+  it("validates input — rejects empty names and path separators", () => {
+    // Should check for empty strings
+    expect(src).toMatch(/trim\(\).*===\s*""|\.length\s*===\s*0/);
+    // Should reject path separators
+    expect(src).toMatch(/includes.*[/\\]|[/\\]/);
   });
 });

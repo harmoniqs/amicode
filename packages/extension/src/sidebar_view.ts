@@ -808,6 +808,31 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       margin: 4px 0;
       background: var(--vscode-menu-separatorBackground, var(--vscode-panel-border));
     }
+
+    /* Inline editing — VS Code explorer-style */
+    .inline-edit-input {
+      font-family: var(--vscode-font-family, sans-serif);
+      font-size: var(--vscode-font-size, 13px);
+      color: var(--vscode-input-foreground, var(--vscode-foreground));
+      background: var(--vscode-input-background, transparent);
+      border: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline: none;
+      padding: 0 2px;
+      margin: 0;
+      height: 22px;
+      line-height: 22px;
+      box-sizing: border-box;
+      flex: 1;
+      min-width: 0;
+    }
+    .inline-edit-input.inline-error {
+      border-color: var(--vscode-inputValidation-errorBorder, #f44);
+    }
+    .inline-edit-row {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
   </style>
 </head>
 <body>

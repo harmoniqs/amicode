@@ -129,6 +129,177 @@ function createIconEl(icon: string): HTMLElement {
     resetSectionSizes();
   });
 
+  // ── Inline editing (VS Code explorer-style) ────────────────────────────────
+
+  let activeInlineEdit: {
+    input: HTMLInputElement;
+    mode: "rename" | "new-file" | "new-folder";
+    path: string;
+    originalLabel?: string;          // for rename: the label text before editing
+    labelEl?: HTMLElement;           // for rename: the original .label span
+    tempRow?: HTMLElement;           // for new-file/new-folder: the temporary row
+    committed?: boolean;             // set to true when Enter fires, prevents blur from double-cancelling
+  } | null = null;
+
+  function cancelInlineEdit(): void {
+    if (!activeInlineEdit) return;
+    const edit = activeInlineEdit;
+    activeInlineEdit = null;
+
+    if (edit.mode === "rename" && edit.labelEl && edit.originalLabel != null) {
+      // Restore the original label
+      edit.labelEl.textContent = edit.originalLabel;
+      edit.labelEl.style.display = "";
+      edit.input.remove();
+    } else if (edit.tempRow) {
+      // Remove the temporary row
+      edit.tempRow.remove();
+    }
+  }
+
+  function commitInlineEdit(): void {
+    if (!activeInlineEdit) return;
+    const edit = activeInlineEdit;
+    const value = edit.input.value.trim();
+
+    // Validation: reject empty names and path separators
+    if (value.length === 0 || value.includes("/") || value.includes("\\")) {
+      edit.input.classList.add("inline-error");
+      edit.input.focus();
+      return;
+    }
+
+    edit.committed = true;
+
+    if (edit.mode === "rename") {
+      vscode.postMessage({ kind: "file-op", op: "rename", path: edit.path, newName: value });
+    } else if (edit.mode === "new-file") {
+      vscode.postMessage({ kind: "file-op", op: "new-file", path: edit.path, name: value });
+    } else if (edit.mode === "new-folder") {
+      vscode.postMessage({ kind: "file-op", op: "new-folder", path: edit.path, name: value });
+    }
+  }
+
+  function startInlineEdit(
+    mode: "rename" | "new-file" | "new-folder",
+    nodePath: string,
+    dataEl: HTMLElement,
+  ): void {
+    // Cancel any existing inline edit first
+    cancelInlineEdit();
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "inline-edit-input";
+
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        e.stopPropagation();
+        commitInlineEdit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelInlineEdit();
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      // If not committed, treat blur as cancel
+      if (activeInlineEdit && !activeInlineEdit.committed) {
+        cancelInlineEdit();
+      }
+    });
+
+    if (mode === "rename") {
+      const row = dataEl.querySelector(".tree-node") ?? dataEl;
+      const labelEl = row.querySelector(".label") as HTMLElement | null;
+      if (!labelEl) return;
+
+      const currentName = labelEl.textContent ?? "";
+      input.value = currentName;
+
+      // Select the stem (not the extension), like VS Code
+      const dotIdx = currentName.lastIndexOf(".");
+      const selEnd = dotIdx > 0 ? dotIdx : currentName.length;
+
+      activeInlineEdit = {
+        input,
+        mode,
+        path: nodePath,
+        originalLabel: currentName,
+        labelEl,
+      };
+
+      // Hide the label and insert the input in its place
+      labelEl.style.display = "none";
+      labelEl.parentElement!.appendChild(input);
+      input.focus();
+      input.setSelectionRange(0, selEnd);
+
+    } else {
+      // new-file or new-folder — create a temporary row at the top of the directory's children
+      // First, ensure the directory is expanded
+      if (!expanded[nodePath]) {
+        expanded[nodePath] = true;
+        saveExpandedState();
+        const chevronSpan = dataEl.querySelector(".chevron") as HTMLElement | null;
+        if (chevronSpan) chevronSpan.textContent = "\u25BE";
+        const iconSpan = dataEl.querySelector(".icon") as HTMLElement | null;
+        if (iconSpan) {
+          const newIcon = createFolderIconEl(true);
+          if (newIcon) iconSpan.replaceWith(newIcon);
+        }
+        const childrenEl = dataEl.querySelector(".children") as HTMLElement | null;
+        if (childrenEl) {
+          childrenEl.style.display = "block";
+          if (!childrenCache[nodePath]) {
+            vscode.postMessage({ kind: "get-children", path: nodePath });
+          }
+        }
+      }
+
+      const childrenEl = dataEl.querySelector(".children") as HTMLElement | null;
+      if (!childrenEl) return;
+
+      // Compute depth from the parent row's padding
+      const parentRow = dataEl.querySelector(".tree-node") as HTMLElement | null;
+      const parentPad = parseInt(parentRow?.style.paddingLeft ?? "8");
+      const depth = Math.round((parentPad - 8) / 16) + 1;
+
+      const tempRow = document.createElement("div");
+      tempRow.className = "tree-node inline-edit-row";
+      tempRow.style.paddingLeft = `${8 + depth * 16}px`;
+
+      // Add the appropriate icon
+      if (mode === "new-folder") {
+        const folderIcon = createFolderIconEl(false);
+        if (folderIcon) tempRow.appendChild(folderIcon);
+      } else {
+        const fileIcon = createFileIconEl("untitled");
+        tempRow.appendChild(fileIcon);
+      }
+
+      tempRow.appendChild(input);
+
+      activeInlineEdit = {
+        input,
+        mode,
+        path: nodePath,
+        tempRow,
+      };
+
+      // Insert at the top of the children list
+      if (childrenEl.firstChild) {
+        childrenEl.insertBefore(tempRow, childrenEl.firstChild);
+      } else {
+        childrenEl.appendChild(tempRow);
+      }
+
+      input.focus();
+    }
+  }
+
   // ── Context menu ──────────────────────────────────────────────────────────
 
   let activeMenu: HTMLElement | null = null;
@@ -142,6 +313,9 @@ function createIconEl(icon: string): HTMLElement {
 
   document.addEventListener("click", dismissMenu);
   document.addEventListener("contextmenu", (e) => {
+    // Suppress context menu while inline edit is active
+    if (activeInlineEdit) return;
+
     // Only handle right-clicks on tree nodes (not buttons, fleet, etc.)
     const target = e.target as HTMLElement;
     const treeNode = target.closest(".tree-node") as HTMLElement | null;
@@ -161,16 +335,16 @@ function createIconEl(icon: string): HTMLElement {
     const isRoot = currentRoots.some((r) => r.path === nodePath);
 
     // Build menu items
-    interface MenuItem { label: string; op?: string; separator?: boolean }
+    interface MenuItem { label: string; op?: string; separator?: boolean; inline?: boolean }
     const items: MenuItem[] = [];
 
     if (nodeType === "directory") {
-      items.push({ label: "New File", op: "new-file" });
-      items.push({ label: "New Folder", op: "new-folder" });
+      items.push({ label: "New File", op: "new-file", inline: true });
+      items.push({ label: "New Folder", op: "new-folder", inline: true });
       items.push({ separator: true });
     }
 
-    items.push({ label: "Rename", op: "rename" });
+    items.push({ label: "Rename", op: "rename", inline: true });
     items.push({ label: "Delete", op: "delete" });
     items.push({ separator: true });
     items.push({ label: "Copy Path", op: "copy-path" });
@@ -206,8 +380,12 @@ function createIconEl(icon: string): HTMLElement {
       el.textContent = item.label;
       el.addEventListener("click", () => {
         dismissMenu();
-        // ALL operations delegate to the host — no window.prompt() in webviews
-        vscode.postMessage({ kind: "file-op", op: item.op, path: nodePath });
+        if (item.inline && dataEl) {
+          // Inline edit: rename, new-file, new-folder
+          startInlineEdit(item.op as "rename" | "new-file" | "new-folder", nodePath, dataEl);
+        } else {
+          vscode.postMessage({ kind: "file-op", op: item.op, path: nodePath });
+        }
       });
       menu.appendChild(el);
     }
@@ -781,6 +959,29 @@ function createIconEl(icon: string): HTMLElement {
               label.classList.add(`git-${bestStatus}`);
             }
           }
+        }
+        break;
+      }
+
+      case "file-op-ok": {
+        // Inline edit succeeded — clean up the inline editor
+        if (activeInlineEdit) {
+          cancelInlineEdit();
+        }
+        break;
+      }
+
+      case "file-op-error": {
+        // Inline edit failed — show error state on the input
+        if (activeInlineEdit) {
+          activeInlineEdit.input.classList.add("inline-error");
+          activeInlineEdit.input.focus();
+          // Clear error styling when user starts typing again
+          const clearError = () => {
+            activeInlineEdit?.input.classList.remove("inline-error");
+            activeInlineEdit?.input.removeEventListener("input", clearError);
+          };
+          activeInlineEdit.input.addEventListener("input", clearError);
         }
         break;
       }

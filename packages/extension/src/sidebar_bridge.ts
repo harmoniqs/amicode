@@ -42,6 +42,7 @@ export type RootsMessage = { kind: "roots"; roots: TreeRoot[] };
 export type ChildrenMessage = { kind: "children"; path: string; entries: TreeEntry[] };
 export type FsChangedMessage = { kind: "fs-changed"; folder: string };
 export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: string; message: string };
+export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
 export type ActiveProjectMessage = { kind: "active-project"; path: string | null };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
 
@@ -51,6 +52,7 @@ export type SidebarDownMessage =
   | ChildrenMessage
   | FsChangedMessage
   | FileOpErrorMessage
+  | FileOpOkMessage
   | ActiveProjectMessage
   | GitStatusMessage;
 
@@ -131,6 +133,12 @@ export function handleSidebarMessage(
             path: req.path,
             message: result.message ?? "Operation failed",
           });
+        } else {
+          handlers.postMessage({
+            kind: "file-op-ok",
+            op: req.op,
+            path: req.path,
+          });
         }
       });
     }
@@ -139,6 +147,7 @@ export function handleSidebarMessage(
     case "children":
     case "fs-changed":
     case "file-op-error":
+    case "file-op-ok":
     case "active-project":
     case "git-status":
       // Down-direction messages — no host-side handler needed.
