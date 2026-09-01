@@ -45,8 +45,10 @@ export class ChatPanel {
   /** Callback fired whenever the number of live chat panels changes. */
   private static onLiveChangeCallback?: (count: number) => void;
   /** Callback fired when the user selects a project in the composer dropdown.
-   *  The extension wires this to sidebar focus (collapse others, expand selected). */
-  private static onProjectSelectedCallback?: (path: string) => void;
+   *  The extension wires this to sidebar focus (collapse others, expand selected).
+   *  Accepts null to clear the highlight (e.g. when switching to a session
+   *  that has no project selected). */
+  private static onProjectSelectedCallback?: (path: string | null) => void;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
@@ -58,6 +60,10 @@ export class ChatPanel {
   /** Callbacks fired when the app signals ready (app-ready message from iframe). */
   private static appReadyCallbacks: Array<() => void> = [];
   private readonly disposables: vscode.Disposable[] = [];
+  /** Last project path selected in THIS session's composer dropdown.
+   *  Re-emitted when the panel gains focus so the sidebar highlight tracks
+   *  the active tab. null = no selection yet (clears stale highlights). */
+  private lastProjectPath: string | null = null;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -65,7 +71,7 @@ export class ChatPanel {
   }
 
   /** Subscribe to project-selected events from the composer dropdown (#663). */
-  static onProjectSelected(cb: ((path: string) => void) | undefined): void {
+  static onProjectSelected(cb: ((path: string | null) => void) | undefined): void {
     ChatPanel.onProjectSelectedCallback = cb;
   }
 
@@ -125,11 +131,26 @@ export class ChatPanel {
           // activation registers it; the bridge consumes the kinds regardless).
           bugReport: getBugReport()?.sink,
           // #663: project-selected → sidebar focus (collapse others, expand selected).
+          // Also cache the selection per-instance so the view-state listener can
+          // re-emit it when this tab regains focus.
           onProjectSelected: ChatPanel.onProjectSelectedCallback
-            ? (p) => ChatPanel.onProjectSelectedCallback!(p)
+            ? (p) => { this.lastProjectPath = p; ChatPanel.onProjectSelectedCallback!(p); }
             : undefined,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
+      },
+      null,
+      this.disposables,
+    );
+    // Tab-switch highlight: when this panel gains focus, re-emit its project
+    // selection (or null) so the sidebar highlight tracks the active tab.
+    // Without this, switching away from a session that selected a project
+    // leaves the highlight stuck on the old folder.
+    this.panel.onDidChangeViewState(
+      (e) => {
+        if (e.webviewPanel.active) {
+          ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath);
+        }
       },
       null,
       this.disposables,

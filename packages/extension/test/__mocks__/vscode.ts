@@ -31,10 +31,13 @@ export const window = {
   }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
   onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
-  createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
+   createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
     const messageCbs: Array<(msg: unknown) => void> = [];
-    return {
+    const viewStateCbs: Array<(e: unknown) => void> = [];
+    const panel = {
+      visible: true,
+      active: true,
       webview: {
         html: "",
         cspSource: "test:",
@@ -54,10 +57,20 @@ export const window = {
         disposeCbs.push(cb);
         return { dispose() {} };
       },
+      onDidChangeViewState(cb: (e: unknown) => void, _thisArg?: unknown, _subs?: unknown) {
+        viewStateCbs.push(cb);
+        return { dispose() {} };
+      },
+      _simulateViewState(active: boolean, visible: boolean) {
+        panel.active = active;
+        panel.visible = visible;
+        for (const cb of viewStateCbs) cb({ webviewPanel: panel });
+      },
       dispose() {
         for (const cb of disposeCbs) cb();
       },
     };
+    return panel;
   },
 };
 const registeredCommands = new Map<string, (...a: unknown[]) => unknown>();

@@ -390,6 +390,41 @@ describe("ChatPanel — onProjectSelected callback (#663)", () => {
     panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
     expect(selected).toEqual(["/Users/jj/harmoniqs"]);
   });
+
+  it("re-emits last project selection when the panel gains focus (tab switch)", () => {
+    const selected: Array<string | null> = [];
+    ChatPanel.onProjectSelected((p) => selected.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // Simulate project selection
+    const panel = cap.created[0] as unknown as {
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
+    selected.length = 0; // clear
+
+    // Simulate tab gaining focus (user switches back)
+    panel._simulateViewState(true, true);
+    expect(selected).toEqual(["/Users/jj/harmoniqs"]);
+  });
+
+  it("emits null when a panel with no project selection gains focus (clears stale highlight)", () => {
+    const selected: Array<string | null> = [];
+    ChatPanel.onProjectSelected((p) => selected.push(p));
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    // No project-selected message — this session never picked a project
+    const panel = cap.created[0] as unknown as {
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    panel._simulateViewState(true, true);
+    expect(selected).toEqual([null]);
+  });
 });
 
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
