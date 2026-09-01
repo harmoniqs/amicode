@@ -899,6 +899,28 @@ describe("sidebar webview — reorderable workspace folders", () => {
   });
 });
 
+describe("sidebar webview — root reorder prevents file-move", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("setupRootReorderDropTarget is registered BEFORE setupDirectoryDropTarget on root nodes", () => {
+    // In renderRootNode, root reorder must be first so stopImmediatePropagation
+    // prevents the directory handler from treating root drags as file moves
+    const renderRootBody = src.slice(src.indexOf("function renderRootNode"));
+    const rootReorderIdx = renderRootBody.indexOf("setupRootReorderDropTarget");
+    const dirDropIdx = renderRootBody.indexOf("setupDirectoryDropTarget");
+    expect(rootReorderIdx).toBeGreaterThan(-1);
+    expect(dirDropIdx).toBeGreaterThan(-1);
+    expect(rootReorderIdx).toBeLessThan(dirDropIdx);
+  });
+
+  it("setupRootReorderDropTarget uses stopImmediatePropagation to prevent directory handler", () => {
+    expect(src).toMatch(/setupRootReorderDropTarget[\s\S]*?stopImmediatePropagation/);
+  });
+});
+
 describe("sidebar bridge — reorder-root message", () => {
   let handleSidebarMessage: any;
 

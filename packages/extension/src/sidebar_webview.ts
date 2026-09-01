@@ -1034,10 +1034,12 @@ function createIconEl(icon: string): HTMLElement {
     container.appendChild(row);
 
     // Drag-and-drop: roots are draggable sources AND drop targets (#712)
+    // Root reorder MUST be registered first — its stopImmediatePropagation
+    // prevents the directory handler from treating root drags as file moves.
     row.draggable = true;
     setupDragSource(row, root.path);
-    setupDirectoryDropTarget(row, root.path);
     setupRootReorderDropTarget(row, root);
+    setupDirectoryDropTarget(row, root.path);
 
     // Children container
     const childrenEl = document.createElement("div");
@@ -1331,7 +1333,7 @@ function createIconEl(icon: string): HTMLElement {
       if (sourceRoot.projectType !== root.projectType) return;
 
       e.preventDefault();
-      e.stopPropagation(); // Prevent setupDirectoryDropTarget from also handling
+      e.stopImmediatePropagation(); // Prevent setupDirectoryDropTarget on the SAME element
       e.dataTransfer!.dropEffect = "move";
 
       // Don't show indicator for self-drop
@@ -1374,7 +1376,7 @@ function createIconEl(icon: string): HTMLElement {
 
     row.addEventListener("drop", (e) => {
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       clearRootInsertIndicator();
       clearDropTarget();
 
