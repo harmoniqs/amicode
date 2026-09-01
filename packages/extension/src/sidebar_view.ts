@@ -673,15 +673,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .tree-node .pill {
-      font-size: 10px;
-      padding: 1px 6px;
-      border-radius: 8px;
-      margin-left: 6px;
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      flex-shrink: 0;
-    }
     /* ── Git status colors ─────────────────────────────────────── */
     .git-modified { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
     .git-added { color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b); }

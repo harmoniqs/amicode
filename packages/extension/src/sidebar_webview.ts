@@ -816,14 +816,6 @@ function createIconEl(icon: string): HTMLElement {
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Research metadata pill
-    if (root.projectType === "research" && root.metadata?.phase) {
-      const pill = document.createElement("span");
-      pill.className = "pill";
-      pill.textContent = root.metadata.phase;
-      row.appendChild(pill);
-    }
-
     container.appendChild(row);
 
     // Drag-and-drop: roots are drop targets
