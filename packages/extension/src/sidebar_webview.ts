@@ -425,10 +425,18 @@ function createIconEl(icon: string): HTMLElement {
 
   // ── Sash resize between sections ────────────────────────────────────────────
 
-  const MIN_SECTION_HEIGHT = 28; // ~section header height
-  const sidebarSections = document.querySelector(".sidebar-sections");
+  const HEADER_HEIGHT = 28; // collapsed section = header only
+  const sidebarSections = document.querySelector(".sidebar-sections") as HTMLElement | null;
+
+  /** Per-section expanded pixel height (only for expanded sections).
+   *  This is the SINGLE source of truth — sash drag and toggle both write here,
+   *  layoutSections() reads it. */
+  const sectionSizes = new Map<string, number>();
+
   let activeSash: {
     sash: HTMLElement;
+    aboveId: string;
+    belowId: string;
     above: HTMLElement;
     below: HTMLElement;
     startY: number;
@@ -448,6 +456,78 @@ function createIconEl(icon: string): HTMLElement {
     }
     if (fleetSection) sections.push(fleetSection);
     return sections;
+  }
+
+  /** Get a stable ID for a section element. */
+  function sectionId(el: HTMLElement): string {
+    return el.id || el.dataset.sectionKey || "";
+  }
+
+  /**
+   * Pixel layout engine — the SINGLE function that writes style.top and
+   * style.height on every .section. Called after every state change (toggle,
+   * sash drag, roots render, resize).
+   *
+   * Algorithm:
+   * 1. Collapsed sections get HEADER_HEIGHT (28px).
+   * 2. Remaining space is split among expanded sections proportionally
+   *    to their sectionSizes entries (or equally if no entry exists).
+   */
+  function layoutSections(): void {
+    if (!sidebarSections) return;
+    const totalHeight = sidebarSections.clientHeight;
+    const sections = getAllSections();
+    if (sections.length === 0) return;
+
+    // Separate expanded vs collapsed
+    const expandedSections: HTMLElement[] = [];
+    let collapsedHeight = 0;
+    for (const s of sections) {
+      if (s.classList.contains("expanded")) {
+        expandedSections.push(s);
+      } else {
+        collapsedHeight += HEADER_HEIGHT;
+      }
+    }
+
+    const availableForExpanded = Math.max(0, totalHeight - collapsedHeight);
+
+    // Compute proportional heights for expanded sections
+    let totalWeight = 0;
+    for (const s of expandedSections) {
+      totalWeight += sectionSizes.get(sectionId(s)) || 1;
+    }
+
+    const expandedHeights = new Map<HTMLElement, number>();
+    if (expandedSections.length > 0 && totalWeight > 0) {
+      let remaining = availableForExpanded;
+      for (let i = 0; i < expandedSections.length; i++) {
+        const s = expandedSections[i];
+        const weight = sectionSizes.get(sectionId(s)) || 1;
+        // Last expanded section gets the remainder to avoid rounding drift
+        const h = i === expandedSections.length - 1
+          ? remaining
+          : Math.round(availableForExpanded * weight / totalWeight);
+        expandedHeights.set(s, Math.max(HEADER_HEIGHT, h));
+        remaining -= expandedHeights.get(s)!;
+      }
+    }
+
+    // Write pixel positions
+    let top = 0;
+    for (const s of sections) {
+      const h = s.classList.contains("expanded")
+        ? (expandedHeights.get(s) ?? HEADER_HEIGHT)
+        : HEADER_HEIGHT;
+      s.style.top = top + "px";
+      s.style.height = h + "px";
+      top += h;
+    }
+  }
+
+  /** Check if the user prefers reduced motion. */
+  function prefersReducedMotion(): boolean {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   }
 
   /** Remove old sashes and insert fresh ones between adjacent sections. */
@@ -473,6 +553,8 @@ function createIconEl(icon: string): HTMLElement {
         e.preventDefault();
         activeSash = {
           sash, above, below,
+          aboveId: sectionId(above),
+          belowId: sectionId(below),
           startY: e.clientY,
           startAboveH: above.getBoundingClientRect().height,
           startBelowH: below.getBoundingClientRect().height,
@@ -486,26 +568,19 @@ function createIconEl(icon: string): HTMLElement {
     }
   }
 
-  /** Clear explicit sizes so CSS flex:1 re-distributes equally; refresh sash states. */
-  function resetSectionSizes(): void {
-    for (const el of getAllSections()) {
-      el.style.flex = "";
-    }
-    document.querySelectorAll(".sash").forEach((s) => {
-      (s as any)._setActive?.();
-    });
-  }
-
   // Global mousemove / mouseup for sash dragging
   document.addEventListener("mousemove", (e) => {
     if (!activeSash) return;
-    const { above, below, startY, startAboveH, startBelowH } = activeSash;
+    const { above, below, aboveId, belowId, startY, startAboveH, startBelowH } = activeSash;
     const delta = e.clientY - startY;
     const total = startAboveH + startBelowH;
-    const newAbove = Math.max(MIN_SECTION_HEIGHT, Math.min(startAboveH + delta, total - MIN_SECTION_HEIGHT));
+    const newAbove = Math.max(HEADER_HEIGHT, Math.min(startAboveH + delta, total - HEADER_HEIGHT));
     const newBelow = total - newAbove;
-    above.style.flex = `0 0 ${newAbove}px`;
-    below.style.flex = `0 0 ${newBelow}px`;
+    // Write to sectionSizes — layoutSections reads these
+    sectionSizes.set(aboveId, newAbove);
+    sectionSizes.set(belowId, newBelow);
+    // Instant pixel update — no .animated class during sash drag
+    layoutSections();
   });
 
   document.addEventListener("mouseup", () => {
@@ -514,6 +589,12 @@ function createIconEl(icon: string): HTMLElement {
     document.body.classList.remove("sash-dragging");
     activeSash = null;
   });
+
+  // Re-layout when the sidebar is resized (e.g. user drags the sidebar width)
+  if (sidebarSections) {
+    const ro = new ResizeObserver(() => layoutSections());
+    ro.observe(sidebarSections);
+  }
 
   // ── Tree rendering ─────────────────────────────────────────────────────────
 
@@ -533,74 +614,69 @@ function createIconEl(icon: string): HTMLElement {
   }
 
   /**
-   * Animated expand/collapse for section bodies. Mirrors VS Code's
-   * PaneView approach: temporarily enable CSS transitions on explicit
-   * heights, let the browser interpolate, then restore flex.
+   * Animated expand/collapse for section bodies. VS Code PaneView pattern:
+   * add .animated class to the container → let CSS transitions interpolate
+   * the pixel top/height changes → remove .animated after transitionend.
    *
    * File tree .children toggling remains instant (display none/block).
    */
   const SECTION_ANIM_MS = 150;
 
   function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
+    const id = sectionId(section);
+
     if (expanding) {
-      // 1. Show body and let flex compute the final layout
       body.style.display = "block";
       section.classList.add("expanded");
-      resetSectionSizes();
-      void body.offsetHeight; // force layout with flex
-      const targetHeight = body.offsetHeight;
-
-      // 2. Pin at 0 without the browser seeing the expanded state
-      section.classList.remove("expanded");
-      body.style.height = "0px";
-      body.style.overflow = "hidden";
-      body.style.transition = `height ${SECTION_ANIM_MS}ms ease-out`;
-      void body.offsetHeight; // commit the 0px state
-
-      // 3. Set target — CSS transition handles the interpolation
-      section.classList.add("expanded");
-      resetSectionSizes();
-      body.style.height = targetHeight + "px";
-
-      const onEnd = () => {
-        body.removeEventListener("transitionend", onEnd);
-        body.style.height = "";
-        body.style.overflow = "";
-        body.style.transition = "";
-        body.classList.add("expanded");
-      };
-      body.addEventListener("transitionend", onEnd);
-
+      body.classList.add("expanded");
+      // Clear any cached sash-drag size so expanded sections split equally
+      sectionSizes.delete(id);
     } else {
-      // 1. Pin current height
-      body.classList.remove("expanded");
-      const startHeight = body.offsetHeight;
-      body.style.height = startHeight + "px";
-      body.style.overflow = "hidden";
-      body.style.transition = `height ${SECTION_ANIM_MS}ms ease-out`;
-
-      // 2. Remove flex — pinned height holds stable
       section.classList.remove("expanded");
-      resetSectionSizes();
-      void body.offsetHeight; // commit
+      body.classList.remove("expanded");
+      // Clear cached size
+      sectionSizes.delete(id);
+    }
 
-      // 3. Animate to 0
-      body.style.height = "0px";
+    // Refresh sash active states
+    document.querySelectorAll(".sash").forEach((s) => {
+      (s as any)._setActive?.();
+    });
+
+    // Add .animated class for the transition (unless reduced motion)
+    if (!prefersReducedMotion() && sidebarSections) {
+      sidebarSections.classList.add("animated");
+      layoutSections();
 
       const onEnd = () => {
-        body.removeEventListener("transitionend", onEnd);
-        body.style.display = "none";
-        body.style.height = "";
-        body.style.overflow = "";
-        body.style.transition = "";
+        section.removeEventListener("transitionend", onEnd);
+        sidebarSections!.classList.remove("animated");
+        if (!expanding) {
+          body.style.display = "none";
+        }
       };
-      body.addEventListener("transitionend", onEnd);
+      section.addEventListener("transitionend", onEnd);
+
+      // Safety timeout: remove .animated even if transitionend doesn't fire
+      setTimeout(() => {
+        sidebarSections!.classList.remove("animated");
+        if (!expanding) {
+          body.style.display = "none";
+        }
+      }, SECTION_ANIM_MS + 50);
+    } else {
+      // No animation — just layout and hide/show instantly
+      layoutSections();
+      if (!expanding) {
+        body.style.display = "none";
+      }
     }
   }
 
   function renderSectionHeader(title: string, sectionKey: string): { section: HTMLElement; body: HTMLElement } {
     const section = document.createElement("div");
     section.className = sectionExpanded[sectionKey] ? "section expanded" : "section";
+    section.dataset.sectionKey = sectionKey;
 
     const header = document.createElement("div");
     header.className = "tree-section-label";
@@ -669,6 +745,7 @@ function createIconEl(icon: string): HTMLElement {
     }
 
     updateSashes();
+    layoutSections();
   }
 
   function renderRootNode(root: TreeRoot, depth: number): HTMLElement {
@@ -1149,5 +1226,7 @@ function createIconEl(icon: string): HTMLElement {
 
   // ── Initial load ───────────────────────────────────────────────────────────
 
+  // Position the fleet section immediately (roots arrive async via get-roots)
+  layoutSections();
   vscode.postMessage({ kind: "get-roots" });
 })();

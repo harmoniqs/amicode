@@ -646,7 +646,7 @@ describe("sidebar webview — section labels", () => {
     expect(html).toMatch(/\.tree-section-label:hover\s+\.section-add-btn[^{]*\{[^}]*opacity:\s*1/);
   });
 
-  it("sections use accordion flex layout with border-top separators", () => {
+  it("sections use pixel-positioned layout with border-top separators", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
@@ -657,10 +657,13 @@ describe("sidebar webview — section labels", () => {
     expect(html).toMatch(/\.tree-section-label\s*\{[^}]*border-top:/);
     expect(html).toMatch(/\.fleet-section-label\s*\{[^}]*border-top:/);
     expect(html).not.toMatch(/\.tree-section-label\s*\{[^}]*margin-top:/);
-    // Accordion layout: body is full-height flex, sections flex-grow when expanded
-    expect(html).toContain("sidebar-sections");
-    expect(html).toMatch(/\.section\.expanded\s*\{[^}]*flex:\s*1/);
-    // section-body gets overflow-y: auto when expanded (animated toggle adds .expanded class)
+    // Pixel-positioned layout: .sidebar-sections is position:relative
+    expect(html).toMatch(/\.sidebar-sections\s*\{[^}]*position:\s*relative/);
+    // Sections are position:absolute (JS sets top/height)
+    expect(html).toMatch(/\.section\s*\{[^}]*position:\s*absolute/);
+    // No flex:1 on .section.expanded — sizing is via JS pixel heights
+    expect(html).not.toMatch(/\.section\.expanded\s*\{[^}]*flex:\s*1/);
+    // section-body gets overflow-y: auto when expanded
     expect(html).toMatch(/\.section-body\.expanded\s*\{[^}]*overflow-y:\s*auto/);
   });
 
@@ -1435,19 +1438,19 @@ describe("sidebar — sash resize between sections", () => {
     expect(html).toContain("sash-dragging");
   });
 
-  it("webview creates sashes between sections and handles resize via mousemove", () => {
+  it("webview creates sashes between sections and handles resize via layoutSections", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
     // Sashes are inserted between sections after rendering
     expect(src).toContain("updateSashes");
-    // Resize handler redistributes heights
+    // Resize handler uses pixel layout
     expect(src).toContain("activeSash");
     expect(src).toContain("mousemove");
     expect(src).toContain("mouseup");
-    // Section toggle resets sizes so flex:1 takes over
-    expect(src).toContain("resetSectionSizes");
+    // Section toggle calls layoutSections
+    expect(src).toContain("layoutSections");
   });
 });
 
@@ -1659,35 +1662,66 @@ describe("sidebar — drag image pill", () => {
   });
 });
 
-// ── Section collapse/expand animation ────────────────────────────────────────
+// ── Section collapse/expand animation (pixel-positioned) ─────────────────────
 
 describe("sidebar — section toggle animation", () => {
-  it("webview uses inline CSS transitions for section expand/collapse with height measurement", () => {
+  it("webview has layoutSections function that sets pixel top/height on sections", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // Must have an animation helper
-    expect(src).toMatch(/toggleSectionBody/);
-    // Must use overflow hidden during animation
-    expect(src).toMatch(/overflow.*hidden/);
-    // Must measure content height via offsetHeight
-    expect(src).toMatch(/offsetHeight/);
-    // Must set an inline CSS transition on the body during animation
-    expect(src).toMatch(/style\.transition/);
-    // Must listen for transitionend to clean up
-    expect(src).toContain("transitionend");
+    // Must have the pixel layout engine
+    expect(src).toContain("layoutSections");
+    // Must set style.top and style.height on sections
+    expect(src).toMatch(/style\.top/);
+    expect(src).toMatch(/style\.height/);
   });
 
-  it("webview uses animated toggle for section expand/collapse, not instant display swap", () => {
+  it("webview has sectionSizes map as single source of truth for expanded section heights", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // Must have the animation helper
-    expect(src).toMatch(/toggleSection|animateSection|section.*animate/i);
-    // Must animate height
-    expect(src).toMatch(/\.height\s*=|offsetHeight|scrollHeight/);
+    // Must have a sectionSizes data structure
+    expect(src).toContain("sectionSizes");
+  });
+
+  it("toggle adds .animated class to sidebar-sections container, not inline transitions", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must add "animated" class for the transition
+    expect(src).toMatch(/classList.*add.*animated|animated/);
+    // Must remove it after the animation completes
+    expect(src).toContain("transitionend");
+    // Must NOT set inline style.transition on section bodies (old approach)
+    // The animation is via a CSS class, not inline transitions
+    expect(src).not.toMatch(/body\.style\.transition\s*=/);
+  });
+
+  it("CSS has .animated class with transition on top and height", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // Must have .animated .section transition rules
+    expect(html).toMatch(/\.animated\s+\.section|\.sidebar-sections\.animated/);
+    expect(html).toMatch(/transition.*top.*height|transition.*height.*top/);
+    // Easing must be ease-out 0.15s matching VS Code paneview.css
+    expect(html).toContain("ease-out");
+    expect(html).toContain("0.15s");
+  });
+
+  it("HEADER_HEIGHT constant is 28 (collapsed section = header only)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must define the header height constant used for collapsed sections
+    expect(src).toMatch(/HEADER_HEIGHT\s*=\s*28/);
   });
 
   it("section body transition does NOT apply to tree-node .children (file tree stays instant)", () => {
@@ -1696,13 +1730,52 @@ describe("sidebar — section toggle animation", () => {
       "utf8",
     );
     // .children container toggling must still use the instant display swap
-    // (not the animated toggleSectionBody helper)
-    // Find a ternary toggle line for childrenEl: display = expanded ? "block" : "none"
     expect(src).toMatch(/childrenEl\.style\.display\s*=\s*expanded.*\?\s*"block"\s*:\s*"none"/);
     // toggleSectionBody must NOT appear near childrenEl
     const childrenToggleLines = src.split("\n").filter(l => l.includes("childrenEl"));
     const usesAnimatedToggle = childrenToggleLines.some(l => l.includes("toggleSection"));
     expect(usesAnimatedToggle).toBe(false);
+  });
+
+  it("prefers-reduced-motion suppresses the animated class", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must check for reduced motion preference
+    expect(src).toContain("prefers-reduced-motion");
+    // The check must gate whether the .animated class is applied
+    expect(src).toMatch(/reduced-motion|matchMedia/);
+  });
+});
+
+// ── Sash with pixel layout ──────────────────────────────────────────────────
+
+describe("sidebar — sash resize with pixel layout", () => {
+  it("sash handler writes to sectionSizes and calls layoutSections without animated class", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Sash must call layoutSections
+    expect(src).toContain("layoutSections");
+    // Sash mousemove must NOT add the animated class
+    // The sash sets pixel heights directly — no transition during drag
+    const mousemoveIdx = src.indexOf("mousemove");
+    const mouseupIdx = src.indexOf("mouseup", mousemoveIdx);
+    const sashSection = src.slice(mousemoveIdx, mouseupIdx + 200);
+    expect(sashSection).not.toContain("animated");
+  });
+
+  it("sash drag writes to sectionSizes (not style.flex)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must use sectionSizes, not style.flex
+    expect(src).toContain("sectionSizes");
+    // Must NOT set style.flex during drag (old approach)
+    expect(src).not.toMatch(/\.style\.flex\s*=/);
   });
 });
 

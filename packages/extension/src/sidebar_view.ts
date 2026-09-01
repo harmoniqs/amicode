@@ -600,30 +600,32 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     }
     /* ── Accordion sections ────────────────────────────────────── */
     .section {
+      position: absolute;
+      left: 0;
+      right: 0;
       display: flex;
       flex-direction: column;
-      flex-shrink: 0;
-      min-height: 0;
-    }
-    .section.expanded {
-      flex: 1;
       overflow: hidden;
+      min-height: 0;
     }
     .section-body {
-      flex: 1;
       overflow: hidden;
       min-height: 0;
+      flex: 1;
     }
     .section-body.expanded {
       overflow-y: auto;
     }
     .sidebar-sections {
       flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-end;
+      position: relative;
       overflow: hidden;
       min-height: 0;
+    }
+    /* Animated expand/collapse — VS Code PaneView pattern.
+       Added temporarily by JS during toggles; removed after 150ms. */
+    .sidebar-sections.animated .section {
+      transition: top 0.15s ease-out, height 0.15s ease-out;
     }
     .tree-node {
       display: flex;
@@ -901,7 +903,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   </div>
   <div class="sidebar-sections">
     <div id="tree-root"></div>
-    <div id="fleet-section" class="section">
+    <div id="fleet-section" class="section" data-section-key="fleet">
       <div class="fleet-section-label" id="fleet-toggle">
         <span class="fleet-chevron" id="fleet-chevron">&#8250;</span>
         <span>Fleet</span>
