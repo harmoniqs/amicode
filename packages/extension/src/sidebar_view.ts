@@ -1155,7 +1155,7 @@ export function propagateGitStatusToDirs(
  * via vscode.window.showInputBox on the host side — window.prompt() does not
  * work in VS Code webview iframes.
  */
-async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
+export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
   try {
     const uri = vscode.Uri.file(req.path);
 
@@ -1218,8 +1218,26 @@ async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         return { ok: true };
       }
       case "delete": {
+        // Confirmation dialog — same pattern as VS Code's Explorer.
+        const name = path.basename(req.path);
+        const confirm = await vscode.window.showWarningMessage(
+          `Are you sure you want to delete '${name}'? You can restore from the Trash.`,
+          { modal: true },
+          "Move to Trash",
+        );
+        if (confirm !== "Move to Trash") return { ok: true };
+
         // Always trash — the permanent delete path does not exist (#673 invariant)
         await vscode.workspace.fs.delete(uri, { useTrash: true, recursive: true });
+
+        // If this was a workspace root folder, also remove the workspace entry
+        // so the sidebar doesn't show a broken/empty root.
+        const folders = vscode.workspace.workspaceFolders ?? [];
+        const rootIdx = folders.findIndex((f) => f.uri.fsPath === req.path);
+        if (rootIdx >= 0) {
+          vscode.workspace.updateWorkspaceFolders(rootIdx, 1);
+        }
+
         return { ok: true };
       }
       case "copy-path": {

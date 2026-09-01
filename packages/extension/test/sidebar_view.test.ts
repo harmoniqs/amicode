@@ -1986,3 +1986,67 @@ describe("amicode.newProject command wiring", () => {
     expect(cmdBlock).toContain("onAppReady");
   });
 });
+
+// ── Delete confirmation + workspace removal (#698) ───────────────────────────
+
+describe("executeFileOp — delete with confirmation", () => {
+  let executeFileOp: any;
+  let vs: typeof vscode;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vs = await import("vscode") as typeof vscode;
+    const mod = await import("../src/sidebar_view");
+    executeFileOp = mod.executeFileOp;
+  });
+
+  it("shows a confirmation dialog before deleting", async () => {
+    const warn = vi.spyOn(vs.window, "showWarningMessage").mockResolvedValue(undefined as any);
+    const del = vi.spyOn(vs.workspace.fs, "delete");
+
+    await executeFileOp({ op: "delete", path: "/project/src/old.ts" });
+
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("old.ts"),
+      expect.objectContaining({ modal: true }),
+      expect.any(String),
+    );
+    // Cancelled — should NOT delete
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("confirmed delete on a root folder trashes it AND removes from workspace", async () => {
+    vi.spyOn(vs.window, "showWarningMessage").mockResolvedValue("Move to Trash" as any);
+    const del = vi.spyOn(vs.workspace.fs, "delete");
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    (vs.workspace as any).workspaceFolders = [
+      { uri: vs.Uri.file("/projects/quantum-sim"), name: "quantum-sim", index: 0 },
+    ];
+
+    await executeFileOp({ op: "delete", path: "/projects/quantum-sim" });
+
+    expect(del).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: "/projects/quantum-sim" }),
+      expect.objectContaining({ useTrash: true, recursive: true }),
+    );
+    expect(updateFolders).toHaveBeenCalledWith(0, 1);
+
+    (vs.workspace as any).workspaceFolders = [];
+  });
+
+  it("confirmed delete on a child file trashes it without touching workspace folders", async () => {
+    vi.spyOn(vs.window, "showWarningMessage").mockResolvedValue("Move to Trash" as any);
+    const del = vi.spyOn(vs.workspace.fs, "delete");
+    const updateFolders = vi.spyOn(vs.workspace, "updateWorkspaceFolders");
+    (vs.workspace as any).workspaceFolders = [
+      { uri: vs.Uri.file("/projects/quantum-sim"), name: "quantum-sim", index: 0 },
+    ];
+
+    await executeFileOp({ op: "delete", path: "/projects/quantum-sim/src/old.ts" });
+
+    expect(del).toHaveBeenCalled();
+    expect(updateFolders).not.toHaveBeenCalled();
+
+    (vs.workspace as any).workspaceFolders = [];
+  });
+});
