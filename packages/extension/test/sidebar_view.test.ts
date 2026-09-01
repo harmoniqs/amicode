@@ -893,6 +893,17 @@ describe("sidebar webview — reorderable workspace folders", () => {
     expect(src).toMatch(/projectType/);
   });
 
+  it("root reorder insertion line uses Harmoniqs yellow, not VS Code blue", () => {
+    // Find the style line for the root-insert-indicator
+    const lines = src.split("\n");
+    const classLineIdx = lines.findIndex((l: string) => l.includes("root-insert-indicator"));
+    expect(classLineIdx).toBeGreaterThan(-1);
+    // The style is on the next line (indicator.style.cssText = ...)
+    const styleLine = lines[classLineIdx + 1];
+    expect(styleLine).toMatch(/#fff676/i);
+    expect(styleLine).not.toMatch(/focusBorder/);
+  });
+
   it("drop posts reorder-root message with sourcePath, targetPath, and position", () => {
     expect(src).toMatch(/reorder-root/);
     expect(src).toMatch(/position.*before|after|"before"|"after"/);
