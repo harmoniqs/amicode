@@ -47,8 +47,9 @@ export class ChatPanel {
   /** Callback fired when the user selects a project in the composer dropdown.
    *  The extension wires this to sidebar focus (collapse others, expand selected).
    *  Accepts null to clear the highlight (e.g. when switching to a session
-   *  that has no project selected). */
-  private static onProjectSelectedCallback?: (path: string | null) => void;
+   *  that has no project selected). autoExpand distinguishes explicit selection
+   *  (true) from session/tab switch (false). */
+  private static onProjectSelectedCallback?: (path: string | null, autoExpand?: boolean) => void;
   /** The `amicode_bug_report=1` boot-param gate (amicode#250 AC5): set from the
    *  staged skill set after every session prep; the composer button renders
    *  only when the report-a-bug skill is there to answer it. */
@@ -71,7 +72,7 @@ export class ChatPanel {
   }
 
   /** Subscribe to project-selected events from the composer dropdown (#663). */
-  static onProjectSelected(cb: ((path: string | null) => void) | undefined): void {
+  static onProjectSelected(cb: ((path: string | null, autoExpand?: boolean) => void) | undefined): void {
     ChatPanel.onProjectSelectedCallback = cb;
   }
 
@@ -134,7 +135,7 @@ export class ChatPanel {
           // Also cache the selection per-instance so the view-state listener can
           // re-emit it when this tab regains focus.
           onProjectSelected: ChatPanel.onProjectSelectedCallback
-            ? (p) => { this.lastProjectPath = p; ChatPanel.onProjectSelectedCallback!(p); }
+            ? (p, ae) => { this.lastProjectPath = p; ChatPanel.onProjectSelectedCallback!(p, ae); }
             : undefined,
         });
         if (!handled) console.log("[amicode/chat] webview msg:", msg);
@@ -144,12 +145,12 @@ export class ChatPanel {
     );
     // Tab-switch highlight: when this panel gains focus, re-emit its project
     // selection (or null) so the sidebar highlight tracks the active tab.
-    // Without this, switching away from a session that selected a project
-    // leaves the highlight stuck on the old folder.
+    // autoExpand=false: tab switch should only update the highlight, never
+    // force-expand/collapse folders the user arranged deliberately.
     this.panel.onDidChangeViewState(
       (e) => {
         if (e.webviewPanel.active) {
-          ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath);
+          ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath, false);
         }
       },
       null,

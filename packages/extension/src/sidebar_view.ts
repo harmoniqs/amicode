@@ -419,11 +419,13 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    * Set the active project path (from the active session's binding).
    * Posts active-project to the webview for highlight + auto-expand.
    * Pass null to clear (no session or no project binding).
+   * When autoExpand is false (e.g. session switch), only the highlight
+   * changes — folders stay as the user left them.
    */
-  setActiveProject(projectPath: string | null): void {
+  setActiveProject(projectPath: string | null, autoExpand = true): void {
     if (this.activeProjectPath === projectPath) return; // deduplicate
     this.activeProjectPath = projectPath;
-    this.postDown({ kind: "active-project", path: projectPath });
+    this.postDown({ kind: "active-project", path: projectPath, autoExpand });
   }
 
   /**

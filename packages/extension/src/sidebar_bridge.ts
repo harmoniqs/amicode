@@ -43,7 +43,7 @@ export type ChildrenMessage = { kind: "children"; path: string; entries: TreeEnt
 export type FsChangedMessage = { kind: "fs-changed"; folder: string };
 export type FileOpErrorMessage = { kind: "file-op-error"; op: string; path: string; message: string };
 export type FileOpOkMessage = { kind: "file-op-ok"; op: string; path: string };
-export type ActiveProjectMessage = { kind: "active-project"; path: string | null };
+export type ActiveProjectMessage = { kind: "active-project"; path: string | null; autoExpand?: boolean };
 export type GitStatusMessage = { kind: "git-status"; statusMap: Record<string, string> };
 export type SectionOrderMessage = { kind: "section-order"; order: string[] };
 

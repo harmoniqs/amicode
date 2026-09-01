@@ -598,6 +598,7 @@ describe("SidebarViewProvider — session awareness", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       kind: "active-project",
       path: "/projects/quantum-sim",
+      autoExpand: true,
     });
   });
 
@@ -612,6 +613,7 @@ describe("SidebarViewProvider — session awareness", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       kind: "active-project",
       path: null,
+      autoExpand: true,
     });
   });
 
@@ -884,6 +886,22 @@ describe("sidebar webview — section reorder bug fixes", () => {
     expect(fnBody).toMatch(/#fff676/);
     // Dev projects get VS Code focusBorder
     expect(fnBody).toMatch(/focusBorder/);
+  });
+
+  it("applyActiveProject accepts an autoExpand parameter", () => {
+    // The function signature must include autoExpand
+    expect(src).toMatch(/function applyActiveProject\(.*autoExpand/);
+  });
+
+  it("applyActiveProject only expands when autoExpand is true", () => {
+    const fnBody = src.slice(src.indexOf("function applyActiveProject"));
+    // The expand logic must be gated on autoExpand
+    expect(fnBody).toMatch(/autoExpand/);
+  });
+
+  it("active-project message handler reads autoExpand from the message", () => {
+    const handler = src.slice(src.indexOf("case \"active-project\""));
+    expect(handler).toMatch(/autoExpand/);
   });
 });
 

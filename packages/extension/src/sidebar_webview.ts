@@ -1473,7 +1473,7 @@ function createIconEl(icon: string): HTMLElement {
 
   // ── Active project logic (extracted for reuse by renderRoots) ────────────
 
-  function applyActiveProject(activePath: string | null): void {
+  function applyActiveProject(activePath: string | null, autoExpand = true): void {
     const rootPaths = new Set(currentRoots.map((r) => r.path));
     const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
     for (const node of allRootNodes) {
@@ -1491,33 +1491,38 @@ function createIconEl(icon: string): HTMLElement {
           : "var(--vscode-focusBorder)";
         row.style.borderLeft = `2px solid ${highlightColor}`;
         row.style.background = "var(--vscode-list-activeSelectionBackground)";
-        if (!expanded[nodePath]) {
-          expanded[nodePath] = true;
-          saveExpandedState();
-          const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
-          if (chevronSpan) chevronSpan.classList.add("expanded");
-          const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-          if (iconSpan) {
-            const newIcon = createFolderIconEl(true);
-            if (newIcon) iconSpan.replaceWith(newIcon);
-          }
-          const childrenEl = el.querySelector(".children") as HTMLElement | null;
-          if (childrenEl) {
-            childrenEl.style.display = "block";
-            if (!childrenCache[nodePath]) {
+        // Only expand/collapse when autoExpand is true (explicit user selection).
+        // Session/tab switches pass autoExpand=false to preserve folder state.
+        if (autoExpand) {
+          if (!expanded[nodePath]) {
+            expanded[nodePath] = true;
+            saveExpandedState();
+            const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+            if (chevronSpan) chevronSpan.classList.add("expanded");
+            const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+            if (iconSpan) {
+              const newIcon = createFolderIconEl(true);
+              if (newIcon) iconSpan.replaceWith(newIcon);
+            }
+            const childrenEl = el.querySelector(".children") as HTMLElement | null;
+            if (childrenEl) {
+              childrenEl.style.display = "block";
+              if (!childrenCache[nodePath]) {
+                vscode.postMessage({ kind: "get-children", path: nodePath });
+              }
+            }
+          } else {
+            const childrenEl = el.querySelector(".children") as HTMLElement | null;
+            if (childrenEl && !childrenEl.hasChildNodes() && !childrenCache[nodePath]) {
               vscode.postMessage({ kind: "get-children", path: nodePath });
             }
-          }
-        } else {
-          const childrenEl = el.querySelector(".children") as HTMLElement | null;
-          if (childrenEl && !childrenEl.hasChildNodes() && !childrenCache[nodePath]) {
-            vscode.postMessage({ kind: "get-children", path: nodePath });
           }
         }
       } else {
         row.style.borderLeft = "";
         row.style.background = "";
-        if (expanded[nodePath]) {
+        // Only collapse other roots when autoExpand is true (explicit selection).
+        if (autoExpand && expanded[nodePath]) {
           expanded[nodePath] = false;
           saveExpandedState();
           const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
@@ -1595,7 +1600,8 @@ function createIconEl(icon: string): HTMLElement {
         // Cache the path — if the DOM is empty (roots haven't arrived yet),
         // renderRoots will pick this up and apply it after building the tree.
         pendingActiveProject = msg.path ?? null;
-        applyActiveProject(pendingActiveProject);
+        const autoExpand = msg.autoExpand !== false;
+        applyActiveProject(pendingActiveProject, autoExpand);
         break;
       }
 

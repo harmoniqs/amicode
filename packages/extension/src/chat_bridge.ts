@@ -83,8 +83,10 @@ export interface BridgeIo {
   bugReport?: BugReportSink;
   /** Project-selected lifecycle (#663): the app posts a project-selected
    *  envelope when the user picks a project in the composer dropdown. The
-   *  extension wires this to sidebar focus (collapse others, expand selected). */
-  onProjectSelected?: (path: string) => void;
+   *  extension wires this to sidebar focus (collapse others, expand selected).
+   *  autoExpand distinguishes explicit selection (true) from session navigation
+   *  (false) — the sidebar highlights either way but only expands on explicit. */
+  onProjectSelected?: (path: string, autoExpand?: boolean) => void;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -1129,10 +1131,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
   // #663: the chat app posts project-selected when the user picks a project in
   // the composer dropdown. Forward to the sidebar so it can collapse other roots
-  // and expand the selected one.
+  // and expand the selected one. autoExpand defaults to true (explicit click);
+  // session-navigation emits set it to false (highlight only, no folder toggle).
   if (msg.kind === "project-selected") {
     const p = (msg as { path?: unknown }).path;
-    if (typeof p === "string" && p !== "") io.onProjectSelected?.(p);
+    const autoExpand = (msg as { autoExpand?: unknown }).autoExpand;
+    if (typeof p === "string" && p !== "") io.onProjectSelected?.(p, autoExpand !== false);
     return true;
   }
 
