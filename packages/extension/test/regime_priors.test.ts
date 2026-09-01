@@ -23,7 +23,7 @@
 // outcome events land in the workspace's events.jsonl via amicode_recommend,
 // and the audit reads them back; no new feed exists.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -496,5 +496,49 @@ describe("auditRegimePriorApplications — the workspace audit", () => {
     const res = auditRegimePriorApplications(slug);
     expect(res.tableProblems).toBeUndefined(); // the committed table loads
     expect(res.ok).toBe(true);
+  });
+});
+
+// ── AC4: attribution-free in the A1 sense — prior VALUES + provenance strings
+// ship; no crossover logic, no profile internals, no vendor attribution. The
+// profiles' sources are public-scale arXiv/meeting citations, which ARE
+// shippable — the leak guard draws the line mechanically: no census-vendor
+// names anywhere in the shipped table, no profile-internal magnitude fields
+// (per-vendor drift scales, trust geometry), family-level scoping only. ──
+describe("the committed table — the A1 leak guard", () => {
+  const raw = readFileSync(join(__dirname, "..", "opencode-plugin", "regime_priors_table.json"), "utf8");
+
+  it("carries no vendor attribution (the census vendors are named NOWHERE — family keying only)", () => {
+    const vendors = [
+      "diraq", "hrl", "intel", "groove",
+      "google", "ibm", "iqm", "rigetti",
+      "quera", "pasqal", "atomcomputing", "atom computing", "logiqal",
+    ];
+    const lowered = raw.toLowerCase();
+    for (const v of vendors) expect(lowered, `vendor "${v}" must not appear in the shipped table`).not.toContain(v);
+  });
+
+  it("carries no profile internals — no drift-scale / trust-geometry / crossover fields, only the five-knob values + their citations", () => {
+    const table = JSON.parse(raw) as Record<string, unknown>;
+    // the top-level shape is the schema, nothing else
+    expect(Object.keys(table).sort()).toEqual(["caveat", "census", "dynamic_census_contract", "priors", "schema"]);
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (typeof node !== "object" || node === null) return;
+      for (const [k, v] of Object.entries(node)) {
+        expect(k, `profile-internal field "${k}" must not ship`).not.toMatch(/drift|trust|geometry|crossover|vendor/);
+        walk(v);
+      }
+    };
+    walk(table);
+    // every entry keys on a NAMED knob with family-level scope — the
+    // profile-scope families are the platform families, never vendors
+    for (const e of table.priors as Record<string, unknown>[]) {
+      expect(REGIME_KNOBS).toContain(e.knob);
+      expect((e.families as string[]).every((f) => ["spin", "transmon", "atom"].includes(f))).toBe(true);
+    }
   });
 });

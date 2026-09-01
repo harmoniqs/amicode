@@ -41,7 +41,7 @@
         "census": { "date": "2026-08-31", "total": 12, "families": { "spin": 4, "transmon": 4, "atom": 4 } },
         "sources": [
           "arXiv:2408.13687 (surface-code transmon platform class, public-scale)",
-          "arXiv:2101.07746 (Heron-class tunable-coupler platform class, public-scale)",
+          "arXiv:2101.07746 (tunable-coupler platform class, public-scale)",
           "arXiv:2603.15758 (cross-resonance gate-synthesis platform class, public-scale)",
           "arXiv:2603.11018 (public-scale flux-tunable platform class)",
           "hardware-loop skill: per-channel trust boxes, never one scalar radius"
