@@ -121,6 +121,12 @@ function createIconEl(icon: string): HTMLElement {
   // then the host's section-order message from globalState overwrites if needed.
   let currentSectionOrder: string[] = savedState?.sectionOrder ?? ["research", "dev", "fleet"];
 
+  // Cache the last active-project path. If the active-project message arrives
+  // before roots render (tab switch, webview recreation), the DOM is empty and
+  // the handler is a no-op. renderRoots checks this after building the DOM and
+  // re-dispatches the active-project logic so the node gets expanded + highlighted.
+  let pendingActiveProject: string | null = null;
+
   /** Resolve rendering order: saved keys filtered to available, new keys appended. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
     const availableSet = new Set(available);
@@ -927,6 +933,13 @@ function createIconEl(icon: string): HTMLElement {
     if (Object.keys(lastGitStatusMap).length > 0) {
       applyGitStatus(lastGitStatusMap);
     }
+
+    // Apply pending active-project if it arrived before roots were rendered.
+    // The active-project handler is a no-op when the DOM is empty; now that
+    // the tree exists, re-dispatch the expand + highlight logic.
+    if (pendingActiveProject !== null) {
+      applyActiveProject(pendingActiveProject);
+    }
   }
 
   // ── Section drag-reorder (#708) ──────────────────────────────────────────
@@ -1458,6 +1471,64 @@ function createIconEl(icon: string): HTMLElement {
     });
   }
 
+  // ── Active project logic (extracted for reuse by renderRoots) ────────────
+
+  function applyActiveProject(activePath: string | null): void {
+    const rootPaths = new Set(currentRoots.map((r) => r.path));
+    const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
+    for (const node of allRootNodes) {
+      const el = node as HTMLElement;
+      const nodePath = el.dataset.path;
+      if (!nodePath || !rootPaths.has(nodePath)) continue;
+      const row = el.querySelector(".tree-node") as HTMLElement | null;
+      if (!row) continue;
+
+      if (nodePath === activePath) {
+        row.style.borderLeft = "2px solid var(--vscode-focusBorder)";
+        row.style.background = "var(--vscode-list-activeSelectionBackground)";
+        if (!expanded[nodePath]) {
+          expanded[nodePath] = true;
+          saveExpandedState();
+          const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+          if (chevronSpan) chevronSpan.classList.add("expanded");
+          const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+          if (iconSpan) {
+            const newIcon = createFolderIconEl(true);
+            if (newIcon) iconSpan.replaceWith(newIcon);
+          }
+          const childrenEl = el.querySelector(".children") as HTMLElement | null;
+          if (childrenEl) {
+            childrenEl.style.display = "block";
+            if (!childrenCache[nodePath]) {
+              vscode.postMessage({ kind: "get-children", path: nodePath });
+            }
+          }
+        } else {
+          const childrenEl = el.querySelector(".children") as HTMLElement | null;
+          if (childrenEl && !childrenEl.hasChildNodes() && !childrenCache[nodePath]) {
+            vscode.postMessage({ kind: "get-children", path: nodePath });
+          }
+        }
+      } else {
+        row.style.borderLeft = "";
+        row.style.background = "";
+        if (expanded[nodePath]) {
+          expanded[nodePath] = false;
+          saveExpandedState();
+          const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
+          if (chevronSpan) chevronSpan.classList.remove("expanded");
+          const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+          if (iconSpan) {
+            const newIcon = createFolderIconEl(false);
+            if (newIcon) iconSpan.replaceWith(newIcon);
+          }
+          const childrenEl = el.querySelector(".children") as HTMLElement | null;
+          if (childrenEl) childrenEl.style.display = "none";
+        }
+      }
+    }
+  }
+
   // ── Host → Webview messages ────────────────────────────────────────────────
 
   window.addEventListener("message", (event) => {
@@ -1516,71 +1587,10 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "active-project": {
-        // Update highlight: find all root nodes, toggle the "active" class.
-        // #663: collapse every OTHER root and expand the selected one, so the
-        // sidebar focuses on the project the user just chose in the composer.
-        const activePath: string | null = msg.path;
-        // Only operate on root-level project nodes (not nested child dirs).
-        const rootPaths = new Set(currentRoots.map((r) => r.path));
-        const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
-        for (const node of allRootNodes) {
-          const el = node as HTMLElement;
-          const nodePath = el.dataset.path;
-          if (!nodePath || !rootPaths.has(nodePath)) continue;
-          const row = el.querySelector(".tree-node") as HTMLElement | null;
-          if (!row) continue;
-
-          if (nodePath === activePath) {
-            row.style.borderLeft = "2px solid var(--vscode-focusBorder)";
-            row.style.background = "var(--vscode-list-activeSelectionBackground)";
-            // Auto-expand the active project root (not deeper)
-            if (!expanded[nodePath]) {
-              expanded[nodePath] = true;
-              saveExpandedState();
-              const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
-              if (chevronSpan) chevronSpan.classList.add("expanded");
-              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-              if (iconSpan) {
-                const newIcon = createFolderIconEl(true);
-                if (newIcon) iconSpan.replaceWith(newIcon);
-              }
-              const childrenEl = el.querySelector(".children") as HTMLElement | null;
-              if (childrenEl) {
-                childrenEl.style.display = "block";
-                if (!childrenCache[nodePath]) {
-                  vscode.postMessage({ kind: "get-children", path: nodePath });
-                }
-              }
-            } else {
-              // Safety net: the node was already expanded (persisted state or
-              // prior click), but the children container may still be empty —
-              // e.g. the initial renderRootNode's get-children hasn't resolved
-              // yet, or a roots re-render invalidated the DOM. If the cache is
-              // empty and no children are rendered, ensure a request is in flight.
-              const childrenEl = el.querySelector(".children") as HTMLElement | null;
-              if (childrenEl && !childrenEl.hasChildNodes() && !childrenCache[nodePath]) {
-                vscode.postMessage({ kind: "get-children", path: nodePath });
-              }
-            }
-          } else {
-            row.style.borderLeft = "";
-            row.style.background = "";
-            // Collapse non-active roots so the sidebar focuses on the chosen project
-            if (expanded[nodePath]) {
-              expanded[nodePath] = false;
-              saveExpandedState();
-              const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
-              if (chevronSpan) chevronSpan.classList.remove("expanded");
-              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-              if (iconSpan) {
-                const newIcon = createFolderIconEl(false);
-                if (newIcon) iconSpan.replaceWith(newIcon);
-              }
-              const childrenEl = el.querySelector(".children") as HTMLElement | null;
-              if (childrenEl) childrenEl.style.display = "none";
-            }
-          }
-        }
+        // Cache the path — if the DOM is empty (roots haven't arrived yet),
+        // renderRoots will pick this up and apply it after building the tree.
+        pendingActiveProject = msg.path ?? null;
+        applyActiveProject(pendingActiveProject);
         break;
       }
 

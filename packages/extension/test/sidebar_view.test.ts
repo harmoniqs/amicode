@@ -858,6 +858,23 @@ describe("sidebar webview — section reorder bug fixes", () => {
     // savedState is read for section order on initialization
     expect(src).toMatch(/savedState[\s\S]*?sectionOrder/);
   });
+
+  it("caches active-project path so it survives the roots-arrival gap", () => {
+    // A pendingActiveProject variable stores the path from active-project messages
+    expect(src).toMatch(/pendingActiveProject/);
+  });
+
+  it("active-project handler sets pendingActiveProject when DOM has no matching node", () => {
+    // The handler must set pendingActiveProject so renderRoots can apply it later
+    const handler = src.slice(src.indexOf("case \"active-project\""));
+    expect(handler).toMatch(/pendingActiveProject\s*=/);
+  });
+
+  it("renderRoots applies pendingActiveProject after rendering", () => {
+    // renderRoots must check and consume pendingActiveProject after building the DOM
+    const fnBody = src.slice(src.indexOf("function renderRoots"));
+    expect(fnBody).toMatch(/pendingActiveProject/);
+  });
 });
 
 // ── Reorderable workspace folders (#712) ─────────────────────────────────────
