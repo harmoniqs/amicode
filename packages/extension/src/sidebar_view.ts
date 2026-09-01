@@ -647,6 +647,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       align-items: center;
       justify-content: center;
       font-size: 12px;
+      transition: transform 0.15s ease;
+    }
+    .tree-node .chevron.expanded {
+      transform: rotate(90deg);
     }
     .tree-node .icon {
       width: 16px;
@@ -769,6 +773,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       align-items: center;
       justify-content: center;
       font-size: 14px;
+      transition: transform 0.15s ease;
+    }
+    .tree-section-label .section-chevron.expanded {
+      transform: rotate(90deg);
     }
     .tree-section-label .section-title {
       flex: 1;
@@ -823,6 +831,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       align-items: center;
       justify-content: center;
       font-size: 14px;
+      transition: transform 0.15s ease;
+    }
+    .fleet-section-label .fleet-chevron.expanded {
+      transform: rotate(90deg);
     }
     .fleet-body {
       padding: 8px 12px 8px 32px;
@@ -892,7 +904,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     <div id="tree-root"></div>
     <div id="fleet-section" class="section">
       <div class="fleet-section-label" id="fleet-toggle">
-        <span class="fleet-chevron" id="fleet-chevron">&#9656;</span>
+        <span class="fleet-chevron" id="fleet-chevron">&#8250;</span>
         <span>Fleet</span>
       </div>
       <div class="fleet-body section-body" id="fleet-body" style="display:none;">Coming soon</div>

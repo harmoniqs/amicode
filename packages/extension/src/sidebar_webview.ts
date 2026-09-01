@@ -123,7 +123,7 @@ function createIconEl(icon: string): HTMLElement {
 
   fleetToggle?.addEventListener("click", () => {
     fleetExpanded = !fleetExpanded;
-    if (fleetChevron) fleetChevron.textContent = fleetExpanded ? "\u25BE" : "\u25B8"; // ▾ / ▸
+    if (fleetChevron) fleetChevron.classList.toggle("expanded", fleetExpanded);
     if (fleetBody && fleetSection) {
       toggleSectionBody(fleetBody, fleetExpanded, fleetSection);
     }
@@ -252,7 +252,7 @@ function createIconEl(icon: string): HTMLElement {
         expanded[nodePath] = true;
         saveExpandedState();
         const chevronSpan = dataEl.querySelector(".chevron") as HTMLElement | null;
-        if (chevronSpan) chevronSpan.textContent = "\u25BE";
+        if (chevronSpan) chevronSpan.classList.add("expanded");
         const iconSpan = dataEl.querySelector(".icon") as HTMLElement | null;
         if (iconSpan) {
           const newIcon = createFolderIconEl(true);
@@ -583,8 +583,8 @@ function createIconEl(icon: string): HTMLElement {
     header.className = "tree-section-label";
 
     const chevron = document.createElement("span");
-    chevron.className = "section-chevron";
-    chevron.textContent = sectionExpanded[sectionKey] ? "\u25BE" : "\u25B8"; // ▾ / ▸
+    chevron.className = sectionExpanded[sectionKey] ? "section-chevron expanded" : "section-chevron";
+    chevron.textContent = "\u203A"; // ›
 
     const titleEl = document.createElement("span");
     titleEl.className = "section-title";
@@ -613,7 +613,7 @@ function createIconEl(icon: string): HTMLElement {
     header.addEventListener("click", () => {
       sectionExpanded[sectionKey] = !sectionExpanded[sectionKey];
       saveSectionState();
-      chevron.textContent = sectionExpanded[sectionKey] ? "\u25BE" : "\u25B8";
+      chevron.classList.toggle("expanded", sectionExpanded[sectionKey]);
       toggleSectionBody(body, sectionExpanded[sectionKey], section);
     });
 
@@ -659,8 +659,8 @@ function createIconEl(icon: string): HTMLElement {
 
     // Chevron (expand/collapse indicator)
     const chevronEl = document.createElement("span");
-    chevronEl.className = "chevron";
-    chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8"; // ▾ / ▸
+    chevronEl.className = expanded[root.path] ? "chevron expanded" : "chevron";
+    chevronEl.textContent = "\u203A"; // ›
 
     // Folder icon (omitted if theme has none — label sits next to chevron)
     const iconEl = createFolderIconEl(!!expanded[root.path]);
@@ -700,7 +700,7 @@ function createIconEl(icon: string): HTMLElement {
     row.addEventListener("click", () => {
       expanded[root.path] = !expanded[root.path];
       saveExpandedState();
-      chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8";
+      chevronEl.classList.toggle("expanded", expanded[root.path]);
       if (iconEl) {
         const newIcon = createFolderIconEl(expanded[root.path]);
         if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
@@ -744,8 +744,8 @@ function createIconEl(icon: string): HTMLElement {
 
     // Chevron
     const chevronEl = document.createElement("span");
-    chevronEl.className = "chevron";
-    chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+    chevronEl.className = expanded[entry.path] ? "chevron expanded" : "chevron";
+    chevronEl.textContent = "\u203A"; // ›
 
     // Folder icon (omitted if theme has none)
     const iconEl = createFolderIconEl(!!expanded[entry.path]);
@@ -780,7 +780,7 @@ function createIconEl(icon: string): HTMLElement {
     row.addEventListener("click", () => {
       expanded[entry.path] = !expanded[entry.path];
       saveExpandedState();
-      chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
+      chevronEl.classList.toggle("expanded", expanded[entry.path]);
       if (iconEl) {
         const newIcon = createFolderIconEl(expanded[entry.path]);
         if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
@@ -1027,7 +1027,7 @@ function createIconEl(icon: string): HTMLElement {
               expanded[nodePath!] = true;
               saveExpandedState();
               const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
-              if (chevronSpan) chevronSpan.textContent = "\u25BE";
+        if (chevronSpan) chevronSpan.classList.add("expanded");
               const iconSpan = row.querySelector(".icon") as HTMLElement | null;
               if (iconSpan) {
                 const newIcon = createFolderIconEl(true);

@@ -940,7 +940,8 @@ describe("sidebar — icon theme", () => {
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    expect(src).toContain('chevronEl.className = "chevron"');
+    // Directories have a chevron element (CSS-rotated, not character-swapped)
+    expect(src).toMatch(/chevronEl\.className\s*=.*"chevron/);
     // Files have icon directly (no spacer), same position as chevron
     expect(src).toContain("createFileIconEl");
   });
@@ -1700,5 +1701,43 @@ describe("sidebar — section toggle animation", () => {
     const childrenToggleLines = src.split("\n").filter(l => l.includes("childrenEl"));
     const usesAnimatedToggle = childrenToggleLines.some(l => l.includes("toggleSection"));
     expect(usesAnimatedToggle).toBe(false);
+  });
+});
+
+// ── Chevron style: CSS-rotated outline chevrons, not filled triangles ────────
+
+describe("sidebar — chevron style", () => {
+  it("CSS includes a rotate transform for expanded chevrons", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // All chevron types must rotate when expanded rather than swapping characters
+    expect(html).toMatch(/\.chevron[^}]*transition[^}]*transform/s);
+    expect(html).toMatch(/rotate\(90deg\)/);
+  });
+
+  it("webview does not use filled triangle characters (U+25B8 / U+25BE)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Must not contain the old filled triangle codepoints
+    expect(src).not.toContain("\\u25B8");
+    expect(src).not.toContain("\\u25BE");
+  });
+
+  it("fleet chevron in static HTML does not use filled triangle entity", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+    // Must not contain the old filled triangle HTML entity
+    expect(html).not.toContain("&#9656;");
+    expect(html).not.toContain("&#9662;");
   });
 });
