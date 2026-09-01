@@ -3,9 +3,9 @@
 #   amico-run --project <julia-project> solve.jl
 # Emits the run-dir contract (AMICODE_ITER, iter_<N>.png, result.toml, pulse.jld2, DONE).
 # Vetted against Piccolo 2.1 / DirectTrajOpt 0.10 / NamedTrajectories 0.9.4 (the
-# provisioned env refresh, #540): a single-qubit X gate on a 3-level transmon
-# converges to subspace fidelity > 0.999 on the cubic-spline parameterization
-# with R_bend on (Piccolo #312's landed default).
+# provisioned env refresh, #540): single-qubit family gates (X/Y/Z/H/√X/T) on a
+# 3-level transmon converge to subspace fidelity > 0.999 on the linear-spline
+# parameterization at R-from-the-grid (the DTO #122 construction).
 using Piccolo
 using CairoMakie   # loads PiccoloMakieExt → gives LivePulsePlotCallback its impl
 using JLD2
@@ -92,18 +92,21 @@ op  = size(gate, 1) == sys.levels ? gate : EmbeddedOperator(gate, sys)
 
 times   = collect(range(0.0, T, length = N))
 initial = 0.1 * randn(sys.n_drives, N)
-# ── the parameterization move (#540, plan step 3) ──────────────────────────
-# Cubic Hermite spline (the tangents :du are independent DOF — the zero-tangent
-# initial guess below is only the seed), carried through a cubic SplinePulseProblem
-# with R_bend riding Piccolo #312's landed default (1e-3, ON for cubic — the
-# opt-out, R_bend = 0, is the A/B's arm, not the template's). On the cubic family
-# R_u/R_du resolve to 0 by Piccolo's design (the L2 penalty biases flat pulses and
-# stalls fidelity); R (from the grid, above) is the weight the LINEAR fallback
-# family resolves to — both branches of the template compute it the same way.
-# The #275 guard refuses cubic + the default PWC BilinearIntegrator (it never
-# reads :du — the spline optimized would not be the spline named), so the
-# spline-faithful integrator is EXPLICIT — Piccolo 2.x ships SplineIntegrator.
-pulse = CubicSplinePulse(initial, times)
+# ── the parameterization (F1 fallback, #540) ───────────────────────────────
+# LINEAR spline at R-from-the-grid — semantics-equivalent to the shipped
+# 1.19/0.9.7 behavior by the DTO #122 construction (see R above): the linear
+# SplinePulseProblem resolves R_u = R_du = R on this family, the du variables are
+# constrained to the inter-knot slopes (DerivativeIntegrator), and the rollout
+# below measures the same linear waveform the dynamics integrate.
+#
+# The cubic/bend parameterization move (CubicSplinePulse + R_bend riding
+# Piccolo #312's landed default) MISSED the family bar on our template —
+# X at F = 0.7918 in 60 iterations (run r20260901-191606Z-5393, still mid-descent
+# with inf_du = 1.6 at max_iter) — and is parked as a named follow-up (F1: a miss
+# reverts, it does not retune). The SplineIntegrator stays on both families:
+# the #275 guard's spline-faithful pairing (a linear spline under it integrates
+# exactly what the rollout measures; a cubic under it is the follow-up's config).
+pulse = LinearSplinePulse(initial, times)
 qtraj = UnitaryTrajectory(sys, pulse, op)
 qcp = SplinePulseProblem(qtraj, N;
     Q = 100.0, R = R,
@@ -230,20 +233,22 @@ wall = time() - t0
 #     for a perfect qubit gate. We want the gate fidelity on {|0>,|1>}.
 #   - rollout (not the raw final propagator): re-integrating at 1e-8 yields a
 #     clean unitary, avoiding the ~1e-6 norm-drift that made the raw block read >1.
-#   - cubic interpolation: the rollout integrates the SAME Hermite spline the
-#     SplineIntegrator constrained (:u and :du) — the pairing the #275 guard
-#     exists to keep honest. A :constant/:linear rollout would measure a
+#   - linear interpolation: the rollout integrates the SAME linear waveform
+#     the SplineIntegrator constrains (order-1 spline) — the pairing the #275
+#     guard exists to keep honest. A :constant rollout would measure a
 #     different waveform than the one the optimizer scored.
 Uroll = iso_vec_to_operator(unitary_rollout(get_trajectory(qcp), sys;
-        state_name = state_name(qtraj), interpolation = :cubic)[:, end])
+        state_name = state_name(qtraj), interpolation = :linear)[:, end])
 fid   = unitary_fidelity(Uroll, op.operator; subspace = op.subspace)
 
 # ── the shape quartet (SEAM 3, #540 plan step 4) ───────────────────────────
 # Piccolo.shape_metrics over the SOLVED pulse: bend (∫|u″|²dt — the transfer
-# predictor), int_u2 (the Bloch–Siegert proxy), max_du (intra-span slew), crest
-# (hardware ACDR check, never a selection rule). Feature-gated by the SAME
-# 2.x probe as the version gate (a pre-2.x env skips the emission — never
-# errors) and try/catch-wrapped so the emission can never break the run.
+# predictor; C¹-families-only comparable — on the linear spline it is carried
+# but meaningful within-parameterization only), int_u2 (the Bloch–Siegert
+# proxy), max_du (intra-span slew), crest (hardware ACDR check, never a
+# selection rule). Feature-gated by the SAME 2.x probe as the version gate
+# (a pre-2.x env skips the emission — never errors) and try/catch-wrapped so
+# the emission can never break the run.
 # Emitted under `params.shape_metrics` — the run-dir result schema pins its
 # top level closed (additionalProperties: false) and the Inspector's
 # readTerminalState drops fidelity on a schema-invalid result.toml, while
