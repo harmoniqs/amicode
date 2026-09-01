@@ -146,6 +146,14 @@
     align-items: flex-end;
   }
 
+  /* Skill-only messages (no text bubble): let the pill shrink-wrap so the
+     body's align-items:flex-end pushes it flush right, matching where the
+     prompt bubble would sit. When a text bubble IS present the collapsible
+     keeps width:100% and left-anchors above the bubble as before. */
+  [data-slot="user-message-body"]:not(:has([data-slot="user-message-text"])) [data-component="collapsible"] {
+    width: fit-content;
+  }
+
   /* The prompt bubble, from the website's /amicode chat (harmoniqs-ai
      app/components/demo/parts.jsx, `Turn`): the user's words are the INVERSE
      of the ground — bg-deep/text-bg there. The app tokens
