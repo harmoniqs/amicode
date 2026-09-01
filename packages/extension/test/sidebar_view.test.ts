@@ -1662,7 +1662,7 @@ describe("sidebar — drag image pill", () => {
 // ── Section collapse/expand animation ────────────────────────────────────────
 
 describe("sidebar — section toggle animation", () => {
-  it("section body CSS has transition on max-height for animated expand/collapse", async () => {
+  it("section body CSS has transition on height for animated expand/collapse", async () => {
     vi.resetModules();
     const { SidebarViewProvider } = await import("../src/sidebar_view");
     const provider = new SidebarViewProvider(makeExtensionUri());
@@ -1684,8 +1684,8 @@ describe("sidebar — section toggle animation", () => {
     expect(src).toMatch(/toggleSection|animateSection|section.*animate/i);
     // Must NOT use bare display none/block for section body toggle
     // (the old pattern was: body.style.display = ... ? "block" : "none")
-    // New pattern should use max-height or height transition
-    expect(src).toMatch(/maxHeight|max-height|scrollHeight/);
+    // New pattern should use height transition (not max-height)
+    expect(src).toMatch(/\.height\s*=|offsetHeight|scrollHeight/);
   });
 
   it("section body transition does NOT apply to tree-node .children (file tree stays instant)", () => {

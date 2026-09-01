@@ -534,43 +534,72 @@ function createIconEl(icon: string): HTMLElement {
 
   /**
    * Animated expand/collapse for section bodies (RESEARCH PROJECTS,
-   * DEVELOPMENT PROJECTS, FLEET). Uses a max-height CSS transition.
+   * DEVELOPMENT PROJECTS, FLEET). Uses a height CSS transition that
+   * works WITH the flex layout instead of fighting it.
+   *
+   * Expand: add .expanded to section first (so flex allocates space),
+   * measure the flex-computed target height, animate body from 0 to
+   * that target, then release the explicit height so flex owns it.
+   *
+   * Collapse: pin the body's current height, remove .expanded (flex
+   * releases), animate body to 0, then hide.
+   *
    * File tree .children toggling remains instant (display none/block).
    */
   function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
+    // Cancel any in-flight animation
+    if ((body as any)._sectionAnimEnd) {
+      body.removeEventListener("transitionend", (body as any)._sectionAnimEnd);
+      (body as any)._sectionAnimEnd = null;
+    }
+
     if (expanding) {
-      // Show the element so we can measure it
+      // 1. Show the body and add .expanded to section so flex allocates space
       body.style.display = "block";
-      body.style.maxHeight = "0px";
       body.classList.remove("expanded");
-      // Force reflow so the browser registers maxHeight: 0
+      section.classList.add("expanded");
+      resetSectionSizes();
+
+      // 2. Let flex compute the target height
+      //    (body has flex:1 inside section.expanded, so it fills the space)
       void body.offsetHeight;
-      // Animate to content height
-      body.style.maxHeight = body.scrollHeight + "px";
+      const targetHeight = body.offsetHeight;
+
+      // 3. Pin at 0 and animate to the flex-computed target
+      body.style.height = "0px";
+      void body.offsetHeight;
+      body.style.height = targetHeight + "px";
+
       const onEnd = () => {
         body.removeEventListener("transitionend", onEnd);
-        // Remove the fixed max-height so the section can flex freely
-        body.style.maxHeight = "";
+        (body as any)._sectionAnimEnd = null;
+        // Release explicit height — flex takes over seamlessly (same value)
+        body.style.height = "";
         body.classList.add("expanded");
-        section.classList.add("expanded");
-        resetSectionSizes();
       };
+      (body as any)._sectionAnimEnd = onEnd;
       body.addEventListener("transitionend", onEnd);
     } else {
-      // Pin current height so we can transition from it
+      // 1. Pin the body at its current flex-computed height
       body.classList.remove("expanded");
-      body.style.maxHeight = body.offsetHeight + "px";
-      // Force reflow
-      void body.offsetHeight;
-      // Animate to 0
-      body.style.maxHeight = "0px";
+      const currentHeight = body.offsetHeight;
+      body.style.height = currentHeight + "px";
+
+      // 2. Remove flex:1 — but the pinned height holds the size stable
       section.classList.remove("expanded");
       resetSectionSizes();
+
+      // 3. Force reflow then animate to 0
+      void body.offsetHeight;
+      body.style.height = "0px";
+
       const onEnd = () => {
         body.removeEventListener("transitionend", onEnd);
+        (body as any)._sectionAnimEnd = null;
         body.style.display = "none";
-        body.style.maxHeight = "";
+        body.style.height = "";
       };
+      (body as any)._sectionAnimEnd = onEnd;
       body.addEventListener("transitionend", onEnd);
     }
   }
