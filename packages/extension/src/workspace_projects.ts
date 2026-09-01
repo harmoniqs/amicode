@@ -21,7 +21,7 @@ export interface WorkspaceProjectEntry {
 
 /** Injected dependencies — testable without VS Code API or filesystem. */
 export interface WorkspaceProjectDeps {
-  getWorkspaceFolders: () => Array<{ uri: { fsPath: string }; name: string }>;
+  getWorkspaceFolders: () => ReadonlyArray<{ uri: { fsPath: string }; name: string }>;
   detectProjectType: (dir: string) => ProjectType;
   readToml: (dir: string) => { name?: string; status?: string };
 }

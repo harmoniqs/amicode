@@ -10,7 +10,7 @@ export interface ProviderEntry {
 
 /** ok | not-ok signal shared by the healthcheck and the chat-not-ready gate. */
 export type LlmCredsSignal =
-  | { ok: true; provider: string; source?: string }
+  | { ok: true; provider: string; source?: string; warning?: string }
   | { ok: false; reason: string; fix: string };
 
 /** PURE: compute the signal from opencode's resolved providers + configured model. */

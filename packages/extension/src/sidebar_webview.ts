@@ -409,7 +409,7 @@ function createIconEl(icon: string): HTMLElement {
     const isRoot = currentRoots.some((r) => r.path === nodePath);
 
     // Build menu items
-    interface MenuItem { label: string; op?: string; separator?: boolean; inline?: boolean }
+    interface MenuItem { label?: string; op?: string; separator?: boolean; inline?: boolean }
     const items: MenuItem[] = [];
 
     if (nodeType === "directory") {
@@ -451,7 +451,7 @@ function createIconEl(icon: string): HTMLElement {
       }
       const el = document.createElement("div");
       el.className = "context-menu-item";
-      el.textContent = item.label;
+      el.textContent = item.label ?? "";
       el.addEventListener("click", () => {
         dismissMenu();
         if (item.inline && dataEl) {
@@ -678,7 +678,7 @@ function createIconEl(icon: string): HTMLElement {
   // Global mousemove / mouseup for sash dragging
   document.addEventListener("mousemove", (e) => {
     if (!activeSash) return;
-    const { above, below, aboveId, belowId, startY, startAboveH, startBelowH } = activeSash;
+    const { above: _above, below: _below, aboveId, belowId, startY, startAboveH, startBelowH } = activeSash;
     const delta = e.clientY - startY;
     const total = startAboveH + startBelowH;
     const newAbove = Math.max(HEADER_HEIGHT, Math.min(startAboveH + delta, total - HEADER_HEIGHT));
@@ -716,7 +716,7 @@ function createIconEl(icon: string): HTMLElement {
   /** Walk all rendered nodes and apply/remove git-status CSS classes. */
   function applyGitStatus(statusMap: Record<string, string>): void {
     const gitClasses = ["git-modified", "git-added", "git-deleted", "git-untracked", "git-ignored", "git-conflict"];
-    const allNodes = treeRoot?.querySelectorAll("[data-path]") ?? [];
+    const allNodes = Array.from(treeRoot?.querySelectorAll("[data-path]") ?? []);
     for (const node of allNodes) {
       const el = node as HTMLElement;
       const nodePath = el.dataset.path;
@@ -786,7 +786,6 @@ function createIconEl(icon: string): HTMLElement {
   const SECTION_ANIM_MS = 150;
 
   function toggleSectionBody(body: HTMLElement, expanding: boolean, section: HTMLElement): void {
-    const id = sectionId(section);
 
     if (expanding) {
       body.style.display = "block";
@@ -1480,7 +1479,7 @@ function createIconEl(icon: string): HTMLElement {
 
   function applyActiveProject(activePath: string | null, autoExpand = true): void {
     const rootPaths = new Set(currentRoots.map((r) => r.path));
-    const allRootNodes = treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? [];
+    const allRootNodes = Array.from(treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? []);
     for (const node of allRootNodes) {
       const el = node as HTMLElement;
       const nodePath = el.dataset.path;
@@ -1566,7 +1565,7 @@ function createIconEl(icon: string): HTMLElement {
         // Find the container for this path and render children
         const container = treeRoot?.querySelector(`[data-path="${CSS.escape(msg.path)}"] > .children`);
         if (container) {
-          const depth = Math.round((parseInt((container.parentElement as HTMLElement)?.querySelector('.tree-node')?.style.paddingLeft ?? '8') - 8) / 16) + 1;
+          const depth = Math.round((parseInt(((container.parentElement as HTMLElement)?.querySelector('.tree-node') as HTMLElement | null)?.style.paddingLeft ?? '8') - 8) / 16) + 1;
           // Guard the inline edit temp row: innerHTML="" will detach the
           // focused input, firing blur synchronously — suppress cancel.
           const hasInlineEdit = activeInlineEdit?.tempRow && activeInlineEdit.path === msg.path;

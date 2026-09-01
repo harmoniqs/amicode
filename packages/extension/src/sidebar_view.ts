@@ -300,7 +300,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       readToml: (dir) => readResearchToml(dir),
       readDirectory: (dir) => readDirectoryEntries(dir),
       getExcludePatterns: () => getExcludePatterns(),
-      getWorkspaceFolders: () => (vscode.workspace.workspaceFolders ?? []) as Array<{ uri: { fsPath: string }; name: string }>,
+      getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
     });
   }
 
@@ -1090,7 +1090,7 @@ async function addExistingProject(): Promise<void> {
 // ── Git status annotation ────────────────────────────────────────────────────
 
 /** Classify a numeric Git extension status into a simple category. */
-function classifyGitStatus(status: number): TreeEntry["gitStatus"] {
+function classifyGitStatus(status: number): NonNullable<TreeEntry["gitStatus"]> {
   // Git extension Status enum: 0=INDEX_MODIFIED, 1=INDEX_ADDED, 2=INDEX_DELETED,
   // 3=INDEX_RENAMED, 4=INDEX_COPIED, 5=MODIFIED, 6=DELETED, 7=UNTRACKED,
   // 8=IGNORED, 9=INTENT_TO_ADD, 10..16=merge conflict variants
@@ -1146,7 +1146,7 @@ function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
     // Annotate files with exact matches, then propagate to directories
     const annotated = entries.map((entry) => {
       const gitStatus = statusMap.get(entry.path);
-      return gitStatus ? { ...entry, gitStatus } : entry;
+      return gitStatus ? { ...entry, gitStatus: gitStatus as TreeEntry["gitStatus"] } : entry;
     });
     return propagateGitStatusToDirs(annotated, statusMap);
   } catch {

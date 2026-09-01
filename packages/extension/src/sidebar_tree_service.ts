@@ -24,7 +24,7 @@ export interface TreeServiceDeps {
   /** Get exclude pattern strings from files.exclude. */
   getExcludePatterns?: () => string[];
   /** Get current workspace folders. */
-  getWorkspaceFolders?: () => Array<{ uri: { fsPath: string }; name: string }>;
+  getWorkspaceFolders?: () => ReadonlyArray<{ uri: { fsPath: string }; name: string }>;
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
