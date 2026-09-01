@@ -1,0 +1,30 @@
+schema_version = 1
+kind = "control"
+
+[system]
+kind = "template"
+template = "TransmonSystem"
+
+[goal]
+kind = "ket"
+target = "cat_alpha2"
+
+[pulse]
+kind = "cubic_spline"
+T = 100
+
+[problem]
+template = "SplinePulseProblem"
+N = 100
+Q = 100000
+R = 0.0001
+du_bound = 50
+
+[solver]
+backend = "ipopt"
+strategy = "direct"
+max_iter = 300
+
+[integrator]
+kind = "spline"
+alg = "magnus_adapt4"

@@ -1,0 +1,15 @@
+id = "transmon-CZ-v3"
+platform = "transmon"
+gate = "CZ"
+fidelity = 0.9994
+duration_us = 0.08
+pulse_type = "cubic"
+N_knots = 51
+free_phase = true
+path = "pulses/transmon-CZ-v3/pulse.jld2"
+branch = "main"
+warm_start = "transmon-CZ-v2"
+calibration_ref = "runs/r20260803-070000Z-calib1/rehearsal.toml"
+pinned_globals = { delta = 0.21 }
+tags = ["flywheel-fixture"]
+date = "2026-08-03"

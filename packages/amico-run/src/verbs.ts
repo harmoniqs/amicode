@@ -24,6 +24,7 @@ import { fleetVerb } from "./fleet_verb.js";
 import { specVerb } from "./spec_verb.js";
 import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
+import { campaignVerb } from "./campaign_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -201,4 +202,31 @@ const papers: Verb = {
   run: papersVerb,
 };
 
-export const SPINE_VERBS: Verb[] = [catalog, vault, device, note, ledger, profile, fleet, spec, plan, handoff, papers];
+// campaign — the SEAM 7 (#709) flywheel surface: the campaign-family derivation
+// + the decay computation, per family, over existing records only. The CLI is
+// the delivery path this slice owns; the studio panel surfacing rides the fork
+// flow (the SEAM 1 UI-half pattern — a named follow-up). Read-only: the verb
+// never stamps a record.
+const campaign: Verb = {
+  name: "campaign",
+  summary:
+    "decay — the flywheel trend: per campaign family, (acquisitions, iterations, wall clock) deltas vs prior same-family campaigns",
+  generalizes: "the studio flywheel panel (SEAM 7's UI half — fork-flow follow-up) over the run store + task records + pulse bank",
+  slice: "codesign SEAM 7 (#709)",
+  run: campaignVerb,
+};
+
+export const SPINE_VERBS: Verb[] = [
+  catalog,
+  vault,
+  device,
+  note,
+  ledger,
+  profile,
+  fleet,
+  spec,
+  plan,
+  handoff,
+  papers,
+  campaign,
+];

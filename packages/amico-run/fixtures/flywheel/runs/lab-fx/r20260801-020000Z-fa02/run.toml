@@ -1,0 +1,10 @@
+schema_version = "2"
+run_id = "r20260801-020000Z-fa02"
+script_path = "/tmp/fx/runs/lab-fx/r20260801-020000Z-fa02/problem.toml"
+lab = "lab-fx"
+lab_id = "lab-fx"
+created_at = "2026-08-01T02:00:00.000Z"
+orchestrator_version = "0.1.0"
+
+[julia]
+binary = "julia"

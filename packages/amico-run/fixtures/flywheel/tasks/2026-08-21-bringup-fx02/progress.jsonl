@@ -1,0 +1,2 @@
+{"t": "2026-08-21T10:01:00.000Z", "ev": "progress", "step": 1, "of": 6, "label": "acquire", "metrics": {"infidelity": 0.028}}
+{"t": "2026-08-21T10:03:00.000Z", "ev": "heartbeat"}
