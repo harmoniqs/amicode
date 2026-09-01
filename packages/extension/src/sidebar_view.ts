@@ -14,6 +14,265 @@ import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMess
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { detectProjectType } from "./project/detect";
 
+// ── Icon theme resolution ────────────────────────────────────────────────────
+
+/** Data structure passed to the webview for icon rendering. */
+export interface IconThemeData {
+  mode: "font" | "svg" | "none";
+  /** CSS to inject (@font-face + icon classes for font themes, empty otherwise). */
+  css: string;
+  /** File extension → icon identifier (CSS class for font, webview URI for svg). */
+  fileExtensions: Record<string, string>;
+  /** Exact file name → icon identifier. */
+  fileNames: Record<string, string>;
+  /** Default folder icon identifier. */
+  folder: string;
+  /** Expanded folder icon identifier. */
+  folderExpanded: string;
+  /** Default file icon identifier. */
+  defaultFile: string;
+}
+
+/**
+ * Pure function: parse a VS Code icon theme JSON and produce an IconThemeData.
+ *
+ * @param themeJson   Parsed icon theme contribution JSON (or null).
+ * @param basePath    Directory containing the theme JSON (for resolving relative paths).
+ * @param resolveUri  Converts an absolute file path to a webview-loadable URI string.
+ * @param langExtMap  Optional mapping from file extension (no dot) to VS Code language ID,
+ *                    built from vscode.extensions.all[*].contributes.languages.
+ *                    Enables the languageIds icon resolution path that Seti relies on.
+ * @param colorThemeKind  "light" | "dark" (default "dark"). When "light", overlays the
+ *                        theme's `light` section onto the base mappings.
+ */
+export function buildIconMap(
+  themeJson: any,
+  basePath: string,
+  resolveUri: (absolutePath: string) => string,
+  langExtMap?: Record<string, string>,
+  colorThemeKind?: "light" | "dark",
+): IconThemeData {
+  const empty: IconThemeData = {
+    mode: "none", css: "",
+    fileExtensions: {}, fileNames: {},
+    folder: "", folderExpanded: "", defaultFile: "",
+  };
+  if (!themeJson || typeof themeJson !== "object") return empty;
+
+  // Merge the light variant overrides when on a light theme
+  let effective = themeJson;
+  if (colorThemeKind === "light" && themeJson.light) {
+    const lt = themeJson.light;
+    effective = {
+      ...themeJson,
+      file: lt.file ?? themeJson.file,
+      folder: lt.folder ?? themeJson.folder,
+      folderExpanded: lt.folderExpanded ?? themeJson.folderExpanded,
+      fileExtensions: { ...themeJson.fileExtensions, ...lt.fileExtensions },
+      fileNames: { ...themeJson.fileNames, ...lt.fileNames },
+      languageIds: { ...themeJson.languageIds, ...lt.languageIds },
+    };
+  }
+
+  const defs: Record<string, any> = themeJson.iconDefinitions ?? {};
+  const isFontTheme = Array.isArray(themeJson.fonts) && themeJson.fonts.length > 0;
+
+  if (isFontTheme) {
+    return buildFontIconMap(effective, basePath, resolveUri, defs, langExtMap);
+  }
+  // SVG-based theme
+  return buildSvgIconMap(effective, basePath, resolveUri, defs, langExtMap);
+}
+
+function buildFontIconMap(
+  themeJson: any, basePath: string,
+  resolveUri: (p: string) => string,
+  defs: Record<string, any>,
+  langExtMap?: Record<string, string>,
+): IconThemeData {
+  const font = themeJson.fonts[0];
+  const fontSrc = font.src?.[0];
+  if (!fontSrc) return { mode: "none", css: "", fileExtensions: {}, fileNames: {}, folder: "", folderExpanded: "", defaultFile: "" };
+
+  const fontUri = resolveUri(path.resolve(basePath, fontSrc.path));
+  const fontSize = font.size ?? "150%";
+  const fontId = font.id ?? "icon-theme-font";
+
+  // Build @font-face + base class
+  let css = `@font-face { font-family: "${fontId}"; src: url("${fontUri}") format("${fontSrc.format ?? "woff"}"); font-weight: normal; font-style: normal; }\n`;
+  css += `.theme-icon { font-family: "${fontId}"; font-size: ${fontSize}; -webkit-font-smoothing: antialiased; }\n`;
+
+  // Build per-definition CSS classes
+  const classMap: Record<string, string> = {}; // defName -> CSS class
+  for (const [defName, def] of Object.entries(defs)) {
+    if (!def?.fontCharacter) continue;
+    const cls = `thi-${defName.replace(/^_/, "")}`;
+    classMap[defName] = cls;
+    css += `.${cls}::before { content: "${def.fontCharacter}"; color: ${def.fontColor ?? "inherit"}; }\n`;
+  }
+
+  // Map file extensions + names to CSS classes
+  const fileExtensions: Record<string, string> = {};
+  for (const [ext, defName] of Object.entries(themeJson.fileExtensions ?? {})) {
+    if (classMap[defName as string]) fileExtensions[ext] = classMap[defName as string];
+  }
+  // languageIds resolution: ext → langId → defName → CSS class (lower priority)
+  const langIcons: Record<string, string> = themeJson.languageIds ?? {};
+  if (langExtMap) {
+    for (const [ext, langId] of Object.entries(langExtMap)) {
+      if (fileExtensions[ext]) continue; // direct mapping wins
+      const defName = langIcons[langId];
+      if (defName && classMap[defName]) fileExtensions[ext] = classMap[defName];
+    }
+  }
+  const fileNames: Record<string, string> = {};
+  for (const [name, defName] of Object.entries(themeJson.fileNames ?? {})) {
+    if (classMap[defName as string]) {
+      const cls = classMap[defName as string];
+      fileNames[name] = cls;
+      // Case-insensitive variants (Seti uses lowercase; real files vary)
+      const lower = name.toLowerCase();
+      const upper = name.toUpperCase();
+      // "readme.md" → "README.MD" won't match, but common patterns:
+      // "readme.md" → "README.md" (uppercase base, keep extension case)
+      const dot = name.lastIndexOf(".");
+      const ext = dot >= 0 ? name.slice(dot) : "";
+      const base = dot >= 0 ? name.slice(0, dot) : name;
+      const upperBase = base.toUpperCase() + ext;
+      if (!fileNames[lower]) fileNames[lower] = cls;
+      if (!fileNames[upper]) fileNames[upper] = cls;
+      if (!fileNames[upperBase]) fileNames[upperBase] = cls;
+    }
+  }
+
+  return {
+    mode: "font",
+    css,
+    fileExtensions,
+    fileNames,
+    folder: classMap[themeJson.folder] ?? "",
+    folderExpanded: classMap[themeJson.folderExpanded] ?? "",
+    defaultFile: classMap[themeJson.file] ?? "",
+  };
+}
+
+function buildSvgIconMap(
+  themeJson: any, basePath: string,
+  resolveUri: (p: string) => string,
+  defs: Record<string, any>,
+  langExtMap?: Record<string, string>,
+): IconThemeData {
+  // Resolve definition name → webview URI
+  const uriMap: Record<string, string> = {};
+  for (const [defName, def] of Object.entries(defs)) {
+    if (!(def as any)?.iconPath) continue;
+    uriMap[defName] = resolveUri(path.resolve(basePath, (def as any).iconPath));
+  }
+
+  const fileExtensions: Record<string, string> = {};
+  for (const [ext, defName] of Object.entries(themeJson.fileExtensions ?? {})) {
+    if (uriMap[defName as string]) fileExtensions[ext] = uriMap[defName as string];
+  }
+  // languageIds resolution (lower priority)
+  const langIcons: Record<string, string> = themeJson.languageIds ?? {};
+  if (langExtMap) {
+    for (const [ext, langId] of Object.entries(langExtMap)) {
+      if (fileExtensions[ext]) continue;
+      const defName = langIcons[langId];
+      if (defName && uriMap[defName]) fileExtensions[ext] = uriMap[defName];
+    }
+  }
+  const fileNames: Record<string, string> = {};
+  for (const [name, defName] of Object.entries(themeJson.fileNames ?? {})) {
+    if (uriMap[defName as string]) {
+      const uri = uriMap[defName as string];
+      fileNames[name] = uri;
+      const lower = name.toLowerCase();
+      const upper = name.toUpperCase();
+      const dot = name.lastIndexOf(".");
+      const ext = dot >= 0 ? name.slice(dot) : "";
+      const base = dot >= 0 ? name.slice(0, dot) : name;
+      const upperBase = base.toUpperCase() + ext;
+      if (!fileNames[lower]) fileNames[lower] = uri;
+      if (!fileNames[upper]) fileNames[upper] = uri;
+      if (!fileNames[upperBase]) fileNames[upperBase] = uri;
+    }
+  }
+
+  return {
+    mode: "svg",
+    css: "",
+    fileExtensions,
+    fileNames,
+    folder: uriMap[themeJson.folder] ?? "",
+    folderExpanded: uriMap[themeJson.folderExpanded] ?? "",
+    defaultFile: uriMap[themeJson.file] ?? "",
+  };
+}
+
+/**
+ * Build a file-extension → language-ID map from VS Code's installed extensions.
+ * Used to resolve the icon theme's `languageIds` section (e.g. .jl → julia → _julia).
+ */
+export function buildLangExtMap(extensionList: any[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const ext of extensionList ?? []) {
+    const languages: any[] = ext.packageJSON?.contributes?.languages ?? [];
+    for (const lang of languages) {
+      const langId = lang.id;
+      if (!langId) continue;
+      for (const fileExt of lang.extensions ?? []) {
+        const clean = fileExt.replace(/^\./, "");
+        if (clean && !map[clean]) map[clean] = langId;
+      }
+    }
+  }
+  return map;
+}
+
+/**
+ * Read the active VS Code file icon theme and produce an IconThemeData.
+ * Returns mode "none" if the theme can't be read (graceful fallback).
+ */
+function resolveIconTheme(webview: vscode.Webview): { data: IconThemeData; rootUri?: vscode.Uri } {
+  const none = { data: buildIconMap(null, "", (p) => p) };
+  try {
+    const themeId = vscode.workspace.getConfiguration("workbench").get<string>("iconTheme");
+    if (!themeId) return none;
+
+    // Build the language-extension map once for all icon resolution
+    const langExtMap = buildLangExtMap(vscode.extensions.all as any[]);
+
+    for (const ext of vscode.extensions.all ?? []) {
+      const themes: any[] | undefined = ext.packageJSON?.contributes?.iconThemes;
+      if (!themes) continue;
+      const theme = themes.find((t: any) => t.id === themeId);
+      if (!theme?.path) continue;
+
+      const themeJsonPath = path.resolve(ext.extensionPath, theme.path);
+      const themeJson = JSON.parse(fs.readFileSync(themeJsonPath, "utf8"));
+      const basePath = path.dirname(themeJsonPath);
+      const rootUri = vscode.Uri.file(basePath);
+
+      // Detect light vs dark color theme
+      const themeKind = vscode.window.activeColorTheme?.kind;
+      // ColorThemeKind: 1=Light, 2=Dark, 3=HighContrast, 4=HighContrastLight
+      const colorThemeKind: "light" | "dark" = (themeKind === 1 || themeKind === 4) ? "light" : "dark";
+
+      const data = buildIconMap(
+        themeJson, basePath,
+        (p) => webview.asWebviewUri(vscode.Uri.file(p)).toString(),
+        langExtMap,
+        colorThemeKind,
+      );
+      return { data, rootUri };
+    }
+  } catch {
+    // Graceful fallback — sidebar works without icons
+  }
+  return none;
+}
+
 /**
  * Provides the sidebar webview for the Amicode workspace panel.
  * Registered as `amicode.workspace` (type: "webview" in package.json).
@@ -49,12 +308,17 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // rather than "AMICODE: AMICODE".
     webviewView.title = "";
 
+    // Resolve the active file icon theme for file/folder icons in the tree.
+    const iconTheme = resolveIconTheme(webviewView.webview);
+    const localRoots = [
+      vscode.Uri.joinPath(this.extensionUri, "dist"),
+      vscode.Uri.joinPath(this.extensionUri, "media"),
+    ];
+    if (iconTheme.rootUri) localRoots.push(iconTheme.rootUri);
+
     webviewView.webview.options = {
       enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.extensionUri, "dist"),
-        vscode.Uri.joinPath(this.extensionUri, "media"),
-      ],
+      localResourceRoots: localRoots,
     };
 
     // CSP nonce — regenerated per resolve (not cached).
@@ -65,7 +329,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       vscode.Uri.joinPath(this.extensionUri, "dist", "sidebar_webview.js"),
     );
 
-    webviewView.webview.html = this.buildHtml(webviewView.webview, nonce, scriptUri);
+    webviewView.webview.html = this.buildHtml(webviewView.webview, nonce, scriptUri, iconTheme.data);
 
     // Wire up the bridge: webview → host messages.
     webviewView.webview.onDidReceiveMessage((msg) => {
@@ -148,16 +412,19 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     webview: vscode.Webview,
     nonce: string,
     scriptUri: string | { toString(): string },
+    iconTheme: IconThemeData,
   ): string {
     const cspSource = webview.cspSource;
+    const iconThemeJson = JSON.stringify(iconTheme);
     return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta http-equiv="Content-Security-Policy"
-    content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${cspSource} 'unsafe-inline';">
+    content="default-src 'none'; script-src 'nonce-${nonce}'; style-src ${cspSource} 'unsafe-inline'; img-src ${cspSource}; font-src ${cspSource};">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
+    ${iconTheme.css}
     body {
       margin: 0;
       padding: 0;
@@ -297,10 +564,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       display: flex;
       align-items: center;
       justify-content: center;
+      line-height: 1;
     }
-    .tree-node .icon svg {
-      width: 16px;
-      height: 16px;
+    .tree-node img.icon {
+      display: block;
     }
     .tree-node .label {
       flex: 1;
@@ -494,6 +761,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       <div class="fleet-body section-body" id="fleet-body" style="display:none;">Coming soon</div>
     </div>
   </div>
+  <script nonce="${nonce}">window.__iconTheme = ${iconThemeJson};</script>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;
@@ -615,13 +883,51 @@ function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
 
     if (statusMap.size === 0) return entries;
 
-    return entries.map((entry) => {
+    // Annotate files with exact matches, then propagate to directories
+    const annotated = entries.map((entry) => {
       const gitStatus = statusMap.get(entry.path);
       return gitStatus ? { ...entry, gitStatus } : entry;
     });
+    return propagateGitStatusToDirs(annotated, statusMap);
   } catch {
     return entries;
   }
+}
+
+/** Priority rank for git statuses (higher = more notable). */
+const GIT_STATUS_PRIORITY: Record<string, number> = {
+  conflict: 5, modified: 4, deleted: 3, untracked: 2, added: 1, ignored: 0,
+};
+
+/**
+ * Pure function: propagate git status to directory entries.
+ * A directory inherits the "most notable" status from any changed file
+ * whose path starts with the directory's path. This matches the VS Code
+ * explorer's behavior where parent folders turn yellow when children change.
+ */
+export function propagateGitStatusToDirs(
+  entries: TreeEntry[],
+  statusMap: Map<string, string>,
+): TreeEntry[] {
+  return entries.map((entry) => {
+    if (entry.type !== "directory" || entry.gitStatus) return entry;
+
+    let bestStatus: string | undefined;
+    let bestPriority = -1;
+    const prefix = entry.path + "/";
+
+    for (const [filePath, status] of statusMap) {
+      if (filePath.startsWith(prefix)) {
+        const p = GIT_STATUS_PRIORITY[status] ?? 0;
+        if (p > bestPriority) {
+          bestPriority = p;
+          bestStatus = status;
+        }
+      }
+    }
+
+    return bestStatus ? { ...entry, gitStatus: bestStatus as TreeEntry["gitStatus"] } : entry;
+  });
 }
 
 // ── File operations (extension host, #676) ───────────────────────────────────

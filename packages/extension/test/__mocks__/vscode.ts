@@ -96,6 +96,10 @@ export const env = {
     },
   },
 };
+export const extensions = {
+  all: [] as unknown[],
+  getExtension: (_id: string): unknown => undefined,
+};
 export const workspace = {
   workspaceFolders: [] as unknown[],
   configUpdates: [] as Array<[string, unknown]>,

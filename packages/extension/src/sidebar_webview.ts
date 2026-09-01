@@ -22,91 +22,68 @@ interface TreeEntry {
   gitStatus?: string;
 }
 
-// ── File icon color mapping ──────────────────────────────────────────────────
+// ── Icon theme data (embedded by the host in window.__iconTheme) ─────────────
 
-const FILE_ICON_COLORS: Record<string, string> = {
-  ts: "#3178c6", tsx: "#3178c6", mts: "#3178c6", cts: "#3178c6",
-  js: "#f1e05a", jsx: "#f1e05a", mjs: "#f1e05a", cjs: "#f1e05a",
-  jl: "#9558b2",
-  py: "#3572A5", pyi: "#3572A5",
-  json: "#e8d44d", jsonc: "#e8d44d", json5: "#e8d44d",
-  toml: "#9c4221",
-  yaml: "#cb171e", yml: "#cb171e",
-  md: "#519aba", mdx: "#519aba",
-  txt: "#8b8b8b", log: "#8b8b8b", csv: "#8b8b8b",
-  sh: "#89e051", bash: "#89e051", zsh: "#89e051", fish: "#89e051",
-  html: "#e34c26", htm: "#e34c26",
-  css: "#563d7c", scss: "#c6538c", less: "#1d365d", sass: "#c6538c",
-  rs: "#dea584",
-  go: "#00ADD8",
-  c: "#555555", h: "#555555", cpp: "#f34b7d", hpp: "#f34b7d", cc: "#f34b7d",
-  java: "#b07219",
-  rb: "#701516",
-  svg: "#ffb13b",
-  png: "#a074c4", jpg: "#a074c4", jpeg: "#a074c4", gif: "#a074c4", ico: "#a074c4", webp: "#a074c4",
-  pdf: "#db1818",
-  zip: "#afb42b", gz: "#afb42b", tar: "#afb42b",
-  lock: "#6d8086",
-  xml: "#e44d26",
-  sql: "#e38c00",
-  graphql: "#e10098", gql: "#e10098",
-  vue: "#41b883",
-  svelte: "#ff3e00",
-  r: "#198ce7", R: "#198ce7",
-  lua: "#000080",
-  zig: "#f69a1b",
-  nim: "#ffe953",
-  swift: "#f05138",
-  kt: "#A97BFF", kts: "#A97BFF",
-  dart: "#00B4AB",
-  ex: "#6e4a7e", exs: "#6e4a7e",
-  tf: "#5c4ee5", hcl: "#5c4ee5",
-  dockerfile: "#2496ed",
+interface IconThemeData {
+  mode: "font" | "svg" | "none";
+  css: string;
+  fileExtensions: Record<string, string>;
+  fileNames: Record<string, string>;
+  folder: string;
+  folderExpanded: string;
+  defaultFile: string;
+}
+
+const iconTheme: IconThemeData = (window as any).__iconTheme ?? {
+  mode: "none", css: "", fileExtensions: {}, fileNames: {},
+  folder: "", folderExpanded: "", defaultFile: "",
 };
 
-const EXACT_FILE_COLORS: Record<string, string> = {
-  ".gitignore": "#f54d27", ".gitmodules": "#f54d27", ".gitattributes": "#f54d27",
-  ".env": "#ecd53f", ".env.local": "#ecd53f",
-  "Dockerfile": "#2496ed", "docker-compose.yml": "#2496ed", "docker-compose.yaml": "#2496ed",
-  "Makefile": "#6d8086", "CMakeLists.txt": "#6d8086",
-  "Cargo.toml": "#dea584", "Cargo.lock": "#dea584",
-  "package.json": "#e8d44d", "package-lock.json": "#6d8086",
-  "tsconfig.json": "#3178c6", "tsconfig.node.json": "#3178c6",
-  "Manifest.toml": "#9558b2", "Project.toml": "#9558b2",
-  "LICENSE": "#6d8086", "LICENSE.md": "#6d8086",
-  "README.md": "#519aba", "CHANGELOG.md": "#519aba",
-};
-
-function getFileIconColor(name: string): string {
-  if (EXACT_FILE_COLORS[name]) return EXACT_FILE_COLORS[name];
+/** Resolve a file name to an icon identifier from the theme. */
+function resolveFileIcon(name: string): string {
+  // Exact file name match first
+  if (iconTheme.fileNames[name]) return iconTheme.fileNames[name];
+  // Then extension match
   const dot = name.lastIndexOf(".");
   if (dot >= 0) {
     const ext = name.slice(dot + 1).toLowerCase();
-    if (FILE_ICON_COLORS[ext]) return FILE_ICON_COLORS[ext];
+    if (iconTheme.fileExtensions[ext]) return iconTheme.fileExtensions[ext];
   }
-  return "#8b8b8b"; // default gray
+  return iconTheme.defaultFile;
 }
 
-// ── SVG icon templates ───────────────────────────────────────────────────────
-
-function fileIconSvg(color: string): string {
-  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
-    + `<path d="M4.5 1.5h4.8L13 5.2V13.5a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-opacity="0.8"/>`
-    + `<path d="M9.3 1.5V5h3.7" fill="none" stroke="${color}" stroke-opacity="0.5"/>`
-    + `</svg>`;
+/** Create an icon element for a file based on the active icon theme. */
+function createFileIconEl(name: string): HTMLElement {
+  const icon = resolveFileIcon(name);
+  return createIconEl(icon);
 }
 
-function folderClosedSvg(): string {
-  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
-    + `<path d="M1.5 2.5h4l1.5 2H14a.75.75 0 0 1 .75.75v7.5a.75.75 0 0 1-.75.75H2a.75.75 0 0 1-.75-.75V3.25A.75.75 0 0 1 2 2.5z" fill="#c09553" fill-opacity="0.85"/>`
-    + `</svg>`;
+/** Create an icon element for a folder, or null if the theme has no folder icon. */
+function createFolderIconEl(expanded: boolean): HTMLElement | null {
+  const icon = expanded ? iconTheme.folderExpanded : iconTheme.folder;
+  if (!icon) return null;
+  return createIconEl(icon);
 }
 
-function folderOpenSvg(): string {
-  return `<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">`
-    + `<path d="M1.5 2.5h4l1.5 2H14a.75.75 0 0 1 .75.75V7H2.5L1 13V3.25A.75.75 0 0 1 1.5 2.5z" fill="#c09553" fill-opacity="0.85"/>`
-    + `<path d="M1 13l1.5-6h13l-1.5 6z" fill="#dcb67a" fill-opacity="0.7"/>`
-    + `</svg>`;
+/** Build a DOM element for a theme icon (img for SVG mode, span for font mode). */
+function createIconEl(icon: string): HTMLElement {
+  if (iconTheme.mode === "svg" && icon) {
+    const img = document.createElement("img");
+    img.className = "icon";
+    img.src = icon;
+    img.width = 16;
+    img.height = 16;
+    return img;
+  }
+  if (iconTheme.mode === "font" && icon) {
+    const span = document.createElement("span");
+    span.className = `icon theme-icon ${icon}`;
+    return span;
+  }
+  // No theme — empty spacer
+  const span = document.createElement("span");
+  span.className = "icon";
+  return span;
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
@@ -458,17 +435,15 @@ function folderOpenSvg(): string {
     chevronEl.className = "chevron";
     chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8"; // ▾ / ▸
 
-    // Folder icon
-    const iconEl = document.createElement("span");
-    iconEl.className = "icon";
-    iconEl.innerHTML = expanded[root.path] ? folderOpenSvg() : folderClosedSvg();
+    // Folder icon (omitted if theme has none — label sits next to chevron)
+    const iconEl = createFolderIconEl(!!expanded[root.path]);
 
     const label = document.createElement("span");
     label.className = "label";
     label.textContent = root.name;
 
     row.appendChild(chevronEl);
-    row.appendChild(iconEl);
+    if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
     // Research metadata pill
@@ -499,7 +474,10 @@ function folderOpenSvg(): string {
       expanded[root.path] = !expanded[root.path];
       saveExpandedState();
       chevronEl.textContent = expanded[root.path] ? "\u25BE" : "\u25B8";
-      iconEl.innerHTML = expanded[root.path] ? folderOpenSvg() : folderClosedSvg();
+      if (iconEl) {
+        const newIcon = createFolderIconEl(expanded[root.path]);
+        if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
+      }
       childrenEl.style.display = expanded[root.path] ? "block" : "none";
 
       if (expanded[root.path] && !childrenCache[root.path]) {
@@ -542,10 +520,8 @@ function folderOpenSvg(): string {
     chevronEl.className = "chevron";
     chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
 
-    // Folder icon
-    const iconEl = document.createElement("span");
-    iconEl.className = "icon";
-    iconEl.innerHTML = expanded[entry.path] ? folderOpenSvg() : folderClosedSvg();
+    // Folder icon (omitted if theme has none)
+    const iconEl = createFolderIconEl(!!expanded[entry.path]);
 
     const label = document.createElement("span");
     label.className = "label";
@@ -555,7 +531,7 @@ function folderOpenSvg(): string {
     }
 
     row.appendChild(chevronEl);
-    row.appendChild(iconEl);
+    if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
     container.appendChild(row);
 
@@ -576,7 +552,10 @@ function folderOpenSvg(): string {
       expanded[entry.path] = !expanded[entry.path];
       saveExpandedState();
       chevronEl.textContent = expanded[entry.path] ? "\u25BE" : "\u25B8";
-      iconEl.innerHTML = expanded[entry.path] ? folderOpenSvg() : folderClosedSvg();
+      if (iconEl) {
+        const newIcon = createFolderIconEl(expanded[entry.path]);
+        if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
+      }
       childrenEl.style.display = expanded[entry.path] ? "block" : "none";
 
       if (expanded[entry.path] && !childrenCache[entry.path]) {
@@ -599,14 +578,8 @@ function folderOpenSvg(): string {
     row.style.paddingLeft = `${8 + depth * 16}px`;
     row.draggable = true;
 
-    // Spacer (same width as chevron, for alignment with directories)
-    const spacer = document.createElement("span");
-    spacer.className = "chevron";
-
-    // File icon (colored by extension)
-    const iconEl = document.createElement("span");
-    iconEl.className = "icon";
-    iconEl.innerHTML = fileIconSvg(getFileIconColor(entry.name));
+    // File icon (from active theme) — sits where the chevron would be
+    const iconEl = createFileIconEl(entry.name);
 
     const label = document.createElement("span");
     label.className = "label";
@@ -615,7 +588,6 @@ function folderOpenSvg(): string {
       label.classList.add(`git-${entry.gitStatus}`);
     }
 
-    row.appendChild(spacer);
     row.appendChild(iconEl);
     row.appendChild(label);
 
@@ -743,7 +715,10 @@ function folderOpenSvg(): string {
               const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
               if (chevronSpan) chevronSpan.textContent = "\u25BE";
               const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-              if (iconSpan) iconSpan.innerHTML = folderOpenSvg();
+              if (iconSpan) {
+                const newIcon = createFolderIconEl(true);
+                if (newIcon) iconSpan.replaceWith(newIcon);
+              }
               const childrenEl = el.querySelector(".children") as HTMLElement | null;
               if (childrenEl) {
                 childrenEl.style.display = "block";

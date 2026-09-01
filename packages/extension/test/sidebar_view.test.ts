@@ -60,11 +60,65 @@ describe("SidebarViewProvider", () => {
     // CSP with nonce
     expect(html).toMatch(/Content-Security-Policy/);
     expect(html).toMatch(/nonce-[a-z0-9]+/);
+    // CSP allows image and font loading (for icon themes)
+    expect(html).toContain("img-src");
+    expect(html).toContain("font-src");
     // Script tag loads the bundled entry point
     expect(html).toContain("sidebar_webview.js");
     // Both header buttons present
     expect(html).toContain("Chat with Amico");
     expect(html).toContain("New Project");
+  });
+
+  it("embeds icon theme data as window.__iconTheme in a nonce-guarded script", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const html = view.webview.html;
+    // Icon theme data is embedded for the webview to consume
+    expect(html).toContain("window.__iconTheme");
+    // The embedded JSON is parseable (contains mode field)
+    expect(html).toMatch(/"mode"\s*:/);
+  });
+
+  it("resolveIconTheme builds langExtMap from vscode.extensions.all language contributions", async () => {
+    vi.resetModules();
+    const { buildLangExtMap } = await import("../src/sidebar_view");
+
+    // Simulate extensions with language contributions
+    const fakeExtensions = [
+      {
+        packageJSON: {
+          contributes: {
+            languages: [
+              { id: "julia", extensions: [".jl"] },
+              { id: "typescript", extensions: [".ts", ".tsx"] },
+            ],
+          },
+        },
+      },
+      {
+        packageJSON: {
+          contributes: {
+            languages: [
+              { id: "python", extensions: [".py", ".pyi"] },
+            ],
+          },
+        },
+      },
+      // Extension with no language contributions
+      { packageJSON: {} },
+    ];
+
+    const map = buildLangExtMap(fakeExtensions);
+
+    expect(map.jl).toBe("julia");
+    expect(map.ts).toBe("typescript");
+    expect(map.tsx).toBe("typescript");
+    expect(map.py).toBe("python");
+    expect(map.pyi).toBe("python");
   });
 
   it("clears the view-level title so VS Code shows just the container title", () => {
@@ -706,65 +760,188 @@ describe("sidebar — add existing project", () => {
   });
 });
 
-// ── File icons (#673 — colored SVG per extension) ────────────────────────────
+// ── Icon theme integration (#673 — use VS Code's active icon theme) ──────────
 
-describe("sidebar webview — file icons", () => {
-  it("webview uses inline SVG file icons colored by extension, not emoji", () => {
-    const src = readFileSync(
-      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
-      "utf8",
-    );
-    // No more 📄 emoji
-    expect(src).not.toContain("\\u{1F4C4}");
-    // Uses SVG-based file icons
-    expect(src).toContain("fileIconSvg");
-    expect(src).toContain("folderClosedSvg");
-    expect(src).toContain("folderOpenSvg");
-    // Has a color mapping for known extensions
-    expect(src).toContain("FILE_ICON_COLORS");
-    expect(src).toContain("getFileIconColor");
-  });
-
-  it("icon color map covers common language extensions", () => {
-    const src = readFileSync(
-      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
-      "utf8",
-    );
-    // TypeScript blue
-    expect(src).toMatch(/ts:\s*"#3178c6"/);
-    // JavaScript yellow
-    expect(src).toMatch(/js:\s*"#f1e05a"/);
-    // Julia purple
-    expect(src).toMatch(/jl:\s*"#9558b2"/);
-    // Python blue
-    expect(src).toMatch(/py:\s*"#3572A5"/);
-    // JSON yellow
-    expect(src).toMatch(/json:\s*"#e8d44d"/);
-    // TOML brown
-    expect(src).toMatch(/toml:\s*"#9c4221"/);
-  });
-
-  it("tree nodes have separate chevron and icon spans (not combined)", () => {
-    const src = readFileSync(
-      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
-      "utf8",
-    );
-    // Directory nodes: chevron + icon (folder SVG) + label
-    expect(src).toContain('chevronEl.className = "chevron"');
-    expect(src).toContain('iconEl.className = "icon"');
-    // File nodes: spacer + icon (file SVG) + label
-    expect(src).toContain('spacer.className = "chevron"');
-  });
-
-  it("CSS has separate chevron and icon styles, icon holds SVG", async () => {
+describe("sidebar — icon theme", () => {
+  it("buildIconMap produces font-mode data from a Seti-style font-based theme JSON", async () => {
     vi.resetModules();
-    const { SidebarViewProvider } = await import("../src/sidebar_view");
-    const provider = new SidebarViewProvider(makeExtensionUri());
-    const view = makeWebviewView();
-    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
-    const html = view.webview.html;
-    expect(html).toMatch(/\.tree-node\s+\.chevron\s*\{/);
-    expect(html).toMatch(/\.tree-node\s+\.icon\s+svg\s*\{/);
+    const { buildIconMap } = await import("../src/sidebar_view");
+
+    const themeJson = {
+      fonts: [{ id: "seti", src: [{ path: "./seti.woff", format: "woff" }], size: "150%" }],
+      iconDefinitions: {
+        _default: { fontCharacter: "\\E001", fontColor: "#C5C5C5" },
+        _typescript: { fontCharacter: "\\E028", fontColor: "#519ABA" },
+        _julia: { fontCharacter: "\\E04C", fontColor: "#a074c4" },
+        _json: { fontCharacter: "\\E029", fontColor: "#CBCB41" },
+        _markdown: { fontCharacter: "\\E02A", fontColor: "#519aba" },
+        _config: { fontCharacter: "\\E030", fontColor: "#d4d7d6" },
+        _folder: { fontCharacter: "\\E02F", fontColor: "#C5C5C5" },
+        _folder_open: { fontCharacter: "\\E031", fontColor: "#C5C5C5" },
+      },
+      file: "_default",
+      folder: "_folder",
+      folderExpanded: "_folder_open",
+      // Seti maps most types via languageIds, not fileExtensions
+      fileExtensions: { toml: "_config" },
+      fileNames: { "package.json": "_json" },
+      languageIds: {
+        typescript: "_typescript",
+        julia: "_julia",
+        json: "_json",
+        markdown: "_markdown",
+      },
+    };
+
+    // Language extension map: file extension → language ID (from vscode extensions)
+    const langExtMap = {
+      ts: "typescript", tsx: "typescript",
+      jl: "julia",
+      json: "json", jsonc: "json",
+      md: "markdown",
+    };
+
+    const result = buildIconMap(themeJson, "/ext/theme", (p) => `vscode-resource:${p}`, langExtMap);
+
+    expect(result.mode).toBe("font");
+    expect(result.css).toContain("@font-face");
+    expect(result.css).toContain("seti.woff");
+
+    // Direct fileExtension mapping
+    expect(result.fileExtensions.toml).toBeDefined();
+    // languageId-based mapping (.ts → typescript → _typescript)
+    expect(result.fileExtensions.ts).toBeDefined();
+    expect(result.fileExtensions.jl).toBeDefined();
+    expect(result.fileExtensions.json).toBeDefined();
+    expect(result.fileExtensions.md).toBeDefined();
+    // languageId-mapped icons should have distinct CSS classes
+    expect(result.fileExtensions.ts).not.toBe(result.fileExtensions.jl);
+    // Exact file name mapping
+    expect(result.fileNames["package.json"]).toBeDefined();
+    // Folder icons
+    expect(result.folder).toBeDefined();
+    expect(result.folderExpanded).toBeDefined();
+    expect(result.defaultFile).toBeDefined();
+  });
+
+  it("buildIconMap produces svg-mode data from an SVG-based theme JSON", async () => {
+    vi.resetModules();
+    const { buildIconMap } = await import("../src/sidebar_view");
+
+    const themeJson = {
+      iconDefinitions: {
+        file: { iconPath: "./icons/file.svg" },
+        typescript: { iconPath: "./icons/typescript.svg" },
+        folder: { iconPath: "./icons/folder.svg" },
+        folder_open: { iconPath: "./icons/folder-open.svg" },
+      },
+      file: "file",
+      folder: "folder",
+      folderExpanded: "folder_open",
+      fileExtensions: { ts: "typescript" },
+      fileNames: {},
+    };
+
+    const result = buildIconMap(themeJson, "/ext/theme", (p) => `vscode-resource:${p}`);
+
+    expect(result.mode).toBe("svg");
+    expect(result.css).toBe(""); // no font CSS needed
+    // File extension maps to webview URI
+    expect(result.fileExtensions.ts).toContain("typescript.svg");
+    // Folder icons are URIs
+    expect(result.folder).toContain("folder.svg");
+    expect(result.folderExpanded).toContain("folder-open.svg");
+    expect(result.defaultFile).toContain("file.svg");
+  });
+
+  it("buildIconMap returns mode 'none' for empty or missing theme JSON", async () => {
+    vi.resetModules();
+    const { buildIconMap } = await import("../src/sidebar_view");
+
+    const result = buildIconMap(null, "", (p) => p);
+    expect(result.mode).toBe("none");
+    expect(result.fileExtensions).toEqual({});
+    expect(result.fileNames).toEqual({});
+  });
+
+  it("buildIconMap uses light variants when colorThemeKind is 'light'", async () => {
+    vi.resetModules();
+    const { buildIconMap } = await import("../src/sidebar_view");
+
+    const themeJson = {
+      fonts: [{ id: "seti", src: [{ path: "./seti.woff", format: "woff" }], size: "150%" }],
+      iconDefinitions: {
+        _default: { fontCharacter: "\\E001", fontColor: "#C5C5C5" },
+        _default_light: { fontCharacter: "\\E001", fontColor: "#bfc2c1" },
+        _ts: { fontCharacter: "\\E028", fontColor: "#519ABA" },
+        _ts_light: { fontCharacter: "\\E028", fontColor: "#498ba7" },
+      },
+      file: "_default",
+      fileExtensions: { ts: "_ts" },
+      fileNames: {},
+      light: {
+        file: "_default_light",
+        fileExtensions: { ts: "_ts_light" },
+        fileNames: {},
+        languageIds: {},
+      },
+    };
+
+    const result = buildIconMap(themeJson, "/ext/theme", (p) => `vscode-resource:${p}`, {}, "light");
+    // Light variant should use the _light icon definitions
+    expect(result.css).toContain("#498ba7"); // light TS color
+    expect(result.defaultFile).toContain("default_light");
+  });
+
+  it("buildIconMap normalises fileNames to lowercase for case-insensitive lookup", async () => {
+    vi.resetModules();
+    const { buildIconMap } = await import("../src/sidebar_view");
+
+    const themeJson = {
+      fonts: [{ id: "seti", src: [{ path: "./seti.woff", format: "woff" }], size: "150%" }],
+      iconDefinitions: {
+        _info: { fontCharacter: "\\E050", fontColor: "#519aba" },
+        _default: { fontCharacter: "\\E001", fontColor: "#C5C5C5" },
+      },
+      file: "_default",
+      fileExtensions: {},
+      // Seti uses lowercase: "readme.md" not "README.md"
+      fileNames: { "readme.md": "_info" },
+    };
+
+    const result = buildIconMap(themeJson, "/ext/theme", (p) => `vscode-resource:${p}`);
+    // Both lowercase and uppercase should resolve
+    expect(result.fileNames["readme.md"]).toBeDefined();
+    expect(result.fileNames["README.md"]).toBeDefined();
+    // They should point to the same icon
+    expect(result.fileNames["readme.md"]).toBe(result.fileNames["README.md"]);
+  });
+
+  it("tree nodes have chevron for directories and icon for files", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    expect(src).toContain('chevronEl.className = "chevron"');
+    // Files have icon directly (no spacer), same position as chevron
+    expect(src).toContain("createFileIconEl");
+  });
+
+  it("webview reads window.__iconTheme and renders icons from the theme, not custom SVGs", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Reads the embedded icon theme data
+    expect(src).toContain("__iconTheme");
+    // Does NOT contain the old custom SVG icon infrastructure
+    expect(src).not.toContain("FILE_ICON_COLORS");
+    expect(src).not.toContain("EXACT_FILE_COLORS");
+    expect(src).not.toContain("fileIconSvg");
+    expect(src).not.toContain("folderClosedSvg");
+    expect(src).not.toContain("folderOpenSvg");
+    // Renders theme-based icons (img for SVG themes, span for font themes)
+    expect(src).toContain("theme-icon");
   });
 });
 
@@ -938,6 +1115,36 @@ describe("sidebar — git status colors", () => {
     // Walks workingTreeChanges and indexChanges
     expect(src).toContain("workingTreeChanges");
     expect(src).toContain("indexChanges");
+  });
+
+  it("propagateGitStatusToDirs gives directories the most notable child status", async () => {
+    vi.resetModules();
+    const { propagateGitStatusToDirs } = await import("../src/sidebar_view");
+
+    const entries = [
+      { name: "src", type: "directory" as const, path: "/project/src" },
+      { name: "docs", type: "directory" as const, path: "/project/docs" },
+      { name: "clean", type: "directory" as const, path: "/project/clean" },
+      { name: "main.ts", type: "file" as const, path: "/project/main.ts", gitStatus: "modified" as const },
+    ];
+
+    // Git tracks these files under /project/src and /project/docs
+    const statusMap = new Map<string, string>([
+      ["/project/src/index.ts", "modified"],
+      ["/project/src/util.ts", "untracked"],
+      ["/project/docs/README.md", "added"],
+    ]);
+
+    const result = propagateGitStatusToDirs(entries, statusMap);
+
+    // src has modified + untracked children → "modified" wins (most notable)
+    expect(result.find(e => e.name === "src")?.gitStatus).toBe("modified");
+    // docs has added children
+    expect(result.find(e => e.name === "docs")?.gitStatus).toBe("added");
+    // clean has no changed children → no git status
+    expect(result.find(e => e.name === "clean")?.gitStatus).toBeUndefined();
+    // Files keep their original status
+    expect(result.find(e => e.name === "main.ts")?.gitStatus).toBe("modified");
   });
 });
 
