@@ -1,0 +1,8 @@
+schema_version = "1"
+fidelity = 0.9991
+iterations = 55
+
+[params]
+structure_hash = "sh-fx-cz-transmon"
+problem_hash = "ph-fx-sens"
+converged = true

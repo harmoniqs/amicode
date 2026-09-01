@@ -1,0 +1,8 @@
+schema_version = "1"
+fidelity = 0.9985
+iterations = 70
+
+[params]
+structure_hash = "sh-fx-cat-transmon"
+problem_hash = "ph-fx-cat"
+converged = true

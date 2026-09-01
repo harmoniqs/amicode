@@ -1,0 +1,8 @@
+schema_version = "1"
+fidelity = 0.9992
+iterations = 50
+
+[params]
+structure_hash = "sh-fx-cz-transmon"
+problem_hash = "ph-fx-mintime"
+converged = true
