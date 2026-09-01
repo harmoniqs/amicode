@@ -1412,7 +1412,7 @@ function createIconEl(icon: string): HTMLElement {
       clearRootInsertIndicator();
       const indicator = document.createElement("div");
       indicator.className = "root-insert-indicator";
-      indicator.style.cssText = `position:absolute;left:8px;right:8px;height:2px;background:#fff676;z-index:100;pointer-events:none;`;
+      indicator.style.cssText = `position:absolute;left:8px;right:8px;height:1px;background:#fff676;z-index:100;pointer-events:none;`;
 
       // Position relative to the row's parent (section-body)
       const sectionBody = row.closest(".section-body") as HTMLElement | null;
