@@ -393,3 +393,70 @@ export function deriveTaskRecordFamily(taskDir: string): TaskRecordFamilyResult 
     ],
   };
 }
+
+// ── derivation (c): store provenance → family ──────────────────────────────
+
+export interface StoreEntryAttribution {
+  kind: "store-entry";
+  dir: string;
+  id: string;
+  family: FamilyId;
+  platform: string;
+  day: string;
+  lineage: { warm_start?: string; calibration_ref?: string };
+  fields_read: string[];
+}
+
+/**
+ * The store-provenance → family derivation: the pulse bank entry's SOURCE
+ * STAMP (the lineage fields of the amico-catalog Phase-0 metadata.toml —
+ * SEAM 5's chain fingerprint rides the same fields). Fields (the exact set):
+ *   - metadata.toml: id, platform, date (→ campaign day), warm_start,
+ *     calibration_ref (the source stamp).
+ *
+ * Mapping onto the repertoire (stated — the most specific stamp present wins):
+ *   - calibration_ref set → drift-response (the SEAM 5 calibrate→pin→
+ *     re-optimize→re-bank chain's re-bank — the drift-response recipe by the
+ *     chain's own name, "the drift-response tune-up");
+ *   - warm_start set (no calibration_ref) → tune-up (a warm-started refinement
+ *     of the incumbent — the closed-loop family's re-solve);
+ *   - neither → first-pulse (the banked terminal artifact of a day-one
+ *     synthesis campaign).
+ *
+ * The banked artifact carries NONE of the three cost metrics (acquisitions,
+ * iterations, wall clock) — store-derived campaigns count campaigns and
+ * lineage only; their metrics are stated-absent, never faked.
+ */
+export function deriveStoreEntryFamily(entryDir: string): StoreEntryAttribution | undefined {
+  const meta = readTomlSafe(join(entryDir, "metadata.toml"));
+  if (!meta) return undefined; // not a store entry — the caller skips it
+  const id = str(meta.id);
+  const platform = str(meta.platform);
+  if (!id || !platform) return undefined; // can't key a record missing its discriminating fields
+  const warmStart = str(meta.warm_start);
+  const calibrationRef = str(meta.calibration_ref);
+  const family: FamilyId = calibrationRef
+    ? "drift-response"
+    : warmStart && warmStart !== ""
+      ? "tune-up"
+      : "first-pulse";
+  return {
+    kind: "store-entry",
+    dir: entryDir,
+    id,
+    family,
+    platform,
+    day: dateStr(meta.date) ?? "",
+    lineage: {
+      ...(warmStart && warmStart !== "" ? { warm_start: warmStart } : {}),
+      ...(calibrationRef ? { calibration_ref: calibrationRef } : {}),
+    },
+    fields_read: ["metadata.toml: id, platform, date, warm_start, calibration_ref"],
+  };
+}
+
+function dateStr(v: unknown): string | undefined {
+  if (typeof v === "string") return v;
+  if (v instanceof Date) return v.toISOString().slice(0, 10); // smol-toml bare-date → TomlDate
+  return undefined;
+}

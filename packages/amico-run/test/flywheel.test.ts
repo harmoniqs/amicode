@@ -23,7 +23,7 @@ export const TASKS_FIXTURE = join(FLYWHEEL_FIXTURES, "tasks");
 export const STORE_FIXTURE = join(FLYWHEEL_FIXTURES, "store");
 export const BRIDGE_FIXTURES = join(PKG_ROOT, "fixtures", "bridge");
 
-import { deriveRunDirFamily, deriveTaskRecordFamily } from "../src/flywheel.js";
+import { deriveRunDirFamily, deriveTaskRecordFamily, deriveStoreEntryFamily } from "../src/flywheel.js";
 
 describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a plain fixed-time gate-synthesis run (TransmonSystem + unitary CZ) is first-pulse", () => {
@@ -124,5 +124,36 @@ describe("SEAM 7 derivation (b) — task record → campaign family", () => {
     expect(r?.kind).toBe("task-record-unattributable");
     if (r?.kind !== "task-record-unattributable") return;
     expect(r.reason).toMatch(/kind/);
+  });
+});
+
+describe("SEAM 7 derivation (c) — store provenance → campaign family (the source stamp)", () => {
+  it("a plain banked entry (no lineage) is first-pulse — the day-one campaign's terminal artifact", () => {
+    const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v1"));
+    expect(r?.kind).toBe("store-entry");
+    if (r?.kind !== "store-entry") return;
+    expect(r.family).toBe("first-pulse");
+    expect(r.id).toBe("transmon-CZ-v1");
+    expect(r.platform).toBe("transmon"); // metadata.toml platform
+    expect(r.day).toBe("2026-08-01"); // metadata.toml date
+    expect(r.lineage.warm_start).toBeUndefined();
+    expect(r.lineage.calibration_ref).toBeUndefined();
+  });
+
+  it("a warm_start chain entry is tune-up — the closed-loop family's warm-started refinement (most specific stamp present wins)", () => {
+    const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v2"));
+    expect(r?.kind).toBe("store-entry");
+    if (r?.kind !== "store-entry") return;
+    expect(r.family).toBe("tune-up");
+    expect(r.lineage.warm_start).toBe("transmon-CZ-v1");
+  });
+
+  it("a calibration_ref entry is drift-response — the SEAM 5 drift-response tune-up chain's re-bank", () => {
+    const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v3"));
+    expect(r?.kind).toBe("store-entry");
+    if (r?.kind !== "store-entry") return;
+    expect(r.family).toBe("drift-response");
+    expect(r.lineage.calibration_ref).toContain("rehearsal.toml");
+    expect(r.lineage.warm_start).toBe("transmon-CZ-v2"); // the seed still carried
   });
 });

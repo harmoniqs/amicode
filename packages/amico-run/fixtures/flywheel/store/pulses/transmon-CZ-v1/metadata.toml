@@ -1,0 +1,13 @@
+id = "transmon-CZ-v1"
+platform = "transmon"
+gate = "CZ"
+fidelity = 0.998
+duration_us = 0.1
+pulse_type = "cubic"
+N_knots = 51
+free_phase = true
+path = "pulses/transmon-CZ-v1/pulse.jld2"
+branch = "main"
+warm_start = ""
+tags = ["flywheel-fixture"]
+date = "2026-08-01"
