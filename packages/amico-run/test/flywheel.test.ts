@@ -43,8 +43,8 @@ function pinnedRunsFixture(): string {
 describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a plain fixed-time gate-synthesis run (TransmonSystem + unitary CZ) is first-pulse", () => {
     const r = deriveRunDirFamily(join(RUNS_FIXTURE, "lab-fx", "r20260801-010000Z-fa01"));
-    expect(r.kind).toBe("run-dir");
-    if (r.kind !== "run-dir") return;
+    expect(r?.kind).toBe("run-dir");
+    if (!r || r.kind !== "run-dir") return;
     expect(r.family).toBe("first-pulse");
     // the EXACT fields the derivation reads (grep-pinned in docs/flywheel-decay.md)
     expect(r.platform).toBe("transmon"); // problem.toml [system].template → platform family
@@ -60,7 +60,7 @@ describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a min-time run (problem.free_dt ≠ false — Piccolo's min-time marker) is regime-sweep", () => {
     const r = deriveRunDirFamily(join(RUNS_FIXTURE, "lab-fx", "r20260803-010000Z-fc01"));
     expect(r?.kind).toBe("run-dir");
-    if (r?.kind !== "run-dir") return;
+    if (!r || r.kind !== "run-dir") return;
     expect(r.family).toBe("regime-sweep");
     expect(r.metrics.iterations).toBe(50);
   });
@@ -68,7 +68,7 @@ describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a run with a sensitivity objective term is robustness (the hardening family)", () => {
     const r = deriveRunDirFamily(join(RUNS_FIXTURE, "lab-fx", "r20260803-010100Z-fc02"));
     expect(r?.kind).toBe("run-dir");
-    if (r?.kind !== "run-dir") return;
+    if (!r || r.kind !== "run-dir") return;
     expect(r.family).toBe("robustness");
     expect(r.metrics.iterations).toBe(55);
   });
@@ -76,7 +76,7 @@ describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a state-prep run (goal.kind ket) maps honestly to first-pulse — a one-shot synthesis, NOT forced into sweep/robustness", () => {
     const r = deriveRunDirFamily(join(RUNS_FIXTURE, "lab-fx", "r20260803-010200Z-fc03"));
     expect(r?.kind).toBe("run-dir");
-    if (r?.kind !== "run-dir") return;
+    if (!r || r.kind !== "run-dir") return;
     expect(r.family).toBe("first-pulse");
     expect(r.goal_kind).toBe("ket");
     expect(r.target).toBe("cat_alpha2"); // [goal].target (the ket axis of the target field)
@@ -85,7 +85,7 @@ describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
   it("a pre-v4 run dir (authored-script shape, like the SEAM 4 bridge fixture) is unattributable — listed, never forced (F-709-5)", () => {
     const r = deriveRunDirFamily(join(BRIDGE_FIXTURES, "amicode-run"));
     expect(r?.kind).toBe("run-dir-unattributable");
-    if (r?.kind !== "run-dir-unattributable") return;
+    if (!r || r.kind !== "run-dir-unattributable") return;
     expect(r.reason).toMatch(/F-709-5/);
   });
 
@@ -99,7 +99,7 @@ describe("SEAM 7 derivation (a) — run dir → campaign family", () => {
     utimesSync(join(fa02, "FINISHED"), new Date("2026-08-01T02:03:20Z"), new Date("2026-08-01T02:03:20Z"));
     const r = deriveRunDirFamily(fa02);
     expect(r?.kind).toBe("run-dir");
-    if (r?.kind !== "run-dir") return;
+    if (!r || r.kind !== "run-dir") return;
     expect(r.metrics.iterations).toBe(60);
     expect(r.metrics.wall_s).toBe(200); // 02:03:20 − 02:00:00
     expect(r.metrics.wall_source).toBe("finished-mtime");
@@ -110,7 +110,7 @@ describe("SEAM 7 derivation (b) — task record → campaign family", () => {
   it("a bringup-kind task record is bring-up; acquisitions = the acquire-labeled progress events; wall = result.ended − task.created", () => {
     const r = deriveTaskRecordFamily(join(TASKS_FIXTURE, "2026-08-20-bringup-fx01"));
     expect(r?.kind).toBe("task-record");
-    if (r?.kind !== "task-record") return;
+    if (!r || r.kind !== "task-record") return;
     expect(r.family).toBe("bring-up"); // task.toml kind axis
     expect(r.device).toBe("qick-fx-01"); // task.toml device (the device key)
     expect(r.day).toBe("2026-08-20"); // task.toml created (UTC day)
@@ -123,7 +123,7 @@ describe("SEAM 7 derivation (b) — task record → campaign family", () => {
   it("an experiment-kind task record is the closed-loop tune-up family — the SEAM 4 strumento fixture reused as the canonical shape", () => {
     const r = deriveTaskRecordFamily(join(BRIDGE_FIXTURES, "2026-08-31-strumento-task-b3a7"));
     expect(r?.kind).toBe("task-record");
-    if (r?.kind !== "task-record") return;
+    if (!r || r.kind !== "task-record") return;
     expect(r.family).toBe("tune-up"); // journey §5: pre-P4 this stage delivers the sim rehearsal
     expect(r.device).toBe("loopback_demo");
     expect(r.metrics.acquisitions).toBe(1);
@@ -137,7 +137,7 @@ describe("SEAM 7 derivation (b) — task record → campaign family", () => {
     writeFileSync(manifest, readFileSync(manifest, "utf8").replace('kind = "bringup"', 'kind = "monitor"').replace('id = "2026-08-20-bringup-fx01"', 'id = "2026-08-22-unknown-fx03"'));
     const r = deriveTaskRecordFamily(join(dir, "2026-08-22-unknown-fx03"));
     expect(r?.kind).toBe("task-record-unattributable");
-    if (r?.kind !== "task-record-unattributable") return;
+    if (!r || r.kind !== "task-record-unattributable") return;
     expect(r.reason).toMatch(/kind/);
   });
 });
@@ -146,7 +146,7 @@ describe("SEAM 7 derivation (c) — store provenance → campaign family (the so
   it("a plain banked entry (no lineage) is first-pulse — the day-one campaign's terminal artifact", () => {
     const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v1"));
     expect(r?.kind).toBe("store-entry");
-    if (r?.kind !== "store-entry") return;
+    if (!r || r.kind !== "store-entry") return;
     expect(r.family).toBe("first-pulse");
     expect(r.id).toBe("transmon-CZ-v1");
     expect(r.platform).toBe("transmon"); // metadata.toml platform
@@ -158,7 +158,7 @@ describe("SEAM 7 derivation (c) — store provenance → campaign family (the so
   it("a warm_start chain entry is tune-up — the closed-loop family's warm-started refinement (most specific stamp present wins)", () => {
     const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v2"));
     expect(r?.kind).toBe("store-entry");
-    if (r?.kind !== "store-entry") return;
+    if (!r || r.kind !== "store-entry") return;
     expect(r.family).toBe("tune-up");
     expect(r.lineage.warm_start).toBe("transmon-CZ-v1");
   });
@@ -166,7 +166,7 @@ describe("SEAM 7 derivation (c) — store provenance → campaign family (the so
   it("a calibration_ref entry is drift-response — the SEAM 5 drift-response tune-up chain's re-bank", () => {
     const r = deriveStoreEntryFamily(join(STORE_FIXTURE, "pulses", "transmon-CZ-v3"));
     expect(r?.kind).toBe("store-entry");
-    if (r?.kind !== "store-entry") return;
+    if (!r || r.kind !== "store-entry") return;
     expect(r.family).toBe("drift-response");
     expect(r.lineage.calibration_ref).toContain("rehearsal.toml");
     expect(r.lineage.warm_start).toBe("transmon-CZ-v2"); // the seed still carried
