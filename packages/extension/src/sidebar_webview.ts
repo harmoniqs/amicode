@@ -1484,7 +1484,12 @@ function createIconEl(icon: string): HTMLElement {
       if (!row) continue;
 
       if (nodePath === activePath) {
-        row.style.borderLeft = "2px solid var(--vscode-focusBorder)";
+        // Typed highlight: Harmoniqs yellow for research, VS Code blue for dev
+        const activeRoot = currentRoots.find((r) => r.path === nodePath);
+        const highlightColor = activeRoot?.projectType === "research"
+          ? "#fff676"
+          : "var(--vscode-focusBorder)";
+        row.style.borderLeft = `2px solid ${highlightColor}`;
         row.style.background = "var(--vscode-list-activeSelectionBackground)";
         if (!expanded[nodePath]) {
           expanded[nodePath] = true;

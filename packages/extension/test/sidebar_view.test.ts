@@ -875,6 +875,16 @@ describe("sidebar webview — section reorder bug fixes", () => {
     const fnBody = src.slice(src.indexOf("function renderRoots"));
     expect(fnBody).toMatch(/pendingActiveProject/);
   });
+
+  it("applyActiveProject uses Harmoniqs yellow for research and VS Code blue for dev", () => {
+    const fnBody = src.slice(src.indexOf("function applyActiveProject"));
+    // Must look up projectType from currentRoots
+    expect(fnBody).toMatch(/projectType/);
+    // Research projects get Harmoniqs yellow
+    expect(fnBody).toMatch(/#fff676/);
+    // Dev projects get VS Code focusBorder
+    expect(fnBody).toMatch(/focusBorder/);
+  });
 });
 
 // ── Reorderable workspace folders (#712) ─────────────────────────────────────
