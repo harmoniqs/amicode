@@ -14,6 +14,7 @@
 // cross-references (the Telaio criterion, the T4 line, the SEAM 6 datum) so
 // the coordination stays honest from the test surface, not just in prose.
 import { describe, it, expect } from "vitest";
+import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -21,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import { validateBridgeRecord, type BridgeRecordKind } from "../scripts/validate_bridge_replay.mjs";
 
 const PKG_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
-const REPO_ROOT = dirname(PKG_ROOT);
+const REPO_ROOT = dirname(dirname(PKG_ROOT));
 const BRIDGE_FIXTURES = join(PKG_ROOT, "fixtures", "bridge");
 const AMICODE_FIXTURE = join(BRIDGE_FIXTURES, "amicode-run");
 // The strumento record dir is named BY ITS ID (the contract: "the id is always
@@ -138,6 +139,82 @@ describe("SEAM 4 corruption detection — the validator fails doctrine violation
       rmSync(join(d, "artifacts", "fit_002.json"));
     });
     expectNotOk(dir, "strumento-task", /does not resolve|artifact/);
+  });
+});
+
+describe("SEAM 4 contract note — the coordination cross-references are grep-able, not vibes", () => {
+  // docs/ledger-bridge-contract.md is the statement of record for the shared
+  // doctrine. Its NAMED cross-references are load-bearing for the OTHER
+  // campaigns (Telaio's criterion is theirs; SEAM 6's datum is the parallel
+  // slice's) — this keeps the coordination honest from the test surface.
+  const NOTE = join(REPO_ROOT, "docs", "ledger-bridge-contract.md");
+
+  it("the note exists and is published in the docs contents", () => {
+    expect(existsSync(NOTE)).toBe(true);
+    const readme = readFileSync(join(REPO_ROOT, "docs", "README.md"), "utf8");
+    expect(readme).toContain("ledger-bridge-contract.md");
+  });
+
+  it("names the Telaio-side criterion as THEIRS, sequenced behind T4 (the fold replays both fixtures)", () => {
+    const note = readFileSync(NOTE, "utf8");
+    expect(note).toContain("t4_fold_replays_fixtures");
+    expect(note).toMatch(/T4/);
+    expect(note).toContain("amicode-run");
+    expect(note).toContain("strumento-task");
+  });
+
+  it("states the F3 non-arrival reduction (if T4 slips, the seam completes as note + fixtures)", () => {
+    const note = readFileSync(NOTE, "utf8");
+    expect(note).toMatch(/F3/);
+    expect(note).toMatch(/non-arrival|slips/);
+  });
+
+  it("names Telaio's event spine elements (LEDGER_SCHEMA_VERSION, the unknown-event carrying rule, the closed union)", () => {
+    const note = readFileSync(NOTE, "utf8");
+    expect(note).toContain("LEDGER_SCHEMA_VERSION");
+    expect(note).toMatch(/unknown-event/i);
+    expect(note).toMatch(/closed event union|closed union/i);
+  });
+
+  it("cross-references the SEAM 6 one-autonomy datum (device: none | ro | rw, the P4 gate, Telaio's bounds)", () => {
+    const note = readFileSync(NOTE, "utf8");
+    expect(note).toMatch(/none \| ro \| rw/);
+    expect(note).toMatch(/P4/);
+    expect(note).toMatch(/warrant/i);
+  });
+
+  it("names the validator and both fixture paths (the fold's entry points)", () => {
+    const note = readFileSync(NOTE, "utf8");
+    expect(note).toContain("packages/amico-run/scripts/validate_bridge_replay.mjs");
+    expect(note).toContain("packages/amico-run/fixtures/bridge/amicode-run");
+    expect(note).toContain("packages/amico-run/fixtures/bridge/2026-08-31-strumento-task-b3a7");
+  });
+});
+
+describe("SEAM 4 validator CLI — the exit code is the contract", () => {
+  it("no args: validates both committed fixtures, exit 0", () => {
+    const r = spawnSync(process.execPath, [join(PKG_ROOT, "scripts", "validate_bridge_replay.mjs")], {
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("amicode-run");
+    expect(r.stdout).toContain("strumento-task");
+  });
+
+  it("a corrupted record dir as arg: exit 1 with the violation on stderr", () => {
+    const dir = mutatedFixture("cli-corrupt", "amicode-run", (d) => rmSync(join(d, "FINISHED")));
+    const r = spawnSync(process.execPath, [join(PKG_ROOT, "scripts", "validate_bridge_replay.mjs"), dir], {
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/FINISHED/);
+  });
+
+  it("a real record dir as arg: exit 0 (the fold invokes the validator per record)", () => {
+    const r = spawnSync(process.execPath, [join(PKG_ROOT, "scripts", "validate_bridge_replay.mjs"), STRUMENTO_FIXTURE], {
+      encoding: "utf8",
+    });
+    expect(r.status).toBe(0);
   });
 });
 
