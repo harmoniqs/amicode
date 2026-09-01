@@ -11,7 +11,6 @@
 //             where the contract carries them, opaque tolerance of unknown
 //             well-formed values).
 //   exit 1  — at least one doctrine violation (reported, one line each).
-//   exit 2  — usage.
 //
 // With no arguments it validates the two committed bridge fixtures (the
 // canonical records the Telaio fold must replay — fixtures/bridge/).

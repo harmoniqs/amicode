@@ -2,7 +2,7 @@
 
 Two committed, synthetic, stable record dirs the Telaio fold must replay —
 issued #704, amicode's half of the ledger bridge. The doctrine they carry is
-[`docs/ledger-bridge-contract.md`](../../../docs/ledger-bridge-contract.md);
+[`docs/ledger-bridge-contract.md`](../../../../docs/ledger-bridge-contract.md);
 the validator is
 `packages/amico-run/scripts/validate_bridge_replay.mjs` (exit 0 on both by
 default; pass a dir to check one; the corruption directions are pinned by
