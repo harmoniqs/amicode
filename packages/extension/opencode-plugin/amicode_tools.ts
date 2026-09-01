@@ -122,12 +122,17 @@ import {
   queryLedger,
   resolveWorkspaceSpecContext,
   stampStructureHash,
-  selectRecommendations,
   attemptErrorStanza,
   fallbackStanza,
   verdictStanza,
   resolveRunHashes,
+  type LedgerQueryResult,
 } from "./ledger_client";
+import {
+  serveRecommendations,
+  auditRegimePriorApplications,
+  type CensusStamp,
+} from "./regime_priors";
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -1393,19 +1398,28 @@ export const AmicodeTools = async (input: unknown) => {
     // L2 (Veloce) has a machine-readable confidence to act on.
     amicode_recommend: {
       description:
-        "Record a parameter recommendation and its outcome, or retrieve ledger-backed " +
-        "priors (L1 + learning-loops L-A). Three actions: " +
+        "Record a parameter recommendation and its outcome, or retrieve priors for the " +
+        "active workspace (L1 + learning-loops L-A + SEAM 2 regime priors). Four actions: " +
         "action=`propose` logs {stage, param, value, confidence: high|medium|low, " +
-        "provenance:[{source: own-precedent|demo|physics|ledger|default, ref, note}], alternatives?} — " +
+        "provenance:[{source: own-precedent|demo|physics|ledger|default|regime-prior, ref, note}], alternatives?} — " +
         "confidence is MECHANICAL per scores/memory/confidence-rubric.md (never a guess); " +
         "action=`outcome` logs {stage, param, outcome: accepted|overridden, applied_value} AFTER " +
         "the value lands via set_model/formulate (append-only pair, keyed on stage+param) — an " +
         "`overridden` outcome also appends a run-ledger `override` stanza; " +
         "action=`query` retrieves honest ledger priors (medians/IQR, \"n runs, m verified\" " +
-        "provenance) for the active workspace's most recent structure_hash — pass `params` " +
-        "(e.g. [\"Q\",\"N\"]) to select which recommendable knobs to return, or omit for all. " +
+        "provenance) for the active workspace's most recent structure_hash, COMPOSED with the " +
+        "regime priors — static, platform-family-scoped priors for the five NAMED calibration " +
+        "knobs (tr_frac, β, y_goal, GLS weighting, min_contrast), scoped by the session's " +
+        "recorded platform family and carrying their profile scope + census + sources + the " +
+        "public-scale caveat in every provenance — pass `params` " +
+        "(e.g. [\"Q\",\"N\",\"min_contrast\"]) to select which knobs to return, or omit for all. " +
         "Ledger-sourced confidence is CAPPED at medium (interim guard until per-structure trust " +
-        "lands) — never auto-applied. propose/outcome events are stamped with structure_hash when " +
+        "lands) — never auto-applied; regime priors state their explicit confidence. " +
+        "action=`audit` runs the regime-prior audit (the off-profile sensor): it FAILS when a " +
+        "prior was applied outside its profile scope without the public-scale caveat surfaced " +
+        "(the with-caveat case passes), and surfaces census staleness when `current_census` " +
+        "{date, total, families:{spin,transmon,atom}} differs from the table's stamp. " +
+        "propose/outcome events are stamped with structure_hash when " +
         "known. No active problem workspace yet → a no-op receipt (recommendations begin at the problem stage).",
       args: {
         action: { type: "string", description: "propose | outcome | query" },
@@ -1431,6 +1445,13 @@ export const AmicodeTools = async (input: unknown) => {
           type: ["array", "null"],
           description: 'Recommendable knob names to retrieve, e.g. ["Q","N"] (query); null/omitted = all.',
         },
+        current_census: {
+          type: ["object", "null"],
+          description:
+            "The CURRENT profile census for the audit's staleness check: " +
+            "{date: \"YYYY-MM-DD\", total: n, families: {spin: n, transmon: n, atom: n}} " +
+            "(audit only; null to audit applications without the staleness check).",
+        },
       },
       async execute(a: {
         action: string;
@@ -1444,31 +1465,109 @@ export const AmicodeTools = async (input: unknown) => {
         applied_value?: unknown;
         auto_accepted?: boolean | null;
         params?: string[] | null;
+        current_census?: Record<string, unknown> | null;
       }) {
         try {
           const slug = readActiveSlug();
           if (!slug)
             return "No active problem yet — recommendation not recorded (recommendations begin at the problem stage).";
 
-          // ── query: retrieve honest ledger priors (learning-loops L-A) ──
+          // ── query: retrieve honest ledger priors (learning-loops L-A),
+          // composed with the SEAM 2 regime priors (#699) — static,
+          // platform-family-scoped priors for the five NAMED calibration knobs
+          // (tr_frac, β, y_goal, GLS weighting, min_contrast), served alongside
+          // the run-history priors. The regime priors are NOT run-gated; the
+          // ledger priors keep their structure-hash keying (ctx.goal keys the
+          // ledger query on the task, not just the type skeleton — without it
+          // a CZ's medians would be recommended for an X gate). Confidence
+          // capping stays with the existing mechanics: ledger recs cap at
+          // medium inside selectRecommendations; regime recs state the table's
+          // explicit confidence. ──
           if (a.action === "query") {
+            const sysRaw = readEntityJson<Record<string, unknown>>(slug, "system");
+            const platform = sysRaw !== undefined ? normalizeSystem(sysRaw).platform : undefined;
             const ctx = resolveWorkspaceSpecContext(slug);
-            if (!ctx)
-              return (
-                `No ledger history yet for "${slug}" — action=query needs at least one completed, ` +
-                `hash-stamped run to key on (run a solve first).`
-              );
-            if (ctx.N === undefined || ctx.T === undefined)
-              return `Ledger history found for "${slug}" but its N/T are unavailable — cannot bucket the query.`;
-            // ctx.goal keys the query on the task, not just the type skeleton —
-            // without it a CZ's medians would be recommended for an X gate.
-            const result = queryLedger(ctx.structure_hash, ctx.N, ctx.T, ctx.goal);
-            if (!result) return `Ledger query unavailable for "${slug}" (amico CLI unreachable, or no matching history).`;
+            let ledger: LedgerQueryResult | undefined;
+            let ledgerNote: string | undefined;
+            if (!ctx) {
+              ledgerNote =
+                `no ledger-backed recommendations yet (they key on at least one completed, hash-stamped run)`;
+            } else if (ctx.N === undefined || ctx.T === undefined) {
+              ledgerNote = `ledger history found but its N/T are unavailable — cannot bucket the ledger query`;
+            } else {
+              const result = queryLedger(ctx.structure_hash, ctx.N, ctx.T, ctx.goal);
+              if (!result) {
+                ledgerNote = `ledger query unavailable (amico CLI unreachable, or no matching history)`;
+              } else {
+                ledger = result;
+              }
+            }
             const wanted = Array.isArray(a.params) && a.params.length > 0 ? a.params.map(String) : undefined;
-            const recs = selectRecommendations(result, wanted);
-            if (recs.length === 0) return `No ledger-backed recommendations yet for "${slug}" (${result.provenance}).`;
-            const lines = recs.map((r) => `  ${r.param} = ${JSON.stringify(r.value)} (${r.confidence}, ${r.provenance})`);
-            return `Ledger-backed recommendations for "${slug}":\n${lines.join("\n")}`;
+            const served = serveRecommendations({
+              ...(platform !== undefined ? { platform } : {}),
+              ...(ledger !== undefined ? { ledger } : {}),
+              ...(wanted !== undefined ? { params: wanted } : {}),
+            });
+            const lines = served.recommendations.map(
+              (r) => `  ${r.param} = ${JSON.stringify(r.value)} (${r.confidence}, ${r.origin}: ${r.provenance})`,
+            );
+            const notes = [served.regimeNote, ledgerNote].filter((n): n is string => n !== undefined);
+            if (lines.length === 0) {
+              return `No recommendations yet for "${slug}":\n${notes.map((n) => `  (${n})`).join("\n")}`;
+            }
+            return (
+              `Recommendations for "${slug}" (regime = static platform-family priors, ledger = this workspace's run history):\n` +
+              `${lines.join("\n")}` +
+              (notes.length > 0 ? `\n${notes.map((n) => `  (${n})`).join("\n")}` : "")
+            );
+          }
+
+          // ── audit: SEAM 2's F2 sensor (#699) — a query over prior-application
+          // events (the propose/outcome events amico_recommend itself appends
+          // to this workspace's events.jsonl). FAILS when a prior was applied
+          // outside its profile scope without the public-scale caveat surfaced;
+          // the with-caveat case passes. Surfaces census staleness when handed
+          // a current census that differs from the table's stamp. ──
+          if (a.action === "audit") {
+            // Boundary shape-check on the free-form census arg (a malformed
+            // census would otherwise report a spurious staleness).
+            let census: CensusStamp | undefined;
+            const c = a.current_census;
+            if (given(c) && typeof c.date === "string" && typeof c.total === "number" && typeof c.families === "object" && c.families !== null) {
+              census = c as unknown as CensusStamp;
+            }
+            const res = auditRegimePriorApplications(slug, census !== undefined ? { currentCensus: census } : undefined);
+            if (res.tableProblems !== undefined) {
+              return (
+                `Regime-prior audit FAILED for "${slug}" — the priors table is invalid (a broken sensor never silently passes):\n` +
+                res.tableProblems.map((p) => `  - ${p}`).join("\n")
+              );
+            }
+            const scopeLine =
+              `  session platform: ${res.platform ?? "(no system recorded)"} → family ${res.family ?? "(unmapped — off-census)"}`;
+            if (res.ok) {
+              return (
+                `Regime-prior audit PASSED for "${slug}": ${res.audited} prior application(s) checked, ` +
+                `${res.applied} applied (outcome-recorded); no off-scope application without the caveat surfaced.\n` +
+                scopeLine
+              );
+            }
+            const parts: string[] = [];
+            for (const v of res.violations) {
+              parts.push(`  - event ${v.seq} (${v.key}): ${v.reason}`);
+            }
+            if (res.stale !== undefined) {
+              parts.push(
+                `  - STALE CENSUS: the table was stamped ${res.stale.stamped.date}, ${res.stale.stamped.total} profiles ` +
+                  `(${Object.entries(res.stale.stamped.families).map(([k, n]) => `${n} ${k}`).join(" / ")}), but the current ` +
+                  `census is ${res.stale.current.date}, ${res.stale.current.total} profiles — regenerate the table from the ` +
+                  `internal distiller and re-stamp it.`,
+              );
+            }
+            return (
+              `Regime-prior audit FAILED for "${slug}" — ${res.audited} prior application(s) checked:\n` +
+              `${parts.join("\n")}\n${scopeLine}`
+            );
           }
 
           const key = `${a.stage ?? "?"}/${a.param ?? "?"}`;

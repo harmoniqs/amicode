@@ -100,6 +100,92 @@ assert(
 );
 assert(runs.runs[0].tier === "vetted", "run ref carries tier");
 
+// ── SEAM 2 (#699): the recommend query serves the regime priors (the session's
+// system is transmon → family transmon; five NAMED knobs, no ledger history
+// yet), and the audit reads the propose/outcome events back. ──
+const q = await tools.amicode_recommend.execute({
+  action: "query",
+  stage: null,
+  param: null,
+  value: null,
+  confidence: null,
+  provenance: null,
+  alternatives: null,
+  outcome: null,
+  applied_value: null,
+  auto_accepted: null,
+  params: null,
+  current_census: null,
+});
+for (const knob of ["tr_frac", "beta", "y_goal", "gls_weighting", "min_contrast"]) {
+  assert(q.includes(`${knob} = `), `query serves the regime prior for ${knob}`);
+  assert(q.includes("regime:"), "regime-origin provenance labeled");
+}
+assert(q.includes("do not cite as device data"), "the public-scale caveat rides the served priors");
+assert(q.includes("ledger-backed recommendations yet"), "no-ledger note is honest, not a dead end");
+
+// propose a served prior through the EXISTING mechanics (regime-prior provenance
+// entry), record its outcome, then audit — clean pass.
+const proposeArgs: any = {
+  action: "propose",
+  stage: "calibrate",
+  param: "min_contrast",
+  value: 2.5,
+  confidence: "high",
+  provenance: [
+    {
+      source: "regime-prior",
+      ref: "regime_priors_table.json#min_contrast@transmon",
+      note: "scope: spin, transmon, atom; census: 2026-08-31, 12 profiles: 4 spin / 4 transmon / 4 atom; sources: Intonatissimo issues #65 + #81; caveat: Magnitudes are public-scale estimates distilled from public papers and meetings — do not cite as device data.",
+    },
+  ],
+  alternatives: null,
+  outcome: null,
+  applied_value: null,
+  auto_accepted: null,
+  params: null,
+  current_census: null,
+};
+await tools.amicode_recommend.execute(proposeArgs);
+await tools.amicode_recommend.execute({ ...proposeArgs, action: "outcome", outcome: "accepted", applied_value: 2.5 });
+const auditArgs: any = {
+  action: "audit",
+  stage: null,
+  param: null,
+  value: null,
+  confidence: null,
+  provenance: null,
+  alternatives: null,
+  outcome: null,
+  applied_value: null,
+  auto_accepted: null,
+  params: null,
+  current_census: null,
+};
+let a1 = await tools.amicode_recommend.execute(auditArgs);
+assert(a1.includes("audit PASSED"), `clean audit passes — got: ${a1.slice(0, 120)}`);
+assert(a1.includes("1 prior application(s) checked, 1 applied"), "the outcome pair is the applied count");
+
+// the violation fixture through the real tool: an off-scope prior (spin-scoped)
+// proposed into this transmon workspace with the caveat stripped → audit FAILS.
+const violated = await tools.amicode_recommend.execute({
+  ...proposeArgs,
+  param: "tr_frac",
+  value: "0.05-0.1",
+  confidence: "low",
+  provenance: [
+    {
+      source: "regime-prior",
+      ref: "regime_priors_table.json#tr_frac@spin",
+      note: "scope: spin; census: 2026-08-31, 12 profiles: 4 spin / 4 transmon / 4 atom; sources: arXiv:2410.15590;",
+    },
+  ],
+});
+assert(violated.includes("Recommended tr_frac"), "the violating proposal records");
+let a2 = await tools.amicode_recommend.execute(auditArgs);
+assert(a2.includes("audit FAILED"), `off-scope-without-caveat audit fails — got: ${a2.slice(0, 120)}`);
+assert(a2.includes("outside its profile scope"), "the violation names the off-scope reason");
+
 console.error(`OK — ${events.length} events, ${formEvents.length} formulation events, workspace "${slug}"`);
 fs.rmSync(tmp, { recursive: true, force: true });
 process.exit(0);
