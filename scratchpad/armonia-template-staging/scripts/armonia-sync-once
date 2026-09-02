@@ -1,27 +1,152 @@
 #!/usr/bin/env bash
-# armonia-sync-once — the ONE sync implementation.
-# Invoked by the 15-min systemd timer (armonia-sync.service) AND by the
-# plugin's post-write debounce (systemd-run --unit=armonia-debounce).
-# For each mounted vault: pull --rebase --autostash; if the vault's marker
-# says kind == personal, commit + push local changes. Clears .sync-pending.
+# armonia-sync-once — the ONE cross-platform sync implementation.
+#
+# For each mounted vault under $AMICO_VAULTS_ROOT (default ~/.amico/vaults):
+#   git fetch (tolerant — feeds the behind-count), git pull --rebase --autostash
+#   (always — keeps team/project mounts current); if the vault's marker says
+#   kind == personal: git add -A; commit; push.
+# Team/project/engagement vaults are pull-only here (their writes are PR-gated).
+#
+# STATUS SIDECAR (vault-mgmt spec M3 — the founding-incident fix: a conflicted
+# clone sat 139 commits behind for two months, silently, because nothing
+# rendered staleness): every cycle, for EVERY mount (including the ones that
+# fail), one JSON record is written OUTSIDE vault content —
+#   $AMICO_OPS_ROOT/sync-status/<resolved-path-key>.json
+# (key = the mount's RESOLVED storage path, so symlinked aliases collapse to
+# one record). Tolerance is preserved (a failed mount never blocks the
+# others); blindness is removed (the failure and its behind-count are
+# recorded, and armonia-vault-status renders states that are never silent:
+# OK / STALE / UNKNOWN / ZOMBIE / ro-by-policy).
+#
+# Invoked by whichever scheduler the platform provides:
+#   - Linux : the 15-min systemd timer (armonia-sync.timer) + a systemd-run
+#             debounce armed by the plugin's post-write hook.
+#   - macOS : the launchd agent co.harmoniqs.armonia-sync (StartInterval 900 +
+#             WatchPaths on ~/.amico/.sync-pending), installed by
+#             scripts/install-macos-sync.
+# The two schedulers differ; this script does not — it is the shared payload.
+#
+# The pending flag is cleared at the START so a write landing mid-sync is not
+# lost (the post-write hook re-touches the flag, re-triggering the watcher).
 set -uo pipefail
 
-VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"
+# Schedulers hand this script a minimal PATH; make sure git (and friends)
+# resolve on both Homebrew (macOS) and standard Linux layouts.
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+AMICO_HOME="${AMICO_HOME:-$HOME/.amico}"
+VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$AMICO_HOME/vaults}"
+OPS_ROOT="${AMICO_OPS_ROOT:-$AMICO_HOME/ops}"
+STATUS_DIR="$OPS_ROOT/sync-status"
+
+# Clear the pending-sync flag first (see header note on the mid-sync race).
+rm -f "$AMICO_HOME/.sync-pending" 2>/dev/null || true
+
+[ -d "$VAULTS_ROOT" ] || exit 0
+
+stamp="$(date +%Y-%m-%dT%H:%M:%S%z)"
+echo "[$stamp] armonia-sync-once: start"
+
+# ── Status sidecar helpers (spec M3) ─────────────────────────────────────────
+mkdir -p "$STATUS_DIR" 2>/dev/null || true
+
+record_key() {  # <mount-dir> → resolved-path key
+  python3 - "$1" <<'PY'
+import sys, os
+print(os.path.realpath(sys.argv[1]).strip('/').replace('/', '_'))
+PY
+}
+
+write_record() {  # <mount-dir> <kind> <display_name> <pull_ok:0|1> <reason> <behind|NULL> <fetch_blocked:0|1> <push_ok:0|-1> 
+  local d="$1" kind="$2" dn="$3" pull_ok="$4" reason="$5" behind="$6" fb="$7" push_ok="$8"
+  [ -d "$STATUS_DIR" ] || return 0
+  python3 - "$STATUS_DIR" "$(record_key "$d")" "$d" "$kind" "$dn" \
+           "$pull_ok" "$reason" "$behind" "$fb" "$push_ok" <<'PY'
+import json, os, sys, subprocess, time
+status_dir, key, path, kind, dn, pull_ok, reason, behind, fb, push_ok = sys.argv[1:11]
+rec_path = os.path.join(status_dir, key + ".json")
+prev = {}
+try:
+    with open(rec_path) as f:
+        prev = json.load(f)
+except Exception:
+    pass  # absent record = UNKNOWN before this write; born here
+now = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+pull_ok = pull_ok == "1"
+ok = pull_ok and (push_ok in ("0", "-1"))  # personal push failure also breaks the round
+failures = 0 if ok else prev.get("consecutive_failures", 0) + 1
+rec = {
+    "display_name": dn or os.path.basename(path.rstrip("/")),
+    "kind": kind or "",
+    "path": os.path.realpath(path),
+    "last_success": now if ok else prev.get("last_success"),
+    "last_failure": None if ok else now,
+    "failure_reason": None if ok else (reason or "unknown")[:300],
+    "consecutive_failures": failures,
+    "behind_count": None if behind == "NULL" else int(behind),
+    "fetch_blocked": fb == "1",
+    "threshold": 50,
+    "cadence_minutes": 15,
+    "updated": now,
+}
+tmp = rec_path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(rec, f, indent=1)
+os.replace(tmp, rec_path)  # atomic: copy → rename; a torn write never lands
+PY
+}
 
 shopt -s nullglob
+seen_resolved=""
 for d in "$VAULTS_ROOT"/*/; do
+  d="${d%/}"
   [ -d "$d/.git" ] || continue
-  git -C "$d" pull --rebase --autostash || true
-  kind=""
+  # alias dedupe at the LOOP level: a symlinked alias of an already-synced vault
+  # is the same storage — process each resolved path once per cycle (failure
+  # counts count CYCLES, not directory entries)
+  resolved="$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$d")"
+  case " $seen_resolved " in *" $resolved "*) continue;; esac
+  seen_resolved="$seen_resolved $resolved"
+  name="$(basename "$d")"
+
+  kind=""; dn=""
   if [ -f "$d/.amico-vault.toml" ]; then
-    kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" | sed -E 's/.*=\s*"?([a-z]+)"?.*/\1/')
+    kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')
+    dn=$(grep -m1 '^name[[:space:]]*=' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')
   fi
+
+  # fetch first (tolerant): feeds the behind-count even when the pull will fail.
+  # GIT_TERMINAL_PROMPT=0: under a scheduler there is no tty — fail, never
+  # hang on a credential prompt (macOS has no `timeout` binary; the env var
+  # is the portable guard)
+  fetch_blocked=0; behind="NULL"
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$d" fetch origin --quiet >/dev/null 2>&1; then
+    fetch_blocked=1
+  else
+    branch="$(git -C "$d" symbolic-ref -q --short HEAD 2>/dev/null || echo main)"
+    n="$(git -C "$d" rev-list --count "HEAD..origin/$branch" 2>/dev/null || echo NULL)"
+    behind="$n"
+  fi
+
+  pull_out="$(git -C "$d" pull --rebase --autostash 2>&1)"; pull_rc=$?
+  printf '%s\n' "$pull_out" | sed "s/^/  [$name] /"
+  reason="$(printf '%s\n' "$pull_out" | grep -m1 -i -e 'error' -e 'fatal' -e 'refus' -e 'conflict' -e 'unmerged' || true)"
+  if [ "$pull_rc" -ne 0 ] && [ -z "$reason" ]; then
+    reason="$(printf '%s\n' "$pull_out" | grep -m1 -v '^\s*$' || echo "pull exited $pull_rc")"
+  fi
+
+  push_ok=-1  # -1 = no push attempted (non-personal / nothing to push)
   if [ "$kind" = "personal" ]; then
-    git -C "$d" add -A
-    git -C "$d" commit -m "auto: sync $(date -Iseconds)" || true
-    git -C "$d" push || true
+    git -C "$d" add -A 2>/dev/null || true
+    if ! git -C "$d" diff --cached --quiet 2>/dev/null; then
+      git -C "$d" commit -m "auto: sync $(date +%Y-%m-%dT%H:%M:%S%z)" \
+        2>&1 | sed "s/^/  [$name] /" || true
+      if git -C "$d" push 2>&1 | sed "s/^/  [$name] /"; then push_ok=0; else push_ok=1; fi
+    fi
   fi
+
+  pull_ok=1; [ "$pull_rc" -eq 0 ] || pull_ok=0
+  write_record "$d" "$kind" "$dn" "$pull_ok" "$reason" "$behind" "$fetch_blocked" "$push_ok" || true
 done
 
-# Clear the pending-sync flag set by the post-write hook.
-rm -f "$HOME/.amico/.sync-pending" 2>/dev/null || true
+echo "[$(date +%Y-%m-%dT%H:%M:%S%z)] armonia-sync-once: done"
