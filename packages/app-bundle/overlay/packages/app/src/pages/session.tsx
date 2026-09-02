@@ -88,7 +88,7 @@ import { sessionPanelLayout } from "@/pages/session/session-panel-layout"
 import { SessionReviewEmptyChangesV2 } from "@opencode-ai/session-ui/v2/session-review-empty-changes-v2"
 import { ReviewPanelV2 } from "@/pages/session/v2/review-panel-v2"
 import { createReviewPanelV2State } from "@/pages/session/v2/review-panel-v2-state"
-import { accumulateDiffs } from "@/pages/session/v2/accumulate-diffs"
+import { resolveReviewDiffs } from "@/pages/session/v2/resolve-review-diffs"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { TerminalPanelV2 } from "@/pages/session/terminal-panel-v2"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
@@ -715,52 +715,52 @@ export default function Page() {
     }
   })
   const reviewDiffs = createMemo(() => {
-    // Server endpoint returns the authoritative full-session diff (queries all messages).
-    const serverDiffs = sessionDiffQuery.data ?? []
-    if (serverDiffs.length > 0) {
-      // Server paths are relative to the project root — prefix with ~/project-path
-      const dir = sdk().directory
-      const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
-      const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
-      return serverDiffs
-        .filter((d): d is SnapshotFileDiff & { file: string } => !!d.file)
-        .map((d) => ({ ...d, file: d.file.startsWith("/") || d.file.startsWith("~/") ? d.file : `${prefix}/${d.file}` }))
-    }
-    // Fallback: derive from tool parts currently loaded in the client.
-    // This shows immediate results for visible messages while the server query loads.
-    const allMessages = messages()
-    if (!allMessages.length) return [] as Array<SnapshotFileDiff & { file: string }>
     const dir = sdk().directory
     const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
-    const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
-    const toHomePath = (p: string) => {
-      if (p.startsWith("~/")) return p
-      if (home && p.startsWith(home)) return "~" + p.slice(home.length)
-      if (!p.startsWith("/")) return `${prefix}/${p}`
-      return p
-    }
+
+    // Server query is authoritative once it has returned real data (not placeholder).
+    // Trust its result even when empty — that means all agent edits were reverted.
+    const serverReady = sessionDiffQuery.isSuccess && !sessionDiffQuery.isPlaceholderData
+
+    // Build the fallback edit parts from loaded tool parts (used while server is loading).
     const editParts: import("@/pages/session/v2/accumulate-diffs").ToolEditPart[] = []
-    for (const msg of allMessages) {
-      const msgParts = sync().data.part[msg.id]
-      if (!msgParts) continue
-      for (const part of msgParts) {
-        if (part.type !== "tool" || !EDIT_TOOLS.has(part.tool)) continue
-        if (part.state.status !== "completed") continue
-        const meta = part.state.metadata as Record<string, unknown> | undefined
-        const filediff = meta?.filediff as { file?: string; patch?: string; additions?: number; deletions?: number } | undefined
-        if (filediff?.file) {
-          const rawTitle = (part.state as { title?: string }).title || filediff.file
-          editParts.push({
-            file: filediff.file,
-            title: toHomePath(rawTitle),
-            patch: filediff.patch,
-            additions: filediff.additions ?? 0,
-            deletions: filediff.deletions ?? 0,
-          })
+    if (!serverReady) {
+      const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
+      const toHomePath = (p: string) => {
+        if (p.startsWith("~/")) return p
+        if (home && p.startsWith(home)) return "~" + p.slice(home.length)
+        if (!p.startsWith("/")) return `${prefix}/${p}`
+        return p
+      }
+      for (const msg of messages()) {
+        const msgParts = sync().data.part[msg.id]
+        if (!msgParts) continue
+        for (const part of msgParts) {
+          if (part.type !== "tool" || !EDIT_TOOLS.has(part.tool)) continue
+          if (part.state.status !== "completed") continue
+          const meta = part.state.metadata as Record<string, unknown> | undefined
+          const filediff = meta?.filediff as { file?: string; patch?: string; additions?: number; deletions?: number } | undefined
+          if (filediff?.file) {
+            const rawTitle = (part.state as { title?: string }).title || filediff.file
+            editParts.push({
+              file: filediff.file,
+              title: toHomePath(rawTitle),
+              patch: filediff.patch,
+              additions: filediff.additions ?? 0,
+              deletions: filediff.deletions ?? 0,
+            })
+          }
         }
       }
     }
-    return accumulateDiffs(editParts)
+
+    return resolveReviewDiffs({
+      serverDiffs: sessionDiffQuery.data ?? [],
+      serverReady,
+      editParts,
+      directory: dir,
+      home,
+    })
   })
 
   // All files touched by edit tools in this session — fetched from the server
