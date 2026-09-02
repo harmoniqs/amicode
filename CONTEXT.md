@@ -56,7 +56,7 @@ _Avoid_: Armonia (the whole stack), workspace, folder
 ### Agentic work
 
 **Notturno**:
-The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amico` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
+The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amicissimo` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
 **Director**:

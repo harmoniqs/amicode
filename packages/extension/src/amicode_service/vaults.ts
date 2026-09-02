@@ -1,5 +1,5 @@
 // AMICODE: data source for the Vaults panel tab (GET /amicode/vaults).
-// Relays `amico-vault status --json` (harmoniqs/amico) verbatim; every
+// Relays `amico-vault status --json` (harmoniqs/amicissimo) verbatim; every
 // failure mode is synthesized into the SAME plural shape so the web app
 // parses exactly one schema. Contract: status() never rejects.
 import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"

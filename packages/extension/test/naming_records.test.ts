@@ -15,7 +15,7 @@
  * in amicode's glossary only.
  *
  * SCOPE: the amico CONTEXT.md companion lines are a cross-repo PR
- * (harmoniqs/amico) owned by parent #497 — this slice tests the
+ * (harmoniqs/amicissimo) owned by parent #497 — this slice tests the
  * amicode-side records only. The dual-glossary (amicode ↔ amico) half of
  * `naming_record_complete` lands with that companion PR, not here.
  */
