@@ -59,17 +59,26 @@ change — that is the whole point of the entanglement.
 
 ## Mounts & resolution
 
-The vault is no longer a single directory. A user's **Armonia** is the set of vaults mounted under `~/.amico/vaults/`, discovered by convention (every dir with a `.amico-vault.toml` marker is a mount). The session-start hook injects a "Mount stack" summary each session; follow that stack for reads and the routing rules below for writes.
+The vault is no longer a single directory. A user's vault set is mounted under `~/.amico/vaults/`, discovered by convention (every dir with a `.amico-vault.toml` marker is a mount). The session-start hook injects a "Mount stack" summary each session; follow that stack for reads and the routing rules below for writes.
+
+### Naming, layout & sync health (the rule of record)
+
+- **Vaults minted by `armonia-init` are named `vault-<owner-or-purpose>`** — minted names never carry "armonia": it names the **workspace** (`~/armonia` = repos + data), never a vault. **Team vaults riding code repos keep the repo's own name** (e.g. `armonissima` is a code repo first, doubling as team vault) — exempt by construction, never "overridden". The lint at minting enforces this; existing vaults converge opportunistically, never by renaming history.
+- The mount's public identity is the `.amico-vault.toml` `name` field — the directory name should match it.
+- **Layout invariant**: every machine resolves BOTH `~/.amico/vaults` and `~/armonia/data/vaults` to the same storage (`~/.amico/vaults` is a symlink into `~/armonia/data/vaults`). A real directory at `~/.amico/vaults` holding clones is the divergence class — refuse it, never work around it.
+- **Sync health is sensed, never silent**: `armonia-sync-once` writes a per-mount status record (ops dir, outside vault content, keyed by resolved storage path so symlinked aliases collapse to one record). `armonia-vault-status` renders the states: **OK** (last round green, within threshold) · **STALE** (consecutive failures, behind-count over threshold, or fetch-blocked) · **UNKNOWN** (no record — a pre-sidecar script version, or a mount the loop never reached) · **ZOMBIE** (newest record older than 3× the sync cadence — a dead scheduler is not a quiet all-clear) · **ro-by-policy** (a personal vault failing on a non-writable mount — an expected failure, muted, detected from the mount's own facts, never a policy table). No state is silent; a vault sitting months behind surfaces within one cycle.
+- **Two layers, documented as two layers**: the sync script's commit/push behavior is keyed on the vault's **kind** (from the toml); a mount's read-only service is a **per-machine policy** — distinct layers, and their interaction is the `ro-by-policy` state, not an error.
+- **Alias dedupe is a rendering rule**: one row per resolved storage, the ruled name displayed — never a precedence change (read precedence stays first-hit top→bottom).
 
 ### The five kinds and read precedence
 
-| Kind | Marker | Repo naming | Holds | Writable |
+| Kind | Marker | Repo naming (minted) | Holds | Writable |
 |------|--------|-------------|-------|----------|
-| **personal** | `kind = "personal"` | `armonia-<name>` | Own research notes, hopper, solo specs/plans, session distillates, experiments-in-progress | single-writer (you) |
-| **engagement** | `kind = "engagement"` | `armonia-<engagement>` | Engagement-scoped notes; lab state (`lab.toml`, device/model-of-lab notes, calibration, per-lab catalog) once hardware deploys | engagement staff |
-| **project** | `kind = "project"` | `armonia-<project>` | Proprietary-package knowledge (your private package internals, hopper, insights) | per-person grant |
-| **team** | `kind = "team"` | `armonia-<team>` | Your team knowledge tier: hardware/control context, methods + patterns, strategy/specs/plans, experiments + insights, papers, people/orgs, central pulse catalog (git-lfs) | PR-gated promotion |
-| **public** | `kind = "public"` | `<org>/armonia` | Best-practice usage patterns for public packages, hazard notes, platform cards, recipes | world read-only |
+| **personal** | `kind = "personal"` | `vault-<name>` | Own research notes, hopper, solo specs/plans, session distillates, experiments-in-progress | single-writer (you) |
+| **engagement** | `kind = "engagement"` | `vault-<engagement>` | Engagement-scoped notes; lab state (`lab.toml`, device/model-of-lab notes, calibration, per-lab catalog) once hardware deploys | engagement staff |
+| **project** | `kind = "project"` | `vault-<project>` | Proprietary-package knowledge (your private package internals, hopper, insights) | per-person grant |
+| **team** | `kind = "team"` | repo's own name when riding a code repo; else `vault-<team>` | Your team knowledge tier: hardware/control context, methods + patterns, strategy/specs/plans, experiments + insights, papers, people/orgs, central pulse catalog (git-lfs) | PR-gated promotion |
+| **public** | `kind = "public"` | `vault-public` (org-owned) | Best-practice usage patterns for public packages, hazard notes, platform cards, recipes | world read-only |
 
 **Read precedence: personal → engagement → project(s) → team → public.** Queries search the **union** of all mounts; on a path collision the higher-precedence mount wins (first hit). `mounts.toml` (in `~/.amico/`) overrides order and writability; absent, kind-order applies. A dir with no marker, a duplicate id, or a manifest `path` that doesn't exist is dropped from the mount set with a warning in the hook summary — never guessed at, never fatal.
 
