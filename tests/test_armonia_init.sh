@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 # Smoke test for scripts/armonia-init (--no-github mode).
 # Builds a throwaway template dir, runs armonia-init against a temp vaults ROOT,
-# and asserts: dest created, kind marker correct, idempotency (2nd run exits 64).
+# and asserts: dest created, kind marker correct, minted-name lint (the naming
+# rule), override stamping, template rule-section presence, the sweep note,
+# and re-run semantics (2nd run exits 64 against a fully-provisioned vault).
 # No network / no GitHub.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INIT="$HERE/../scripts/armonia-init"
+REPO="$HERE/.."
 [ -x "$INIT" ] || { echo "FAIL: $INIT not executable"; exit 1; }
 
 fail() { echo "FAIL: $*"; exit 1; }
 
 # --- fixtures ---
 TMPL="$(mktemp -d)"        # throwaway template (plain dir, NOT a git repo)
-ROOT="$(mktemp -d)"        # vaults root, reused for both invocations
+ROOT="$(mktemp -d)"        # vaults root, reused for all invocations
 trap 'rm -rf "$TMPL" "$ROOT"' EXIT
 
 # minimal template skeleton
@@ -32,22 +35,64 @@ if ! "$INIT" jane-doe --no-github --root "$ROOT"; then
   fail "first armonia-init invocation did not exit 0"
 fi
 
-DEST="$ROOT/armonia-jane-doe"
+DEST="$ROOT/vault-jane-doe"
 [ -d "$DEST" ] || fail "dest $DEST was not created"
 [ -d "$DEST/.git" ] || fail "dest is not a git repo"
 
 # marker must say kind = "personal"
 grep -q '^kind = "personal"$' "$DEST/.amico-vault.toml" \
   || fail "marker kind is not personal: $(cat "$DEST/.amico-vault.toml")"
-# marker name must be the repo name
-grep -q '^name = "armonia-jane-doe"$' "$DEST/.amico-vault.toml" \
-  || fail "marker name is wrong: $(cat "$DEST/.amico-vault.toml")"
+# marker name must be the MINTED vault- name (naming rule: vault-<owner-or-purpose>)
+grep -q '^name = "vault-jane-doe"$' "$DEST/.amico-vault.toml" \
+  || fail "marker name is wrong (minted name must be vault-<name>): $(cat "$DEST/.amico-vault.toml")"
 
-# --- second invocation against the SAME root: must exit 64 (already exists) ---
+# --- naming-rule lint: containment, both positions ---
+set +e
+"$INIT" armonia-foo --no-github --root "$ROOT" 2>"$ROOT/.lint1"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "lint must refuse NAME=armonia-foo (embedded 'armonia')"
+grep -qi 'names the workspace' "$ROOT/.lint1" \
+  || fail "refusal must print the rule text; got: $(cat "$ROOT/.lint1")"
+[ -d "$ROOT/vault-armonia-foo" ] && fail "lint refusal must not create the vault"
+
+set +e
+"$INIT" jane-armonia-doe --no-github --root "$ROOT" 2>"$ROOT/.lint2"
+rc=$?
+set -e
+[ "$rc" -ne 0 ] || fail "lint must refuse a suffix-position 'armonia' (containment, not prefix)"
+
+# --- override: proceeds AND stamps the sanctioned-exception note ---
+"$INIT" armonia-legacy --override --no-github --root "$ROOT" >/dev/null 2>&1 \
+  || fail "override must proceed past the lint"
+OD="$ROOT/vault-armonia-legacy"
+[ -f "$OD/README.md" ] || fail "override vault must carry a README (the stamp target)"
+grep -qi 'sanctioned exception' "$OD/README.md" \
+  || fail "override README must carry the sanctioned-exception note"
+if grep -qi 'deviation' "$OD/README.md"; then
+  fail "override note must NEVER use the word 'deviation' (sanctioned, not deviation)"
+fi
+
+# --- the template's delimited rule section (the generated surface) ---
+TPLREADME="$REPO/scratchpad/armonia-template-staging/README.md"
+[ -f "$TPLREADME" ] || fail "template README missing: $TPLREADME"
+grep -q '^## Naming & layout (the rule of record)$' "$TPLREADME" \
+  || fail "template README must carry the delimited rule section heading"
+grep -q 'vault-<owner-or-purpose>' "$TPLREADME" \
+  || fail "template rule section must state the minted-name form"
+
+# --- the sweep note (one-time, lists every fleet vault) ---
+SWEEP="$REPO/docs/vault-naming-sweep.md"
+[ -f "$SWEEP" ] || fail "sweep note missing: $SWEEP"
+for vault in vault-aaron vault-partitura armonissima meeting-vault vault-attic vault-public vault-visionroom; do
+  grep -q "$vault" "$SWEEP" || fail "sweep note must list fleet vault: $vault"
+done
+
+# --- second invocation against the SAME fully-provisioned vault: exit 64 ---
 set +e
 "$INIT" jane-doe --no-github --root "$ROOT" 2>/dev/null
 rc=$?
 set -e
-[ "$rc" -eq 64 ] || fail "second invocation should exit 64, got $rc"
+[ "$rc" -eq 64 ] || fail "second invocation should exit 64 (already exists), got $rc"
 
-echo "PASS: armonia-init smoke test (create + marker + idempotency-exit-64)"
+echo "PASS: armonia-init smoke test (mint vault- name + containment lint + override stamp + template rule + sweep note + re-run exit-64)"

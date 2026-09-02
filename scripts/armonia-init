@@ -1,17 +1,38 @@
 #!/usr/bin/env bash
-# armonia-init <name> [--kind personal|project|engagement] [--no-github] [--root DIR]
-# One-command Armonia onboarding. Creates harmoniqs/armonia-<name> from
-# armonia-template (or clones it if already provisioned), stamps the kind
-# marker, installs the sync timer, mounts the company vault (armonissima) and
-# armonia-issimo where you have access, and creates the visible workspace
-# symlink ~/harmoniqs/armonia -> vaults root (spec §3 / Q4, resolved 2026-06-11).
+# armonia-init <name> [--kind personal|project|engagement] [--override] [--no-github] [--root DIR]
+# One-command Amico vault onboarding. Creates harmoniqs/vault-<name> (the
+# naming rule of record: vaults are named vault-<owner-or-purpose>; "armonia"
+# names the WORKSPACE, never a minted vault) from armonia-template (or clones
+# it if already provisioned), stamps the kind marker, installs the sync
+# timer, mounts the company vault (armonissima) and armonia-issimo where you
+# have access, and creates the visible workspace view (spec §3 / Q4,
+# resolved 2026-06-11; naming rule 2026-09-02, vault-mgmt spec M1).
 set -euo pipefail
-ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"; KIND=personal; GH=1
+ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"; KIND=personal; GH=1; OVERRIDE=0
 NAME="$1"; shift
 while [ $# -gt 0 ]; do case "$1" in
   --kind) KIND="$2"; shift 2;; --no-github) GH=0; shift;;
+  --override) OVERRIDE=1; shift;;
   --root) ROOT="$2"; shift 2;; *) echo "unknown arg $1" >&2; exit 64;; esac; done
-REPO="armonia-${NAME}"; DEST="$ROOT/$REPO"
+REPO="vault-${NAME}"; DEST="$ROOT/$REPO"
+
+# ── Naming-rule lint (vault-mgmt spec M1): a minted name must not contain  ──
+# "armonia" — prefix or embedded. The lint applies to MINTED names only:
+# existing vaults and team vaults riding code repos are exempt by
+# construction, never "overridden". --override proceeds AND stamps.
+if [[ "$REPO" == *armonia* ]]; then
+  if [ "$OVERRIDE" != 1 ]; then
+    {
+      echo "REFUSED: the minted name '$REPO' contains 'armonia'."
+      echo "The naming rule of record: vaults are named vault-<owner-or-purpose>;"
+      echo "'armonia' names the workspace (\$HOME/armonia = repos + data), never a minted vault."
+      echo "Pass a different <name>, or pass --override to proceed with a"
+      echo "sanctioned-exception note stamped in the vault's README."
+    } >&2
+    exit 64
+  fi
+fi
+
 [ -e "$DEST" ] && { echo "$DEST already exists" >&2; exit 64; }
 mkdir -p "$ROOT"
 if [ "$GH" = 1 ]; then
@@ -34,12 +55,30 @@ else  # test mode: copy a local template
   printf 'kind = "%s"\nname = "%s"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
   git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
 fi
+
+# ── Sanctioned-exception stamp (--override): the note, never a "deviation" ──
+if [ "$OVERRIDE" = 1 ]; then
+  STAMP="$(date +%Y-%m-%d)"
+  {
+    echo ""
+    echo "## Naming note — sanctioned exception"
+    echo ""
+    echo "This vault was minted as '$REPO' with the naming rule's explicit"
+    echo "override (stamp: $STAMP). The rule of record stands: vaults are named"
+    echo "vault-<owner-or-purpose>, and 'armonia' names the workspace. This name is"
+    echo "a sanctioned exception, recorded here at minting time."
+    echo ""
+  } >> "$DEST/README.md"
+  git -C "$DEST" add README.md && git -C "$DEST" commit -qm "naming: sanctioned exception stamped (--override)" || true
+fi
+
 # ── Shared mounts: company vault always; issimo where granted ──────────────
+# (existing vaults, not mints — the naming lint never applies here)
 if [ "$GH" = 1 ] && [ "$KIND" = personal ]; then
   if [ ! -d "$ROOT/armonissima" ]; then
     git clone "git@github.com:harmoniqs/armonissima.git" "$ROOT/armonissima" \
       && echo "Mounted: $ROOT/armonissima (kind=team)" \
-      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmoniqs/armonissima.git $ROOT/armonissima"
+      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmonissima.git $ROOT/armonissima"
   fi
   if [ ! -d "$ROOT/armonia-issimo" ]; then
     if git clone -q "git@github.com:harmoniqs/armonia-issimo.git" "$ROOT/armonia-issimo" 2>/dev/null; then

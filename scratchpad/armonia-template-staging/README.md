@@ -1,11 +1,23 @@
-# Your Armonia vault
+# Your vault
 
-This is a personal **Armonia** vault — one of the repos mounted under
-`~/.amico/vaults/`. Claude (via the amico-plugin skills + hooks) discovers it by
+This is a personal Amico vault — one of the repos mounted under
+`~/.amico/vaults/`. Amico (via the amico-plugin skills + hooks) discovers it by
 convention and resolves reads/writes across all your mounts.
 
 The kind of this vault is set in `.amico-vault.toml` (`kind = "personal"` by
 default; `armonia-init` rewrites it per `--kind`).
+
+## Naming & layout (the rule of record)
+
+- **Vaults are named `vault-<owner-or-purpose>`** — minted names never carry
+  "armonia": it names the **workspace** (`~/armonia` = repos + data), never a
+  vault. Team vaults riding code repos keep the repo's own name (that is
+  repo-naming, not vault-branding) — exempt by construction, never
+  "overridden".
+- The mount's public identity is the `.amico-vault.toml` `name` field — the
+  directory name matches it.
+- Storage lives under `~/armonia/data/vaults/`; `~/.amico/vaults` resolves to
+  it, so both paths work on every machine in the fleet.
 
 ## What goes here
 
