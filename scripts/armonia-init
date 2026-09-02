@@ -85,15 +85,29 @@ if [ -e "$DEST" ]; then
     elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh repo create "harmoniqs/$REPO" --private >/dev/null 2>&1; then
       REMOTE="git@github.com:harmoniqs/$REPO.git"
     else
+      # expected retry-later state, NOT an error: still local-only, honestly stamped
       echo "resume: no remote available yet — still local-only; re-run with credentials" >&2
-      exit 64
+      echo "Mounted: $DEST (kind=$KIND, provision_state=local-only — unchanged)" >&2
+      exit 0
     fi
     git -C "$DEST" remote remove origin 2>/dev/null || true
     git -C "$DEST" remote add origin "$REMOTE"
-    git -C "$DEST" push -q -u origin "$(git -C "$DEST" branch --show-current)" 2>/dev/null || true
-    sed -i.bak -E 's/^provision_state = ".*"$/provision_state = "provisioned"/' "$DEST/.amico-vault.toml" && rm -f "$DEST/.amico-vault.toml.bak"
-    git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "provision: resumed (remote attached)" || true
-    echo "Mounted: $DEST (kind=$KIND, resumed: local-only → provisioned, origin=$REMOTE)"
+    # stamp FIRST, then push: the remote receives the final state (the stamp
+    # commit included). The push is the REAL success gate — the stamp is
+    # earned only when the remote actually received the branch; a failed
+    # push leaves the stamp as local-only (revert the pre-stamp edit)
+    if sed -i.bak -E 's/^provision_state = ".*"$/provision_state = "provisioned"/' "$DEST/.amico-vault.toml" \
+       && rm -f "$DEST/.amico-vault.toml.bak" \
+       && git -C "$DEST" add .amico-vault.toml \
+       && git -C "$DEST" commit -qm "provision: resumed (remote attached)" \
+       && git -C "$DEST" push -q -u origin "$(git -C "$DEST" branch --show-current)" 2>/dev/null; then
+      echo "Mounted: $DEST (kind=$KIND, resumed: local-only → provisioned, origin=$REMOTE)"
+    else
+      sed -i.bak -E 's/^provision_state = ".*"$/provision_state = "local-only"/' "$DEST/.amico-vault.toml" && rm -f "$DEST/.amico-vault.toml.bak"
+      git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "provision: resume push failed — reverted to local-only" || true
+      echo "resume: remote attached but push failed — still local-only; fix connectivity and re-run" >&2
+      echo "Mounted: $DEST (kind=$KIND, provision_state=local-only — unchanged)" >&2
+    fi
     exit 0
   fi
   echo "$DEST already exists" >&2; exit 64
@@ -167,7 +181,7 @@ fi
 
 # ── Shared mounts: company vault always; issimo where granted ──────────────
 # (existing vaults, not mints — the naming lint never applies here)
-if [ "$GH" = 1 ] && [ "$KIND" = personal ]; then
+if [ "$GH" = 1 ] && [ "$DEGRADED" = 0 ] && [ "$KIND" = personal ]; then
   if [ ! -d "$ROOT/armonissima" ]; then
     git clone "git@github.com:harmoniqs/armonissima.git" "$ROOT/armonissima" \
       && echo "Mounted: $ROOT/armonissima (kind=team)" \
