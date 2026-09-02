@@ -90,8 +90,8 @@ function hermetic(
     vaultProbe: (alias) =>
       vaults?.[alias] ??
       (machines[alias] && !machines[alias].ok
-        ? { alias, layout: "unprobeable", sync_state: "unknown", scheduler: "unknown" }
-        : { alias, layout: "aligned", sync_state: "no-sidecar", scheduler: "unknown" }),
+        ? { alias, layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" }
+        : { alias, layout: "aligned", sync_state: "no-sidecar", scheduler: "unknown", config: "unknown" }),
     ...(debt !== undefined ? { debt } : {}),
     post,
     now: () => NOW,
@@ -285,30 +285,39 @@ describe("amico fleet digest --post", () => {
 // ── vault health + migration debt (M4: layout invariant, portability, drift) ─────
 
 describe("parseVaultHealth — the vault-probe output contract (pure, no ssh)", () => {
-  const out = (layout: string, sync: string, sched: string) => `LAYOUT:${layout}\nSYNC:${sync}\nSCHED:${sched}\n`;
+  const out = (layout: string, sync: string, sched: string, cfg = "resolved") =>
+    `LAYOUT:${layout}\nSYNC:${sync}\nSCHED:${sched}\nCONFIG:${cfg}\n`;
 
-  it("reads all three fields from one probe invocation", () => {
+  it("reads all four fields from one probe invocation", () => {
     const vh = parseVaultHealth("alpha", out("aligned", "ok 2026-09-02 08:00 (2 mounts, 0 stale)", "loaded"));
     expect(vh).toEqual({
       alias: "alpha",
       layout: "aligned",
       sync_state: "ok 2026-09-02 08:00 (2 mounts, 0 stale)",
       scheduler: "loaded",
+      config: "resolved",
     });
   });
 
   it("misaligned layout + no sidecar + written-only scheduler — every honest degraded value, none an error", () => {
     const vh = parseVaultHealth("beta", out("misaligned", "no-sidecar", "written-only"));
-    expect(vh).toEqual({ alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only" });
+    expect(vh).toEqual({ alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" });
   });
 
   it("a machine with no scheduler manager reads unknown, never a guessed state", () => {
     expect(parseVaultHealth("gamma", out("aligned", "no-sidecar", "unknown")).scheduler).toBe("unknown");
   });
 
+  it("config resolution: the found incident renders foreign-home, never a guessed pass", () => {
+    // a /Users/ config string surviving on a non-Mac home — the 2026-09-02 incident
+    expect(parseVaultHealth("zeta", out("aligned", "no-sidecar", "loaded", "foreign-home")).config).toBe("foreign-home");
+    expect(parseVaultHealth("eta", out("aligned", "no-sidecar", "loaded", "absent")).config).toBe("absent");
+    expect(parseVaultHealth("theta", out("aligned", "no-sidecar", "loaded", "")).config).toBe("unknown");
+  });
+
   it("garbled or empty probe output → unprobeable, never a fake pass", () => {
     const vh = parseVaultHealth("delta", "");
-    expect(vh).toEqual({ alias: "delta", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown" });
+    expect(vh).toEqual({ alias: "delta", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" });
     expect(parseVaultHealth("eps", "total nonsense from a broken shell").layout).toBe("unprobeable");
   });
 });
@@ -328,6 +337,7 @@ describe("formatDigestBlock — the vaults line (M4)", () => {
   const vh = (alias: string, layout: VaultHealth["layout"]): VaultHealth => ({
     alias,
     layout,
+    config: "resolved",
     sync_state: "no-sidecar",
     scheduler: "unknown",
   });
@@ -386,9 +396,9 @@ describe("formatDigestTable — vault-health rows + the migration-debt checklist
         date: "2026-08-18",
         machines: [],
         vaults: [
-          { alias: "alpha", layout: "aligned", sync_state: "ok 2026-09-02 08:00", scheduler: "loaded" },
-          { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only" },
-          { alias: "gamma", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown" },
+          { alias: "alpha", layout: "aligned", sync_state: "ok 2026-09-02 08:00", scheduler: "loaded", config: "resolved" },
+          { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" },
+          { alias: "gamma", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" },
         ],
         sessions: { ...emptySessions },
         debt: [
@@ -431,7 +441,7 @@ describe("formatDigestTable — vault-health rows + the migration-debt checklist
 
 describe("amico fleet digest — vault-health lines (hermetic, M4)", () => {
   const up = (alias: string, host: string): MachineProbe => ({ alias, ok: true, detail: host });
-  const aligned = (alias: string): VaultHealth => ({ alias, layout: "aligned", sync_state: "ok", scheduler: "loaded" });
+  const aligned = (alias: string): VaultHealth => ({ alias, layout: "aligned", sync_state: "ok", scheduler: "loaded", config: "resolved" });
 
   it("probes vault health per configured machine; all aligned → vaults line + debt rows, ok, exit 0", () => {
     const r = run(
@@ -459,7 +469,7 @@ describe("amico fleet digest — vault-health lines (hermetic, M4)", () => {
         undefined,
         {
           alpha: aligned("alpha"),
-          beta: { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only" },
+          beta: { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" },
         },
       ),
     );

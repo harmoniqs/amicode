@@ -60,6 +60,7 @@ export interface MachineProbe {
  *  every field is what the machine said, or an honest "can't know", never a guess. */
 export type VaultLayout = "aligned" | "misaligned" | "unprobeable";
 export type VaultScheduler = "loaded" | "written-only" | "unknown";
+export type VaultConfigRes = "resolved" | "foreign-home" | "absent" | "unknown";
 
 export interface VaultHealth {
   alias: string;
@@ -72,6 +73,11 @@ export interface VaultHealth {
   /** The sync scheduler: loaded (systemd user timer active or launchd agent found),
    *  written-only (configured but not active), unknown (no manager to ask). */
   scheduler: VaultScheduler;
+  /** Config resolution (amico#361 AC): the distiller config's home-shaped paths must
+   *  resolve on THIS machine — a `/Users/` string surviving on a non-Mac home is
+   *  `foreign-home` (the 2026-09-02 found incident); `absent` when no config exists;
+   *  `unknown` when unreadable. Never a guessed pass. */
+  config: VaultConfigRes;
 }
 
 /** One migration-debt ledger item (spec M4's ledger). Rows render until closed. */
@@ -218,7 +224,7 @@ export function formatDigestTable(v: DigestView, rootPath: string): string {
       lines.push("  (not configured — pass --machines or set AMICO_FLEET_MACHINES)");
     } else {
       for (const vh of v.vaults) {
-        lines.push(`  ${vh.alias.padEnd(18)} layout ${LAYOUT_ROW_LABEL[vh.layout]} · sync ${vh.sync_state} · scheduler ${vh.scheduler}`);
+        lines.push(`  ${vh.alias.padEnd(18)} layout ${LAYOUT_ROW_LABEL[vh.layout]} · sync ${vh.sync_state} · scheduler ${vh.scheduler} · config ${vh.config}`);
       }
     }
     lines.push("");
@@ -296,6 +302,10 @@ const VAULT_PROBE_REMOTE = [
   'elif command -v launchctl >/dev/null 2>&1; then',
   'if launchctl list 2>/dev/null | grep -q armonia-sync; then s=loaded; else s=written-only; fi;',
   'fi; echo "SCHED:$s"',
+  'c=absent; f="$HOME/.amico/amicode/distiller.config.json";',
+  'if [ -f "$f" ]; then c=resolved;',
+  'if grep -q "/Users/" "$f" && [ "${HOME#/Users/}" = "$HOME" ]; then c=foreign-home; fi; fi;',
+  'echo "CONFIG:$c"',
 ].join(" ");
 
 /** Parse the vault probe's delimited output. A machine that answered without a parseable
@@ -305,13 +315,19 @@ export function parseVaultHealth(alias: string, stdout: string): VaultHealth {
   const layout: VaultLayout =
     layoutRaw === "aligned" ? "aligned" : layoutRaw === "misaligned" ? "misaligned" : "unprobeable";
   if (layout === "unprobeable") {
-    return { alias, layout, sync_state: "unknown", scheduler: "unknown" };
+    return { alias, layout, sync_state: "unknown", scheduler: "unknown", config: "unknown" };
   }
   const sync = (/SYNC:(.*)/.exec(stdout)?.[1] ?? "").trim();
   const schedRaw = /SCHED:(\S+)/.exec(stdout)?.[1];
   const scheduler: VaultScheduler =
     schedRaw === "loaded" ? "loaded" : schedRaw === "written-only" ? "written-only" : "unknown";
-  return { alias, layout, sync_state: sync === "" ? "unknown" : sync, scheduler };
+  const cfgRaw = /CONFIG:(\S+)/.exec(stdout)?.[1];
+  const config: VaultConfigRes =
+    cfgRaw === "resolved" ? "resolved"
+    : cfgRaw === "foreign-home" ? "foreign-home"
+    : cfgRaw === "absent" ? "absent"
+    : "unknown";
+  return { alias, layout, sync_state: sync === "" ? "unknown" : sync, scheduler, config };
 }
 
 /** One machine's vault health over the SSH mesh (M4) — the same injection pattern as
@@ -417,6 +433,14 @@ export function fleetDigest(argv: string[], deps: DigestDeps = {}): VerbResult {
       (vh) =>
         `vault layout misaligned on ${vh.alias}: ~/.amico/vaults and ~/armonia/data/vaults resolve to different storage (the M4 layout invariant)`,
     );
+  // Config resolution is a FAILURE on a reachable machine (amico#361 AC): the found
+  // incident was a Mac-shaped config synced to a Linux server — no path resolved.
+  const configErrors = (vaults ?? [])
+    .filter((vh) => vh.config === "foreign-home")
+    .map(
+      (vh) =>
+        `distiller config foreign-home on ${vh.alias}: /Users/ paths survive on a non-Mac home (regenerate with armonia-distiller-config --write)`,
+    );
 
   const block = formatDigestBlock(view);
   const table = formatDigestTable(view, root);
@@ -424,7 +448,7 @@ export function fleetDigest(argv: string[], deps: DigestDeps = {}): VerbResult {
   const base: Record<string, unknown> = {
     verb: "fleet",
     subcommand,
-    ok: layoutErrors.length === 0,
+    ok: layoutErrors.length === 0 && configErrors.length === 0,
     root,
     channel,
     machines: machines ?? [],
@@ -438,18 +462,18 @@ export function fleetDigest(argv: string[], deps: DigestDeps = {}): VerbResult {
     },
     block,
     table,
-    ...(layoutErrors.length > 0 ? { errors: layoutErrors } : {}),
+    ...(layoutErrors.length > 0 || configErrors.length > 0 ? { errors: [...layoutErrors, ...configErrors] } : {}),
   };
 
   if (!isPost) {
-    return { json: { ...base, dry_run: true }, code: layoutErrors.length === 0 ? 0 : 64 };
+    return { json: { ...base, dry_run: true }, code: layoutErrors.length === 0 && configErrors.length === 0 ? 0 : 64 };
   }
 
   const post = deps.post ?? postViaAmicoSlack;
   const res = post(channel, block, table);
   if (!res.ok) {
     return {
-      json: { ...base, ok: false, dry_run: false, errors: [...layoutErrors, ...(res.errors ?? ["post failed"])] },
+      json: { ...base, ok: false, dry_run: false, errors: [...layoutErrors, ...configErrors, ...(res.errors ?? ["post failed"])] },
       code: 64,
     };
   }
