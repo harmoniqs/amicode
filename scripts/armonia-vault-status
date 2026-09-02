@@ -14,7 +14,8 @@
 #
 # Symlinked aliases dedupe by resolved storage (one row per resolved path);
 # the ruled name (toml `name`) is the display name.
-# Exit 0 always, unless --strict: then nonzero if ANY mount is not OK.
+# Exit 0 always, unless --strict: then nonzero if any mount is STALE / UNKNOWN
+# / ZOMBIE — ro-by-policy is an expected state and never fails strict.
 set -uo pipefail
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 
@@ -33,8 +34,10 @@ def toml_get(path, key):
     try:
         with open(os.path.join(path, ".amico-vault.toml")) as f:
             for line in f:
-                if line.strip().startswith(key):
-                    return line.split("=", 1)[1].strip().strip('"')
+                s = line.strip()
+                # exact key match ("name" must not match "namespace")
+                if s.startswith(key) and s[len(key):len(key) + 1] in (" ", "="):
+                    return s.split("=", 1)[1].strip().strip('"')
     except OSError:
         pass
     return ""
@@ -66,6 +69,11 @@ def state_for(real, rec):
     if newest and now - newest > 3 * cadence * 60:
         return "ZOMBIE"
     failures = rec.get("consecutive_failures", 0)
+    # mute ordering is a NAMED decision, not an accident: a ro-served personal
+    # mount is the expected-failure class — non-actionable by sync — so its
+    # state is ro-by-policy; its behind-count survives in the detail line.
+    # The mute never touches rw mounts: a genuine STALE renders STALE (the
+    # fixture proves both in the same run).
     if failures and rec.get("kind") == "personal" and not os.access(real, os.W_OK):
         return "ro-by-policy"
     if failures or rec.get("fetch_blocked") or (rec.get("behind_count") or 0) > rec.get("threshold", 50):
@@ -85,7 +93,10 @@ if os.path.isdir(status_dir):
             continue
 
 worst = "OK"
-rank = {"OK": 0, "ro-by-policy": 1, "STALE": 1, "UNKNOWN": 1, "ZOMBIE": 1}
+# --strict fails on states that need a HUMAN (STALE/UNKNOWN/ZOMBIE); ro-by-policy
+# is an expected state — it never fails strict (an immortal strict
+# false-positive is the dead-sense class the mute exists to prevent)
+rank = {"OK": 0, "ro-by-policy": 0, "STALE": 1, "UNKNOWN": 1, "ZOMBIE": 1}
 for real, meta in sorted(mounts.items(), key=lambda kv: kv[1]["display_name"]):
     rec = records.get(real)
     if rec is None:
