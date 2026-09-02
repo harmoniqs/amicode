@@ -97,9 +97,16 @@ PY
 }
 
 shopt -s nullglob
+seen_resolved=""
 for d in "$VAULTS_ROOT"/*/; do
   d="${d%/}"
   [ -d "$d/.git" ] || continue
+  # alias dedupe at the LOOP level: a symlinked alias of an already-synced vault
+  # is the same storage — process each resolved path once per cycle (failure
+  # counts count CYCLES, not directory entries)
+  resolved="$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$d")"
+  case " $seen_resolved " in *" $resolved "*) continue;; esac
+  seen_resolved="$seen_resolved $resolved"
   name="$(basename "$d")"
 
   kind=""; dn=""
@@ -121,6 +128,9 @@ for d in "$VAULTS_ROOT"/*/; do
   pull_out="$(git -C "$d" pull --rebase --autostash 2>&1)"; pull_rc=$?
   printf '%s\n' "$pull_out" | sed "s/^/  [$name] /"
   reason="$(printf '%s\n' "$pull_out" | grep -m1 -i -e 'error' -e 'fatal' -e 'refus' -e 'conflict' -e 'unmerged' || true)"
+  if [ "$pull_rc" -ne 0 ] && [ -z "$reason" ]; then
+    reason="$(printf '%s\n' "$pull_out" | grep -m1 -v '^\s*$' || echo "pull exited $pull_rc")"
+  fi
 
   push_ok=-1  # -1 = no push attempted (non-personal / nothing to push)
   if [ "$kind" = "personal" ]; then

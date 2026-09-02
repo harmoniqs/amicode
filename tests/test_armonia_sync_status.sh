@@ -93,6 +93,17 @@ PY
 # alias: symlinked second name for the SAME storage → one row, one record
 ln -s "$ROOT/vault-conflicted" "$ROOT/alias-conflicted"
 
+# with the alias PRESENT, a second cycle increments failures by EXACTLY one
+# (failure counts count cycles, not directory entries)
+AMICO_HOME="$HOME_FIX" AMICO_VAULTS_ROOT="$ROOT" AMICO_OPS_ROOT="$OPS" \
+  bash "$SYNC" >/dev/null 2>&1 || true
+python3 - "$RC" <<'PY' || exit 1
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["consecutive_failures"] == 2, \
+    f"alias present: failures must count CYCLES (+1 per cycle), got {r['consecutive_failures']}"
+PY
+
 # orphan: mounted, never synced → UNKNOWN
 mk_vault vault-orphan personal
 
