@@ -35,7 +35,7 @@ for d in "$VAULT"/*/; do
   kind="$(grep -m1 '^kind' "$d/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')"
   if [ "$kind" = personal ]; then
     PERSONAL_PATH="$d"
-    PERSONAL_NAME="$(grep -m1 '^name' "$d/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')"
+    PERSONAL_NAME="$(grep -m1 '^name[[:space:]]*=' "$d/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')"
     break
   fi
 done
@@ -96,7 +96,7 @@ PY
 
 case "$MODE" in
   print) generate ;;
-  write) tmp="$OUT.tmp"; generate > "$tmp"; mkdir -p "$(dirname "$OUT")"; mv "$tmp" "$OUT"; echo "wrote: $OUT" ;;
+  write) mkdir -p "$(dirname "$OUT")"; tmp="$OUT.tmp"; generate > "$tmp"; mv "$tmp" "$OUT"; echo "wrote: $OUT" ;;
   check)
     generate > "$OUT.expected" || { echo "generation failed" >&2; exit 1; }
     if python3 - "$OUT" "$OUT.expected" <<'PY'
