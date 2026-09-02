@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# armonia-distiller-config — generate the distiller config for THIS machine
+# (vault-mgmt spec M4, portability — pinned: $HOME-relative generation by the
+# installer that owns the config; the found incident was a Mac-shaped file
+# synced to a Linux server where none of its paths resolved).
+#
+#   armonia-distiller-config                    # print the config to stdout
+#   armonia-distiller-config --write [PATH]    # write it (default: the ops config path)
+#   armonia-distiller-config --check           # report drift vs the written config
+#
+# The binary contract (named per machine, never a Mac-shaped placeholder):
+# the fleet-guard binary is declared when present; a machine without it
+# declares its absence explicitly.
+set -euo pipefail
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+AMICO_HOME="${AMICO_HOME:-$HOME/.amico}"
+OUT="${1:-}"; MODE=print
+if [ "${1:-}" = "--write" ]; then MODE=write; OUT="${2:-$AMICO_HOME/amicode/distiller.config.json}"; fi
+if [ "${1:-}" = "--check" ]; then MODE=check; OUT="${2:-$AMICO_HOME/amicode/distiller.config.json}"; fi
+
+# ── this machine's reality ──────────────────────────────────────────────────
+DISTILLER_MD=""
+for ext in "$HOME/.vscode/extensions"/harmoniqs.amicode-*/DISTILLER.md; do
+  [ -f "$ext" ] && DISTILLER_MD="$ext"   # glob order: last (highest version) wins
+done
+
+VAULT="$AMICO_HOME/vaults"
+# first personal mount by resolved storage (the identity file's name field is
+# the public identity; the path is machine-state, $HOME-derived)
+PERSONAL_PATH=""; PERSONAL_NAME=""; OPS_DIR=""; RUNS_DIR=""
+for d in "$VAULT"/*/; do
+  d="${d%/}"
+  [ -d "$d/.git" ] || [ -f "$d/.amico-vault.toml" ] || continue
+  kind="$(grep -m1 '^kind' "$d/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')"
+  if [ "$kind" = personal ]; then
+    PERSONAL_PATH="$d"
+    PERSONAL_NAME="$(grep -m1 '^name[[:space:]]*=' "$d/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')"
+    break
+  fi
+done
+
+FLEET_GUARD=""
+for cand in "$HOME/.local/bin/amico-opencode-fleet-guard" \
+            "/usr/local/bin/amico-opencode-fleet-guard"; do
+  [ -x "$cand" ] && FLEET_GUARD="$cand"
+done
+
+generate() {
+python3 - "$DISTILLER_MD" "$PERSONAL_PATH" "$PERSONAL_NAME" "$FLEET_GUARD" "$AMICO_HOME" <<'PY'
+import json, sys, os
+distiller_md, personal_path, personal_name, fleet_guard, amico_home = sys.argv[1:6]
+ext_dir = os.path.dirname(os.path.dirname(distiller_md)) if distiller_md else None
+cfg = {
+  "$schema": "https://opencode.ai/config.json",
+  "instructions": [distiller_md] if distiller_md else [],
+  "agent": {
+    "distiller": {
+      "description": "Amico's background memory distiller (headless; no subagents)",
+      "prompt": ("You are Amico's distiller. Follow the distiller instructions exactly. "
+                 "Your input message is one JSON job object. Work silently; never spawn "
+                 "subagents; finish with a one-line summary."),
+      "model": "opencode/big-pickle",
+    }
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": "allow",
+    "external_directory": {
+      f"{personal_path}/amicode": "allow",
+      f"{personal_path}/amicode/**": "allow",
+      f"{personal_path}/.git/**": "allow",
+      f"{amico_home}/amicode/**": "allow",
+      f"{amico_home}/problems/**": "allow",
+      f"{amico_home}/runs/default/**": "allow",
+    },
+  },
+}
+ext_dir and cfg["permission"]["external_directory"].update({f"{ext_dir}/**": "allow"})
+out = {
+  "binary": fleet_guard or None,
+  "binary_contract": ("declared per machine — fleet-guard present and used here"
+                      if fleet_guard else
+                      "declared per machine — fleet-guard ABSENT on this machine; the distiller runs via the agent entry only"),
+  "config": cfg,
+  "job_defaults": {
+    "vault": personal_path,
+    "vault_display_name": personal_name or None,
+    "ops": f"{amico_home}/amicode",
+    "runs_root": f"{amico_home}/runs/default",
+  },
+}
+print(json.dumps(out, indent=2))
+PY
+}
+
+case "$MODE" in
+  print) generate ;;
+  write) mkdir -p "$(dirname "$OUT")"; tmp="$OUT.tmp"; generate > "$tmp"; mv "$tmp" "$OUT"; echo "wrote: $OUT" ;;
+  check)
+    generate > "$OUT.expected" || { echo "generation failed" >&2; exit 1; }
+    if python3 - "$OUT" "$OUT.expected" <<'PY'
+import json, sys
+a, b = (json.load(open(p)) for p in sys.argv[1:3])
+sys.exit(0 if a == b else 1)
+PY
+    then echo "OK: on-disk config matches this machine's generated config"; rm -f "$OUT.expected"
+    else echo "DRIFT: on-disk config differs from this machine's generated config (regenerate with --write)"; rm -f "$OUT.expected"; exit 1; fi ;;
+esac
