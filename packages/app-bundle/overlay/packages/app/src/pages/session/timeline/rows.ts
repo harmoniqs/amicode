@@ -3,7 +3,7 @@ import type { SessionMessageInfo } from "@opencode-ai/client/promise"
 import { AssistantMessage, Part, SessionStatus, UserMessage } from "@opencode-ai/sdk/v2"
 import { groupParts, renderable, type PartGroup } from "@opencode-ai/session-ui/message-part"
 import { TimelineRow, type SummaryDiff } from "./timeline-row"
-import { uniqueSummaryDiffs } from "./summary-diffs"
+// import { uniqueSummaryDiffs } from "./summary-diffs"  // suppressed (#733)
 
 export { TimelineRow, type SummaryDiff } from "./timeline-row"
 
@@ -290,15 +290,9 @@ export namespace Timeline {
 
     if (isActive && status === "retry") rows.push(new TimelineRow.Retry({ userMessageID: userMessage.id }))
 
-    const diffs = uniqueSummaryDiffs(userMessage.summary?.diffs)
-    if (diffs.length > 0 && (status === "idle" || !isActive)) {
-      rows.push(
-        new TimelineRow.DiffSummary({
-          userMessageID: userMessage.id,
-          diffs,
-        }),
-      )
-    }
+    // Per-message "Changed files" section suppressed (#733):
+    // redundant with the side-panel Files Changed tab, and the unfiltered
+    // snapshot diff leaks cross-session file changes during concurrent turns.
 
     if (error) {
       const data = error.data?.message
