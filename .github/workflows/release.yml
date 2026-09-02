@@ -185,11 +185,35 @@ jobs:
       # (and other-platform) users a ~100MB install with no runnable binary. It
       # stays a GitHub-Release direct-install asset. That fallback role is now the
       # cover packages' job instead, at a few MB and with an actionable message.
+      # Publish each platform individually so a partial-publish recovery
+      # (re-run after an outage) skips "already exists" platforms instead
+      # of bailing on the first one and leaving the rest unserved.
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          npx --yes @vscode/vsce publish \
-            --packagePath dist/amicode-linux-x64.vsix dist/amicode-linux-arm64.vsix \
-            dist/amicode-darwin-arm64.vsix \
-            dist/amicode-win32-x64.vsix dist/amicode-win32-arm64.vsix dist/amicode-darwin-x64.vsix
+          VSIXES=(
+            dist/amicode-linux-x64.vsix
+            dist/amicode-linux-arm64.vsix
+            dist/amicode-darwin-arm64.vsix
+            dist/amicode-win32-x64.vsix
+            dist/amicode-win32-arm64.vsix
+            dist/amicode-darwin-x64.vsix
+          )
+          FAILED=0
+          for V in "${VSIXES[@]}"; do
+            echo "--- Publishing $V ---"
+            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && {
+              echo "$OUTPUT"
+              echo "  ✓ published"
+              continue
+            }
+            echo "$OUTPUT"
+            if echo "$OUTPUT" | grep -q "already exists"; then
+              echo "  (already published, skipping)"
+            else
+              echo "::error::Failed to publish $V"
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" -eq 0 ] || exit 1
