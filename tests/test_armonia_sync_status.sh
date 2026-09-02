@@ -46,6 +46,11 @@ git -C "$ROOT/vault-conflicted" reset -q --merge HEAD >/dev/null 2>&1 || true
 # leave unmerged paths: re-run the merge without resolving (the incident state)
 git -C "$ROOT/vault-conflicted" merge --no-edit origin/main >/dev/null 2>&1 || true
 
+# fetch-blocked: a clone whose remote DIED (the bare is removed) — fetch
+# cannot run; behind_count must be null + fetch_blocked true
+mk_vault vault-fetchblocked personal
+rm -rf "$SB/bare-vault-fetchblocked.git"
+
 # ro-personal: strip write bits (expected-failure mount: pull must fail)
 chmod -R a-w "$ROOT/vault-ropersonal"
 
@@ -89,6 +94,17 @@ assert r["consecutive_failures"] >= 1, "ro: failures recorded"
 assert r["kind"] == "personal", "ro: kind personal (ro-by-policy scope)"
 PY
 
+KEY_FB=$(python3 -c "import os,sys;print(os.path.realpath('$ROOT/vault-fetchblocked').strip('/').replace('/','_'))")
+RFB="$R/$KEY_FB.json"
+[ -f "$RFB" ] || fail "fetch-blocked clone must have a record (failures recorded, never swallowed)"
+python3 - "$RFB" <<'PY' || exit 1
+import json, sys
+r = json.load(open(sys.argv[1]))
+assert r["fetch_blocked"] is True, "dead remote: fetch_blocked must be true"
+assert r["behind_count"] is None, "dead remote: behind_count must be null (cannot count what it cannot fetch)"
+assert r["consecutive_failures"] >= 1, "dead remote: pull also fails — the failure path records it"
+PY
+
 # ── the RENDERER: states, dedupe, never-silent ──────────────────────────────
 # alias: symlinked second name for the SAME storage → one row, one record
 ln -s "$ROOT/vault-conflicted" "$ROOT/alias-conflicted"
@@ -127,6 +143,7 @@ grep -q 'vault-healthy .*state=OK' <<<"$OUT" || fail "healthy must render OK; go
 grep -q 'vault-conflicted .*state=STALE' <<<"$OUT" || fail "conflicted must render STALE (failures path)"
 grep -q 'vault-handrec .*state=STALE' <<<"$OUT" || fail "behind-only record must render STALE (render half of the detector)"
 grep -q 'vault-ropersonal .*state=ro-by-policy' <<<"$OUT" || fail "ro personal must render ro-by-policy (muted, self-contained)"
+grep -q 'vault-fetchblocked .*state=STALE' <<<"$OUT" || fail "fetch-blocked must render STALE via the failure path"
 grep -q 'vault-orphan .*state=UNKNOWN' <<<"$OUT" || fail "never-synced mount must render UNKNOWN (never silently fresh)"
 
 # alias dedupe: one row per resolved storage — the conflicted vault renders once

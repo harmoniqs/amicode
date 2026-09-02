@@ -78,7 +78,7 @@ failures = 0 if ok else prev.get("consecutive_failures", 0) + 1
 rec = {
     "display_name": dn or os.path.basename(path.rstrip("/")),
     "kind": kind or "",
-    "path": subprocess.run(["realpath", path], capture_output=True, text=True).stdout.strip() or path,
+    "path": os.path.realpath(path),
     "last_success": now if ok else prev.get("last_success"),
     "last_failure": None if ok else now,
     "failure_reason": None if ok else (reason or "unknown")[:300],
@@ -97,20 +97,30 @@ PY
 }
 
 shopt -s nullglob
+seen_resolved=""
 for d in "$VAULTS_ROOT"/*/; do
   d="${d%/}"
   [ -d "$d/.git" ] || continue
+  # alias dedupe at the LOOP level: a symlinked alias of an already-synced vault
+  # is the same storage — process each resolved path once per cycle (failure
+  # counts count CYCLES, not directory entries)
+  resolved="$(python3 -c "import os,sys;print(os.path.realpath(sys.argv[1]))" "$d")"
+  case " $seen_resolved " in *" $resolved "*) continue;; esac
+  seen_resolved="$seen_resolved $resolved"
   name="$(basename "$d")"
 
   kind=""; dn=""
   if [ -f "$d/.amico-vault.toml" ]; then
     kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')
-    dn=$(grep -m1 '^name' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')
+    dn=$(grep -m1 '^name[[:space:]]*=' "$d/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([A-Za-z0-9._-]+)"?.*/\1/')
   fi
 
-  # fetch first (tolerant): feeds the behind-count even when the pull will fail
+  # fetch first (tolerant): feeds the behind-count even when the pull will fail.
+  # GIT_TERMINAL_PROMPT=0: under a scheduler there is no tty — fail, never
+  # hang on a credential prompt (macOS has no `timeout` binary; the env var
+  # is the portable guard)
   fetch_blocked=0; behind="NULL"
-  if ! git -C "$d" fetch origin --quiet >/dev/null 2>&1; then
+  if ! GIT_TERMINAL_PROMPT=0 git -C "$d" fetch origin --quiet >/dev/null 2>&1; then
     fetch_blocked=1
   else
     branch="$(git -C "$d" symbolic-ref -q --short HEAD 2>/dev/null || echo main)"
@@ -121,6 +131,9 @@ for d in "$VAULTS_ROOT"/*/; do
   pull_out="$(git -C "$d" pull --rebase --autostash 2>&1)"; pull_rc=$?
   printf '%s\n' "$pull_out" | sed "s/^/  [$name] /"
   reason="$(printf '%s\n' "$pull_out" | grep -m1 -i -e 'error' -e 'fatal' -e 'refus' -e 'conflict' -e 'unmerged' || true)"
+  if [ "$pull_rc" -ne 0 ] && [ -z "$reason" ]; then
+    reason="$(printf '%s\n' "$pull_out" | grep -m1 -v '^\s*$' || echo "pull exited $pull_rc")"
+  fi
 
   push_ok=-1  # -1 = no push attempted (non-personal / nothing to push)
   if [ "$kind" = "personal" ]; then
