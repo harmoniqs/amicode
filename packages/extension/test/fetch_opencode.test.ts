@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -205,6 +205,102 @@ describe("releaseCoords — fork-mirror pinning", async () => {
     expect(assetUrl(m, "linux-x64")).toBe(
       "https://github.com/harmoniqs/opencode/releases/download/v1.17.3-amicode.1/opencode-linux-x64.tar.gz",
     );
+  });
+});
+
+describe("AMICODE_RELEASE_TAG override — clean-tag self-provisioning", () => {
+  afterEach(() => {
+    delete process.env.AMICODE_RELEASE_TAG;
+    delete process.env.AMICODE_RELEASE_REPO;
+    delete process.env.AMICODE_REQUIRE_CHANNEL;
+  });
+  it("repoints the tag (and the hash authority) at the freshly provisioned release", async () => {
+    const { fetchOpencode } = await import("../scripts/fetch_opencode.mjs");
+    const { bytes, hash } = fixtureArchive();
+    // The fresh release's own checksums — the committed lock cannot know a tag
+    // that did not exist when it was written.
+    const sums = `${hash}  opencode-linux-x64.tar.gz\n${"9".repeat(64)}  opencode-darwin-arm64.zip\n`;
+    const download = async (url: string) => {
+      if (url.endsWith("SHA256SUMS.txt")) return Buffer.from(sums);
+      expect(url).toBe(
+        "https://github.com/harmoniqs/opencode/releases/download/v1.18.10-amicode.20/opencode-linux-x64.tar.gz",
+      );
+      return bytes;
+    };
+    process.env.AMICODE_RELEASE_TAG = "v1.18.10-amicode.20";
+    process.env.AMICODE_RELEASE_REPO = "harmoniqs/opencode";
+    // stale lock: its hash is ignored under the override, but it must still validate
+    const root = rootWith({
+      version: "1.18.10",
+      repo: "harmoniqs/opencode",
+      tag: "v1.18.10-amicode.19",
+      platforms: { "linux-x64": { asset: "opencode-linux-x64.tar.gz", sha256: "e".repeat(64) } },
+    });
+    const ghApi = () =>
+      "Built by the amicode-release workflow ... OPENCODE_CHANNEL=beta (UI gate verified ON in every binary). Badge: BETA.";
+    const r = await fetchOpencode({ root, platform: "linux-x64", download, ghApi });
+    expect(r.skipped).toBe(false);
+    expect(r.source).toBe("release harmoniqs/opencode@v1.18.10-amicode.20 channel=beta");
+  });
+  it("an empty-string env (alpha runs) is NOT an override — the lock stays authoritative", async () => {
+    const { releaseCoords } = await import("../scripts/fetch_opencode.mjs");
+    process.env.AMICODE_RELEASE_TAG = "";
+    const m = { version: "1.17.3", platforms: { "linux-x64": { asset: "a", sha256: "b".repeat(64) } } };
+    expect(releaseCoords(m)).toEqual({ repo: "anomalyco/opencode", tag: "v1.17.3", private: false });
+  });
+});
+
+describe("assertReleaseChannel — the promoted-release backstop", () => {
+  // The release body is authored by the fork's amicode-release workflow; the
+  // channel check reads it through `gh`, so a fake `gh` on PATH stands in for it.
+  function withFakeGh(body: string | null, fail = false): string {
+    const dir = mkdtempSync(join(tmpdir(), "oc-fakegh-"));
+    const bodyJson = JSON.stringify(body ?? {});
+    writeFileSync(
+      join(dir, "gh"),
+      `#!/bin/sh
+if [ "$1" = "api" ]; then
+  ${fail ? "echo 'gh: api failed' >&2; exit 1" : `echo '${bodyJson.replace(/'/g, `'\\''`)}'`}
+fi
+`,
+    );
+    chmodSync(join(dir, "gh"), 0o755);
+    return dir;
+  }
+  it("accepts a beta-channel release and fails closed on anything else", async () => {
+    const { assertReleaseChannel } = await import("../scripts/fetch_opencode.mjs");
+    const coords = { repo: "harmoniqs/opencode", tag: "v1.18.10-amicode.20" };
+    const good = withFakeGh(
+      "Built by the amicode-release workflow ... OPENCODE_CHANNEL=beta (UI gate verified ON in every binary). Badge: BETA.",
+    );
+    const prev = process.env.PATH;
+    process.env.PATH = `${good}:${process.env.PATH}`;
+    try {
+      await expect(import("../scripts/fetch_opencode.mjs").then((m) => m.assertReleaseChannel(coords, "beta"))).resolves.toBeUndefined();
+      await expect(
+        import("../scripts/fetch_opencode.mjs").then((m) => m.assertReleaseChannel(coords, "dev")),
+      ).rejects.toThrow(/NOT built with OPENCODE_CHANNEL=dev/);
+    } finally {
+      process.env.PATH = prev;
+    }
+    const dev = withFakeGh("OPENCODE_CHANNEL=dev (internal alpha). Badge: DEV.");
+    process.env.PATH = `${dev}:${process.env.PATH}`;
+    try {
+      await expect(
+        import("../scripts/fetch_opencode.mjs").then((m) => m.assertReleaseChannel(coords, "beta")),
+      ).rejects.toThrow(/NOT built with OPENCODE_CHANNEL=beta/);
+    } finally {
+      process.env.PATH = prev;
+    }
+    const broken = withFakeGh(null, true);
+    process.env.PATH = `${broken}:${process.env.PATH}`;
+    try {
+      await expect(
+        import("../scripts/fetch_opencode.mjs").then((m) => m.assertReleaseChannel(coords, "beta")),
+      ).rejects.toThrow(/release notes/);
+    } finally {
+      process.env.PATH = prev;
+    }
   });
 });
 

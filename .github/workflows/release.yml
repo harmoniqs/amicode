@@ -9,6 +9,15 @@
 # an INTERNAL channel that must never reach end users. Promotion = bump the
 # extension manifest to the next x.y.z and cut a clean `vX.Y.Z` tag; that clean
 # tag is what unlocks the Marketplace publish job.
+#
+# A clean tag ALSO provisions its own fork binary: it cuts the next
+# `v<base>-amicode.N` tag in harmoniqs/opencode, dispatches the fork's
+# amicode-release workflow with `channel: beta` (repository_dispatch +
+# REPO_ACCESS_TOKEN — the rebuild_docs.yml pattern), waits for the release,
+# and vendors it. The committed opencode.lock.json cannot know a tag that did
+# not exist when it was written, so the fresh release's own SHA256SUMS.txt is
+# the hash authority and the release notes are the channel authority — a
+# dev-channel binary can never ride a promotion. The lock bump follows on main.
 name: release
 on:
   push:
@@ -19,6 +28,9 @@ on:
       tag:
         description: "Existing tag to package and release"
         required: true
+      fork_ref:
+        description: "Fork branch/tag to cut the vendored binary from (clean tags only; default local/amicode)"
+        required: false
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -60,9 +72,58 @@ jobs:
           echo "tag-base=$BASE  manifest=$MANIFEST"
           [ "$BASE" = "$MANIFEST" ] || { echo "FAIL: tag base '$BASE' != extension manifest '$MANIFEST' — bump packages/extension/package.json to match the tag (or retag)."; exit 1; }
       - run: pnpm install --frozen-lockfile
+      # Cross-repo provision (clean tags ONLY — alphas keep the committed lock):
+      # cut the next -amicode.N tag on the fork, dispatch its release workflow
+      # with channel=beta, wait for the release, and hand the tag to the
+      # vendoring steps below. Idempotent on re-run (reuses the existing tag).
+      - name: Provision fork binary at the promoted channel (clean tags only)
+        id: fork
+        if: ${{ steps.meta.outputs.publishable == 'true' }}
+        env:
+          # Fine-grained PAT, repository access = harmoniqs/opencode ONLY,
+          # permissions: Actions (read/write) + Contents (read/write). Deploy
+          # keys/tokens CANNOT do this (git+packages only, no REST API). If the
+          # org enforces SAML SSO, authorize the PAT for it — scope-correct
+          # tokens still 403 otherwise (the 2026-08-17 fetch incident).
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+          FORK_REPO: harmoniqs/opencode
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.meta.outputs.base }}"
+          FORK_REF="${{ inputs.fork_ref || 'local/amicode' }}"
+          SHA="$(gh api "repos/$FORK_REPO/branches/$FORK_REF" --jq .commit.sha)"
+          # Next -amicode.N for this base (only fork tags count; upstream tags don't match)
+          N=$(gh api "repos/$FORK_REPO/tags?per_page=100" --paginate --jq '.[].name' \
+                | grep -o -- '-amicode\.[0-9]*$' | grep -o '[0-9]*$' | sort -n | tail -1)
+          N=$(( ${N:-0} + 1 ))
+          FORK_TAG="v${BASE}-amicode.${N}"
+          if ! gh api "repos/$FORK_REPO/git/ref/tags/$FORK_TAG" >/dev/null 2>&1; then
+            gh api -X POST "repos/$FORK_REPO/git/refs" -f ref="refs/tags/$FORK_TAG" -f sha="$SHA" >/dev/null
+            echo "created fork tag $FORK_TAG @ ${SHA:0:10} (ref $FORK_REF)"
+          fi
+          gh api -X POST "repos/$FORK_REPO/dispatches" \
+            -f event_type=amicode-release \
+            -f "client_payload[tag]=$FORK_TAG" \
+            -f "client_payload[channel]=beta" >/dev/null
+          echo "dispatched amicode-release for $FORK_TAG (channel=beta, $FORK_REF @ ${SHA:0:10})"
+          # Poll for the release: not a draft, all three binaries present (~build + release).
+          for i in $(seq 1 60); do
+            sleep 20
+            GOT=$(gh release view "$FORK_TAG" -R "$FORK_REPO" --json isDraft,assets \
+                    --jq '[.isDraft == false, ([.assets[].name] | contains(["opencode-linux-x64.tar.gz", "opencode-linux-arm64.tar.gz", "opencode-darwin-arm64.zip"]))] | all' 2>/dev/null || true)
+            [ "$GOT" = "true" ] && break
+            [ "$i" = "60" ] && { echo "FAIL: fork release $FORK_TAG did not appear within 20 min"; exit 1; }
+          done
+          # Backstop: the release notes must record the beta build (the fetch
+          # script's channel assertion re-checks the body against the binaries).
+          gh release view "$FORK_TAG" -R "$FORK_REPO" --json body --jq .body | grep -q "Badge: BETA" \
+            || { echo "FAIL: $FORK_TAG does not declare Badge: BETA — not a beta-channel build"; exit 1; }
+          echo "fork_tag=$FORK_TAG" >> "$GITHUB_OUTPUT"
       - run: pnpm --filter amicode run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + vsce
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork fetch (opencode binary only — skills now ship in-repo)
+          AMICODE_RELEASE_TAG: ${{ steps.fork.outputs.tag }} # clean tag → vendor the freshly provisioned release
+          AMICODE_REQUIRE_CHANNEL: ${{ steps.meta.outputs.publishable == 'true' && 'beta' || '' }}
       # Also vendor darwin-arm64 + linux-arm64, so the universal .vsix installs on
       # mac and in arm64 devcontainers too (the package chain above only fetches
       # the ubuntu runner's linux-x64 binary).
@@ -72,6 +133,8 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
+          AMICODE_RELEASE_TAG: ${{ steps.fork.outputs.tag }}
+          AMICODE_REQUIRE_CHANNEL: ${{ steps.meta.outputs.publishable == 'true' && 'beta' || '' }}
       - name: Gate check — every vendored binary ships the amicode UI ON
         run: |
           set -eu

@@ -54,12 +54,17 @@ export function resolvePlatform(manifest, flag) {
 
 /** Release coordinates: default = upstream anomalyco/opencode at v<version>; a manifest
  *  with `repo`/`tag` set points at our fork's release instead (harmoniqs/opencode,
- *  private — downloads go through the authenticated `gh` path in that case). */
+ *  private — downloads go through the authenticated `gh` path in that case).
+ *  AMICODE_RELEASE_TAG / AMICODE_RELEASE_REPO override the pinned tag/repo — used by
+ *  release.yml on a clean tag, which provisions a FRESHLY built fork binary (its tag
+ *  cannot be in the committed lock yet; see "Provision fork binary" there). */
 export function releaseCoords(manifest) {
+  const repo = process.env.AMICODE_RELEASE_REPO || manifest.repo || "anomalyco/opencode";
+  const tag = process.env.AMICODE_RELEASE_TAG || manifest.tag || `v${manifest.version}`;
   return {
-    repo: manifest.repo ?? "anomalyco/opencode",
-    tag: manifest.tag ?? `v${manifest.version}`,
-    private: manifest.repo != null, // our mirror is private; upstream is not
+    repo,
+    tag,
+    private: manifest.repo != null || !!process.env.AMICODE_RELEASE_TAG,
   };
 }
 
@@ -187,13 +192,70 @@ function fetchFromLocal({ root, manifest, key, cloneDir, anyRef, noBuild, build 
   return { skipped: false, path: bin, source: provenance };
 }
 
-async function fetchFromRelease({ root, manifest, key, download }) {
-  const { asset, sha256: want } = manifest.platforms[key];
+/** Channel assertion (the fail-closed backstop): a release body must record the
+ *  channel it was BUILT with AND the badge that channel implies, so a dev-channel
+ *  binary can never ride a beta-tagged promotion. Reads the release notes via
+ *  `gh` (the fork's release body is authored by its workflow — see
+ *  amicode-release.yml's "Create GitHub release" step). `api` is injectable
+ *  (tests stub it; it stands in for `gh api repos/<repo>/<path> --jq <jq>`). */
+export async function assertReleaseChannel(coords, channel, api = ghApi) {
+  const BADGE = channel === "beta" ? "BETA" : "DEV";
+  let body;
+  try {
+    body = api(coords.repo, `releases/tags/${coords.tag}`, ".body");
+  } catch (e) {
+    throw new Error(
+      `cannot read release notes for ${coords.repo}@${coords.tag}: ${e.message} — is \`gh\` installed and authed for ${coords.repo}?`,
+    );
+  }
+  const m = body.match(/OPENCODE_CHANNEL=(\S+)/);
+  if (!m || m[1] !== channel)
+    throw new Error(
+      `release ${coords.tag} was NOT built with OPENCODE_CHANNEL=${channel} (body says ${m ? m[1] : "nothing"}) — refusing to vendor it into a promoted release`,
+    );
+  if (!body.includes(`Badge: ${BADGE}`))
+    throw new Error(`release ${coords.tag} does not declare Badge: ${BADGE} — refusing to vendor it into a promoted release`);
+}
+
+/** `gh api repos/<repo>/<path> --jq <jq>` — the release-notes read path. */
+function ghApi(repo, path, jq) {
+  return execFileSync("gh", ["api", `repos/${repo}/${path}`, "--jq", jq], { encoding: "utf8" });
+}
+
+/** Hash authority when AMICODE_RELEASE_TAG overrides the pin: the release's own
+ *  SHA256SUMS.txt — the committed lock cannot know a tag that did not exist
+ *  when it was written. */
+function shaFromSums(text, asset) {
+  const line = text.split("\n").find((l) => l.trimEnd().endsWith(asset));
+  if (!line) throw new Error(`SHA256SUMS.txt has no entry for ${asset}`);
+  const hash = line.trim().split(/\s+/)[0];
+  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error(`SHA256SUMS.txt entry for ${asset} is not a sha256: ${line.trim()}`);
+  return hash;
+}
+
+async function fetchFromRelease({ root, manifest, key, download, ghApi: api = ghApi }) {
+  const { asset } = manifest.platforms[key];
   const destDir = join(root, "vendor", "opencode", key);
   const bin = join(destDir, "opencode");
   const stamp = join(destDir, ".sha256");
   const coords = releaseCoords(manifest);
-  const provenance = `release ${coords.repo}@${coords.tag}`;
+  const override = process.env.AMICODE_RELEASE_TAG || null;
+  // A tag override only ever happens on the promoted path — fail closed to beta
+  // if the channel requirement was somehow not passed alongside it.
+  const channel = process.env.AMICODE_REQUIRE_CHANNEL || (override ? "beta" : null);
+  const provenance = `release ${coords.repo}@${coords.tag}` + (channel ? ` channel=${channel}` : "");
+  let want = manifest.platforms[key].sha256;
+  if (override) {
+    want = shaFromSums(
+      (
+        await download(
+          `https://github.com/${coords.repo}/releases/download/${coords.tag}/SHA256SUMS.txt`,
+        )
+      ).toString("utf8"),
+      asset,
+    );
+    await assertReleaseChannel(coords, channel, api);
+  }
 
   if (existsSync(bin) && existsSync(stamp) && readFileSync(stamp, "utf8").trim() === want) {
     return { skipped: true, path: bin, source: provenance }; // offline repeat builds
@@ -257,6 +319,7 @@ export async function fetchOpencode({
   root = PKG_ROOT,
   platform,
   download = defaultDownload,
+  ghApi: ghApiImpl,
   mode,
   localDir,
   anyRef = false,
@@ -277,7 +340,7 @@ export async function fetchOpencode({
       `[fetch-opencode] WARNING: lock source=local but no clone at ${cloneDir} — ${hint}; falling back to the pinned release`,
     );
   }
-  return fetchFromRelease({ root, manifest, key, download });
+  return fetchFromRelease({ root, manifest, key, download, ghApi: ghApiImpl });
 }
 
 async function main(argv) {
