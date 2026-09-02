@@ -113,15 +113,26 @@ describe("amicode service — golden-fixture parity with the fork", () => {
    *  next pin bump; the field itself is unit-tested in
    *  vault_mount_identity.test.ts. */
   const normalizePortExtensions = (obj: any): any => {
-    if (obj && typeof obj === "object" && Array.isArray(obj.mounts)) {
-      const mounts = obj.mounts.map((m: any) => {
+    let out = obj;
+    if (out && typeof out === "object" && Array.isArray(out.mounts)) {
+      const mounts = out.mounts.map((m: any) => {
         if (!m || typeof m !== "object" || !("dirName" in m)) return m;
         const { dirName: _dropped, ...rest } = m;
         return rest;
       });
-      return { ...obj, mounts };
+      out = { ...out, mounts };
     }
-    return obj;
+    // amicode#663: the port's /amicode/projects adds `type` per project
+    // (research vs dev); the fork pin predates this field.
+    if (out && typeof out === "object" && Array.isArray(out.projects)) {
+      const projects = out.projects.map((p: any) => {
+        if (!p || typeof p !== "object" || !("type" in p)) return p;
+        const { type: _dropped, ...rest } = p;
+        return rest;
+      });
+      out = { ...out, projects };
+    }
+    return out;
   };
 
   /** amicode#678: the port ships a campaign-digest BUILT-IN widget the fork

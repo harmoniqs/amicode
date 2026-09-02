@@ -970,7 +970,6 @@ export const dict = {
   "app.server.retrying": "自動的に再試行中...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
-  "app.server.restartHub": "Hubを再起動",
   "app.server.otherServers": "その他のサーバー",
   "dialog.server.add.usernamePlaceholder": "ユーザー名",
   "dialog.server.add.passwordPlaceholder": "パスワード",

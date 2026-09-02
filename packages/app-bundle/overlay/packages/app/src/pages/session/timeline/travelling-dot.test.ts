@@ -2,51 +2,48 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
-// Regression guard for the travelling dot + bottom-up card animation (#265).
-// These CSS declarations are load-bearing: removing them silently breaks the
-// dot's smooth travel and the card entry motion.
+// Regression guard for the bottom-anchored harmonic dot (replaces travelling
+// dot #265). The running dot sits at the bottom of the last row — no position
+// transitions needed, content grows above it.
 
 const indexCss = readFileSync(resolve(__dirname, "../../../index.css"), "utf8")
 const polishCss = readFileSync(resolve(__dirname, "../../../design-polish.css"), "utf8")
 
-describe("travelling dot transition (#265)", () => {
-  test("settled dot has top transition", () => {
-    expect(indexCss).toContain("thought-rail-dot--settled")
-    expect(indexCss).toMatch(/thought-rail-dot--settled[^}]*transition[^}]*top/)
+describe("bottom-anchored harmonic dot", () => {
+  test("harmonic dot class has display:block (kills SVG baseline gap)", () => {
+    expect(indexCss).toContain("thought-rail-dot--harmonic")
+    expect(indexCss).toMatch(/thought-rail-dot--harmonic[^}]*display:\s*block/)
   })
 
-  test("rail line has height transition", () => {
-    expect(indexCss).toMatch(/thought-rail-line[^}]*transition[^}]*height/)
+  test("no position transition on the dot (bottom-anchored, passive)", () => {
+    expect(indexCss).not.toContain("thought-rail-dot--settled")
   })
 
-  test("reduced motion disables dot transition", () => {
-    // Inside a prefers-reduced-motion block, the settled class gets transition: none
-    expect(indexCss).toMatch(/prefers-reduced-motion[\s\S]*thought-rail-dot--settled[\s\S]*transition:\s*none/)
+  test("no height transition on rail line (no travelling)", () => {
+    expect(indexCss).not.toMatch(/thought-rail-line[^}]*transition[^}]*height/)
   })
 
-  test("reduced motion disables rail line transition", () => {
-    expect(indexCss).toMatch(/prefers-reduced-motion[\s\S]*thought-rail-line[\s\S]*transition:\s*none/)
+  test("reduced motion disables SMIL animation", () => {
+    expect(indexCss).toMatch(/prefers-reduced-motion[\s\S]*harmonic-dot-shape[\s\S]*display:\s*none/)
   })
 })
 
-describe("prose fragment entry animation (#265)", () => {
-  test("prose-fragment-enter keyframe exists", () => {
-    expect(polishCss).toContain("prose-fragment-enter")
+describe("done-dot crossfade", () => {
+  test("done-dot has an opacity transition (fade-in on completion)", () => {
+    // The done-dot should fade in smoothly rather than appearing instantly.
+    // Look for a CSS rule with transition containing "opacity" on the done state.
+    expect(indexCss).toMatch(/thought-rail-dot[^}]*done[^}]*transition[^}]*opacity/)
+  })
+})
+
+describe("timeline entrance animation", () => {
+  test("timeline-enter keyframe uses blur + rise + opacity", () => {
+    expect(polishCss).toMatch(/timeline-enter[\s\S]*opacity:\s*0/)
+    expect(polishCss).toMatch(/timeline-enter[\s\S]*translateY/)
+    expect(polishCss).toMatch(/timeline-enter[\s\S]*blur/)
   })
 
-  test("prose-fragment-enter uses translateY", () => {
-    expect(polishCss).toMatch(/prose-fragment-enter[\s\S]*translateY\(10px\)/)
-  })
-
-  test("prose-fragment cards use prose-fragment-enter animation", () => {
-    expect(polishCss).toMatch(/data-prose-fragment.*data-part-enter[\s\S]*prose-fragment-enter/)
-  })
-
-  test("prose-fragment-enter has 150ms duration", () => {
-    expect(polishCss).toMatch(/data-prose-fragment.*data-part-enter[\s\S]*150ms/)
-  })
-
-  test("reduced motion disables prose-fragment entrance", () => {
-    expect(polishCss).toMatch(/prefers-reduced-motion[\s\S]*data-prose-fragment.*data-part-enter[\s\S]*animation:\s*none/)
+  test("[data-part-enter] uses timeline-enter (unified entrance)", () => {
+    expect(polishCss).toMatch(/data-part-enter[\s\S]*timeline-enter/)
   })
 })

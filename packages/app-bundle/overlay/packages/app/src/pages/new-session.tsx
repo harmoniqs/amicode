@@ -1,5 +1,5 @@
 import { createPromptProjectController } from "@/components/prompt-project-selector"
-import { useTitlebarRightMount } from "@/components/titlebar"
+import { useTitlebarControlMount } from "@/components/titlebar"
 import { useSettings } from "@/context/settings"
 import { createEffect, createResource, onMount } from "solid-js"
 import { useLocation } from "@solidjs/router"
@@ -13,7 +13,8 @@ import { useAmicodeCommands } from "@/pages/session/use-amicode-commands"
 /** The draft-only V2 session page. Submitting promotes the draft into a real session. */
 export default function NewSessionPage() {
   const settings = useSettings()
-  const rightMount = useTitlebarRightMount()
+  const sessionsMount = useTitlebarControlMount("sessions")
+  const statusMount = useTitlebarControlMount("status")
   const workspace = createNewSessionWorkspaceController()
   const draft = createNewSessionDraftController({
     worktree: workspace.selection.value,
@@ -55,7 +56,7 @@ export default function NewSessionPage() {
   return (
     <div class="relative size-full overflow-hidden flex flex-col">
       {suspendUntilPromptReady()}
-      <NewSessionStatus mount={rightMount} visible={settings.visibility.status} />
+      <NewSessionStatus sessionsMount={sessionsMount} statusMount={statusMount} visible={settings.visibility.status} />
       <div class="flex-1 min-h-0 flex flex-col gap-2 p-2">
         <NewSessionView
           input={draft.input}

@@ -4,7 +4,11 @@
 //
 // Rhythm: sphere → harmonic → sphere → harmonic → ... (the sphere is "home base").
 // Each pulse is ~1.2s: sphere-hold (350ms) → morph-out (175ms) → shape-hold (500ms)
-// → morph-back (175ms). Four pulses make one full cycle (~4.8s).
+// → morph-back (175ms). Ten pulses make one full cycle (12s).
+//
+// The sequence is strictly ascending by quantum numbers (l, m): l=2→4, m=0→l
+// within each level, using only genuine spherical harmonic cross-sections.
+// This gives a natural build-up from simple pills to complex stars as it loops.
 //
 // All paths share the same command structure (64 points, M + 63 L + Z) so SVG
 // SMIL <animate attributeName="d"> can interpolate natively between them.
@@ -30,74 +34,100 @@ export const SHAPE_HOLD_MS = 500
 export const PULSE_MS = SPHERE_HOLD_MS + MORPH_MS + SHAPE_HOLD_MS + MORPH_MS
 
 /** Number of pulses in one full cycle. */
-export const PULSE_COUNT = 10
+export const PULSE_COUNT = 8
 
 /** Total cycle duration (ms). */
 export const CYCLE_MS = PULSE_MS * PULSE_COUNT
 
 // --- Modes ---
 
-/** Number of distinct harmonic modes (circle + 7 shapes). */
-export const MODE_COUNT = 8
+/** Number of distinct harmonic modes (circle + 10 genuine shapes). */
+export const MODE_COUNT = 11
 
 /**
  * Compute the normalized radius [0, 1] for a given mode at angle theta.
  *
- * Mode 0: Y_0^0 — circle (constant)
- * Mode 1: Y_1^0 — dumbbell (cos²θ) — NOT USED in pulse sequence (phallic-adjacent)
- * Mode 2: Y_2^0 — pinched (|3cos²θ − 1| normalized, with base)
- * Mode 3: l=2 m=2 — four-lobe clover (|cos(2θ)| with base)
- * Mode 4: l=3 m=3 — six-lobe rosette (|cos(3θ)| with base)
- * Mode 5: l=3 m=0 — trefoil (gentle 3-lobe via (1+cos(3θ))/2)
- * Mode 6: l=4 m=4 — eight-lobe star (|cos(4θ)| with base)
- * Mode 7: l=4 m=0 — double pinch (|P_4^0(cosθ)| — 4 lobes along axis with 2 waists)
+ * Each mode is a genuine spherical harmonic cross-section — either an
+ * azimuthal cut |cos(mφ)| (lobe count = 2m) or a polar Legendre |P_l^0(cosθ)|.
+ * Every mode is topologically distinct at 13px: different lobe count or
+ * different symmetry-breaking pattern.
  *
- * A base offset (min radius ~0.2–0.3) prevents cusps and keeps shapes "spherical" —
- * at 13px a cusp would be a single-pixel spike, unreadable.
+ *   Mode 0: circle        — Y_0^0 (home base, not in pulse sequence)
+ *   Mode 1: pill          — |cosθ| (m=1, 2 lobes)
+ *   Mode 2: pinched       — |P_2^0(cosθ)| (2 big + 2 equatorial bumps)
+ *   Mode 3: clover        — |cos2θ| (m=2, 4 lobes)
+ *   Mode 4: peanut        — |P_3^0(cosθ)| (2 big + 4 side bumps)
+ *   Mode 5: rosette       — |cos3θ| (m=3, 6 lobes)
+ *   Mode 6: double-pinch  — |P_4^0(cosθ)| (complex multi-node)
+ *   Mode 7: star-8        — |cos4θ| (m=4, 8 lobes)
+ *   Mode 8: star-10       — |cos5θ| (m=5, 10 lobes)
+ *   Mode 9: hedgehog      — |P_5^0(cosθ)| (2 big + 8 fine bumps)
+ *   Mode 10: star-12     — |cos6θ| (m=6, 12 lobes)
+ *
+ * A base offset (min radius) prevents cusps — at 13px a cusp would be a
+ * single-pixel spike, unreadable. Higher lobe counts use a higher base
+ * so the features remain visible at small pixel radius.
  */
 export function harmonicRadius(mode: number, theta: number): number {
   switch (mode) {
     case 0:
-      // Perfect circle
       return 1.0
     case 1: {
-      // Dumbbell: two lobes (legacy, not in pulse sequence)
+      // m=1 pill: cos²θ, 2 lobes — the simplest non-circle
       const cos = Math.cos(theta)
-      return 0.25 + 0.75 * cos * cos
+      return 0.15 + 0.85 * cos * cos
     }
     case 2: {
-      // Pinched: |3cos²θ - 1| gives lobes at poles + equatorial bump
+      // P_2^0: |3cos²θ - 1|/2 — 2 big lobes + 2 equatorial bumps
       const cos = Math.cos(theta)
-      const raw = Math.abs(3 * cos * cos - 1) // range [0, 2]
-      return 0.2 + 0.8 * (raw / 2)
+      const raw = Math.abs(3 * cos * cos - 1) / 2
+      return 0.15 + 0.85 * raw
     }
     case 3: {
-      // Four-lobe clover: |cos(2θ)| gives four symmetric lobes
-      const raw = Math.abs(Math.cos(2 * theta)) // range [0, 1]
-      return 0.2 + 0.8 * raw
+      // m=2 clover: |cos(2θ)|, 4 symmetric lobes
+      const raw = Math.abs(Math.cos(2 * theta))
+      return 0.15 + 0.85 * raw
     }
     case 4: {
-      // Six-lobe rosette: |cos(3θ)| gives six symmetric lobes
-      const raw = Math.abs(Math.cos(3 * theta)) // range [0, 1]
-      return 0.25 + 0.75 * raw
+      // P_3^0: |(5cos³θ - 3cosθ)/2| — 2 big lobes + 4 side bumps
+      const cos = Math.cos(theta)
+      const raw = Math.abs(5 * cos * cos * cos - 3 * cos) / 2
+      return 0.15 + 0.85 * raw
     }
     case 5: {
-      // Trefoil: (1 + cos(3θ))/2 gives gentle 3-lobe shape
-      const raw = (1 + Math.cos(3 * theta)) / 2 // range [0, 1]
-      return 0.3 + 0.7 * raw
+      // m=3 rosette: |cos(3θ)|, 6 lobes
+      const raw = Math.abs(Math.cos(3 * theta))
+      return 0.2 + 0.8 * raw
     }
     case 6: {
-      // Eight-lobe star: |cos(4θ)| gives eight fine lobes
-      const raw = Math.abs(Math.cos(4 * theta)) // range [0, 1]
-      return 0.3 + 0.7 * raw
-    }
-    case 7: {
-      // Double pinch: |P_4^0(cosθ)| = |35cos⁴θ − 30cos²θ + 3|/8
-      // Gives 4 lobes along the polar axis with two pinched waists between them
+      // P_4^0: |(35cos⁴θ - 30cos²θ + 3)/8| — complex multi-node
       const cos = Math.cos(theta)
       const cos2 = cos * cos
-      const raw = Math.abs(35 * cos2 * cos2 - 30 * cos2 + 3) / 8 // range [0, 1]
+      const raw = Math.abs(35 * cos2 * cos2 - 30 * cos2 + 3) / 8
+      return 0.15 + 0.85 * raw
+    }
+    case 7: {
+      // m=4 star-8: |cos(4θ)|, 8 lobes
+      const raw = Math.abs(Math.cos(4 * theta))
+      return 0.25 + 0.75 * raw
+    }
+    case 8: {
+      // m=5 star-10: |cos(5θ)|, 10 lobes
+      const raw = Math.abs(Math.cos(5 * theta))
+      return 0.3 + 0.7 * raw
+    }
+    case 9: {
+      // P_5^0: |(63cos⁵θ - 70cos³θ + 15cosθ)/8| — 2 big + 8 fine bumps
+      const cos = Math.cos(theta)
+      const cos2 = cos * cos
+      const cos3 = cos2 * cos
+      const raw = Math.abs(63 * cos2 * cos3 - 70 * cos3 + 15 * cos) / 8
       return 0.2 + 0.8 * raw
+    }
+    case 10: {
+      // m=6 star-12: |cos(6θ)|, 12 lobes
+      const raw = Math.abs(Math.cos(6 * theta))
+      return 0.35 + 0.65 * raw
     }
     default:
       return 1.0
@@ -180,58 +210,39 @@ export function harmonicDonutPath(mode: number, rotationDeg: number = 0, innerR:
 }
 
 /**
- * The pulse mode sequence: which harmonic shape appears in each pulse.
- * Order is fixed for visual contrast; ANGLES are randomized per mount.
- * 10 pulses using 6 shapes (modes 1–6), no adjacent repeats.
+ * The pulse mode sequence: 8 visually distinct genuine spherical harmonics.
+ * Azimuthal |cos(mθ)| lobe ladder interleaved with 2 zonal Legendres.
  */
 export const PULSE_MODES: readonly number[] = [
-  3, // clover (4 lobes, Y_2^2)
-  1, // dumbbell (2 lobes, Y_1^0)
-  4, // rosette-6 (6 lobes, Y_3^3)
-  7, // double pinch (4 axial, P_4^0)
-  2, // pinched (2+equator, P_2^0)
-  6, // star-8 (8 lobes, Y_4^4)
-  3, // clover
-  1, // dumbbell
-  4, // rosette-6
-  6, // star-8
+  1,  // pill          — 2 lobes
+  2,  // pinched       — P_2^0, 2 big + 2 bumps
+  6,  // double-pinch  — P_4^0, complex
+  3,  // clover        — 4 lobes
+  5,  // rosette       — 6 lobes
+  7,  // star-8        — 8 lobes
+  8,  // star-10       — 10 lobes
+  10, // star-12       — 12 lobes
 ]
 
 /**
- * Allowed rotation angles per mode (degrees, 45° increments).
- *
- * In SVG coordinates, theta=0 points RIGHT. The dumbbell's natural shape
- * (rotation=0°) has lobes at LEFT/RIGHT = horizontal. Rotation=90° makes
- * it VERTICAL — which looks phallic. Pill-shaped modes (1, 2, 7) are
- * restricted to horizontal only (0°/180°) so they always read as a
- * horizontal lozenge, never at an odd diagonal.
+ * Fixed rotation angle per pulse slot (degrees).
+ * Only the clover (4-lobe) rotates 45° so fins form an X.
  */
-const ANGLES_ANY = [0, 45, 90, 135, 180, 225, 270, 315] as const
-const ANGLES_HORIZONTAL = [0, 180] as const
+export const PULSE_ROTATIONS: readonly number[] = [
+  0,  // pill
+  0,  // pinched
+  0,  // double-pinch
+  45, // clover — X not +
+  0,  // rosette
+  0,  // star-8
+  0,  // star-10
+  0,  // star-12
+]
 
-function allowedAngles(mode: number): readonly number[] {
-  if (mode === 1 || mode === 2 || mode === 7) return ANGLES_HORIZONTAL
-  return ANGLES_ANY
-}
-
-/**
- * Generate a random pulse sequence (mode + rotation for each pulse).
- * Called once per HarmonicDot mount — each streaming turn gets a fresh sequence.
- */
-export function randomPulseSequence(): ReadonlyArray<{ mode: number; rotation: number }> {
-  const result: Array<{ mode: number; rotation: number }> = []
-  for (let i = 0; i < PULSE_MODES.length; i++) {
-    const mode = PULSE_MODES[i]
-    const angles = allowedAngles(mode)
-    let rotation: number
-    const prev = result[i - 1]
-    do {
-      rotation = angles[Math.floor(Math.random() * angles.length)]
-    } while (prev && prev.mode === mode && prev.rotation === rotation)
-    result.push({ mode, rotation })
-  }
-  return result
-}
+/** The canonical deterministic pulse sequence — mode + fixed rotation per slot.
+ *  Used by HarmonicDot directly (no randomization). */
+export const PULSE_SEQUENCE: ReadonlyArray<{ mode: number; rotation: number }> =
+  PULSE_MODES.map((mode, i) => ({ mode, rotation: PULSE_ROTATIONS[i] }))
 
 /** Inner disc radius that creates the ring hole (px in viewBox units).
  *  maxR is 6, so ring thickness = 6 - INNER_R ≈ 1.5px. */
@@ -305,18 +316,14 @@ export function buildSmil(sequence: ReadonlyArray<{ mode: number; rotation: numb
   }
 }
 
-// --- Deterministic exports for tests ---
+// --- Pre-computed exports ---
 
-/** A deterministic sequence for testing — uses first allowed angle per mode. */
-export const PULSE_SEQUENCE: ReadonlyArray<{ mode: number; rotation: number }> =
-  PULSE_MODES.map((mode) => ({ mode, rotation: allowedAngles(mode)[0] }))
-
-/** Pre-computed paths for the deterministic test sequence. */
+/** Pre-computed paths for the deterministic pulse sequence. */
 export const PULSE_PATHS: readonly string[] = PULSE_SEQUENCE.map(
   ({ mode, rotation }) => harmonicPath(mode, rotation),
 )
 
-/** Pre-computed donut paths (solid, inner r=0) for the deterministic test sequence. */
+/** Pre-computed donut paths (solid, inner r=0) for the deterministic pulse sequence. */
 export const PULSE_DONUT_PATHS: readonly string[] = PULSE_SEQUENCE.map(
   ({ mode, rotation }) => harmonicDonutPath(mode, rotation, 0),
 )
@@ -327,7 +334,7 @@ export const HARMONIC_PATHS: readonly string[] = Array.from(
   (_, mode) => harmonicPath(mode),
 )
 
-/** Pre-computed SMIL for the deterministic test sequence. */
+/** Pre-computed SMIL for the canonical pulse sequence. */
 export const SMIL = buildSmil(PULSE_SEQUENCE)
 
 /** @deprecated use SMIL.dur or CYCLE_MS */
@@ -336,4 +343,16 @@ export const MORPH_CADENCE_MS = CYCLE_MS
 /** @deprecated use SMIL.keyTimes */
 export function smilKeyTimes(): string {
   return SMIL.keyTimes
+}
+
+/**
+ * Compute a SMIL `begin` offset that phase-locks the animation to a global
+ * modular clock. Every mount of HarmonicDot calls this once; the returned
+ * string (e.g. "-4200ms") makes the browser start the SMIL timeline as if
+ * it had been running since wall-clock t=0 mod CYCLE_MS. Two dots mounting
+ * at different times agree on the current shape because they share the same
+ * epoch.
+ */
+export function smilBeginOffset(): string {
+  return `-${Date.now() % CYCLE_MS}ms`
 }

@@ -963,7 +963,6 @@ export const dict = {
   "app.server.retrying": "جاري إعادة المحاولة تلقائيًا...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
-  "app.server.restartHub": "Restart Hub",
   "app.server.otherServers": "خوادم أخرى",
   "dialog.server.add.usernamePlaceholder": "اسم المستخدم",
   "dialog.server.add.passwordPlaceholder": "كلمة المرور",

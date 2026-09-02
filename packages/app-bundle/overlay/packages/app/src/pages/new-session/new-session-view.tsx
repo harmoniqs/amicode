@@ -59,7 +59,7 @@ export function NewSessionView(props: {
             <div class="flex justify-center">
               <MarkDetailed class="w-24 h-auto" style={{ color: "var(--v2-icon-icon-accent)" }} />
             </div>
-            <div class="mt-8 flex flex-col gap-8">
+            <div class="mt-8 flex flex-col gap-4">
               {/* amicode/opencode#117: the bug-report dock rides the draft
                   composer too — the #116 button renders here, and without the
                   dock its click would look dead. Singleton state; never
@@ -74,8 +74,10 @@ export function NewSessionView(props: {
                 <PromptProjectAddButton controller={props.project} />
               </Show>
               {/* amicode#663: un-gated — the project selector now renders inside
-                  the Amicode webview with type grouping (Research/Dev). */}
-              <Show when={props.project.selected()}>
+                  the Amicode webview with type grouping (Research/Dev).
+                  amicode#673: show when projects exist, not only when one is
+                  pre-selected — otherwise "Pick a project" is never visible. */}
+              <Show when={!props.project.empty()}>
                 <div class="flex min-h-7 min-w-0 flex-col items-center justify-center gap-0 text-v2-text-text-faint sm:flex-row">
                   <PromptProjectSelector controller={props.project} placement="bottom" />
                   <Show
@@ -104,24 +106,36 @@ export function NewSessionView(props: {
   )
 }
 
-export function NewSessionStatus(props: { mount: Accessor<HTMLElement | null>; visible: Accessor<boolean> }) {
+export function NewSessionStatus(props: {
+  sessionsMount: Accessor<HTMLElement | null>
+  statusMount: Accessor<HTMLElement | null>
+  visible: Accessor<boolean>
+}) {
   const language = useLanguage()
 
   return (
-    <Show when={props.mount()} keyed>
-      {(mount) => (
-        <Portal mount={mount}>
-          <div class="flex items-center gap-2">
-            <TooltipV2 placement="bottom" value="Sessions" class="shrink-0">
+    <>
+      <Show when={props.sessionsMount()} keyed>
+        {(mount) => (
+          <Portal mount={mount}>
+            <span class="flex shrink-0" data-tour-target="sessions">
               <SessionChatsDropdown />
-            </TooltipV2>
-            <TooltipV2 placement="bottom" value={language.t("status.popover.trigger")} class="shrink-0">
-              <StatusPopoverV2 />
-            </TooltipV2>
-          </div>
-        </Portal>
-      )}
-    </Show>
+            </span>
+          </Portal>
+        )}
+      </Show>
+      <Show when={props.statusMount()} keyed>
+        {(mount) => (
+          <Portal mount={mount}>
+            <span class="flex shrink-0" data-tour-target="status">
+              <TooltipV2 placement="bottom" value={language.t("status.popover.trigger")} class="shrink-0">
+                <StatusPopoverV2 />
+              </TooltipV2>
+            </span>
+          </Portal>
+        )}
+      </Show>
+    </>
   )
 }
 

@@ -209,23 +209,7 @@
 [data-part-enter] {
   animation: timeline-enter var(--motion-enter-duration) var(--motion-enter-ease) backwards;
 }
-/* Prose-fragment cards get a snappier, blur-free entrance (#265): 150ms
-   ease-out, 10px rise, no blur. Faster than the general timeline-enter because
-   these settle during active streaming — the eye is already watching the bottom
-   edge, so the entrance can be crisp without startling. */
-[data-prose-fragment][data-part-enter] {
-  animation: prose-fragment-enter 150ms ease-out backwards;
-}
-@keyframes prose-fragment-enter {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
+
 /* The open cascade holds at frame 0 (opacity 0, risen, blurred) until the
    timeline has settled at the bottom — released by removing
    [data-entrance-pending] (message-timeline.tsx entranceReady). Also keeps
@@ -278,9 +262,6 @@
   :root {
     --motion-enter-rise: 0px;
     --motion-enter-blur: 0px;
-  }
-  [data-prose-fragment][data-part-enter] {
-    animation: none;
   }
 }
 

@@ -169,6 +169,15 @@ const icons = {
     viewBox: "0 0 16 16",
     body: `<circle cx="8" cy="5" r="2.5" stroke="currentColor"/><path d="M3.5 14C3.5 11.5147 5.51472 9.5 8 9.5C10.4853 9.5 12.5 11.5147 12.5 14" stroke="currentColor" stroke-linecap="round"/>`,
   },
+  // amicode#663: project-type icons for the Research / Dev selector.
+  flask: {
+    viewBox: "0 0 16 16",
+    body: `<path d="M6 2H10M6.5 2V6L3 13H13L9.5 6V2" stroke="currentColor" stroke-linejoin="round"/><path d="M4.5 10.5H11.5" stroke="currentColor"/>`,
+  },
+  "code-brackets": {
+    viewBox: "0 0 16 16",
+    body: `<path d="M5.5 3.5L2 8L5.5 12.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/><path d="M10.5 3.5L14 8L10.5 12.5" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 3L7 13" stroke="currentColor" stroke-linecap="round"/>`,
+  },
 }
 
 const spriteID = "opencode-v2-icon-sprite"

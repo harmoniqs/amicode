@@ -4,6 +4,7 @@ import { createSimpleContext } from "@opencode-ai/ui/context"
 import { persisted } from "@/utils/persist"
 import { usePlatform } from "@/context/platform"
 import { developerBootFlag } from "@/utils/amicode-developer"
+import { type TitlebarLayout, defaultTitlebarLayout, validateTitlebarLayout } from "@/components/titlebar-layout"
 
 export interface NotificationSettings {
   agent: boolean
@@ -40,6 +41,7 @@ export interface Settings {
     agentVisibilityInitialized?: boolean
     newInterfaceNoticeDismissed?: boolean
     shouldDisplayTabsToast?: boolean
+    titlebarLayout?: TitlebarLayout
   }
   appearance: {
     fontSize: number
@@ -464,6 +466,11 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         shouldDisplayTabsToast: withFallback(() => store.general?.shouldDisplayTabsToast, false),
         dismissTabsToast() {
           setStore("general", "shouldDisplayTabsToast", false)
+        },
+        titlebarLayout: createMemo(() => validateTitlebarLayout(store.general?.titlebarLayout)),
+        setTitlebarLayout(value: TitlebarLayout) {
+          const validated = validateTitlebarLayout(value)
+          setStore("general", "titlebarLayout", validated)
         },
       },
       visibility: {

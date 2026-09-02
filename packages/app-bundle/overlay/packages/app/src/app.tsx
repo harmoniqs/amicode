@@ -427,8 +427,7 @@ function AmicodeThemeBridge() {
       bugDockController.handleBridgeMessage(d)
       return
     }
-    // amicode#663: workspace-projects push from the extension host — the
-    // project selector below the composer reads from this signal.
+    // amicode#663: workspace-projects push from the extension host.
     if (d.kind === "workspace-projects") {
       adoptWorkspaceProjects((d as { projects?: unknown[] }).projects as Parameters<typeof adoptWorkspaceProjects>[0])
       return

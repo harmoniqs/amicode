@@ -241,6 +241,17 @@ export namespace Timeline {
 
     assistantItems.forEach((item, itemIndex) => {
       if (item.type === "interrupted") {
+        // ThinkingMeta attaches to the last output BEFORE the interruption —
+        // it summarises the work that was interrupted, not the post-interrupt tail.
+        if (assistantPartRefs.length > 0 && !turnIsRunning) {
+          rows.push(
+            new TimelineRow.ThinkingMeta({
+              userMessageID: userMessage.id,
+              turnRunning: false,
+              turnDurationMs: computeTurnDuration(userMessage, assistantMessages),
+            }),
+          )
+        }
         rows.push(
           new TimelineRow.TurnDivider({
             userMessageID: userMessage.id,
@@ -266,8 +277,8 @@ export namespace Timeline {
 
     // ThinkingMeta row renders LAST — duration + tokens as a historical record.
     // Hidden while streaming (the harmonic dot signals "working"); appears only
-    // after the turn completes.
-    if (assistantPartRefs.length > 0 && !turnIsRunning) {
+    // after the turn completes. Skipped when interrupted — already emitted above.
+    if (assistantPartRefs.length > 0 && !turnIsRunning && !interrupted) {
       rows.push(
         new TimelineRow.ThinkingMeta({
           userMessageID: userMessage.id,

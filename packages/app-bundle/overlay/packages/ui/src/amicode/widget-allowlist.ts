@@ -7,8 +7,6 @@ const FETCH_ROUTES = [
   "/amicode/profile",
   "/amicode/problems",
   "/amicode/problem",
-  "/amicode/campaigns",
-  "/amicode/campaign",
   "/amicode/run-status",
   "/amicode/run-series",
   "/amicode/run-cards",

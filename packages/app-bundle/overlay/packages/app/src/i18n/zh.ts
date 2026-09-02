@@ -1033,7 +1033,6 @@ export const dict = {
   "app.server.retrying": "正在自动重试...",
   "app.server.connectionLost": "与服务器的连接已断开——正在重新连接…",
   "app.server.reconnected": "已重新连接到服务器",
-  "app.server.restartHub": "重启 Hub",
   "app.server.otherServers": "其他服务器",
   "dialog.server.add.usernamePlaceholder": "用户名",
   "dialog.server.add.passwordPlaceholder": "密码",

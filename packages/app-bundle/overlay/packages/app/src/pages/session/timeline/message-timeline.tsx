@@ -19,7 +19,7 @@ import { useMutation } from "@tanstack/solid-query"
 import { createVirtualizer, defaultRangeExtractor, elementScroll, type VirtualItem } from "@tanstack/solid-virtual"
 import { Accordion } from "@opencode-ai/ui/accordion"
 import { AmicodeEntityRail } from "@opencode-ai/ui/amicode-entity-rail"
-import { DEFAULT_DOT_CENTRE, ThoughtRail, ThoughtRailLabel, THOUGHT_RAIL_INSET, shouldRenderRail } from "./thought-rail"
+import { DEFAULT_DOT_CENTRE, ThoughtRail, ThoughtRailLabel, THOUGHT_RAIL_INSET, shouldRenderRail, dotCentreForGroup } from "./thought-rail"
 import { formatElapsed, formatTokens, turnTokens } from "@opencode-ai/ui/amicode-thinking"
 import {
   AmicodeEntityView,
@@ -42,7 +42,7 @@ import {
   type UserActions,
 } from "@opencode-ai/session-ui/message-part"
 import { readPartText, settledChunkBoundary } from "@opencode-ai/session-ui/message-part-text"
-import { buildTrace } from "@opencode-ai/session-ui/build-trace"
+import { buildTrace, buildSessionTrace } from "@opencode-ai/session-ui/build-trace"
 import { DiffChanges } from "@opencode-ai/ui/diff-changes"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -98,6 +98,7 @@ import { notifySessionTabsRemoved } from "@/components/titlebar-session-events"
 import { sessionTitle } from "@/utils/session-title"
 import { scheduleConnectedMeasure } from "./measure"
 import { observeElementOffsetReconnectAware } from "./observe-element-offset"
+import { smoothScrollInterpolate, SMOOTH_SCROLL_DURATION } from "./smooth-scroll"
 import { createTimelineProjection } from "./projection"
 import { MessageComment, SummaryDiff, TimelineRow, TimelineRowMap } from "./rows"
 import { filterVirtualIndexes } from "./virtual-items"
@@ -479,13 +480,51 @@ export function MessageTimeline(props: {
   // Copy the full assistant trace for a turn to the clipboard.
   const copyTraceForTurn = (userMessageID: string) => {
     const msgs = sessionMessages()
-    const start = msgs.findIndex((m) => m.id === userMessageID)
-    if (start === -1) return
-    const assistantMsgs = msgs.slice(start + 1).filter((m): m is AssistantMessage => m.role === "assistant")
-    const content = buildTrace(assistantMsgs, getMsgParts)
+    const userParts = getMsgParts(userMessageID)
+    const userTextPart = userParts.find(
+      (p): p is TextPart => p.type === "text" && !(p as TextPart).synthetic,
+    )
+    const assistantMsgs = msgs.filter(
+      (m): m is AssistantMessage => m.role === "assistant" && m.parentID === userMessageID,
+    )
+    const content = buildTrace(assistantMsgs, getMsgParts, userTextPart?.text)
     if (!content) return
     if (!writeClipboardViaBridge(content)) void navigator.clipboard?.writeText(content)
   }
+
+  // Export the full session trace to a file.
+  const exportSessionTrace = async () => {
+    const msgs = sessionMessages()
+    const content = buildSessionTrace(msgs, getMsgParts)
+    if (!content) return
+    const raw = titleValue() || "session"
+    const slug = raw
+      .trim()
+      .toLowerCase()
+      .replace(/[\s_]+/g, "-")
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+    const date = new Date().toISOString().slice(0, 10)
+    const filename = `trace-${slug || "session"}-${date}.md`
+
+    if (platform.saveFilePickerDialog) {
+      await platform.saveFilePickerDialog({
+        title: language.t("session.exportTrace"),
+        defaultPath: filename,
+        content,
+      })
+    } else {
+      const blob = new Blob([content], { type: "text/markdown" })
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement("a")
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   /** True when at least one AssistantPart ROW exists in the projected timeline
    *  for this turn — meaning renderable, settled output is visible. Reasoning
    *  parts withheld while streaming do NOT count (they produce no row until
@@ -702,6 +741,64 @@ export function MessageTimeline(props: {
       )
     },
   })
+
+  // ── Smooth scroll (#631) ───────────────────────────────────────────────
+  // Custom RAF loop for bottom-follow scrolls (180ms ease-out cubic). Instant
+  // scrollToEnd is used for mount, reveal, and prepend-anchor; smooth only for
+  // the "new content arrived while anchored" path. Cancels on user gesture.
+  let smoothFrame: number | undefined
+  let smoothStartY = 0
+  let smoothStartTime = 0
+  const prefersReducedMotion = typeof window !== "undefined"
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : undefined
+
+  const cancelSmoothScroll = () => {
+    if (smoothFrame !== undefined) {
+      cancelAnimationFrame(smoothFrame)
+      smoothFrame = undefined
+    }
+  }
+
+  const smoothScrollToEnd = () => {
+    const el = listRoot()
+    if (!el) { virtualizer.scrollToEnd(); return }
+    // Reduced motion: instant
+    if (prefersReducedMotion?.matches) { virtualizer.scrollToEnd(); return }
+    // Compute target (max scroll position = scrollHeight - clientHeight)
+    const target = el.scrollHeight - el.clientHeight
+    const current = el.scrollTop
+    if (Math.abs(target - current) < 2) return // already there
+    // If an animation is in flight, restart from current position
+    cancelSmoothScroll()
+    smoothStartY = current
+    smoothStartTime = performance.now()
+    const tick = (now: number) => {
+      const elapsed = now - smoothStartTime
+      const y = smoothScrollInterpolate(smoothStartY, target, elapsed, SMOOTH_SCROLL_DURATION)
+      el.scrollTop = y
+      if (elapsed < SMOOTH_SCROLL_DURATION) smoothFrame = requestAnimationFrame(tick)
+      else smoothFrame = undefined
+    }
+    smoothFrame = requestAnimationFrame(tick)
+  }
+
+  // Cancel smooth scroll on user gesture (wheel, touch, pointer)
+  onMount(() => {
+    const el = listRoot()
+    if (!el) return
+    const cancel = () => cancelSmoothScroll()
+    el.addEventListener("wheel", cancel, { passive: true })
+    el.addEventListener("touchstart", cancel, { passive: true })
+    el.addEventListener("pointerdown", cancel)
+    onCleanup(() => {
+      el.removeEventListener("wheel", cancel)
+      el.removeEventListener("touchstart", cancel)
+      el.removeEventListener("pointerdown", cancel)
+      cancelSmoothScroll()
+    })
+  })
+
   const resizeItem = virtualizer.resizeItem
   let resizeAnchorScheduled = false
   const anchorResizedBottom = () => {
@@ -710,7 +807,7 @@ export function MessageTimeline(props: {
     queueMicrotask(() => {
       resizeAnchorScheduled = false
       if (!props.shouldAnchorBottom() || props.hasScrollGesture()) return
-      virtualizer.scrollToEnd()
+      smoothScrollToEnd()
     })
   }
   virtualizer.resizeItem = (index, size) => {
@@ -819,7 +916,7 @@ export function MessageTimeline(props: {
       if (index === undefined) return
       virtualizer.scrollToIndex(index, { align: "center" })
     })
-    props.setScrollToEnd?.(() => virtualizer.scrollToEnd())
+    props.setScrollToEnd?.(() => smoothScrollToEnd())
     props.setHistoryAnchor?.({ capture: capturePrependAnchor, restore: restorePrependAnchor })
   })
 
@@ -843,7 +940,7 @@ export function MessageTimeline(props: {
     if (resizePinFrame !== undefined) cancelAnimationFrame(resizePinFrame)
     clearPrependAnchor()
     if (prependAnchorFrame !== undefined) cancelAnimationFrame(prependAnchorFrame)
-    virtualizer.scrollToEnd()
+    smoothScrollToEnd()
   }
 
   let measuredSessionKey = sessionKey()
@@ -1479,38 +1576,38 @@ export function MessageTimeline(props: {
       if (row._tag === "Thinking") {
         const hasOutput = hasAssistantParts(row.userMessageID)
         // Dot stays on Thinking only while no output exists
-        return { first: true, last: !hasOutput, running: row.turnRunning && !hasOutput }
+        return { first: true, last: !hasOutput, running: row.turnRunning && !hasOutput, prose: false }
       }
       if (row._tag !== "AssistantPart") return undefined
       if (!shouldRenderRail(row)) return undefined
-      // Last AssistantPart gets the dot when the turn is still running
-      return { first: false, last: row.lastAssistantPart, running: row.turnRunning && row.lastAssistantPart }
+      // Last AssistantPart gets the dot when the turn is still running.
+      // prose = text content that grows → dot bottom-anchored.
+      // !prose = tool/status row → dot at dotCentre.
+      // A "part" group can be either text or a single tool — check the actual part.
+      let isProse = false
+      if (row.group.type === "part") {
+        const part = getMsgPart(row.group.ref.messageID, row.group.ref.partID)
+        isProse = part?.type === "text"
+      }
+      return { first: false, last: row.lastAssistantPart, running: row.turnRunning && row.lastAssistantPart, prose: isProse }
     }
 
-    // The dot sits on the row's FIRST TEXT LINE, wherever the content puts it
-    // (Kate 2026-08-24: dots must line up with the text they coincide with).
-    // Prose and rail-label rows put it at the default 11px; rows that open
-    // with a card (a tool chip, a group header, a widget preview) start their
-    // first line lower by that card's own padding — measured, not tabulated,
-    // because the set of card species is open-ended. The ResizeObserver
-    // re-measures when async card content mounts (deferToolContent) or
-    // streaming reflows the row; observers exist only on rendered rows, so
-    // the count is bounded by the virtualizer's window.
+    // The dot aligns with the vertical centre of the row's first text line.
+    // Initialized from dotCentreForGroup (deterministic per row type) so the
+    // dot starts in the right place without waiting for DOM measurement.
+    // ResizeObserver refines the value once the content has rendered.
     let turnEl: HTMLDivElement | undefined
-    const [dotCentre, setDotCentre] = createSignal(DEFAULT_DOT_CENTRE)
-    const [dotSettled, setDotSettled] = createSignal(false)
+    const initialDotCentre = () => {
+      const row = input.row()
+      if (row._tag === "Thinking") return dotCentreForGroup("thinking")
+      if (row._tag === "AssistantPart") return dotCentreForGroup(row.group.type)
+      return DEFAULT_DOT_CENTRE
+    }
+    const [dotCentre, setDotCentre] = createSignal(initialDotCentre())
     const measureDotCentre = () => {
       if (!turnEl || !rail()) return
       const hostTop = turnEl.getBoundingClientRect().top
-      // Travelling dot (#265): ONLY the running dot tracks the last
-      // prose-fragment card. The done-dot stays at the first text line
-      // (top of the row) so the rail reads as a sequence of origin marks.
-      const r = rail()
-      const isRunning = r && r.last && r.running
-      const fragments = isRunning ? turnEl.querySelectorAll("[data-prose-fragment]") : undefined
-      const lastFragment = fragments && fragments.length > 0 ? (fragments[fragments.length - 1] as HTMLElement) : null
-      const target = lastFragment ?? turnEl
-      const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT)
+      const walker = document.createTreeWalker(turnEl, NodeFilter.SHOW_TEXT)
       let node: Node | null
       while ((node = walker.nextNode())) {
         if (!node.textContent?.trim()) continue
@@ -1519,13 +1616,10 @@ export function MessageTimeline(props: {
         const rect = range.getClientRects()[0]
         if (!rect || rect.height === 0) continue
         const centre = rect.top + rect.height / 2 - hostTop
-        // When targeting a fragment, the dot can be anywhere down the row
-        // (no ceiling). For non-fragment rows the 80px ceiling guards against
-        // mid-virtualisation nonsense measurements.
-        const maxCentre = lastFragment ? Infinity : 80
-        if (centre > 0 && centre < maxCentre) setDotCentre(Math.max(DEFAULT_DOT_CENTRE, Math.round(centre * 2) / 2))
-        if (!dotSettled()) setDotSettled(true)
-        return
+        if (centre > 0 && centre < 80) {
+          setDotCentre(Math.max(DEFAULT_DOT_CENTRE, Math.round(centre * 2) / 2))
+          return
+        }
       }
     }
     onMount(() => {
@@ -1546,6 +1640,7 @@ export function MessageTimeline(props: {
           "md:max-w-200 2xl:max-w-[1000px]": props.centered,
           "md:mx-auto": props.centered,
           "pt-3": previousAssistantPart(),
+          "md:pl-3": assistantPart(),
         }}
       >
         <div
@@ -1560,8 +1655,8 @@ export function MessageTimeline(props: {
                 first={r().first}
                 last={r().last}
                 running={r().running}
+                prose={r().prose}
                 dotCentre={dotCentre()}
-                settled={dotSettled()}
                 turnStartedAt={"turnStartedAt" in input.row() ? (input.row() as any).turnStartedAt : undefined}
                 tokens={r().running && r().last ? assistantTokensForTurn(input.row().userMessageID) || undefined : undefined}
               />
@@ -2111,6 +2206,9 @@ export function MessageTimeline(props: {
                                     </DropdownMenu.ItemLabel>
                                   </DropdownMenu.Item>
                                 </Show>
+                                <DropdownMenu.Item onSelect={() => void exportSessionTrace()}>
+                                  <DropdownMenu.ItemLabel>{language.t("session.exportTrace")}</DropdownMenu.ItemLabel>
+                                </DropdownMenu.Item>
                                 <Show
                                   when={sync().session.get(id)?.time?.archived}
                                   fallback={
@@ -2191,6 +2289,9 @@ export function MessageTimeline(props: {
                                   {language.t("session.share.action.share")}...
                                 </MenuV2.Item>
                               </Show>
+                              <MenuV2.Item onSelect={() => void exportSessionTrace()}>
+                                {language.t("session.exportTrace")}
+                              </MenuV2.Item>
                               <Show
                                 when={sync().session.get(id)?.time?.archived}
                                 fallback={
