@@ -21,14 +21,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fleetVerb } from "../src/fleet_verb.js";
 import {
+  MIGRATION_DEBT,
   fleetDigest,
   formatAge,
   formatDigestBlock,
   formatDigestTable,
+  parseVaultHealth,
   summarizeSessions,
   type DigestDeps,
   type DigestPoster,
+  type DigestView,
   type MachineProbe,
+  type MigrationDebtItem,
+  type VaultHealth,
 } from "../src/fleet_digest.js";
 import { normalizeRecord, writeRecord, type FleetRecord, type FleetState } from "../src/fleet_registry.js";
 
@@ -70,10 +75,24 @@ function put(session_id: string, state: FleetState, over: Partial<FleetRecord> =
   return rec;
 }
 
-/** Hermetic deps: no ssh, no amico-slack, frozen clock — the whole verb runs in-process. */
-function hermetic(machines: Record<string, MachineProbe>, post?: DigestPoster): DigestDeps {
+/** Hermetic deps: no ssh, no amico-slack, frozen clock — the whole verb runs in-process.
+ *  The vault probe defaults COHERENTLY with the machine probe: a machine the ssh probe
+ *  saw as down is unprobeable (parked), everything else aligned — so existing fixtures
+ *  keep their meaning and no test can ever reach a real `ssh` or `armonia-vault-status`. */
+function hermetic(
+  machines: Record<string, MachineProbe>,
+  post?: DigestPoster,
+  vaults?: Record<string, VaultHealth>,
+  debt?: MigrationDebtItem[],
+): DigestDeps {
   return {
     probe: (alias) => machines[alias] ?? { alias, ok: false, detail: "unknown alias" },
+    vaultProbe: (alias) =>
+      vaults?.[alias] ??
+      (machines[alias] && !machines[alias].ok
+        ? { alias, layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" }
+        : { alias, layout: "aligned", sync_state: "no-sidecar", scheduler: "unknown", config: "unknown" }),
+    ...(debt !== undefined ? { debt } : {}),
     post,
     now: () => NOW,
   };
@@ -260,6 +279,243 @@ describe("amico fleet digest --post", () => {
     expect(r.code).toBe(0);
     expect(r.json.dry_run).toBe(true);
     expect(posted).toBe(0);
+  });
+});
+
+// ── vault health + migration debt (M4: layout invariant, portability, drift) ─────
+
+describe("parseVaultHealth — the vault-probe output contract (pure, no ssh)", () => {
+  const out = (layout: string, sync: string, sched: string, cfg = "resolved") =>
+    `LAYOUT:${layout}\nSYNC:${sync}\nSCHED:${sched}\nCONFIG:${cfg}\n`;
+
+  it("reads all four fields from one probe invocation", () => {
+    const vh = parseVaultHealth("alpha", out("aligned", "ok 2026-09-02 08:00 (2 mounts, 0 stale)", "loaded"));
+    expect(vh).toEqual({
+      alias: "alpha",
+      layout: "aligned",
+      sync_state: "ok 2026-09-02 08:00 (2 mounts, 0 stale)",
+      scheduler: "loaded",
+      config: "resolved",
+    });
+  });
+
+  it("misaligned layout + no sidecar + written-only scheduler — every honest degraded value, none an error", () => {
+    const vh = parseVaultHealth("beta", out("misaligned", "no-sidecar", "written-only"));
+    expect(vh).toEqual({ alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" });
+  });
+
+  it("a machine with no scheduler manager reads unknown, never a guessed state", () => {
+    expect(parseVaultHealth("gamma", out("aligned", "no-sidecar", "unknown")).scheduler).toBe("unknown");
+  });
+
+  it("config resolution: the found incident renders foreign-home, never a guessed pass", () => {
+    // a /Users/ config string surviving on a non-Mac home — the 2026-09-02 incident
+    expect(parseVaultHealth("zeta", out("aligned", "no-sidecar", "loaded", "foreign-home")).config).toBe("foreign-home");
+    expect(parseVaultHealth("eta", out("aligned", "no-sidecar", "loaded", "absent")).config).toBe("absent");
+    expect(parseVaultHealth("theta", out("aligned", "no-sidecar", "loaded", "")).config).toBe("unknown");
+  });
+
+  it("garbled or empty probe output → unprobeable, never a fake pass", () => {
+    const vh = parseVaultHealth("delta", "");
+    expect(vh).toEqual({ alias: "delta", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" });
+    expect(parseVaultHealth("eps", "total nonsense from a broken shell").layout).toBe("unprobeable");
+  });
+});
+
+describe("MIGRATION_DEBT — the seeded migration-debt ledger (M4)", () => {
+  it("holds the real current debt, all open, partitura owned by content resolution", () => {
+    expect(MIGRATION_DEBT.map((d) => d.id)).toEqual(["partitura-archived", "compat-symlinks", "sync-script-rollout"]);
+    for (const d of MIGRATION_DEBT) {
+      expect(d.state).toBe("open");
+      expect(d.label.length).toBeGreaterThan(0);
+    }
+    expect(MIGRATION_DEBT.find((d) => d.id === "partitura-archived")?.owner).toBe("content resolution");
+  });
+});
+
+describe("formatDigestBlock — the vaults line (M4)", () => {
+  const vh = (alias: string, layout: VaultHealth["layout"]): VaultHealth => ({
+    alias,
+    layout,
+    config: "resolved",
+    sync_state: "no-sidecar",
+    scheduler: "unknown",
+  });
+  const emptySessions: DigestView["sessions"] = { total: 0, byState: {}, live: [], terminal: 0, unreadable: 0 };
+
+  it("renders layout counts and the open-debt count in one vaults line", () => {
+    const block = formatDigestBlock({
+      date: "2026-08-18",
+      machines: [],
+      vaults: [vh("alpha", "aligned"), vh("beta", "aligned"), vh("gamma", "misaligned"), vh("delta", "unprobeable")],
+      sessions: { ...emptySessions },
+      debt: [
+        { id: "partitura-archived", label: "conflicted clone parked in vaults-archive", state: "open", owner: "content resolution" },
+        { id: "done-already", label: "resolved", state: "closed", owner: "x" },
+      ],
+    });
+    expect(block).toContain("vaults: 2 aligned · 1 misaligned · 1 unverified · debt 1 open");
+    expect(block.split("\n").length).toBeLessThanOrEqual(6);
+  });
+
+  it("omits zero-count layout segments; closed debt items do not count", () => {
+    const block = formatDigestBlock({
+      date: "2026-08-18",
+      machines: [],
+      vaults: [vh("alpha", "aligned")],
+      sessions: { ...emptySessions },
+      debt: [{ id: "done-already", label: "resolved", state: "closed", owner: "x" }],
+    });
+    expect(block).toContain("vaults: 1 aligned · debt 0 open");
+    expect(block).not.toContain("misaligned");
+    expect(block).not.toContain("unverified");
+  });
+
+  it("an unconfigured machine list renders an honest vaults n/a line", () => {
+    const block = formatDigestBlock({
+      date: "2026-08-18",
+      machines: null,
+      vaults: null,
+      sessions: { ...emptySessions },
+    });
+    expect(block).toContain("vaults: n/a (not configured)");
+  });
+
+  it("a view without vault data renders no vaults line (back-compat)", () => {
+    const block = formatDigestBlock({ date: "2026-08-18", machines: null, sessions: { ...emptySessions } });
+    expect(block).not.toContain("vaults:");
+  });
+});
+
+describe("formatDigestTable — vault-health rows + the migration-debt checklist (M4)", () => {
+  const emptySessions: DigestView["sessions"] = { total: 0, byState: {}, live: [], terminal: 0, unreadable: 0 };
+
+  it("renders per-machine layout/sync/scheduler rows, the parked state verbatim, and open debt rows only", () => {
+    const table = formatDigestTable(
+      {
+        date: "2026-08-18",
+        machines: [],
+        vaults: [
+          { alias: "alpha", layout: "aligned", sync_state: "ok 2026-09-02 08:00", scheduler: "loaded", config: "resolved" },
+          { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" },
+          { alias: "gamma", layout: "unprobeable", sync_state: "unknown", scheduler: "unknown", config: "unknown" },
+        ],
+        sessions: { ...emptySessions },
+        debt: [
+          { id: "partitura-archived", label: "conflicted clone parked in vaults-archive", state: "open", owner: "content resolution" },
+          { id: "done-already", label: "resolved", state: "closed", owner: "x" },
+        ],
+      },
+      "/registry/root",
+    );
+    expect(table).toContain("*Vaults*");
+    expect(table).toMatch(/alpha\s+layout aligned\s+· sync ok 2026-09-02 08:00\s+· scheduler loaded/);
+    expect(table).toMatch(/beta\s+layout misaligned\s+· sync no-sidecar\s+· scheduler written-only/);
+    // parked: an explicit state with the named re-check trigger — never a fake pass
+    expect(table).toMatch(/gamma\s+layout unverified \(parked; owner: fleet ritual\)/);
+    expect(table).toContain("*Migration debt*");
+    expect(table).toMatch(/partitura-archived\s+open — conflicted clone parked in vaults-archive \(owner: content resolution\)/);
+    // items render UNTIL closed — a closed item stops rendering
+    expect(table).not.toContain("done-already");
+  });
+
+  it("the debt checklist renders even with no machines configured — debt is fleet state, not per-machine", () => {
+    const table = formatDigestTable(
+      { date: "2026-08-18", machines: null, vaults: null, sessions: { ...emptySessions } },
+      "/registry/root",
+    );
+    expect(table).toContain("*Vaults*");
+    expect(table).toContain("(not configured — pass --machines or set AMICO_FLEET_MACHINES)");
+    expect(table).toContain("*Migration debt*");
+  });
+
+  it("a view without vault data renders no Vaults or debt sections (back-compat)", () => {
+    const table = formatDigestTable(
+      { date: "2026-08-18", machines: null, sessions: { ...emptySessions } },
+      "/registry/root",
+    );
+    expect(table).not.toContain("*Vaults*");
+    expect(table).not.toContain("*Migration debt*");
+  });
+});
+
+describe("amico fleet digest — vault-health lines (hermetic, M4)", () => {
+  const up = (alias: string, host: string): MachineProbe => ({ alias, ok: true, detail: host });
+  const aligned = (alias: string): VaultHealth => ({ alias, layout: "aligned", sync_state: "ok", scheduler: "loaded", config: "resolved" });
+
+  it("probes vault health per configured machine; all aligned → vaults line + debt rows, ok, exit 0", () => {
+    const r = run(
+      ["--machines", "alpha,beta"],
+      hermetic(
+        { alpha: up("alpha", "host-a"), beta: up("beta", "host-b") },
+        undefined,
+        { alpha: aligned("alpha"), beta: aligned("beta") },
+      ),
+    );
+    expect(r.code).toBe(0);
+    expect(r.json.ok).toBe(true);
+    expect(r.json.block).toContain("vaults: 2 aligned · debt 3 open");
+    expect(r.json.table).toMatch(/alpha\s+layout aligned/);
+    expect(r.json.table).toContain("partitura-archived");
+    expect(r.json.vaults).toEqual([aligned("alpha"), aligned("beta")]);
+    expect((r.json.migration_debt as MigrationDebtItem[]).every((d) => d.state === "open")).toBe(true);
+  });
+
+  it("a misaligned machine FAILS the digest (layout invariant), yet the digest still renders — errors-as-data", () => {
+    const r = run(
+      ["--machines", "alpha,beta"],
+      hermetic(
+        { alpha: up("alpha", "host-a"), beta: up("beta", "host-b") },
+        undefined,
+        {
+          alpha: aligned("alpha"),
+          beta: { alias: "beta", layout: "misaligned", sync_state: "no-sidecar", scheduler: "written-only", config: "resolved" },
+        },
+      ),
+    );
+    expect(r.code).toBe(64);
+    expect(r.json.ok).toBe(false);
+    expect((r.json.errors as string[]).join(" ")).toMatch(/beta/);
+    expect((r.json.errors as string[]).join(" ")).toMatch(/misaligned/);
+    // always-renders: the block and table still come back
+    expect(r.json.block).toContain("vaults: 1 aligned · 1 misaligned");
+    expect(r.json.table).toMatch(/beta\s+layout misaligned/);
+  });
+
+  it("a down machine is parked with the fleet-ritual trigger — a row, never a failed digest, never a fake pass", () => {
+    const r = run(
+      ["--machines", "alpha,gamma"],
+      hermetic({
+        alpha: up("alpha", "host-a"),
+        gamma: { alias: "gamma", ok: false, detail: "ssh: connect timed out" },
+      }), // the hermetic default derives: gamma down → vault unprobeable (parked)
+    );
+    expect(r.code).toBe(0);
+    expect(r.json.ok).toBe(true);
+    expect(r.json.block).toContain("vaults: 1 aligned · 1 unverified · debt 3 open");
+    expect(r.json.table).toContain("unverified (parked; owner: fleet ritual)");
+  });
+
+  it("an injected debt ledger with a closed item counts only the open ones and stops rendering the closed row", () => {
+    const debt: MigrationDebtItem[] = [
+      { id: "partitura-archived", label: "conflicted clone parked in vaults-archive", state: "closed", owner: "content resolution" },
+      { id: "compat-symlinks", label: "removal gated on confirmation", state: "open", owner: "Aaron's no-session-broke confirmation" },
+      { id: "sync-script-rollout", label: "new sidecar script deploys fleet-wide post-merge", state: "open", owner: "post-merge deploy" },
+    ];
+    const r = run(
+      ["--machines", "alpha"],
+      hermetic({ alpha: up("alpha", "host-a") }, undefined, { alpha: aligned("alpha") }, debt),
+    );
+    expect(r.json.block).toContain("vaults: 1 aligned · debt 2 open");
+    expect(r.json.table).not.toContain("partitura-archived");
+    expect(r.json.table).toContain("compat-symlinks");
+  });
+
+  it("no machines configured → honest vaults n/a line in the block, debt checklist still in the table", () => {
+    const r = run([], hermetic({}));
+    expect(r.code).toBe(0);
+    expect(r.json.block).toContain("vaults: n/a (not configured)");
+    expect(r.json.table).toContain("*Migration debt*");
   });
 });
 
