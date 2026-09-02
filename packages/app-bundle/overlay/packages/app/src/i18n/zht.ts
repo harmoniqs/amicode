@@ -1029,7 +1029,6 @@ export const dict = {
   "app.server.retrying": "正在自動重試...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
-  "app.server.restartHub": "重啟 Hub",
   "app.server.otherServers": "其他伺服器",
   "dialog.server.add.usernamePlaceholder": "使用者名稱",
   "dialog.server.add.passwordPlaceholder": "密碼",

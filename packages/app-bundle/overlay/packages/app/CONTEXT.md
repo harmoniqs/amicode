@@ -34,6 +34,14 @@ until the session holds context. On-demand — visible only when the context pan
 never persistent. See ADR 0004 (relocated from the former top panel of ADR 0003).
 _Avoid_: Brain (that was the ambient, non-interactive strip), knowledge graph, minimap
 
+**Titlebar controls:**
+The five icon buttons a researcher can reposition within the titlebar: Sessions, Status,
+Side Panel, Profile, and Settings. Each control occupies one of two configurable **slots**
+-- left of the tab strip or right of it -- and can be drag-reordered within or across
+slots via an explicit edit mode (right-click the titlebar). The channel badge, tab strip,
+and new-tab button are fixed titlebar chrome, not titlebar controls.
+_Avoid_: toolbar buttons, action buttons, chrome strip (retired)
+
 **Vault panel**:
 The dismissible drawer that puts the vault — every attached mount and every file inside
 it — in the interface. Read-only browsing with inline markdown/source rendering; opened

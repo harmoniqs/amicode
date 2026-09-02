@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { buildTrace } from "./build-trace"
-import type { AssistantMessage, Part as PartType } from "@opencode-ai/sdk/v2"
+import { buildTrace, buildSessionTrace } from "./build-trace"
+import type { AssistantMessage, Message, Part as PartType, UserMessage } from "@opencode-ai/sdk/v2"
 
 function msg(id: string): AssistantMessage {
   return {
@@ -64,6 +64,17 @@ function skipPart(id: string, tool: string): PartType {
     tool,
     state: { status: "completed", input: {}, output: "some output", title: "", metadata: {}, time: { start: 0, end: 1 } },
   } as PartType
+}
+
+function userMsg(id: string): UserMessage {
+  return {
+    id,
+    sessionID: "s1",
+    role: "user",
+    time: { created: 1000 },
+    agent: "default",
+    model: { providerID: "p1", modelID: "m1" },
+  } as UserMessage
 }
 
 describe("buildTrace", () => {
@@ -153,5 +164,133 @@ describe("buildTrace", () => {
     }
     const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [])
     expect(result).toBe("some output")
+  })
+
+  test("prepends user text with You: prefix when provided", () => {
+    const parts: Record<string, PartType[]> = {
+      msg1: [textPart("p1", "The answer is 42")],
+    }
+    const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [], "What is the meaning of life?")
+    expect(result).toBe("You: What is the meaning of life?\n\nThe answer is 42")
+  })
+
+  test("no user prefix for empty userText", () => {
+    const parts: Record<string, PartType[]> = {
+      msg1: [textPart("p1", "The answer")],
+    }
+    const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [], "")
+    expect(result).toBe("The answer")
+  })
+
+  test("no user prefix for whitespace-only userText", () => {
+    const parts: Record<string, PartType[]> = {
+      msg1: [textPart("p1", "The answer")],
+    }
+    const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [], "   ")
+    expect(result).toBe("The answer")
+  })
+
+  test("no user prefix when userText is undefined", () => {
+    const parts: Record<string, PartType[]> = {
+      msg1: [textPart("p1", "The answer")],
+    }
+    const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [], undefined)
+    expect(result).toBe("The answer")
+  })
+
+  test("user text with only assistant trace (backward compatible)", () => {
+    const parts: Record<string, PartType[]> = {
+      msg1: [textPart("p1", "Hello"), bashPart("p2", "ls", "file.txt")],
+    }
+    const result = buildTrace([msg("msg1")], (id) => parts[id] ?? [])
+    expect(result).toBe("Hello\n\n$ ls\nfile.txt")
+  })
+})
+
+describe("buildSessionTrace", () => {
+  test("single turn with user and assistant", () => {
+    const messages: Message[] = [userMsg("u1"), msg("a1")]
+    const parts: Record<string, PartType[]> = {
+      u1: [textPart("p0", "Hello")],
+      a1: [textPart("p1", "Hi there")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("You: Hello\n\nHi there")
+  })
+
+  test("multiple turns in order", () => {
+    const messages: Message[] = [userMsg("u1"), msg("a1"), userMsg("u2"), msg("a2")]
+    const parts: Record<string, PartType[]> = {
+      u1: [textPart("p0", "First question")],
+      a1: [textPart("p1", "First answer")],
+      u2: [textPart("p2", "Second question")],
+      a2: [textPart("p3", "Second answer")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("You: First question\n\nFirst answer\n\nYou: Second question\n\nSecond answer")
+  })
+
+  test("returns empty string for no messages", () => {
+    const result = buildSessionTrace([], () => [])
+    expect(result).toBe("")
+  })
+
+  test("user message with no assistant response", () => {
+    const messages: Message[] = [userMsg("u1"), userMsg("u2"), msg("a1")]
+    const parts: Record<string, PartType[]> = {
+      u1: [textPart("p0", "First")],
+      u2: [textPart("p1", "Second")],
+      a1: [textPart("p2", "Response")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("You: First\n\nYou: Second\n\nResponse")
+  })
+
+  test("user message with no text part produces no prefix", () => {
+    const messages: Message[] = [userMsg("u1"), msg("a1")]
+    const parts: Record<string, PartType[]> = {
+      u1: [],
+      a1: [textPart("p1", "Response")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("Response")
+  })
+
+  test("skips synthetic user text parts", () => {
+    const syntheticPart = {
+      id: "p0",
+      sessionID: "s1",
+      messageID: "u1",
+      type: "text",
+      text: "system prompt",
+      synthetic: true,
+    } as PartType
+    const messages: Message[] = [userMsg("u1"), msg("a1")]
+    const parts: Record<string, PartType[]> = {
+      u1: [syntheticPart],
+      a1: [textPart("p1", "Response")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("Response")
+  })
+
+  test("turn with multiple assistant messages", () => {
+    const messages: Message[] = [userMsg("u1"), msg("a1"), msg("a2")]
+    const parts: Record<string, PartType[]> = {
+      u1: [textPart("p0", "Run something")],
+      a1: [textPart("p1", "Running"), bashPart("p2", "echo hi", "hi")],
+      a2: [textPart("p3", "Done")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("You: Run something\n\nRunning\n\n$ echo hi\nhi\n\nDone")
+  })
+
+  test("session with no assistant messages at all", () => {
+    const messages: Message[] = [userMsg("u1")]
+    const parts: Record<string, PartType[]> = {
+      u1: [textPart("p0", "Hello?")],
+    }
+    const result = buildSessionTrace(messages, (id) => parts[id] ?? [])
+    expect(result).toBe("You: Hello?")
   })
 })

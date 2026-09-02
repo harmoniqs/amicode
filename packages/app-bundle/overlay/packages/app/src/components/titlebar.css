@@ -1,0 +1,160 @@
+[data-slot="titlebar-tab-item"] {
+  user-select: none;
+}
+
+[data-slot="titlebar-tab-item"] a {
+  outline: none;
+}
+
+[data-slot="titlebar-v2"]
+  [data-component="icon-button-v2"][data-variant="ghost-muted"]:is(:focus-visible, [data-state="focus"]):not(
+    :disabled
+  ) {
+  outline: none;
+  background-color: var(--v2-overlay-simple-overlay-hover);
+}
+
+[data-slot="titlebar-tab-item"]
+  [data-component="icon-button-v2"]:is(:focus-visible, [data-state="focus"]):not(:disabled) {
+  opacity: 1;
+}
+
+[data-slot="titlebar-tab-item"]:has([data-component="icon-button-v2"]:focus-visible) [data-slot="titlebar-tab-close"] {
+  right: 0;
+  left: auto;
+}
+
+[data-slot="titlebar-tab-item"]:has([data-component="icon-button-v2"]:focus-visible)
+  [data-slot="titlebar-tab-close-fade"] {
+  background-image: var(--active-bg);
+}
+
+@keyframes titlebar-tab-fade-left {
+  from {
+    visibility: hidden;
+  }
+  to {
+    visibility: visible;
+  }
+}
+
+@keyframes titlebar-tab-fade-right {
+  from {
+    visibility: visible;
+  }
+  to {
+    visibility: hidden;
+  }
+}
+
+/* The narrow ranges preserve the binary thresholds of scrollLeft > 0 and
+   remaining scroll distance > 1px. Hidden defaults make an inactive timeline
+   (no overflow) a no-op. Unsupported browsers also degrade to no fades. */
+[data-slot="titlebar-tabs"] {
+  timeline-scope: --titlebar-tabs-scroll;
+
+  [data-slot^="titlebar-tabs-fade-"] {
+    visibility: hidden;
+  }
+}
+
+@supports (animation-timeline: --titlebar-tabs-scroll) and (timeline-scope: --titlebar-tabs-scroll) {
+  [data-slot="titlebar-tabs-scroll"] {
+    scroll-timeline: --titlebar-tabs-scroll x;
+  }
+
+  [data-slot="titlebar-tabs-fade-left"] {
+    animation: titlebar-tab-fade-left linear both;
+    animation-timeline: --titlebar-tabs-scroll;
+    animation-range: 0 0.1px;
+  }
+
+  [data-slot="titlebar-tabs-fade-right"] {
+    animation: titlebar-tab-fade-right linear both;
+    animation-timeline: --titlebar-tabs-scroll;
+    animation-range: calc(100% - 1.1px) calc(100% - 1px);
+  }
+}
+
+/* Edit mode: dashed ring around each configurable control */
+.titlebar-control-wrapper {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.titlebar-control-edit {
+  position: relative;
+  border: 1px dashed var(--v2-border-default, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  cursor: grab;
+}
+
+/* Transparent overlay: captures pointer events for DnD on the wrapper
+   while suppressing clicks on interactive children (popovers, dropdowns).
+   Pseudo-elements are part of the generating element for hit-testing,
+   so pointerdown events on the overlay fire on the sortable wrapper. */
+.titlebar-control-edit::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  border-radius: inherit;
+}
+
+.titlebar-control-edit:hover {
+  border-color: var(--v2-border-strong, rgba(255, 255, 255, 0.24));
+}
+
+.titlebar-control-dragging {
+  opacity: 0.5;
+  border-style: solid;
+  cursor: grabbing;
+}
+
+/* Context menu spawned by right-click on the titlebar */
+.titlebar-context-menu {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--v2-border-default, rgba(255, 255, 255, 0.12));
+  background: var(--v2-background-bg-subtle, #1e1e1e);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  min-width: 120px;
+}
+
+.titlebar-context-menu-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--v2-text-text-base, #e0e0e0);
+  cursor: default;
+  user-select: none;
+}
+
+.titlebar-context-menu-item:hover {
+  background: var(--v2-overlay-simple-overlay-hover, rgba(255, 255, 255, 0.06));
+}
+
+/* Edit-mode drop zone — visible placeholder for an empty slot */
+.titlebar-drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  min-height: 24px;
+  border: 1px dashed var(--v2-border-default, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  flex-shrink: 0;
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.titlebar-drop-zone-hover {
+  border-color: var(--v2-border-strong, rgba(255, 255, 255, 0.24));
+  background: var(--v2-overlay-simple-overlay-hover, rgba(255, 255, 255, 0.06));
+  border-style: solid;
+}

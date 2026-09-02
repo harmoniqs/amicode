@@ -340,7 +340,6 @@ export const dict = {
   "app.server.retrying": "Retrying automatically...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
-  "app.server.restartHub": "Restart Hub",
   "app.server.otherServers": "Other servers",
 
   "dialog.server.title": "Servers",
@@ -836,6 +835,7 @@ export const dict = {
   "session.share.action.view": "View",
   "session.share.copy.copied": "Copied",
   "session.share.copy.copyLink": "Copy link",
+  "session.exportTrace": "Export trace",
 
   "lsp.tooltip.none": "No LSP servers",
   "lsp.label.connected": "{{count}} LSP",

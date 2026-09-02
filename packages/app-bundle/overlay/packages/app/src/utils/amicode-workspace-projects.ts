@@ -2,10 +2,6 @@
 // reads from this reactive store. The extension host pushes the list via
 // postMessage on app-ready and on workspace-folder change; the bridge handler
 // below adopts it into a SolidJS signal.
-//
-// Pattern follows amicode-hidden-project.ts — module-scoped signal, no
-// component tree dependency, importable from any context.
-
 import { createSignal } from "solid-js"
 
 export interface WorkspaceProject {
@@ -17,8 +13,7 @@ export interface WorkspaceProject {
 
 const [projects, setProjects] = createSignal<WorkspaceProject[]>([])
 
-/** Adopt a workspace-projects push from the extension host. Replaces the
- *  entire list (the extension always sends the full set). */
+/** Adopt a workspace-projects push from the extension host. */
 export function adoptWorkspaceProjects(data: WorkspaceProject[]): void {
   setProjects(Array.isArray(data) ? data : [])
 }
@@ -28,12 +23,15 @@ export function workspaceProjects(): WorkspaceProject[] {
   return projects()
 }
 
-/** Post an add-workspace-project request to the extension host. The extension
- *  shows a native folder picker, adds the selected folder to the VS Code
- *  workspace, and pushes an updated workspace-projects message back. */
+/** Post an add-workspace-project request to the extension host. */
 export function requestAddWorkspaceProject(): void {
-  window.parent.postMessage(
-    { source: "amicode", kind: "add-workspace-project" },
-    "*",
-  )
+  window.parent.postMessage({ source: "amicode", kind: "add-workspace-project" }, "*")
+}
+
+/** Notify the extension host that the user selected a project in the dropdown.
+ *  The extension forwards this to the sidebar (collapse others, expand selected).
+ *  autoExpand=true (default) for explicit dropdown clicks; false for session
+ *  navigation (highlight only, don't toggle folder state). */
+export function notifyProjectSelected(worktree: string, autoExpand = true): void {
+  window.parent.postMessage({ source: "amicode", kind: "project-selected", path: worktree, autoExpand }, "*")
 }

@@ -1061,7 +1061,6 @@ export const dict = {
   "app.server.retrying": "Reintentando automáticamente...",
   "app.server.connectionLost": "Server connection dropped — reconnecting…",
   "app.server.reconnected": "Server reconnected",
-  "app.server.restartHub": "Reiniciar el hub",
   "app.server.otherServers": "Otros servidores",
   "dialog.server.add.usernamePlaceholder": "usuario",
   "dialog.server.add.passwordPlaceholder": "contraseña",

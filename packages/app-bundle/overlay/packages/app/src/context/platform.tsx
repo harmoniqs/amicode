@@ -16,7 +16,7 @@ type OpenAttachmentPickerOptions = {
   extensions?: string[]
   defaultPath?: string
 }
-type SaveFilePickerOptions = { title?: string; defaultPath?: string }
+type SaveFilePickerOptions = { title?: string; defaultPath?: string; content?: string }
 type PlatformName = "web" | "desktop"
 type DesktopOS = "macos" | "windows" | "linux"
 

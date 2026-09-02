@@ -32,8 +32,6 @@ import { normalizeFileTreeV2Path } from "@/components/file-tree-v2-model"
 import { SessionContextUsage } from "@/components/session-context-usage"
 import { RunInspector } from "@/amicode/inspector/run-inspector"
 import { useInspectorBridge } from "@/amicode/inspector/inspector-context"
-import { CampaignTabContent } from "@/amicode/campaign/campaign-tab"
-import { campaignPromptSlug } from "@/amicode/campaign/campaign-tab-model"
 import {
   WidgetGrid,
   parseWidgetsResponse,
@@ -61,7 +59,6 @@ import { useCommand } from "@/context/command"
 import { useFile, type SelectedLineRange } from "@/context/file"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
-import { usePrompt } from "@/context/prompt"
 import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
@@ -148,8 +145,6 @@ function HomeTabContent() {
   const sdk = useSDK()
   const params = useParams()
   const navigate = useNavigate()
-  const { tabs } = useSessionLayout()
-  const prompt = usePrompt()
 
   // Compute the most recent non-empty session that isn't the current one
   const resumeSession = createMemo(() => {
@@ -178,17 +173,7 @@ function HomeTabContent() {
       }
       return { ok: true }
     },
-    // amicode#694: the campaign-digest tile composes `amico.prompt('Open the
-    // campaign <slug>')` — its click path deep-links into the Campaign tab
-    // (the readable ledger beside this tile) and still lands in the composer
-    // so the agent sees the same ask.
-    prompt: (text) => {
-      if (campaignPromptSlug(text) !== null) {
-        tabs().open("campaign")
-        tabs().setActive("campaign")
-      }
-      prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
-    },
+    prompt: () => {},
     open: () => {},
   }
 
@@ -415,30 +400,11 @@ export function SessionSidePanel(props: {
   const contextOpen = tabState.contextOpen
   const previewOpen = tabState.previewOpen
   const pulseInspectorOpen = tabState.pulseInspectorOpen
-  const campaignOpen = tabState.campaignOpen
   const openFileOpen = tabState.openFileOpen
   const panelTabs = tabState.panelTabs
   const openedTabs = tabState.openedTabs
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
-
-  // amicode#694: the digest tile's home-page click path composes its prompt
-  // into a NEW session draft; when that draft lands here the campaign prompt
-  // opens the Campaign tab once per prompt text, so the readable ledger sits
-  // beside the chat. The Work Column's own Home tab deep-links directly in its
-  // widget host (see HomeTabContent's prompt callback).
-  const prompt = usePrompt()
-  const campaignDeepLink = new Map<string, string>()
-  createEffect(() => {
-    const key = sessionKey()
-    const text = prompt.current().find((part) => part.type === "text")?.content ?? ""
-    if (campaignPromptSlug(text) === null) return
-    if (campaignDeepLink.get(key) === text) return
-    campaignDeepLink.set(key, text)
-    openReviewPanel()
-    if (!tabState.campaignOpen()) tabs().open("campaign")
-    tabs().setActive("campaign")
-  })
 
   const fileTreeTab = () => layout.fileTree.tab()
 
@@ -520,13 +486,6 @@ export function SessionSidePanel(props: {
       available: () => true,
       active: () => activeTab() === "pulseInspector",
       group: "Quantum",
-    },
-    {
-      id: "campaign",
-      label: "Campaign",
-      icon: "checklist",
-      available: () => true,
-      active: () => activeTab() === "campaign",
     },
     {
       id: SESSION_PREVIEW_TAB,
@@ -755,34 +714,6 @@ export function SessionSidePanel(props: {
                                    </div>
                                  </Tabs.Trigger>
                               </div>
-                              <div style={{ display: campaignOpen() ? undefined : "none" }}>
-                                <Tabs.Trigger
-                                  value="campaign"
-                                  closeButton={
-                                    <TooltipKeybind
-                                      title={language.t("common.closeTab")}
-                                      keybind={command.keybind("tab.close")}
-                                      placement="bottom"
-                                      gutter={10}
-                                    >
-                                      <IconButton
-                                        icon="close-small"
-                                        variant="ghost"
-                                        class="h-5 w-5"
-                                        onClick={() => tabs().close("campaign")}
-                                        aria-label={language.t("common.closeTab")}
-                                      />
-                                    </TooltipKeybind>
-                                  }
-                                  hideCloseButton
-                                  onMiddleClick={() => tabs().close("campaign")}
-                                >
-                                  <div class="flex items-center gap-1.5">
-                                    <Icon name="checklist" size="small" />
-                                    <div>Campaign</div>
-                                  </div>
-                                </Tabs.Trigger>
-                              </div>
                               <div style={{ display: previewOpen() ? undefined : "none" }}>
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
@@ -875,12 +806,6 @@ export function SessionSidePanel(props: {
                           <Show when={activeTab() === "pulseInspector"}>
                             <Tabs.Content value="pulseInspector" class="flex flex-col h-full overflow-hidden contain-strict">
                               <PulseInspectorContent />
-                            </Tabs.Content>
-                          </Show>
-
-                          <Show when={activeTab() === "campaign"}>
-                            <Tabs.Content value="campaign" class="flex flex-col h-full overflow-hidden contain-strict">
-                              <CampaignTabContent />
                             </Tabs.Content>
                           </Show>
 
@@ -1069,40 +994,6 @@ export function SessionSidePanel(props: {
                                </div>
                              </Tabs.Trigger>
                             </div>
-                            <div style={{ display: campaignOpen() ? undefined : "none" }}>
-                              <Tabs.Trigger
-                                value="campaign"
-                                closeButton={
-                                  <TooltipV2
-                                    value={
-                                      <>
-                                        {language.t("common.closeTab")}
-                                        <Show when={closeTabKeybind().length > 0}>
-                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                        </Show>
-                                      </>
-                                    }
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close("campaign")}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipV2>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close("campaign")}
-                              >
-                                <div class="flex items-center gap-1.5">
-                                  <Icon name="checklist" size="small" />
-                                  <div>Campaign</div>
-                                </div>
-                              </Tabs.Trigger>
-                            </div>
                             <div style={{ display: previewOpen() ? undefined : "none" }}>
                               <Tabs.Trigger
                                 value={SESSION_PREVIEW_TAB}
@@ -1208,12 +1099,6 @@ export function SessionSidePanel(props: {
                         <Show when={activeTab() === "pulseInspector"}>
                           <Tabs.Content value="pulseInspector" class="flex flex-col h-full overflow-hidden contain-strict">
                             <PulseInspectorContent />
-                          </Tabs.Content>
-                        </Show>
-
-                        <Show when={activeTab() === "campaign"}>
-                          <Tabs.Content value="campaign" class="flex flex-col h-full overflow-hidden contain-strict">
-                            <CampaignTabContent />
                           </Tabs.Content>
                         </Show>
 

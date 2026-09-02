@@ -2,18 +2,17 @@ import { describe, expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 
-// amicode#663 — the breadcrumb bar (project selector + workspace selector +
-// git status) below the new-session composer is now SHOWN in the Amicode
-// webview, enriched with type grouping (Research/Dev). The !inAmicode() gate
-// was removed in #667 (Selector UI enrichment).
+// amicode#663 / #673 — the breadcrumb bar (project selector + workspace
+// selector + git status) below the new-session composer. Originally gated on
+// !inAmicode(), then un-gated (#663), then changed from selected() to empty()
+// (#673) so the "Pick a project" placeholder is visible even when no project
+// matches the draft directory.
 const source = readFileSync(join(import.meta.dir, "new-session-view.tsx"), "utf8")
 
-describe("breadcrumb bar shown in Amicode (#663, #667)", () => {
-  test("no longer imports inAmicode (gate removed)", () => {
-    expect(source).not.toContain("inAmicode")
-  })
-
-  test("the project-selected breadcrumb block is NOT gated on !inAmicode()", () => {
-    expect(source).not.toMatch(/!inAmicode\(\)/)
+describe("project selector in new-session view (#663, #673)", () => {
+  test("renders the selector when projects exist (not only when one is selected)", () => {
+    // The guard must use !empty() (projects available), not selected() (one is matched)
+    expect(source).toMatch(/props\.project\.empty\(\)/)
+    expect(source).not.toMatch(/when=\{props\.project\.selected\(\)\}/)
   })
 })

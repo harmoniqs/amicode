@@ -774,6 +774,7 @@ export function partDefaultOpen(part: PartType, shell = false, edit = false) {
 
 export function AssistantParts(props: {
   messages: AssistantMessage[]
+  userText?: string
   showAssistantCopyPartID?: string | null
   turnDurationMs?: number
   useV2Actions?: boolean
@@ -968,13 +969,14 @@ export function AssistantParts(props: {
           <ThinkingLine tokens={turnTokenCount() || undefined} />
         </div>
       </Show>
-      <TurnFooter messages={props.messages} turnDurationMs={props.turnDurationMs} working={props.working} />
+      <TurnFooter messages={props.messages} userText={props.userText} turnDurationMs={props.turnDurationMs} working={props.working} />
     </>
   )
 }
 
 function TurnFooter(props: {
   messages: AssistantMessage[]
+  userText?: string
   turnDurationMs?: number
   working?: boolean
 }) {
@@ -1033,7 +1035,7 @@ function TurnFooter(props: {
 
   const handleCopyTrace = async () => {
     const emptyParts: PartType[] = []
-    const content = buildTrace(props.messages, (id) => list(data.store.part?.[id], emptyParts))
+    const content = buildTrace(props.messages, (id) => list(data.store.part?.[id], emptyParts), props.userText)
     if (!content) return
     if (await writeClipboard(content)) {
       setCopied(true)
@@ -3154,15 +3156,11 @@ ToolRegistry.register({
 
     return (
       <BasicTool icon="brain" status={props.status} trigger={trigger()}>
-        <Show when={body()}>
-          {/* AMICODE: an opened skill is a FILE, not more conversation. tool-output carries no
-              surface of its own, so the instructions flowed as bare prose; amc-skill-file gives
-              them a bounded, tinted panel. The chip above stays flush with the other Amico chips
-              — shared left alignment is the transcript's spine, and indenting the row broke it. */}
+        {body() ? (
           <div class="amc-skill-file" data-component="tool-output" data-scrollable>
             <Markdown text={body()} />
           </div>
-        </Show>
+        ) : undefined}
       </BasicTool>
     )
   },

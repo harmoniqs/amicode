@@ -3,6 +3,7 @@ import {
   type SnapshotFileDiff,
   Message as MessageType,
   Part as PartType,
+  type TextPart,
 } from "@opencode-ai/sdk/v2/client"
 import type { FileDiffInfo } from "@opencode-ai/client/promise"
 import type { SessionStatus } from "@opencode-ai/sdk/v2"
@@ -236,6 +237,13 @@ export function SessionTurn(
     return list(data.store.part?.[msg.id], emptyParts)
   })
 
+  const userText = createMemo(() => {
+    const p = parts().find(
+      (p): p is TextPart => p.type === "text" && !(p as TextPart).synthetic,
+    )
+    return p?.text?.trim() || undefined
+  })
+
   const compaction = createMemo(() => parts().find((part) => part.type === "compaction"))
 
   const diffs = createMemo(() => {
@@ -409,6 +417,7 @@ export function SessionTurn(
                 <div data-slot="session-turn-assistant-content" aria-hidden={working()}>
                   <AssistantParts
                     messages={assistantMessages()}
+                    userText={userText()}
                     showAssistantCopyPartID={assistantCopyPartID()}
                     turnDurationMs={turnDurationMs()}
                     working={working()}

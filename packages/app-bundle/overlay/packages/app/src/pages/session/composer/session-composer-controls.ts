@@ -5,7 +5,7 @@ import { type Accessor, createMemo } from "solid-js"
 import type { PromptInputControls } from "@/components/prompt-input/contracts"
 import type { PromptProjectControls } from "@/components/prompt-project-selector"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
-import { workspaceProjects, requestAddWorkspaceProject } from "@/utils/amicode-workspace-projects"
+import { workspaceProjects, requestAddWorkspaceProject, notifyProjectSelected } from "@/utils/amicode-workspace-projects"
 import { useDirectoryPicker } from "@/components/directory-picker"
 import { useGlobal } from "@/context/global"
 import { useLayout } from "@/context/layout"
@@ -76,9 +76,7 @@ export function createPromptProjectControls() {
   const projectServerCtx = createMemo(() => global.ensureServerCtx(projectServer()))
   const projects = createMemo(() => {
     // amicode#663: when the extension host pushes workspace folder data, use
-    // it as the canonical project list (type-grouped, workspace-backed). The
-    // signal is empty until the first push — standalone opencode never pushes,
-    // so the fallback below handles it.
+    // it as the canonical project list (workspace-backed, type-grouped).
     const wsProjects = workspaceProjects()
     if (wsProjects.length > 0) {
       return wsProjects.map((p) => ({
@@ -101,12 +99,25 @@ export function createPromptProjectControls() {
               .projects.list()
               .map((project) => ({ ...project, server: item }))
           })
-    // amicode#203: hide the extension's scaffold project from the composer
-    // picker (same filter as the dashboard). Only set in the amicode webview.
     const hidden = hiddenProjectWorktree()
     return hidden ? list.filter((p) => p.worktree !== hidden) : list
   })
   const selectProject = (worktree: string, serverKey?: string) => {
+    // #673: toggle — re-clicking the already-selected project deselects it.
+    // Reset to the hidden scaffold dir so current() returns undefined.
+    // Notify the extension with the non-matching path so the sidebar clears.
+    if (pathKey(worktree) === pathKey(sdk().directory)) {
+      const fallback = hiddenProjectWorktree()
+      if (search.draftId && fallback) {
+        notifyProjectSelected(fallback, true)
+        tabs.updateDraft(search.draftId, { directory: fallback })
+      }
+      return
+    }
+    // #663: tell the extension host so the sidebar can focus this project
+    // (collapse others, expand selected). Fire-and-forget — the sidebar update
+    // is cosmetic and must never block selection.
+    notifyProjectSelected(worktree)
     const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
     if (search.draftId) {
       if (!conn) return
@@ -133,16 +144,11 @@ export function createPromptProjectControls() {
   }
 
   const addProject = (title: string, serverKey?: string) => {
-    // amicode#663: when workspace-backed (running inside the amicode
-    // extension webview), delegate folder picking to the extension host —
-    // it shows VS Code's native showOpenDialog and adds the result as a
-    // workspace folder. The workspace-change listener then pushes an
-    // updated project list via postMessage.
+    // amicode#663: delegate to the extension host for the native folder picker.
     if (hiddenProjectWorktree()) {
       requestAddWorkspaceProject()
       return
     }
-    // Standalone opencode: use the server's directory picker.
     const conn = serverKey ? server.list.find((conn) => ServerConnection.key(conn) === serverKey) : projectServer()
     if (!conn) return
     pickDirectory({
