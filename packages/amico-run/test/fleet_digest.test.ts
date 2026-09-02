@@ -323,10 +323,15 @@ describe("parseVaultHealth — the vault-probe output contract (pure, no ssh)", 
 });
 
 describe("MIGRATION_DEBT — the seeded migration-debt ledger (M4)", () => {
-  it("holds the real current debt, all open, partitura owned by content resolution", () => {
+  it("holds the real current debt; sync-rollout closed with deploy evidence, partitura owned by content resolution", () => {
     expect(MIGRATION_DEBT.map((d) => d.id)).toEqual(["partitura-archived", "compat-symlinks", "sync-script-rollout"]);
     for (const d of MIGRATION_DEBT) {
-      expect(d.state).toBe("open");
+      if (d.id === "sync-script-rollout") {
+        expect(d.state).toBe("closed");
+        expect(d.owner).toContain("DONE 2026-09-02"); // closed WITH evidence, never silently
+      } else {
+        expect(d.state).toBe("open");
+      }
       expect(d.label.length).toBeGreaterThan(0);
     }
     expect(MIGRATION_DEBT.find((d) => d.id === "partitura-archived")?.owner).toBe("content resolution");
@@ -454,11 +459,12 @@ describe("amico fleet digest — vault-health lines (hermetic, M4)", () => {
     );
     expect(r.code).toBe(0);
     expect(r.json.ok).toBe(true);
-    expect(r.json.block).toContain("vaults: 2 aligned · debt 3 open");
+    expect(r.json.block).toContain("vaults: 2 aligned · debt 2 open"); // sync-rollout closed w/ evidence stops counting
     expect(r.json.table).toMatch(/alpha\s+layout aligned/);
     expect(r.json.table).toContain("partitura-archived");
     expect(r.json.vaults).toEqual([aligned("alpha"), aligned("beta")]);
-    expect((r.json.migration_debt as MigrationDebtItem[]).every((d) => d.state === "open")).toBe(true);
+    expect((r.json.migration_debt as MigrationDebtItem[]).filter((d) => d.state === "open").map((d) => d.id))
+      .toEqual(["partitura-archived", "compat-symlinks"]);
   });
 
   it("a misaligned machine FAILS the digest (layout invariant), yet the digest still renders — errors-as-data", () => {
@@ -492,7 +498,7 @@ describe("amico fleet digest — vault-health lines (hermetic, M4)", () => {
     );
     expect(r.code).toBe(0);
     expect(r.json.ok).toBe(true);
-    expect(r.json.block).toContain("vaults: 1 aligned · 1 unverified · debt 3 open");
+    expect(r.json.block).toContain("vaults: 1 aligned · 1 unverified · debt 2 open");
     expect(r.json.table).toContain("unverified (parked; owner: fleet ritual)");
   });
 
