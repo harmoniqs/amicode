@@ -187,10 +187,22 @@ export function validateDispatchTarget(card: string, target: string): void {
   }
 }
 
-/** Merge one method-class field into the card body at its pinned anchor.
- *  A missing anchor throws: the base card's Method section must cover every
- *  dimension its overlay tunes (ADR decision 6 — overlays are deltas on a
- *  working default). */
+/** The Method section's slice: from the `## Method` heading to the next
+ *  `## ` heading (end of card when none follows). Every merge anchor and
+ *  every overlay value lives INSIDE this slice — the frozen Output contract
+ *  and the frontmatter are structurally out of reach (review F1). */
+function methodSlice(text: string): { start: number; end: number } | null {
+  const heading = /^## Method[^\n]*$/m.exec(text);
+  if (!heading || heading.index === undefined) return null;
+  const start = heading.index + heading[0].length;
+  const next = /^## /m.exec(text.slice(start));
+  return { start, end: next && next.index !== undefined ? start + next.index : text.length };
+}
+
+/** Merge one method-class field into the card body at its pinned anchor —
+ *  scoped to the Method slice. A missing or out-of-order anchor throws: the
+ *  base card's Method section must cover every dimension its overlay tunes
+ *  (ADR decision 6 — overlays are deltas on a working default). */
 function mergeMethodField(
   text: string,
   field: MethodClassField,
@@ -201,46 +213,53 @@ function mergeMethodField(
     new Error(
       `overlay merge (${cardName}): base card lacks the "${what}" anchor for method field "${field}"`,
     );
-  switch (field) {
-    case "prompt_body": {
-      // the Method section's default-procedure block, up to the routing paragraph
-      const start = text.search(/^Default procedure/m);
-      const routingStart = text.search(/^Model routing, /m);
-      if (start === -1 || routingStart === -1) throw anchorMissing("Default procedure");
-      return text.slice(0, start) + value + "\n\n" + text.slice(routingStart);
+  const slice = methodSlice(text);
+  if (slice === null) throw anchorMissing("## Method");
+  const method = text.slice(slice.start, slice.end);
+  const mergedMethod = (() => {
+    switch (field) {
+      case "prompt_body": {
+        // the default-procedure block, up to the routing paragraph
+        const start = method.search(/^Default procedure/m);
+        const routingStart = method.search(/^Model routing, /m);
+        if (start === -1 || routingStart === -1) throw anchorMissing("Default procedure");
+        if (start >= routingStart) throw anchorMissing("Default procedure");
+        return method.slice(0, start) + value + "\n\n" + method.slice(routingStart);
+      }
+      case "model_routing": {
+        const s = method.search(/^Model routing, /m);
+        if (s === -1) throw anchorMissing("Model routing, ");
+        const blank = method.indexOf("\n\n", s);
+        const end = blank === -1 ? method.length : blank;
+        return method.slice(0, s) + `Model routing, tuned: ${value}` + method.slice(end);
+      }
+      case "iteration_budget": {
+        const s = method.search(/^Iteration budget, /m);
+        if (s === -1) throw anchorMissing("Iteration budget, ");
+        const blank = method.indexOf("\n\n", s);
+        const end = blank === -1 ? method.length : blank;
+        return method.slice(0, s) + `Iteration budget, tuned: ${value}` + method.slice(end);
+      }
+      case "example_brief": {
+        const caption = /^Example brief[^\n]*$/m.exec(method);
+        if (!caption || caption.index === undefined) throw anchorMissing("Example brief");
+        const after = method.slice(caption.index + caption[0].length);
+        const open = after.indexOf("```text");
+        if (open === -1) throw anchorMissing("Example brief fence");
+        const close = after.indexOf("```", open + "```text".length);
+        if (close === -1) throw anchorMissing("Example brief fence close");
+        return (
+          method.slice(0, caption.index + caption[0].length) +
+          after.slice(0, open) +
+          "```text\n" +
+          value +
+          "\n" +
+          after.slice(close)
+        );
+      }
     }
-    case "model_routing": {
-      const s = text.search(/^Model routing, /m);
-      if (s === -1) throw anchorMissing("Model routing, ");
-      const blank = text.indexOf("\n\n", s);
-      const end = blank === -1 ? text.length : blank;
-      return text.slice(0, s) + `Model routing, tuned: ${value}` + text.slice(end);
-    }
-    case "iteration_budget": {
-      const s = text.search(/^Iteration budget, /m);
-      if (s === -1) throw anchorMissing("Iteration budget, ");
-      const blank = text.indexOf("\n\n", s);
-      const end = blank === -1 ? text.length : blank;
-      return text.slice(0, s) + `Iteration budget, tuned: ${value}` + text.slice(end);
-    }
-    case "example_brief": {
-      const caption = /^Example brief[^\n]*$/m.exec(text);
-      if (!caption) throw anchorMissing("Example brief");
-      const after = text.slice(caption.index + caption[0].length);
-      const open = after.indexOf("```text");
-      if (open === -1) throw anchorMissing("Example brief fence");
-      const close = after.indexOf("```", open + "```text".length);
-      if (close === -1) throw anchorMissing("Example brief fence close");
-      return (
-        text.slice(0, caption.index + caption[0].length) +
-        after.slice(0, open) +
-        "```text\n" +
-        value +
-        "\n" +
-        after.slice(close)
-      );
-    }
-  }
+  })();
+  return text.slice(0, slice.start) + mergedMethod + text.slice(slice.end);
 }
 
 export interface OverlayMergeResult {

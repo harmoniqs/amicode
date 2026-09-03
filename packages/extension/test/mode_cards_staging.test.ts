@@ -408,3 +408,123 @@ describe("dispatch-target validator", () => {
     ).toThrow(/malformed dispatch target/);
   });
 });
+
+// ── review F1: every merge anchor is scoped to the Method section ───────────
+//
+// An overlay value must only ever land inside `## Method` … the next `## `
+// heading. The live failure: a card whose Method example sits in a PLAIN
+// fence and whose Output contract carries a ```text fence — the fence search
+// must not cross the section boundary and silently overwrite the frozen
+// Output contract.
+function fixtureCard(methodFence: "text" | "plain"): string {
+  return [
+    "---",
+    "description: fixture worker card",
+    "mode: subagent",
+    "dispatch: fixture-tuning",
+    "---",
+    "",
+    "## Role",
+    "",
+    "Fixture role.",
+    "",
+    "## Method",
+    "",
+    "Default procedure — the complete default; a tuning overlay sharpens this method,",
+    "never replaces it:",
+    "",
+    "1. Step one.",
+    "",
+    "Model routing, default: the standard class for fixture work.",
+    "",
+    "Iteration budget, default: one pass per cast.",
+    "",
+    "Example brief (the shape of the input, not the cast grammar):",
+    "",
+    methodFence === "text" ? "```text" : "```",
+    "plain fixture example",
+    "```",
+    "",
+    "## Output contract",
+    "",
+    "**Frozen interface — a tuning overlay may change how you work, never what you",
+    "return.**",
+    "",
+    "```text",
+    "FROZEN_OUTPUT_CONTRACT_EXAMPLE that must never move",
+    "```",
+    "",
+  ].join("\n");
+}
+
+describe("merge anchors are scoped to the Method section (review F1)", () => {
+  const overlay = { id: "fixture-tuning", fields: { example_brief: "TUNED_EXAMPLE_BRIEF" } };
+
+  it("a Method example in a plain fence is a missing ```text anchor — never an Output-contract overwrite", () => {
+    // Current-code live bug: the fence search finds the Output contract's
+    // ```text fence and silently overwrites the frozen content.
+    expect(() =>
+      mergeOverlayIntoCard(fixtureCard("plain"), overlay, "fixture.md"),
+    ).toThrow(/Example brief fence/);
+  });
+
+  it("the Output contract stays byte-untouched when the Method fence is the lawful one", () => {
+    const merged = mergeOverlayIntoCard(fixtureCard("text"), overlay, "fixture.md");
+    const oc = (t: string) => t.slice(t.indexOf("## Output contract"));
+    expect(oc(merged.text)).toBe(oc(fixtureCard("text")));
+    // the tuned value landed in the METHOD fence, exactly once
+    expect(merged.text).toContain("```text\nTUNED_EXAMPLE_BRIEF\n```");
+    expect(merged.text.match(/TUNED_EXAMPLE_BRIEF/g)?.length).toBe(1);
+  });
+
+  it("staging: a fence-crossing merge is rejected and the base stages alone, Output contract intact", () => {
+    const fakeExt = mkdtempSync(join(tmpdir(), "mode-cards-f1-"));
+    mkdirSync(join(fakeExt, "agents"), { recursive: true });
+    writeFileSync(join(fakeExt, "agents", "fixture.md"), fixtureCard("plain"));
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-f1-src-"));
+    mkdirSync(join(root, "vault", "agents", "overlays"), { recursive: true });
+    writeFileSync(
+      join(root, "vault", "agents", "overlays", "fixture-tuning.json"),
+      JSON.stringify({ overlay_version: 1, id: "fixture-tuning", fields: overlay.fields }),
+    );
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-f1-dest-"));
+    const r = stageModCards(fakeExt, destDir, { entitlements: ENTITLED, overlaySource: root });
+    expect(readFileSync(join(destDir, "fixture.md"), "utf8")).toBe(fixtureCard("plain"));
+    expect(r.merges).toEqual([]);
+    const rej = r.rejections.find((x) => x.card === "fixture.md");
+    expect(rej).toBeDefined();
+    expect(rej.reason).toContain("Example brief fence");
+  });
+
+  it("a Default-procedure block that sits AFTER the routing paragraph rejects (unordered anchors)", () => {
+    // The prompt_body merge replaces the span [Default procedure … Model
+    // routing); a card whose procedure sits after its routing paragraph would
+    // splice garbage. That is a base-card defect: reject, never guess.
+    const reversed = [
+      "---",
+      "description: fixture worker card",
+      "mode: subagent",
+      "dispatch: fixture-tuning",
+      "---",
+      "",
+      "## Method",
+      "",
+      "Model routing, default: the standard class for fixture work.",
+      "",
+      "Iteration budget, default: one pass per cast.",
+      "",
+      "Default procedure — the complete default:",
+      "",
+      "1. Step one.",
+      "",
+      "## Output contract",
+      "",
+      "**Frozen interface.**",
+      "",
+    ].join("\n");
+    const ov = { id: "fixture-tuning", fields: { prompt_body: "Tuned procedure." } };
+    expect(() => mergeOverlayIntoCard(reversed, ov, "fixture.md")).toThrow(
+      /Default procedure/,
+    );
+  });
+});
