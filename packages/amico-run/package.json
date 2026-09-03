@@ -31,9 +31,9 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^26.1.2",
-    "esbuild": "^0.28.1",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "@types/node": "^26.4.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }
