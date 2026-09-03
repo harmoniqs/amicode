@@ -13,6 +13,7 @@ import {
   resolveJuliaProject,
   buildOpencodeConfigContent,
   resolveModelPin,
+  readConfiguredModel,
   validatedModelPin,
 } from "./opencode_config";
 import { parseLibraryRootSpecs } from "./scores/package_skills";
@@ -538,9 +539,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     showError: (m) => void vscode.window.showErrorMessage(m),
     showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items) as Promise<string | undefined>,
     log: (line) => opencodeChannel.appendLine(line),
-    // Same pin rule as the boot/restart config pins above: ONLY an explicit
-    // amicode.defaultModel pins a model; empty means "let the server decide".
+    // An explicit Amicode setting remains the preferred pin. Provider import
+    // persists its selected model in opencode.json instead, which supplies a
+    // one-shot fallback for bug-report sessions without changing that setting.
     defaultModel: () => vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || undefined,
+    importedModel: () => {
+      const configDir = vscode.workspace.getConfiguration("amicode").get<string>("configDir", "").trim();
+      return readConfiguredModel(configDir || undefined);
+    },
   });
   ctx.subscriptions.push({ dispose: () => unregisterBugReport() });
 

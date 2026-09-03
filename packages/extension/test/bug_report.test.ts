@@ -127,6 +127,31 @@ describe("amicode.reportBug — create, arm, open (AC1)", () => {
     expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
   });
 
+  it("uses the model persisted by provider import when amicode.defaultModel is unset", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": { status: 200, body: [] },
+      "POST /session": { status: 200, body: { id: "ses_bug_imported" } },
+      "POST /session/ses_bug_imported/command": { status: 200, body: {} },
+    });
+    const { d } = deps(
+      {
+        defaultModel: () => undefined,
+        importedModel: () => "amazon-bedrock/anthropic.claude-sonnet-5",
+      },
+      fetchImpl,
+    );
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_imported/command"));
+    expect(arm).toHaveLength(1);
+    expect(arm[0].body).toEqual({
+      command: "report-a-bug",
+      arguments: "",
+      model: "amazon-bedrock/anthropic.claude-sonnet-5",
+    });
+  });
+
   it("omits run_pointer when no run is active, and never sends an absolute path", async () => {
     const { fetchImpl, calls } = mockFetch({
       "GET /session": { status: 200, body: [] },

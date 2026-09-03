@@ -400,6 +400,21 @@ export function resolveModelPin(): string | undefined {
   return undefined;
 }
 
+/** Read the model selected by provider onboarding/import without turning it
+ * into an Amicode setting. Callers that need a one-shot model pin, such as the
+ * bug reporter, can use this when no live selection is available. */
+export function readConfiguredModel(configDir?: string): string | undefined {
+  const configPath = configDir
+    ? path.join(configDir, "opencode.json")
+    : path.join(opencodeConfigDir(), "opencode.json");
+  try {
+    const model = JSON.parse(fs.readFileSync(configPath, "utf8"))?.model;
+    return typeof model === "string" && model.trim() !== "" ? model.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Validate a model pin against the user's configured providers.
  *  Returns the pin unchanged if its provider is configured, otherwise undefined.
  *  This prevents injecting a stale pin that references a disconnected provider

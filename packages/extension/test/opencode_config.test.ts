@@ -7,6 +7,7 @@ import {
   prepareOpencodeProject,
   resolveJuliaProject,
   buildOpencodeConfigContent,
+  readConfiguredModel,
   resolveModelPin,
   validatedModelPin,
   profileHasIdentity,
@@ -34,6 +35,22 @@ describe("resolveJuliaProject", () => {
   it("expands a leading ~ (parity with resolveRunsRoot)", () => {
     expect(resolveJuliaProject("~")).toBe(homedir());
     expect(resolveJuliaProject("~/foo/bar")).toBe(join(homedir(), "foo", "bar"));
+  });
+});
+
+describe("readConfiguredModel", () => {
+  it("returns the model selected by provider import without requiring an Amicode setting", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "opencode-config-"));
+    writeFileSync(join(configDir, "opencode.json"), JSON.stringify({ model: "amazon-bedrock/anthropic.claude-sonnet-5" }));
+
+    expect(readConfiguredModel(configDir)).toBe("amazon-bedrock/anthropic.claude-sonnet-5");
+  });
+
+  it("returns undefined when no usable model was persisted", () => {
+    const configDir = mkdtempSync(join(tmpdir(), "opencode-config-"));
+    writeFileSync(join(configDir, "opencode.json"), JSON.stringify({ provider: { "amazon-bedrock": {} } }));
+
+    expect(readConfiguredModel(configDir)).toBeUndefined();
   });
 });
 

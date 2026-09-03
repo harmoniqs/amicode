@@ -101,8 +101,11 @@ export interface BugReportDeps {
    *  extension.ts's boot/restart pins) — we never guess a model.
    *
    *  Precedence for the arming turn is: live composer selection (passed to
-   *  reportBug) → configured default → server default (omit). */
+   *  reportBug) → configured default → imported model → server default (omit). */
   defaultModel?(): string | undefined;
+  /** The model persisted by a completed provider import. Unlike defaultModel,
+   * this is not a VS Code setting and is used only to arm this bug session. */
+  importedModel?(): string | undefined;
 }
 
 /** The bridge sink the chat/deck panels wire into their BridgeIo — the two
@@ -357,13 +360,13 @@ export class BugReportManager {
 
   /** Arm: the report-a-bug slash command as the session's first turn.
    *
-   *  Precedence is live selection → configured default → server default
+   *  Precedence is live selection → configured default → imported model → server default
    *  (omit). Each level is a strict fallback; an empty or malformed value
    *  never pins the session — it falls through. The live variant travels with
    *  its model; the configured pin cannot express a variant. */
   private async armSession(server: BugReportServer, sessionID: string, liveModel?: ReportBugModel): Promise<void> {
     const body: Record<string, unknown> = { command: REPORT_A_BUG_SKILL, arguments: "" };
-    // Precedence: live → configured → omit. Validation mirrors the bridge's
+    // Precedence: live → configured → imported → omit. Validation mirrors the bridge's
     // bounded-string checks; a malformed live value never blocks the command.
     const liveValid =
       liveModel &&
@@ -379,12 +382,12 @@ export class BugReportManager {
         body.variant = liveModel.variant;
       }
     } else {
-      const configured = this.deps.defaultModel?.()?.trim();
+      const configured = this.deps.defaultModel?.()?.trim() || this.deps.importedModel?.()?.trim();
       if (
         configured &&
         configured !== "" &&
         configured.length <= 200 &&
-        /^[\w.-]+\/[\w.:-]+$/.test(configured)
+        /^[\w.-]+\/[\w.:-]+(?:\/[\w.:-]+)*$/.test(configured)
       ) {
         body.model = configured;
       }
