@@ -87,9 +87,23 @@ export function overlayDirOf(root: string): string {
 
 /** Resolve the overlay source root: explicit config wins; then the
  *  AMICO_OVERLAY_SOURCE env override; then AMICISSIMO_ROOT; then the known
- *  checkout location (the canonical workspace repo root). Absent dir ⇒ the
- *  caller treats the source as absent — never an error (the funnel
- *  invariant: a missing overlay never dead-ends staging). */
+ *  checkout location (the canonical workspace repo root,
+ *  ~/armonia/repos/amicissimo). Absent dir ⇒ the caller treats the source as
+ *  absent — never an error (the funnel invariant: a missing overlay never
+ *  dead-ends staging).
+ *
+ *  DIVERGENCE, named (review F4): amico-run's `amico premium` verb
+ *  (packages/amico-run/src/premium.ts) resolves its checkout as
+ *  AMICISSIMO_ROOT → the default path under the org home dir. This module
+ *  follows the same LADDER but a DIFFERENT final default: the org-home path
+ *  spells a proprietary string the protocol blocklist forbids in new code,
+ *  so this public module cannot name it. Both surfaces agree whenever
+ *  AMICISSIMO_ROOT is set (the fleet convention); unset, `amico premium`
+ *  probes the org-home path and staging probes the workspace path. Machines
+ *  whose checkout lives elsewhere set AMICISSIMO_ROOT or
+ *  AMICO_OVERLAY_SOURCE — the escape both surfaces share. If the default
+ *  ever changes, change BOTH comments so the surfaces can't silently
+ *  disagree for a reader. */
 export function resolveOverlaySource(explicit?: string | null): string | null {
   if (explicit) return explicit;
   return (
