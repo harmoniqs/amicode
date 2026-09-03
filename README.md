@@ -111,18 +111,17 @@ catalog           shared catalog       shared catalog, warm-starts
 
 ## Skills are the product
 
-Skills are not configuration — they are the capability surface. The **38 public skills** in `packages/extension/skills/` ship in the vsix, versioned with the product. Additional skills load from your own vault mounts and from co-located Julia packages behind entitlements.
+Skills are not configuration — they are the capability surface. **26 skills** ship in the vsix from `packages/extension/skills/`, versioned with the product: **24 public** — they load for every session — plus **2 entitled surfaces**, `piccolissimo` and `intonatissimo`, which ship in the vsix but stage only for entitled sessions ([ADR-0011](docs/adr/0011-entitled-skill-surface.md)). Additional skills load from your own vault mounts and from co-located Julia packages behind entitlements.
 
 | Surface | What it covers |
 |---|---|
-| Physics | `transmon`, `fluxonium`, `atoms` (Rydberg), `bosonic`, `ions` — Hamiltonians, drives, construction patterns |
+| Research loop | `autoresearch`, `analyze`, `hypothesis-review`, `dream-reflect`, `open-threads`, `paper-writer`, `create-research-project`, `migrate-research-project` |
 | Lab + catalog + vault | `amico-lab`, `amico-catalog`, `amico-vault`, `amico-strategy`, `amico-schema-check`, `amico-slack` |
-| Analysis + synthesis | `analyze`, `structural-analysis`, `hypothesis-review`, `dream-reflect`, `autoresearch` |
-| System | `setup`, `solve`, `simulate`, `warm-start`, `constraints`, `objectives`, `problem-types` |
-| Delivery | `demo`, `pasqal`, `plot`, `compose`, `multistart` |
 | Engineering | `debugging`, `tdd`, `verification`, `brainstorming`, `deliberate`, `grill-me`, `grill-with-docs`, `improve-codebase-architecture`, `teach`, `report-a-bug` |
+| Entitled surfaces | `piccolissimo`, `intonatissimo` — usage guidance for the `-issimo` performance tiers; ship in the vsix, stage only for entitled sessions |
+| Internal library — not in the vsix | `transmon`, `fluxonium`, `atoms` (Rydberg), `bosonic`, `ions`, `setup`, `solve`, `simulate`, `warm-start`, `constraints`, `objectives`, `problem-types`, `structural-analysis`, `demo`, `pasqal`, `plot`, `compose`, `multistart` — these live in the internal library and resolve only from the private plugin checkout, per the skill-surface decisions of record ([ADR-0003](docs/adr/0003-skill-surfaces-two-tier-checkout-gate.md), [ADR-0011](docs/adr/0011-entitled-skill-surface.md)) |
 
-The extension stages the union of the public bundle and your vault mounts at startup; mount presence is the eligibility proof.
+The extension stages the union of the shipped bundle and your vault mounts at startup; mount presence is the eligibility proof. The boundary as it stands: the extension, the `amico` / `amico-run` CLI, and the public skills are open — entitled builds add proprietary capabilities behind entitlements.
 
 ## Physical intelligence
 
