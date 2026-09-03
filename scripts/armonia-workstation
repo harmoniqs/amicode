@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# armonia-workstation — provision a complete Harmoniqs workstation, idempotently.
+#
+# armonia-init sets up the VAULTS. This sets up everything else amicode needs
+# and then some, because amicode itself provisions nothing: it only discovers
+# what already exists at a set of hard-coded paths. Populate the paths and the
+# extension picks them up; leave one empty and that capability silently does
+# nothing. Safe to re-run — every step checks before acting.
+#
+#   armonia-workstation              # everything
+#   armonia-workstation --no-demos   # skip the ~2GB demo corpus
+#   armonia-workstation --check      # report drift, change nothing
+#
+# See WORKSTATION.md (same dir) for why each path is what it is.
+set -uo pipefail
+
+ORG=harmoniqs
+HQ="${HARMONIQS_ROOT:-$HOME/harmoniqs}"
+VAULTS="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"
+DEMOS=1; CHECK=0
+
+while [ $# -gt 0 ]; do case "$1" in
+  --no-demos) DEMOS=0; shift;;
+  --check) CHECK=1; shift;;
+  *) echo "unknown arg $1" >&2; exit 64;; esac; done
+
+say()  { printf '  %s\n' "$*"; }
+head_() { printf '\n== %s ==\n' "$*"; }
+
+# Code repos: the extension, the design authority, the skill library, the fork.
+CODE=(amicode amico amico-plugin opencode)
+# DEFAULT_SKILL_ROOTS — package skills resolve as <pkg>.jl/skills/<name>/SKILL.md
+PKGS=(Piccolo.jl Piccolissimo.jl DirectTrajOpt.jl NamedTrajectories.jl Intonato.jl
+      Intonatissimo.jl IntonatoQICK.jl Altissimo.jl Legato.jl Legatissimo.jl
+      HarmoniqsBenchmarks.jl PiccoloMultidocs.jl CuQuantum.jl JuliaStaticData.jl
+      jl2py pypiccolo)
+# Distiller demo-ingest root.
+DEMO_REPOS=(atoms-demo atom-transport-demo braket-testing cloud-demo cryocmos-spin-demo
+      embedded-operators-demo fluxonium-demo ions kerr-readout-stanford nv-center-demo
+      nyu-bosonic-demo nyu-multiqubit-demo spin-qubit-demo stanford-bosonics
+      syndrome-extraction-demo)
+
+clone_into() { # <dest-dir> <repo>
+  local dest="$1/$2"
+  if [ -d "$dest/.git" ]; then say "ok       $2"; return; fi
+  if [ "$CHECK" = 1 ]; then say "MISSING  $2"; return; fi
+  mkdir -p "$1"
+  git clone -q "git@github.com:$ORG/$2.git" "$dest" 2>/dev/null \
+    && say "cloned   $2" || say "FAILED   $2 (access?)"
+}
+
+head_ "Code repos -> $HQ"
+for r in "${CODE[@]}"; do clone_into "$HQ" "$r"; done
+
+head_ "Packages -> $HQ/packages  (DEFAULT_SKILL_ROOTS)"
+for r in "${PKGS[@]}"; do clone_into "$HQ/packages" "$r"; done
+
+if [ "$DEMOS" = 1 ]; then
+  head_ "Demos -> $HQ/demos  (distiller demo-ingest)"
+  for r in "${DEMO_REPOS[@]}"; do clone_into "$HQ/demos" "$r"; done
+fi
+
+head_ "Vault mounts -> $VAULTS"
+# Canonical state lives HERE, not in ~/harmoniqs. ~/harmoniqs/armonia is only a
+# view symlink onto this root (armonia-init's rule: "never the canonical state").
+for r in armonissima; do clone_into "$VAULTS" "$r"; done
+say "personal + project vaults: use armonia-init <name> (creates from template)"
+say "restricted (partitura): clone to $HQ, attach on demand via armonia-mount"
+
+head_ "Workspace view"
+if [ -L "$HQ/armonia" ]; then say "ok       $HQ/armonia -> $(readlink "$HQ/armonia")"
+elif [ -e "$HQ/armonia" ]; then say "CONFLICT $HQ/armonia is a real dir — the view symlink cannot be created"
+elif [ "$CHECK" = 1 ]; then say "MISSING  $HQ/armonia view symlink"
+else ln -sn "$VAULTS" "$HQ/armonia" && say "linked   $HQ/armonia -> $VAULTS"; fi
+
+head_ "Marker drift (kind that disagrees with the approved spec)"
+# Matters beyond precedence: armonia-sync-once reads the RAW marker, not the
+# mounts.toml-resolved kind, and auto-commits+pushes anything marked personal.
+shopt -s nullglob
+for d in "$VAULTS"/*/; do
+  b=$(basename "$d")
+  k=$(grep -m1 '^kind' "$d/.amico-vault.toml" 2>/dev/null \
+      | sed -E 's/.*=[[:space:]]*"?([a-z]+)"?.*/\1/')
+  case "$b" in
+    armonia-issimo)    say "RETIRED  $b: DEPRECATED 2026-07-01 — should not be mounted; move it to ~/.amico/detached/ (see mounts.toml)" ;;
+    armonia-partitura) [ "$k" = restricted ] || say "DRIFT    $b: kind=$k, spec says restricted" ;;
+    armonissima)       [ "$k" = team ]       || say "DRIFT    $b: kind=$k, spec says team" ;;
+  esac
+  [ -n "$k" ] || say "DRIFT    $b: no readable kind — resolver will skip it"
+done
+[ -f "$HOME/.amico/mounts.toml" ] && say "ok       mounts.toml present (pins order + overrides kind)" \
+                                  || say "MISSING  ~/.amico/mounts.toml"
+
+head_ "macOS: vault auto-sync"
+# armonia-init's sync step is systemd-only and no-ops here.
+if [ "$(uname)" = Darwin ]; then
+  if launchctl print "gui/$UID/co.harmoniqs.armonia-sync" >/dev/null 2>&1; then
+    say "ok       launchd agent loaded"
+  else
+    say "MISSING  launchd agent — see WORKSTATION.md 'Vault sync on macOS'"
+  fi
+  # EVERY vault built from armonia-template ships its own copy of the sync
+  # script, so fixing one does not fix the others. Check each; name the file.
+  # (Match the live `kind=` assignment only — not a comment describing the bug.)
+  for f in "$VAULTS"/*/scripts/armonia-sync-once; do
+    [ -f "$f" ] || continue
+    grep '^[[:space:]]*kind=' "$f" | grep -q '\\s' \
+      && say "DRIFT    ${f#$HOME/} uses \\s (BSD sed cannot match -> pull-only)"
+  done
+else
+  say "linux    systemctl --user status armonia-sync.timer"
+fi
+
+head_ "Build state"
+if [ -d "$HQ/amicode" ]; then
+  [ -f "$HQ/amicode/packages/extension/dist/extension.js" ] \
+    && say "ok       built" || say "TODO     pnpm install && pnpm -r build"
+  lock=$(python3 -c "import json;print(json.load(open('$HQ/amicode/packages/extension/opencode.lock.json'))['platforms']['darwin-arm64']['sha256'])" 2>/dev/null)
+  stamp=$(cut -d' ' -f1 < "$HQ/amicode/packages/extension/vendor/opencode/darwin-arm64/.sha256" 2>/dev/null)
+  if [ -n "$lock" ] && [ "$lock" != "$stamp" ]; then
+    say "DRIFT    vendored opencode stale — pnpm --filter amicode run fetch:opencode"
+  else say "ok       vendored opencode matches lock"; fi
+fi
+
+printf '\nDone.%s\n' "$([ "$CHECK" = 1 ] && echo ' (--check: nothing was changed)')"

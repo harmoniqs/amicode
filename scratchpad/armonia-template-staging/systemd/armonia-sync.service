@@ -1,0 +1,8 @@
+[Unit]
+Description=Armonia vault sync (pull/commit/push all mounted vaults)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/armonia-sync-once
