@@ -106,6 +106,8 @@ import {
   childTitle,
   unwrap,
   summarizeSpawned,
+  spawnGate,
+  spawnGateKey,
   type SpawnedChild,
 } from "../opencode-plugin/session_spawn";
 import {
@@ -1815,7 +1817,11 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         },
         ctx: AmicodeToolContext,
       ) {
-        if (!ctx.engineClient) {
+        // Capture before the gate closure — TS narrowing on ctx.engineClient
+        // does not survive into the async closure below (same closure-over-
+        // client style as the plugin twin).
+        const engineClient = ctx.engineClient;
+        if (!engineClient) {
           return (
             ctx.carrier === "plugin"
               ? "Cannot spawn: the engine did not hand this plugin a server client (legacy load path)."
@@ -1826,12 +1832,17 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         const parsed = parseSpawnArgs(a);
         if (!parsed.ok) return `Cannot spawn: ${parsed.error}.`;
         const args = parsed.args;
+        // #655: coalesce concurrent re-dispatches of the SAME spawn (same
+        // caller + same parsed signature) onto the first run — a retry racing
+        // the slow promptAsync must not create a second identical session.
+        // In-flight only: a deliberate sequential re-spawn still creates.
+        return spawnGate.coalesce(spawnGateKey(ctx.sessionID ?? "", ctx.directory ?? "", args), async () => {
         // Depth comes from THIS session's own stamp — never from the caller's
         // claim — so the cap is enforced by construction, not by politeness.
         let own: { metadata?: unknown; model?: { providerID?: string; modelID?: string } } | undefined;
         try {
           own = unwrap<typeof own>(
-            await ctx.engineClient.session.get({ path: { id: ctx.sessionID }, query: { directory: ctx.directory } }),
+            await engineClient.session.get({ path: { id: ctx.sessionID }, query: { directory: ctx.directory } }),
           );
         } catch {
           own = undefined;
@@ -1853,7 +1864,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
             let id: string | undefined;
             if (args.mode === "fork") {
               const forked = unwrap<{ id?: string }>(
-                await ctx.engineClient.session.fork({
+                await engineClient.session.fork({
                   path: { id: ctx.sessionID },
                   query: { directory: ctx.directory },
                   body: {},
@@ -1865,13 +1876,13 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
                 // metadata so the parent's route can auto-open the tab.
                 // Tolerated failure: the child still runs, it just won't
                 // auto-open — the summary below lists it either way.
-                await ctx.engineClient.session
+                await engineClient.session
                   .update({ path: { id }, query: { directory: ctx.directory }, body: { metadata: spawnMeta } })
                   .catch(() => undefined);
               }
             } else {
               const created = unwrap<{ id?: string }>(
-                await ctx.engineClient.session.create({
+                await engineClient.session.create({
                   query: { directory: ctx.directory },
                   body: {
                     title,
@@ -1884,7 +1895,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
               id = created?.id;
             }
             if (!id) throw new Error(`session ${args.mode === "fork" ? "fork" : "create"} returned no id`);
-            await ctx.engineClient.session.promptAsync({
+            await engineClient.session.promptAsync({
               path: { id },
               query: { directory: ctx.directory },
               body: {
@@ -1901,6 +1912,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           return `Cannot spawn: ${msg}`;
         }
         return summarizeSpawned(children, args.mode);
+        });
       },
     },
 
