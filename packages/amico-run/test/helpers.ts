@@ -160,13 +160,14 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
 
   // ── agent cards: source (amicode repo) + both deployments + receipt ──
   const agentsSrc = join(repoAmicode, "packages", "extension", "agents");
-  for (const c of ["autodev.md", "autoresearch.md"]) {
+  const CARDS = ["analyzer.md", "autodev.md", "autoresearch.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
+  for (const c of CARDS) {
     mkdirSync(agentsSrc, { recursive: true });
     writeFileSync(join(agentsSrc, c), `---\nmode: ${c.replace(".md", "")}\n---\n# ${c}\n`);
   }
   mkdirSync(join(config, "agents"), { recursive: true });
   mkdirSync(join(staging, ".opencode", "agents"), { recursive: true });
-  for (const c of ["autodev.md", "autoresearch.md"]) {
+  for (const c of CARDS) {
     copyFileSync(join(agentsSrc, c), join(config, "agents", c));
     copyFileSync(join(agentsSrc, c), join(staging, ".opencode", "agents", c));
   }
@@ -174,7 +175,7 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
     receipt_version: 1,
     deployed_at: "2026-08-01T00:00:00.000Z",
     dry_run: false,
-    sources: ["autodev.md", "autoresearch.md"].map((c) => ({
+    sources: CARDS.map((c) => ({
       card: c,
       path: join(agentsSrc, c),
       sha256: `sha256:${sha256File(join(agentsSrc, c))}`,
