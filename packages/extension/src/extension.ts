@@ -239,13 +239,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
   }
 
-  // #533: stage mode cards (autodev, autoresearch) into the global opencode
-  // agents directory so they appear in the agent picker. Same always-copy
-  // semantics as Pasqal staging: extension-owned, overwrite-on-activate,
-  // never blocks activation.
+  // #533/#761: stage every mode card (two directors + five workers) into the
+  // global opencode agents directory so they appear in the agent picker.
+  // Same always-copy semantics as Pasqal staging: extension-owned,
+  // overwrite-on-activate, never blocks activation. When the premium
+  // entitlement is present and an overlay source resolves, method-class
+  // overlay fields merge in (#761); the receipt next to the staged cards is
+  // the provenance record, and a rejected overlay is logged, never silent.
   try {
     const modes = stageModCards(ctx.extensionPath);
-    opencodeChannel.appendLine(`[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})`);
+    const mergedNote = modes.merges.length > 0 ? `; ${modes.merges.length} overlay merge(s)` : "";
+    opencodeChannel.appendLine(
+      `[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})${mergedNote}`,
+    );
+    for (const rej of modes.rejections) {
+      opencodeChannel.appendLine(
+        `[modes] overlay rejected (${rej.overlay_id}${rej.card ? ` → ${rej.card}` : ""}): ${rej.reason}`,
+      );
+    }
   } catch (e) {
     opencodeChannel.appendLine(`[modes] mode-card staging failed: ${(e as Error).message}`);
   }
