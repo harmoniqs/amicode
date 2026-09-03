@@ -22,7 +22,7 @@
 // hardcoded host or channel name. Unconfigured machines render an honest "n/a" line;
 // a down machine is a row, never a failed digest (degrade-graceful: the digest ALWAYS
 // renders, because a digest that dies when one machine sleeps is worse than no digest).
-// The Notturno wrapper (harmoniqs/amico#340) injects its jobs rollup via --jobs-line so
+// The Notturno wrapper (harmoniqs/amicissimo#340) injects its jobs rollup via --jobs-line so
 // this module never learns about Notturno.
 //
 // VAULT HEALTH + MIGRATION DEBT (vault-management spec M4, amico#361): the digest gains

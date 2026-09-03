@@ -2,7 +2,7 @@
 
 You are (probably) an agent asked to set up, develop, or test Amicode on this machine.
 This file is the canonical path. The human-oriented test script is
-`packages/extension/TESTING.md`; design authority lives in the `harmoniqs/amico` vault
+`packages/extension/TESTING.md`; design authority lives in the `harmoniqs/amicissimo` vault
 (see `README.md`). **Do not confuse this file with `packages/extension/AGENTS.md`** —
 that one is the product's runtime instruction set for the in-app agent, not for you.
 
@@ -27,7 +27,7 @@ Interview flows are data (`packages/extension/scores/`). Schemas: `packages/sche
 ## Setup (in order; each step has a check)
 
 ```bash
-git clone git@github.com:harmoniqs/amicode.git && cd amicode
+git clone git@github.com:harmoniqs/amicissimode.git && cd amicode
 corepack enable && pnpm install               # check: exits 0, lockfile untouched
 pnpm -r build                                 # check: packages/extension/dist/extension.js exists
 pnpm --filter amicode run fetch:opencode   # check: vendor/opencode/<platform>/opencode exists
