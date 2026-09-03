@@ -169,7 +169,7 @@ describe("doctor v2 surface inventory — stale cells", () => {
     const w = buildDoctorWorld();
     const receiptPath = join(w.repoAmicode, "packages", "extension", "agents", ".deploy-receipt.json");
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as { sources: { card: string; sha256: string }[] };
-    receipt.sources[0].sha256 = "sha256:" + "0".repeat(64); // lies about autodev.md
+    receipt.sources.find((s) => s.card === "autodev.md")!.sha256 = "sha256:" + "0".repeat(64); // lies about autodev.md, by name — order-independent (the fixture stages the full 7-card surface)
     writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
