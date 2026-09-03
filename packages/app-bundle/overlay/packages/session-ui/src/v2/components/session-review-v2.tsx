@@ -35,6 +35,7 @@ export type SessionReviewV2Props = {
   onExpandModeChange: (mode: SessionReviewExpandMode) => void
   preview?: JSX.Element
   hasDiffs: boolean
+  onRefresh?: () => void
 }
 
 export type SessionReviewV2SidebarProps = {
@@ -283,14 +284,27 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
           </TooltipV2>
         </SegmentedControlV2>
       </Show>
+      <Show when={props.onRefresh}>
+        {(handler) => (
+          <TooltipV2 openDelay={2000} value="Refresh">
+            <IconButtonV2
+              variant="ghost"
+              size="small"
+              aria-label="Refresh"
+              onClick={handler()}
+              icon={<Icon name="refresh" />}
+            />
+          </TooltipV2>
+        )}
+      </Show>
     </>
   )
 
   return (
     <SessionFilePanelV2
       sidebar={props.sidebar}
-      toolbar={props.hasDiffs}
-      toolbarStart={toolbarStart()}
+      toolbar={props.hasDiffs || !!props.onRefresh}
+      toolbarStart={props.hasDiffs ? toolbarStart() : undefined}
       toolbarEnd={toolbarEnd()}
     >
       <Show when={props.hasDiffs} fallback={props.empty}>
