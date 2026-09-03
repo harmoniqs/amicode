@@ -267,7 +267,7 @@ describe("stageModCards — overlay merge (entitlement + overlays present)", () 
 // Table-driven over the ADR's FULL frozen list (output schema, tool
 // permissions, brief/cast grammar, dispatch/cast rules) plus unclassified
 // field names, which default to reject.
-import { INTERFACE_CLASS_FIELDS, classifyOverlayField, mergeOverlayIntoCard } from "../src/mode_cards";
+import { INTERFACE_CLASS_FIELDS, cardDispatch, classifyOverlayField, mergeOverlayIntoCard, validateDispatchTarget } from "../src/mode_cards";
 
 describe("overlay field classification (the freeze table)", () => {
   it("every interface-class field on the frozen list classifies interface", () => {
@@ -355,5 +355,56 @@ describe("stageModCards — freeze violations stage the base alone, rejection re
     const rej = r.rejections.find((x) => x.overlay_id === "researcher-tuning" && !x.card);
     expect(rej).toBeDefined();
     expect(rej.reason).toContain("malformed overlay");
+  });
+});
+
+// ── #761: the dispatch-target validator ───────────────────────────────────
+describe("dispatch-target validator", () => {
+  it("every worker card's dispatch target is a well-formed slug; directors carry none", () => {
+    for (const f of expectedCards()) {
+      const text = readFileSync(join(AGENTS_SRC, f), "utf8");
+      const target = cardDispatch(text);
+      if (f === "autodev.md" || f === "autoresearch.md") {
+        expect(target, `${f} — directors dispatch no overlay`).toBeUndefined();
+      } else {
+        expect(target, `${f} declares a dispatch target`).toBeDefined();
+        expect(() => validateDispatchTarget(f, target!)).not.toThrow();
+      }
+    }
+  });
+
+  it("the five workers name the four tuned targets (librarian-tuning covers two)", () => {
+    const targets = new Map<string, string[]>();
+    for (const f of expectedCards()) {
+      const target = cardDispatch(readFileSync(join(AGENTS_SRC, f), "utf8"));
+      if (target === undefined) continue;
+      targets.set(target, [...(targets.get(target) ?? []), f]);
+    }
+    expect([...targets.keys()].sort()).toEqual([
+      "engineer-tuning",
+      "experimenter-tuning",
+      "librarian-tuning",
+      "researcher-tuning",
+    ]);
+    expect(targets.get("librarian-tuning")?.sort()).toEqual(["analyzer.md", "librarian.md"]);
+  });
+
+  it("a malformed dispatch target throws (loud — a base-card defect)", () => {
+    expect(() => validateDispatchTarget("bogus.md", "Bad_Name!")).toThrow(/malformed dispatch target/);
+    expect(() => validateDispatchTarget("bogus.md", "")).toThrow(/malformed dispatch target/);
+  });
+
+  it("a card with a malformed dispatch field aborts staging loudly", () => {
+    // fixture extension dir: one card with a malformed dispatch value
+    const fakeExt = mkdtempSync(join(tmpdir(), "mode-cards-badcard-"));
+    mkdirSync(join(fakeExt, "agents"), { recursive: true });
+    writeFileSync(
+      join(fakeExt, "agents", "worker.md"),
+      "---\ndescription: x\nmode: subagent\ndispatch: Bad_Name!\n---\n\nbody\n",
+    );
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-badcard-dest-"));
+    expect(() =>
+      stageModCards(fakeExt, destDir, { entitlements: ENTITLED, overlaySource: null }),
+    ).toThrow(/malformed dispatch target/);
   });
 });
