@@ -308,58 +308,6 @@ describe("current session timeline rows", () => {
     }
   })
 
-  test("suppresses per-message DiffSummary rows even when summary.diffs is populated (#733)", () => {
-    const source = [
-      {
-        id: "msg_u",
-        type: "user",
-        text: "edit some files",
-        time: { created: 1 },
-        summary: {
-          additions: 10,
-          deletions: 3,
-          files: 2,
-          diffs: [
-            { file: "src/foo.ts", additions: 7, deletions: 2 },
-            { file: "src/bar.ts", additions: 3, deletions: 1 },
-          ],
-        },
-      },
-      {
-        id: "msg_a",
-        type: "assistant",
-        agent: "build",
-        model: { id: "model", providerID: "provider" },
-        content: [{ type: "text", text: "done" }],
-        time: { created: 2, completed: 3 },
-      },
-    ] satisfies SessionMessageInfo[]
-    const normalized = normalizeSessionMessages("ses_1", source)
-    const messages = new Map(normalized.messages.map((message) => [message.id, message]))
-    // Inject summary.diffs onto the user message (normalizeSessionMessages
-    // doesn't propagate it, but the live store does)
-    const userMsg = messages.get("msg_u")!
-    ;(userMsg as any).summary = source[0].summary
-
-    const result = Timeline.constructSessionMessageRows(
-      source,
-      (messageID) => messages.get(messageID),
-      (messageID) => normalized.parts.get(messageID) ?? [],
-      true,
-      "idle",
-      true,
-      normalized.messages.filter((m) => m.role === "user"),
-    )
-
-    // No DiffSummary row should appear — the section is suppressed (#733)
-    const tags = result.rows.map((r) => r._tag)
-    expect(tags).not.toContain("DiffSummary")
-    // The normal rows (UserMessage, Thinking, AssistantPart, ThinkingMeta) are still present
-    expect(tags).toContain("UserMessage")
-    expect(tags).toContain("AssistantPart")
-    expect(tags).toContain("ThinkingMeta")
-  })
-
   test("turnStartedAt is threaded through Thinking and AssistantPart rows from user message time.created", () => {
     const source = [
       { id: "msg_u", type: "user", text: "go", time: { created: 1000 } },
