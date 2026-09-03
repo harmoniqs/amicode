@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# armonia-vault-status — render the sync-status sidecar (vault-mgmt spec M3).
+#
+# States, never silent (the dead-sense fix: silence itself is reportable):
+#   OK            last round green, behind ≤ threshold
+#   STALE         consecutive failures, behind > threshold, or fetch-blocked
+#   UNKNOWN       a mounted vault with NO record (pre-sidecar script version,
+#                 or a mount the loop never reached)
+#   ZOMBIE        newest record older than 3× cadence — a dead scheduler must
+#                 not read as a quiet all-clear
+#   ro-by-policy  a personal vault failing on a non-writable mount (expected
+#                 failure, muted, self-contained: detected from the mount's
+#                 own facts — local writability + kind — never a policy table)
+#
+# Symlinked aliases dedupe by resolved storage (one row per resolved path);
+# the ruled name (toml `name`) is the display name.
+# Exit 0 always, unless --strict: then nonzero if any mount is STALE / UNKNOWN
+# / ZOMBIE — ro-by-policy is an expected state and never fails strict.
+set -uo pipefail
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+AMICO_HOME="${AMICO_HOME:-$HOME/.amico}"
+VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$AMICO_HOME/vaults}"
+STATUS_DIR="${AMICO_OPS_ROOT:-$AMICO_HOME/ops}/sync-status"
+STRICT=0
+[ "${1:-}" = "--strict" ] && STRICT=1
+
+python3 - "$VAULTS_ROOT" "$STATUS_DIR" "$STRICT" <<'PY'
+import json, os, sys, time, datetime
+
+vaults_root, status_dir, strict = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+
+def toml_get(path, key):
+    try:
+        with open(os.path.join(path, ".amico-vault.toml")) as f:
+            for line in f:
+                s = line.strip()
+                # exact key match ("name" must not match "namespace")
+                if s.startswith(key) and s[len(key):len(key) + 1] in (" ", "="):
+                    return s.split("=", 1)[1].strip().strip('"')
+    except OSError:
+        pass
+    return ""
+
+def parse_ts(ts):
+    if not ts:
+        return 0
+    try:
+        return datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S%z").timestamp()
+    except ValueError:
+        return 0
+
+# enumerate mounted vaults by RESOLVED path (aliases collapse)
+mounts = {}
+if os.path.isdir(vaults_root):
+    for entry in sorted(os.listdir(vaults_root)):
+        p = os.path.join(vaults_root, entry)
+        if not os.path.isdir(p) or not os.path.exists(os.path.join(p, ".git")):
+            continue
+        real = os.path.realpath(p)
+        if real in mounts:
+            continue  # alias dedupe: one row per resolved storage
+        mounts[real] = {"display_name": toml_get(p, "name") or entry, "kind": toml_get(p, "kind")}
+
+def state_for(real, rec):
+    now = time.time()
+    cadence = rec.get("cadence_minutes", 15)
+    newest = max(parse_ts(rec.get("last_success")), parse_ts(rec.get("last_failure")))
+    if newest and now - newest > 3 * cadence * 60:
+        return "ZOMBIE"
+    failures = rec.get("consecutive_failures", 0)
+    # mute ordering is a NAMED decision, not an accident: a ro-served personal
+    # mount is the expected-failure class — non-actionable by sync — so its
+    # state is ro-by-policy; its behind-count survives in the detail line.
+    # The mute never touches rw mounts: a genuine STALE renders STALE (the
+    # fixture proves both in the same run).
+    if failures and rec.get("kind") == "personal" and not os.access(real, os.W_OK):
+        return "ro-by-policy"
+    if failures or rec.get("fetch_blocked") or (rec.get("behind_count") or 0) > rec.get("threshold", 50):
+        return "STALE"
+    return "OK"
+
+records = {}
+if os.path.isdir(status_dir):
+    for fn in os.listdir(status_dir):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(status_dir, fn)) as f:
+                rec = json.load(f)
+            records[rec.get("path") or fn[:-5]] = rec
+        except (OSError, json.JSONDecodeError):
+            continue
+
+worst = "OK"
+# --strict fails on states that need a HUMAN (STALE/UNKNOWN/ZOMBIE); ro-by-policy
+# is an expected state — it never fails strict (an immortal strict
+# false-positive is the dead-sense class the mute exists to prevent)
+rank = {"OK": 0, "ro-by-policy": 0, "STALE": 1, "UNKNOWN": 1, "ZOMBIE": 1}
+for real, meta in sorted(mounts.items(), key=lambda kv: kv[1]["display_name"]):
+    rec = records.get(real)
+    if rec is None:
+        st = "UNKNOWN"
+        detail = "no record (never synced here, or pre-sidecar script version)"
+    else:
+        st = state_for(real, rec)
+        detail = (
+            f"behind={rec.get('behind_count')}"
+            f" failures={rec.get('consecutive_failures')}"
+            f" fetch_blocked={rec.get('fetch_blocked')}"
+        )
+        if rec.get("failure_reason"):
+            detail += f" reason={rec['failure_reason'][:80]}"
+    print(f"{meta['display_name']:<24} kind={meta['kind'] or '?':<10} state={st:<14} {detail}")
+    if rank[st] > rank[worst]:
+        worst = st
+
+print(f"— {len(mounts)} mounted vault(s): no state is silent —")
+if strict and worst != "OK":
+    sys.exit(1)
+PY

@@ -1,0 +1,219 @@
+#!/usr/bin/env bash
+# armonia-init <name> [--kind personal|project|engagement] [--override]
+#                    [--cadence MIN] [--no-github] [--root DIR]
+# One-command Amico vault onboarding — the day-1 provisioning contract
+# (vault-mgmt spec M1 + M2). Creates harmoniqs/vault-<name> (the naming rule
+# of record: vaults are named vault-<owner-or-purpose>; "armonia" names the
+# WORKSPACE, never a minted vault) from armonia-template (or clones it if
+# already provisioned), stamps the kind + provision_state markers, installs
+# the sync timer (cadence-parameterized), mounts the company vault
+# (armonissima) and armonia-issimo where you have access, and creates the
+# visible workspace view. Root-state contract: the DEFAULT vaults root must
+# resolve to the canonical storage (an explicitly-passed --root is a test
+# seam used as-is; set AMICO_ENFORCE_ROOT_CONTRACT=1 to apply the contract
+# to it). Degraded runs (no credentials) mint LOCAL-ONLY with an idempotent
+# resume — the pre-entitlement day-1 shape, an honest state, not an error.
+set -euo pipefail
+ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"; KIND=personal; GH=1; OVERRIDE=0; CADENCE=15
+CANON="${AMICO_CANONICAL_VAULTS_DATA:-$HOME/armonia/data/vaults}"
+NAME="$1"; shift
+while [ $# -gt 0 ]; do case "$1" in
+  --kind) KIND="$2"; shift 2;; --no-github) GH=0; shift;;
+  --override) OVERRIDE=1; shift;;
+  --cadence) CADENCE="$2"; shift 2;;
+  --root) ROOT="$2"; shift 2;; *) echo "unknown arg $1" >&2; exit 64;; esac; done
+REPO="vault-${NAME}"; DEST="$ROOT/$REPO"
+
+# ── Naming-rule lint (vault-mgmt spec M1): a minted name must not contain  ──
+# "armonia" — prefix or embedded. The lint applies to MINTED names only:
+# existing vaults and team vaults riding code repos are exempt by
+# construction, never "overridden". --override proceeds AND stamps.
+if [[ "$REPO" == *armonia* ]]; then
+  if [ "$OVERRIDE" != 1 ]; then
+    {
+      echo "REFUSED: the minted name '$REPO' contains 'armonia'."
+      echo "The naming rule of record: vaults are named vault-<owner-or-purpose>;"
+      echo "'armonia' names the workspace (\$HOME/armonia = repos + data), never a minted vault."
+      echo "Pass a different <name>, or pass --override to proceed with a"
+      echo "sanctioned-exception note stamped in the vault's README."
+    } >&2
+    exit 64
+  fi
+fi
+
+# ── Root-state contract (spec M2 step 0) — the divergence-class guard ──────
+ENFORCE=0
+[ "$ROOT" = "${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}" ] && ENFORCE=1
+[ "${AMICO_ENFORCE_ROOT_CONTRACT:-0}" = 1 ] && ENFORCE=1
+if [ "$ENFORCE" = 1 ]; then
+  if [ -L "$ROOT" ]; then
+    TARGET="$(readlink "$ROOT")"
+    if [ "$TARGET" != "$CANON" ]; then
+      { echo "REFUSED: $ROOT is a symlink to $TARGET, not the canonical storage $CANON."
+        echo "A wrong-pointing root is the divergence class wearing a symlink — it is never"
+        echo "silently re-pointed. Migration: point $ROOT at $CANON (see docs/vault-naming-sweep.md)." ; } >&2
+      exit 64
+    fi
+    mkdir -p "$CANON" 2>/dev/null || true
+  elif [ -d "$ROOT" ]; then
+    if [ -z "$(ls -A "$ROOT" 2>/dev/null)" ]; then
+      rmdir "$ROOT" && ln -s "$CANON" "$ROOT"   # empty real dir → adopt the doctrine
+    else
+      { echo "REFUSED: $ROOT is a real directory holding content — the layout doctrine wants"
+        echo "storage under $CANON with $ROOT as a symlink to it (the erich divergence class)."
+        echo "Migration: move the clones to $CANON, then ln -s $CANON $ROOT (see docs/vault-naming-sweep.md)." ; } >&2
+      exit 64
+    fi
+  elif [ -e "$ROOT" ]; then
+    echo "REFUSED: $ROOT exists and is not a directory. Migration pointer: docs/vault-naming-sweep.md" >&2
+    exit 64
+  else
+    mkdir -p "$(dirname "$ROOT")" && mkdir -p "$CANON" && ln -s "$CANON" "$ROOT"
+  fi
+fi
+
+# ── Idempotent resume: a local-only vault re-runs to provisioned ────────────
+if [ -e "$DEST" ]; then
+  STATE=""
+  [ -f "$DEST/.amico-vault.toml" ] && STATE="$(grep -m1 '^provision_state' "$DEST/.amico-vault.toml" 2>/dev/null | sed -E 's/.*=[[:space:]]*"?([a-z-]+)"?.*/\1/')"
+  if [ "$STATE" = "local-only" ]; then
+    # resume: attach the remote (seam > existing repo > create), push, stamp
+    if [ -n "${AMICO_RESUME_REMOTE:-}" ]; then
+      REMOTE="$AMICO_RESUME_REMOTE"
+    elif command -v gh >/dev/null 2>&1 && gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
+      REMOTE="git@github.com:harmoniqs/$REPO.git"   # mid-flight-death case: repo exists, remote unset
+    elif command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1 && gh repo create "harmoniqs/$REPO" --private >/dev/null 2>&1; then
+      REMOTE="git@github.com:harmoniqs/$REPO.git"
+    else
+      # expected retry-later state, NOT an error: still local-only, honestly stamped
+      echo "resume: no remote available yet — still local-only; re-run with credentials" >&2
+      echo "Mounted: $DEST (kind=$KIND, provision_state=local-only — unchanged)" >&2
+      exit 0
+    fi
+    git -C "$DEST" remote remove origin 2>/dev/null || true
+    git -C "$DEST" remote add origin "$REMOTE"
+    # stamp FIRST, then push: the remote receives the final state (the stamp
+    # commit included). The push is the REAL success gate — the stamp is
+    # earned only when the remote actually received the branch; a failed
+    # push leaves the stamp as local-only (revert the pre-stamp edit)
+    if sed -i.bak -E 's/^provision_state = ".*"$/provision_state = "provisioned"/' "$DEST/.amico-vault.toml" \
+       && rm -f "$DEST/.amico-vault.toml.bak" \
+       && git -C "$DEST" add .amico-vault.toml \
+       && git -C "$DEST" commit -qm "provision: resumed (remote attached)" \
+       && git -C "$DEST" push -q -u origin "$(git -C "$DEST" branch --show-current)" 2>/dev/null; then
+      echo "Mounted: $DEST (kind=$KIND, resumed: local-only → provisioned, origin=$REMOTE)"
+    else
+      sed -i.bak -E 's/^provision_state = ".*"$/provision_state = "local-only"/' "$DEST/.amico-vault.toml" && rm -f "$DEST/.amico-vault.toml.bak"
+      git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "provision: resume push failed — reverted to local-only" || true
+      echo "resume: remote attached but push failed — still local-only; fix connectivity and re-run" >&2
+      echo "Mounted: $DEST (kind=$KIND, provision_state=local-only — unchanged)" >&2
+    fi
+    exit 0
+  fi
+  echo "$DEST already exists" >&2; exit 64
+fi
+
+# ── Credentials check → the degraded path (spec M2 step 4) ──────────────────
+DEGRADED=0
+if [ "$GH" = 1 ]; then
+  [ "${AMICO_FORCE_DEGRADED:-0}" = 1 ] && DEGRADED=1
+  if [ "$DEGRADED" = 0 ] && ! command -v gh >/dev/null 2>&1; then DEGRADED=1; fi
+  if [ "$DEGRADED" = 0 ] && ! gh auth status >/dev/null 2>&1; then DEGRADED=1; fi
+  if [ "$DEGRADED" = 0 ] && ! gh repo view "harmoniqs/$REPO" >/dev/null 2>&1 \
+     && ! gh repo create "harmoniqs/$REPO" --private --template harmoniqs/armonia-template >/dev/null 2>&1; then
+    DEGRADED=1   # repo-create failed (org perms) — degrade honestly, never half-mint remotely
+  fi
+fi
+
+mkdir -p "$ROOT"
+if [ "$GH" = 1 ] && [ "$DEGRADED" = 0 ]; then
+  if gh repo view "harmoniqs/$REPO" >/dev/null 2>&1; then
+    # clone-only path: member machine, repo already provisioned centrally
+    git clone "git@github.com:harmoniqs/$REPO.git" "$DEST"
+  else
+    gh repo create "harmoniqs/$REPO" --private --template harmoniqs/armonia-template
+    for i in 1 2 3 4 5; do  # template copy is async — retry the clone
+      git clone "git@github.com:harmoniqs/$REPO.git" "$DEST" 2>/dev/null && break
+      sleep 3; [ "$i" = 5 ] && { echo "clone failed after retries" >&2; exit 1; }
+    done
+    printf 'kind = "%s"\nname = "%s"\nprovision_state = "provisioned"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
+    git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
+    git -C "$DEST" push -q
+  fi
+elif [ -n "${AMICO_TEMPLATE_PATH:-}" ]; then  # test mode / template available: copy a local template
+  cp -r "$AMICO_TEMPLATE_PATH" "$DEST"
+  git -C "$DEST" init -q && git -C "$DEST" add -A && git -C "$DEST" commit -qm init
+  printf 'kind = "%s"\nname = "%s"\nprovision_state = "%s"\n' \
+    "$KIND" "$REPO" "$([ "$DEGRADED" = 1 ] && echo local-only || echo provisioned)" > "$DEST/.amico-vault.toml"
+  git -C "$DEST" add .amico-vault.toml && git -C "$DEST" commit -qm "kind: $KIND"
+else  # degraded with NO template available: self-contained minimal mint
+  mkdir -p "$DEST"/{hopper,specs,plans,notes,briefs,experiments,insights,sessions}
+  for d in hopper specs plans notes briefs experiments insights sessions; do touch "$DEST/$d/.gitkeep"; done
+  { echo "# Your vault"; echo
+    echo "Minted local-only (no credentials / no template at mint time)."
+    echo "The generated README (naming rule, folders, routing) lands on resume."; } > "$DEST/README.md"
+  printf 'kind = "%s"\nname = "%s"\nprovision_state = "local-only"\n' "$KIND" "$REPO" > "$DEST/.amico-vault.toml"
+  git -C "$DEST" init -q && git -C "$DEST" add -A && git -C "$DEST" commit -qm "init: local-only mint"
+fi
+
+# ── Sanctioned-exception stamp (--override): the note, never a "deviation" ──
+if [ "$OVERRIDE" = 1 ]; then
+  STAMP="$(date +%Y-%m-%d)"
+  {
+    echo ""
+    echo "## Naming note — sanctioned exception"
+    echo ""
+    echo "This vault was minted as '$REPO' with the naming rule's explicit"
+    echo "override (stamp: $STAMP). The rule of record stands: vaults are named"
+    echo "vault-<owner-or-purpose>, and 'armonia' names the workspace. This name is"
+    echo "a sanctioned exception, recorded here at minting time."
+    echo ""
+  } >> "$DEST/README.md"
+  git -C "$DEST" add README.md && git -C "$DEST" commit -qm "naming: sanctioned exception stamped (--override)" || true
+fi
+
+# ── Cadence parameter (spec M2 step 5): the scheduler file carries it ──────
+if [ -f "$DEST/systemd/armonia-sync.timer" ]; then
+  sed -i.bak -E "s/^# amico-sync-cadence: .*$/# amico-sync-cadence: ${CADENCE}m/" "$DEST/systemd/armonia-sync.timer" \
+    && rm -f "$DEST/systemd/armonia-sync.timer.bak"
+fi
+[ "$CADENCE" != 15 ] && echo "Cadence: ${CADENCE}m (scheduler file rewritten)"
+
+# ── Shared mounts: company vault always; issimo where granted ──────────────
+# (existing vaults, not mints — the naming lint never applies here)
+if [ "$GH" = 1 ] && [ "$DEGRADED" = 0 ] && [ "$KIND" = personal ]; then
+  if [ ! -d "$ROOT/armonissima" ]; then
+    git clone "git@github.com:harmoniqs/armonissima.git" "$ROOT/armonissima" \
+      && echo "Mounted: $ROOT/armonissima (kind=team)" \
+      || echo "⚠ could not clone armonissima — ask for access, then: git clone git@github.com:harmonissima.git $ROOT/armonissima"
+  fi
+  if [ ! -d "$ROOT/armonia-issimo" ]; then
+    if git clone -q "git@github.com:harmoniqs/armonia-issimo.git" "$ROOT/armonia-issimo" 2>/dev/null; then
+      echo "Mounted: $ROOT/armonia-issimo (kind=project)"
+    else
+      echo "(armonia-issimo not mounted — no access or not granted yet; rerun later if needed)"
+    fi
+  fi
+fi
+# ── Visible workspace view (never the canonical state) ─────────────────────
+if [ -d "$HOME/harmoniqs" ] && [ ! -e "$HOME/harmoniqs/armonia" ]; then
+  ln -sn "$ROOT" "$HOME/harmoniqs/armonia" && echo "View: ~/harmoniqs/armonia -> $ROOT"
+fi
+# ── Sync timer (personal machines; the FILE is fixture-claimable, loaded ──
+# state is a fleet-digest line — never a fixture claim)
+if [ "$KIND" = personal ] && command -v systemctl >/dev/null && [ "${AMICO_NO_TIMER:-0}" != 1 ]; then
+  mkdir -p ~/.config/systemd/user ~/.local/bin
+  cp "$DEST"/scripts/armonia-sync-once ~/.local/bin/ 2>/dev/null || true
+  cp "$DEST"/systemd/armonia-sync.* ~/.config/systemd/user/ 2>/dev/null || true
+  systemctl --user daemon-reload && systemctl --user enable --now armonia-sync.timer || true
+fi
+echo "Mounted: $DEST (kind=$KIND$([ "$DEGRADED" = 1 ] && echo ', provision_state=local-only'))"
+echo ""
+echo "Next steps:"
+echo "  1. Fill your profile: $ROOT/armonissima/team/${NAME}.md (slack_handle + TODOs; add 'personal' to brief_sections)"
+echo "  2. Add the vaults to VS Code:  code --add $ROOT"
+echo "  3. Update the plugin:  /plugin update  (inside Claude Code)"
+if [ "$DEGRADED" = 1 ]; then
+  echo ""
+  echo "RESUME (once credentials/repo access exist): armonia-init $NAME --root $ROOT"
+fi

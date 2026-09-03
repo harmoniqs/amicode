@@ -1,0 +1,83 @@
+#!/usr/bin/env bash
+# armonia-mount — attach/detach a vault to the Armonia mount stack on demand.
+#
+# WHY: the resolver only discovers directories *under* ~/.amico/vaults (a
+# mounts.toml entry cannot add a mount by path — it only overrides kind,
+# writability and order for something already discovered). So "mounted" is
+# purely a question of whether a directory exists in that root.
+#
+# The point of this script is restricted-tier vaults. amicode grants the chat
+# agent a READ allow on EVERY mount:
+#     ...Object.fromEntries(mounts.map((m) => [`${m.path}/**`, "allow"]))
+# and the permission surface has no read/write split, so a read-only mount is
+# still fully readable by the agent. For armonia-partitura (cap table,
+# financials, legal) that is a real exposure decision, not a formality —
+# amicode's telemetry consent copy states that captured runs include "your
+# prompts and tool output". Keep it detached by default; attach it for the
+# session where you actually need it, then detach.
+#
+# Canonical clones live in ~/harmoniqs/<repo>; this symlinks them into the
+# vaults root. statSync() follows symlinks, so the resolver treats the link as
+# a real mount, and armonia-sync-once likewise finds <link>/.git and pulls it.
+#
+#   armonia-mount --list
+#   armonia-mount armonia-partitura        # attach
+#   armonia-mount --off armonia-partitura  # detach (never deletes the clone)
+set -uo pipefail
+
+VAULTS_ROOT="${AMICO_VAULTS_ROOT:-$HOME/.amico/vaults}"
+SRC_ROOT="${ARMONIA_SRC_ROOT:-$HOME/harmoniqs}"
+
+die() { echo "armonia-mount: $*" >&2; exit 1; }
+
+list_mounts() {
+  printf '%-30s %-10s %-9s %s\n' VAULT KIND STATE SOURCE
+  shopt -s nullglob
+  for d in "$VAULTS_ROOT"/*/; do
+    base=$(basename "$d")
+    kind=$(grep -m1 '^kind' "$d/.amico-vault.toml" 2>/dev/null \
+           | sed -E 's/.*=[[:space:]]*"?([a-z]+)"?.*/\1/')
+    [ -n "$kind" ] || kind="(no marker)"
+    if [ -L "${d%/}" ]; then state="attached"; src=$(readlink "${d%/}")
+    else state="resident"; src="-"; fi
+    printf '%-30s %-10s %-9s %s\n' "$base" "$kind" "$state" "$src"
+  done
+  # Detached candidates: clones in SRC_ROOT carrying a marker but not mounted.
+  for c in "$SRC_ROOT"/*/; do
+    base=$(basename "$c")
+    [ -f "$c/.amico-vault.toml" ] || continue
+    [ -e "$VAULTS_ROOT/$base" ] && continue
+    kind=$(grep -m1 '^kind' "$c/.amico-vault.toml" 2>/dev/null \
+           | sed -E 's/.*=[[:space:]]*"?([a-z]+)"?.*/\1/')
+    printf '%-30s %-10s %-9s %s\n' "$base" "${kind:-?}" "detached" "${c%/}"
+  done
+}
+
+case "${1:-}" in
+  ""|--list|-l) list_mounts; exit 0 ;;
+  --off)
+    name="${2:-}"; [ -n "$name" ] || die "usage: armonia-mount --off <vault>"
+    target="$VAULTS_ROOT/$name"
+    [ -e "$target" ] || die "$name is not mounted"
+    [ -L "$target" ] || die "$name is a real directory, not an attached link — refusing to remove it (move it by hand if you mean to)"
+    rm "$target" && echo "detached: $name (clone left at $(readlink -f "$SRC_ROOT/$name" 2>/dev/null || echo "$SRC_ROOT/$name"))"
+    ;;
+  -*) die "unknown flag $1" ;;
+  *)
+    name="$1"
+    src="$SRC_ROOT/$name"
+    [ -d "$src" ] || die "no clone at $src — clone it first"
+    [ -f "$src/.amico-vault.toml" ] || die "$src has no .amico-vault.toml marker; the resolver would skip it"
+    target="$VAULTS_ROOT/$name"
+    [ -e "$target" ] && die "$name is already mounted"
+    mkdir -p "$VAULTS_ROOT"
+    ln -sn "$src" "$target"
+    kind=$(grep -m1 '^kind' "$src/.amico-vault.toml" | sed -E 's/.*=[[:space:]]*"?([a-z]+)"?.*/\1/')
+    echo "attached: $name (kind=$kind) -> $src"
+    [ "$kind" = "restricted" ] && cat <<'WARN'
+
+  NOTE: a restricted vault is now in the agent's read surface for every new
+  session. Detach it when you are done:  armonia-mount --off <vault>
+WARN
+    ;;
+esac
