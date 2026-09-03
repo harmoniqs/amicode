@@ -52,6 +52,11 @@ const PROPRIETARY_STRINGS: string[] = (
     proprietary_strings: string[];
   }
 ).proprietary_strings;
+const BANNED_NAMES: string[] = (
+  JSON.parse(readFileSync(BLOCKLIST_PATH, "utf8")) as {
+    banned_names: string[];
+  }
+).banned_names;
 
 // The five loop verbs + four core-clause keywords (Measurement Protocol).
 const LOOP_VERBS = ["plan", "dispatch", "gate", "analyze", "record"] as const;
@@ -204,6 +209,69 @@ describe("mode cards — blocklist (open-protocol vocabulary)", () => {
           `${name} must not contain "${s}"`,
         ).toBe(false);
       }
+    });
+  }
+});
+
+// ── #761: worker base cards — contract floor + default-method-body floor ────
+//
+// The five worker cards (analyzer, experimenter, hypothesizer, implementer,
+// librarian) are public base cards: complete products with no entitlement.
+// The floor tests pin what the overlay architecture depends on — the frozen
+// output contract, the four pinned sections, and a complete default for
+// every method-class dimension an overlay tunes.
+const WORKER_CARDS = [
+  "analyzer.md",
+  "experimenter.md",
+  "hypothesizer.md",
+  "implementer.md",
+  "librarian.md",
+] as const;
+type WorkerCard = (typeof WORKER_CARDS)[number];
+
+const workerText = (name: WorkerCard): string =>
+  readFileSync(path.join(AGENTS_DIR, name), "utf8");
+
+describe("worker cards — contract floor (one per card)", () => {
+  for (const name of WORKER_CARDS) {
+    it(`${name}: blocklist (banned names AND proprietary strings) + frozen output contract`, () => {
+      // Guards: the fixtures of record carry the real lists — empty lists
+      // would make the blocklist half of this floor vacuously green.
+      expect(PROPRIETARY_STRINGS.length).toBeGreaterThanOrEqual(5);
+      expect(BANNED_NAMES.length).toBeGreaterThanOrEqual(2);
+      const text = workerText(name);
+      for (const s of [...PROPRIETARY_STRINGS, ...BANNED_NAMES]) {
+        expect(
+          text.toLowerCase().includes(s.toLowerCase()),
+          `${name} must not contain "${s}"`,
+        ).toBe(false);
+      }
+      // the output contract is present and marked frozen — the interface an
+      // overlay may never touch
+      expect(text).toMatch(/^## Output contract$/m);
+      expect(text).toMatch(/Frozen interface/i);
+    });
+  }
+});
+
+describe("worker cards — default-method-body floor (one per card)", () => {
+  for (const name of WORKER_CARDS) {
+    it(`${name}: four pinned sections + every method-class dimension defaulted`, () => {
+      const text = workerText(name);
+      // the four pinned sections, in order
+      const sections = ["## Role", "## Inputs", "## Method", "## Output contract"];
+      const idx = sections.map((s) => text.indexOf(s));
+      idx.forEach((i, k) => expect(i, `${name} carries ${sections[k]}`).toBeGreaterThan(-1));
+      for (let k = 1; k < idx.length; k++)
+        expect(idx[k]!, `${name}: ${sections[k]} after ${sections[k - 1]}`).toBeGreaterThan(idx[k - 1]!);
+      // method-class dimension coverage: the Method section carries a
+      // complete default for every dimension an overlay may tune
+      const method = text.slice(idx[2]!, idx[3]!);
+      expect(method, `${name}: default procedure (the prompt body)`).toMatch(/^Default procedure/m);
+      expect(method, `${name}: model routing default`).toMatch(/^Model routing, default: /m);
+      expect(method, `${name}: iteration budget default`).toMatch(/^Iteration budget, default: /m);
+      expect(method, `${name}: example brief`).toMatch(/^Example brief/m);
+      expect(method, `${name}: example brief sits in a text fence`).toContain("```text");
     });
   }
 });
