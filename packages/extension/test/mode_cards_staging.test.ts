@@ -261,3 +261,99 @@ describe("stageModCards — overlay merge (entitlement + overlays present)", () 
     expect(staged).not.toContain("merged_fields");
   });
 });
+
+// ── #761: the contract freeze — interface-class fields never merge ─────────
+//
+// Table-driven over the ADR's FULL frozen list (output schema, tool
+// permissions, brief/cast grammar, dispatch/cast rules) plus unclassified
+// field names, which default to reject.
+import { INTERFACE_CLASS_FIELDS, classifyOverlayField, mergeOverlayIntoCard } from "../src/mode_cards";
+
+describe("overlay field classification (the freeze table)", () => {
+  it("every interface-class field on the frozen list classifies interface", () => {
+    for (const f of INTERFACE_CLASS_FIELDS) {
+      expect(classifyOverlayField(f), `${f} → interface`).toBe("interface");
+    }
+    expect(INTERFACE_CLASS_FIELDS.length).toBe(4); // the full list, no shrinkage
+  });
+
+  it("unclassified field names default to reject", () => {
+    for (const f of ["banana_split", "role", "tools", "output", "mode", "color"]) {
+      expect(classifyOverlayField(f), `${f} → unclassified`).toBe("unclassified");
+    }
+  });
+});
+
+describe("mergeOverlayIntoCard — freeze enforcement (table-driven)", () => {
+  const BASE = readFileSync(join(AGENTS_SRC, "hypothesizer.md"), "utf8");
+
+  // one offending field per interface-class entry, each named in the error
+  it.each([...INTERFACE_CLASS_FIELDS])("rejects interface-class field %s", (field) => {
+    const overlay = { id: "researcher-tuning", fields: { [field]: "BOGUS_INTERFACE_OVERRIDE" } };
+    expect(() => mergeOverlayIntoCard(BASE, overlay, "hypothesizer.md")).toThrow(
+      new RegExp(`"${field}" is interface-class`),
+    );
+  });
+
+  it.each(["banana_split", "role", "tools"])("rejects unclassified field %s", (field) => {
+    const overlay = { id: "researcher-tuning", fields: { [field]: "BOGUS_UNCLASSIFIED_OVERRIDE" } };
+    expect(() => mergeOverlayIntoCard(BASE, overlay, "hypothesizer.md")).toThrow(
+      new RegExp(`"${field}" is unclassified-class`),
+    );
+  });
+});
+
+describe("stageModCards — freeze violations stage the base alone, rejection recorded", () => {
+  const BASE_HYPOTHESIZER = () => readFileSync(join(AGENTS_SRC, "hypothesizer.md"), "utf8");
+
+  function rootWithOverlay(overlayId: string, fields: Record<string, string>): string {
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-freeze-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, `${overlayId}.json`), JSON.stringify({ overlay_version: 1, id: overlayId, fields }));
+    return root;
+  }
+
+  it.each([...INTERFACE_CLASS_FIELDS, "banana_split"])(
+    "interface/unclassified field %s: base stages alone, rejection names the field",
+    (field) => {
+      const destDir = mkdtempSync(join(tmpdir(), "mode-cards-frz-"));
+      const r = stageModCards(EXTENSION_PATH, destDir, {
+        entitlements: ENTITLED,
+        overlaySource: rootWithOverlay("researcher-tuning", { [field]: "BOGUS" }),
+      });
+      expect(readFileSync(join(destDir, "hypothesizer.md"), "utf8")).toBe(BASE_HYPOTHESIZER());
+      const rej = r.rejections.find((x) => x.card === "hypothesizer.md");
+      expect(rej).toBeDefined();
+      expect(rej.overlay_id).toBe("researcher-tuning");
+      expect(rej.reason).toContain(`"${field}"`);
+    },
+  );
+
+  it("malformed overlay JSON is a registry rejection; other overlays still merge", () => {
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-badjson-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "researcher-tuning.json"), "{ not json");
+    writeFileSync(
+      join(dir, "librarian-tuning.json"),
+      JSON.stringify({
+        overlay_version: 1,
+        id: "librarian-tuning",
+        fields: { model_routing: "the heavy class for curation casts spanning campaigns." },
+      }),
+    );
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-badjson-dest-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: ENTITLED,
+      overlaySource: root,
+    });
+    // the good overlay still merged
+    const staged = readFileSync(join(destDir, "librarian.md"), "utf8");
+    expect(staged).toContain("Model routing, tuned: the heavy class");
+    // the malformed one is a registry-level rejection naming the file
+    const rej = r.rejections.find((x) => x.overlay_id === "researcher-tuning" && !x.card);
+    expect(rej).toBeDefined();
+    expect(rej.reason).toContain("malformed overlay");
+  });
+});
