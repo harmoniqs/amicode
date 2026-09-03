@@ -148,7 +148,7 @@ One execution of an experiment script, producing a result artifact and an iterat
 _Avoid_: Solve (as the generic concept — "solve" is quantum-control vocabulary for a Run)
 
 **Entitlement**:
-A grant of capability, in two linked senses. Locally: a license code granting access to a set of Julia packages (e.g. `issimo` unlocks Piccolissimo) — holdable with no Connection at all. Service-side: the authorization set a Credential carries on its service record. The Company Compute Connection bridges them: establishing it grants the local code.
+A grant of capability, in two linked senses. Locally: a license code granting access to a set of surfaces — `issimo` unlocks the Piccolissimo package skills; `amicissimo` unlocks the premium bundle's surfaces (`amico premium` reports them; repo access to the bundle pairs with the code) — holdable with no Connection at all. Service-side: the authorization set a Credential carries on its service record. The Company Compute Connection bridges them: establishing it grants the local code.
 _Avoid_: License, unlock
 
 **Solver mode**:
