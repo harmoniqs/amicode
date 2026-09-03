@@ -50,13 +50,21 @@ The canonical workspace and knowledge system. As a workspace: the `~/armonia/` d
 _Avoid_: Vault (as the system name), knowledge base
 
 **Vault**:
-One mounted knowledge tier within Armonia — a git-backed store of notes, specs, and catalog entries at a single precedence level (personal / project / team). Many Vaults mount into the Armonia stack; the panel lists them as its roots and reads them top-to-bottom.
+One mounted knowledge tier within Armonia — a git-backed store of notes, specs, and catalog entries at a single precedence level, one of five kinds: personal, engagement, project, team, public. Many Vaults mount into the Armonia stack; the panel lists them as its roots and reads them top-to-bottom.
 _Avoid_: Armonia (the whole stack), workspace, folder
+
+**Vault naming rule**:
+Vaults minted by the provisioning tool are named `vault-<owner-or-purpose>`; "armonia" names the workspace and never a minted vault. Team vaults riding code repos keep the repo's own name — exempt by construction, never "overridden". The mount's public identity is its marker file's `name` field; the directory name matches it.
+_Avoid_: vault branding, armonia-<name> (the retired convention)
+
+**Sync health**:
+The per-machine, never-silent state of a mounted Vault's sync: OK · STALE (consecutive failures, behind-count over threshold, or fetch-blocked) · UNKNOWN (no record — a pre-sidecar script version or a mount the loop never reached) · ZOMBIE (the newest record older than 3× the sync cadence — a dead scheduler is not a quiet all-clear) · ro-by-policy (an expected failure on a read-only mount, muted). Sensed by the status sidecar outside vault content; rendered by the status command and the fleet digest. No state is silent.
+_Avoid_: sync status (as a state name), stale (unqualified — name the state)
 
 ### Agentic work
 
 **Notturno**:
-The scheduled agentic-work context — a registered set of jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. Already live as the team-facing nightly Slack automation in `harmoniqs/amicissimo` (morning brief, per-member briefs, EOD check-in, news posts) on GitHub Actions; the unified context grows it to all scheduled agentic work, including local repo/Julia-heavy jobs. Subsumes the dream cycle: `dream-reflect` runs as one job within Notturno. One night's run of the registered jobs is "tonight's notturno".
+The scheduled agentic-work context — jobs that run unattended on a schedule, each producing staged, reviewable output rather than direct changes. The engine and its full language (Job, Surface, Warrant tier, Registry) live in the premium bundle, `harmoniqs/amicissimo` — this glossary does not duplicate them. One night's run of the registered jobs is "tonight's notturno".
 _Avoid_: cron, scheduler (as concept names), night shift
 
 **Director**:
