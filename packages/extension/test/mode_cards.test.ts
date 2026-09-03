@@ -274,4 +274,34 @@ describe("worker cards — default-method-body floor (one per card)", () => {
       expect(method, `${name}: example brief sits in a text fence`).toContain("```text");
     });
   }
+
+  // review F2c pins — the structural invariants the scoped merge relies on:
+  // exactly one Example brief caption, fenced ```text, INSIDE Method; the
+  // Method subsections in pinned order; no ```text anywhere outside Method.
+  it("pins: one ```text Example brief caption inside Method, none outside; pinned subsection order", () => {
+    for (const name of WORKER_CARDS) {
+      const text = workerText(name);
+      const methodStart = text.indexOf("## Method");
+      const methodEnd = (() => {
+        const next = /^## /m.exec(text.slice(methodStart + 1));
+        return next && next.index !== undefined ? methodStart + 1 + next.index : text.length;
+      })();
+      const method = text.slice(methodStart, methodEnd);
+      const outside = text.slice(0, methodStart) + text.slice(methodEnd);
+      // exactly one caption, inside Method
+      expect((text.match(/^Example brief/gm) ?? []).length, `${name}: one Example brief caption`).toBe(1);
+      expect(method).toMatch(/^Example brief/m);
+      // its fence is ```text, and no ```text fence exists outside Method
+      // (the merge fence search is scoped to Method — this pin keeps the
+      // scope sound against card edits)
+      expect(method).toContain("```text");
+      expect(outside, `${name}: no text fence outside Method`).not.toContain("```text");
+      // pinned subsection order within Method
+      const order = ["Default procedure", "Model routing, default:", "Iteration budget, default:", "Example brief"];
+      const positions = order.map((anchor) => method.search(new RegExp(`^${anchor.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m")));
+      positions.forEach((p, k) => expect(p, `${name}: ${order[k]} present`).toBeGreaterThan(-1));
+      for (let k = 1; k < positions.length; k++)
+        expect(positions[k]!, `${name}: ${order[k]} after ${order[k - 1]}`).toBeGreaterThan(positions[k - 1]!);
+    }
+  });
 });
