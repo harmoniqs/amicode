@@ -93,6 +93,17 @@ export async function main(argv: string[]): Promise<number> {
       return report.exit;
     }
 
+    case "premium": {
+      // The split's entitlement surface (#750, design amicode#747): the
+      // Altissimo pattern — entitlement, not capability fork. Not-granted is
+      // an honest state (exit 0): the vault machinery works fully without it.
+      const { premiumReport } = await import("./premium.js");
+      const r = premiumReport(rest);
+      if (r.json !== null) console.log(r.json);
+      else console.log(r.rendered);
+      return r.exit;
+    }
+
     // ── the upgrade verbs (#526, spec D2): the four upgrade chains as
     // receipt-emitting runbooks. Pre-flight composes the SAME doctor v2
     // probes (current → no-op; unknown → abort; stale/integrity → proceed);
