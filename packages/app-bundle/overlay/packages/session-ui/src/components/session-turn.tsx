@@ -441,9 +441,101 @@ export function SessionTurn(
                 </div>
               </Show>
               <SessionRetry status={status()} show={active()} />
-              {/* Per-message "Changed files" section suppressed (#733):
-                  redundant with the side-panel Files Changed tab, and the
-                  unfiltered snapshot diff leaks cross-session file changes. */}
+              <Show when={edited() > 0 && !working()}>
+                <div
+                  data-slot="session-turn-diffs"
+                  data-component="session-turn-diffs-group"
+                  data-show-all={showAll() || undefined}
+                >
+                  <div data-slot="session-turn-diffs-header">
+                    <span data-slot="session-turn-diffs-label">
+                      {i18n.t(
+                        edited() === 1 ? "ui.sessionTurn.diffs.changed.one" : "ui.sessionTurn.diffs.changed.other",
+                        { count: String(edited()) },
+                      )}
+                    </span>
+                    <DiffChanges changes={diffs()} />
+                    <Show when={overflow() > 0}>
+                      <span data-slot="session-turn-diffs-toggle" onClick={toggleAll}>
+                        {showAll() ? i18n.t("ui.sessionTurn.diffs.showLess") : i18n.t("ui.sessionTurn.diffs.showAll")}
+                      </span>
+                    </Show>
+                  </div>
+                  <div data-component="session-turn-diffs-content">
+                    <Accordion
+                      multiple
+                      style={{ "--sticky-accordion-offset": "44px" }}
+                      value={expanded()}
+                      onChange={(value) => setState("expanded", Array.isArray(value) ? value : value ? [value] : [])}
+                    >
+                      <For each={visible()}>
+                        {(diff) => {
+                          const view = normalize(diff)
+                          const active = createMemo(() => expanded().includes(diff.file))
+                          const [shown, setShown] = createSignal(false)
+
+                          createEffect(
+                            on(
+                              active,
+                              (value) => {
+                                if (!value) {
+                                  setShown(false)
+                                  return
+                                }
+
+                                requestAnimationFrame(() => {
+                                  if (!active()) return
+                                  setShown(true)
+                                })
+                              },
+                              { defer: true },
+                            ),
+                          )
+
+                          return (
+                            <Accordion.Item value={diff.file}>
+                              <StickyAccordionHeader>
+                                <Accordion.Trigger>
+                                  <div data-slot="session-turn-diff-trigger">
+                                    <span data-slot="session-turn-diff-path">
+                                      <Show when={diff.file.includes("/")}>
+                                        <span data-slot="session-turn-diff-directory">
+                                          {`\u202A${getDirectory(diff.file)}\u202C`}
+                                        </span>
+                                      </Show>
+                                      <span data-slot="session-turn-diff-filename">{getFilename(diff.file)}</span>
+                                    </span>
+                                    <div data-slot="session-turn-diff-meta">
+                                      <span data-slot="session-turn-diff-changes">
+                                        <DiffChanges changes={diff} />
+                                      </span>
+                                      <span data-slot="session-turn-diff-chevron">
+                                        <Icon name="chevron-down" size="small" />
+                                      </span>
+                                    </div>
+                                  </div>
+                                </Accordion.Trigger>
+                              </StickyAccordionHeader>
+                              <Accordion.Content>
+                                <Show when={shown()}>
+                                  <div data-slot="session-turn-diff-view" data-scrollable>
+                                    <Dynamic component={fileComponent} mode="diff" fileDiff={view.fileDiff} />
+                                  </div>
+                                </Show>
+                              </Accordion.Content>
+                            </Accordion.Item>
+                          )
+                        }}
+                      </For>
+                    </Accordion>
+                    <Show when={!showAll() && overflow() > 0}>
+                      <div data-slot="session-turn-diffs-more" onClick={toggleAll}>
+                        {i18n.t("ui.sessionTurn.diffs.more", { count: String(overflow()) })}
+                      </div>
+                    </Show>
+                  </div>
+                </div>
+              </Show>
               <Show when={error()}>
                 <Card variant="error" class="error-card">
                   {errorText()}
