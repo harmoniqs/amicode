@@ -79,7 +79,7 @@ if grep -qi 'deviation' "$OD/README.md"; then
 fi
 
 # --- the template's delimited rule section (the generated surface) ---
-TPLREADME="$REPO/scratchpad/armonia-template-staging/README.md"
+TPLREADME="$REPO/templates/vault/README.md"
 [ -f "$TPLREADME" ] || fail "template README missing: $TPLREADME"
 grep -q '^## Naming & layout (the rule of record)$' "$TPLREADME" \
   || fail "template README must carry the delimited rule section heading"
