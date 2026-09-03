@@ -5,6 +5,8 @@ import { FileIcon } from "@opencode-ai/ui/file-icon"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { useI18n } from "@opencode-ai/ui/context/i18n"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
+import { Icon } from "@opencode-ai/ui/v2/icon"
+import { IconButtonV2 } from "@opencode-ai/ui/v2/icon-button-v2"
 import { mediaKindFromPath } from "../../pierre/media"
 import { cloneSelectedLineRange, previewSelectedLines } from "../../pierre/selection-bridge"
 import { copyTextToClipboard } from "../../util/clipboard"
@@ -53,6 +55,12 @@ function statusLabel(status: ViewDiff["status"]) {
   if (status === "added") return "A"
   if (status === "deleted") return "D"
   return "M"
+}
+
+function statusTooltip(status: ViewDiff["status"]) {
+  if (status === "added") return "Added"
+  if (status === "deleted") return "Deleted"
+  return "Modified"
 }
 
 function statusType(status: ViewDiff["status"]) {
@@ -258,11 +266,42 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   return (
     <>
       <div data-slot="session-review-v2-file-header">
+        <Show when={props.onRefresh}>
+          {(handler) => (
+            <TooltipV2 openDelay={500} value="Refresh">
+              <button
+                type="button"
+                aria-label="Refresh"
+                onClick={handler()}
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  width: "10px",
+                  height: "10px",
+                  padding: "0",
+                  margin: "0 -4px 0 0",
+                  border: "none",
+                  background: "none",
+                  cursor: "pointer",
+                  color: "var(--icon-base)",
+                  "flex-shrink": "0",
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "var(--icon-hover, var(--icon-base))")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "var(--icon-base)")}
+              >
+                <Icon name="refresh" size="small" />
+              </button>
+            </TooltipV2>
+          )}
+        </Show>
         <MenuV2.Context>
           <MenuV2.Context.Trigger as="div" data-slot="session-review-v2-file-title">
-            <div data-slot="session-review-v2-file-status" data-type={statusType(view().status)}>
-              {statusLabel(view().status)}
-            </div>
+            <TooltipV2 openDelay={500} value={statusTooltip(view().status)}>
+              <div data-slot="session-review-v2-file-status" data-type={statusType(view().status)}>
+                {statusLabel(view().status)}
+              </div>
+            </TooltipV2>
             <FileIcon node={{ path: props.file, type: "file" }} />
             <FileNameWithPicker
               file={props.file}
