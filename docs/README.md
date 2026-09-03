@@ -17,6 +17,17 @@ instead, see [`AGENTS.md`](../AGENTS.md).
 | [Ledger bridge contract](./ledger-bridge-contract.md) | SEAM 4: the shared record doctrine (append-only, atomic terminal markers, content hashes) across amicode run dirs, strumento task records, and the Telaio event spine — plus the replay fixtures the fold must replay. |
 | [Flywheel decay](./flywheel-decay.md) | SEAM 7: the campaign-family derivation per record kind (run dirs, task records, store provenance) and the decay computation — per family, the (acquisitions, iterations, wall clock) trend vs prior same-family campaigns, with the F4 findings the records force. |
 
+## Architecture decisions
+
+This repo's decision records live in [`docs/adr/`](./adr/). The agent-cards
+decision — worker role cards ship as the public base architecture (the five
+cards in [`packages/extension/agents/`](../packages/extension/agents/):
+experimenter, hypothesizer, analyzer, implementer, librarian, each complete and
+functional with no entitlement, with a `dispatch:` frontmatter field naming its
+premium tuning source) — is recorded in the premium bundle's ADR-0003
+(amicissimo's series, distinct from this repo's ADR-0003 skill-surfaces record);
+this repo's cards are that decision's public base layer.
+
 ## New here?
 
 Start with [Getting started](./getting-started.md) and run the worked
