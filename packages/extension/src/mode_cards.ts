@@ -21,8 +21,7 @@ import { createHash } from "node:crypto";
 import { readLocalEntitlements } from "./scores/entitlements";
 
 /** The premium entitlement code that lights the overlay surface (the same
- *  code `amico premium` reports; the Altissimo pattern — entitlement, not
- *  capability fork). */
+ *  code `amico premium` reports — entitlement, not capability fork). */
 export const PREMIUM_ENTITLEMENT = "amicissimo";
 
 /** Staging options (#761). Injectable for hermetic tests; production calls
