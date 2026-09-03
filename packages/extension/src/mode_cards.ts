@@ -119,16 +119,29 @@ export interface OverlayRegistry {
   rejections: OverlayRejection[];
 }
 
-/** Load every <id>.json in the overlays dir into the registry. Malformed
- *  files, version/id mismatches, and non-string field values are rejection
- *  records — the rest of the registry still loads. */
+/** Load every <id>.json in the overlays dir into the registry. An
+ *  UNREADABLE dir (e.g. mode-000: existsSync passes, readdirSync throws)
+ *  degrades to absence — an honest registry-level rejection record, never
+ *  a staging failure (the funnel invariant, review F3). Malformed files,
+ *  version/id mismatches, and non-string field values are rejection records
+ *  too — the rest of the registry still loads. */
 export function loadOverlayRegistry(overlaysDir: string): OverlayRegistry {
   const overlays = new Map<string, Overlay>();
   const rejections: OverlayRejection[] = [];
-  if (!fs.existsSync(overlaysDir) || !fs.statSync(overlaysDir).isDirectory()) {
+  let entries: string[];
+  try {
+    if (!fs.existsSync(overlaysDir) || !fs.statSync(overlaysDir).isDirectory()) {
+      return { overlays, rejections };
+    }
+    entries = fs.readdirSync(overlaysDir);
+  } catch (e) {
+    rejections.push({
+      overlay_id: "",
+      reason: `overlays dir unreadable (${overlaysDir}): ${(e as Error).message}`,
+    });
     return { overlays, rejections };
   }
-  for (const f of fs.readdirSync(overlaysDir).filter((x) => x.endsWith(".json")).sort()) {
+  for (const f of entries.filter((x) => x.endsWith(".json")).sort()) {
     const id = f.slice(0, -".json".length);
     try {
       const parsed = JSON.parse(fs.readFileSync(path.join(overlaysDir, f), "utf8")) as unknown;

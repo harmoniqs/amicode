@@ -528,3 +528,56 @@ describe("merge anchors are scoped to the Method section (review F1)", () => {
     );
   });
 });
+
+// ── review F3: an unreadable overlays dir degrades to absence ───────────────
+//
+// existsSync passes on a mode-000 dir; readdirSync then throws EACCES. The
+// funnel invariant: an entitlement/overlay failure never dead-ends staging.
+import { chmodSync } from "node:fs";
+import { loadOverlayRegistry } from "../src/mode_cards";
+
+describe("unreadable overlays dir (review F3)", () => {
+  it("loadOverlayRegistry never throws on an unreadable dir", () => {
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-eacces-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "x.json"), "{}");
+    chmodSync(dir, 0o000);
+    try {
+      let registry: ReturnType<typeof loadOverlayRegistry> | undefined;
+      expect(() => (registry = loadOverlayRegistry(dir))).not.toThrow();
+      expect(registry!.overlays.size).toBe(0);
+      // honest, not silent: the unreadable dir is a registry-level rejection
+      expect(registry!.rejections.length).toBe(1);
+      expect(registry!.rejections[0]!.reason).toMatch(/unreadable|EACCES|denied/i);
+    } finally {
+      chmodSync(dir, 0o755); // restore so tmp cleanup can remove it
+    }
+  });
+
+  it("staging with an entitled but unreadable overlays dir stages every base card, no throw", () => {
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-eacces-stg-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "researcher-tuning.json"),
+      JSON.stringify({ overlay_version: 1, id: "researcher-tuning", fields: { model_routing: "TUNED" } }),
+    );
+    chmodSync(dir, 0o000);
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-eacces-dest-"));
+    try {
+      const r = stageModCards(EXTENSION_PATH, destDir, {
+        entitlements: ENTITLED,
+        overlaySource: root,
+      });
+      for (const f of expectedCards()) {
+        expect(readFileSync(join(destDir, f), "utf8")).toBe(readFileSync(join(AGENTS_SRC, f), "utf8"));
+      }
+      expect(r.merges).toEqual([]);
+      expect(r.rejections.length).toBe(1);
+      expect(r.rejections[0]!.reason).toMatch(/unreadable|EACCES|denied/i);
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+  });
+});
