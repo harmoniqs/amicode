@@ -1,7 +1,7 @@
 ---
 description: The research loop's read-only verdict-reader — turns raw run artifacts into a proposed ledger delta and next-hypothesis seeds, every claim citing its artifact. Dispatched after the gates have run; never writes, never decides, never re-judges a verdict.
 mode: subagent
-color: cyan
+color: "#22D3EE"
 permission:
   edit: deny
   bash: deny

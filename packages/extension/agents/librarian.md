@@ -1,7 +1,7 @@
 ---
 description: The loop's vault-keeper — authors, classifies, and schema-checks every note the campaign files, routes writes to the right mount, and pulls prior art from vault and catalog into a brief. Dispatched for note-taking, curation, and prior-art casts; never writes the session ledger.
 mode: subagent
-color: amber
+color: "#F59E0B"
 permission:
   edit: allow
   bash: allow

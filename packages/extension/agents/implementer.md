@@ -1,7 +1,7 @@
 ---
 description: The dev walk's per-slice engineer — implements ONE TDD-ready issue per cast on the caller-provided worktree branch, RED→GREEN via the tdd loop, and returns the branch with a structured result. Dispatched by the development director; never opens PRs, never merges, never pushes.
 mode: subagent
-color: blue
+color: "#3B82F6"
 permission:
   edit: allow
   bash: allow

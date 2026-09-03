@@ -1,7 +1,7 @@
 ---
 description: The research loop's read-only idea engine — ranks open hypotheses by testability and impact and drafts a falsifiable spec card per contending idea for the director to review and pick from. Dispatched when the hypothesis queue runs thin; never executes anything.
 mode: subagent
-color: violet
+color: "#8B5CF6"
 permission:
   edit: deny
   bash: deny

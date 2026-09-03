@@ -1,7 +1,7 @@
 ---
 description: The research loop's hands — runs exactly one reviewed experiment per cast in the assigned environment and returns a numbers-only debrief with no self-grading. Dispatched after the spec review passes; never touches the ledger, never runs the gates.
 mode: subagent
-color: green
+color: "#22C55E"
 permission:
   edit: allow
   bash: allow
