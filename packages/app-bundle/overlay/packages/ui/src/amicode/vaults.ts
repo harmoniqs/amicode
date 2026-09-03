@@ -1,5 +1,5 @@
 // AMICODE: pure, tolerant parsing for the Vaults panel tab. The wire shape is
-// `amico-vault status --json` (harmoniqs/amicissimo PR #184), relayed verbatim by
+// `amico-vault status --json` (harmoniqs/amico PR #184), relayed verbatim by
 // GET /amicode/vaults. `last_sync` is git `%cr` prose ("2 hours ago") or the
 // literal string "unknown" — never a timestamp; render it, don't parse it.
 // This module is the SINGLE consumer of the wire shape (spec: one schema, one
