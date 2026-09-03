@@ -10,6 +10,7 @@
 // agents directory. Semantics: ALWAYS-COPY (extension-owned, overwrite-on-
 // activate, never blocks activation).
 import { describe, it, expect } from "vitest";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,5 +92,27 @@ describe("stageModCards", () => {
   it("tripwire: the extension really ships the cards at the source path", () => {
     for (const f of expectedCards())
       expect(existsSync(join(AGENTS_SRC, f)), `missing source ${f}`).toBe(true);
+  });
+
+  it("writes a staging receipt recording every card and its base content hash", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-receipt-"));
+    const fixedNow = "2026-09-03T00:00:00.000Z";
+    const r = stageModCards(EXTENSION_PATH, destDir, { ...HERMETIC, now: () => fixedNow });
+    const receiptPath = join(destDir, ".staging-receipt.json");
+    expect(r.receiptPath).toBe(receiptPath);
+    expect(existsSync(receiptPath)).toBe(true);
+    const receipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    expect(receipt.staged_at).toBe(fixedNow);
+    expect(receipt.dir).toBe(destDir);
+    // one record per staged card, each carrying the BASE content hash
+    expect(receipt.cards.map((c: { card: string }) => c.card)).toEqual(r.staged);
+    for (const c of receipt.cards) {
+      expect(c.overlay_id).toBeNull(); // no entitlement → base alone
+      expect(c.merged_fields).toEqual([]);
+      const digest = createHash("sha256")
+        .update(readFileSync(join(AGENTS_SRC, c.card)))
+        .digest("hex");
+      expect(c.base_sha256).toBe(`sha256:${digest}`);
+    }
   });
 });

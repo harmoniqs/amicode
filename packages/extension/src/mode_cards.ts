@@ -17,6 +17,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { createHash } from "node:crypto";
 
 /** Staging options (#761). Injectable for hermetic tests; production calls
  *  use the defaults (the machine's real entitlements + overlay ladder). */
@@ -63,24 +64,48 @@ export function listModeCardFiles(extensionPath: string): string[] {
   return cards;
 }
 
-/** Copy the shipped mode cards into ~/.config/opencode/agents/. Returns what
- *  landed where (for the activation log line). */
+/** Copy the shipped mode cards into ~/.config/opencode/agents/, writing a
+ *  staging receipt (provenance) next to the staged cards. Returns what landed
+ *  where (for the activation log line). */
 export function stageModCards(
   extensionPath: string,
   destDir: string = globalAgentsDir(),
-  _opts: StageOptions = {},
-): { dir: string; staged: string[] } {
+  opts: StageOptions = {},
+): { dir: string; staged: string[]; receiptPath: string } {
   const srcDir = path.join(extensionPath, "agents");
   fs.mkdirSync(destDir, { recursive: true });
   const staged: string[] = [];
+  const cardRecords: Array<Record<string, unknown>> = [];
+  const nowIso = opts.now ?? (() => new Date().toISOString());
   for (const f of listModeCardFiles(extensionPath)) {
     const src = path.join(srcDir, f);
     if (!fs.existsSync(src))
       throw new Error(
         `mode card missing from the extension: ${src} — packaging dropped it (.vscodeignore)`,
       );
-    fs.copyFileSync(src, path.join(destDir, f));
+    const bytes = fs.readFileSync(src);
+    fs.writeFileSync(path.join(destDir, f), bytes);
     staged.push(f);
+    cardRecords.push({
+      card: f,
+      base_sha256: "sha256:" + createHash("sha256").update(bytes).digest("hex"),
+      overlay_id: null,
+      merged_fields: [] as string[],
+    });
   }
-  return { dir: destDir, staged };
+  const receiptPath = path.join(destDir, ".staging-receipt.json");
+  fs.writeFileSync(
+    receiptPath,
+    JSON.stringify(
+      {
+        receipt_version: 1,
+        staged_at: nowIso(),
+        dir: destDir,
+        cards: cardRecords,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  return { dir: destDir, staged, receiptPath };
 }
