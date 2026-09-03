@@ -16,6 +16,7 @@
 
 import { buildStackStateBlock } from "./stack_state";
 import { buildRecentSessionsBlock } from "./session_recap";
+import { buildSetupStateSection } from "./setup_state";
 
 console.error("[amicode-context] loaded — stack-state + session-recap injection plugin");
 
@@ -33,6 +34,17 @@ export const AmicodeContext = async () => ({
     } catch (e) {
       console.error(`[amicode-context] buildStackStateBlock failed: ${e instanceof Error ? e.message : String(e)}`);
       // Never throw — a failing hook must not break the prompt build.
+    }
+
+    // Setup state (agent-driven tool setup — only when something needs attention)
+    try {
+      const setup = buildSetupStateSection();
+      if (setup) {
+        output.system.push(setup);
+      }
+    } catch (e) {
+      console.error(`[amicode-context] buildSetupStateSection failed: ${e instanceof Error ? e.message : String(e)}`);
+      // Never throw — a missing section is silent, a crash is not.
     }
 
     // Recent sessions recap (from the opencode session DB)

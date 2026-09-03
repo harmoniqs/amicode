@@ -7,12 +7,15 @@ import type { TelemetryContext } from "./server_auth";
 
 // ============================================================================
 // Run-corpus telemetry — the extension-host glue around server_auth.ts's pure
-// gate/encoding (buildTelemetryEnv). This module owns the settings/consent keys,
-// first-run consent, and sourcing the resource attributes + the auth token the
-// ingest keys on (BEARER_AUTH_SPEC.md). Auth is the user's EXISTING per-user
+// gate/encoding (buildTelemetryEnv). This module owns the settings keys and
+// sourcing the resource attributes + the auth token the ingest keys on
+// (BEARER_AUTH_SPEC.md). Auth is the user's EXISTING per-user
 // Solve/cloud bearer token from ~/.amico/cloud.json (identity-minted, revocable)
 // — there is no separate ingest secret to manage. Nothing here transmits — it
 // only resolves a TelemetryContext; server_auth decides whether the gate is open.
+// The first-run consent toast was removed (consent UI returns with the telemetry
+// rework) — until consent is recorded by some future surface, the gate stays
+// shut and nothing transmits.
 // ============================================================================
 
 /** globalState key recording the first-run consent decision (true = Enable,
@@ -109,29 +112,4 @@ export function resolveTelemetryContext(
     repo,
     gitRef,
   };
-}
-
-/** First-run consent notification (a non-modal VS Code toast — NOT a modal or OS
- *  dialog). Shows ONLY when consent is unset. Enable/Disable both record an answer
- *  (so we never re-prompt) and set `amicode.telemetry.enabled`; a dismissed or
- *  auto-hidden notification leaves consent UNSET so we ask again next
- *  activation. On Enable, `onEnable` lets the caller bounce the server so capture
- *  starts on THIS boot rather than the next. Until answered, the gate stays shut. */
-export async function maybePromptTelemetryConsent(
-  ctx: vscode.ExtensionContext,
-  opts?: { onEnable?: () => void },
-): Promise<void> {
-  if (ctx.globalState.get<boolean>(TELEMETRY_CONSENT_KEY) !== undefined) return; // already answered
-  const choice = await vscode.window.showInformationMessage(
-    "Help improve Amico. With your consent, agent runs — including your prompts and tool output, which may contain source code — are captured to Harmoniqs' internal run corpus so we can debug and improve the agent. Nothing is sent until you choose here. You can change this any time in Settings (amicode.telemetry.enabled).",
-    "Enable",
-    "Disable",
-  );
-  if (choice === undefined) return; // dismissed → leave unset, ask again next activation
-  const enabled = choice === "Enable";
-  await vscode.workspace
-    .getConfiguration("amicode")
-    .update("telemetry.enabled", enabled, vscode.ConfigurationTarget.Global);
-  await ctx.globalState.update(TELEMETRY_CONSENT_KEY, enabled);
-  if (enabled) opts?.onEnable?.();
 }

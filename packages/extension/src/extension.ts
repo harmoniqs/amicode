@@ -23,16 +23,14 @@ import {
   serverAuthHeader,
   serverAuthToken,
   buildServerSpawnEnv,
-  buildTelemetryEnv,
   telemetryGateOpen,
-  TELEMETRY_ENV_KEYS,
 } from "./server_auth";
 import {
   mintTelemetrySession,
   resolveTelemetryContext,
-  maybePromptTelemetryConsent,
 } from "./telemetry";
 import { resolveLabTomlPath, checkLabToml } from "./lab_config";
+import { computeSetupState, writeSetupStateFile } from "./setup_state";
 import { OpencodeEventClient } from "./sse_client";
 import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
@@ -54,7 +52,6 @@ import {
   hasJuliaup,
   hasChannel,
   projectInstantiated,
-  shouldOfferJuliaSetup,
   buildSetupSteps,
   resolveJuliaupCommands,
   juliaProjectFingerprint,
@@ -215,13 +212,10 @@ async function refreshDeviceInspector(channel: vscode.OutputChannel): Promise<vo
  *  second Stop click must not stack a second dialog. */
 const pendingStops = new Set<string>();
 
-// Domain-pack activation gate (ADR 0008): quantum-control is the first and
-// only domain pack, always active today. This gate exists so domain-specific
-// infrastructure (Julia substrate, domain tools) is visibly gated rather than
-// implicitly unconditional. A second domain pack would make this configurable.
-function isQuantumControlPackActive(): boolean {
-  return true;
-}
+// Domain-pack gate (ADR 0008): quantum-control is the first and only domain
+// pack, always active today. The gate's former consumer (the Julia-setup
+// auto-offer) moved to agent-driven, on-block surfacing — the domain stays
+// implicit until a second domain pack exists.
 
 export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const opencodeChannel = vscode.window.createOutputChannel("Amicode — opencode");
@@ -349,48 +343,6 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   const telemetryOpen = (): boolean =>
     telemetryGateOpen(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId }));
 
-  /** Reconcile telemetry on the LIVE spawn env in place (the amicoPython
-   *  self-heal pattern: ServerManager re-reads opts.env at start()). Re-gates the
-   *  OTLP env keys AND toggles experimental.openTelemetry inside the live
-   *  OPENCODE_CONFIG_CONTENT — both from ONE gate read, so a consent flip or a key
-   *  change takes effect (exporter + span generation together) on the next
-   *  `amicode.restartServer` WITHOUT a window reload. No live env yet → no-op. */
-  const refreshTelemetryLiveEnv = (): void => {
-    if (!currentSpawnEnv) return;
-    const open = telemetryOpen();
-    // exporter env
-    for (const k of TELEMETRY_ENV_KEYS) delete currentSpawnEnv[k];
-    Object.assign(
-      currentSpawnEnv,
-      buildTelemetryEnv(resolveTelemetryContext(ctx, { sessionId: telemetrySessionId })),
-    );
-    // span-generation flag — patch the live config JSON in place (works whatever
-    // project the current server was spawned from; toggles only our one field).
-    try {
-      const cfg = JSON.parse(currentSpawnEnv.OPENCODE_CONFIG_CONTENT ?? "{}") as {
-        experimental?: Record<string, unknown>;
-      };
-      if (open) cfg.experimental = { ...(cfg.experimental ?? {}), openTelemetry: true };
-      else if (cfg.experimental) {
-        delete cfg.experimental.openTelemetry;
-        if (Object.keys(cfg.experimental).length === 0) delete cfg.experimental;
-      }
-      currentSpawnEnv.OPENCODE_CONFIG_CONTENT = JSON.stringify(cfg);
-    } catch {
-      /* malformed config JSON (never, we built it) → leave it; env gate still applied */
-    }
-  };
-
-  // First-run consent (fire-and-forget, like the vault/julia popups). Until it is
-  // answered the gate stays shut; on Enable we reconcile + bounce the server so
-  // capture starts on THIS boot rather than waiting for the next activation.
-  void maybePromptTelemetryConsent(ctx, {
-    onEnable: () => {
-      refreshTelemetryLiveEnv();
-      if (serverManager) void vscode.commands.executeCommand("amicode.restartServer");
-    },
-  });
-
   // 1. UI surfaces — Workspace sidebar (webview, #673)
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
   ctx.subscriptions.push(
@@ -424,18 +376,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // otherwise silently solve against the wrong hardware or fail opaquely mid-solve.
   // Field-precise: the error names the offending key + path. Non-fatal — the rest
   // of the extension still activates; a partner can fix the config and reload.
+  // No toast: the validation state rides the agent's Setup-state context stream,
+  // so it surfaces when a task actually touches hardware config.
   const labPath = resolveLabTomlPath(vscode.workspace.getConfiguration("amicode").get<string>("labToml", ""));
   const lab = checkLabToml(labPath);
   if (lab.state === "invalid") {
     runsChannel.appendLine(`[lab] ${lab.path} is INVALID:`);
     for (const e of lab.errors) runsChannel.appendLine(`  ${e}`);
-    void vscode.window.showErrorMessage(
-      `Amicode: lab.toml is invalid — ${lab.errors[0]}` +
-        (lab.errors.length > 1 ? ` (+${lab.errors.length - 1} more; see "Amicode — runs" output)` : ""),
-    );
   } else if (lab.state === "valid") {
     runsChannel.appendLine(`[lab] validated ${lab.path}`);
   }
+
+  // Setup state (agent-driven tool setup): snapshot Julia readiness + lab.toml
+  // validity to the ops dir so the in-chat agent can surface setup only when a
+  // task actually needs it (opencode-plugin/setup_state.ts reads this file).
+  // No toast — the first-run notification surface is gone; the agent is the
+  // surface. Re-snapshotted by the healthcheck command (post-setup refresh).
+  writeSetupStateFile(
+    computeSetupState({
+      extensionPath: ctx.extensionPath,
+      juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+      labTomlSetting: vscode.workspace.getConfiguration("amicode").get<string>("labToml", ""),
+    }),
+  );
 
   // 3. opencode project bootstrap
   const amicoRunBinDir = resolveAmicoRunBinDir(ctx.extensionPath);
@@ -1128,14 +1091,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // e.g. 1.12.6 vs the Manifest's 1.12.3) — a patch drift install.sh already
   // treats as fine. Resolve juliaup and its sibling launcher together so a
   // standalone Julia earlier on PATH cannot intercept the `+<minor>` argument.
-  const runJuliaSetup = async (fromCommand: boolean): Promise<void> => {
+  // Manual-only (`amicode.setupJulia` palette command): no activation-time
+  // auto-offer — the agent surfaces setup when a task actually needs the
+  // toolchain (Setup state in the context stream), never proactively.
+  const runJuliaSetup = async (): Promise<void> => {
     const manifestSrc = path.resolve(ctx.extensionPath, "julia", "Manifest.toml");
     const projectSrc = path.resolve(ctx.extensionPath, "julia", "Project.toml");
     const minor = pinnedJuliaMinor(manifestSrc);
     const projectFingerprint = juliaProjectFingerprint(projectSrc, manifestSrc);
     if (!minor || !projectFingerprint) {
-      if (fromCommand)
-        void vscode.window.showErrorMessage("Amicode: could not fingerprint the bundled Julia project.");
+      void vscode.window.showErrorMessage("Amicode: could not fingerprint the bundled Julia project.");
       return;
     }
     const project = resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", ""));
@@ -1144,22 +1109,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const channelPresent = juliaupPresent && hasChannel(minor, undefined, juliaupCommands);
     const ready = juliaupPresent && channelPresent && projectInstantiated(project, projectFingerprint);
     if (ready) {
-      if (fromCommand) void vscode.window.showInformationMessage(`Amicode: Julia ${minor} is already set up.`);
+      void vscode.window.showInformationMessage(`Amicode: Julia ${minor} is already set up.`);
       return;
-    }
-    if (!fromCommand && ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true) return;
-    if (!fromCommand) {
-      const choice = await vscode.window.showInformationMessage(
-        `Amicode uses Julia ${minor} (via juliaup) to run solves. Set it up now? The first run installs and precompiles the Piccolo project (a few minutes).`,
-        "Set up Julia",
-        "Not now",
-        "Don't ask again",
-      );
-      if (choice === "Don't ask again") {
-        await ctx.globalState.update("amicode.juliaSetup.dismissed", true);
-        return;
-      }
-      if (choice !== "Set up Julia") return;
     }
     const steps = buildSetupSteps({
       minor,
@@ -1182,30 +1133,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       `Amicode: setting up Julia ${minor} in the terminal. When it finishes, run "Amicode: Healthcheck" (Command Palette) to verify.`,
     );
   };
-  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup(true)));
-  // Auto-offer on first run when the toolchain isn't ready (juliaup/channel/
-  // project missing) and the user hasn't dismissed. Command bypasses the gate.
-  // Gated: Julia substrate belongs to the quantum-control domain pack (ADR 0008).
-  if (
-    isQuantumControlPackActive() &&
-    shouldOfferJuliaSetup({
-      juliaupPresent: hasJuliaup(),
-      channelPresent: (() => {
-        const m = pinnedJuliaMinor(path.resolve(ctx.extensionPath, "julia", "Manifest.toml"));
-        return m ? hasChannel(m) : false;
-      })(),
-      projectInstantiated: projectInstantiated(
-        resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
-        juliaProjectFingerprint(
-          path.resolve(ctx.extensionPath, "julia", "Project.toml"),
-          path.resolve(ctx.extensionPath, "julia", "Manifest.toml"),
-        ) ?? "",
-      ),
-      dismissed: ctx.globalState.get<boolean>("amicode.juliaSetup.dismissed") === true,
-    })
-  ) {
-    void runJuliaSetup(false);
-  }
+  ctx.subscriptions.push(vscode.commands.registerCommand("amicode.setupJulia", () => void runJuliaSetup()));
 
   // Healthcheck (the real `amicode.healthcheck`): verify the managed Julia
   // toolchain (Piccolo loads), the opencode server, and LLM creds. This is what
@@ -1303,6 +1231,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           results.push({ name: "Fleet", ok: false, detail: `check failed: ${(e as Error).message}` });
         }
 
+        // Refresh the Setup-state snapshot — a healthcheck is the natural
+        // post-setup moment (the user just ran the toolchain through its paces).
+        writeSetupStateFile(
+          computeSetupState({
+            extensionPath: ctx.extensionPath,
+            juliaProject: resolveJuliaProject(vscode.workspace.getConfiguration("amicode").get<string>("juliaProject", "")),
+            labTomlSetting: vscode.workspace.getConfiguration("amicode").get<string>("labToml", ""),
+          }),
+        );
         const report = formatHealthReport(results);
         opencodeChannel.appendLine(`[healthcheck] ${new Date().toISOString()}`);
         report.lines.forEach((l) => opencodeChannel.appendLine(`  ${l}`));
