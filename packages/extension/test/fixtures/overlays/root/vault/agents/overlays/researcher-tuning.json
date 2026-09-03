@@ -1,0 +1,10 @@
+{
+  "overlay_version": 1,
+  "id": "researcher-tuning",
+  "fields": {
+    "prompt_body": "Tuned procedure — the researcher tuning overlay sharpens the default, never replaces it:\n\n1. Re-read the named ledger sections from disk twice before scoring anything.\n2. Score every candidate on the review vocabulary: impact × ease, each 1–3; ties break toward the fewer-experiment test.\n3. Draft refutation cards for the top three contenders only — one falsifiable sentence, one named experiment, one refutation condition each.\n4. Return the ranked list with one-line rationales. Stop there — selection is the director's.",
+    "model_routing": "the heaviest reasoning class on the machine, every cast — ideation across a large prior-evidence corpus is the exact case the heavy class exists for; never downgrade a ranking pass to the standard class.",
+    "iteration_budget": "two ranking passes and up to two refinement passes per contending card; a third refinement pass needs the director's say-so named in the brief.",
+    "example_brief": "Queue thin, tuned: Ledger: <path> (re-read §1/§2/§5/§7 twice). Open stock: hypotheses/ across the mounted vaults. Prior evidence: the notes named in §2. Rank on the review vocabulary; draft refutation cards for the top three. One cast, read-only."
+  }
+}

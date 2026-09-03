@@ -116,3 +116,148 @@ describe("stageModCards", () => {
     }
   });
 });
+
+// ── #761: entitlement gate + overlay merge ─────────────────────────────────
+//
+// The overlay source fixture mirrors the premium checkout's overlay layout
+// (<root>/vault/agents/overlays/<id>.json); the real overlay content arrives
+// with the premium slice. researcher-tuning targets hypothesizer (all four
+// method-class fields); librarian-tuning targets analyzer + librarian (one
+// field, two cards); experimenter-tuning and engineer-tuning are DELIBERATELY
+// absent — those cards stage alone, no missing-target errors.
+const OVERLAY_ROOT = join(__dirname, "fixtures", "overlays", "root");
+const ENTITLED = ["amicissimo"];
+
+describe("stageModCards — entitlement gate", () => {
+  it("no entitlement: base cards stage alone even with the overlay source present", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-noent-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: [],
+      overlaySource: OVERLAY_ROOT,
+    });
+    // every card byte-identical to its base — no overlay fields anywhere
+    for (const f of expectedCards()) {
+      expect(readFileSync(join(destDir, f), "utf8")).toBe(
+        readFileSync(join(AGENTS_SRC, f), "utf8"),
+      );
+    }
+    expect(r.staged).toEqual(expectedCards());
+    const receipt = JSON.parse(readFileSync(r.receiptPath, "utf8"));
+    expect(receipt.cards.every((c: { overlay_id: string | null }) => c.overlay_id === null)).toBe(true);
+  });
+
+  it("entitlement via the real resolution path (entitlements.toml fixture dir)", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-entcfg-"));
+    const configDir = mkdtempSync(join(tmpdir(), "mode-cards-cfg-"));
+    writeFileSync(
+      join(configDir, "entitlements.toml"),
+      'codes = ["amicissimo"]\n',
+    );
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlementConfigDir: configDir,
+      overlaySource: OVERLAY_ROOT,
+    });
+    const staged = readFileSync(join(destDir, "hypothesizer.md"), "utf8");
+    expect(staged).toContain("Model routing, tuned:");
+  });
+
+  it("entitlement present but source absent: base cards stage alone, no errors", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-nosrc-"));
+    const emptyRoot = mkdtempSync(join(tmpdir(), "mode-cards-emptysrc-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: ENTITLED,
+      overlaySource: emptyRoot, // exists, but no overlays dir inside → absent
+    });
+    for (const f of expectedCards()) {
+      expect(readFileSync(join(destDir, f), "utf8")).toBe(
+        readFileSync(join(AGENTS_SRC, f), "utf8"),
+      );
+    }
+    const receipt = JSON.parse(readFileSync(r.receiptPath, "utf8"));
+    expect(receipt.cards.every((c: { overlay_id: string | null }) => c.overlay_id === null)).toBe(true);
+    expect(receipt.rejections ?? []).toEqual([]);
+  });
+});
+
+describe("stageModCards — overlay merge (entitlement + overlays present)", () => {
+  const fixedNow = "2026-09-03T12:00:00.000Z";
+
+  function stageEntitled(): { destDir: string; receipt: any; result: ReturnType<typeof stageModCards> } {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-merge-"));
+    const result = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: ENTITLED,
+      overlaySource: OVERLAY_ROOT,
+      now: () => fixedNow,
+    });
+    const receipt = JSON.parse(readFileSync(result.receiptPath, "utf8"));
+    return { destDir, receipt, result };
+  }
+
+  it("merges method-class fields into the dispatched card; defaults replaced", () => {
+    const { destDir } = stageEntitled();
+    const staged = readFileSync(join(destDir, "hypothesizer.md"), "utf8");
+    const base = readFileSync(join(AGENTS_SRC, "hypothesizer.md"), "utf8");
+    // all four method-class dimensions merged
+    expect(staged).toContain("Tuned procedure — the researcher tuning overlay sharpens the default");
+    expect(staged).toContain("Model routing, tuned: the heaviest reasoning class on the machine");
+    expect(staged).toContain("Iteration budget, tuned: two ranking passes");
+    expect(staged).toContain("Queue thin, tuned: Ledger: <path>");
+    // the base defaults they replace are GONE from the staged card
+    expect(staged).not.toContain("Model routing, default:");
+    expect(staged).not.toContain("Iteration budget, default:");
+    // the frozen Output contract and the frontmatter are byte-untouched
+    const oc = (t: string) => t.slice(t.indexOf("## Output contract"));
+    expect(oc(staged)).toBe(oc(base));
+    const fm = (t: string) => t.slice(0, t.indexOf("\n---\n", 4) + 5);
+    expect(fm(staged)).toBe(fm(base));
+  });
+
+  it("one overlay covers two cards (librarian-tuning → analyzer + librarian)", () => {
+    const { destDir, receipt } = stageEntitled();
+    for (const card of ["analyzer.md", "librarian.md"]) {
+      const staged = readFileSync(join(destDir, card), "utf8");
+      expect(staged).toContain("Model routing, tuned: the heavy reasoning class for curation casts");
+      expect(staged).not.toContain("Model routing, default:");
+      const rec = receipt.cards.find((c: { card: string }) => c.card === card);
+      expect(rec.overlay_id).toBe("librarian-tuning");
+      expect(rec.merged_fields).toEqual(["model_routing"]);
+    }
+  });
+
+  it("cards whose dispatch target is absent from the registry stage alone, no errors", () => {
+    const { destDir, receipt, result } = stageEntitled();
+    for (const card of ["experimenter.md", "implementer.md"]) {
+      expect(readFileSync(join(destDir, card), "utf8")).toBe(
+        readFileSync(join(AGENTS_SRC, card), "utf8"),
+      );
+      const rec = receipt.cards.find((c: { card: string }) => c.card === card);
+      expect(rec.overlay_id).toBeNull();
+    }
+    // directors carry no dispatch field at all — base, never overlay
+    for (const card of ["autodev.md", "autoresearch.md"]) {
+      expect(readFileSync(join(destDir, card), "utf8")).toBe(
+        readFileSync(join(AGENTS_SRC, card), "utf8"),
+      );
+    }
+    expect(result.rejections).toEqual([]);
+  });
+
+  it("provenance lands in the merge record — never in the staged card", () => {
+    const { destDir, receipt } = stageEntitled();
+    const rec = receipt.cards.find((c: { card: string }) => c.card === "hypothesizer.md");
+    // merge record: base card name, base content hash, overlay id, timestamp
+    expect(rec.card).toBe("hypothesizer.md");
+    const digest = createHash("sha256")
+      .update(readFileSync(join(AGENTS_SRC, "hypothesizer.md")))
+      .digest("hex");
+    expect(rec.base_sha256).toBe(`sha256:${digest}`);
+    expect(rec.overlay_id).toBe("researcher-tuning");
+    expect(rec.merged_fields).toEqual(["prompt_body", "model_routing", "iteration_budget", "example_brief"]);
+    expect(rec.merged_at).toBe(fixedNow);
+    // the STAGED card carries no provenance: no hash, no merge timestamp
+    const staged = readFileSync(join(destDir, "hypothesizer.md"), "utf8");
+    expect(staged).not.toContain("sha256:");
+    expect(staged).not.toContain(fixedNow);
+    expect(staged).not.toContain("merged_fields");
+  });
+});
