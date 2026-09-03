@@ -46,8 +46,8 @@ _Avoid_: chat, side chat, ticket
 ### Knowledge
 
 **Armonia**:
-The canonical workspace and knowledge system. As a workspace: the `~/armonia/` directory tree (`repos/{packages,demos}`, `data/{env,problems,runs,vaults}`) surfaced as the structured "Armonia" sidebar panel via ArmoniaService. As a knowledge system: the precedence-ordered stack of mounted Vaults under `data/vaults/` (personal → project → team) that the agent reads for context. The sidebar panel shows both — semantic buckets for the full workspace, with Vaults as one bucket.
-_Avoid_: Vault (as the system name), knowledge base
+The canonical workspace and single state root. As a workspace: the `~/armonia/` directory tree (`repos/{packages,demos}`, `data/{config,env/julia,problems,runs,vaults,library,fleet,ledger,devices,authoring,amicode}`) surfaced as the structured "Armonia" sidebar panel via ArmoniaService. As a knowledge system: the precedence-ordered stack of mounted Vaults under `data/vaults/` (personal → project → team) that the agent reads for context. All amicode product state lives here; `~/.amico/` is a backward-compatible symlink farm into `data/` (ADR 0008), retired once ArmoniaService resolves paths directly.
+_Avoid_: Vault (as the system name), knowledge base, ~/.amico (as a canonical location)
 
 **Vault**:
 One mounted knowledge tier within Armonia — a git-backed store of notes, specs, and catalog entries at a single precedence level, one of five kinds: personal, engagement, project, team, public. Many Vaults mount into the Armonia stack; the panel lists them as its roots and reads them top-to-bottom.

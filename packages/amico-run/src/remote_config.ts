@@ -4,9 +4,8 @@
 // message or log line (llm_creds.mjs stance — the secret never enters
 // amico's surfaces beyond the Authorization header itself).
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { ConfigError } from "./types.js";
+import { cloudConfigFile as _cloudConfigFile } from "./paths.js";
 
 export interface RemoteConfig {
   baseUrl: string; // e.g. https://solves.staging.harmoniqs.co (no trailing slash)
@@ -17,7 +16,7 @@ export interface RemoteConfig {
 export function cloudConfigFile(env: NodeJS.ProcessEnv = process.env): string {
   const v = env.AMICO_CLOUD_FILE;
   if (v && v.trim() !== "") return v;
-  return join(homedir(), ".amico", "cloud.json");
+  return _cloudConfigFile();
 }
 
 /** Resolution order: AMICO_CLOUD_URL+AMICO_CLOUD_TOKEN env pair → cloud.json.

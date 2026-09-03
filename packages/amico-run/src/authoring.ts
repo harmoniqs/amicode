@@ -5,8 +5,7 @@
 // defaults (public base ∪ support set) so a bare-but-spec'd dev invocation
 // still gates sanely. $AMICO_AUTHORING_FILE overrides the path (tests).
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { authoringFile as _authoringFile } from "./paths.js";
 
 // NOTE (spec-20260704-113005 §3): session prep ALSO writes an additive
 // `skills: [{source: "library"|"package", package?, name, description, path}]`
@@ -37,7 +36,7 @@ function defaults(): AuthoringConfig {
 export function authoringFile(): string {
   const env = process.env.AMICO_AUTHORING_FILE;
   if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "authoring", "authoring.json");
+  return _authoringFile();
 }
 
 export function readAuthoring(): { config: AuthoringConfig; warning?: string } {

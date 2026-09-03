@@ -12,9 +12,9 @@
 // Loaders never throw: a missing/corrupt graph or state degrades to an empty view,
 // exactly like repertoire.ts's loaders degrade to an empty repertoire.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { devicesDir } from "./paths.js";
 
 /** The single status enum — node state, evaluate() verdict, and the per-qubit
  *  rollup all use it (no divergent vocabularies). */
@@ -571,7 +571,7 @@ export function releaseDecision(
 export function deviceRoot(): string {
   const env = process.env.AMICO_DEVICE_DIR;
   if (env && env.trim() !== "") return env;
-  return join(homedir(), ".amico", "devices");
+  return devicesDir();
 }
 
 export interface DeviceLoad {

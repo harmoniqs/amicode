@@ -1,3 +1,11 @@
+export {
+  baseDir, isCanonicalLayout, isLegacyLayout, _resetBaseDir,
+  runsRoot, problemsRoot, juliaProject, ledgerDir, ledgerFile, claimsFile,
+  authoringDir, authoringFile, devicesDir, libraryDir, opsDir,
+  fleetDir, configFile, profileFile, pasqalConfigFile, connectionsFile,
+  labTomlFile, mountsTomlFile, vaultsRoot, teamVaultDir,
+  catalogPulsesDir, profilesVaultDir, teamSkillsDir, reposRoot,
+} from "./paths.js";
 export * from "./types.js";
 export * from "./estimate.js";
 export * from "./telemetry.js";
