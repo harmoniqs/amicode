@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""amico-slack — Amico's Slack CLI (Harmoniqs workspace).
+
+Reads the bot token from ~/.amico/slack/token (or SLACK_BOT_TOKEN env).
+Implements the contract in the amico-slack skill:
+  send "<channel>" "<message>" [--thread <ts>] [--as-user|--as-bot]
+  send "<channel>" --file <path> [--thread <ts>] [--as-user|--as-bot]
+  read "<channel>" [limit] [--thread <ts>]
+  join "<channel>"
+  whois [name]
+  delete "<channel>" <ts> [--as-user]
+  status
+
+join self-serves conversations.join for public channels (idempotent);
+private channels still need a human /invite. By default send posts as the Amico app (bot identity) with no footer —
+clean, human-readable messages. Pass --as-user to post on Aaron's behalf
+(chat:write.customize → username="Aaron") and append a subtle "_de Amico_"
+signature. --as-bot is accepted for backwards-compat and is the default.
+The footer is idempotent — a message that already ends with "_Authored by
+Amico_" (legacy) or "_de Amico_" is not double-tagged.
+LaTeX-ish inline math is flattened to Slack-friendly Unicode/mrkdwn.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+API = "https://slack.com/api"
+TOKEN_FILE = Path.home() / ".amico" / "slack" / "token"
+AS_USER_NAME = os.environ.get("AMICO_SLACK_AS_USER_NAME", "Aaron")
+AS_USER_ICON = os.environ.get("AMICO_SLACK_AS_USER_ICON", "")
+CACHE_DIR = Path.home() / ".amico" / "slack"
+CHANNELS_CACHE = CACHE_DIR / "channels.json"
+USERS_CACHE = CACHE_DIR / "users.json"
+CACHE_TTL = 3600  # seconds
+
+
+def die(msg: str, code: int = 1) -> "None":
+    print(f"amico-slack: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def token() -> str:
+    tok = os.environ.get("SLACK_BOT_TOKEN", "").strip()
+    if not tok and TOKEN_FILE.exists():
+        tok = TOKEN_FILE.read_text().strip()
+    if not tok:
+        die("no token — put an xoxb-… in ~/.amico/slack/token (or set SLACK_BOT_TOKEN)")
+    return tok
+
+
+def api(method: str, **params) -> dict:
+    url = f"{API}/{method}"
+    data = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None}).encode()
+    req = urllib.request.Request(url, data=data, headers={
+        "Authorization": f"Bearer {token()}",
+        "Content-Type": "application/x-www-form-urlencoded; charset=utf-8",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            payload = json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        die(f"{method}: HTTP {e.code} — {e.read().decode()[:200]}")
+    except urllib.error.URLError as e:
+        die(f"{method}: network error — {e.reason}")
+    if not payload.get("ok"):
+        err = payload.get("error", "unknown")
+        hint = {
+            "missing_scope": "the app is missing a scope — add it at api.slack.com/apps and reinstall",
+            "not_in_channel": "the bot isn't in that channel — run `amico-slack join \"<channel>\"` first (public) or /invite it (private)",
+            "method_not_supported_for_private_channel": "private channels can't be self-joined — ask a human to /invite the bot",
+            "invalid_auth": "token rejected — check ~/.amico/slack/token",
+            "channel_not_found": "no such channel — check the name (I resolve #name and names)",
+        }.get(err, "")
+        die(f"{method}: {err}" + (f" ({hint})" if hint else ""))
+    return payload
+
+
+# ---------- caches (channels, users) ----------
+
+def _cached(path: Path, fetch):
+    if path.exists() and (path.stat().st_mtime + CACHE_TTL) > __import__("time").time():
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            pass
+    data = fetch()
+    try:
+        path.write_text(json.dumps(data))
+    except Exception:
+        pass
+    return data
+
+
+def channels() -> dict:
+    def fetch():
+        out, cursor = {}, ""
+        while True:
+            r = api("conversations.list", limit=1000, cursor=cursor or None,
+                    types="public_channel,private_channel")
+            for c in r.get("channels", []):
+                out[c["name"]] = c["id"]
+            cursor = (r.get("response_metadata") or {}).get("next_cursor") or ""
+            if not cursor:
+                break
+        return out
+    return _cached(CHANNELS_CACHE, fetch)
+
+
+def users() -> list:
+    def fetch():
+        out, cursor = [], ""
+        while True:
+            r = api("users.list", limit=1000, cursor=cursor or None)
+            out.extend([u for u in r.get("members", []) if not u.get("deleted")])
+            cursor = (r.get("response_metadata") or {}).get("next_cursor") or ""
+            if not cursor:
+                break
+        return out
+    return _cached(USERS_CACHE, fetch)
+
+
+def channel_id(name: str) -> str:
+    n = name.lstrip("#")
+    if re.fullmatch(r"[CGD][A-Z0-9]{8,}", n):  # already an ID
+        return n
+    n = n.lower()
+    cid = channels().get(n)
+    if not cid:
+        # cache may be stale; bust it once
+        CHANNELS_CACHE.unlink(missing_ok=True)
+        cid = channels().get(n)
+    if not cid:
+        die(f"channel '{name}' not found (is the bot in it? /invite @{bot_name() or 'the bot'})")
+    return cid
+
+
+def bot_name() -> str | None:
+    try:
+        return api("auth.test").get("user")
+    except SystemExit:
+        return None
+
+
+# ---------- formatting ----------
+
+UNICODE_MAP = {
+    r"\alpha": "α", r"\beta": "β", r"\gamma": "γ", r"\delta": "δ",
+    r"\epsilon": "ε", r"\theta": "θ", r"\lambda": "λ", r"\mu": "μ",
+    r"\pi": "π", r"\sigma": "σ", r"\phi": "φ", r"\omega": "ω",
+    r"\Omega": "Ω", r"\Delta": "Δ", r"\hbar": "ℏ", r"\infty": "∞",
+    r"\times": "×", r"\pm": "±", r"\leq": "≤", r"\geq": "≥", r"\neq": "≠",
+    r"\approx": "≈", r"\propto": "∝", r"\rightarrow": "→", r"\leftarrow": "←",
+    r"\langle": "⟨", r"\rangle": "⟩",
+}
+SUP = {"0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵",
+       "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻", "+": "⁺"}
+
+
+def flatten_math(text: str) -> str:
+    """Flatten $…$/$$…$$ LaTeX-ish spans to Slack-friendly Unicode."""
+    def fix(span: str) -> str:
+        s = span
+        for k, v in UNICODE_MAP.items():
+            s = s.replace(k, v)
+        s = re.sub(r"\\[a-zA-Z]+", lambda m: m.group(0)[1:], s)  # unknown commands → bare name
+        s = re.sub(r"\^\{([^}]*)\}", lambda m: "".join(SUP.get(c, c) for c in m.group(1)), s)
+        s = re.sub(r"\^([0-9+-])", lambda m: SUP.get(m.group(1), m.group(1)), s)
+        s = s.replace("{", "").replace("}", "")
+        s = s.replace("~", " ").replace("\\,", " ").replace("\\;", " ")
+        return re.sub(r"\s+", " ", s).strip()
+    text = re.sub(r"\$\$([^$]+)\$\$", lambda m: fix(m.group(1)), text, flags=re.S)
+    text = re.sub(r"\$([^$\n]+)\$", lambda m: fix(m.group(1)), text)
+    return text
+
+
+def resolve_mentions(text: str) -> str:
+    """@handle / @FirstName → <@U…> so people actually get pinged."""
+    try:
+        roster = users()
+    except SystemExit:
+        return text  # users:read missing — leave mentions as-is
+    by_handle, by_first = {}, {}
+    for u in roster:
+        prof = u.get("profile", {})
+        handle = (prof.get("display_name") or u.get("name") or "").lower()
+        first = (prof.get("first_name") or "").lower()
+        if handle:
+            by_handle.setdefault(handle, u["id"])
+        if first:
+            by_first.setdefault(first, u["id"])
+
+    def repl(m):
+        name = m.group(1).lower()
+        uid = by_handle.get(name) or by_first.get(name)
+        return f"<@{uid}>" if uid else m.group(0)
+
+    return re.sub(r"@([A-Za-z][A-Za-z0-9._-]*)", repl, text)
+
+
+def mrkdwn(text: str) -> str:
+    text = flatten_math(text)
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)]+)\)", r"<\2|\1>", text)  # md links → slack
+    text = re.sub(r"\*\*([^*]+)\*\*", r"*\1*", text)                      # **bold** → *bold*
+    return resolve_mentions(text)
+
+
+# ---------- commands ----------
+
+FOOTER_RE = re.compile(r"\s*[_*](Authored by Amico|de Amico)[_*]\s*$", re.I)
+
+def _strip_existing_footer(text: str) -> str:
+    """Remove trailing _Authored by Amico_ (legacy) or _de Amico_ block(s) if present (idempotent send)."""
+    # Loop so a pre-doubled footer (agent + CLI) collapses to zero before we append one.
+    cur = text.rstrip()
+    while True:
+        m = FOOTER_RE.search(cur)
+        if not m:
+            break
+        cur = cur[: m.start()].rstrip()
+    return cur
+
+
+def _positional(args: list[str]) -> list[str]:
+    """Return positional args with flag values removed (so --thread <ts> etc. don't leak into pos)."""
+    out: list[str] = []
+    skip_next = False
+    for i, a in enumerate(args):
+        if skip_next:
+            skip_next = False
+            continue
+        if a == "--file" or a == "--thread":
+            skip_next = True
+            continue
+        if a.startswith("--"):
+            continue
+        out.append(a)
+    return out
+
+
+def cmd_send(args):
+    as_user = "--as-user" in args
+    # Default is bot (Amico app, no footer, human-readable). --as-user posts as
+    # Aaron and appends "_de Amico_". --as-bot is accepted for back-compat.
+    as_bot = not as_user
+    thread = _flag(args, "--thread")
+    file_arg = _flag(args, "--file")
+    pos = _positional(args)
+    if not pos:
+        die("send: missing channel")
+    ch = pos[0]
+    if file_arg:
+        msg = Path(file_arg).read_text()
+    elif len(pos) > 1:
+        msg = pos[1]
+    else:
+        die("send: pass a message or --file <path>")
+    msg = mrkdwn(msg)
+    # Always strip legacy footers so a pasted-in old message doesn't double-sign,
+    # even on bot sends (which add nothing).
+    msg = _strip_existing_footer(msg)
+    kw = {}
+    if as_user:
+        if AS_USER_ICON:
+            kw["icon_url"] = AS_USER_ICON
+        kw["username"] = AS_USER_NAME
+        msg += "\n_de Amico_"
+    cid = channel_id(ch)
+    r = api("chat.postMessage", channel=cid, text=msg,
+            thread_ts=thread, **kw)
+    shown = ch if ch.startswith("#") else cid
+    print(f"sent → {shown} ts={r['ts']}" + (" (thread)" if thread else ""))
+
+
+def _roster_or_empty():
+    try:
+        return {u["id"]: (u.get("profile", {}).get("display_name") or u.get("name")) for u in users()}
+    except SystemExit:
+        return {}
+
+
+def cmd_read(args):
+    thread = _flag(args, "--thread")
+    pos = _positional(args)
+    if not pos:
+        die("read: missing channel")
+    ch = pos[0]
+    limit = int(pos[1]) if len(pos) > 1 and pos[1].isdigit() else 20
+    cid = channel_id(ch)
+    roster = _roster_or_empty()
+    if thread:
+        r = api("conversations.replies", channel=cid, ts=thread, limit=limit)
+        msgs = r.get("messages", [])[1:]  # drop the parent duplicate
+    else:
+        r = api("conversations.history", channel=cid, limit=limit)
+        msgs = r.get("messages", [])
+    if not msgs:
+        print("(no messages)")
+        return
+    for m in reversed(msgs):
+        who = roster.get(m.get("user", ""), m.get("username") or m.get("user") or "bot")
+        ts = m.get("ts", "")
+        text = m.get("text", "").replace("\n", "\n    ")
+        print(f"[{ts}] {who}: {text}")
+
+
+def cmd_join(args):
+    pos = _positional(args)
+    if not pos:
+        die("join: missing channel")
+    ch = pos[0]
+    cid = channel_id(ch)
+    r = api("conversations.join", channel=cid)
+    warnings = (r.get("response_metadata") or {}).get("warnings") or []
+    already = "already_in_channel" in str(warnings)
+    print(f"joined #{ch.lstrip('#')}" + (" (already in channel)" if already else ""))
+
+
+def cmd_whois(args):
+    q = " ".join(a for a in args if not a.startswith("--")).lower()
+    if not q:
+        die("whois: give a name or handle")
+    hits = []
+    for u in users():
+        prof = u.get("profile", {})
+        hay = " ".join(filter(None, [
+            u.get("name"), prof.get("display_name"), prof.get("first_name"),
+            prof.get("last_name"), prof.get("real_name"),
+        ])).lower()
+        if q in hay:
+            hits.append((u["id"], prof.get("display_name") or u.get("name"),
+                         prof.get("real_name") or "", prof.get("title") or ""))
+    if not hits:
+        print(f"no one matching '{q}'")
+        return
+    for uid, handle, real, title in hits[:15]:
+        print(f"@{handle:<20} {real:<24} {title:<30} id={uid}")
+
+
+def cmd_delete(args):
+    pos = _positional(args)
+    if len(pos) < 2:
+        die("delete: need <channel> <ts>")
+    r = api("chat.delete", channel=channel_id(pos[0]), ts=pos[1])
+    print(f"deleted ts={r.get('ts', pos[1])} from #{pos[0].lstrip('#')}")
+
+
+def cmd_status(_args):
+    r = api("auth.test")
+    print(f"ok — connected to {r.get('team')} as bot '{r.get('user')}' (bot_id={r.get('bot_id')})")
+    try:
+        n = len(channels())
+        print(f"visible channels: {n} (public + invited private)")
+    except SystemExit:
+        print("note: channel listing unavailable (missing channels:read scope) — "
+              "add it at api.slack.com/apps and reinstall, or read via channel ID")
+
+
+def _flag(args, name):
+    if name in args:
+        i = args.index(name)
+        if i + 1 >= len(args):
+            die(f"{name}: missing value")
+        return args[i + 1]
+    return None
+
+
+USAGE = """usage: amico-slack <command> …
+  send "<channel>" "<message>" [--thread <ts>] [--as-user|--as-bot]
+  send "<channel>" --file <path> [--thread <ts>] [--as-user|--as-bot]
+  read "<channel>" [limit] [--thread <ts>]
+  join "<channel>"
+  whois <name>
+  delete "<channel>" <ts> [--as-user]
+  status
+"""
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help", "help"):
+        print(USAGE)
+        return
+    cmd, rest = args[0], args[1:]
+    {"send": cmd_send, "read": cmd_read, "join": cmd_join, "whois": cmd_whois,
+     "delete": cmd_delete, "status": cmd_status}.get(cmd, lambda _a: die(f"unknown command '{cmd}'\n{USAGE}"))(rest)
+
+
+if __name__ == "__main__":
+    main()
