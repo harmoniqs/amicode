@@ -127,8 +127,13 @@ edits skills, and there is no LLM judgment anywhere in the verdict path.
 From a checkout of this repo on the mini:
 
 ```sh
-ops/install.sh            # copies the three scripts to ~/.amico/ops/ (idempotent)
+ops/install.sh            # copies the ops scripts to ~/.amico/ops/ (idempotent)
 ```
+
+`install.sh` also plants the Slack CLI (`packages/amico-run/launcher/amico-slack`)
+to `~/.local/bin/amico-slack` — the token stays in `~/.amico/slack/` (planted,
+never in the repo); the script itself rides the checkout so a hub rebuild or
+migration gets Slack working by re-running the deploy (#753).
 
 The install script copies scripts ONLY — no plists (one-time, by hand), no state
 files, no bundle. After editing anything here: merge, then deploy, then
