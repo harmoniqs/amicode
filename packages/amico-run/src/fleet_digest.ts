@@ -95,7 +95,7 @@ export interface MigrationDebtItem {
 export const MIGRATION_DEBT: MigrationDebtItem[] = [
   { id: "partitura-archived", label: "conflicted clone parked in vaults-archive", state: "open", owner: "content resolution" },
   { id: "compat-symlinks", label: "removal gated on confirmation", state: "open", owner: "Aaron's no-session-broke confirmation" },
-  { id: "sync-script-rollout", label: "new sidecar script deploys fleet-wide post-merge", state: "open", owner: "post-merge deploy" },
+  { id: "sync-script-rollout", label: "new sidecar script deploys fleet-wide post-merge", state: "closed", owner: "post-merge deploy — DONE 2026-09-02: deployed fleet-wide (live-pilot machine first, then every other machine), boards all-OK everywhere, backups kept" },
 ];
 
 /** How a VaultHealth layout renders: the parked state names its re-check trigger —
