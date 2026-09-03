@@ -95,6 +95,66 @@ export function unwrap<T>(res: unknown): T | undefined {
 
 export type SpawnedChild = { id: string; title: string };
 
+// ── the double-create gate (#655) ────────────────────────────────────────────
+// amicode_session is the pack's only server-mutating verb, and a single spawn
+// dispatch used to run its create loop once per EXECUTE with no idempotency
+// gate between the tool-call boundary and session.create/session.fork. A
+// re-fired dispatch (an engine tool-call retry racing the slow promptAsync,
+// double registration, parallel callers) then created a SECOND identical live
+// session — both on the model budget (#655: two parentless sessions ingesting
+// the same prompt, seconds apart). The gate is IN-FLIGHT ONLY: concurrent
+// dispatches of the SAME spawn signature coalesce onto the first run; once it
+// settles the entry is gone, so a deliberate sequential re-spawn of the same
+// prompt still creates. It changes no stamps, no caps, no count semantics.
+
+export type SpawnGate = {
+  coalesce<T>(key: string, run: () => Promise<T>): Promise<T>;
+};
+
+/** Stable key for one spawn dispatch: the calling session's identity plus the
+ * FULLY-PARSED signature (parseSpawnArgs-normalized — a re-serialized retry
+ * that says count:1 where the first said count:null lands on the same key).
+ * Anything that changes what the dispatch does (mode, force, model, prompt,
+ * count, title, agent, caller) changes the key. */
+export function spawnGateKey(sessionID: string, directory: string, args: SpawnArgs): string {
+  return JSON.stringify([
+    sessionID,
+    directory,
+    args.prompt,
+    args.count,
+    args.title,
+    args.agent,
+    args.model ? `${args.model.providerID}/${args.model.modelID}` : null,
+    args.mode,
+    args.force,
+  ]);
+}
+
+export function createSpawnGate(): SpawnGate {
+  const inFlight = new Map<string, Promise<unknown>>();
+  return {
+    async coalesce<T>(key: string, run: () => Promise<T>): Promise<T> {
+      const existing = inFlight.get(key);
+      if (existing) return existing as Promise<T>;
+      // Promise.resolve().then(run) tolerates a synchronous throw in run();
+      // the finally clears the entry either way — a rejected run never wedges
+      // the key, so a later dispatch retries instead of coalescing onto a corpse.
+      const p = Promise.resolve()
+        .then(run)
+        .finally(() => {
+          inFlight.delete(key);
+        });
+      inFlight.set(key, p);
+      return p;
+    },
+  };
+}
+
+/** The transport-wide singleton. The plugin twin and the core run in separate
+ * module registries in production, so each transport gates its own
+ * dispatches; within one registry this is the one gate every execute shares. */
+export const spawnGate = createSpawnGate();
+
 export function summarizeSpawned(children: SpawnedChild[], mode: SpawnMode): string {
   if (children.length === 0) return "No sessions were spawned.";
   const lines = children.map((c) => `- ${c.id}${c.title ? ` — ${c.title}` : ""}`);

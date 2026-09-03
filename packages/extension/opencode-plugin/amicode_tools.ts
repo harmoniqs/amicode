@@ -108,6 +108,8 @@ import {
   childTitle,
   unwrap,
   summarizeSpawned,
+  spawnGate,
+  spawnGateKey,
   type SpawnedChild,
 } from "./session_spawn";
 import {
@@ -1786,6 +1788,11 @@ export const AmicodeTools = async (input: unknown) => {
         const parsed = parseSpawnArgs(a);
         if (!parsed.ok) return `Cannot spawn: ${parsed.error}.`;
         const args = parsed.args;
+        // #655: coalesce concurrent re-dispatches of the SAME spawn (same
+        // caller + same parsed signature) onto the first run — a retry racing
+        // the slow promptAsync must not create a second identical session.
+        // In-flight only: a deliberate sequential re-spawn still creates.
+        return spawnGate.coalesce(spawnGateKey(ctx.sessionID, ctx.directory, args), async () => {
         // Depth comes from THIS session's own stamp — never from the caller's
         // claim — so the cap is enforced by construction, not by politeness.
         let own: { metadata?: unknown; model?: { providerID?: string; modelID?: string } } | undefined;
@@ -1861,6 +1868,7 @@ export const AmicodeTools = async (input: unknown) => {
           return `Cannot spawn: ${msg}`;
         }
         return summarizeSpawned(children, args.mode);
+        });
       },
     },
 
