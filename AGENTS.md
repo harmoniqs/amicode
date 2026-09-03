@@ -174,6 +174,21 @@ tag, its clean `vX.Y.Z` not yet taken, every check run green on that commit), cu
 at the alpha's exact SHA, and dispatches release.yml. It does **not** touch the manifest; if the
 base was already promoted it fails and tells you to bump + start a fresh alpha cycle.
 
+**Clean tags provision their own fork binary.** A promoted release cannot vendor the binary the
+committed lock pins: that was built earlier — historically on the `dev` channel (the fork
+workflow's default), which renders the DEV titlebar badge in customer builds. Instead, release.yml
+(for clean tags only) cuts the next `v<base>-amicode.N` tag on the fork at `local/amicode`'s head
+(overridable via the `fork_ref` input), `repository_dispatch`es the fork's `amicode-release`
+workflow with `channel: beta`, polls for the release, and vendors it — the fresh release's own
+`SHA256SUMS.txt` is the hash authority and its release notes must declare `Badge: BETA` (the fetch
+script re-asserts the channel; fail-closed). The vendored fork version is a separate knob from the
+extension manifest. Requires the **`REPO_ACCESS_TOKEN`** secret in this repo — a **fine-grained
+PAT** scoped to `harmoniqs/opencode` ONLY, permissions Actions + Contents (read/write). Deploy
+keys/tokens cannot do this (no REST API access). If the org enforces SAML SSO, authorize the PAT
+for it. Same mechanism `PiccoloMultidocs.jl` uses to drive `docs.harmoniqs.co`. After the release,
+bump `opencode.lock.json` on main via `pnpm --filter amicode opencode:pin <fork tag>` so local dev
+and alpha builds get the same binary.
+
 Typical cycle: bump manifest -> push `v0.0.3-alpha.1..N` (internal prereleases) -> when one
 passes, **promote** it -> clean `v0.0.3` -> Marketplace. The first promotion of a base needs no
 bump (alphas never hit the Marketplace, so the version is still free); re-promoting an
