@@ -91,4 +91,24 @@ describe("accumulateDiffs", () => {
   test("empty input returns empty output", () => {
     expect(accumulateDiffs([])).toEqual([])
   })
+
+  test("multi-edit sums diverge from net diff (documents flash risk)", () => {
+    // A file edited 3 times: +3/-1, +2/-4, +1/-0
+    // accumulateDiffs sums: +6/-5
+    // A real git net diff might be +2/-1 (or anything else)
+    // This divergence is what the user sees as a "flash" when the client
+    // fallback briefly replaces the server's net diff during a refetch.
+    const result = accumulateDiffs([
+      edit("src/a.ts", { additions: 3, deletions: 1, patch: "p1" }),
+      edit("src/a.ts", { additions: 2, deletions: 4, patch: "p2" }),
+      edit("src/a.ts", { additions: 1, deletions: 0, patch: "p3" }),
+    ])
+    // The fallback SUMS, not nets — this is the documented behavior that
+    // makes the flash visible (different numbers than the server response).
+    expect(result[0].additions).toBe(6)
+    expect(result[0].deletions).toBe(5)
+    // A hypothetical net diff would be lower — the client must never show
+    // this stale/inflated data during a refetch. The fix is keepPreviousData
+    // on the query so the fallback never fires while server data exists.
+  })
 })

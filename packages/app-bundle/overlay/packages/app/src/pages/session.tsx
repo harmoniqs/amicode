@@ -1,7 +1,7 @@
 import type { FilePart, Project, SnapshotFileDiff, UserMessage } from "@opencode-ai/sdk/v2"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { createQuery, skipToken, useMutation } from "@tanstack/solid-query"
+import { createQuery, keepPreviousData, skipToken, useMutation } from "@tanstack/solid-query"
 import {
   batch,
   ErrorBoundary,
@@ -695,7 +695,7 @@ export default function Page() {
     return {
       queryKey: sessionDiffKey(),
       enabled: !!sessionID,
-      placeholderData: [] as SnapshotFileDiff[],
+      placeholderData: keepPreviousData,
       queryFn: sessionID
         ? () =>
             sdk()
@@ -708,7 +708,11 @@ export default function Page() {
   const reviewDiffs = createMemo(() => {
     // Server endpoint returns the authoritative full-session diff (queries all messages).
     const serverDiffs = sessionDiffQuery.data ?? []
-    if (serverDiffs.length > 0) {
+    // Once the server has responded at least once, trust it — even if it returned [].
+    // The client-side fallback is only for the initial load before any server response,
+    // never during refetches (where keepPreviousData already preserves the last result).
+    const serverResponded = sessionDiffQuery.status === "success" || sessionDiffQuery.isPlaceholderData
+    if (serverDiffs.length > 0 || serverResponded) {
       // Server paths are relative to the project root — prefix with ~/project-path
       const dir = sdk().directory
       const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
@@ -761,7 +765,7 @@ export default function Page() {
     return {
       queryKey: ["session-touched-files", sessionID ?? "", sessionDiffVersion()] as const,
       enabled: !!sessionID,
-      placeholderData: [] as Array<{ file: string; status: string }>,
+      placeholderData: keepPreviousData,
       staleTime: 30_000,
       queryFn: sessionID
         ? async () => {
@@ -1011,6 +1015,9 @@ export default function Page() {
     ),
   )
 
+  // Bump diff_version when the watcher reports external changes to files in the
+  // current session's worktree (#743). Debounced: 1s trailing-edge per session.
+  let watcherDebounce: ReturnType<typeof setTimeout> | undefined
   const stopVcs = sdk().event.listen((evt) => {
     const details = evt.details as { type: string; properties?: unknown }
     if (details.type !== "file.watcher.updated" && details.type !== "filesystem.changed") return
@@ -1020,8 +1027,18 @@ export default function Page() {
         : undefined
     const file = typeof props?.file === "string" ? props.file : undefined
     if (!file || file.startsWith(".git/")) return
+    const id = params.id
+    if (!id) return
+    if (watcherDebounce !== undefined) clearTimeout(watcherDebounce)
+    watcherDebounce = setTimeout(() => {
+      watcherDebounce = undefined
+      sync().set("diff_version", id, (v: number | undefined) => (v ?? 0) + 1)
+    }, 1000)
   })
-  onCleanup(stopVcs)
+  onCleanup(() => {
+    stopVcs()
+    if (watcherDebounce !== undefined) clearTimeout(watcherDebounce)
+  })
 
   createEffect(
     on(
@@ -1302,6 +1319,10 @@ export default function Page() {
     },
     onDiffStyleChange: layout.review.setDiffStyle,
     state: reviewV2State,
+    onRefresh: () => {
+      const id = params.id
+      if (id) sync().set("diff_version", id, (v: number | undefined) => (v ?? 0) + 1)
+    },
     onLineComment: (comment: SessionReviewLineComment) => addCommentToContext({ ...comment, origin: "review" }),
     onLineCommentUpdate: updateCommentInContext,
     onLineCommentDelete: removeCommentFromContext,
