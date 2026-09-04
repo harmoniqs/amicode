@@ -110,8 +110,12 @@ describe("buildFleetSection (lean fleet line + pointers)", () => {
 
 // buildFleetSection is module-private; reach it through buildStackStateBlock's
 // seams for these unit cases (config + status stubbed, everything else empty).
-function fleetSectionWith(opts: { configPath?: string; statusPath?: string }): string {
-  const stubs = stubAllSeams({ fleetConfig: opts.configPath, fleetStatus: opts.statusPath });
+function fleetSectionWith(opts: { configPath?: string; statusPath?: string; attachStatePath?: string }): string {
+  const stubs = stubAllSeams({
+    fleetConfig: opts.configPath,
+    fleetStatus: opts.statusPath,
+    fleetAttachState: opts.attachStatePath,
+  });
   try {
     const block = buildStackStateBlock() ?? "";
     const m = block.match(/## Fleet \(live\)[\s\S]*?(?=\n\n## |\n*$)/);
@@ -120,6 +124,169 @@ function fleetSectionWith(opts: { configPath?: string; statusPath?: string }): s
     restoreSeams(stubs);
   }
 }
+
+// ── Fleet posture block (attach-state.json, #780) ────────────────────────────
+
+/** The extension's single-writer schema for attach-state.json. */
+function writeAttachFixture(p: string, state: Record<string, unknown>): void {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(state));
+}
+
+describe("fleet posture block (attach-state.json, #780)", () => {
+  const NOW = Date.now();
+  const minsAgo = (m: number): string => new Date(NOW - m * 60_000).toISOString();
+
+  it("fresh fleet state renders machine, hub identity + endpoint, reachability, last-ok age", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client", canonical: { host: "erlich", port: 4096 } }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "macbook",
+      mode: "fleet",
+      hubName: "erlich",
+      hubBaseUrl: "http://127.0.0.1:4096",
+      reachable: true,
+      lastOkAt: minsAgo(0),
+      lastRttMs: 3,
+      since: minsAgo(2),
+      updatedAt: minsAgo(0),
+    });
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toContain("macbook");
+    expect(s).toContain("erlich");
+    expect(s).toContain("http://127.0.0.1:4096");
+    expect(s).toContain("reachable ✓");
+    expect(s).toContain("last ok 0 min ago");
+  });
+
+  it("degraded state renders UNREACHABLE with the last-ok age — never a healthy claim", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client", canonical: { host: "erlich", port: 4096 } }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "macbook",
+      mode: "degraded",
+      hubName: "erlich",
+      hubBaseUrl: "http://127.0.0.1:4096",
+      reachable: false,
+      lastOkAt: minsAgo(45),
+      since: minsAgo(30),
+      updatedAt: minsAgo(1),
+    });
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).toContain("macbook");
+    expect(s).toContain("UNREACHABLE");
+    expect(s).toContain("last ok 45 min ago");
+    expect(s).not.toContain("reachable ✓");
+  });
+
+  it("standalone state says so explicitly with the fallback time and does NOT render the client role line as attached", () => {
+    const dir = mkTmp("fleet-");
+    // Stale config still says client — the state file is live truth and must win.
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client", canonical: { host: "erlich", port: 4096 } }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "macbook",
+      mode: "standalone",
+      reachable: false,
+      since: minsAgo(30),
+      updatedAt: minsAgo(0),
+    });
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).toContain("macbook");
+    expect(/standalone/i.test(s)).toBe(true);
+    expect(s).toContain("30 min ago");
+    // the stale client role line must not read as if the machine is attached
+    expect(s).not.toContain("**client** — rides the tunnel");
+  });
+
+  it("stale state file (beyond TTL) → no current reachability claim, staleness said honestly", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client", canonical: { host: "erlich", port: 4096 } }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "macbook",
+      mode: "fleet",
+      hubName: "erlich",
+      hubBaseUrl: "http://127.0.0.1:4096",
+      reachable: true,
+      lastOkAt: minsAgo(45),
+      since: minsAgo(60),
+      updatedAt: minsAgo(45),
+    });
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).not.toContain("reachable ✓");
+    expect(s).toMatch(/stale/i);
+    // the last-verified claim survives, timestamped
+    expect(s).toContain("45 min ago");
+  });
+
+  it("corrupt state file → honest unknown line, never a crash, never a healthy claim", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client" }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {} as Record<string, unknown>); // missing required fields = corrupt
+    fs.writeFileSync(state, "{not json at all");
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toMatch(/corrupt|unknown/i);
+    expect(s).not.toContain("reachable ✓");
+  });
+
+  it("absent state file → falls back to the legacy role line, no posture block", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "client", canonical: { host: "erlich", port: 4096 } }));
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: path.join(dir, "nope.json") });
+    expect(s).toContain("**client** — rides the tunnel to the canonical server");
+    expect(s).not.toContain("Posture:");
+    expect(s).not.toContain("reachable ✓");
+  });
+
+  it("standalone machine with no fleet.json but a fresh standalone state → explicit standalone section", () => {
+    const dir = mkTmp("fleet-");
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "macbook",
+      mode: "standalone",
+      reachable: false,
+      since: minsAgo(10),
+      updatedAt: minsAgo(0),
+    });
+    const s = fleetSectionWith({ configPath: path.join(dir, "absent.json"), attachStatePath: state });
+    expect(s).toContain("## Fleet (live)");
+    expect(s).toContain("macbook");
+    expect(/standalone/i.test(s)).toBe(true);
+    expect(s).toContain("10 min ago");
+  });
+
+  it("hub server section keeps its existing role line substance (state file present adds posture, changes nothing else)", () => {
+    const dir = mkTmp("fleet-");
+    const cfg = path.join(dir, "fleet.json");
+    fs.writeFileSync(cfg, JSON.stringify({ role: "server", canonical: { host: "127.0.0.1", port: 4096 } }));
+    const state = path.join(dir, "attach-state.json");
+    writeAttachFixture(state, {
+      hostname: "erlich",
+      mode: "fleet",
+      hubName: "erlich",
+      hubBaseUrl: "http://127.0.0.1:4096",
+      reachable: true,
+      lastOkAt: minsAgo(0),
+      since: minsAgo(0),
+      updatedAt: minsAgo(0),
+    });
+    const s = fleetSectionWith({ configPath: cfg, attachStatePath: state });
+    expect(s).toContain("**server** — this machine is the canonical Amicode server");
+    expect(s).toContain("## Fleet (live)");
+  });
+});
 
 // ── Mount discovery ──────────────────────────────────────────────────────────
 
@@ -602,6 +769,7 @@ interface SeamOpts {
   vaultsRoot?: string;
   fleetConfig?: string;
   fleetStatus?: string;
+  fleetAttachState?: string;
   runsDir?: string;
   /** Prebuilt fixture vault flavor for the golden-text cases. */
   vault?: "profile" | "problems" | "demos" | "memory";
@@ -611,6 +779,7 @@ const SEAM_KEYS = [
   "AMICO_VAULTS_ROOT",
   "AMICO_FLEET_CONFIG",
   "AMICO_FLEET_STATUS",
+  "AMICO_FLEET_ATTACH_STATE",
   "AMICODE_OPS_DIR",
   "AMICODE_CONNECTIONS_FILE",
   "AMICODE_PROBLEMS_DIR",
@@ -671,6 +840,7 @@ function stubAllSeams(opts: SeamOpts): Record<string, string | undefined> {
   process.env.AMICO_VAULTS_ROOT = root;
   process.env.AMICO_FLEET_CONFIG = opts.fleetConfig ?? path.join(fleetDir, "absent-fleet.json");
   process.env.AMICO_FLEET_STATUS = opts.fleetStatus ?? path.join(fleetDir, "absent-status.json");
+  process.env.AMICO_FLEET_ATTACH_STATE = opts.fleetAttachState ?? path.join(fleetDir, "absent-attach-state.json");
   process.env.AMICODE_OPS_DIR = ops; // no solver-mode.json → piccolo/ready → no section
   process.env.AMICODE_CONNECTIONS_FILE = path.join(conn, "absent.json"); // not connected
   process.env.AMICODE_PROBLEMS_DIR = problems; // no active problem

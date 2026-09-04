@@ -59,6 +59,7 @@ import {
 import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult } from "./healthcheck";
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
+import { postureTransition, writeAttachState, readAttachState, recordStandalonePosture, standaloneHubFromConfig } from "./fleet_attach_state";
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
@@ -573,6 +574,27 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   if (binary !== undefined && fleetClient) {
     const fleetCfg = readFleetConfig();
     const fleetPort = fleetCfg?.canonical?.port ?? 4096;
+    // #780: the extension is the single writer of attach-state.json (the
+    // agent-context plugin only reads it). Writes happen on attach-state
+    // TRANSITIONS (attach / degrade / hub-lost / hub-regained), never per
+    // poll tick — steady-state claims stay timestamped at their transition.
+    const postureHub = {
+      name: fleetCfg?.canonical?.sshAlias ?? fleetCfg?.canonical?.host ?? "canonical",
+      baseUrl: `http://127.0.0.1:${fleetPort}`,
+    };
+    let posturePrev: ReturnType<typeof readAttachState> = readAttachState();
+    const recordClientPosture = (up: boolean, rttMs?: number): void => {
+      try {
+        const { changed, state } = postureTransition(posturePrev, { up, rttMs }, Date.now(), postureHub);
+        if (changed && state) {
+          writeAttachState(state);
+          posturePrev = state;
+          opencodeChannel.appendLine(`[fleet] posture: ${state.mode} (attach-state.json updated)`);
+        }
+      } catch (e) {
+        opencodeChannel.appendLine(`[fleet] posture write failed: ${(e as Error).message}`);
+      }
+    };
     opencodeChannel.appendLine(`[fleet] client mode — guard ${binary} would refuse on ${os.hostname()} — riding tunnel 127.0.0.1:${fleetPort}`);
     opencodeChannel.appendLine(`[fleet] hint: canonical offline? Palette → Amicode: Fleet — Go Standalone`);
     // Distiller still arms on the client (uses vendored binary directly, not the guard)
@@ -613,12 +635,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     let fleetNotified = false;
     const checkFleet = async () => {
       fleetChecks++;
+      let up = false;
+      let rttMs: number | undefined;
       try {
+        const t0 = Date.now();
         const r = await fetch(`http://127.0.0.1:${fleetPort}/`, {
           signal: AbortSignal.timeout(1500),
           headers: serverAuthHeaders,
         });
-        const up = r.ok || (r.status >= 200 && r.status < 400);
+        rttMs = Date.now() - t0;
+        up = r.ok || (r.status >= 200 && r.status < 400);
         if (up && !fleetReady) {
           fleetReady = true;
           fleetNotified = false;
@@ -651,6 +677,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               else if (pick === `Show log`) opencodeChannel.show();
             });
         }
+        recordClientPosture(up, rttMs);
       } catch {
         if (fleetReady) {
           fleetReady = false;
@@ -670,6 +697,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               else if (pick === `Show log`) opencodeChannel.show();
             });
         }
+        recordClientPosture(false);
       }
     };
     fleetClientPoll = setInterval(() => void checkFleet(), 2000);
@@ -1319,6 +1347,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Migrate legacy fallback.json on activation.
   migrateLegacyFallback();
 
+  // #780: a standalone machine (incl. never-fleeted) states its posture
+  // explicitly in agent context — record it at activation so the state file
+  // exists before any session asks. Client machines are owned by the attach
+  // loop; hub-server machines keep the plain role line (dev's call, minimal).
+  if (getFleetRole() === "standalone") {
+    try {
+      recordStandalonePosture({ hub: standaloneHubFromConfig(readFleetConfig()) });
+    } catch {
+      // best-effort — the plugin degrades honestly when the file is absent
+    }
+  }
+
   const fleetStatusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
   ctx.subscriptions.push(fleetStatusItem);
   const refreshFleetStatus = (): void => {
@@ -1351,7 +1391,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     const cfg = vscode.workspace.getConfiguration("amicode");
     const prevBinary = cfg.get<string>("opencodeBinary", "");
     const prevPort = cfg.get<number>("opencodePort", 0);
+    // #780: leaving the fleet is an attach-state transition — persist it so the
+    // agent context names the machine as standalone with the fallback time.
+    // Hub identity is captured BEFORE the config write (goStandalone drops it).
+    const leavingHub = standaloneHubFromConfig(getFleetRole() === "client" ? readFleetConfig() : null);
     goStandalone({ previousBinary: prevBinary, previousPort: prevPort });
+    try {
+      recordStandalonePosture({ hub: leavingHub });
+    } catch (e) {
+      opencodeChannel.appendLine(`[fleet] posture write failed: ${(e as Error).message}`);
+    }
     try {
       // Clear the fleet guard override → vendored binary, ephemeral port
       await cfg.update("opencodeBinary", "", vscode.ConfigurationTarget.Global);
