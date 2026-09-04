@@ -30,7 +30,13 @@ export interface ServerOptions {
   channel: vscode.OutputChannel;
   /** Fixed port to serve on. 0 (default) picks a free ephemeral port each start. */
   port?: number;
+  /** Health-probe budget in ms. Default 30_000; tests inject a short one. */
+  healthTimeoutMs?: number;
 }
+
+/** Tail length of the child's captured output attached to a failed start
+ *  (#781) — long enough to carry a crash cause, short enough for a toast. */
+const SPAWN_OUTPUT_TAIL = 4000;
 
 export class ServerManager {
   private child?: cp.ChildProcessByStdio<null, Readable, Readable>;
@@ -77,8 +83,22 @@ export class ServerManager {
     });
     this.child = child;
 
-    child.stdout.on("data", (b: Buffer) => this.opts.channel.append(`[opencode] ${b.toString()}`));
-    child.stderr.on("data", (b: Buffer) => this.opts.channel.append(`[opencode!] ${b.toString()}`));
+    // Capture the child's output while spawning (#781): on a failed start the
+    // thrown error carries a tail of it, so the caller can match a known crash
+    // signature (e.g. the local-DB `duplicate column name` migration failure)
+    // instead of the generic timeout message hiding the cause.
+    let output = "";
+    const capture = (b: Buffer) => {
+      output = (output + b.toString()).slice(-SPAWN_OUTPUT_TAIL);
+    };
+    child.stdout.on("data", (b: Buffer) => {
+      capture(b);
+      this.opts.channel.append(`[opencode] ${b.toString()}`);
+    });
+    child.stderr.on("data", (b: Buffer) => {
+      capture(b);
+      this.opts.channel.append(`[opencode!] ${b.toString()}`);
+    });
     child.on("exit", (code, signal) => {
       this.opts.channel.appendLine(`[server] opencode exited code=${code} signal=${signal}`);
       this._ready = false;
@@ -90,11 +110,32 @@ export class ServerManager {
     // a healthy boot would read as a 30s timeout. Derived from the same env
     // the child gets, so probe and server can never disagree.
     const password = this.opts.env.OPENCODE_SERVER_PASSWORD;
-    const ready = await waitForHealth(`http://127.0.0.1:${port}/`, 30_000, password ? serverAuthHeader(password) : undefined);
-    if (!ready) {
-      this.opts.channel.appendLine(`[server] opencode did not become healthy within 30s`);
+    const healthTimeoutMs = this.opts.healthTimeoutMs ?? 30_000;
+    // Fail fast on a crashed child (#781): a binary that dies during startup
+    // must surface immediately with its captured output — not burn the full
+    // health budget and throw a generic timeout. `close` (not `exit`) fires
+    // after the stdio streams drain, so the captured tail is complete.
+    const childClosed = new Promise<boolean>((resolve) => child.once("close", () => resolve(true)));
+    const healthSettled = waitForHealth(`http://127.0.0.1:${port}/`, healthTimeoutMs, password ? serverAuthHeader(password) : undefined).then(() => false);
+    const crashed = await Promise.race([healthSettled, childClosed]);
+    if (crashed) {
+      this.opts.channel.appendLine(`[server] opencode exited before becoming healthy — aborting start`);
       this.stop();
-      throw new Error("opencode failed to start within 30s — check the 'Amicode — opencode' output channel");
+      const err = new Error(
+        "opencode exited during startup before becoming healthy — check the 'Amicode — opencode' output channel",
+      ) as Error & { spawnOutput?: string };
+      err.spawnOutput = output;
+      throw err;
+    }
+    const ready = await healthSettled.then(() => true);
+    if (!ready) {
+      this.opts.channel.appendLine(`[server] opencode did not become healthy within ${Math.round(healthTimeoutMs / 1000)}s`);
+      this.stop();
+      const err = new Error(
+        `opencode failed to start within ${Math.round(healthTimeoutMs / 1000)}s — check the 'Amicode — opencode' output channel`,
+      ) as Error & { spawnOutput?: string };
+      err.spawnOutput = output;
+      throw err;
     }
     this._ready = true;
     const url = new URL(`http://127.0.0.1:${port}`);
