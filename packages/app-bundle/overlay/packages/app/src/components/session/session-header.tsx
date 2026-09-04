@@ -38,7 +38,7 @@ import { statusTriggerVisibility } from "../status-popover-model"
 import { useServerSync } from "@/context/server-sync"
 import { useGlobal } from "@/context/global"
 import { base64Encode } from "@opencode-ai/core/util/encode"
-import { sortedRootSessions } from "@/pages/layout/helpers"
+import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpers"
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 
@@ -727,8 +727,7 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       if (!conn) return []
       const ctx = globalCtx.ensureServerCtx(conn)
       if (!ctx) return []
-      const projects = ctx.projects.list()
-      const directories = projects.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])])
+      const directories = sessionListDirectories(ctx.projects.list(), ctx.sync.data?.project ?? [])
       const seen = new Set<string>()
       const sessions: Session[] = []
       for (const dir of directories) {
@@ -742,6 +741,21 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
       return sessions.sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
     } catch {
       return []
+    }
+  })
+
+  // Fresh clients have no bootstrapped child stores for the fallback
+  // directories (the dropdown reads with bootstrap: false) — kick the loads
+  // once per open. Converges: re-runs find the stores populated and skip.
+  createEffect(() => {
+    if (!open()) return
+    const conn = server.current
+    if (!conn) return
+    const ctx = globalCtx.ensureServerCtx(conn)
+    if (!ctx) return
+    for (const dir of sessionListDirectories(ctx.projects.list(), ctx.sync.data?.project ?? [])) {
+      const [store] = ctx.sync.child(dir, { bootstrap: false })
+      if ((store.session?.length ?? 0) === 0) ctx.sync.project.loadSessions(dir, { limit: 50 })
     }
   })
 

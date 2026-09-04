@@ -42,6 +42,7 @@ export type SessionReviewFilePreviewV2Props = {
   readFile?: (path: string) => Promise<FileContent | undefined>
   filePicker?: (pickerProps: { onSelect: (path: string) => void }) => JSX.Element
   onSelectFile?: (file: string) => void
+  onRefresh?: () => void
   onLineComment?: (comment: SessionReviewLineComment) => void
   onLineCommentUpdate?: (comment: SessionReviewCommentUpdate) => void
   onLineCommentDelete?: (comment: SessionReviewCommentDelete) => void
