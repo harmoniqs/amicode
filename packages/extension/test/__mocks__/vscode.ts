@@ -161,9 +161,19 @@ export const Uri = {
   },
 };
 export class EventEmitter {
-  event = () => ({ dispose() {} });
-  fire() {}
-  dispose() {}
+  private listeners: Array<(e: unknown) => void> = [];
+  event = (cb: (e: unknown) => void) => {
+    this.listeners.push(cb);
+    return { dispose: () => {
+      this.listeners = this.listeners.filter((l) => l !== cb);
+    } };
+  };
+  fire(e?: unknown) {
+    for (const l of [...this.listeners]) l(e);
+  }
+  dispose() {
+    this.listeners = [];
+  }
 }
 export class Disposable {
   dispose() {}

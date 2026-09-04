@@ -60,6 +60,16 @@ import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult }
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { resolveHubTarget, restartHub } from "./hub_ops";
+import {
+  FleetSessionsProvider,
+  FLEET_CLIENT_CONTEXT_KEY,
+  FLEET_SESSIONS_LIMIT,
+  FLEET_SESSIONS_VIEW_ID,
+  fleetClientContextValue,
+  fetchHubSessions,
+  hubDisplayName,
+  makeReattach,
+} from "./fleet_sessions";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
@@ -569,6 +579,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // Fleet client: guard would `exit 1` on this host (role=client in fleet.json) —
   // don't spawn and storm "opencode failed to start within 30s".
   // Ride the tunnel instead; "Go Standalone" switches to local mode permanently.
+  // Fleet Sessions view visibility (amicode#779 AC5): role=client only — on
+  // machines that were never clients the view is absent, not an empty stub.
+  void vscode.commands.executeCommand("setContext", FLEET_CLIENT_CONTEXT_KEY, fleetClientContextValue(getFleetRole()));
   const fleetClient = isFleetClientGuard(binary);
   if (binary !== undefined && fleetClient) {
     const fleetCfg = readFleetConfig();
@@ -607,6 +620,34 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       authorization: serverAuthHeaders.Authorization,
     });
     ctx.subscriptions.push(sseClient);
+    // Fleet Sessions (amicode#779): a read-only list of the hub's sessions over
+    // the tunnel — same GET /session collection route the attach flow uses,
+    // directory-scoped (workspace folder; fleet-synced repos share paths across
+    // hub and clients). Refresh on view open (native getChildren) and on hub
+    // state transitions below — never on a timer. Strictly GET-only.
+    const fleetSessions = new FleetSessionsProvider({
+      hubName: hubDisplayName(fleetCfg),
+      fetchSessions: () =>
+        fetchHubSessions(`http://127.0.0.1:${fleetPort}`, {
+          directory: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+          limit: FLEET_SESSIONS_LIMIT,
+          authorization: serverAuthHeaders.Authorization,
+        }),
+      reattach: makeReattach({
+        readyUrl: () => opencodeReadyUrl,
+        openOrReveal: (url) =>
+          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir),
+        onAppReady: (cb) => ChatPanel.onAppReady(cb),
+        warn: (m) => void vscode.window.showWarningMessage(m),
+      }),
+    });
+    const fleetSessionsView = vscode.window.createTreeView(FLEET_SESSIONS_VIEW_ID, { treeDataProvider: fleetSessions });
+    ctx.subscriptions.push(fleetSessionsView, fleetSessions);
+    ctx.subscriptions.push(
+      vscode.commands.registerCommand("amicode.fleetSessions.open", (item: import("./fleet_sessions").FleetSessionsItem) => {
+        if (item?.session) fleetSessions.reattach(item.session.id);
+      }),
+    );
     // Poll the tunnel — when the canonical server is reachable the forward answers 200.
     let fleetReady = false;
     let fleetChecks = 0;
@@ -632,6 +673,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             opencodeChannel.appendLine(sig.ok ? `[fleet] LLM provider: configured (${sig.provider})` : `[fleet] LLM provider: ${sig.reason} → ${sig.fix}`);
           });
           opencodeChannel.appendLine(`[fleet] tunnel up at ${opencodeReadyUrl} — chat attached`);
+          // Fleet Sessions (amicode#779): attach/regain is a hub state
+          // transition — re-query the session list (open = native getChildren).
+          fleetSessions.refresh();
         } else if (!up && fleetReady) {
           fleetReady = false;
           opencodeReadyUrl = undefined;
