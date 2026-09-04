@@ -1,5 +1,13 @@
 # Fleet — configurable multi-machine studio
 
+> **DEPRECATED (ADR-0012, 2026-09-04):** the fleet provisioning tooling has moved
+> to **amicissimo** (`automation/fleet/`, harmoniqs/amicissimo PR #379) per the
+> amico split's boundary — fleet-specific provisioning is premium-side. This copy
+> remains until amicissimo's installer entry point ships (no fleet machine
+> stranded); fixes land in the amicissimo copy first. The extension's fleet
+> *architecture* (role detection, attach state machine, posture surfaces) stays
+> in this repo as the entitled surface — see `docs/adr/0012`.
+
 Operational tooling for Amicode's fleet: one canonical server, clients attach via tunnel.
 
 ## Architecture
