@@ -60,6 +60,13 @@ import { probeCommand, formatHealthReport, probeOpencodeTui, type HealthResult }
 import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { resolveHubTarget, restartHub } from "./hub_ops";
+import {
+  goStandaloneSpawn,
+  journalSelfHeal,
+  localDbPath,
+  OfferGate,
+  ReofferBackoff,
+} from "./standalone_spawn";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
@@ -103,6 +110,22 @@ let distillerSetup: DistillerSetup | undefined;
 let devicePollTimer: ReturnType<typeof setInterval> | undefined;
 /** Fleet client tunnel poll — when the machine is a fleet client (guard `exit 1`), we don't spawn. */
 let fleetClientPoll: ReturnType<typeof setInterval> | undefined;
+/** Restarts the attach poll after a failed Go-Standalone spawn (#781 AC1) —
+ *  set by the client-mode boot; undefined when this window never polled. */
+let fleetPollResume: (() => void) | undefined;
+/** True while a Go-Standalone spawn attempt is in flight — the attach loop
+ *  holds its re-offers so no banner fires mid-spawn (#781 AC4). */
+let standaloneAttemptActive = false;
+
+/** Stop the fleet client attach poll (idempotent). The poll stops ONLY via the
+ *  FleetPollGuard path (#781: after the local server is healthy) or disposal —
+ *  never before a spawn attempt. */
+function stopFleetClientPoll(): void {
+  if (fleetClientPoll) {
+    clearInterval(fleetClientPoll);
+    fleetClientPoll = undefined;
+  }
+}
 
 const DEVICE_POLL_MS = 2500; // mirror the RunsManager cadence
 
@@ -610,7 +633,25 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // Poll the tunnel — when the canonical server is reachable the forward answers 200.
     let fleetReady = false;
     let fleetChecks = 0;
-    let fleetNotified = false;
+    // #781 AC2: the one-shot `fleetNotified` flag is gone. Re-offers now follow
+    // a per-window exponential backoff (base 30s, ceiling 5 min) that resets on
+    // any successful attach, and an OfferGate keeps exactly one banner alive so
+    // offers can never stack into double banners (AC4).
+    const reoffer = new ReofferBackoff();
+    const offerGate = new OfferGate();
+    const offerStandalone = (reason: string) => {
+      if (standaloneAttemptActive) return; // a spawn attempt is in flight — hold offers
+      if (!reoffer.due() || !offerGate.tryBegin()) return;
+      reoffer.recordOffer();
+      opencodeChannel.appendLine(`[fleet] ${reason} (checks=${fleetChecks}) — offering standalone`);
+      void vscode.window
+        .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
+        .then((pick) => {
+          offerGate.end();
+          if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
+          else if (pick === `Show log`) opencodeChannel.show();
+        });
+    };
     const checkFleet = async () => {
       fleetChecks++;
       try {
@@ -621,7 +662,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         const up = r.ok || (r.status >= 200 && r.status < 400);
         if (up && !fleetReady) {
           fleetReady = true;
-          fleetNotified = false;
+          reoffer.reset(); // a successful attach restarts the re-offer schedule (AC2)
           opencodeReadyUrl = new URL(`http://127.0.0.1:${fleetPort}`);
           statusBar?.setServerReady(true);
           sseClient?.connect(opencodeReadyUrl);
@@ -641,15 +682,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — canonical unreachable, will retry`);
         }
         // After ~10s (5 checks) still down → offer standalone visibly, not just a log
-        if (!up && !fleetReady && !fleetNotified && fleetChecks >= 5) {
-          fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+        if (!up && !fleetReady && fleetChecks >= 5) {
+          offerStandalone(`tunnel still down after ${fleetChecks} checks — offering standalone`);
         }
       } catch {
         if (fleetReady) {
@@ -660,20 +694,17 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         } else if (fleetChecks === 1) {
           opencodeChannel.appendLine(`[fleet] waiting for tunnel 127.0.0.1:${fleetPort} — will retry`);
         }
-        if (!fleetReady && !fleetNotified && fleetChecks >= 5) {
-          fleetNotified = true;
-          opencodeChannel.appendLine(`[fleet] tunnel still down after ${fleetChecks} checks — offering standalone`);
-          void vscode.window
-            .showWarningMessage(`Amicode: fleet tunnel down — canonical unreachable. Go standalone?`, `Go Standalone`, `Show log`)
-            .then((pick) => {
-              if (pick === `Go Standalone`) void vscode.commands.executeCommand(`amicode.fleet.goStandalone`);
-              else if (pick === `Show log`) opencodeChannel.show();
-            });
+        if (!fleetReady && fleetChecks >= 5) {
+          offerStandalone(`tunnel still down after ${fleetChecks} checks — offering standalone`);
         }
       }
     };
-    fleetClientPoll = setInterval(() => void checkFleet(), 2000);
-    ctx.subscriptions.push({ dispose: () => { if (fleetClientPoll) clearInterval(fleetClientPoll); fleetClientPoll = undefined; } });
+    const startFleetPoll = () => {
+      if (!fleetClientPoll) fleetClientPoll = setInterval(() => void checkFleet(), 2000);
+    };
+    fleetPollResume = startFleetPoll; // a failed Go-Standalone spawn restores the poll (#781 AC1)
+    startFleetPoll();
+    ctx.subscriptions.push({ dispose: () => stopFleetClientPoll() });
     void checkFleet();
     // Fallback status bar already handles the fallback-active case; in pure
     // client mode we surface tunnel health via the fleet health warning above.
@@ -1372,65 +1403,110 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
     refreshFleetStatus();
     opencodeChannel.appendLine(`[fleet] Go Standalone — restarting server locally (was binary=${prevBinary || "(vendored)"} port=${prevPort})`);
+    // #781: the fleet attach poll is NOT stopped before the spawn. It stops
+    // exactly once the local server reports healthy, and every failure path
+    // restores it (FleetPollGuard inside goStandaloneSpawn) — a failed spawn
+    // can never leave the window dead (AC1), and re-offers resume under the
+    // attach loop's per-window backoff (AC2).
+    standaloneAttemptActive = true; // hold the attach loop's re-offers during the attempt (AC4)
+    const runSqlite3 = (cmd: string[]): Promise<{ code: number; stdout: string; stderr: string }> =>
+      new Promise((resolve) => {
+        const { execFile } = require("node:child_process") as typeof import("node:child_process");
+        execFile(cmd[0]!, cmd.slice(1), { timeout: 10_000, encoding: "utf8" }, (error, stdout, stderr) => {
+          resolve({
+            code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+            stdout: String(stdout ?? ""),
+            stderr: String(stderr ?? ""),
+          });
+        });
+      });
     try {
       await serverManager?.stop();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
-      // Stop the fleet client poll if running
-      if (fleetClientPoll) { clearInterval(fleetClientPoll); fleetClientPoll = undefined; }
-      // Spawn a fresh local server (selected harness, fresh resolution — the
-      // standalone path deliberately re-resolves, ephemeral port)
-      const standaloneCfg = vscode.workspace.getConfiguration("amicode");
-      const standaloneLaunch = resolveSelectedLaunch({
-        harnessId: standaloneCfg.get<string>("harness", "opencode"),
-        opencodeBinary: "", // standalone drops the override by design
-        telaioBinary: standaloneCfg.get<string>("telaioBinary", ""),
-        telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
-        extensionPath: ctx.extensionPath,
+      const result = await goStandaloneSpawn({
+        poll: { stopPoll: () => stopFleetClientPoll(), resumePoll: () => fleetPollResume?.() },
+        startServer: async () => {
+          // Spawn a fresh local server (selected harness, fresh resolution — the
+          // standalone path deliberately re-resolves, ephemeral port)
+          const standaloneCfg = vscode.workspace.getConfiguration("amicode");
+          const standaloneLaunch = resolveSelectedLaunch({
+            harnessId: standaloneCfg.get<string>("harness", "opencode"),
+            opencodeBinary: "", // standalone drops the override by design
+            telaioBinary: standaloneCfg.get<string>("telaioBinary", ""),
+            telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
+            extensionPath: ctx.extensionPath,
+          });
+          harnessEnvCurrent = standaloneLaunch.descriptor.spawnEnvAdditions({
+            telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
+          });
+          harnessConsumesOpencodeConfig = standaloneLaunch.descriptor.consumesOpencodeConfig;
+          const amicoRunBinDir2 = resolveAmicoRunBinDir(ctx.extensionPath);
+          const freshManager = new ServerManager({
+            binary: standaloneLaunch.binary,
+            cwd: opencodeProject.projectDir,
+            port: undefined, // ephemeral — standalone
+            env: spawnEnv({
+              amicoRunBinDir: amicoRunBinDir2,
+              serverPassword,
+              configContent: buildOpencodeConfigContent(
+                opencodeProject.agentsPath,
+                opencodeProject.templatePath,
+                runsRoot,
+                undefined,
+                undefined,
+                opencodeProject.skillPaths,
+                opencodeProject.skillsStageDir,
+                opencodeProject.vaultDir,
+                opencodeProject.mounts,
+                validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
+                telemetryOpen(),
+              ),
+            }),
+            channel: opencodeChannel,
+          });
+          serverManager = freshManager;
+          ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
+          freshManager.onReady((url) => {
+            opencodeReadyUrl = url;
+            statusBar?.setServerReady(true);
+            sseClient?.connect(url);
+            if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+              ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            }
+          });
+          await freshManager.start();
+        },
+        notice: (n) => Promise.resolve(vscode.window.showErrorMessage(n.title, ...n.actions)),
+        confirmHeal: async () =>
+          (await vscode.window.showWarningMessage(
+            "Run the local-DB journal self-heal? This rewrites local session data (a backup of the DB is kept first).",
+            { modal: true },
+            "Self-heal",
+            "Cancel",
+          )) === "Self-heal",
+        heal: () =>
+          journalSelfHeal({
+            dbPath: localDbPath(),
+            run: runSqlite3,
+            fs: { existsSync: (p) => fs.existsSync(p), copyFileSync: (src, dest) => fs.copyFileSync(src, dest) },
+          }),
+        onHealResult: (r) => {
+          const detail = r.steps.map((s) => `${s.step}: ${s.detail}`).join(" | ");
+          opencodeChannel.appendLine(`[fleet] journal self-heal ok=${r.ok} — ${detail}`);
+          if (r.ok) {
+            void vscode.window.showInformationMessage("Amicode: journal self-heal applied — try Go Standalone again.");
+          } else {
+            void vscode.window.showErrorMessage(`Amicode: journal self-heal failed — ${detail}`);
+          }
+        },
+        log: (line) => opencodeChannel.appendLine(line),
       });
-      harnessEnvCurrent = standaloneLaunch.descriptor.spawnEnvAdditions({
-        telaioAppDir: standaloneCfg.get<string>("telaioAppDir", ""),
-      });
-      harnessConsumesOpencodeConfig = standaloneLaunch.descriptor.consumesOpencodeConfig;
-      const amicoRunBinDir2 = resolveAmicoRunBinDir(ctx.extensionPath);
-      const freshManager = new ServerManager({
-        binary: standaloneLaunch.binary,
-        cwd: opencodeProject.projectDir,
-        port: undefined, // ephemeral — standalone
-        env: spawnEnv({
-          amicoRunBinDir: amicoRunBinDir2,
-          serverPassword,
-          configContent: buildOpencodeConfigContent(
-            opencodeProject.agentsPath,
-            opencodeProject.templatePath,
-            runsRoot,
-            undefined,
-            undefined,
-            opencodeProject.skillPaths,
-            opencodeProject.skillsStageDir,
-            opencodeProject.vaultDir,
-            opencodeProject.mounts,
-            validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
-            telemetryOpen(),
-          ),
-        }),
-        channel: opencodeChannel,
-      });
-      serverManager = freshManager;
-      ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
-      freshManager.onReady((url) => {
-        opencodeReadyUrl = url;
-        statusBar?.setServerReady(true);
-        sseClient?.connect(url);
-        if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
-        }
-      });
-      await freshManager.start();
-      void vscode.window.showInformationMessage("Amicode: Standalone mode — running locally. Your local sessions are now visible.");
-    } catch (e) {
-      void vscode.window.showErrorMessage(`Amicode: go standalone failed — ${(e as Error).message}`);
-      opencodeChannel.appendLine(`[fleet] go standalone failed: ${(e as Error).message}`);
+      if (result.ok) {
+        void vscode.window.showInformationMessage("Amicode: Standalone mode — running locally. Your local sessions are now visible.");
+      }
+    } finally {
+      standaloneAttemptActive = false;
     }
   };
 
@@ -1958,10 +2034,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
 }
 
 export function deactivate(): void {
-  if (fleetClientPoll) {
-    clearInterval(fleetClientPoll);
-    fleetClientPoll = undefined;
-  }
+  stopFleetClientPoll();
   if (devicePollTimer) {
     clearInterval(devicePollTimer);
     devicePollTimer = undefined;
