@@ -62,6 +62,12 @@
           "id": "amicode.workspace",
           "name": "AMICODE",
           "type": "webview"
+        },
+        {
+          "id": "amicode.fleetSessions",
+          "name": "Fleet Sessions",
+          "type": "tree",
+          "when": "amicode.fleetClient"
         }
       ]
     },
