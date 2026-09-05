@@ -192,6 +192,10 @@ type ServerSDKBase = {
   client: ReturnType<typeof createSdkForServer>
   api: CompatibleApi
   currentApi: ServerApi
+  /** D2/D3 (issue #817): the hub's self-reported version (health endpoint),
+   *  resolved once per server context — the derived list-currency token's
+   *  stamp and the boot parity record's input. */
+  version: () => Promise<string | undefined>
   event: {
     on: ServerEventEmitter["on"]
     listen: ServerEventEmitter["listen"]

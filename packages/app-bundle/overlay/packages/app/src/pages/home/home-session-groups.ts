@@ -32,7 +32,7 @@ const baseName = (worktree: string) => {
  *  no server row and no backfill. */
 export function resolveSessionProject(
   session: Pick<Session, "directory" | "projectID">,
-  projects: LocalProject[],
+  projects: readonly LocalProject[],
 ): { project: LocalProject; projectName: string } {
   const directory = pathKey(session.directory)
   const matched = projects.find(

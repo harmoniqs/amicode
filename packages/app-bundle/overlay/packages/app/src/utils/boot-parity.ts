@@ -82,7 +82,7 @@ export async function recordBootParity(input: {
     serverVersion: input.serverVersion,
     channel: () => fetchCanonicalReleaseChannel(input.fetcher),
   })
-  const parts = [record.outcome]
+  const parts: string[] = [record.outcome]
   if (record.detail) parts.push(`(${record.detail})`)
   if (record.serverVersion) parts.push(`server=${record.serverVersion}`)
   if (record.channelVersion) parts.push(`channel=${record.channelVersion}`)
