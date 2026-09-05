@@ -5,11 +5,13 @@ import * as path from "node:path";
 import {
   resolvePackageSkills,
   resolveLibrarySkills,
+  resolveLibrarySkillsWithProvenance,
   buildSkillIndexSection,
   stageOpencodeSkills,
   parseLibraryRootSpecs,
 } from "../../src/scores/package_skills";
 import { DEFAULT_LIBRARY_ROOTS, QUANTUM_CONTROL_SKILLS } from "../../src/opencode_config";
+import { generateLedgerDiscoveryRegion } from "@amicode/schema";
 
 function mkRoot(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "amicode-skillroot-"));
@@ -377,6 +379,191 @@ describe("resolveLibrarySkills — entitled surface tier (spec §Amendment A1, a
   });
 });
 
+// ── typed revision selection (spec-20260905-063000 D2, #807) ───────────────────
+//
+// The five public workflow skills ship as in-repo CANONICAL copies with
+// frontmatter `source` + `revision`; when the same name is admitted by a
+// later root (the armonissima vault on team machines), the selection is
+// typed: equal revision → canonical; a STRICTLY NEWER vault revision
+// supersedes only after validateSupersedingSkillRevision passes (consumer
+// floor + generated-region parity, BEFORE it supersedes); a mismatch
+// declines to canonical with the NAMED failure disclosed on the skill-index
+// line and the deploy receipt. The staging cases reuse the mode-registry
+// slice's hermetic fixture idiom (temp source roots, no machine paths).
+describe("resolveLibrarySkills — typed revision selection (spec-20260905-063000 D2, #807)", () => {
+  /** The default two-root shape: canonical (in-repo form, admits public) then
+   *  vault (admits internal) — DEFAULT_LIBRARY_ROOTS' tiering, hermetic. */
+  function twoRoots(): { canonical: string; vault: string; roots: Array<{ path: string; surfaces: string[] }> } {
+    const canonical = mkRoot();
+    const vault = mkRoot();
+    return {
+      canonical,
+      vault,
+      roots: [
+        { path: canonical, surfaces: ["public", "entitled"] },
+        { path: vault, surfaces: ["internal"] },
+      ],
+    };
+  }
+
+  /** Write a revision-tagged library skill. */
+  function writeRevisioned(
+    root: string,
+    name: string,
+    o: {
+      surface: "public" | "internal";
+      revision?: number;
+      body?: string;
+      description?: string;
+      source?: string;
+      consumerFloor?: string;
+    },
+  ): string {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir, { recursive: true });
+    const p = path.join(dir, "SKILL.md");
+    const lines = [
+      "---",
+      `name: ${name}`,
+      `description: ${o.description ?? `${name} protocol`}`,
+      `surface: ${o.surface}`,
+      ...(o.source !== undefined ? [`source: ${o.source}`] : []),
+      ...(o.revision !== undefined ? [`revision: ${o.revision}`] : []),
+      ...(o.consumerFloor !== undefined ? [`consumer_floor: "${o.consumerFloor}"`] : []),
+      "---",
+      "",
+      o.body ?? "# body\n",
+    ];
+    fs.writeFileSync(p, lines.join("\n"));
+    return p;
+  }
+
+  it("equal revisions resolve to the IN-REPO CANONICAL copy (precedence of record, D2)", () => {
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "director-core", { surface: "public", revision: 1, source: "amicode" });
+    writeRevisioned(vault, "director-core", { surface: "internal", revision: 1, source: "armonissima" });
+    const { entries, provenance } = resolveLibrarySkillsWithProvenance(roots);
+    expect(entries.map((e) => e.name)).toEqual(["director-core"]);
+    expect(entries[0].path.startsWith(canonical)).toBe(true); // canonical wins
+    expect(entries[0].revision).toBe(1);
+    const rec = provenance.find((r) => r.name === "director-core")!;
+    expect(rec.outcome).toBe("canonical");
+    expect(rec.canonical_revision).toBe(1);
+    expect(rec.superseding_revision).toBe(1);
+    expect(rec.detail).toMatch(/equal revision.*canonical/i);
+  });
+
+  it("a strictly newer vault revision SUPERSEDES — after validation — and the disclosure lands on the skill-index line and the deploy receipt", () => {
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "director-core", { surface: "public", revision: 1, source: "amicode", body: "# body\n" });
+    writeRevisioned(vault, "director-core", { surface: "internal", revision: 2, source: "armonissima", description: "hotfix", body: "# body hotfix\n" });
+    const { entries, provenance } = resolveLibrarySkillsWithProvenance(roots);
+    expect(entries.map((e) => e.name)).toEqual(["director-core"]);
+    expect(entries[0].path.startsWith(vault)).toBe(true); // the newer revision staged
+    expect(entries[0].revision).toBe(2);
+    expect(entries[0].description).toBe("hotfix");
+    expect(entries[0].provenanceNote).toMatch(/superseding revision 2/);
+    expect(entries[0].provenanceNote).toMatch(/supersedes canonical revision 1/);
+    const rec = provenance.find((r) => r.name === "director-core")!;
+    expect(rec.outcome).toBe("vault-superseded");
+    expect(rec.superseding_revision).toBe(2);
+    expect(rec.canonical_revision).toBe(1);
+    // (i) the skill-index line carries the disclosure
+    const section = buildSkillIndexSection(entries);
+    expect(section).toContain("director-core");
+    expect(section).toContain(entries[0].provenanceNote!);
+    // (ii) the deploy receipt carries the selection
+    const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));
+    stageOpencodeSkills(stageRoot, entries, provenance);
+    const receipt = JSON.parse(fs.readFileSync(path.join(stageRoot, ".deploy-receipt.json"), "utf8"));
+    expect(receipt.selections).toEqual([rec]);
+    expect(receipt.skills[0].provenance_note).toBe(entries[0].provenanceNote);
+  });
+
+  it("a newer vault revision DECLINES on the consumer floor: version-gap named, canonical stands with disclosure", () => {
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "director-core", { surface: "public", revision: 1, source: "amicode" });
+    writeRevisioned(vault, "director-core", { surface: "internal", revision: 2, consumerFloor: "2" });
+    const { entries, provenance } = resolveLibrarySkillsWithProvenance(roots);
+    expect(entries[0].path.startsWith(canonical)).toBe(true); // declined → canonical
+    expect(entries[0].provenanceNote).toMatch(/declined superseding revision 2/);
+    expect(entries[0].provenanceNote).toMatch(/version-gap/);
+    const rec = provenance.find((r) => r.name === "director-core")!;
+    expect(rec.outcome).toBe("vault-declined");
+    expect(rec.detail).toMatch(/version-gap/);
+  });
+
+  it("a newer vault revision DECLINES on generated-region parity: generator-mismatch NAMED, never a staged divergent discovery rule", () => {
+    const region = generateLedgerDiscoveryRegion();
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "director-core", { surface: "public", revision: 1, source: "amicode", body: region });
+    // (a) the superseding copy hand-edits the rule body (forged current stamp)
+    const tampered = region.replace("kickoff before any work.", "TAMPERED hand-edited rule body.");
+    writeRevisioned(vault, "director-core", { surface: "internal", revision: 2, body: tampered });
+    const a = resolveLibrarySkillsWithProvenance(roots);
+    expect(a.entries[0].path.startsWith(canonical)).toBe(true); // declined → canonical
+    expect(a.entries[0].provenanceNote).toMatch(/generator-mismatch/);
+    expect(a.provenance.find((r) => r.name === "director-core")!.detail).toMatch(/generator-mismatch/);
+    // (b) the superseding copy DROPS the region the canonical carries
+    const { canonical: c2, vault: v2, roots: r2 } = twoRoots();
+    writeRevisioned(c2, "director-core", { surface: "public", revision: 1, source: "amicode", body: region });
+    writeRevisioned(v2, "director-core", { surface: "internal", revision: 2, body: "# body without the rule\n" });
+    const b = resolveLibrarySkillsWithProvenance(r2);
+    expect(b.entries[0].path.startsWith(c2)).toBe(true);
+    expect(b.entries[0].provenanceNote).toMatch(/generator-mismatch/);
+  });
+
+  it("a newer vault revision carrying the SAME generated region byte-exact supersedes (parity is about divergence, not existence)", () => {
+    const region = generateLedgerDiscoveryRegion();
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "director-core", { surface: "public", revision: 1, source: "amicode", body: region });
+    writeRevisioned(vault, "director-core", { surface: "internal", revision: 2, body: region });
+    const { entries, provenance } = resolveLibrarySkillsWithProvenance(roots);
+    expect(entries[0].path.startsWith(vault)).toBe(true);
+    expect(provenance.find((r) => r.name === "director-core")!.outcome).toBe("vault-superseded");
+  });
+
+  it("a vault revision that is NOT strictly newer (lower, or missing = 0) loses to the canonical copy", () => {
+    const { canonical, vault, roots } = twoRoots();
+    writeRevisioned(canonical, "develop", { surface: "public", revision: 1, source: "amicode" });
+    writeRevisioned(vault, "develop", { surface: "internal" }); // no revision → 0
+    const r1 = resolveLibrarySkillsWithProvenance(roots);
+    expect(r1.entries[0].path.startsWith(canonical)).toBe(true);
+    expect(r1.provenance.find((p) => p.name === "develop")!.outcome).toBe("canonical");
+  });
+
+  it("H3 matrix — the five workflow skills + autodev stage for a NON-entitled session (the standalone gap, closed)", () => {
+    // A non-entitled session: NO entitlements, and the ONLY root it has is the
+    // in-repo library (a Marketplace machine has no vault mount). The public
+    // workflow set must be there — this is the 2026-09-03 incident's fixture.
+    const root = inRepoLibraryRoot();
+    if (!root) return;
+    const idx = resolveLibrarySkills([{ path: root, surfaces: ["public", "entitled"] }], []);
+    const names = idx.map((e) => e.name);
+    for (const name of [
+      "director-core",
+      "develop",
+      "implement-issue",
+      "write-an-issue",
+      "break-into-subissues",
+      "autodev",
+    ]) {
+      expect(names, `non-entitled session stages ${name}`).toContain(name);
+    }
+  });
+
+  it("every real in-repo workflow skill carries the D2 revision frontmatter (source + revision ≥ 1)", () => {
+    const root = inRepoLibraryRoot();
+    if (!root) return;
+    for (const name of ["director-core", "develop", "implement-issue", "write-an-issue", "break-into-subissues", "autodev"]) {
+      const raw = fs.readFileSync(path.join(root, name, "SKILL.md"), "utf8");
+      const fm = raw.match(/^---\n([\s\S]*?)\n---/)![1];
+      expect(fm, `${name}: source label`).toMatch(/^source:\s*\S/m);
+      expect(fm, `${name}: revision ≥ 1`).toMatch(/^revision:\s*[1-9]\d*$/m);
+    }
+  });
+});
+
 describe("parseLibraryRootSpecs (settings back-compat, ADR-0003)", () => {
   it("passes bare strings through as public-only roots (pre-ADR overrides keep working)", () => {
     expect(parseLibraryRootSpecs(["/a", "~/b"])).toEqual(["/a", "~/b"]);
@@ -456,8 +643,17 @@ describe("stageOpencodeSkills", () => {
     expect(fs.existsSync(staged)).toBe(true);
     // folder name == frontmatter name (opencode's rule); content copied verbatim (agents: kept — opencode ignores it)
     expect(fs.readFileSync(staged, "utf8")).toContain("agents: [x]");
-    // nothing else staged — only the one resolved entry's dir exists
-    expect(fs.readdirSync(stageRoot).sort()).toEqual(["atoms"]);
+    // nothing else staged — only the one resolved entry's dir exists, plus
+    // the deploy receipt (#807: the staging record the revision disclosures
+    // ride; a dotfile opencode's SKILL.md scan never reads)
+    expect(fs.readdirSync(stageRoot).sort()).toEqual([".deploy-receipt.json", "atoms"]);
+    // the receipt records what staged (name + revision), sha-pinned
+    const receipt = JSON.parse(fs.readFileSync(path.join(stageRoot, ".deploy-receipt.json"), "utf8"));
+    expect(receipt.receipt_version).toBe(1);
+    expect(receipt.skills).toEqual([
+      { name: "atoms", revision: 0, provenance_note: null, sha256: expect.stringMatching(/^sha256:[0-9a-f]{64}$/) },
+    ]);
+    expect(receipt.selections).toEqual([]);
   });
   it("stages companion files so SKILL.md relative links resolve (amicode#393)", () => {
     const src = fs.mkdtempSync(path.join(os.tmpdir(), "skillsrc-"));
@@ -472,8 +668,8 @@ describe("stageOpencodeSkills", () => {
     ]);
     expect(fs.existsSync(path.join(stageRoot, "tdd", "tests.md"))).toBe(true);
     expect(fs.existsSync(path.join(stageRoot, "tdd", "references", "r.md"))).toBe(true);
-    // still only the resolved set at the stage root
-    expect(fs.readdirSync(stageRoot)).toEqual(["tdd"]);
+    // still only the resolved set at the stage root (+ the deploy receipt, #807)
+    expect(fs.readdirSync(stageRoot).sort()).toEqual([".deploy-receipt.json", "tdd"]);
   });
   it("empty set → '' (no skills.paths registered)", () => {
     const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), "stage-"));

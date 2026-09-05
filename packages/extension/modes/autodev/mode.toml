@@ -21,6 +21,7 @@ pack = "pack.toml"
 # validation failure, never a silent skip.
 protocol_skills = [
   "director-core",
+  "autodev",
   "develop",
   "implement-issue",
   "write-an-issue",
@@ -31,8 +32,10 @@ protocol_skills = [
 name = "implementer"
 path = "../../agents/implementer.md"
 
-# The mode's protocol skills (the binding surface; the skill moves land in
-# slice 3, D2).
+# The mode's protocol skills (the binding surface). The five dev-workflow
+# skills + the `autodev` mode-protocol skill are PUBLIC with in-repo canonical
+# copies under packages/extension/skills/ (#807, D2, ADR-0011 amendment:
+# workflow public, package-proprietary gated).
 
 # The handoff seed this mode RECEIVES: research closes with an issue seed and
 # hands it to autodev (D6). kind → receiving mode is registry data, checked

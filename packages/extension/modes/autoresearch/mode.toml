@@ -29,8 +29,11 @@ path = "../../agents/experimenter.md"
 name = "analyzer"
 path = "../../agents/analyzer.md"
 
-# The mode's protocol skills (the binding surface; the skill moves land in
-# slice 3, D2).
+# The mode's protocol skills (the binding surface). director-core is PUBLIC
+# with an in-repo canonical copy under packages/extension/skills/ (#807, D2,
+# ADR-0011 amendment: workflow public, package-proprietary gated);
+# hypothesis-review likewise ships publicly; structural-analysis remains a
+# team-vault copy on machines that sync it (honest degradation names it).
 
 # The handoff seed this mode RECEIVES: dev closes with a hypothesis seed and
 # hands it to autoresearch (D6).

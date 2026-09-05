@@ -8,11 +8,12 @@ import { readLocalEntitlements, filterRepertoire, packageAllowlist } from "./sco
 import { buildRouterSection } from "./scores/router";
 import { compileScore, spliceIntoAgentsMd } from "./scores/compiler";
 import {
-  resolveLibrarySkills,
+  resolveLibrarySkillsWithProvenance,
   resolvePackageSkills,
   buildSkillIndexSection,
   stageOpencodeSkills,
   type SkillIndexEntry,
+  type SkillProvenanceRecord,
   type LibraryRoot,
   type LibraryRootSpec,
 } from "./scores/package_skills";
@@ -177,10 +178,12 @@ export const DEFAULT_SKILL_ROOTS = [path.join(os.homedir(), "harmoniqs", "packag
  *   2. the team's armonissima vault mount — admits {internal}. Mount presence
  *      IS the eligibility proof: internal SKILL.md content exists only in the
  *      private team vault (synced by the armonia sync), so nobody stages
- *      skills they do not already possess. This is what gives brainstorming's
- *      publish/decompose steps (write-an-issue, break-into-subissues —
- *      surface:internal) their path to Amicode. Missing roots are silently
- *      skipped (resolveLibrarySkills). */
+ *      skills they do not already possess. The dev-workflow skills went public
+ *      (#807, ADR-0011 amendment: workflow public, package-proprietary gated)
+ *      — their in-repo canonical copies live in root 1; a strictly newer
+ *      vault revision of one of them supersedes only after validation, with
+ *      disclosure on the skill-index line and the deploy receipt. Missing
+ *      roots are silently skipped (resolveLibrarySkills). */
 export const DEFAULT_LIBRARY_ROOTS: LibraryRoot[] = [
   { path: path.resolve(__dirname, "..", "skills"), surfaces: ["public", "entitled"] },
   { path: path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills"), surfaces: ["internal"] },
@@ -754,18 +757,24 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // then entitlement-gated package skills. Read on demand — the content is never
   // baked into the prompt or the .vsix; only the lean index is spliced.
   let skillEntries: SkillIndexEntry[] = [];
+  let skillProvenance: SkillProvenanceRecord[] = [];
   try {
     const entsDir = opts.entitlementsDir ?? path.join(os.homedir(), ".amico", "amicode");
     const scoresRoot = opts.scoresRoot ?? DEFAULT_SCORES_ROOT;
     const ents = readLocalEntitlements(entsDir).entitlements;
     const allow = packageAllowlist(entitlementsTablePath(scoresRoot), ents);
+    // Library skills by `surface:` tag (spec-20260713-003804; entitled tier per
+    // spec §A1 / ADR-0011) — public ships to all, entitled stages only for
+    // sessions holding the skill's entitlement code (the entitlements resolved
+    // above, prep-time, headless included). The private tier is package-gated
+    // below (resolvePackageSkills), never here. The typed revision selection
+    // (#807, D2) rides the library pass: equal revision → in-repo canonical;
+    // a strictly newer vault revision supersedes AFTER validation, disclosed
+    // on the skill-index line and the skills deploy receipt.
+    const library = resolveLibrarySkillsWithProvenance(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents);
+    skillProvenance = library.provenance;
     const shippedEntries: SkillIndexEntry[] = [
-      // Library skills by `surface:` tag (spec-20260713-003804; entitled tier per
-      // spec §A1 / ADR-0011) — public ships to all, entitled stages only for
-      // sessions holding the skill's entitlement code (the entitlements resolved
-      // above, prep-time, headless included). The private tier is package-gated
-      // below (resolvePackageSkills), never here.
-      ...resolveLibrarySkills(opts.skillLibraryRoots ?? DEFAULT_LIBRARY_ROOTS, ents),
+      ...library.entries,
       ...resolvePackageSkills(allow, opts.skillRoots ?? DEFAULT_SKILL_ROOTS),
     ];
     // User skill providers (issue #573): custom + workspace, merged with shadow semantics.
@@ -808,7 +817,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
   // re-prepares, and skills staged under a previous (wider) entitlement set
   // must not survive into this session's guarded set.
   fs.rmSync(path.join(projectDir, "skills"), { recursive: true, force: true });
-  const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries);
+  const skillsStageDir = stageOpencodeSkills(path.join(projectDir, "skills"), skillEntries, skillProvenance);
 
   // Solver mode, routing, fleet, and the user-memory sections (profile,
   // recent problems, reference demos, mount stack, memory index) are injected
