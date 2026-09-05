@@ -226,6 +226,11 @@
           "default": "",
           "description": "Override the extension's resource root for scores, templates, and bin/ (dev only). Empty = use the installed extension path. Set via the Developer Tools section in settings."
         },
+        "amicode.appBundleDir": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a built app-bundle dist (dev override). The amicode service serves it as the app UI on its origin. Empty = the packaged dist (dist/app inside the extension, staged by `pnpm --filter amicode run build:app`). When neither exists the service serves an honest needs-setup placeholder — the /amicode/* API surface is unaffected."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,
@@ -380,6 +385,7 @@
     "opencode:build": "node scripts/opencode_dev.mjs build",
     "opencode:pin": "node scripts/opencode_dev.mjs pin",
     "build:exemplars": "node scripts/build_exemplars.mjs",
+    "build:app": "node scripts/build_app_bundle.mjs",
     "healthcheck": "node scripts/healthcheck.mjs",
     "package": "pnpm --filter @amicode/amico-run build && pnpm run build && pnpm run build:exemplars && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix",
     "dev:pulseplot": "esbuild dev/pulseplot_harness/main.ts --bundle --format=iife --outfile=dev/pulseplot_harness/main.js && open dev/pulseplot_harness/index.html",

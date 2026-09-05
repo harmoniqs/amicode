@@ -32,6 +32,8 @@ import { libraryBody, saveLibraryFile } from "./library";
 import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry } from "./widgets";
 import { dashboardResponse, saveDashboardResponse } from "./dashboard";
 import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
+import { AppShelf } from "./app_shelf";
+import { EngineProxy } from "./engine_proxy";
 import { createProject, listProjects } from "./project";
 import {
   addCustomConnectionResponse,
@@ -222,9 +224,28 @@ export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeS
 }
 
 /** The service with every ported slice mounted. The extension wiring slice
- *  boots this at activation; the contract tests boot it in-process. */
-export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
-  const server = new AmicodeServiceServer(opts);
+ *  boots this at activation; the contract tests boot it in-process.
+ *
+ *  #822 additions, both optional so the parity-contract boots stay
+ *  byte-identical: `shelf` mounts the app-bundle static server (the built
+ *  dist this origin serves the framed app from), `engine` arms engine-token
+ *  auth acceptance + the reverse proxy to the spawned opencode server. */
+export function createAmicodeService(
+  opts: {
+    password?: string;
+    shelf?: { distRoot?: string };
+    engine?: { password?: string; getUrl?: () => string | undefined };
+  } = {},
+): AmicodeServiceServer {
+  const server = new AmicodeServiceServer({
+    password: opts.password,
+    // The engine mint arms accept-both auth even before the URL getter
+    // binds (the engine token is valid on /amicode/* from boot, not just
+    // once the upstream is reachable).
+    enginePassword: opts.engine?.password,
+  });
+  if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
+  if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);
