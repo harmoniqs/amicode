@@ -27,6 +27,7 @@ rename(2) over the running executable — atomic, no stop, ever.
 | `fleet-alert.sh` | every 15 min (`co.harmoniqs.fleet-alert`) | `fleet-status.json`, state file | **Slack `#fleet`** — device transitions only (noise-gated; always-on hosts `mini erlich` notify, laptops never do); down->24h re-reminds once daily |
 | `papers-digest/daily.sh` | daily ~09:00 (`co.harmoniqs.amicode-papers-digest`) | the frozen bundle | **Slack `#papers`** — top-5 quant-ph digest; appends to `papers-digest/log.txt` |
 | `skill-freshness/run-skill-freshness.sh` | daily ~04:30 (`co.harmoniqs.skill-freshness`) | the three skill surfaces (repo public library, armonissima vault library, server staging tree), Julia package checkouts, the `#586` lint CLI | receipt line appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift, the tracking issue "Skill freshness report (nightly)" in `harmoniqs/armonissima` (created once, then commented); reports under `skill-freshness/reports/` |
+| `role-parity/run-role-parity-check.sh` | daily ~04:45 (`co.harmoniqs.role-parity`, on the vault-visible machine) | the role-card parity pin record (`packages/extension/test/fixtures/vault-agents/pin.json` — the engine-neutral role definitions at their pinned amicissimo revision) vs the amicissimo vault checkout, via the `#806` check CLI | receipt line (kind `role-parity`) appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift (a pinned definition changed past the pin, a fixture mismatched its record, or the pin orphaned), the chore issue "Role-card parity pin behind the vault (nightly)" in `harmoniqs/amicode` (created once, then commented) |
 
 The launchd plists themselves are versioned alongside (`ops/launchd/`) — reference
 copies; installing them is a one-time `launchctl load` on the mini (paths inside are
@@ -36,7 +37,7 @@ absolute to `/Users/aaron`).
 
 `fleet-status.json`, `fleet-status.guard-state`, `fleet-alert.state`,
 `fleet-alert.launchd.{out,err}`, `papers-digest/{log.txt,launchd.*}`,
-`skill-freshness/{reports/,launchd.*}` — all live under
+`skill-freshness/{reports/,launchd.*}`, `role-parity/launchd.*` — all live under
 `~/.amico/ops/` on the mini and belong to the running system. `install.sh` touches
 none of them.
 
