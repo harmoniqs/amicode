@@ -385,6 +385,7 @@
     "opencode:build": "node scripts/opencode_dev.mjs build",
     "opencode:pin": "node scripts/opencode_dev.mjs pin",
     "build:exemplars": "node scripts/build_exemplars.mjs",
+    "build:app": "node scripts/build_app_bundle.mjs",
     "healthcheck": "node scripts/healthcheck.mjs",
     "package": "pnpm --filter @amicode/amico-run build && pnpm run build && pnpm run build:exemplars && pnpm run fetch:opencode && vsce package --no-dependencies --allow-missing-repository -o amicode.vsix",
     "dev:pulseplot": "esbuild dev/pulseplot_harness/main.ts --bundle --format=iife --outfile=dev/pulseplot_harness/main.js && open dev/pulseplot_harness/index.html",

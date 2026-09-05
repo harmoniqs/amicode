@@ -206,6 +206,29 @@ jobs:
           name: amicode-vsix
           path: packages/extension/amicode.vsix
           if-no-files-found: error
+  app-shelf-boot-proof:
+    # #822 the env-gated LIVE boot proof lane (the telaio_app_probe precedent).
+    # HONEST STUB: ci.yml does NOT build the app dist in this slice (the full
+    # bun recipe — upstream tarball fetch + ~4,700-package install — is the
+    # packaging chore issue amicode#<follow-up>, which also wires build:app
+    # into the release pipeline), so the probe SKIPS here with the reason
+    # printed. It runs FOR REAL once a dist is present: pass AMICODE_APP_DIST
+    # pointing at packages/extension/dist/app after a build:app step. The
+    # contract itself is held by the vitest suite (mock engine + mock dist);
+    # this lane is the end-to-end proof, never a false green — a skip is
+    # printed as a skip.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter amicode fetch:opencode
+        env:
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}   # the probe's engine default is the vendored binary
+      - name: boot proof — real service + real engine + real dist (self-skips until the dist-build chore lands)
+        run: AMICODE_APP_DIST=${AMICODE_APP_DIST:-} node packages/extension/scripts/amicode_service_boot_probe.mjs
   boot-smoke:
     strategy:
       matrix:
