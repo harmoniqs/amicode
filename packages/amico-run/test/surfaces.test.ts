@@ -219,8 +219,12 @@ describe("doctor v2 surface inventory — unknown cells (every surface degrades 
     const ext = bySurface(report, "extension");
     expect(ext.verdict).toBe("unknown");
     expect(ext.evidence.join(" ")).toMatch(/amicode fetch failed/);
-    // the agent-cards source is the LOCAL checkout — unaffected by the dead remote
-    expect(bySurface(report, "agent-cards-global").verdict).toBe("current");
+    // the agent-cards BYTES are judged against the local checkout (component
+    // rows still read current — the local facts ride), but release currency
+    // is verdict-bearing since the mode registry: when the compare cannot
+    // run, the RECORD reads unknown, never current (a network-dependent
+    // verdict is the anti-gaming hole; supersedes the pre-registry cell)
+    expect(bySurface(report, "agent-cards-global").verdict).toBe("unknown");
     cleanup();
   });
 
@@ -653,9 +657,12 @@ describe("doctor mode-registry component verdicts (#804)", () => {
       const rel = componentOf(r, (c) => c.component === "release-compare")!;
       expect(rel.verdict).toBe("unknown");
       expect(rel.evidence.join(" ")).toMatch(/amicode fetch failed/);
-      // local facts still govern: the tag bytes match, so the record reads
-      // current WITH the named unknown riding it — never a silent pass
-      expect(r.verdict).toBe("current");
+      // release currency is verdict-bearing (a stale compare constrains the
+      // record), so its unknown state is too: an unreachable remote reads
+      // whole-record unknown, NEVER current — a verdict that depends on the
+      // network is the anti-gaming hole (a pre-registry machine, surfaced
+      // only by this compare, could read current on a network blip)
+      expect(r.verdict).toBe("unknown");
     }
     cleanup();
   });

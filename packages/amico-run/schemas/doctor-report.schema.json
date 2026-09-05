@@ -1,6 +1,6 @@
 {
   "$id": "https://harmoniqs.github.io/amicode/schemas/doctor-report.schema.json",
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "description": "The `amico doctor --json` machine contract (doctor v2, #525; schema v2, #804): the surface inventory the settings panel and watchdog consume, with a top-level schema_version and component-level mode-registry verdicts riding the agent-cards records (the doctor extends, never mints). Consumers are tolerate-then-warn: the v1 schema (additionalProperties open) accepts v2 reports; v2 validators reject v1 reports (the bump is real). Canonical form: deep-sorted keys, 2-space indent, trailing newline.",
   "properties": {
     "schema_version": {

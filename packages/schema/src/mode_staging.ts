@@ -245,7 +245,7 @@ function acquireLock(
   opts: ModeStagingOpts,
   steals: StolenLock[],
   detail: string[],
-): { acquired: boolean; reason?: string } {
+): { acquired: boolean; reason?: string; liveness_token?: string } {
   const lockPath = join(modesDir, MODE_STAGING_LOCK_NAME);
   const ttl = opts.ttlMs ?? MODE_STAGING_TTL_MS_DEFAULT;
   const nowIso = opts.now ?? (() => new Date().toISOString());
@@ -264,7 +264,7 @@ function acquireLock(
       const fh = openSync(lockPath, "wx");
       writeFileSync(fh, JSON.stringify(lock, null, 2) + "\n");
       closeSync(fh);
-      return { acquired: true };
+      return { acquired: true, liveness_token: lock.liveness_token };
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
       const held = readStagingLock(modesDir);
@@ -339,6 +339,11 @@ export function stageModeBundles(
     detail.push(lock.reason ?? "lock refused");
     return { outcome: "aborted-locked", dir: modesDir, modes: [], steals, receiptPath: null, detail };
   }
+  const ourLockToken = lock.liveness_token ?? "";
+  // sweep crashed-pass tmp debris under the lock: no other live stager holds
+  // one, so any *.tmp-<pid> file is an orphaned write-then-rename left-hand —
+  // without the sweep it is permanent doctor staleness with no repair path
+  sweepTmpDebris(modesDir, detail);
 
   const nowIso = opts.now ?? (() => new Date().toISOString());
   const modeRecords: StageModeBundlesResult["modes"] = [];
@@ -400,14 +405,43 @@ export function stageModeBundles(
     detail.push(`staged ${modeRecords.length} mode bundle(s) to ${modesDir}`);
     return { outcome: "staged", dir: modesDir, modes: modeRecords, steals, receiptPath, detail };
   } finally {
-    // (5) release the lock — a crash mid-stage leaves a stale lock the
-    // doctor reads as failed and the next pass steals
+    // (5) release the lock — OWNERSHIP-CHECKED: a stalled-then-resumed owner
+    // must not delete a thief's new lock (the liveness_token is the
+    // disambiguator; an unconditional unlink would leave the thief staging
+    // lockless). A crash mid-stage leaves a stale lock the doctor reads as
+    // failed and the next pass steals.
     try {
-      unlinkSync(join(modesDir, MODE_STAGING_LOCK_NAME));
+      const held = readStagingLock(modesDir);
+      if (held !== null && held.liveness_token === ourLockToken) {
+        unlinkSync(join(modesDir, MODE_STAGING_LOCK_NAME));
+      }
     } catch {
       // already gone (stolen?) — nothing to release
     }
   }
+}
+
+/** Remove tmp debris from crashed staging passes (write-then-rename's
+ *  orphaned left-hand files). Runs under the lock — no live stager holds
+ *  one, so any `*.tmp-<pid>` file is debris by construction. */
+function sweepTmpDebris(root: string, detail: string[]): void {
+  const walk = (rel: string): void => {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = readdirSync(join(root, rel), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const child = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) walk(child);
+      else if (e.isFile() && /\.tmp-\d+$/.test(e.name)) {
+        rmSync(join(root, child), { force: true });
+        detail.push(`swept tmp debris: ${child}`);
+      }
+    }
+  };
+  walk("");
 }
 
 function readManifests(sourceModes: string): Array<[string, ModeManifest]> {

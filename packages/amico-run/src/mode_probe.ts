@@ -112,6 +112,7 @@ async function walkDeployed(root: string): Promise<Map<string, string>> {
     for (const e of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const child = rel ? `${rel}/${e.name}` : e.name;
       if (e.name === ".staging-lock.json") continue; // the lock is judged by its own row
+      if (/\.tmp-\d+$/.test(e.name)) continue; // crashed-stager debris — swept by the next stage, never a verdict input
       if (e.isDirectory()) await walk(child);
       else if (e.isFile()) out.set(child, await readFileSafe(join(root, child)).then((b) => b ?? "<UNREADABLE>"));
     }
@@ -375,8 +376,18 @@ export async function probeModeRegistry(
     }
   }
 
+  // Release currency is verdict-bearing (a stale compare constrains the
+  // record above), so its unknown state is verdict-bearing too: an
+  // unreachable remote must read whole-record unknown, never "current" —
+  // a verdict that depends on the network is the anti-gaming hole (a
+  // pre-registry machine surfaced only by this compare could read current
+  // on a network blip). A hard local stale fact always wins over unknown.
   const recordVerdict: "stale" | "unknown" | null =
-    releaseRow.verdict === "stale" ? "stale" : anyStale ? "stale" : null;
+    releaseRow.verdict === "stale" || anyStale
+      ? "stale"
+      : releaseRow.verdict === "unknown"
+        ? "unknown"
+        : null;
   return { components, recordVerdict, evidence };
 }
 
