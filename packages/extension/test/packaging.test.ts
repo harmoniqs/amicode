@@ -17,6 +17,10 @@ const PUBLIC_WORKFLOW_SKILLS = [
   "write-an-issue",
   "break-into-subissues",
   "autodev",
+  // #820 — the dual-lens SOTA survey skill (living-sota D1): public with the
+  // same shipping discipline; a dropped copy = the loops' external-currency
+  // survey never stages.
+  "sota-review",
 ] as const;
 
 const REQUIRED = [
@@ -83,6 +87,7 @@ const REQUIRED = [
   "extension/skills/write-an-issue/SKILL.md",
   "extension/skills/break-into-subissues/SKILL.md",
   "extension/skills/autodev/SKILL.md",
+  "extension/skills/sota-review/SKILL.md", // #820 — the public SOTA survey skill must ship (living-sota D1)
   // #804 — the mode registry: the bundles the activation stager deploys and
   // the doctor probes ship in the vsix; a dropped modes/ = zero staged
   // bundles on every Marketplace machine (packaging.test runs on the built

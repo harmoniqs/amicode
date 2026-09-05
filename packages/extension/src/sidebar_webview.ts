@@ -408,32 +408,43 @@ function createIconEl(icon: string): HTMLElement {
     // Determine if this is a workspace root
     const isRoot = currentRoots.some((r) => r.path === nodePath);
 
+    // Detect ghost entries (deleted from disk, still tracked by git)
+    const isGhost = dataEl?.dataset.gitStatus === "deleted";
+
     // Build menu items
     interface MenuItem { label?: string; op?: string; separator?: boolean; inline?: boolean }
     const items: MenuItem[] = [];
 
-    if (nodeType === "directory") {
-      items.push({ label: "New File", op: "new-file", inline: true });
-      items.push({ label: "New Folder", op: "new-folder", inline: true });
+    if (isGhost) {
+      // Ghost entries get a reduced menu — only restore and copy paths
+      items.push({ label: "Restore", op: "restore" });
       items.push({ separator: true });
-    }
+      items.push({ label: "Copy Path", op: "copy-path" });
+      items.push({ label: "Copy Relative Path", op: "copy-relative-path" });
+    } else {
+      if (nodeType === "directory") {
+        items.push({ label: "New File", op: "new-file", inline: true });
+        items.push({ label: "New Folder", op: "new-folder", inline: true });
+        items.push({ separator: true });
+      }
 
-    items.push({ label: "Rename", op: "rename", inline: true });
-    items.push({ label: "Delete", op: "delete" });
-    items.push({ separator: true });
-    items.push({ label: "Copy Path", op: "copy-path" });
-    items.push({ label: "Copy Relative Path", op: "copy-relative-path" });
-    items.push({ separator: true });
-    items.push({ label: "Reveal in Finder", op: "reveal-in-os" });
-    items.push({ label: "Open in Terminal", op: "open-in-terminal" });
-
-    if (nodeType === "file") {
-      items.push({ label: "Open to the Side", op: "open-to-side" });
-    }
-
-    if (isRoot) {
+      items.push({ label: "Rename", op: "rename", inline: true });
+      items.push({ label: "Delete", op: "delete" });
       items.push({ separator: true });
-      items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+      items.push({ label: "Copy Path", op: "copy-path" });
+      items.push({ label: "Copy Relative Path", op: "copy-relative-path" });
+      items.push({ separator: true });
+      items.push({ label: "Reveal in Finder", op: "reveal-in-os" });
+      items.push({ label: "Open in Terminal", op: "open-in-terminal" });
+
+      if (nodeType === "file") {
+        items.push({ label: "Open to the Side", op: "open-to-side" });
+      }
+
+      if (isRoot) {
+        items.push({ separator: true });
+        items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+      }
     }
 
     // Render menu
@@ -482,11 +493,57 @@ function createIconEl(icon: string): HTMLElement {
   let dragSourcePath: string | null = null;
   let currentDropTarget: HTMLElement | null = null;
 
+  // ── Drag auto-scroll ────────────────────────────────────────────────────
+  // When dragging near the top/bottom edge of a scrollable section, auto-scroll
+  // so off-screen drop targets become reachable.
+  let autoScrollRAF: number | null = null;
+  let autoScrollSpeed = 0;
+  let autoScrollTarget: HTMLElement | null = null;
+
+  function startAutoScroll(container: HTMLElement, speed: number): void {
+    autoScrollTarget = container;
+    autoScrollSpeed = speed;
+    if (autoScrollRAF === null) autoScrollTick();
+  }
+
+  function autoScrollTick(): void {
+    if (autoScrollTarget && autoScrollSpeed !== 0) {
+      autoScrollTarget.scrollTop += autoScrollSpeed;
+      autoScrollRAF = requestAnimationFrame(autoScrollTick);
+    }
+  }
+
+  function clearAutoScroll(): void {
+    if (autoScrollRAF !== null) { cancelAnimationFrame(autoScrollRAF); autoScrollRAF = null; }
+    autoScrollSpeed = 0;
+    autoScrollTarget = null;
+  }
+
+  function handleDragAutoScroll(e: DragEvent): void {
+    const container = (e.target as HTMLElement)?.closest(".section-body") as HTMLElement | null;
+    if (!container) { clearAutoScroll(); return; }
+
+    const rect = container.getBoundingClientRect();
+    const threshold = 30;
+    const maxSpeed = 12;
+
+    if (e.clientY < rect.top + threshold && container.scrollTop > 0) {
+      const proximity = Math.max(0, 1 - (e.clientY - rect.top) / threshold);
+      startAutoScroll(container, -maxSpeed * proximity);
+    } else if (e.clientY > rect.bottom - threshold && container.scrollTop < container.scrollHeight - container.clientHeight) {
+      const proximity = Math.max(0, 1 - (rect.bottom - e.clientY) / threshold);
+      startAutoScroll(container, maxSpeed * proximity);
+    } else {
+      clearAutoScroll();
+    }
+  }
+
   function clearDropTarget(): void {
     if (currentDropTarget) {
       currentDropTarget.classList.remove("drop-target");
       currentDropTarget = null;
     }
+    clearAutoScroll();
   }
 
   // ── Sash resize between sections ────────────────────────────────────────────
@@ -732,8 +789,13 @@ function createIconEl(icon: string): HTMLElement {
       const directStatus = statusMap[nodePath];
       if (directStatus) {
         label.classList.add(`git-${directStatus}`);
+        // Keep dataset.gitStatus in sync so click/context-menu guards read current state
+        el.dataset.gitStatus = directStatus;
         continue;
       }
+
+      // No direct status — clear stale dataset.gitStatus (e.g. file was restored)
+      delete el.dataset.gitStatus;
 
       // Directory propagation: find the most notable child status
       const isDir = el.dataset.type === "directory";
@@ -1239,6 +1301,7 @@ function createIconEl(icon: string): HTMLElement {
     label.textContent = entry.name;
     if (entry.gitStatus) {
       label.classList.add(`git-${entry.gitStatus}`);
+      row.dataset.gitStatus = entry.gitStatus;
     }
 
     row.appendChild(iconEl);
@@ -1249,6 +1312,9 @@ function createIconEl(icon: string): HTMLElement {
     setupFileDropTarget(row);
 
     row.addEventListener("click", () => {
+      // Ghost entries (deleted from disk) can't be opened — read from DOM so
+      // the guard reflects applyGitStatus updates (not a stale closure value)
+      if (row.dataset.gitStatus === "deleted") return;
       vscode.postMessage({ kind: "open-file", path: entry.path });
     });
 
@@ -1297,6 +1363,7 @@ function createIconEl(icon: string): HTMLElement {
       el.classList.remove("dragging");
       dragSourcePath = null;
       clearDropTarget();
+      clearAutoScroll();
       if (dragImage) {
         dragImage.remove();
         dragImage = null;
@@ -1315,6 +1382,7 @@ function createIconEl(icon: string): HTMLElement {
       if (dragSourcePath.startsWith(targetDir + "/")) return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "move";
+      handleDragAutoScroll(e);
       if (currentDropTarget !== highlight) {
         clearDropTarget();
         currentDropTarget = highlight;
@@ -1353,6 +1421,7 @@ function createIconEl(icon: string): HTMLElement {
       if (dragSourcePath.startsWith(dirPath + "/")) return;
       e.preventDefault();
       e.dataTransfer!.dropEffect = "move";
+      handleDragAutoScroll(e);
       const dirRow = dirContainer.querySelector(":scope > .tree-node") as HTMLElement | null;
       if (!dirRow) return;
       if (currentDropTarget !== dirRow) {
@@ -1413,6 +1482,7 @@ function createIconEl(icon: string): HTMLElement {
       e.preventDefault();
       e.stopImmediatePropagation(); // Prevent setupDirectoryDropTarget on the SAME element
       e.dataTransfer!.dropEffect = "move";
+      handleDragAutoScroll(e);
 
       // Don't show indicator for self-drop
       if (sourceRoot.path === root.path) {
@@ -1453,18 +1523,20 @@ function createIconEl(icon: string): HTMLElement {
     });
 
     row.addEventListener("drop", (e) => {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      clearRootInsertIndicator();
-      clearDropTarget();
-
       const sourcePath = e.dataTransfer?.getData("text/plain");
       if (!sourcePath) return;
 
       // Is the source a root?
       const sourceRoot = currentRoots.find((r) => r.path === sourcePath);
-      if (!sourceRoot) return; // Not a root — setupDirectoryDropTarget handles file move
+      if (!sourceRoot) return; // Not a root — let setupDirectoryDropTarget handle file move
       if (sourceRoot.projectType !== root.projectType) return;
+
+      // Confirmed root-to-root reorder — now block other handlers
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      clearRootInsertIndicator();
+      clearDropTarget();
+
       if (sourcePath === root.path) return; // Self-drop no-op
 
       const rect = row.getBoundingClientRect();
@@ -1613,6 +1685,35 @@ function createIconEl(icon: string): HTMLElement {
         // Reactive git coloring: cache + apply.
         lastGitStatusMap = msg.statusMap ?? {};
         applyGitStatus(lastGitStatusMap);
+
+        // Re-request children for expanded directories that contain orphaned
+        // deleted entries (deleted files in the status map with no matching
+        // DOM node). This handles the race where the filesystem watcher fires
+        // before git has updated its working-tree status — by the time this
+        // git-status push arrives, annotateGitStatus on the host side will
+        // inject the ghost entries.
+        const renderedPaths = new Set(
+          Array.from(treeRoot?.querySelectorAll("[data-path]") ?? [])
+            .map((el) => (el as HTMLElement).dataset.path)
+            .filter(Boolean),
+        );
+        const orphanedDirs = new Set<string>();
+        for (const [filePath, status] of Object.entries(lastGitStatusMap)) {
+          if (status !== "deleted") continue;
+          if (renderedPaths.has(filePath)) continue;
+          // Find the parent directory of this orphaned deleted file
+          const lastSlash = filePath.lastIndexOf("/");
+          if (lastSlash < 0) continue;
+          const parentDir = filePath.slice(0, lastSlash);
+          // Only re-request if the parent is expanded (visible in the tree)
+          if (expanded[parentDir]) {
+            orphanedDirs.add(parentDir);
+          }
+        }
+        for (const dir of orphanedDirs) {
+          delete childrenCache[dir];
+          vscode.postMessage({ kind: "get-children", path: dir });
+        }
         break;
       }
 
@@ -1640,8 +1741,11 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "section-order": {
-        // Host replays the persisted section order on webview resolve
+        // Host replays the persisted section order on webview resolve.
+        // Skip the re-render when the order is unchanged — avoids a
+        // redundant full DOM wipe on sidebar show and section-reorder echo.
         if (Array.isArray(msg.order)) {
+          if (JSON.stringify(msg.order) === JSON.stringify(currentSectionOrder)) break;
           currentSectionOrder = msg.order;
           saveExpandedState(); // persist to webview state for tab-switch survival
           // Re-render with the new order if we already have roots
