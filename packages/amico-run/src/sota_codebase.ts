@@ -276,7 +276,7 @@ export interface RepoResult {
   surfaces: SurfaceResult[];
 }
 
-export interface CodebaseLensOpts extends Omit<FetchThroughQueueOpts, "fetch" | "root" | "sourceKey"> {
+export interface CodebaseLensOpts extends Omit<FetchThroughQueueOpts, "fetchFn" | "root" | "sourceKey"> {
   root: string;
   fetchFn?: SotaFetch; // the transport — injectable for hermetic tests; default curlGithubFetch
   repos?: string[]; // optional filter (canonical owner/name)

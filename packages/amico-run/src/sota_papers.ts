@@ -164,7 +164,7 @@ export function papersBrief(opts: PapersBriefOpts): string {
 
 // ── the lens (one on-demand query through the queue) ─────────────────────────
 
-export interface PapersLensOpts extends Omit<FetchThroughQueueOpts, "fetch" | "root" | "sourceKey"> {
+export interface PapersLensOpts extends Omit<FetchThroughQueueOpts, "fetchFn" | "root" | "sourceKey"> {
   root: string;
   terms: string[];
   maxResults?: number;

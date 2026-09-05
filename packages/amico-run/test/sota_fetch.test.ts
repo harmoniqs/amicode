@@ -82,7 +82,7 @@ describe("fetchThroughQueue — the one-fetcher flow (S6)", () => {
     const calls: string[] = [];
     const bPromise = fetchThroughQueue(url, {
       root: r,
-      fetch: ((async (u: string) => {
+      fetchFn: ((async (u: string) => {
         calls.push(u);
         return { ok: true as const, status: 200, body: "<b/>", count: 2 };
       }) as SotaFetch),
@@ -103,7 +103,7 @@ describe("fetchThroughQueue — the one-fetcher flow (S6)", () => {
     const calls: string[] = [];
     const res = await fetchThroughQueue("https://export.arxiv.org/api/query?search_query=all:busy", {
       root: r,
-      fetch: ((async (u: string) => {
+      fetchFn: ((async (u: string) => {
         calls.push(u);
         return { ok: true as const, status: 200, body: "", count: 0 };
       }) as SotaFetch),
@@ -122,7 +122,7 @@ describe("fetchThroughQueue — the one-fetcher flow (S6)", () => {
     const calls: string[] = [];
     const res = await fetchThroughQueue("http://export.arxiv.org/api/query?id_list=1", {
       root: r,
-      fetch: ((async (u: string) => {
+      fetchFn: ((async (u: string) => {
         calls.push(u);
         return { ok: true as const, status: 200, body: "", count: 0 };
       }) as SotaFetch),

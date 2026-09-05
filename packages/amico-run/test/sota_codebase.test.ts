@@ -252,7 +252,7 @@ describe("runCodebaseLens — the fetch round, GitHub-shaped fixtures only (S1)"
         return { ok: true as const, status: 200, body: emptyIss, count: 0 };
       }
       return fetch(url);
-    }) as Parameters<typeof runCodebaseLens>[0]["fetch"];
+    }) as SotaFetch;
     const res = await runCodebaseLens({ root: r, fetchFn: emptyFetch, nowMs: c.nowMs, sleep: c.sleep });
     expect(res.brief).toContain("scan returned nothing — anomalous");
     expect(res.brief).not.toMatch(/nothing new/i);
@@ -280,7 +280,7 @@ describe("stamps + the retire-or-confirm flag (S2 — quiet failures are the one
     const r = root();
     writeFileSync(registryPath(r), REGISTRY_TOML); // failure_threshold = 2 (data, per-registry)
     const failing = (async (url: string) =>
-      ({ ok: false as const, status: 503, error: "github down" })) as Parameters<typeof runCodebaseLens>[0]["fetch"];
+      ({ ok: false as const, status: 503, error: "github down" })) as SotaFetch;
     // round 1: failures accrue, not yet flagged (threshold 2) — no flag SECTION yet
     const round1 = await runCodebaseLens({ root: r, fetchFn: failing, nowMs: vclock().nowMs, sleep: vclock().sleep });
     expect(round1.brief).not.toMatch(/^## Retire-or-confirm/m);
@@ -305,7 +305,7 @@ describe("stamps + the retire-or-confirm flag (S2 — quiet failures are the one
     const mixed = (async (url: string) =>
       url.includes("example/agent-harness")
         ? { ok: false as const, status: 503, error: "github down" }
-        : { ok: true as const, status: 200, body: RELEASES_JSON, count: 2 }) as Parameters<typeof runCodebaseLens>[0]["fetch"];
+        : { ok: true as const, status: 200, body: RELEASES_JSON, count: 2 }) as SotaFetch;
     await runCodebaseLens({ root: r, fetchFn: mixed, nowMs: c.nowMs, sleep: c.sleep });
     const persisted = parseWatchedRepoRegistry(readFileSync(registryPath(r), "utf8"));
     const ok1 = persisted.repos.find((x) => x.repo === "example/piccolo-adjacent")!;
