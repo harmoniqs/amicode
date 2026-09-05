@@ -10,9 +10,11 @@ import {
   type IconCache,
   type MetaCache,
   type ProjectMeta,
+  type SessionSnapshotCache,
   type State,
   type VcsCache,
 } from "./types"
+import type { SessionSnapshot } from "./session-snapshot"
 import { canDisposeDirectory, pickDirectoriesToEvict } from "./eviction"
 import { useQuery } from "@tanstack/solid-query"
 import { QueryOptionsApi } from "../server-sync"
@@ -39,6 +41,7 @@ export function createChildStoreManager(input: {
   const vcsCache = new Map<string, VcsCache>()
   const metaCache = new Map<string, MetaCache>()
   const iconCache = new Map<string, IconCache>()
+  const snapshotCache = new Map<string, SessionSnapshotCache>()
   const lifecycle = new Map<string, DirState>()
   const pins = new Map<string, number>()
   const ownerPins = new WeakMap<object, Set<string>>()
@@ -117,6 +120,7 @@ export function createChildStoreManager(input: {
     vcsCache.delete(key)
     metaCache.delete(key)
     iconCache.delete(key)
+    snapshotCache.delete(key)
     lifecycle.delete(key)
     mcpDirectories.delete(key)
     mcpToggles.delete(key)
@@ -180,6 +184,23 @@ export function createChildStoreManager(input: {
       )
       if (!icon) throw new Error(input.translate("error.childStore.persistedProjectIconCreateFailed"))
       iconCache.set(key, { store: icon[0], setStore: icon[1], ready: icon[3] })
+
+      // D2 (issue #817): the persisted session snapshot is a render
+      // accelerator, never an authority — hydrated only until the first real
+      // list fetch resolves, and verified against the client-derived currency
+      // token on every list response.
+      const sessionSnapshot = runWithOwner(input.owner, () =>
+        input.persist(
+          Persist.serverWorkspace(input.scope, directory, "session:snapshot"),
+          createStore({ value: undefined as SessionSnapshot | undefined }),
+        ),
+      )
+      if (!sessionSnapshot) throw new Error(input.translate("error.childStore.persistedCacheCreateFailed"))
+      snapshotCache.set(key, {
+        store: sessionSnapshot[0],
+        setStore: sessionSnapshot[1],
+        ready: sessionSnapshot[3],
+      })
 
       const init = () =>
         createRoot((dispose) => {
@@ -289,6 +310,17 @@ export function createChildStoreManager(input: {
             if (child[0].icon !== initialIcon) return
             child[1]("icon", icon[0].value)
           })
+
+          // D2 (issue #817): hydrate the persisted snapshot as a render
+          // accelerator — only until a real list fetch resolves
+          // (sessions_fetched flips true), never over a store a fetch
+          // already filled.
+          onPersistedInit(sessionSnapshot[2], () => {
+            if (child[0].sessions_fetched) return
+            const cached = sessionSnapshot[0].value
+            if (!cached || child[0].session.length > 0) return
+            child[1]("session", cached.sessions)
+          })
         })
 
       runWithOwner(input.owner, init)
@@ -394,5 +426,21 @@ export function createChildStoreManager(input: {
     vcsCache,
     metaCache,
     iconCache,
+    // D2 (issue #817): the persisted snapshot's read/write seam — server-sync
+    // verifies the token on every list response and overwrites the snapshot;
+    // the panel reset invalidates all of them.
+    sessionSnapshot(directory: string) {
+      return snapshotCache.get(directoryKey(directory))?.store.value
+    },
+    writeSessionSnapshot(directory: string, next: SessionSnapshot) {
+      const cache = snapshotCache.get(directoryKey(directory))
+      if (!cache) return
+      cache.setStore("value", next)
+    },
+    resetSessionSnapshots() {
+      for (const cache of snapshotCache.values()) {
+        cache.setStore("value", undefined)
+      }
+    },
   }
 }

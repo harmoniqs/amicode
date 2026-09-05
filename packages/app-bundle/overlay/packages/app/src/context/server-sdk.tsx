@@ -13,6 +13,7 @@ import { useGlobal } from "./global"
 import { ServerScope } from "@/utils/server-scope"
 import { detectServerProtocol, type ServerProtocol } from "@/utils/server-protocol"
 import { createCompatibleApi, type CompatibleApi } from "@/utils/server-compat"
+import { checkServerHealth } from "@/utils/server-health"
 
 const isAbortError = (error: unknown) =>
   error !== null && typeof error === "object" && "name" in error && error.name === "AbortError"
@@ -391,6 +392,21 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     })
   const api = createCompatibleApi({ protocol, current: currentApi, legacy })
 
+  // D2 (issue #817): the hub's self-reported version, resolved once per
+  // server context and memoized — the stamp the client's derived list-currency
+  // token carries, and the input to the boot parity record. A hub that does
+  // not report one yields undefined (the token degrades honestly; parity
+  // records channel-unreachable semantics, never a fake ok).
+  let pendingVersion: Promise<string | undefined> | undefined
+  const version = () => {
+    if (!pendingVersion) {
+      pendingVersion = checkServerHealth(server.http, platform.fetch ?? globalThis.fetch)
+        .then((health) => health.version)
+        .catch(() => undefined)
+    }
+    return pendingVersion
+  }
+
   return {
     server,
     scope,
@@ -400,6 +416,7 @@ function createServerSdkContextBase(server: ServerConnection.Any, scope: ServerS
     client: sdk,
     api,
     currentApi,
+    version,
     event: {
       on: emitter.on.bind(emitter),
       listen: emitter.listen.bind(emitter),
