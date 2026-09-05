@@ -1,0 +1,93 @@
+{
+  "$id": "https://harmoniqs.github.io/amicode/schemas/watched-repo-registry.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The watched-repo registry (watched-repos.toml, spec-20260905-103000 living-sota D3): the SOTA codebase lens's DATA — repos, why-watched, feeding-which-domains, fetch surface, match keywords, last-success stamps, consecutive-failure counters. Adding a repo is a data edit, never code; a malformed registry fails LOUDLY, never silently skips. The fetch surface rides the GitHub API against the CANONICAL repo (owner/name) — never a local fork checkout. N consecutive fetch failures (failure_threshold, default 7) flag the entry for human retire-or-confirm; the flag is DERIVED from consecutive_failures at read time, never stored.",
+  "properties": {
+    "failure_threshold": {
+      "default": 7,
+      "description": "Consecutive fetch failures after which an entry flags for human retire-or-confirm (never a silent unwatch).",
+      "minimum": 1,
+      "type": "integer"
+    },
+    "repos": {
+      "description": "The watched set. One entry per canonical repo (uniqueness checked at registry level).",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "consecutive_failures": {
+            "default": 0,
+            "description": "Machinery-written: consecutive fetch failures since the last success. The retire-or-confirm flag derives from this counter.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "domains": {
+            "description": "Which research domains this repo feeds (e.g. agent-harness, julia-optimal-control, quantum-sdk).",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "fetch_surface": {
+            "description": "The GitHub API surfaces this entry watches.",
+            "items": {
+              "enum": [
+                "releases",
+                "changelog",
+                "issues"
+              ]
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "last_success": {
+            "default": "",
+            "description": "Machinery-written: ISO-8601 stamp of the last successful fetch (empty until the first success).",
+            "pattern": "^$|^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})?)$",
+            "type": "string"
+          },
+          "match_keywords": {
+            "description": "The vocabulary an event (release title, changelog line, issue title) must match to surface in the brief.",
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "repo": {
+            "description": "Canonical GitHub owner/name — the GitHub API fetch target, never a local fork checkout.",
+            "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "why_watched": {
+            "description": "The human reason this repo is watched — the retire-or-confirm decision reads this line.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo",
+          "why_watched",
+          "domains",
+          "fetch_surface",
+          "match_keywords"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema_version": {
+      "const": "1"
+    }
+  },
+  "required": [
+    "schema_version",
+    "repos"
+  ],
+  "title": "watched-repo registry (watched-repos.toml)",
+  "type": "object"
+}
