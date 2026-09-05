@@ -235,7 +235,11 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ agent: "autodev" }),
-          signal: AbortSignal.timeout(10_000),
+          // (#830) the FIRST session spins up the instance lazily — the
+          // plugin factory + the cold-HOME package install happen inside
+          // this POST on a fresh runner; 10s aborted it on CI. 60s is the
+          // honest bound for a cold spin-up (the warm path stays instant).
+          signal: AbortSignal.timeout(60_000),
         });
         expect(created.status, `POST /session failed (${created.status})\n${log}`).toBe(200);
         const session = (await created.json()) as { id?: string; agent?: string };
@@ -247,7 +251,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         // (3) the probe plugin LOADED with the session's instance and its
         //     factory got the engine client (the same PluginInput handoff
         //     amicode_tools.ts relies on in production).
-        let lines = await waitFor(probeOut, (l) => l.event === "factory", 15_000);
+        let lines = await waitFor(probeOut, (l) => l.event === "factory", 30_000);
         const factory = lines.find((l) => l.event === "factory")!;
         expect(factory, "the probe plugin never loaded — the factory record is absent").toBeTruthy();
         expect(factory.has_client, "the plugin factory input did NOT carry the engine client").toBe(true);
@@ -416,7 +420,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         rmSync(proj, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
       }
     },
-    150_000,
+    300_000,
   );
 });
 
