@@ -16,9 +16,9 @@
 //   global:  ~/.config/opencode/agents
 //
 // Behavior:
-//   - copies packages/extension/agents/*.md (the two directors + the five
-//     worker cards) to each EXISTING destination directory (missing
-//     destination dirs are skipped, not created);
+//   - copies packages/extension/agents/*.md (the two directors, the four
+//     D3-seeded role cards, and the worker) to each EXISTING destination
+//     directory (missing destination dirs are skipped, not created);
 //   - verifies each written file byte-matches its repo source (sha256);
 //   - writes .deploy-receipt.json next to the sources (timestamp, source
 //     digests, destinations, verified flags) — unless --dry-run;
@@ -37,9 +37,10 @@ const SOURCE_DIR = path.join(REPO_ROOT, "packages", "extension", "agents");
 const RECEIPT_PATH = path.join(SOURCE_DIR, ".deploy-receipt.json");
 
 // #761: the deploy surface matches the staging surface — every card shipped
-// in the extension's agents dir (two directors + five workers). Explicit on
-// purpose: this is a MANUAL operator action, and the list is the human's
-// decision surface; staging itself discovers the dir at runtime.
+// in the extension's agents dir (two directors, the four D3-seeded role
+// cards, and the worker). Explicit on purpose: this is a MANUAL operator
+// action, and the list is the human's decision surface; staging itself
+// discovers the dir at runtime.
 const CARDS = [
   "analyzer.md",
   "autodev.md",

@@ -1,0 +1,11 @@
+[Unit]
+Description=Amicode role-parity pin check (nightly, amicode#806 obligation O8)
+Documentation=https://github.com/harmoniqs/amicode/blob/main/ops/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/.amico/ops/role-parity/run-role-parity-check.sh
+StandardOutput=append:%h/.amico/ops/role-parity/systemd.out
+StandardError=append:%h/.amico/ops/role-parity/systemd.err

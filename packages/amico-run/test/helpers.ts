@@ -119,6 +119,13 @@ export interface DoctorWorldOpts {
    *  (v0.2.6, revision 1), and no bundles deploy. The doctor must surface it
    *  as stale-to-release, never current. */
   preRegistryMachine?: boolean;
+  /** #806: seed the fixture repo's agents/ from the REAL extension cards
+   *  (packages/extension/agents) instead of the synthetic one-line cards —
+   *  the machine's release tag then carries the D3-seeded role cards
+   *  byte-for-byte, exactly like a post-seed release. Default false keeps
+   *  the synthetic cards (the historical pre-D3 world, unchanged for the
+   *  pre-existing cells). */
+  realAgents?: boolean;
 }
 
 /** The vendored-binary platform dir, derived from the LIVE platform — the
@@ -327,6 +334,16 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
   for (const c of CARDS) {
     mkdirSync(agentsSrc, { recursive: true });
     writeFileSync(join(agentsSrc, c), `---\nmode: ${c.replace(".md", "")}\n---\n# ${c}\n`);
+  }
+  // #806: optionally seed the fixture's agent cards from the REAL extension
+  // sources, so the machine's release tag carries the D3-seeded role cards
+  // byte-for-byte (a post-seed release). The fixture's registry (below) and
+  // the staged bundles then validate + stage against the same real bytes.
+  if (opts.realAgents === true) {
+    const realAgents = join(__dirname, "..", "..", "extension", "agents");
+    for (const c of CARDS) {
+      copyFileSync(join(realAgents, c), join(agentsSrc, c));
+    }
   }
   mkdirSync(join(config, "agents"), { recursive: true });
   mkdirSync(join(staging, ".opencode", "agents"), { recursive: true });

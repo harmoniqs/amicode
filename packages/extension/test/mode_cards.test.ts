@@ -231,16 +231,17 @@ describe("mode cards — blocklist (open-protocol vocabulary)", () => {
 
 // ── #761: worker base cards — contract floor + default-method-body floor ────
 //
-// The five worker cards (analyzer, experimenter, hypothesizer, implementer,
-// librarian) are public base cards: complete products with no entitlement.
-// The floor tests pin what the overlay architecture depends on — the frozen
-// output contract, the four pinned sections, and a complete default for
-// every method-class dimension an overlay tunes.
+// D3 (#806) re-homed the four director-cast role cards (hypothesizer,
+// experimenter, analyzer, implementer) into the mode bundles as seeded
+// registry artifacts — they left the #758 overlay-tunable worker-card
+// architecture (their structural floor now lives in role_cards.test.ts,
+// and their content is seed-gated per spec-20260905-063000 D3). The overlay
+// architecture's shipped surface is the LIBRARIAN: the one worker card that
+// still declares a dispatch target and carries the merge anchors. These
+// floor tests pin what that architecture depends on — the frozen output
+// contract, the four pinned sections, and a complete default for every
+// method-class dimension an overlay tunes.
 const WORKER_CARDS = [
-  "analyzer.md",
-  "experimenter.md",
-  "hypothesizer.md",
-  "implementer.md",
   "librarian.md",
 ] as const;
 type WorkerCard = (typeof WORKER_CARDS)[number];

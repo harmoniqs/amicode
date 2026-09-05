@@ -207,6 +207,91 @@ describe("upgrade agents — pre-flight gates + aborts", () => {
   });
 });
 
+// ── #806 (D3): role-card convergence — a machine on a post-seed release ──────
+//
+// The fixture world's release tag carries the REAL D3-seeded role cards
+// (helpers' realAgents) — a post-seed release. A machine whose deployed
+// roots still carry the OLD deployed-only artifacts (drifted bytes from
+// before the cards had a repo source) reads STALE with the role cards
+// named — the honest pre-upgrade state, not a regression — and reads
+// CURRENT once UPGRADED, on both agent-cards records and every bundle
+// component row.
+describe("upgrade agents — role-card convergence (#806)", () => {
+  const ROLE_CARD_NAMES = ["hypothesizer", "experimenter", "analyzer", "implementer"] as const;
+
+  test("old deployed-only role artifacts read stale (named) → verb converges BOTH roots → post current", async () => {
+    const w = buildDoctorWorld({ realAgents: true });
+    mkdirSync(join(w.repoAmicode, "scripts"), { recursive: true });
+    copyFileSync(REAL_SCRIPT, join(w.repoAmicode, "scripts", "deploy-agents.mjs"));
+    // the machine still carries the OLD deployed-only artifacts — the
+    // pre-seed live copies, drifted bytes on both deployment roots AND the
+    // deployed bundles' role components
+    const oldArtifact = (role: string): string =>
+      `---\ndescription: the old deployed-only ${role} artifact\ntemperature: 0.3\n---\n# ${role} (pre-seed live copy)\n`;
+    for (const role of ROLE_CARD_NAMES) {
+      writeFileSync(join(w.config, "agents", `${role}.md`), oldArtifact(role));
+      writeFileSync(join(w.staging, ".opencode", "agents", `${role}.md`), oldArtifact(role));
+      const bundle = role === "implementer" ? "autodev" : "autoresearch";
+      writeFileSync(join(w.config, "modes", bundle, "roles", `${role}.md`), oldArtifact(role));
+      writeFileSync(join(w.staging, ".opencode", "modes", bundle, "roles", `${role}.md`), oldArtifact(role));
+    }
+
+    // PRE: both agent-cards records stale, the role cards named in evidence
+    // (the flat per-card digest diff governs — the honest pre-upgrade state)
+    const pre = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const rec = pre.surfaces.find((r) => r.surface === name)!;
+      expect(rec.verdict).toBe("stale");
+      for (const role of ROLE_CARD_NAMES) {
+        expect(rec.evidence.some((e) => e.includes(`${role}.md`)), `${name} names ${role}.md`).toBe(true);
+      }
+    }
+
+    // the verb converges BOTH roots
+    const r = await upgradeVerb(verbArgs(w, ["--root-receipts", receiptsDir(w)]));
+    expect(r.code).toBe(0);
+    expect((r.json as Record<string, unknown>).outcome).toBe("upgraded");
+
+    // POST: both records current, every role component current — the old
+    // deployed-only artifacts read current once UPGRADED (the stale-by-
+    // construction verdict resolves, D3)
+    const post = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const rec = post.surfaces.find((r2) => r2.surface === name)!;
+      expect(rec.verdict, `${name} post-upgrade`).toBe("current");
+      for (const comp of rec.components ?? []) {
+        if (comp.component.startsWith("roles/")) {
+          expect(comp.verdict, `${name} component ${comp.component}`).toBe("current");
+        }
+      }
+    }
+    // the deployed role cards are byte-identical to the repo's seeded sources
+    for (const role of ROLE_CARD_NAMES) {
+      const src = readFileSync(join(w.repoAmicode, "packages", "extension", "agents", `${role}.md`), "utf8");
+      expect(readFileSync(join(w.config, "agents", `${role}.md`), "utf8")).toBe(src);
+      expect(readFileSync(join(w.staging, ".opencode", "agents", `${role}.md`), "utf8")).toBe(src);
+    }
+    cleanup();
+  });
+
+  test("a converged post-seed machine reads CURRENT across both records and all role components (the resolved state)", async () => {
+    const w = buildDoctorWorld({ realAgents: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const rec = report.surfaces.find((r) => r.surface === name)!;
+      expect(rec.verdict, `${name} starts current on a fresh post-seed world`).toBe("current");
+      for (const comp of rec.components ?? []) {
+        if (comp.component.startsWith("roles/")) expect(comp.verdict).toBe("current");
+      }
+      // the doctor's source set includes the four role cards — the record's
+      // evidence counts the full shipped set
+      const counted = rec.evidence.find((e) => /cards byte-match/.test(e));
+      expect(counted, `${name} evidence counts the card set`).toBeDefined();
+    }
+    cleanup();
+  });
+});
+
 // ── the record-name alias (spec D3: the panel passes doctor's record names verbatim) ──
 
 test("doctor record names agent-cards-global / agent-cards-staging alias the agents verb", async () => {

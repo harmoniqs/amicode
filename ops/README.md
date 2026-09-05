@@ -27,16 +27,20 @@ rename(2) over the running executable — atomic, no stop, ever.
 | `fleet-alert.sh` | every 15 min (`co.harmoniqs.fleet-alert`) | `fleet-status.json`, state file | **Slack `#fleet`** — device transitions only (noise-gated; always-on hosts `mini erlich` notify, laptops never do); down->24h re-reminds once daily |
 | `papers-digest/daily.sh` | daily ~09:00 (`co.harmoniqs.amicode-papers-digest`) | the frozen bundle | **Slack `#papers`** — top-5 quant-ph digest; appends to `papers-digest/log.txt` |
 | `skill-freshness/run-skill-freshness.sh` | daily ~04:30 (`co.harmoniqs.skill-freshness`) | the three skill surfaces (repo public library, armonissima vault library, server staging tree), Julia package checkouts, the `#586` lint CLI | receipt line appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift, the tracking issue "Skill freshness report (nightly)" in `harmoniqs/armonissima` (created once, then commented); reports under `skill-freshness/reports/` |
+| `role-parity/run-role-parity-check.sh` | daily ~04:45 (**erlich** — the vault-visible machine; systemd pair `co.harmoniqs.role-parity.{service,timer}` under `ops/systemd/`. The launchd plist is the macOS-**secondary** declaration) | the role-card parity pin record (`packages/extension/test/fixtures/vault-agents/pin.json` — the engine-neutral role definitions at their pinned amicissimo revision, provenance without content per review B1) vs the amicissimo vault checkout, via the `#806` check CLI with `--fetch` (the drift compare never runs against stale remote-tracking refs; a fetch failure is the named unknown `vault-unfetchable`, never a green receipt) | receipt line (kind `role-parity`) appended to `~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`; on drift (a pinned definition changed past the pin, a fixture mismatched its record, or the pin orphaned), the chore issue "Role-card parity pin behind the vault (nightly)" in `harmoniqs/amicode` (created once, then commented); a CLI pre-flight/runtime failure appends a named `check-failed` receipt, never an empty status |
 
 The launchd plists themselves are versioned alongside (`ops/launchd/`) — reference
 copies; installing them is a one-time `launchctl load` on the mini (paths inside are
-absolute to `/Users/aaron`).
+absolute to `/Users/aaron`). The linux-side cadence units are versioned at
+`ops/systemd/` — one-time install on erlich: copy the `.service` + `.timer` into
+`~/.config/systemd/user/`, then `systemctl --user daemon-reload && systemctl --user
+enable --now <unit>.timer`. Never edit the installed copies; this repo is the source.
 
 ## Runtime state (NOT in this repo, never overwritten by deploy)
 
 `fleet-status.json`, `fleet-status.guard-state`, `fleet-alert.state`,
 `fleet-alert.launchd.{out,err}`, `papers-digest/{log.txt,launchd.*}`,
-`skill-freshness/{reports/,launchd.*}` — all live under
+`skill-freshness/{reports/,launchd.*}`, `role-parity/{launchd.*,systemd.*}` — all live under
 `~/.amico/ops/` on the mini and belong to the running system. `install.sh` touches
 none of them.
 

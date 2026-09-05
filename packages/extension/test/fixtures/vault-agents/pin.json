@@ -1,0 +1,32 @@
+{
+  "record_version": 2,
+  "note": "The role-card parity fixtures' pin record (slice 2 / D3, #806, obligations O2/O8): the engine-neutral role definitions this pin targets, at the amicissimo vault revision they were pinned at, with the per-definition digests AT that revision — provenance WITHOUT content. Review B1 (PR #811): the full-definition fixtures are NOT published pending the seed-gate signature — the committed copies failed the amended content policy's per-line usage-vs-internals test (ADR-0011's categories: the engineer def's src/ module tree, how-to-extend recipe, and internals sections; the experimenter def's literal internal host paths), so nothing from the vault definitions is published-verbatim before Aaron decides. The nightly pin-behind-HEAD check (ops/role-parity) verifies the pin against the live amicissimo checkout directly — pin genuineness via git show at the recorded revision, freshness via the vault ref — and files a chore issue on drift. When the signature lands: either republish the fixtures (post-signature) or, recommended, run the vault re-authoring follow-up first (move package-internals out of the defs at their source in amicissimo, its own issue+PR), then re-take fixtures + this record at the new revision.",
+  "vault_repo": "harmoniqs/amicissimo",
+  "vault_revision": "5c6a1cd0d5bd240e07f6bef6467986e2fb41d7a7",
+  "fixture_publication": "pending-signature",
+  "captured_at": "2026-09-05T03:45:00.000Z",
+  "pinned": [
+    {
+      "role_card": "implementer",
+      "vault_path": "vault/agents/engineer.md",
+      "sha256": "sha256:4f10693c58f325e6a014cc3273e457bbf9753ebfafa191e0c5573492a607cc92"
+    },
+    {
+      "role_card": "experimenter",
+      "vault_path": "vault/agents/experimenter.md",
+      "sha256": "sha256:9ed13551d22063d176cff0bf3fd33aa4b9f0937c4c941eaf2bf21fecd03ce2d5"
+    }
+  ],
+  "no_counterpart": [
+    {
+      "role_card": "hypothesizer",
+      "nearest_kin": "vault/agents/researcher.md",
+      "reason": "the researcher is a decider returning one brief; the hypothesizer is a read-only proposer of ranked hypotheses — different governance and output; no overlap pin without inventing a mapping"
+    },
+    {
+      "role_card": "analyzer",
+      "nearest_kin": "vault/agents/librarian.md",
+      "reason": "the librarian writes curated notes; the analyzer is read-only, raw-artifacts-only, and proposes ledger verdicts — no overlap pin without inventing a mapping"
+    }
+  ]
+}
