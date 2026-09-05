@@ -8,9 +8,14 @@
 // describe "H4 FIRST" has proven (live, against the REAL vendored pinned
 // binary in the REAL Bun runtime — not a mock of the loader's contract) that
 // the plugin can resolve the session's agent via the engine client it holds →
-// session.get → Session.Info.agent. Its outcome is recorded whichever way it
-// decides:
-//   - PRIMARY contract (all four facts hold): the block resolves postures via
+// session.get → Session.Info.agent, and (A1, the PR #814 review fold) that
+// the session.messages endpoint returns its array in ASCENDING message-id
+// order with the per-message agent present — the exact facts
+// fallbackResolve's array-order pick consumes. Its outcome is recorded
+// whichever way it decides, DURABLY on both paths (A2: the record is computed
+// from whatever probe records exist — the contract value is never hardcoded —
+// and persisted under test/fixtures/session_api_probe/last-run/):
+//   - PRIMARY contract (all facts hold): the block resolves postures via
 //     session.get; the last-assistant-message fallback exists only for
 //     non-compaction resolution failures and declines on a newer switch (the
 //     monotonic message key, same store).
@@ -46,10 +51,19 @@ const PROBE_PLUGIN = join(HERE, "fixtures", "session_api_probe", "plugin.ts");
 // fails to LOAD under the pinned binary's Bun runtime (a broken sibling
 // import, a bad transpile), every production chat dies. The fixture's boot
 // registers BOTH the probe and the product plugin — the probe proves the
-// contract, the product plugin's clean load + surviving hook is asserted
-// below (no "failed to load plugin" in the server log, and BOTH hooks ran:
-// the probe's records still arrive after amicode_context's hook ran first).
+// contract, and the live boot additionally asserts exactly the LOAD: no
+// "failed to load plugin" in the server log, with the probe's records still
+// arriving after the product plugin registered FIRST in the array. The
+// context plugin's own TRANSFORM path is NOT exercised by this boot (in the
+// temp HOME it no-ops by design — no staged registry to read); that path is
+// covered by the unit cells below, not the live fixture.
 const CONTEXT_PLUGIN = join(EXT, "opencode-plugin", "amicode_context.ts");
+// (A2) the durable artifact home for the fixture's outcome record — the
+// probe JSONL, server log, and outcome JSON persist HERE (repo-level,
+// gitignored via the fixtures dir's own .gitignore), so an INSUFFICIENT
+// verdict leaves the D4 amendment decision its artifact instead of dying
+// with the temp home.
+const DURABLE_DIR = join(HERE, "fixtures", "session_api_probe", "last-run");
 
 /** A free 127.0.0.1 port (the opencode_probe.mjs idiom). */
 function freePort(): Promise<number> {
@@ -89,7 +103,7 @@ function readProbeLines(out: string): ProbeLine[] {
 // the transform, whatever the turn's fate.
 describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability fixture (gates every H4 cell below)", () => {
   it(
-    "the transform hook resolves the session's agent via the engine client's session.get (the primary path, proven live)",
+    "the transform hook resolves the session's agent via session.get, and session.messages' array order is ascending with the per-message agent on the wire (the primary path + the fallback's ordering fact, proven live)",
     async () => {
       const port = await freePort();
       const home = mkdtempSync(join(tmpdir(), "saf-home-"));
@@ -163,6 +177,10 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         }, 3000).unref();
       };
 
+      // hoisted for the A2 finally: the outcome record is computed from the
+      // probe's records whatever happened, and needs the session's id.
+      let sessionID: string | null = null;
+
       try {
         // (1) server up (the opencode_probe idiom)
         const deadline = Date.now() + 30_000;
@@ -192,7 +210,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(created.status, `POST /session failed (${created.status})\n${log}`).toBe(200);
         const session = (await created.json()) as { id?: string; agent?: string };
         expect(typeof session.id).toBe("string");
-        const sessionID = session.id!;
+        sessionID = session.id!;
         // the wire contract's first leg: the session's own agent round-trips
         expect(session.agent, "GET /session response did not carry the created agent on the wire").toBe("autodev");
 
@@ -204,6 +222,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(factory, "the probe plugin never loaded — the factory record is absent").toBeTruthy();
         expect(factory.has_client, "the plugin factory input did NOT carry the engine client").toBe(true);
         expect(factory.has_get, "the engine client has no session.get callable").toBe(true);
+        expect(factory.has_messages, "the engine client has no session.messages callable (the A1 leg's transport)").toBe(true);
         expect(factory.has_directory, "the plugin factory input did not carry the directory").toBe(true);
 
         // (4) prompt the session — the user message lands with agent=autodev,
@@ -242,38 +261,132 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           "session.get returned but Session.Info.agent is absent — the primary path is insufficient",
         ).toBe("autodev");
 
-        // (6) the PRODUCT context plugin loaded cleanly and its hook survives
-        //     the same chain (registered FIRST in the plugin array, its
-        //     transform ran before the probe's records arrived): no plugin
-        //     load failure in the server log, and the session's own instance
-        //     spun up through both hooks.
+        // (6) (A1, PR #814 review fold) PIN THE MESSAGES-ORDERING FACT LIVE.
+        //     fallbackResolve picks the LAST assistant message by ARRAY ORDER
+        //     of session.messages — an assumption the unit cells can't check
+        //     (their fakes are built ascending by construction). A future
+        //     vendoring pin that flipped the endpoint's order would make the
+        //     fallback silently read the OLDEST assistant message: a wrong
+        //     posture with every unit cell green. So the live fixture fires a
+        //     SECOND prompt (the doomed turn persists BOTH its user and
+        //     assistant messages — the first is already in the store; the
+        //     second adds a third record) and asserts the probe's observed
+        //     stream: ids strictly ascending IN ARRAY ORDER, and the
+        //     per-message agent present on the wire for both roles.
+        const promptFetch2 = fetch(`http://127.0.0.1:${port}/session/${sessionID}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            parts: [{ type: "text", text: "resolve the posture, again" }],
+            agent: "autodev",
+            model: { providerID: "fixtureprov", modelID: "fixturemodel" },
+          }),
+        });
+        void promptFetch2.then((r) => void r.body?.cancel()).catch(() => {});
+        lines = await waitFor(
+          probeOut,
+          (l) => l.event === "messages" && Array.isArray(l.ids) && (l.ids as string[]).length >= 3,
+          60_000,
+        );
+        const messagesRec = [...lines]
+          .filter((l) => l.event === "messages" && Array.isArray(l.ids) && (l.ids as string[]).length >= 3)
+          .at(-1);
+        expect(
+          messagesRec,
+          "no session.messages record with >=3 messages arrived — the messages leg never fired",
+        ).toBeTruthy();
+        const mIds = (messagesRec as ProbeLine).ids as string[];
+        const mRoles = ((messagesRec as ProbeLine).roles ?? []) as Array<string | null>;
+        const mAgents = ((messagesRec as ProbeLine).agents ?? []) as Array<string | null>;
+        expect((messagesRec as ProbeLine).ok, `the probe's session.messages leg failed: ${String((messagesRec as ProbeLine).reason)}`).toBe(true);
+        // the ordering fact — re-derived from the RAW ids, not trusting the
+        // probe's own flag (asserted separately below)
+        for (let k = 1; k < mIds.length; k++) {
+          expect(
+            mIds[k - 1] < mIds[k],
+            `session.messages ARRAY ORDER is not ascending: [${mIds.join(", ")}] — fallbackResolve would read the OLDEST assistant message, not the last (a wrong posture with every unit cell green)`,
+          ).toBe(true);
+        }
+        expect((messagesRec as ProbeLine).ascending, "the probe's own ascending computation disagrees with the raw ids").toBe(true);
+        // the per-message-agent fact: BOTH roles carry the agent on the wire
+        // (the user messages the switch-decline rule reads, and the assistant
+        // messages the fallback reads)
+        expect(mRoles).toContain("user");
+        expect(mRoles).toContain("assistant");
+        expect(
+          mAgents,
+          "session.messages did not carry the per-message agent on the wire — the fallback's read data is absent",
+        ).toEqual(mAgents.map(() => "autodev"));
+
+        // (7) the PRODUCT context plugin LOADS cleanly under the pinned
+        //     binary's Bun runtime (a broken sibling import or a bad
+        //     transpile would log "failed to load plugin" here — the failure
+        //     that kills every production chat), with the probe's records
+        //     still arriving after it registered FIRST in the plugin array.
+        //     Exactly what this asserts: the LOAD. The context plugin's own
+        //     TRANSFORM path is NOT exercised by this boot (in the temp HOME
+        //     it no-ops by design — no staged registry to read); that path
+        //     is covered by the unit cells below, not the live fixture.
         expect(
           log,
           "a plugin failed to load under the pinned binary — the production registration would break every chat:\n" + log,
         ).not.toMatch(/failed to load (external )?plugin/i);
-
-        // (7) RECORD THE OUTCOME (AC7: whichever way it decides) — stdout
-        // artifact for the slice record + the campaign ledger's O5 entry.
+      } finally {
+        // (8) (A2, PR #814 review fold) RECORD THE OUTCOME, DURABLY, ON BOTH
+        //     PATHS. The contract value is COMPUTED from whatever probe
+        //     records exist — never hardcoded — so a RED on any leg (this
+        //     finally runs after it) leaves an honest `insufficient` record
+        //     plus the probe JSONL and server log: the artifacts the D4
+        //     amendment decision consumes. Everything persists to the
+        //     repo-level gitignored dir (DURABLE_DIR) before the temp home
+        //     dies, and the OUTCOME line is echoed for the slice record.
+        const records = readProbeLines(probeOut);
+        const factoryRec = records.find((l) => l.event === "factory");
+        const transformRec = records.find((l) => l.event === "transform");
+        const resolveRec = records.find((l) => l.event === "resolve");
+        const messagesRecs = records.filter((l) => l.event === "messages" && Array.isArray(l.ids) && (l.ids as string[]).length > 0);
+        const lastMessages = messagesRecs.at(-1);
+        let idsAscending = false;
+        if (lastMessages !== undefined) {
+          const ids = lastMessages.ids as string[];
+          idsAscending = ids.every((id, k) => k === 0 || ids[k - 1] < id);
+        }
+        const facts = {
+          factory_has_client: factoryRec?.has_client === true,
+          hook_fires_with_sessionID: typeof transformRec?.sessionID === "string" && transformRec.sessionID === sessionID,
+          session_get_resolves_inside_hook: resolveRec?.ok === true,
+          info_agent_round_trips: resolveRec?.agent === "autodev",
+          messages_endpoint_ascending: idsAscending,
+          per_message_agent_on_the_wire:
+            lastMessages !== undefined &&
+            Array.isArray(lastMessages.agents) &&
+            (lastMessages.agents as Array<unknown>).length > 0 &&
+            (lastMessages.agents as Array<unknown>).every((a) => a === "autodev"),
+        };
         const outcome = {
           fixture: "session-api-availability",
           issue: 808,
           binary: "vendored pinned (opencode.lock.json)",
-          contract: "primary",
-          facts: {
-            factory_has_client: factory.has_client,
-            hook_fires_with_sessionID: true,
-            session_get_resolves_inside_hook: resolution.ok === true,
-            info_agent_round_trips: resolution.agent === "autodev",
-          },
+          contract: Object.values(facts).every((v) => v === true) ? "primary" : "insufficient",
+          facts,
+          records_seen: records.length,
+          recorded_at: new Date().toISOString(),
         };
+        try {
+          mkdirSync(DURABLE_DIR, { recursive: true });
+          writeFileSync(join(DURABLE_DIR, "outcome.json"), JSON.stringify(outcome, null, 2) + "\n");
+          if (existsSync(probeOut)) writeFileSync(join(DURABLE_DIR, "probe.jsonl"), readFileSync(probeOut));
+          writeFileSync(join(DURABLE_DIR, "server.log"), log);
+        } catch (e) {
+          console.error(`[session-api-fixture] durable record write failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
         console.log(`[session-api-fixture] OUTCOME ${JSON.stringify(outcome)}`);
-      } finally {
         kill();
         rmSync(home, { recursive: true, force: true });
         rmSync(proj, { recursive: true, force: true });
       }
     },
-    120_000,
+    150_000,
   );
 });
 
@@ -290,8 +403,11 @@ async function waitFor(out: string, pred: (l: ProbeLine) => boolean, ms: number)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // H4 — the injection cells. The session-API availability fixture above ran
-// FIRST and decided the contract (primary, all four facts — see the recorded
-// OUTCOME line): the block resolves postures via the engine client's
+// FIRST and decided the contract (primary, all facts — session.get's
+// resolution AND session.messages' ascending array order with the per-message
+// agent on the wire; see the recorded OUTCOME line + the durable record under
+// test/fixtures/session_api_probe/last-run/): the block resolves postures via
+// the engine client's
 // session.get; the last-assistant-message fallback exists only for runtime
 // resolution failures (compaction is NOT one — session state survives
 // compaction, and the fallback never fires for it by construction) and
