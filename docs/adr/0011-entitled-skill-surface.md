@@ -1,6 +1,6 @@
 # Skill surfaces are three-tier: public ships and loads for all, entitled ships and loads only for entitled sessions, internal stays vault-only
 
-Status: accepted (2026-08-27)
+Status: accepted (2026-08-27; content policy amended 2026-09-05 — see the Amendment record)
 
 ADR-0003's two surface tiers amend to three. `public` ships in the .vsix and loads for every
 session, as before. `internal` stays exactly as ADR-0003 left it: private-vault content
@@ -50,7 +50,9 @@ recipes, roadmap or cloud-infrastructure detail, or anything whose world-readabi
 harm. The test is per line: usage (shippable) vs internals (vault-only). This is a review-time
 discipline enforced at PR review by the director + an independent reviewer — the same review
 that guards the dev gate — not a mechanical check; the mechanical guards (leak-guard, resolver)
-police the tier labels, not the prose. Dev skills (`*-dev`) remain internal unconditionally.
+police the tier labels, not the prose. Dev skills split by content kind (2026-09-05 amendment —
+see the Amendment record): workflow-level skills are public; package-proprietary dev skills
+(`*-dev`) stay internal.
 
 **Considered:** keeping two tiers and putting -issimo usage in package-colocated skills
 (rejected — the channel is dormant and usage guidance belongs with the rest of the library's
@@ -74,3 +76,22 @@ APPROVED-WITH-ADVISORIES). Amends: ADR-0003 (two-tier checkout gate — its root
 mount-presence mechanics carry forward unchanged; only the tier count grows).
 
 Implementation: harmoniqs/amicode#614
+
+---
+
+**Amendment (2026-09-05): content policy — workflow public, package-proprietary gated.** The
+final line of the Content policy section is superseded: "Dev skills (`*-dev`) remain internal
+unconditionally." now reads workflow-level skills (the dev-workflow/loop-protocol stack:
+`director-core`, `develop`, `implement-issue`, `write-an-issue`, `break-into-subissues`) are
+public (`surface: public`, in-repo canonical copies that ship and load for every session); only
+package-proprietary skills stay gated (usage skills via this record's entitled tier; package
+internals, including `*-dev` skills, vault-only internal). The tier machinery of this record is
+untouched: the three-tier model, root admission (`{public, entitled}` in-repo, `{internal}`
+vault-only), the entitlement staging gate, and the usage-vs-internals per-line test stand as
+written — the per-line test IS the package-proprietary boundary the new policy keeps. Provenance:
+modes-first-class campaign, spec spec-20260905-063000-modes-first-class decision D2,
+harmoniqs/amicode#805, per Aaron Trowbridge's standing approval (2026-09-05); supersedes the
+"dev skills stay internal" line of session-20260827-skill-lifecycle §10 (annotated in the vault
+record); the companion record, amicissimo ADR-0002 (boundary test), is untouched. Review: at PR
+review (director + independent reviewer, per the dev gate) — the pass had not run when this note
+was written.
