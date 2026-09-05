@@ -436,3 +436,52 @@ describe("amico sessions archive — disjointness from the vault/coordination pl
     expect(diffs).toEqual([]);
   });
 });
+
+// ── AC 3 (end-to-end): the cutoff the archive applies comes from the workspace
+//    preference, overridable per call — never a hardcoded constant ────────────
+describe("amico sessions prefs/archive — the cutoff is the preference (bundle)", () => {
+  let tmp: string;
+  let db: string;
+  let ops: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-sessions-prefs-"));
+    db = join(tmp, "opencode.db");
+    ops = join(tmp, "ops");
+    mkdirSync(ops, { recursive: true });
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it("prefs --days writes the preference; archive --apply honors it (7d cutoff, not 30)", () => {
+    seedDb(db, [
+      { id: "ses_5d", updatedDaysAgo: 5 },
+      { id: "ses_10d", updatedDaysAgo: 10 },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+
+    const p = JSON.parse(run(["sessions", "prefs", "--days", "7"], env).stdout);
+    expect(p).toMatchObject({ archive_days: 7 });
+    expect(JSON.parse(readFileSync(join(ops, "session-retention.json"), "utf8")).archive_days).toBe(7);
+
+    // dry-run first: exactly the 10-day-old session crosses the 7-day cutoff
+    expect(JSON.parse(run(["sessions", "archive"], env).stdout)).toMatchObject({ days: 7, candidates: 1, candidate_ids: ["ses_10d"] });
+    run(["sessions", "archive", "--apply"], env);
+    const after = JSON.parse(run(["sessions", "list"], env).stdout);
+    expect(after.sessions.map((s: { id: string }) => s.id)).toEqual(["ses_5d"]);
+  });
+
+  it("--days overrides the preference for a single call without writing it", () => {
+    seedDb(db, [{ id: "ses_1d", updatedDaysAgo: 1 }]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: ops };
+    const dry = JSON.parse(run(["sessions", "archive", "--days", "1"], env).stdout);
+    expect(dry).toMatchObject({ days: 1, candidates: 1 });
+    expect(existsSync(join(ops, "session-retention.json"))).toBe(false);
+    expect(JSON.parse(run(["sessions", "prefs"], env).stdout)).toMatchObject({ archive_days: 30 });
+  });
+
+  it("unknown subcommand is a usage error listing the surface", () => {
+    const r = run(["sessions", "bogus"], { AMICODE_OPS_DIR: ops });
+    expect(r.code).toBe(64);
+    expect(JSON.parse(r.stdout).usage).toMatch(/archive/);
+  });
+});
