@@ -62,6 +62,10 @@ at the shared path. In practice:
   get the **named outcome** `queue-timeout` with the disclosed alternative
   (read the fetch cache, or record the explicit waiver). Never retry in a
   tight loop; never block the loop on the wire.
+- **Known limit** (named, not hidden): the lock is atomic per host —
+  vault-sync propagation latency makes fleet-wide mutual exclusion
+  best-effort, and the under-lock cache re-check bounds the damage to a
+  duplicate fetch, never a correctness break.
 
 ## Lens 2 — codebases
 

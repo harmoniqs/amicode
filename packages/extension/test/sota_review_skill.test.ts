@@ -55,12 +55,17 @@ describe("the sota-review skill carries both lenses with the recipe verbatim (#8
     expect(flat).toMatch(/never scraping|never fetch\s+them/i);
   });
 
-  it("the queue discipline — one fetcher, one serialized queue; the named outcome and the disclosed alternative", () => {
+  it("the queue discipline — one fetcher, one serialized queue; the named outcome, the disclosed alternative, and the KNOWN LIMIT named", () => {
     expect(flat).toMatch(/serialized queue|one query queue/i);
     expect(flat).toMatch(/per-host lock serializes nothing/i); // the fleet-wide invariant, stated
     expect(skill).toMatch(/queue-timeout/); // the named outcome
     expect(flat).toMatch(/never block the loop|the loop was never blocked/i); // the survey never blocks
     expect(skill).toMatch(/via: cache/); // cache reads are honest about being cache reads
+    // A2 (review fold on #828): the mutual-exclusion limit is NAMED, not hidden
+    expect(flat).toMatch(/known limit/i);
+    expect(flat).toMatch(/best-effort/i);
+    expect(flat).toMatch(/atomic per host/i);
+    expect(flat).toMatch(/duplicate fetch/); // the bounded damage, named
   });
 
   it("the codebase lens — the GitHub API against CANONICAL repos, never a local fork checkout", () => {
