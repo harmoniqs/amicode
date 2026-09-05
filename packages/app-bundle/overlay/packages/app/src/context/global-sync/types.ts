@@ -44,6 +44,11 @@ export type State = {
   path: Path
   session: Session[]
   sessionTotal: number
+  // D2 honest states (issue #817): has a session-list fetch completed for
+  // this directory? A persisted snapshot is a render accelerator, never an
+  // authority — until a fetch resolves, the UI renders "not yet fetched",
+  // never "empty".
+  sessions_fetched?: boolean
   session_status: {
     [sessionID: string]: SessionStatus
   }

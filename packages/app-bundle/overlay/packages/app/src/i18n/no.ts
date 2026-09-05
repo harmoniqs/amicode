@@ -25,6 +25,7 @@ export const dict = {
   "theme.scheme.dark": "Mørk",
 
   "command.sidebar.toggle": "Veksle sidepanel",
+  "command.panel.reset": "Tilbakestill paneltilstand",
   "command.project.open": "Åpne prosjekt",
   "command.provider.connect": "Koble til leverandør",
   "command.server.switch": "Bytt server",

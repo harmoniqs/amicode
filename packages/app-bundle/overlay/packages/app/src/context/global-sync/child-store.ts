@@ -228,6 +228,7 @@ export function createChildStoreManager(input: {
             },
             session: [],
             sessionTotal: 0,
+            sessions_fetched: false,
             session_status: {},
             session_working(id: string) {
               const type = this.session_status[id]?.type
