@@ -10,6 +10,7 @@ import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
 import { SessionTabAvatarView } from "@/pages/layout/session-tab-avatar"
 import { sessionTitle } from "@/utils/session-title"
+import { type SessionListState } from "@/utils/session-list-state"
 import { shouldOpenSessionInBackground } from "../home-session-open"
 import {
   HomeSessionStatusController,
@@ -39,6 +40,7 @@ function isBackgroundOpen(event: MouseEvent) {
 export type HomeSessionsViewProps = {
   language: ReturnType<typeof useLanguage>
   groups: Accessor<HomeSessionGroup[]>
+  listState: Accessor<SessionListState>
   showProjectName: Accessor<boolean>
   server: Accessor<ServerConnection.Key>
   canCreateSession: Accessor<boolean>
@@ -113,7 +115,7 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
           }
         >
           <Show
-            when={props.groups().length > 0}
+            when={props.groups().length > 0 || props.listState() === "unfetched"}
             fallback={
               <HomeSessionsEmpty
                 onNewSession={props.canCreateSession() ? props.onCreateSession : undefined}
@@ -121,6 +123,17 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
               />
             }
           >
+            <Show
+              when={props.listState() !== "unfetched"}
+              fallback={
+                // D2 honest states (issue #817): while no index fetch has ever
+                // resolved, render loading — never the empty state (#293's
+                // invisible failure shape).
+                <div class="pt-3">
+                  <HomeSessionSkeleton label={props.language.t("common.loading")} />
+                </div>
+              }
+            >
             <div ref={props.onSetContent} class="flex flex-col pt-3 pr-3 pb-16">
               <For each={props.groups()}>
                 {(group, index) => (
@@ -140,6 +153,7 @@ export function HomeSessionsView(props: HomeSessionsViewProps) {
                 )}
               </For>
             </div>
+            </Show>
           </Show>
         </Suspense>
       </div>

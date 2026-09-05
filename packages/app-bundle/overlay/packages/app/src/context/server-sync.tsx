@@ -28,6 +28,7 @@ import {
 import { createChildStoreManager } from "./global-sync/child-store"
 import { applyDirectoryEvent, applyGlobalEvent } from "./global-sync/event-reducer"
 import { estimateRootSessionTotal, loadRootSessions, loadRootSessionsV1 } from "./global-sync/session-load"
+import { bootCurrencyDecision, toSnapshot } from "./global-sync/session-snapshot"
 import { trimSessions } from "./global-sync/session-trim"
 import type { ProjectMeta } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
@@ -399,17 +400,22 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     const [store, setStore] = children.child(directory, { bootstrap: false })
     const meta = sessionMeta.get(key)
     const retainedLimit = Math.max(store.limit, options?.limit ?? 0, meta?.limit ?? 0)
-    if (meta && meta.limit >= retainedLimit) {
-      const next = trimSessions(store.session, {
-        limit: retainedLimit,
-        permission: session.data.permission,
-      })
-      if (next.length !== store.session.length) {
-        setStore("session", reconcile(next, { key: "id" }))
+      if (meta && meta.limit >= retainedLimit) {
+        const next = trimSessions(store.session, {
+          limit: retainedLimit,
+          permission: session.data.permission,
+        })
+        batch(() => {
+          // D2 honest states (issue #817): a completed list fetch means the UI
+          // may render "genuinely empty" — never "not yet fetched".
+          if (!store.sessions_fetched) setStore("sessions_fetched", true)
+          if (next.length !== store.session.length) {
+            setStore("session", reconcile(next, { key: "id" }))
+          }
+        })
+        children.unpin(key)
+        return
       }
-      children.unpin(key)
-      return
-    }
 
     const limit = Math.max(retainedLimit + SESSION_RECENT_LIMIT, SESSION_RECENT_LIMIT)
     const promise = queryClient
@@ -422,7 +428,7 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
                 ? loadRootSessionsV1({ client: sdkFor(directory), directory, limit })
                 : loadRootSessions({ api: serverSDK.api.session, directory, limit }),
             )
-            .then((x) => {
+            .then(async (x) => {
               const nonArchived = (x.data ?? [])
                 .filter((s) => !!s?.id)
                 .filter((s) => !s.time?.archived)
@@ -439,6 +445,10 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
               })
               batch(() => {
                 next.forEach(session.remember)
+                // D2 honest states (issue #817): the fetch resolved (even to
+                // empty) — the UI may now distinguish "genuinely empty" from
+                // "not yet fetched".
+                setStore("sessions_fetched", true)
                 setStore(
                   "sessionTotal",
                   estimateRootSessionTotal({
@@ -450,6 +460,16 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
                 setStore("session", reconcile(next, { key: "id" }))
               })
               sessionMeta.set(key, { limit: retained })
+              // D2 (issue #817): verify the persisted snapshot against the
+              // CLIENT-derived currency token — a stale or tokenless snapshot
+              // is invalidated by this overwrite, so the #293 shape self-heals
+              // on boot with zero manual action.
+              const decision = bootCurrencyDecision({
+                snapshot: children.sessionSnapshot(directory),
+                response: { sessions: next },
+                serverVersion: await serverSDK.version().catch(() => undefined),
+              })
+              children.writeSessionSnapshot(directory, toSnapshot(next, decision.currency))
             })
             .catch((err) => {
               console.error("Failed to load sessions", err)
@@ -658,6 +678,30 @@ export function createServerSyncContextInner(serverSDK: ServerSDK) {
     },
     icon(directory: string, value: string | undefined) {
       children.projectIcon(directory, value)
+    },
+    // D2 in-product reset (issue #817): clears session caches ONLY —
+    // in-memory session state plus the session-list query keys. Persisted
+    // workspace preferences (settings, archive cutoff, posture config) live
+    // in stores this never touches, so recovery never destroys configuration
+    // and never requires filesystem surgery (#293).
+    resetSessionCaches() {
+      sessionMeta.clear()
+      for (const child of Object.values(children.children)) {
+        const [store, setStore] = child
+        batch(() => {
+          if (store.sessions_fetched) setStore("sessions_fetched", false)
+          if (store.sessionTotal !== 0) setStore("sessionTotal", 0)
+          setStore("session", reconcile([], { key: "id" }))
+          setStore("session_status", reconcile({}))
+        })
+      }
+      queryClient.removeQueries({
+        predicate: (query) => {
+          const name = (query.queryKey as readonly unknown[])[2]
+          return name === "loadSessions" || name === "activeSessions"
+        },
+      })
+      children.resetSessionSnapshots()
     },
   }
 

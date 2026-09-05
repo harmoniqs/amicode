@@ -872,6 +872,17 @@ export default function LegacyLayout(props: ParentProps) {
   command.register("layout", () => {
     const commands: CommandOption[] = [
       {
+        // D2 (issue #817): in-product recovery — clears session caches ONLY;
+        // workspace preferences survive. Never requires filesystem surgery
+        // (#293).
+        id: "panel.reset",
+        title: language.t("command.panel.reset"),
+        category: language.t("command.category.view"),
+        onSelect: async () => {
+          serverSync().project.resetSessionCaches()
+        },
+      },
+      {
         id: "sidebar.toggle",
         title: language.t("command.sidebar.toggle"),
         category: language.t("command.category.view"),
