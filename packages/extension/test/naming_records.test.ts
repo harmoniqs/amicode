@@ -155,6 +155,7 @@ describe("naming records — the public workflow skills carry open-protocol voca
     "write-an-issue",
     "break-into-subissues",
     "autodev",
+    "sota-review", // #820 — the public SOTA survey skill joins the naming discipline
   ];
   const blocklist = JSON.parse(readFileSync(BLOCKLIST_PATH, "utf8")) as {
     proprietary_strings: string[];
