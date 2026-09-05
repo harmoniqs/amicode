@@ -69,6 +69,9 @@ import LegacyLayout from "@/pages/layout"
 import NewLayout from "@/pages/layout-new"
 import { ErrorPage } from "./pages/error"
 import { useCheckServerHealth } from "./utils/server-health"
+// D3 (issue #817): the boot parity record — the server-reported version is
+// asserted against the release channel and the three-outcome record logged.
+import { recordBootParity } from "./utils/boot-parity"
 import { AmicodeSplash } from "@opencode-ai/ui/amicode-splash"
 import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref } from "./utils/session-route"
 import { createSessionLineage } from "@/pages/session/session-lineage"
@@ -551,6 +554,7 @@ export function AppBaseProviders(
 function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; startup?: Promise<void> }>) {
   const server = useServer()
   const checkServerHealth = useCheckServerHealth()
+  const platform = usePlatform()
 
   const [checkMode, setCheckMode] = createSignal<"blocking" | "background">("blocking")
 
@@ -565,7 +569,16 @@ function ConnectionGate(props: ParentProps<{ disableHealthCheck?: boolean; start
 
           while (true) {
             const res = yield* Effect.promise(() => checkServerHealth(http))
-            if (res.healthy) return true
+            if (res.healthy) {
+              // D3 (issue #817): the boot parity assertion rides the healthy
+              // health check — the same probe that reported the server's
+              // version. Surfaced, never a gate; fails open as
+              // channel-unreachable when the release channel is unreachable.
+              yield* Effect.promise(() =>
+                recordBootParity({ serverVersion: res.version, fetcher: platform.fetch ?? globalThis.fetch }),
+              )
+              return true
+            }
             if (checkMode() === "background" || type === "http") return false
           }
         }).pipe(
