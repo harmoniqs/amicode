@@ -5,11 +5,14 @@
 # mode_registry) enforces this against the pack schema and the declared set;
 # the vitest suite and the amico-run doctor probe import the same code.
 #
-# Slice 1 (#804): role cards stay where they ship today (packages/extension/
-# agents/) and are DECLARED here by path; slice 2 (D3) re-homes their content
-# into the bundle. Legacy card staging (mode_cards.ts, always-copy from
-# agents/) remains AUTHORITATIVE until the bundle is complete — this manifest
-# binds, it does not yet source.
+# D3 (#806) LANDED: the implementer role card is a versioned repo source
+# seeded from the live deployed staging artifact (packages/extension/agents/
+# implementer.md, provenance in .seed-provenance.json beside it) — owned by
+# THIS bundle, staged and digest-verified with the director card. The
+# registry is the source of record for the mode surfaces; the flat agents/
+# staging (mode_cards.ts, always-copy) remains opencode's discovery path.
+# Content parity against the engine-neutral vault definition is seed-gated
+# on Aaron's signature — see docs/seed-gate/role-cards-seed-diff.md.
 schema_version = "1"
 mode = "autodev"
 card = "card.md"

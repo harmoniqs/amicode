@@ -1,9 +1,12 @@
 // mode_staging.ts — the atomic mode-bundle stager (#804, spec-20260905-063000
 // D1, H2): stages every director-mode bundle (card, pack, roles,
 // handoff-seed schemas, manifest) into <destRoot>/modes/<mode>/ as ONE
-// locked, receipt-audited unit. Legacy card staging (mode_cards.ts) remains
-// AUTHORITATIVE — this module never touches the legacy agents destination;
-// the source flip lands with the role-cards slice (D3).
+// locked, receipt-audited unit. Since D3 (#806) the bundles are COMPLETE —
+// their role cards are versioned repo sources (seeded from the deployed
+// artifacts, .seed-provenance.json) — and THIS module is the source of record
+// for the deployed mode surfaces. The flat agents/ staging (mode_cards.ts)
+// stays as opencode's card-DISCOVERY path for the same versioned files; it
+// never stages into modes/.
 //
 // Staging semantics (reconciled with the #761/#614 entitlement staging gate,
 // recorded as the pre-flight outcome of #804): ALWAYS-COPY base artifacts,

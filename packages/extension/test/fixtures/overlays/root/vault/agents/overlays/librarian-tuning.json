@@ -2,6 +2,9 @@
   "overlay_version": 1,
   "id": "librarian-tuning",
   "fields": {
-    "model_routing": "the heavy reasoning class for curation casts that span campaigns; the standard class for single-note filing — the tuned default splits by cast weight, not by habit."
+    "prompt_body": "Tuned procedure — the librarian tuning overlay sharpens the default, never replaces it:\n\n1. Preload `amico-vault` and `amico-schema-check`; read the mount stack from disk, never from the brief's summary.\n2. Classify from the folder responsibility table; a claim with a local-only mechanism is TWO notes, authored up front.\n3. Validate the frontmatter before returning the filing receipt; a note that fails validation is fixed, not filed as-is.",
+    "model_routing": "the heavy reasoning class for curation casts that span campaigns; the standard class for single-note filing — the tuned default splits by cast weight, not by habit.",
+    "iteration_budget": "two curation passes and one validation pass per note cluster; a third pass needs the director's say-so named in the brief.",
+    "example_brief": "File the note, tuned: Vault: <path> (mount stack from disk). Route per the vault skill; split local-only mechanisms into linked pairs. Schema-check every note; return one receipt per note."
   }
 }
