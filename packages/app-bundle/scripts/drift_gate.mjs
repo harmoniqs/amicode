@@ -18,10 +18,9 @@
 // checkout is present (AMICODE_OPENCODE_SRC or the sibling layout); otherwise
 // it SKIPS with exit 0 and a printed reason (the committed overlay itself is
 // the artifact CI protects; the re-derivation needs fork access).
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, readdirSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, lstatSync, readFileSync, readlinkSync, readdirSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 const PKG_ROOT = join(import.meta.dirname, "..");
@@ -47,42 +46,27 @@ if (!existsSync(FORK) || !existsSync(join(FORK, ".git"))) {
   console.log(`[drift-gate] SKIP: no fork clone at ${FORK} (set AMICODE_OPENCODE_SRC) — protecting committed state only`);
 }
 
-// ── 1. manifest pins resolve ────────────────────────────────────────────────
-if (existsSync(FORK)) {
-  const git = (...a) => execFileSync("git", ["-C", FORK, ...a], { encoding: "utf8" }).trim();
-  const tagSha = git("rev-parse", `${TAG}^{commit}`);
-  if (tagSha !== manifest.fork_sha) {
-    fail(`manifest.fork_sha ${manifest.fork_sha.slice(0, 10)} != ${TAG} (${tagSha.slice(0, 10)}) — re-run the extractor`);
+// ── 1. upstream base archive verifies against the manifest's recorded sha ───
+// Since the v1.18.29 re-base (#796) the overlay is maintained against the
+// CANONICAL upstream tree (repaired in place), not extracted from the fork —
+// the old fork-extraction equality checks are retired. The upstream base is
+// pinned by (tag, git sha, archive sha256); the archive check runs against the
+// materializer's cache stamp when the cache is warm.
+const cacheStamp = join(PKG_ROOT, ".cache", `anomalyco_opencode@${manifest.upstream_base}`, "sha256");
+if (existsSync(cacheStamp)) {
+  if (manifest.upstream_base_archive_sha256 === undefined) {
+    fail(`manifest has no upstream_base_archive_sha256 for ${manifest.upstream_base}`);
   }
-  const baseSha = git("rev-parse", `${manifest.upstream_base}^{commit}`);
-  if (baseSha !== manifest.upstream_base_sha) {
-    fail(`manifest.upstream_base_sha disagrees with ${manifest.upstream_base}`);
+  const got = readFileSync(cacheStamp, "utf8").trim();
+  if (got !== manifest.upstream_base_archive_sha256) {
+    fail(`cached archive sha ${got.slice(0, 10)} != manifest.upstream_base_archive_sha256 ${manifest.upstream_base_archive_sha256.slice(0, 10)}`);
   }
-  console.log(`[drift-gate] pins resolve: ${TAG} (fork) on base ${manifest.upstream_base}`);
-
-  // ── 2. fresh extraction reproduces the committed manifest ────────────────
-  const work = mkdtempSync(join(tmpdir(), "app-bundle-drift-"));
-  try {
-    execFileSync("node", [join(PKG_ROOT, "scripts", "extract_overlay.mjs"), "--fork", FORK, "--tag", TAG, "--out", work], {
-      cwd: PKG_ROOT,
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-    const fresh = JSON.parse(readFileSync(join(work, "manifest.json"), "utf8"));
-    if (Object.keys(fresh.files).length !== Object.keys(manifest.files).length) {
-      fail(`file-set drift: fresh extraction has ${Object.keys(fresh.files).length} files, committed manifest has ${Object.keys(manifest.files).length} — re-run the extractor`);
-    }
-    for (const [rel, want] of Object.entries(manifest.files)) {
-      if (fresh.files[rel] !== want) {
-        fail(`hash drift on ${rel}: committed ${want.slice(0, 10)}, fresh ${String(fresh.files[rel] ?? "(missing)").slice(0, 10)} — re-run the extractor`);
-      }
-    }
-    console.log(`[drift-gate] fresh extraction matches the committed manifest (${Object.keys(manifest.files).length} files)`);
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
+  console.log(`[drift-gate] upstream base archive verified: ${manifest.upstream_base} @ ${got.slice(0, 10)}`);
+} else {
+  console.log(`[drift-gate] SKIP: no cached archive for ${manifest.upstream_base} — materialize to verify the archive sha`);
 }
 
-// ── 3. committed overlay/ matches the manifest (always runs) ────────────────
+// ── 2. committed overlay/ matches the manifest (always runs) ────────────────
 const overlayDir = join(PKG_ROOT, "overlay");
 const onDisk = new Set();
 for (const rel of readdirSync(overlayDir, { recursive: true })) {
@@ -109,4 +93,4 @@ for (const [rel, want] of Object.entries(manifest.files)) {
   if (h !== want) fail(`overlay file hash mismatch (hand-edit?): ${rel} — re-run the extractor`);
 }
 console.log(`[drift-gate] committed overlay verified against the manifest (${onDisk.size} files)`);
-console.log("[drift-gate] PASS: overlay, manifest, and (when the fork is present) the extraction are in sync");
+console.log("[drift-gate] PASS: overlay and manifest are in sync");
