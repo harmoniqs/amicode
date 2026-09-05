@@ -11,6 +11,12 @@ const common = {
   bundle: true,
   platform: "node",
   target: "node20",
+  // Data-as-import (the #820 sota seed): resources/*.toml are the CANONICAL
+  // shipped data files, imported as text so the self-contained bins carry
+  // them (the vsix stages only bin/dist/*.js — no resources dir rides
+  // along). Vitest loads the same files through the matching plugin in
+  // vitest.config.ts; the d.ts beside src/ types the specifier.
+  loader: { ".toml": "text" },
   // ESM, not CJS: the package is "type": "module", so node executes the bundle as ESM —
   // a CJS bundle would die on `require is not defined in ES module scope`.
   format: "esm",
