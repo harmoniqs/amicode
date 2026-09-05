@@ -19,6 +19,7 @@ import { timingSafeEqual } from "node:crypto";
 import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
 import { AppShelf, type AppShelfResult } from "./app_shelf";
+import { EngineProxy } from "./engine_proxy";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -59,6 +60,7 @@ export class AmicodeServiceServer {
   private server?: http.Server;
   private _port?: number;
   private shelf?: AppShelf;
+  private engineProxy?: EngineProxy;
   readonly password: string;
 
   constructor(opts: { password?: string } = {}) {
@@ -90,6 +92,13 @@ export class AmicodeServiceServer {
    *  consulted AFTER the exact route table and BEFORE the engine proxy. */
   attachAppShelf(shelf: AppShelf): this {
     this.shelf = shelf;
+    return this;
+  }
+
+  /** Mount the engine reverse proxy (#822): the fallback for non-amicode,
+   *  non-static requests, streaming to/from the spawned engine. */
+  attachEngineProxy(proxy: EngineProxy): this {
+    this.engineProxy = proxy;
     return this;
   }
 
@@ -150,6 +159,11 @@ export class AmicodeServiceServer {
       if (shelfHit) {
         send(shelfHit);
         return;
+      }
+      if (this.engineProxy) {
+        // Streams method/headers/body through to the engine (SSE included);
+        // false = no upstream bound yet → the honest 503 below.
+        if (this.engineProxy.handle(req, res)) return;
       }
       send({ status: 503, body: JSON.stringify({ ok: false, error: "engine upstream not available" }) });
     } catch (err) {

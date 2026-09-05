@@ -33,6 +33,7 @@ import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry }
 import { dashboardResponse, saveDashboardResponse } from "./dashboard";
 import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
 import { AppShelf } from "./app_shelf";
+import { EngineProxy } from "./engine_proxy";
 import { createProject, listProjects } from "./project";
 import {
   addCustomConnectionResponse,
@@ -233,10 +234,12 @@ export function createAmicodeService(
   opts: {
     password?: string;
     shelf?: { distRoot?: string };
+    engine?: { password?: string; getUrl?: () => string | undefined };
   } = {},
 ): AmicodeServiceServer {
   const server = new AmicodeServiceServer(opts);
   if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
+  if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);
