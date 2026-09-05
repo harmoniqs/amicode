@@ -35,7 +35,9 @@ export function dropSessionCaches(store: SessionCache, sessionIDs: Iterable<stri
     delete store.todo[sessionID]
     delete store.session_message[sessionID]
     delete store.session_diff[sessionID]
-    delete store.diff_version[sessionID]
+    // amicode: diff_version is a fork-side field — upstream-shaped stores
+    // (upstream tests/fixtures) do not carry it, so guard the eviction.
+    if (store.diff_version) delete store.diff_version[sessionID]
     delete store.session_status[sessionID]
     delete store.permission[sessionID]
     delete store.question[sessionID]
