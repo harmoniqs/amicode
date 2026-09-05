@@ -12,6 +12,10 @@
 # binds, it does not yet source.
 schema_version = "1"
 mode = "autodev"
+# The agent id that BINDS this mode (D4 posture-binding map, #808): a session
+# resolved to this agent runs the autodev director posture; every other agent
+# id (plan, build, role agents, custom) binds copilot and is silent.
+agent = "autodev"
 card = "card.md"
 pack = "pack.toml"
 

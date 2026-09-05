@@ -72,6 +72,44 @@ describe("the shipped registry validates (one validator, two consumers)", () => 
   });
 });
 
+// ─── the posture-binding map is typed data (#808, spec D4) ───────────────────
+//
+// D4: "registry mode agents bind their mode; every other agent id binds the
+// copilot posture and is silent." The BINDING is manifest data — the agent id
+// each mode owns — so the plugin's map reads the registry, never a hardcoded
+// mode-name branch (the modes-are-data invariant). A manifest that does not
+// DECLARE its agent cannot be posture-bound by anything: a loud validation
+// failure, never a silent copilot fallback (that would put a director session
+// posture-blind — the exact failure this slice exists to close).
+describe("the posture-binding map: each manifest declares its binding agent (#808)", () => {
+  it("both shipped manifests declare their binding agent", () => {
+    for (const mode of ["autodev", "autoresearch"]) {
+      const manifest = parseModeManifest(readFileSync(join(MODES_DIR, mode, "mode.toml"), "utf8"));
+      expect(manifest.agent, `${mode}/mode.toml must declare the agent id that binds its mode`).toBe(mode);
+    }
+  });
+
+  it("a manifest with NO declared agent fails the manifest schema, named", () => {
+    const root = bundleCopy();
+    const manifestPath = join(root, "modes", "autodev", "mode.toml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(/^agent = "autodev"\n/m, ""));
+    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    expect(v.ok).toBe(false);
+    expect(v.errors.some((e) => /agent/.test(e))).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("a manifest whose declared agent is not a valid agent id fails the schema", () => {
+    const root = bundleCopy();
+    const manifestPath = join(root, "modes", "autodev", "mode.toml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('agent = "autodev"', 'agent = "Not An Agent"'));
+    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    expect(v.ok).toBe(false);
+    expect(v.errors.some((e) => /agent/.test(e))).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
 describe("bundle card parity (legacy staging stays authoritative — AC9)", () => {
   it("each bundle card.md is byte-identical to the legacy agents/ card it mirrors", () => {
     for (const mode of ["autodev", "autoresearch"]) {

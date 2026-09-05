@@ -5,6 +5,10 @@
 # legacy card staging stays authoritative until the bundle is complete.
 schema_version = "1"
 mode = "autoresearch"
+# The agent id that BINDS this mode (D4 posture-binding map, #808): a session
+# resolved to this agent runs the autoresearch director posture; every other
+# agent id (plan, build, role agents, custom) binds copilot and is silent.
+agent = "autoresearch"
 card = "card.md"
 pack = "pack.toml"
 

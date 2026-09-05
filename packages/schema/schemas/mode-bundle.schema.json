@@ -4,6 +4,11 @@
   "additionalProperties": false,
   "description": "The director-mode bundle manifest (mode.toml, spec-20260905-063000 D1): ONE unit binding the agent card, the gate pack, the declared role cards, the protocol skills, the received handoff seed, the schema version, and the per-consumer minimum-version map. Declared-set rule: a bundle ships fewer roles/skills only by explicit declaration here; a declared component that does not resolve fails validation in BOTH the vitest suite and the doctor probe (one shared validator).",
   "properties": {
+    "agent": {
+      "description": "The agent id that BINDS this mode (spec D4 posture-binding map, #808): a session resolved to this agent id runs this mode's director posture; every agent id outside the declared set binds the copilot posture and is silent. The plugin's posture map reads THIS field — never a mode-name branch.",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "type": "string"
+    },
     "card": {
       "const": "card.md",
       "description": "The bundle's agent card file, byte-identical to the legacy agents/ card it mirrors until slice 2 (D3) flips the source."
@@ -108,6 +113,7 @@
   "required": [
     "schema_version",
     "mode",
+    "agent",
     "card",
     "pack",
     "roles",
