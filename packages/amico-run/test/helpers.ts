@@ -171,6 +171,7 @@ function writeModeRegistryFixture(
       [
         `schema_version = "1"`,
         `mode = "${mode}"`,
+        `agent = "${mode}"`,
         'card = "card.md"',
         'pack = "pack.toml"',
         'protocol_skills = ["director-core"]',
