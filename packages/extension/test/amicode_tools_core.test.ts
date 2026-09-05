@@ -27,6 +27,7 @@ const PLUGIN = await import("../opencode-plugin/amicode_tools");
 const EXPECTED_TOOLS = [
   "amicode_request_approval",
   "amicode_ask",
+  "amicode_author_widget",
   "amicode_problem",
   "amicode_pick_system",
   "amicode_set_model",
@@ -66,6 +67,137 @@ describe("AMICODE_TOOLS (the core tool table)", () => {
     );
     expect(out).toMatch(/Cannot spawn/);
     expect(out).not.toMatch(/undefined/);
+  });
+});
+
+// Issue #799 — the widget-authoring tool (the fork's registry delta ported
+// into the harness-neutral floor). The prompt is CARRIED from the fork's
+// widget-author.txt (never rewritten), execution drives the extension
+// service's widget server helper end-to-end, and the returned LAST line is
+// the AMICODE_WIDGET sentinel the UI's preview card parses.
+describe("amicode_author_widget (issue #799)", () => {
+  const def = () => CORE.AMICODE_TOOLS["amicode_author_widget"] as AmicodeToolDef;
+
+  it("the description is the fork's widget-author.txt, carried byte-for-byte", async () => {
+    const { readFileSync } = await import("node:fs");
+    const carried = readFileSync(join(__dirname, "..", "src", "widget-author.txt"), "utf8");
+    expect(carried.length).toBeGreaterThan(1000);
+    expect(def().description).toBe(carried);
+  });
+
+  it("the schema is fork-equivalent (id/name/size/height/description/js, tile|hero enum)", () => {
+    const args = def().args as Record<string, { type: unknown; enum?: string[]; description: string }>;
+    expect(Object.keys(args).sort()).toEqual(["description", "height", "id", "js", "name", "size"]);
+    expect(args.size.enum).toEqual(["tile", "hero"]);
+    expect(args.id.description).toMatch(/UPDATE that widget in place/);
+    expect(args.js.description).toMatch(/export default \{ mount/);
+  });
+
+  it("a tool call drives the service helper end-to-end: the widget lands in the dashboard inventory", async () => {
+    const { mkdtempSync, existsSync, readFileSync } = await import("node:fs");
+    const userDir = mkdtempSync(join(tmpdir(), "amico-widgets-799-"));
+    const saved = process.env.AMICODE_WIDGETS_DIR;
+    process.env.AMICODE_WIDGETS_DIR = userDir;
+    try {
+      const out = await def().execute(
+        {
+          id: "fidelity-leaderboard",
+          name: "Fidelity leaderboard",
+          size: "hero",
+          height: 220,
+          description: "Best F per problem",
+          js: "export default { mount: function (el, amico) { el.textContent = 'hi' } }",
+        },
+        { carrier: "mcp" },
+      );
+      // the tool return carries the UI sentinel as its LAST line
+      const lines = out.split("\n");
+      expect(lines[lines.length - 1]).toMatch(/^AMICODE_WIDGET /);
+      const sentinel = JSON.parse(lines[lines.length - 1].slice("AMICODE_WIDGET ".length));
+      expect(sentinel).toMatchObject({ id: "fidelity-leaderboard", name: "Fidelity leaderboard", size: "hero", height: 220 });
+      expect(typeof sentinel.hash).toBe("string");
+      expect(sentinel.hash.length).toBeGreaterThan(0);
+      expect(Array.isArray(sentinel.warnings)).toBe(true);
+      expect(out).toMatch(/Pin it to their dashboard/);
+      // the helper wrote the widget under the widgets root
+      expect(existsSync(join(userDir, "fidelity-leaderboard", "manifest.toml"))).toBe(true);
+      expect(existsSync(join(userDir, "fidelity-leaderboard", "widget.js"))).toBe(true);
+      expect(readFileSync(join(userDir, "fidelity-leaderboard", "widget.js"), "utf8")).toContain("mount: function");
+
+      // dashboard inventory end-to-end: the extension service's widget route
+      // (which reads the same registry) now serves the authored widget. (The
+      // dashboard LAYOUT deliberately keeps user widgets opt-in until the
+      // user Pins — the tool's contract ends at the registry inventory.)
+      const { createAmicodeService } = await import("../src/amicode_service");
+      const service = createAmicodeService();
+      const base = (await service.start()).toString().replace(/\/$/, "");
+      try {
+        const headers = { Authorization: service.authHeader };
+        const w = await (await fetch(`${base}/amicode/widgets`, { headers })).json();
+        const entry = (w.widgets as Array<{ id: string; builtin: boolean; hash: string }>).find(
+          (x) => x.id === "fidelity-leaderboard",
+        );
+        expect(entry, "GET /amicode/widgets serves the authored widget").toBeTruthy();
+        expect(entry!.builtin).toBe(false);
+        expect(entry!.hash).toBe(sentinel.hash);
+      } finally {
+        await service.stop();
+      }
+    } finally {
+      if (saved === undefined) delete process.env.AMICODE_WIDGETS_DIR;
+      else process.env.AMICODE_WIDGETS_DIR = saved;
+    }
+  });
+
+  it("re-calling with the SAME id updates in place (new content → new hash)", async () => {
+    const { mkdtempSync, readFileSync } = await import("node:fs");
+    const userDir = mkdtempSync(join(tmpdir(), "amico-widgets-799b-"));
+    const saved = process.env.AMICODE_WIDGETS_DIR;
+    process.env.AMICODE_WIDGETS_DIR = userDir;
+    try {
+      const call = (js: string) =>
+        def().execute(
+          { id: "my-tile", name: "My tile", size: "tile", height: 120, description: null, js },
+          {},
+        );
+      const first = await call("export default { mount: function (el) { el.textContent = 'v1' } }");
+      const second = await call("export default { mount: function (el) { el.textContent = 'v2' } }");
+      const h1 = JSON.parse(first.split("\n").pop()!.slice("AMICODE_WIDGET ".length)).hash;
+      const h2 = JSON.parse(second.split("\n").pop()!.slice("AMICODE_WIDGET ".length)).hash;
+      expect(h1).not.toBe(h2);
+      expect(readFileSync(join(userDir, "my-tile", "widget.js"), "utf8")).toContain("'v2'");
+    } finally {
+      if (saved === undefined) delete process.env.AMICODE_WIDGETS_DIR;
+      else process.env.AMICODE_WIDGETS_DIR = saved;
+    }
+  });
+
+  it("REFUSES a bad widget honestly — nothing is written, the error names the field", async () => {
+    const { mkdtempSync, existsSync, readdirSync } = await import("node:fs");
+    const userDir = mkdtempSync(join(tmpdir(), "amico-widgets-799c-"));
+    const saved = process.env.AMICODE_WIDGETS_DIR;
+    process.env.AMICODE_WIDGETS_DIR = userDir;
+    try {
+      const out = await def().execute(
+        { id: "Not_Kebab", name: "X", size: "tile", height: 120, description: null, js: "export default {}" },
+        {},
+      );
+      expect(out).toMatch(/Widget rejected/);
+      expect(out).toMatch(/The widget was NOT written/);
+      expect(out).toMatch(/bad_id/);
+      expect(existsSync(join(userDir, "Not_Kebab"))).toBe(false);
+      expect(readdirSync(userDir)).toEqual([]);
+      // and a missing mount contract is refused too (the helper's js gate)
+      const out2 = await def().execute(
+        { id: "ok-id", name: "X", size: "tile", height: 120, description: null, js: "export default {}" },
+        {},
+      );
+      expect(out2).toMatch(/bad_js/);
+      expect(existsSync(join(userDir, "ok-id"))).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.AMICODE_WIDGETS_DIR;
+      else process.env.AMICODE_WIDGETS_DIR = saved;
+    }
   });
 });
 

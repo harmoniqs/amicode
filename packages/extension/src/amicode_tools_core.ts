@@ -133,6 +133,14 @@ import {
   auditRegimePriorApplications,
   type CensusStamp,
 } from "../opencode-plugin/regime_priors";
+// Issue #799 — the widget-authoring tool executes against the extension
+// service's widget server helper (src/amicode_service/widgets.ts, already
+// ported): the helper is pure filesystem (manifest + widget.js under
+// widgetsRoot()), which is exactly the floor's harness-neutral contract —
+// the dashboard inventory (GET /amicode/widgets, /amicode/dashboard) reads
+// the same directory, so a tool call lands in the inventory end-to-end
+// without an HTTP hop and without touching the harness server.
+import { authorWidget } from "./amicode_service/widgets";
 
 
 
@@ -328,7 +336,68 @@ const RYDBERG_SCOPE_NOTE =
 
 
 
-// ── The tool table (the one source of truth) ──────────────────────────────────
+// Issue #799 — the widget-authoring tool's prompt, CARRIED VERBATIM from the
+// fork's packages/opencode/src/tool/widget-author.txt (copied byte-for-byte to
+// ./widget-author.txt beside this module; the test suite pins the constant to
+// the file — carried, never rewritten). Backticks are the only escape needed
+// (the text carries no ${ and no backslash).
+const WIDGET_AUTHOR_PROMPT = `Author or update a widget on the user's Amicode home dashboard, from this conversation.
+
+Use this when the user asks to add, build, create, redesign, or change a home tile/widget
+("add a tile showing my recent runs", "make a fidelity leaderboard", "make that bigger").
+The widget is written to the user's widget folder and a LIVE PREVIEW renders in this chat
+immediately; the user clicks "Pin to dashboard" to place it on home. Calling this tool again
+with the SAME \`id\` UPDATES that widget in place and the preview hot-reloads — use that to
+refine after feedback rather than making a new widget.
+
+You supply the widget body as an ES module in \`js\`. Exact contract:
+
+  export default {
+    mount: function (el, amico) {
+      // Build the widget's DOM inside \`el\` (its root element). Vanilla DOM only.
+      // Leave \`el\` empty (no child elements, no text) to signal an EMPTY STATE —
+      // the host then hides the tile until there is something to show.
+    }
+  }
+
+The \`amico\` client passed to mount:
+  amico.fetch(path) -> Promise<data>   ONLY these routes are allowed (anything else rejects):
+    /amicode/profile          {ok, you:{name, stats:{problems,runs}, ...}}
+    /amicode/problems         {ok, active, problems:[{slug,name,status,score,recorded,entity_kinds}]}
+    /amicode/problem?slug=..  one problem's detail
+    /amicode/run-status?slug=..  {ok, runs:[{run_id, status, fidelity, iteration}]}
+        status is solving|stalled|finished|failed; \`fidelity\` is the objective value
+        (~ infidelity 1-F, LOWER is better).
+    /amicode/run-series?run=..&lab=..  one run's per-iteration series
+    /amicode/run-cards        shareable run cards (the showcase gallery)
+    /amicode/library          uploaded papers + learnings
+  amico.action(verb, payload) -> Promise   verbs: resume-session, warm-start, open-gallery,
+        open-external, upload-library, save-profile, lookup-institution, resolve-logo
+  amico.prompt(text)   start a new chat turn with \`text\` (good for click-to-ask)
+  amico.open(entity)   open an entity view
+  amico.config   amico.context ({resume, liveRun, library})   amico.theme   amico.density ('normal'|'compact'|'tight')
+  amico.onConfig(cb) / amico.onTheme(cb) / amico.onContext(cb)   re-render hooks
+
+STYLE — use the host theme tokens (CSS custom properties). NEVER hard-code colors:
+  colors:  --amc-bg --amc-layer --amc-layer2 --amc-border --amc-text --amc-text-muted
+           --amc-text-faint --amc-accent --amc-success --amc-warning --amc-danger
+  fonts:   --amc-font-sans --amc-font-mono
+  padding: --amc-pad (hero) --amc-pad-tile (tile)
+A card should fill its box: border 1px solid var(--amc-border); border-radius 10px;
+background var(--amc-layer); padding var(--amc-pad-tile). Give data an UPPERCASE eyebrow
+label in --amc-text-faint. Use font-variant-numeric: tabular-nums wherever digits line up.
+Show physics quantities the way the user writes them (infidelity as 2.1e-4, etc.).
+
+SIZE: "tile" = compact card in the tile row; "hero" = wide card in the top grid.
+\`height\` is the resting pixel height (the frame grows to content): tiles ~96-180, heroes ~180-320.
+
+Fetch is async — render a nothing/loading state first, then fill in on the promise. Handle
+fetch failure by rendering an empty state (leave \`el\` empty), not an error dump. Tell the user
+in one sentence what you built; the preview and Pin button appear on their own. If the tool
+returns an error, fix \`js\`/the fields and call it again.
+`;
+
+
 export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
 
     // Capability warrant request (spec-20260727-164748 §9.5 / G-9). The CARD is the
@@ -430,6 +499,94 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           `Question presented with ${opts.length} option buttons. STOP HERE: write no ` +
           `further text this turn, do NOT repeat the question in prose, and NEVER pick ` +
           `an option yourself — the user's next message is their click.`
+        );
+      },
+    },
+
+    // Issue #799 — the fork's widget-authoring tool (its registry delta, one of
+    // the two load-bearing deltas blocking fork retirement) ported into the
+    // harness-neutral floor. Bare MCP wire name: `author_widget` — with the
+    // server registered as "amicode", opencode renders `amicode_author_widget`,
+    // the name the UI's sentinel seam keys on (widget-preview.ts parses the
+    // AMICODE_WIDGET {id,name,size,height,hash,warnings} LAST line into the
+    // live preview + Pin card). Execution calls the extension service's widget
+    // server helper (authorWidget — see the import note above); the helper
+    // validates everything (kebab id, size, height 40..2000, mount contract),
+    // assembles the manifest (the model never hand-writes TOML), and writes
+    // under widgetsRoot() — the same directory the dashboard inventory serves.
+    // NOT a problem-stage tool: ungated (no guardAndRecordStage), chat-level
+    // authoring like amicode_profile/amicode_recommend.
+    amicode_author_widget: {
+      description: WIDGET_AUTHOR_PROMPT,
+      args: {
+        id: {
+          type: "string",
+          description: "kebab-case widget id (also its folder name). Reuse an id to UPDATE that widget in place.",
+        },
+        name: {
+          type: "string",
+          description: "human title shown in the widget header / edit controls",
+        },
+        size: {
+          type: "string",
+          enum: ["tile", "hero"],
+          description: '"tile" = compact card in the tile row; "hero" = wide card in the top grid',
+        },
+        height: {
+          type: "number",
+          description: "resting pixel height (40..2000); the frame grows to content",
+        },
+        description: {
+          type: ["string", "null"],
+          description: "one-line description of the widget. Null for none.",
+        },
+        js: {
+          type: "string",
+          description: "the widget.js ES module body: export default { mount: function (el, amico) { ... } }",
+        },
+      },
+      async execute(a: {
+        id: string;
+        name: string;
+        size: string;
+        height: number;
+        description?: string | null;
+        js: string;
+      }) {
+        // Validation lives in the service helper (the same never-reject
+        // discipline as every service route): a bad field returns {ok:false}
+        // with a precise error — refuse honestly, write nothing.
+        const r = authorWidget({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          height: a.height,
+          description: a.description ?? undefined,
+          js: a.js,
+        });
+        if (!r.ok) {
+          return (
+            `Widget rejected: ${a.id}. The widget was NOT written. ${r.error}. ` +
+            `Fix the input and call amicode_author_widget again.`
+          );
+        }
+        // The UI sentinel (the RunWindow/AMICODE_DIFF precedent): the card
+        // parses this LAST line for {id, hash} to build the preview frame src.
+        // Re-calling with the same id overwrites in place → new content hash →
+        // the preview hot-reloads.
+        const sentinel = JSON.stringify({
+          id: r.id,
+          name: r.name,
+          size: r.size,
+          height: r.height,
+          hash: r.hash,
+          warnings: r.warnings,
+        });
+        const warnLine = r.warnings.length ? ` Warnings: ${r.warnings.join("; ")}.` : "";
+        return (
+          `Authored widget "${r.id}" — "${r.name}" (${r.size}) ✓.${warnLine} ` +
+          `A live preview is shown below — the user can Pin it to their dashboard.\n` +
+          `AMICODE_WIDGET ${sentinel}`
         );
       },
     },

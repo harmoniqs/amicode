@@ -1,0 +1,54 @@
+Author or update a widget on the user's Amicode home dashboard, from this conversation.
+
+Use this when the user asks to add, build, create, redesign, or change a home tile/widget
+("add a tile showing my recent runs", "make a fidelity leaderboard", "make that bigger").
+The widget is written to the user's widget folder and a LIVE PREVIEW renders in this chat
+immediately; the user clicks "Pin to dashboard" to place it on home. Calling this tool again
+with the SAME `id` UPDATES that widget in place and the preview hot-reloads — use that to
+refine after feedback rather than making a new widget.
+
+You supply the widget body as an ES module in `js`. Exact contract:
+
+  export default {
+    mount: function (el, amico) {
+      // Build the widget's DOM inside `el` (its root element). Vanilla DOM only.
+      // Leave `el` empty (no child elements, no text) to signal an EMPTY STATE —
+      // the host then hides the tile until there is something to show.
+    }
+  }
+
+The `amico` client passed to mount:
+  amico.fetch(path) -> Promise<data>   ONLY these routes are allowed (anything else rejects):
+    /amicode/profile          {ok, you:{name, stats:{problems,runs}, ...}}
+    /amicode/problems         {ok, active, problems:[{slug,name,status,score,recorded,entity_kinds}]}
+    /amicode/problem?slug=..  one problem's detail
+    /amicode/run-status?slug=..  {ok, runs:[{run_id, status, fidelity, iteration}]}
+        status is solving|stalled|finished|failed; `fidelity` is the objective value
+        (~ infidelity 1-F, LOWER is better).
+    /amicode/run-series?run=..&lab=..  one run's per-iteration series
+    /amicode/run-cards        shareable run cards (the showcase gallery)
+    /amicode/library          uploaded papers + learnings
+  amico.action(verb, payload) -> Promise   verbs: resume-session, warm-start, open-gallery,
+        open-external, upload-library, save-profile, lookup-institution, resolve-logo
+  amico.prompt(text)   start a new chat turn with `text` (good for click-to-ask)
+  amico.open(entity)   open an entity view
+  amico.config   amico.context ({resume, liveRun, library})   amico.theme   amico.density ('normal'|'compact'|'tight')
+  amico.onConfig(cb) / amico.onTheme(cb) / amico.onContext(cb)   re-render hooks
+
+STYLE — use the host theme tokens (CSS custom properties). NEVER hard-code colors:
+  colors:  --amc-bg --amc-layer --amc-layer2 --amc-border --amc-text --amc-text-muted
+           --amc-text-faint --amc-accent --amc-success --amc-warning --amc-danger
+  fonts:   --amc-font-sans --amc-font-mono
+  padding: --amc-pad (hero) --amc-pad-tile (tile)
+A card should fill its box: border 1px solid var(--amc-border); border-radius 10px;
+background var(--amc-layer); padding var(--amc-pad-tile). Give data an UPPERCASE eyebrow
+label in --amc-text-faint. Use font-variant-numeric: tabular-nums wherever digits line up.
+Show physics quantities the way the user writes them (infidelity as 2.1e-4, etc.).
+
+SIZE: "tile" = compact card in the tile row; "hero" = wide card in the top grid.
+`height` is the resting pixel height (the frame grows to content): tiles ~96-180, heroes ~180-320.
+
+Fetch is async — render a nothing/loading state first, then fill in on the promise. Handle
+fetch failure by rendering an empty state (leave `el` empty), not an error dump. Tell the user
+in one sentence what you built; the preview and Pin button appear on their own. If the tool
+returns an error, fix `js`/the fields and call it again.
