@@ -110,6 +110,22 @@ export {
   type ReleaseCompare,
   type ReleaseCompareStatus,
 } from "./mode_registry.js";
+export {
+  stageModeBundles,
+  modeBundleStagingRoot,
+  readStagingLock,
+  stagingLockVerdict,
+  pidAlive,
+  processStartTimeToken,
+  MODE_STAGING_LOCK_NAME,
+  MODE_DEPLOY_RECEIPT_NAME,
+  MODE_STAGING_TTL_MS_DEFAULT,
+  type StageModeBundlesResult,
+  type ModeStagingLock,
+  type ModeStagingOpts,
+  type StolenLock,
+  type StagingLockVerdict,
+} from "./mode_staging.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
