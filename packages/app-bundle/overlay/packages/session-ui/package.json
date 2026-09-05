@@ -41,7 +41,18 @@
     "vite": "catalog:"
   },
   "dependencies": {
+    "@codemirror/lang-css": "6.3.1",
+    "@codemirror/lang-html": "6.4.12",
+    "@codemirror/lang-javascript": "6.2.5",
+    "@codemirror/lang-json": "6.0.2",
+    "@codemirror/lang-markdown": "6.5.2",
+    "@codemirror/lang-python": "6.2.1",
+    "@codemirror/language": "6.12.4",
+    "@codemirror/merge": "6.12.2",
+    "@codemirror/state": "6.7.1",
+    "@codemirror/view": "6.43.9",
     "@kobalte/core": "catalog:",
+    "@lezer/highlight": "1.2.3",
     "@opencode-ai/client": "file:../app/vendor/opencode-ai-client-1.17.13-v2.tgz",
     "@opencode-ai/core": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",

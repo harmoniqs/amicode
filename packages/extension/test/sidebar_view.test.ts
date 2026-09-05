@@ -1238,6 +1238,19 @@ describe("sidebar webview — context menu", () => {
     expect(src).toContain("Open in Terminal");
   });
 
+  it("context menu shows 'Restore' for ghost (deleted) entries instead of normal file ops", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Reads gitStatus from the data attribute to detect ghost entries
+    expect(src).toMatch(/dataset\.gitStatus\s*===\s*"deleted"/);
+    // Shows "Restore" for ghost entries
+    expect(src).toContain("Restore");
+    // The restore op
+    expect(src).toContain('"restore"');
+  });
+
   it("sidebar_view.ts CSS includes context-menu styling", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
@@ -1634,6 +1647,15 @@ describe("sidebar webview — drag and drop", () => {
     expect(req.op).toBe("move");
     expect(req.targetDir).toBe("/lib");
   });
+
+  it("FileOpRequest type includes restore op for git-deleted ghost entries", async () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+      "utf8",
+    );
+    // The op union should include "restore"
+    expect(src).toMatch(/"restore"/);
+  });
 });
 
 // ── Git status colors (#673) ─────────────────────────────────────────────────
@@ -1669,6 +1691,20 @@ describe("sidebar — git status colors", () => {
     expect(html).toContain("--vscode-gitDecoration-untrackedResourceForeground");
   });
 
+  it("CSS suppresses strikethrough on directory nodes with git-deleted status", async () => {
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+
+    // Deleted files get strikethrough
+    expect(html).toContain(".git-deleted");
+    expect(html).toMatch(/\.git-deleted\s*\{[^}]*text-decoration:\s*line-through/);
+    // But directories do NOT — the override rule suppresses it
+    expect(html).toMatch(/\[data-type="directory"\].*\.git-deleted\s*\{[^}]*text-decoration:\s*none/);
+  });
+
   it("webview applies git status CSS classes to file labels", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
@@ -1677,6 +1713,17 @@ describe("sidebar — git status colors", () => {
     // Label gets git-* class from entry.gitStatus
     expect(src).toContain("entry.gitStatus");
     expect(src).toMatch(/label\.classList\.add.*git-/);
+  });
+
+  it("renderFileNode stores gitStatus as a data attribute for context menu detection", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The file node's DOM element should carry data-git-status when gitStatus is set
+    expect(src).toContain("dataset.gitStatus");
+    // Should be set from entry.gitStatus
+    expect(src).toMatch(/dataset\.gitStatus\s*=\s*entry\.gitStatus/);
   });
 
   it("sidebar_view.ts annotates children with git status from the Git extension", () => {
@@ -1692,6 +1739,19 @@ describe("sidebar — git status colors", () => {
     // Walks workingTreeChanges and indexChanges
     expect(src).toContain("workingTreeChanges");
     expect(src).toContain("indexChanges");
+    // Injects ghost entries for deleted files before annotation
+    expect(src).toContain("injectDeletedEntries");
+  });
+
+  it("annotateGitStatus receives the parent directory path so it can inject deleted ghost entries", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // annotateGitStatus should accept a parentDir parameter
+    expect(src).toMatch(/annotateGitStatus\(entries,\s*\w+/);
+    // The getChildren call site should pass the directory path
+    expect(src).toMatch(/annotateGitStatus\(entries,\s*p\)/);
   });
 
   it("propagateGitStatusToDirs gives directories the most notable child status", async () => {
@@ -1702,6 +1762,7 @@ describe("sidebar — git status colors", () => {
       { name: "src", type: "directory" as const, path: "/project/src" },
       { name: "docs", type: "directory" as const, path: "/project/docs" },
       { name: "clean", type: "directory" as const, path: "/project/clean" },
+      { name: "trash", type: "directory" as const, path: "/project/trash" },
       { name: "main.ts", type: "file" as const, path: "/project/main.ts", gitStatus: "modified" as const },
     ];
 
@@ -1710,6 +1771,7 @@ describe("sidebar — git status colors", () => {
       ["/project/src/index.ts", "modified"],
       ["/project/src/util.ts", "untracked"],
       ["/project/docs/README.md", "added"],
+      ["/project/trash/old.ts", "deleted"],
     ]);
 
     const result = propagateGitStatusToDirs(entries, statusMap);
@@ -1720,8 +1782,64 @@ describe("sidebar — git status colors", () => {
     expect(result.find(e => e.name === "docs")?.gitStatus).toBe("added");
     // clean has no changed children → no git status
     expect(result.find(e => e.name === "clean")?.gitStatus).toBeUndefined();
-    // Files keep their original status
+    // trash has deleted children → gets "deleted" color (CSS prevents strikethrough on dirs)
+    expect(result.find(e => e.name === "trash")?.gitStatus).toBe("deleted");
+     // Files keep their original status
     expect(result.find(e => e.name === "main.ts")?.gitStatus).toBe("modified");
+  });
+
+  it("injectDeletedEntries adds ghost entries for deleted files missing from the directory listing", async () => {
+    vi.resetModules();
+    const { injectDeletedEntries } = await import("../src/sidebar_view");
+
+    // Existing entries from the filesystem — deleted.ts is NOT here (already removed from disk)
+    const entries = [
+      { name: "main.ts", type: "file" as const, path: "/project/src/main.ts" },
+      { name: "util.ts", type: "file" as const, path: "/project/src/util.ts", gitStatus: "modified" as const },
+    ];
+
+    // Git status map includes a deleted file under the same directory
+    const statusMap = new Map<string, string>([
+      ["/project/src/deleted.ts", "deleted"],
+      ["/project/src/util.ts", "modified"],
+    ]);
+
+    const result = injectDeletedEntries(entries, statusMap, "/project/src");
+
+    // The ghost entry should appear in the result
+    const ghost = result.find(e => e.name === "deleted.ts");
+    expect(ghost).toBeDefined();
+    expect(ghost!.path).toBe("/project/src/deleted.ts");
+    expect(ghost!.type).toBe("file");
+    expect(ghost!.gitStatus).toBe("deleted");
+
+    // Existing entries should still be present and unchanged
+    expect(result.find(e => e.name === "main.ts")).toBeDefined();
+    expect(result.find(e => e.name === "util.ts")?.gitStatus).toBe("modified");
+
+    // No duplicate: util.ts exists on disk, so it shouldn't be injected again
+    expect(result.filter(e => e.name === "util.ts")).toHaveLength(1);
+  });
+
+  it("injectDeletedEntries does not inject files from subdirectories (only direct children)", async () => {
+    vi.resetModules();
+    const { injectDeletedEntries } = await import("../src/sidebar_view");
+
+    const entries = [
+      { name: "index.ts", type: "file" as const, path: "/project/src/index.ts" },
+    ];
+
+    const statusMap = new Map<string, string>([
+      ["/project/src/deleted.ts", "deleted"],           // direct child — should appear
+      ["/project/src/sub/deep.ts", "deleted"],           // nested — should NOT appear
+      ["/project/other/file.ts", "deleted"],             // different dir — should NOT appear
+    ]);
+
+    const result = injectDeletedEntries(entries, statusMap, "/project/src");
+
+    expect(result.find(e => e.name === "deleted.ts")).toBeDefined();
+    expect(result.find(e => e.name === "deep.ts")).toBeUndefined();
+    expect(result.find(e => e.name === "file.ts")).toBeUndefined();
   });
 });
 
@@ -1906,6 +2024,19 @@ describe("sidebar — reactive git status", () => {
     expect(src).toMatch(/classList\.remove|className.*replace|git-/);
   });
 
+  it("applyGitStatus updates dataset.gitStatus on file nodes so click/context-menu guards stay current", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // applyGitStatus should set dataset.gitStatus when a status is present
+    // and delete it when the status is cleared (file restored)
+    const applyFn = src.slice(src.indexOf("function applyGitStatus"), src.indexOf("function applyGitStatus") + 1500);
+    expect(applyFn).toContain("dataset.gitStatus");
+    // Should clear it when no status matches (delete operator or empty assignment)
+    expect(applyFn).toMatch(/delete\s+.*dataset\.gitStatus|dataset\.gitStatus\s*=\s*""/);
+  });
+
   it("webview applies git status to root-level project nodes too", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
@@ -1916,6 +2047,20 @@ describe("sidebar — reactive git status", () => {
     expect(src).toContain("git-status");
     // Should propagate status to directories using prefix matching
     expect(src).toContain("startsWith");
+  });
+
+  it("webview re-requests children when git-status has orphaned deleted entries with no DOM node", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The git-status handler should detect orphaned deleted entries
+    // (deleted files in the status map with no matching DOM node)
+    // and re-request children for the parent directory so ghost entries appear.
+    // Look for the re-request pattern in the git-status case:
+    expect(src).toContain("orphaned");
+    // Should invalidate cache and re-request children
+    expect(src).toMatch(/get-children/);
   });
 
   it("host pushes git-status after every roots re-render to prevent color loss", async () => {
@@ -2608,5 +2753,356 @@ describe("executeFileOp — delete with confirmation", () => {
     expect(updateFolders).not.toHaveBeenCalled();
 
     (vs.workspace as any).workspaceFolders = [];
+  });
+});
+
+// ── Restore (git checkout) for ghost entries ─────────────────────────────────
+
+describe("executeFileOp — restore ghost entry", () => {
+  it("executeFileOp restore case runs git checkout HEAD to restore a deleted file", async () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Should have a "restore" case in executeFileOp
+    expect(src).toMatch(/case\s*"restore"/);
+    // Should run git checkout HEAD -- <path>
+    expect(src).toContain("git");
+    expect(src).toContain("checkout");
+    expect(src).toContain("HEAD");
+  });
+});
+
+// ── Ghost entry click suppression ────────────────────────────────────────────
+
+describe("ghost entry click behavior", () => {
+  it("single-clicking a ghost (deleted) file does not post open-file", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The click handler in renderFileNode should check gitStatus before posting open-file
+    // Find the click handler block near "open-file"
+    const openFileIdx = src.indexOf('"open-file"');
+    expect(openFileIdx).toBeGreaterThan(-1);
+    // There should be a gitStatus guard before the open-file post
+    const blockBefore = src.slice(Math.max(0, openFileIdx - 200), openFileIdx);
+    expect(blockBefore).toContain("gitStatus");
+  });
+
+  it("click guard reads dataset.gitStatus from the DOM at click time, not from a closure", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Find the click handler near "open-file"
+    const openFileIdx = src.indexOf('"open-file"');
+    const blockBefore = src.slice(Math.max(0, openFileIdx - 300), openFileIdx);
+    // Must read from row.dataset.gitStatus (DOM), not entry.gitStatus (closure)
+    expect(blockBefore).toContain("row.dataset.gitStatus");
+    expect(blockBefore).not.toContain("entry.gitStatus");
+  });
+});
+
+// ── Root-reorder drop handler: non-root files must pass through ──────────────
+
+describe("root-reorder drop handler propagation", () => {
+  it("does NOT call stopImmediatePropagation before confirming the source is a root", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Find the setupRootReorderDropTarget function's drop handler
+    const fnStart = src.indexOf("function setupRootReorderDropTarget");
+    expect(fnStart).toBeGreaterThan(-1);
+    const fnBody = src.slice(fnStart, fnStart + 3500);
+
+    // Find the drop listener within this function (skip "dragleave"/"dragover")
+    const dropIdx = fnBody.indexOf('"drop"');
+    expect(dropIdx).toBeGreaterThan(-1);
+    const dropBody = fnBody.slice(dropIdx, dropIdx + 600);
+
+    // stopImmediatePropagation must come AFTER the sourceRoot check,
+    // not before it — otherwise non-root file drops are silently swallowed
+    const stopIdx = dropBody.indexOf("stopImmediatePropagation");
+    const rootCheckIdx = dropBody.indexOf("currentRoots.find");
+    expect(stopIdx).toBeGreaterThan(-1);
+    expect(rootCheckIdx).toBeGreaterThan(-1);
+    expect(rootCheckIdx).toBeLessThan(stopIdx);
+  });
+});
+
+// ── Lane 2 relay allowlist for file-op-notify ────────────────────────────────
+
+describe("chat panel Lane 2 relay", () => {
+  it("allowlists file-op-notify in both relay scripts so sidebar file moves reach the session page", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "chat_panel.ts"),
+      "utf8",
+    );
+    // There are two relay scripts (renderHtml and renderTransitionHtml),
+    // each must include file-op-notify in their allowlist
+    const matches = src.match(/file-op-notify/g);
+    expect(matches).toBeDefined();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── File-op-notify: sidebar notifies chat panel after move/rename ─────────────
+
+describe("file-op-notify for Files Changed tracking", () => {
+  it("executeFileOp returns newPath for move operations", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the move case in executeFileOp
+    const moveCase = src.indexOf('case "move"');
+    expect(moveCase).toBeGreaterThan(-1);
+    const moveBlock = src.slice(moveCase, moveCase + 800);
+    // Must return newPath so the bridge can notify the session page
+    expect(moveBlock).toContain("newPath");
+  });
+
+  it("executeFileOp returns newPath for rename operations", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the rename case in executeFileOp
+    const renameCase = src.indexOf('case "rename"');
+    expect(renameCase).toBeGreaterThan(-1);
+    const renameBlock = src.slice(renameCase, renameCase + 1000);
+    expect(renameBlock).toContain("newPath");
+  });
+
+  it("sidebar_bridge posts file-op-notify to the chat panel after a successful move/rename", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+      "utf8",
+    );
+    expect(src).toContain("file-op-notify");
+    expect(src).toContain("oldPath");
+    expect(src).toContain("newPath");
+  });
+
+  it("notifyFileMove sends os.homedir() so the browser iframe can normalize paths", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    const notifyBlock = src.slice(src.indexOf("notifyFileMove"), src.indexOf("notifyFileMove") + 400);
+    expect(notifyBlock).toContain("homedir");
+  });
+});
+
+// ── Drag auto-scroll ─────────────────────────────────────────────────────────
+
+describe("drag auto-scroll", () => {
+  it("all three dragover handlers call handleDragAutoScroll", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Each of the three setup functions should call handleDragAutoScroll in their dragover
+    for (const fn of ["setupDirectoryDropTarget", "setupFileDropTarget", "setupRootReorderDropTarget"]) {
+      const fnStart = src.indexOf(`function ${fn}`);
+      expect(fnStart, `${fn} exists`).toBeGreaterThan(-1);
+      const fnBody = src.slice(fnStart, fnStart + 2500);
+      expect(fnBody, `${fn} calls handleDragAutoScroll`).toContain("handleDragAutoScroll");
+    }
+  });
+
+  it("clearAutoScroll is called on dragend and in clearDropTarget", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // dragend listener should clear auto-scroll
+    const dragendIdx = src.indexOf('"dragend"');
+    expect(dragendIdx).toBeGreaterThan(-1);
+    const dragendBlock = src.slice(dragendIdx, dragendIdx + 300);
+    expect(dragendBlock).toContain("clearAutoScroll");
+
+    // clearDropTarget should also clear auto-scroll
+    const clearDropIdx = src.indexOf("function clearDropTarget");
+    expect(clearDropIdx).toBeGreaterThan(-1);
+    const clearDropBlock = src.slice(clearDropIdx, clearDropIdx + 300);
+    expect(clearDropBlock).toContain("clearAutoScroll");
+  });
+});
+
+// ── Sidebar flicker prevention ───────────────────────────────────────────────
+
+describe("sidebar — flicker prevention", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("filesystem watcher debounces rapid events into a single fs-changed per folder", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    // Wire a mock createFileSystemWatcher that captures event handlers
+    const fsCbs: { create: Array<(uri: any) => void>; change: Array<(uri: any) => void>; del: Array<(uri: any) => void> } = {
+      create: [], change: [], del: [],
+    };
+    const vscodeMock = await import("vscode");
+    (vscodeMock.workspace as any).createFileSystemWatcher = () => ({
+      onDidCreate: (cb: (uri: any) => void) => { fsCbs.create.push(cb); return { dispose() {} }; },
+      onDidChange: (cb: (uri: any) => void) => { fsCbs.change.push(cb); return { dispose() {} }; },
+      onDidDelete: (cb: (uri: any) => void) => { fsCbs.del.push(cb); return { dispose() {} }; },
+      dispose() {},
+    });
+    // Set up a workspace folder so getWorkspaceFolder resolves
+    (vscodeMock.workspace as any).workspaceFolders = [
+      { uri: { fsPath: "/project" }, name: "project", index: 0 },
+    ];
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    (view.webview.postMessage as any).mockClear();
+
+    // Fire 10 rapid file-change events (simulating a git checkout)
+    for (let i = 0; i < 10; i++) {
+      for (const cb of fsCbs.change) cb({ fsPath: `/project/src/file${i}.ts` });
+    }
+
+    // Within the debounce window, no fs-changed should have been sent
+    const callsBefore = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "fs-changed");
+    expect(callsBefore).toHaveLength(0);
+
+    // Advance past the debounce window
+    vi.advanceTimersByTime(350);
+
+    // Exactly one fs-changed for the /project folder
+    const callsAfter = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "fs-changed");
+    expect(callsAfter).toHaveLength(1);
+    expect(callsAfter[0][0].folder).toBe("/project");
+
+    // Restore
+    (vscodeMock.workspace as any).workspaceFolders = [];
+  });
+
+  it("filesystem watcher coalesces events from multiple folders", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    const fsCbs: { create: Array<(uri: any) => void>; change: Array<(uri: any) => void>; del: Array<(uri: any) => void> } = {
+      create: [], change: [], del: [],
+    };
+    const vscodeMock = await import("vscode");
+    (vscodeMock.workspace as any).createFileSystemWatcher = () => ({
+      onDidCreate: (cb: (uri: any) => void) => { fsCbs.create.push(cb); return { dispose() {} }; },
+      onDidChange: (cb: (uri: any) => void) => { fsCbs.change.push(cb); return { dispose() {} }; },
+      onDidDelete: (cb: (uri: any) => void) => { fsCbs.del.push(cb); return { dispose() {} }; },
+      dispose() {},
+    });
+    (vscodeMock.workspace as any).workspaceFolders = [
+      { uri: { fsPath: "/project-a" }, name: "a", index: 0 },
+      { uri: { fsPath: "/project-b" }, name: "b", index: 1 },
+    ];
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    (view.webview.postMessage as any).mockClear();
+
+    // Interleave events from two folders
+    for (const cb of fsCbs.change) {
+      cb({ fsPath: "/project-a/file1.ts" });
+      cb({ fsPath: "/project-b/file1.ts" });
+      cb({ fsPath: "/project-a/file2.ts" });
+    }
+
+    vi.advanceTimersByTime(350);
+
+    const fsMsgs = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "fs-changed");
+    // One message per folder, not per event
+    expect(fsMsgs).toHaveLength(2);
+    const folders = fsMsgs.map((c: any[]) => c[0].folder).sort();
+    expect(folders).toEqual(["/project-a", "/project-b"]);
+
+    (vscodeMock.workspace as any).workspaceFolders = [];
+  });
+
+  it("dispose clears the filesystem debounce timer so it does not fire into a dead webview", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    const fsCbs: { change: Array<(uri: any) => void> } = { change: [] };
+    const vscodeMock = await import("vscode");
+    (vscodeMock.workspace as any).createFileSystemWatcher = () => ({
+      onDidCreate: () => ({ dispose() {} }),
+      onDidChange: (cb: (uri: any) => void) => { fsCbs.change.push(cb); return { dispose() {} }; },
+      onDidDelete: () => ({ dispose() {} }),
+      dispose() {},
+    });
+    (vscodeMock.workspace as any).workspaceFolders = [
+      { uri: { fsPath: "/project" }, name: "project", index: 0 },
+    ];
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    (view.webview.postMessage as any).mockClear();
+
+    // Fire an event, starting the debounce timer
+    for (const cb of fsCbs.change) cb({ fsPath: "/project/file.ts" });
+
+    // Dispose before the timer fires
+    for (const cb of view._disposeCbs) cb();
+
+    // Advance past the debounce window
+    vi.advanceTimersByTime(350);
+
+    // The fs-changed message should NOT have been sent (timer was cleared)
+    const fsMsgs = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "fs-changed");
+    expect(fsMsgs).toHaveLength(0);
+
+    (vscodeMock.workspace as any).workspaceFolders = [];
+  });
+
+  it("section-order handler skips re-render when order is unchanged", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The section-order message handler should compare incoming order with
+    // currentSectionOrder before calling renderRoots, to avoid a redundant
+    // full DOM wipe on sidebar show and section-reorder echo.
+    const handlerStart = src.indexOf('case "section-order"');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerBlock = src.slice(handlerStart, handlerStart + 800);
+    // Must check equality before rendering — look for a comparison guard
+    expect(handlerBlock).toMatch(/currentSectionOrder/);
+    // The guard must come BEFORE renderRoots — find both positions
+    const guardIdx = handlerBlock.indexOf("currentSectionOrder");
+    const renderIdx = handlerBlock.indexOf("renderRoots");
+    expect(renderIdx).toBeGreaterThan(-1);
+    // There must be an early-exit/skip before the renderRoots call
+    expect(handlerBlock).toMatch(/JSON\.stringify|every|===.*break|return/);
+  });
+
+  it("sidebar webview is registered with retainContextWhenHidden", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "extension.ts"),
+      "utf8",
+    );
+    // Find the registerWebviewViewProvider call for the sidebar
+    const regIdx = src.indexOf('registerWebviewViewProvider("amicode.workspace"');
+    expect(regIdx).toBeGreaterThan(-1);
+    // The third argument should include retainContextWhenHidden: true
+    const regBlock = src.slice(regIdx, regIdx + 200);
+    expect(regBlock).toContain("retainContextWhenHidden");
+    expect(regBlock).toContain("true");
   });
 });

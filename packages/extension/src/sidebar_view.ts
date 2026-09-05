@@ -13,6 +13,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry } from "./sidebar_bridge";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
+import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
 
 // ── Icon theme resolution ────────────────────────────────────────────────────
@@ -284,6 +285,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
   private watcher?: vscode.FileSystemWatcher;
+  private fsDebounceTimer?: ReturnType<typeof setTimeout>;
+  private fsPendingFolders = new Set<string>();
   private workspaceSub?: vscode.Disposable;
   private gitSubs: vscode.Disposable[] = [];
   private treeService: SidebarTreeService;
@@ -353,7 +356,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         },
         getChildren: async (p) => {
           const entries = await this.treeService.getChildren(p);
-          return annotateGitStatus(entries);
+          return annotateGitStatus(entries, p);
         },
         openFile: (p) => {
           const uri = vscode.Uri.file(p);
@@ -365,6 +368,19 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         },
         setSectionOrder: (order) => this.setSectionOrder(order),
         reorderRoot: (sourcePath, targetPath, position) => reorderWorkspaceFolder(sourcePath, targetPath, position),
+        notifyFileMove: (oldPath, newPath, op) => {
+          const panel = ChatPanel.peek();
+          if (panel) {
+            void panel.postMessage({
+              source: "amicode",
+              kind: "file-op-notify",
+              op,
+              oldPath,
+              newPath,
+              home: os.homedir(),
+            });
+          }
+        },
       };
       void handleSidebarMessage(msg, handlers);
     });
@@ -382,6 +398,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     });
 
     webviewView.onDidDispose(() => {
+      clearTimeout(this.fsDebounceTimer);
+      this.fsPendingFolders.clear();
       this.watcher?.dispose();
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
@@ -465,10 +483,17 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     const onFsEvent = (uri: vscode.Uri) => {
       const folder = vscode.workspace.getWorkspaceFolder(uri);
       if (folder) {
-        void webviewView.webview.postMessage({
-          kind: "fs-changed",
-          folder: folder.uri.fsPath,
-        });
+        this.fsPendingFolders.add(folder.uri.fsPath);
+        clearTimeout(this.fsDebounceTimer);
+        this.fsDebounceTimer = setTimeout(() => {
+          for (const f of this.fsPendingFolders) {
+            void webviewView.webview.postMessage({
+              kind: "fs-changed",
+              folder: f,
+            });
+          }
+          this.fsPendingFolders.clear();
+        }, 300);
       }
     };
     this.watcher.onDidCreate(onFsEvent);
@@ -739,6 +764,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .git-modified { color: var(--vscode-gitDecoration-modifiedResourceForeground, #e2c08d); }
     .git-added { color: var(--vscode-gitDecoration-addedResourceForeground, #81b88b); }
     .git-deleted { color: var(--vscode-gitDecoration-deletedResourceForeground, #c74e39); text-decoration: line-through; }
+    /* Directories inherit the deleted color but not the strikethrough */
+    [data-type="directory"] > .tree-node .git-deleted { text-decoration: none; }
     .git-untracked { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
     .git-ignored { color: var(--vscode-gitDecoration-ignoredResourceForeground, #8c8c8c); opacity: 0.6; }
     .git-conflict { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
@@ -1131,7 +1158,7 @@ export function buildGitStatusMap(api: any): Record<string, string> {
  * Annotate tree entries with git status from the Git extension.
  * Falls back gracefully if the git extension is unavailable.
  */
-function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
+function annotateGitStatus(entries: TreeEntry[], parentDir: string): TreeEntry[] {
   try {
     const gitExt = vscode.extensions.getExtension("vscode.git");
     if (!gitExt?.isActive) return entries;
@@ -1143,8 +1170,11 @@ function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
 
     const statusMap = new Map(Object.entries(statusRecord));
 
+    // Inject ghost entries for files deleted from disk but still tracked by git
+    const withGhosts = injectDeletedEntries(entries, statusMap, parentDir);
+
     // Annotate files with exact matches, then propagate to directories
-    const annotated = entries.map((entry) => {
+    const annotated = withGhosts.map((entry) => {
       const gitStatus = statusMap.get(entry.path);
       return gitStatus ? { ...entry, gitStatus: gitStatus as TreeEntry["gitStatus"] } : entry;
     });
@@ -1152,6 +1182,40 @@ function annotateGitStatus(entries: TreeEntry[]): TreeEntry[] {
   } catch {
     return entries;
   }
+}
+
+/**
+ * Pure function: inject ghost entries for files that git reports as "deleted"
+ * but are no longer on disk (and therefore missing from the directory listing).
+ * Only injects direct children of `parentDir` — not nested files.
+ */
+export function injectDeletedEntries(
+  entries: TreeEntry[],
+  statusMap: Map<string, string>,
+  parentDir: string,
+): TreeEntry[] {
+  const existingPaths = new Set(entries.map((e) => e.path));
+  const prefix = parentDir + "/";
+  const ghosts: TreeEntry[] = [];
+
+  for (const [filePath, status] of statusMap) {
+    if (status !== "deleted") continue;
+    if (!filePath.startsWith(prefix)) continue;
+    // Only direct children: no further "/" after the prefix
+    const remainder = filePath.slice(prefix.length);
+    if (remainder.includes("/")) continue;
+    // Don't duplicate an entry that already exists on disk
+    if (existingPaths.has(filePath)) continue;
+
+    ghosts.push({
+      name: remainder,
+      type: "file",
+      path: filePath,
+      gitStatus: "deleted",
+    });
+  }
+
+  return [...entries, ...ghosts];
 }
 
 /** Priority rank for git statuses (higher = more notable). */
@@ -1247,7 +1311,7 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
           // Target doesn't exist — safe to rename
         }
         await vscode.workspace.fs.rename(uri, newUri);
-        return { ok: true };
+        return { ok: true, newPath: newUri.fsPath };
       }
       case "move": {
         if (!req.targetDir) return { ok: false, message: "No target directory" };
@@ -1261,7 +1325,7 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
           // Target doesn't exist — safe to move
         }
         await vscode.workspace.fs.rename(uri, targetUri);
-        return { ok: true };
+        return { ok: true, newPath: targetUri.fsPath };
       }
       case "delete": {
         // Confirmation dialog — same pattern as VS Code's Explorer.
@@ -1320,6 +1384,17 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
       case "new-session": {
         // Posts to the session creation flow — the project path is carried
         void vscode.commands.executeCommand("amicode.newChat");
+        return { ok: true };
+      }
+      case "restore": {
+        // Restore a git-deleted file by checking it out from HEAD.
+        const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
+        const dirPath = require("node:path").dirname(req.path);
+        execFileSync("git", ["checkout", "HEAD", "--", req.path], {
+          cwd: dirPath,
+          encoding: "utf8",
+          timeout: 10_000,
+        });
         return { ok: true };
       }
       default:
