@@ -26,6 +26,7 @@ import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
 import { campaignVerb } from "./campaign_verb.js";
 import { projectVerb } from "./project_verb.js";
+import { sessionsVerb } from "./sessions_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -227,6 +228,27 @@ const project: Verb = {
   run: projectVerb,
 };
 
+// sessions — the D4 retention surface (spec-20260905-045114 slice 3, #795):
+// the chat DB's lifecycle as product verbs. `list` respects the visibility
+// rules (default hides archived; `--archived` is the explicit opt-in); `archive`
+// RELOCATES old sessions by stamping the engine's time_archived (dry-run by
+// default; deletion is out of the vocabulary); `restore` clears the field;
+// `index` regenerates sessions/SESSION-INDEX.md from the DB. The archive cutoff
+// is the workspace preference ($AMICODE_OPS_DIR/session-retention.json, default
+// 30 days). The vault ledger plane and the coordination board are separate
+// transports — this verb never touches them.
+//
+// NOTE: the DB access runs through the python3 stdlib sqlite3 bridge
+// (sqlite_bridge.ts) — the repo's CI pins node 20, where node:sqlite does not
+// exist, and the store's other reader (open-threads) already uses python3.
+const sessions: Verb = {
+  name: "sessions",
+  summary: "session retention over the chat DB: list (visibility rules) / archive (relocate) / restore / index (generated) / prefs",
+  generalizes: "the hand-built 2026-09-05 SESSION-INDEX.md + hand SQL consolidation (the D4 anti-pattern, made contractual)",
+  slice: "session-device lifecycle D4 (slice 3, #795)",
+  run: (args) => sessionsVerb(args),
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -241,4 +263,5 @@ export const SPINE_VERBS: Verb[] = [
   papers,
   campaign,
   project,
+  sessions,
 ];
