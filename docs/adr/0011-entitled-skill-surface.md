@@ -88,10 +88,14 @@ package-proprietary skills stay gated (usage skills via this record's entitled t
 internals, including `*-dev` skills, vault-only internal). The tier machinery of this record is
 untouched: the three-tier model, root admission (`{public, entitled}` in-repo, `{internal}`
 vault-only), the entitlement staging gate, and the usage-vs-internals per-line test stand as
-written — the per-line test IS the package-proprietary boundary the new policy keeps. Provenance:
+written — the per-line test IS the package-proprietary boundary the new policy keeps. The slice-3 review
+(harmoniqs/amicode#807) applies the usage-vs-internals boundary test to each of the five workflow
+skills before they ship. Provenance:
 modes-first-class campaign, spec spec-20260905-063000-modes-first-class decision D2,
 harmoniqs/amicode#805, per Aaron Trowbridge's standing approval (2026-09-05); supersedes the
 "dev skills stay internal" line of session-20260827-skill-lifecycle §10 (annotated in the vault
 record); the companion record, amicissimo ADR-0002 (boundary test), is untouched. Review: at PR
 review (director + independent reviewer, per the dev gate) — the pass had not run when this note
-was written.
+was written; it completed 2026-09-05: **approved** (independent reviewer, findings tracked:
+the slice-3 content lens folded here; the internal-location vocabulary seam tracked as a chore
+for the parents' next amendment).
