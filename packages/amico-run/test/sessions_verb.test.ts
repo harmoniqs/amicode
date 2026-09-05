@@ -197,3 +197,87 @@ describe("amico sessions list/archive/restore — the visibility matrix (bundle)
     expect(JSON.parse(r.stdout).error).toMatch(/not found|no session/);
   });
 });
+
+// ── AC 4: the index is generated, never authored — and matches the DB ───────
+describe("amico sessions index — regeneration vs the seeded DB (bundle)", () => {
+  let tmp: string;
+  let db: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-sessions-idx-"));
+    db = join(tmp, "opencode.db");
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  interface ParsedRow { id: string; month: string; home: string; state: string }
+
+  /** Parse the generated markdown back into rows — the shape check is part of
+   *  the contract: month sections, one row per session, provenance columns. */
+  function parseIndex(text: string): { rows: ParsedRow[]; header: string; distribution: string[]; visible: number; archived: number } {
+    const header = text.split("\n").find((l) => l.startsWith("*Generated"))!;
+    const distribution = text.split("\n").filter((l) => l.startsWith("- `"));
+    const visibleM = header.match(/(\d+) visible · (\d+) archived/)!;
+    const rows: ParsedRow[] = [];
+    let month = "";
+    for (const line of text.split("\n")) {
+      const m = line.match(/^## (\d{4}-\d{2})$/);
+      if (m) { month = m[1]; continue; }
+      const r = line.match(/^\| [\d-]+ \| .* \| (\S+) \| (\w+) \| `(ses_\w+)` \|$/);
+      if (r) rows.push({ month, home: r[1], state: r[2], id: r[3] });
+    }
+    return { rows, header, distribution, visible: Number(visibleM[1]), archived: Number(visibleM[2]) };
+  }
+
+  it("regenerates a complete, provenance-carrying index that matches the seeded DB", () => {
+    seedDb(db, [
+      { id: "ses_a1", title: "Fleet sync", directory: "/home/aaron/armonia", updatedDaysAgo: 2 },
+      { id: "ses_a2", title: "Gate solve", directory: "/home/aaron/harmoniqs/amicode", updatedDaysAgo: 3 },
+      { id: "ses_b1", title: "Old work", directory: "/home/aaron/armonia", updatedDaysAgo: 40, archived: true },
+      { id: "ses_sub1", title: "child", directory: "/home/aaron/armonia", updatedDaysAgo: 2, parent: "ses_a1" },
+    ]);
+    const out = join(tmp, "sessions", "SESSION-INDEX.md");
+    const r = JSON.parse(
+      run(["sessions", "index", "--db", db, "--out", out], { AMICODE_OPS_DIR: tmp }).stdout,
+    );
+    expect(r).toMatchObject({ sessions_indexed: 4, visible: 3, archived: 1, source_db: db });
+    expect(existsSync(out)).toBe(true);
+
+    const text = readFileSync(out, "utf8");
+    const parsed = parseIndex(text);
+    // complete: every DB row appears exactly once
+    expect(parsed.rows.map((x) => x.id).sort()).toEqual(["ses_a1", "ses_a2", "ses_b1", "ses_sub1"].sort());
+    // provenance: home column is the directory basename from the DB
+    expect(parsed.rows.find((x) => x.id === "ses_a2")!.home).toBe("amicode");
+    expect(parsed.rows.find((x) => x.id === "ses_a1")!.home).toBe("armonia");
+    // archive state per row matches the DB
+    expect(parsed.rows.find((x) => x.id === "ses_b1")!.state).toBe("archived");
+    expect(parsed.rows.find((x) => x.id === "ses_a1")!.state).toBe("active");
+    // month sections follow time_updated
+    const nowMonth = new Date().toISOString().slice(0, 7);
+    expect(parsed.rows.find((x) => x.id === "ses_a1")!.month).toBe(nowMonth);
+    // the distribution header carries the full-path provenance + counts
+    expect(parsed.distribution).toContain("- `/home/aaron/armonia` — 3 sessions");
+    expect(parsed.distribution).toContain("- `/home/aaron/harmoniqs/amicode` — 1 session");
+    expect(parsed.visible).toBe(3);
+    expect(parsed.archived).toBe(1);
+  });
+
+  it("regeneration is deterministic apart from the generated-at stamp (idempotent rewrite)", () => {
+    seedDb(db, [{ id: "ses_x1", title: "Only", updatedDaysAgo: 1 }]);
+    const out = join(tmp, "SESSION-INDEX.md");
+    const env = { AMICODE_OPS_DIR: tmp };
+    run(["sessions", "index", "--db", db, "--out", out], env);
+    const first = readFileSync(out, "utf8");
+    run(["sessions", "index", "--db", db, "--out", out], env);
+    const second = readFileSync(out, "utf8");
+    expect(second.replace(/\*Generated [^*]+\*/, "")).toBe(first.replace(/\*Generated [^*]+\*/, ""));
+  });
+
+  it("an empty DB yields an honest empty index (0 visible · 0 archived), not an error", () => {
+    seedDb(db, []);
+    const out = join(tmp, "SESSION-INDEX.md");
+    const r = JSON.parse(run(["sessions", "index", "--db", db, "--out", out], { AMICODE_OPS_DIR: tmp }).stdout);
+    expect(r).toMatchObject({ sessions_indexed: 0, visible: 0, archived: 0 });
+    expect(readFileSync(out, "utf8")).toMatch(/0 sessions: 0 visible · 0 archived/);
+  });
+});
