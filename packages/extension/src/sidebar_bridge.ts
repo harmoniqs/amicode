@@ -23,7 +23,7 @@ export interface TreeEntry {
 // ── File operation types ─────────────────────────────────────────────────────
 
 export interface FileOpRequest {
-  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session" | "move";
+  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session" | "move" | "restore";
   path: string;
   newName?: string;
   name?: string;
@@ -33,6 +33,8 @@ export interface FileOpRequest {
 export interface FileOpResult {
   ok: boolean;
   message?: string;
+  /** Set by move/rename ops — the destination path, for file-op-notify. */
+  newPath?: string;
 }
 
 // ── Host → Webview (down) ────────────────────────────────────────────────────
@@ -120,6 +122,8 @@ export interface SidebarMessageHandlers {
   postMessage: (msg: SidebarDownMessage) => void;
   setSectionOrder: (order: string[]) => void;
   reorderRoot: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
+  /** Notify the chat panel that a file was moved/renamed so Files Changed updates. */
+  notifyFileMove?: (oldPath: string, newPath: string, op: string) => void;
 }
 
 /**
@@ -181,6 +185,11 @@ export function handleSidebarMessage(
             op: req.op,
             path: req.path,
           });
+          // Notify the session page about file moves/renames so Files Changed
+          // updates the file's path instead of showing a stale ghost entry.
+          if (result.newPath && (req.op === "move" || req.op === "rename")) {
+            handlers.notifyFileMove?.(req.path, result.newPath, req.op);
+          }
         }
       });
     }

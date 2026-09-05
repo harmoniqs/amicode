@@ -278,3 +278,25 @@ describe("HP solver-mode guidance: both imports", () => {
     }
   });
 });
+
+// The overlay is a tracking copy of the fork — edits there silently vanish on
+// sync:apply and never reach the compiled binary. An agent that edits the overlay
+// instead of the fork wastes a whole implementation cycle. The rule must be in
+// the ROOT AGENTS.md (the dev-agent instruction set) so every agent sees it
+// before touching app-layer files.
+describe("AGENTS.md overlay prohibition", () => {
+  const ROOT_AGENTS = readFileSync(join(__dirname, "..", "..", "..", "AGENTS.md"), "utf8");
+
+  it("explicitly prohibits editing the overlay directly", () => {
+    expect(ROOT_AGENTS).toMatch(/[Nn]ever edit the overlay directly/);
+  });
+
+  it("names the fork as the correct edit target for app-layer changes", () => {
+    expect(ROOT_AGENTS).toMatch(/edit.*fork/i);
+    expect(ROOT_AGENTS).toMatch(/~\/harmoniqs\/opencode|AMICODE_OPENCODE_SRC/);
+  });
+
+  it("warns that overlay edits silently vanish", () => {
+    expect(ROOT_AGENTS).toMatch(/silently (vanish|overwritten|lost)/i);
+  });
+});

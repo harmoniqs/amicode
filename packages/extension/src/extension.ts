@@ -374,7 +374,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces — Workspace sidebar (webview, #673)
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
   ctx.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider),
+    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
   // Mute the "Chat with Amico" button when a chat panel is open
   ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));

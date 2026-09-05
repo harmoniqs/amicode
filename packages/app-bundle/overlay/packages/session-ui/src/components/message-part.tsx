@@ -1389,16 +1389,22 @@ export function ContextToolGroup(props: {
               <AnimatedCountList
                 items={[
                   {
-                    key: "ui.messagePart.context.read",
+                    key: "read",
                     count: summary().read,
+                    one: i18n.t("ui.messagePart.context.read.one"),
+                    other: i18n.t("ui.messagePart.context.read.other"),
                   },
                   {
-                    key: "ui.messagePart.context.search",
+                    key: "search",
                     count: summary().search,
+                    one: i18n.t("ui.messagePart.context.search.one"),
+                    other: i18n.t("ui.messagePart.context.search.other"),
                   },
                   {
-                    key: "ui.messagePart.context.list",
+                    key: "list",
                     count: summary().list,
+                    one: i18n.t("ui.messagePart.context.list.one"),
+                    other: i18n.t("ui.messagePart.context.list.other"),
                   },
                 ]}
                 fallback=""
@@ -1807,7 +1813,7 @@ export function UserMessageDisplay(props: {
                   clickable={!!props.actions?.openAttachment}
                   onClick={() => props.actions?.openAttachment?.(file)}
                 >
-                  {typeLabel(name, file.mime, i18n.t("ui.common.file"))}
+                  {typeLabel(name, file.mime)}
                 </AttachmentCardV2>
               </Show>
             )

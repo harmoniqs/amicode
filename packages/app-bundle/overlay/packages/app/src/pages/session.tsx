@@ -88,7 +88,7 @@ import { sessionPanelLayout } from "@/pages/session/session-panel-layout"
 import { SessionReviewEmptyChangesV2 } from "@opencode-ai/session-ui/v2/session-review-empty-changes-v2"
 import { ReviewPanelV2 } from "@/pages/session/v2/review-panel-v2"
 import { createReviewPanelV2State } from "@/pages/session/v2/review-panel-v2-state"
-import { accumulateDiffs } from "@/pages/session/v2/accumulate-diffs"
+import { accumulateDiffs, applyRenames, mergeServerAndToolDiffs, toHomePath } from "@/pages/session/v2/accumulate-diffs"
 import { TerminalPanel } from "@/pages/session/terminal-panel"
 import { TerminalPanelV2 } from "@/pages/session/terminal-panel-v2"
 import { useComposerCommands } from "@/pages/session/use-composer-commands"
@@ -681,6 +681,47 @@ export default function Page() {
 
   const mobileChanges = createMemo(() => !isDesktop() && store.mobileTab === "changes")
   const EDIT_TOOLS = new Set(["edit", "write", "patch", "apply_patch"])
+
+  // --- File rename tracking (sidebar move/rename → Files Changed update) ---
+  // When the sidebar moves or renames a file, the extension posts a
+  // file-op-notify message. We track the rename so the tool-metadata diffs
+  // (which still have the old path) are displayed at the new location.
+  const [fileRenames, setFileRenames] = createSignal(new Map<string, string>())
+  const onFileOpNotify = (e: MessageEvent) => {
+    const d = e.data as { source?: string; kind?: string; op?: string; oldPath?: string; newPath?: string; home?: string } | undefined
+    if (d?.source !== "amicode" || d?.kind !== "file-op-notify") return
+    if ((d.op === "move" || d.op === "rename") && d.oldPath && d.newPath) {
+      // Use the SAME home as the reviewDiffs memo (globalThis.process.env.HOME,
+      // which is undefined in the browser). This ensures rename map keys match
+      // tool-diff paths — both end up as absolute paths in the browser iframe.
+      // Do NOT use d.home here: that produces ~/... keys while the memo produces
+      // /Users/... paths, and they never match.
+      const dir = sdk().directory
+      const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
+      const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
+      const oldNorm = toHomePath(d.oldPath, home, prefix)
+      const newNorm = toHomePath(d.newPath, home, prefix)
+      setFileRenames((prev) => {
+        const next = new Map(prev)
+        // Chain resolution: if anything pointed to oldPath, update it to newPath
+        for (const [k, v] of next) {
+          if (v === oldNorm) next.set(k, newNorm)
+        }
+        next.set(oldNorm, newNorm)
+        return next
+      })
+      // Force a server refetch so in-project files at their new location
+      // appear immediately — without this, the stale server response (which
+      // doesn't include the file) persists until the file watcher's 1s debounce.
+      const sessionID = params.id
+      if (sessionID) {
+        sync().set("diff_version", sessionID, (v: number | undefined) => (v ?? 0) + 1)
+      }
+    }
+  }
+  window.addEventListener("message", onFileOpNotify)
+  onCleanup(() => window.removeEventListener("message", onFileOpNotify))
+
   // Refetch when the session transitions to idle (assistant finished, snapshot taken)
   // or when a file-editing tool completes mid-turn (diff_version bumps)
   const sessionDiffVersion = () => {
@@ -706,35 +747,16 @@ export default function Page() {
     }
   })
   const reviewDiffs = createMemo(() => {
-    // Server endpoint returns the authoritative full-session diff (queries all messages).
-    const serverDiffs = sessionDiffQuery.data ?? []
-    // Once the server has responded at least once, trust it — even if it returned [].
-    // The client-side fallback is only for the initial load before any server response,
-    // never during refetches (where keepPreviousData already preserves the last result).
-    const serverResponded = sessionDiffQuery.status === "success" || sessionDiffQuery.isPlaceholderData
-    if (serverDiffs.length > 0 || serverResponded) {
-      // Server paths are relative to the project root — prefix with ~/project-path
-      const dir = sdk().directory
-      const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
-      const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
-      return serverDiffs
-        .filter((d): d is SnapshotFileDiff & { file: string } => !!d.file)
-        .map((d) => ({ ...d, file: d.file.startsWith("/") || d.file.startsWith("~/") ? d.file : `${prefix}/${d.file}` }))
-    }
-    // Fallback: derive from tool parts currently loaded in the client.
-    // This shows immediate results for visible messages while the server query loads.
-    const allMessages = messages()
-    if (!allMessages.length) return [] as Array<SnapshotFileDiff & { file: string }>
+    // Shared path normalization — both sources must use the same function for dedup to work.
     const dir = sdk().directory
     const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
     const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
-    const toHomePath = (p: string) => {
-      if (p.startsWith("~/")) return p
-      if (home && p.startsWith(home)) return "~" + p.slice(home.length)
-      if (!p.startsWith("/")) return `${prefix}/${p}`
-      return p
-    }
+
+    // --- Tool-metadata diffs (always computed, not just as fallback) ---
+    // Scraped from completed edit/write/patch/apply_patch tool parts across all messages.
+    // These see every file the agent touched regardless of directory.
     const editParts: import("@/pages/session/v2/accumulate-diffs").ToolEditPart[] = []
+    const allMessages = messages()
     for (const msg of allMessages) {
       const msgParts = sync().data.part[msg.id]
       if (!msgParts) continue
@@ -747,7 +769,7 @@ export default function Page() {
           const rawTitle = (part.state as { title?: string }).title || filediff.file
           editParts.push({
             file: filediff.file,
-            title: toHomePath(rawTitle),
+            title: toHomePath(rawTitle, home, prefix),
             patch: filediff.patch,
             additions: filediff.additions ?? 0,
             deletions: filediff.deletions ?? 0,
@@ -755,7 +777,19 @@ export default function Page() {
         }
       }
     }
-    return accumulateDiffs(editParts)
+    const toolDiffs = applyRenames(accumulateDiffs(editParts), fileRenames())
+
+    // --- Server diffs (authoritative for in-project files) ---
+    const serverDiffs = sessionDiffQuery.data ?? []
+    const serverResponded = sessionDiffQuery.status === "success" || sessionDiffQuery.isPlaceholderData
+
+    return mergeServerAndToolDiffs({
+      serverDiffs,
+      toolDiffs,
+      serverResponded,
+      directory: dir,
+      home,
+    })
   })
 
   // All files touched by edit tools in this session — fetched from the server
@@ -1318,7 +1352,14 @@ export default function Page() {
       return layout.review.diffStyle()
     },
     onDiffStyleChange: layout.review.setDiffStyle,
+    get serverUrl() {
+      return serverSDK().url
+    },
     state: reviewV2State,
+    get isAgentBusy() {
+      const id = params.id
+      return id ? sync().data.session_working(id) : false
+    },
     onRefresh: () => {
       const id = params.id
       if (id) sync().set("diff_version", id, (v: number | undefined) => (v ?? 0) + 1)
