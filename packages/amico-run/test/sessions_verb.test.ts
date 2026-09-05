@@ -109,6 +109,16 @@ function seedDb(dbPath: string, seeds: SeedOpts[]): void {
       time_updated INTEGER NOT NULL,
       time_archived INTEGER
     )\`);
+    db.exec(\`CREATE TABLE project (
+      id TEXT PRIMARY KEY,
+      worktree TEXT,
+      vcs TEXT,
+      name TEXT,
+      time_created INTEGER,
+      time_updated INTEGER
+    )\`);
+    db.prepare("INSERT INTO project (id, worktree, vcs, name, time_created, time_updated) VALUES (?,?,?,?,?,?)")
+      .run("proj_armonia", "/home/aaron/armonia", null, "armonia", now - 100 * ${DAY}, now - 1 * ${DAY});
     const ins = db.prepare("INSERT INTO session (id, parent_id, directory, title, time_created, time_updated, time_archived) VALUES (?,?,?,?,?,?,?)");
     for (const s of JSON.parse(process.argv[2])) {
       const updated = now - s.updatedDaysAgo * ${DAY};
@@ -350,5 +360,79 @@ describe("amico sessions list — pagination under a 1000+ session store (bundle
     }
     expect(seen).toHaveLength(250);
     expect(seen).not.toContain("ses_hidden");
+  });
+});
+
+// ── AC 2: archive affects product lists only — the vault ledger plane and the
+//    coordination plane are separate transports (D4 disjointness invariant) ──
+describe("amico sessions archive — disjointness from the vault/coordination planes (bundle)", () => {
+  let tmp: string;
+  let db: string;
+  let vault: string;
+  let claims: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-sessions-disj-"));
+    db = join(tmp, "opencode.db");
+    vault = join(tmp, "vault");
+    mkdirSync(join(vault, "sessions"), { recursive: true });
+    writeFileSync(join(vault, "sessions", "session-ledger.md"), "# ledger plane — never touched by archive\n");
+    claims = join(tmp, "claims.jsonl");
+    writeFileSync(claims, '{"type":"claim","work_id":"w1"}\n');
+    mkdirSync(join(tmp, "board"), { recursive: true });
+    writeFileSync(join(tmp, "board", "m5-board.md"), "# coordination board — never touched\n");
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  function dbRows(dbPath: string): string {
+    return execFileSync(
+      process.execPath,
+      ["--no-warnings", "-e", `
+        const { DatabaseSync } = require("node:sqlite");
+        const db = new DatabaseSync(process.argv[1], { readOnly: true });
+        console.log(JSON.stringify({
+          sessions: db.prepare("SELECT * FROM session ORDER BY id").all(),
+          projects: db.prepare("SELECT * FROM project ORDER BY id").all(),
+        }));
+      `, dbPath],
+      { encoding: "utf8" },
+    );
+  }
+
+  it("archive --apply and restore change ONLY time_archived on session rows; sibling planes are byte-identical", () => {
+    seedDb(db, [
+      { id: "ses_active", updatedDaysAgo: 1 },
+      { id: "ses_old", updatedDaysAgo: 60, directory: "/home/aaron/armonia" },
+    ]);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: tmp };
+    const before = dbRows(db);
+    const vaultBefore = readFileSync(join(vault, "sessions", "session-ledger.md"), "utf8");
+    const claimsBefore = readFileSync(claims, "utf8");
+    const boardBefore = readFileSync(join(tmp, "board", "m5-board.md"), "utf8");
+    const vaultListBefore = execFileSync("find", [vault], { encoding: "utf8" });
+
+    run(["sessions", "archive", "--apply"], env);
+    run(["sessions", "restore", "ses_old"], env);
+
+    // sibling planes byte-identical, no new vault-plane files
+    expect(readFileSync(join(vault, "sessions", "session-ledger.md"), "utf8")).toBe(vaultBefore);
+    expect(readFileSync(claims, "utf8")).toBe(claimsBefore);
+    expect(readFileSync(join(tmp, "board", "m5-board.md"), "utf8")).toBe(boardBefore);
+    expect(execFileSync("find", [vault], { encoding: "utf8" })).toBe(vaultListBefore);
+
+    // the DB delta is exactly the time_archived stamp + its clear — project
+    // rows and every other session column untouched (archive writes ONE field)
+    const after = dbRows(db);
+    const beforeParsed = JSON.parse(before) as { sessions: Record<string, unknown>[]; projects: unknown[] };
+    const afterParsed = JSON.parse(after) as { sessions: Record<string, unknown>[]; projects: unknown[] };
+    expect(afterParsed.projects).toEqual(beforeParsed.projects);
+    const diffs: string[] = [];
+    for (let i = 0; i < beforeParsed.sessions.length; i++) {
+      for (const k of Object.keys(beforeParsed.sessions[i])) {
+        if (String(beforeParsed.sessions[i][k]) !== String(afterParsed.sessions[i][k])) diffs.push(`${k}:${beforeParsed.sessions[i][k]}->${afterParsed.sessions[i][k]}`);
+      }
+    }
+    // ses_old was archived then restored → net zero; nothing else may differ
+    expect(diffs).toEqual([]);
   });
 });
