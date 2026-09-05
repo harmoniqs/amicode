@@ -6,7 +6,7 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-05T23:59:41.804Z",
+  "extracted_at": "2026-09-05T23:59:49.342Z",
   "per_package": {
     "packages/app": {
       "A": 124,
@@ -1402,7 +1402,7 @@
     "packages/app/src/context/global-sync/event-reducer.test.ts": "600cd7654854b910f25c61b20d8ae69f043f52ed544e6bf9be5ee9e5bbd6c96e",
     "packages/app/src/context/global-sync/event-reducer.ts": "667fbae1259f6deed77573edd2b742beee4f825b4306b6d861670443e381a55f",
     "packages/app/src/context/global-sync/session-cache.test.ts": "c66d790c6336794b2b1d707e2739fe0992ccad7ed3b96187b124b5c783ef332a",
-    "packages/app/src/context/global-sync/session-cache.ts": "1849408caba0f114809f37153e7d531bf2776572433880a96c5ebd31d7b30aa3",
+    "packages/app/src/context/global-sync/session-cache.ts": "b901b3cb392f29f011765ce8be5451a255853964c46b6a2053b3c2b178a65281",
     "packages/app/src/context/global-sync/types.ts": "901c9bd1fda63dab676d33dc1a8582a29f8ee00aa20458e843aed5f93414fa84",
     "packages/app/src/pages/home/home-projects-view.tsx": "074f1cdd7926db9574164824666cd63f1f5bd0f8e8dfb65453f6fe8f2dca0ec8",
     "packages/app/src/pages/home/home-sessions-view.tsx": "5b73b18e4349a628a15e09a3810ecf2319bde222e18fe8de5d08373ac91fb37c",
