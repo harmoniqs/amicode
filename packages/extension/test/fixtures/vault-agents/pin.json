@@ -1,0 +1,33 @@
+{
+  "record_version": 1,
+  "note": "The role-card parity fixtures' pin record (slice 2 / D3, #806, obligation O8): the engine-neutral role definitions this pin targets, at the amicissimo vault revision they were pinned at. The parity suite (role_cards_parity.test.ts) digest-verifies the committed fixture copies against this record — the pin is self-contained — and the nightly pin-behind-HEAD check (ops/role-parity, riding the doctor's fleet cadence on the vault-visible machine) re-verifies the pin against the live amicissimo checkout: HEAD moved past this revision, or bytes at the revision changed, files a chore issue on drift.",
+  "vault_repo": "harmoniqs/amicissimo",
+  "vault_revision": "5c6a1cd0d5bd240e07f6bef6467986e2fb41d7a7",
+  "captured_at": "2026-09-05T03:45:00.000Z",
+  "pinned": [
+    {
+      "role_card": "implementer",
+      "vault_path": "vault/agents/engineer.md",
+      "fixture": "engineer.md",
+      "sha256": "sha256:4f10693c58f325e6a014cc3273e457bbf9753ebfafa191e0c5573492a607cc92"
+    },
+    {
+      "role_card": "experimenter",
+      "vault_path": "vault/agents/experimenter.md",
+      "fixture": "experimenter.md",
+      "sha256": "sha256:9ed13551d22063d176cff0bf3fd33aa4b9f0937c4c941eaf2bf21fecd03ce2d5"
+    }
+  ],
+  "no_counterpart": [
+    {
+      "role_card": "hypothesizer",
+      "nearest_kin": "vault/agents/researcher.md",
+      "reason": "the researcher is a decider returning one brief; the hypothesizer is a read-only proposer of ranked hypotheses — different governance and output; no overlap pin without inventing a mapping"
+    },
+    {
+      "role_card": "analyzer",
+      "nearest_kin": "vault/agents/librarian.md",
+      "reason": "the librarian writes curated notes; the analyzer is read-only, raw-artifacts-only, and proposes ledger verdicts — no overlap pin without inventing a mapping"
+    }
+  ]
+}
