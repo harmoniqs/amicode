@@ -4,6 +4,21 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const VSIX = join(__dirname, "..", "amicode.vsix");
+
+// #807 — the public workflow skill set (spec-20260905-063000 D2, the ADR-0011
+// amendment's content-kind split: workflow-level public, package-proprietary
+// gated). One list, three pins: they ship (REQUIRED above), their in-repo
+// copies carry shipping frontmatter (the leak guard below), and the
+// proprietary `*-dev` set stays absent everywhere.
+const PUBLIC_WORKFLOW_SKILLS = [
+  "director-core",
+  "develop",
+  "implement-issue",
+  "write-an-issue",
+  "break-into-subissues",
+  "autodev",
+] as const;
+
 const REQUIRED = [
   // EVERY bin the CLI package declares ships as launcher + dist bundle (#161 —
   // amico-pasqal was declared but unstaged; cli_gate.test.ts asserts behavior,
@@ -58,6 +73,16 @@ const REQUIRED = [
   "extension/scores/memory/free-phase-objective-only.md",
   "extension/scores/entitlements.toml", // entitlement registry — gating breaks silently without it
   "extension/skills/amico-vault/SKILL.md", // the in-repo public skill library (post-amico-plugin) — a dropped skills/ = zero library skills for a Marketplace user
+  // #807 — the PUBLIC workflow skill set (spec-20260905-063000 D2, ADR-0011
+  // amendment: workflow public, package-proprietary gated). A dropped copy =
+  // the 2026-09-03 missing-director-core incident on every Marketplace
+  // machine: the autodev card points at skills that never stage.
+  "extension/skills/director-core/SKILL.md",
+  "extension/skills/develop/SKILL.md",
+  "extension/skills/implement-issue/SKILL.md",
+  "extension/skills/write-an-issue/SKILL.md",
+  "extension/skills/break-into-subissues/SKILL.md",
+  "extension/skills/autodev/SKILL.md",
   // #804 — the mode registry: the bundles the activation stager deploys and
   // the doctor probes ship in the vsix; a dropped modes/ = zero staged
   // bundles on every Marketplace machine (packaging.test runs on the built
@@ -111,10 +136,16 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
       /extension\/skills\/.+\/SKILL\.md/.test(listing),
       "no shipped skill SKILL.md — skills/ was excluded from the vsix",
     ).toBe(true);
-    // Internal-only names must NEVER appear in the artifact (repo-boundary
-    // defense in depth — these live in the armonissima vault now).
-    expect(listing).not.toMatch(/extension\/skills\/implement-issue\//);
-    expect(listing).not.toMatch(/extension\/skills\/break-into-subissues\//);
+    // #807 — the five workflow skills + the autodev mode-protocol skill are
+    // PUBLIC with in-repo canonical copies (ADR-0011 amendment): each must
+    // ship. The PROPRIETARY set must never appear in the artifact — the
+    // package-proprietary skills (`*-dev`) stay vault-only, never ship.
+    for (const name of PUBLIC_WORKFLOW_SKILLS) {
+      expect(listing, `missing public workflow skill ${name}`).toContain(`extension/skills/${name}/SKILL.md`);
+    }
+    expect(listing, "a proprietary -dev skill must never ship").not.toMatch(
+      /extension\/skills\/[^/]+-dev\//,
+    );
   });
 });
 
@@ -142,14 +173,26 @@ describe("in-repo skill library — repo-boundary leak guard (ADR-0003 as amende
     }
     expect(offenders, `non-shippable skills in the shipped library: ${offenders.join(", ")}`).toEqual([]);
   });
-  it("the internal dev-workflow skills are absent from the shipped set (AC5 — the repo boundary remains the internal gate)", () => {
+  it("the public workflow skills ARE the shipped set with revision-pinned frontmatter; the proprietary `-dev` set stays absent (AC5 → #807's policy of record)", () => {
     const names = readdirSync(SKILLS_DIR);
-    // surface:internal (amico-plugin#52) — they leaked into the public bundle
-    // once under the extract pipeline; the repo boundary must not regress.
-    // The entitled tier does NOT reopen this door: entitled ships from the
-    // same in-repo dir but stages only through the entitlement gate
-    // (resolveLibrarySkills); internal stays vault-only, never ships.
-    expect(names).not.toContain("implement-issue");
-    expect(names).not.toContain("break-into-subissues");
+    // ADR-0011 amendment (2026-09-05, workflow-public / package-proprietary):
+    // the five dev-workflow skills + autodev are PUBLIC in-repo canonical
+    // copies — the old "dev skills stay internal" pin is superseded by the
+    // amended policy, and this test now pins the NEW boundary: the five +
+    // autodev present with shipping frontmatter (public + source + revision);
+    // the package-proprietary set (`*-dev`) stays out of the shipped library
+    // (vault-only, never ships).
+    for (const name of PUBLIC_WORKFLOW_SKILLS) {
+      expect(names, `public workflow skill ${name} must be in the shipped library`).toContain(name);
+      const p = join(SKILLS_DIR, name, "SKILL.md");
+      const m = readFileSync(p, "utf8").match(/^---\n([\s\S]*?)\n---/);
+      const fm = m?.[1] ?? "";
+      expect(fm, `${name}: surface: public`).toMatch(/^surface:\s*public\b/m);
+      expect(fm, `${name}: source label (D2)`).toMatch(/^source:\s*\S/m);
+      expect(fm, `${name}: revision (D2, monotonic integer ≥ 1)`).toMatch(/^revision:\s*[1-9]\d*\s*$/m);
+    }
+    // the proprietary set stays vault-only: no `-dev` (package-proprietary)
+    // directory ever lands in the shipped library.
+    expect(names.filter((n) => /-dev$/.test(n)), "no -dev skill in the shipped library").toEqual([]);
   });
 });

@@ -35,7 +35,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const EXT = resolve(HERE, "..");
 const MODES_DIR = join(EXT, "modes");
 const AGENTS_DIR = join(EXT, "agents");
-const SKILL_FIXTURE = join(HERE, "fixtures", "director-core", "SKILL.md");
+const SKILL_FIXTURE = join(EXT, "skills", "director-core", "SKILL.md"); // the in-repo canonical copy (#807) — what the vsix ships and the tests pin
 
 /** The shipped bundles, copied to a temp tree so missing-component cells can
  *  delete pieces without touching the real registry. */
@@ -190,7 +190,7 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
     }
   });
 
-  it("the region's rule block is byte-identical to the director-core skill fixture's block (card ≡ skill ≡ registry)", () => {
+  it("the region's rule block is byte-identical to the director-core canonical skill's block (card ≡ skill ≡ registry) — and the skill itself carries the delimited generated region (AC8 deferred leg, #807)", () => {
     const skill = readFileSync(SKILL_FIXTURE, "utf8");
     const open = skill.lastIndexOf("```text", skill.indexOf("LEDGER DISCOVERY RULE v1"));
     const close = skill.indexOf("```", open + "```text".length);
@@ -200,6 +200,10 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
       const card = readFileSync(join(MODES_DIR, mode, "card.md"), "utf8");
       expect(card).toContain(skillBlock);
     }
+    // the deferred AC8 leg: the skill's region is delimited + generator-stamped,
+    // byte-identical to the generator output — parity extends to the skill.
+    expect(classifyLedgerDiscoveryRegion(skill).status).toBe("ok");
+    expect(skill).toContain(region);
   });
 
   it("classification: a missing region is a named mismatch", () => {

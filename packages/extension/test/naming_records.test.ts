@@ -139,6 +139,52 @@ describe("naming records — six locked terms in the amicode glossary", () => {
   });
 });
 
+// #807 (#809 fold) — the public workflow skill surface joins the naming
+// discipline: the five dev-workflow skills + the autodev mode-protocol skill
+// are now user-facing product content (surface: public, in-repo canonical
+// copies), so the same locked vocabulary governs them. The pin reads the
+// fixture of record (protocol-blocklist.json) — never a private copy of the
+// strings — and the full content-lens guard (internal path shapes, recipe
+// prose) lives in workflow_skills_public.test.ts beside the skills.
+describe("naming records — the public workflow skills carry open-protocol vocabulary (#807)", () => {
+  const SKILLS_DIR = join(__dirname, "..", "skills");
+  const PUBLIC_WORKFLOW_SKILLS = [
+    "director-core",
+    "develop",
+    "implement-issue",
+    "write-an-issue",
+    "break-into-subissues",
+    "autodev",
+  ];
+  const blocklist = JSON.parse(readFileSync(BLOCKLIST_PATH, "utf8")) as {
+    proprietary_strings: string[];
+    banned_names: string[];
+  };
+
+  it("the glossary's autodev entry governs the new skill: it names the mode, never a banned alias", () => {
+    const entry = glossaryEntry("autodev");
+    expect(entry, "autodev entry").not.toBeNull();
+    expect((entry?.avoid ?? "").toLowerCase()).toContain("autobuild");
+    const skill = readFileSync(join(SKILLS_DIR, "autodev", "SKILL.md"), "utf8").toLowerCase();
+    expect(skill).toContain("autodev");
+    expect(skill).not.toContain("autobuild");
+  });
+
+  it("every public workflow skill reads zero blocklisted strings (the shipped surface stays open-protocol)", () => {
+    expect(blocklist.proprietary_strings.length).toBeGreaterThanOrEqual(5);
+    expect(blocklist.banned_names.length).toBeGreaterThanOrEqual(2);
+    for (const name of PUBLIC_WORKFLOW_SKILLS) {
+      const text = readFileSync(join(SKILLS_DIR, name, "SKILL.md"), "utf8").toLowerCase();
+      for (const s of [...blocklist.proprietary_strings, ...blocklist.banned_names]) {
+        expect(
+          text.includes(s.toLowerCase()),
+          `${name} must not mention "${s}" on the public surface`,
+        ).toBe(false);
+      }
+    }
+  });
+});
+
 describe("blocklist fixture (proprietary strings + banned names)", () => {
   it("parses and carries exactly the two tables with the specified entries", () => {
     const raw = readFileSync(BLOCKLIST_PATH, "utf8");

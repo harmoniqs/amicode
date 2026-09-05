@@ -9,11 +9,13 @@
 // director-core skill (correctness by containment, D1). The blocklist grep
 // keeps the cards' vocabulary open-protocol.
 //
-// Hermetic containment source: test/fixtures/director-core/SKILL.md is the
-// committed fixture copy. The RUNTIME canonical source is the live
-// armonissima team mount checkout (skills/director-core/SKILL.md) — when
-// that mount is present, the fixture must be byte-identical to it, so the
-// committed copy cannot silently drift from the canonical one either.
+// Containment source (#807, spec-20260905-063000 D2): the IN-REPO CANONICAL
+// copy at skills/director-core/SKILL.md — what the vsix ships and these tests
+// pin. The committed fixture copy is retired (the canonical copy IS in the
+// repo). The live armonissima team mount is the engine-neutral RECORD: when
+// present, its rule body must agree with the canonical's (rule-body parity,
+// below) — full byte-identity is retired with the precedence flip: canonical
+// wins at equal revision; the vault copy is a record, not the shipper.
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
@@ -23,10 +25,12 @@ import { classifyLedgerDiscoveryRegion, generateLedgerDiscoveryRegion } from "@a
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.join(HERE, "..");
 const AGENTS_DIR = path.join(EXT, "agents");
-const FIXTURE_SKILL = path.join(HERE, "fixtures", "director-core", "SKILL.md");
+// The in-repo canonical director-core skill (#807) — ships in the vsix; the
+// parity pins below hold against IT, not a fixture.
+const CANONICAL_SKILL = path.join(EXT, "skills", "director-core", "SKILL.md");
 
-// The live armonissima team mount (read-only runtime source of the canonical
-// director core); absent on machines without the mount.
+// The live armonissima team mount (the engine-neutral record); absent on
+// machines without the mount.
 const LIVE_SKILL = path.join(
   process.env.HOME ?? "",
   ".amico",
@@ -67,7 +71,7 @@ const KEYWORDS = [...LOOP_VERBS, ...CORE_CLAUSES] as const;
 const cardText = (name: CardName): string =>
   readFileSync(path.join(AGENTS_DIR, name), "utf8");
 
-const fixtureSkill = readFileSync(FIXTURE_SKILL, "utf8");
+const canonicalSkill = readFileSync(CANONICAL_SKILL, "utf8");
 
 /** Extract the spine between the marker pair; counts pairs for the one-pair rule. */
 function spineOf(text: string): { spine: string; pairs: number } {
@@ -172,7 +176,7 @@ describe("mode cards — ledger discovery rule (correctness by containment)", ()
   const spine = spineOf(cardText("autoresearch.md")).spine;
 
   it("the spine contains the canonical discovery-rule block verbatim", () => {
-    const rule = discoveryRuleFrom(fixtureSkill);
+    const rule = discoveryRuleFrom(canonicalSkill);
     expect(spine).toContain(rule);
   });
 
@@ -191,10 +195,31 @@ describe("mode cards — ledger discovery rule (correctness by containment)", ()
     }
   });
 
-  it("the committed fixture is the live armonissima director core when the mount is present", () => {
-    if (!existsSync(LIVE_SKILL)) return; // mount absent: fixture is the hermetic source
+  it("the in-repo canonical director-core skill carries the SAME delimited, generator-stamped generated region — parity extends to the skill (AC8 deferred leg, #807)", () => {
+    // the deferred AC8 leg from PR #810's review: the skill's
+    // ledger-discovery-rule region is a delimited, generator-stamped
+    // generated region (the registry's generator emits it), and the parity
+    // checks extend to it — card ≡ skill ≡ registry.
+    const c = classifyLedgerDiscoveryRegion(canonicalSkill);
+    expect(c.status, `canonical skill: ${c.detail}`).toBe("ok");
+    expect(canonicalSkill).toContain(generateLedgerDiscoveryRegion());
+    // and the region's rule body is the one BOTH cards embed
+    const rule = discoveryRuleFrom(canonicalSkill);
+    for (const name of CARDS) {
+      expect(spineOf(cardText(name)).spine).toContain(rule);
+    }
+  });
+
+  it("the live armonissima record agrees on the RULE BODY when the mount is present (precedence flip, #807: the in-repo copy is canonical and ships; the vault is the engine-neutral record)", () => {
+    if (!existsSync(LIVE_SKILL)) return; // mount absent: the canonical is the only copy
     const live = readFileSync(LIVE_SKILL, "utf8");
-    expect(fixtureSkill, "fixture === live canonical skill").toBe(live);
+    // rule-body parity, NOT byte-identity: the canonical wraps the rule in
+    // the delimited generated region (AC8); the vault record predates the
+    // delimiters. What must hold is the RULE itself — one discovery rule
+    // every mode resolves, engine-neutral record and shipped copy agreeing.
+    expect(discoveryRuleFrom(live), "the vault record carries the same rule body").toBe(
+      discoveryRuleFrom(canonicalSkill),
+    );
   });
 });
 

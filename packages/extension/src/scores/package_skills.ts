@@ -1,6 +1,11 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 import { parse as parseYaml } from "yaml"; // same parser as scores/loader.ts
+import {
+  SUPPORTED_SKILL_CONTRACT_VERSION,
+  validateSupersedingSkillRevision,
+} from "@amicode/schema";
 
 // Dual-source skill index (spec-20260704-113005 §1/§3). Two skill TYPES:
 //   - PACKAGE skills: co-located at packages/<P>.jl/skills/<name>/SKILL.md,
@@ -27,6 +32,32 @@ export interface SkillIndexEntry {
   name: string;
   description: string;
   path: string; // absolute SKILL.md path
+  /** The copy's frontmatter revision (spec-20260905-063000 D2): a monotonic
+   *  integer, missing = 0. Present on library entries; drives the typed
+   *  revision selection when the same skill name appears in two roots. */
+  revision?: number;
+  /** The disclosure fragment rendered on the skill-index line when a
+   *  superseding revision staged or was declined (D2: the session can always
+   *  tell which provenance it read). */
+  provenanceNote?: string;
+}
+
+/** One typed revision-selection decision, recorded on the skills deploy
+ *  receipt (spec-20260905-063000 D2): which copy won for a name present in
+ *  more than one root, at which revisions, and why. */
+export interface SkillProvenanceRecord {
+  name: string;
+  /** canonical = the earlier (in-repo) copy won; vault-superseded = the
+   *  strictly newer later-root copy staged after validation;
+   *  vault-declined = the newer copy failed the consumer floor or the
+   *  generated-region parity, and the canonical copy stands with disclosure. */
+  outcome: "canonical" | "vault-superseded" | "vault-declined";
+  canonical_revision: number;
+  /** The later root's revision (null when it carried none — reads as 0). */
+  superseding_revision: number | null;
+  /** The decision's reason — the supersede's validation detail, the NAMED
+   *  failure on a decline, or the tie-break rule on a canonical win. */
+  detail: string;
 }
 
 /** A typed library root (ADR-0003, amicode#242): the directory PLUS the `surface:`
@@ -89,12 +120,17 @@ function expandHome(p: string): string {
  *  (`public` | `entitled` | `internal`) or undefined when the skill is untagged.
  *  `entitlement` (spec §Amendment A1) is the code a session must hold for an
  *  entitled-surface skill to stage (see resolveLibrarySkills). It drives
- *  library-skill staging. */
+ *  library-skill staging. `revision` + `source` (spec-20260905-063000 D2) are
+ *  the typed revision fields of the public workflow skills: a monotonic
+ *  integer (missing/malformed reads as 0 — the defective-copy rule, skip+warn)
+ *  and the copy's source label. */
 function readFrontmatter(skillPath: string): {
   name: string;
   description: string;
   surface?: string;
   entitlement?: string;
+  revision: number;
+  source?: string;
 } {
   const raw = fs.readFileSync(skillPath, "utf8");
   const m = raw.match(/^---\n([\s\S]*?)\n---/);
@@ -104,14 +140,24 @@ function readFrontmatter(skillPath: string): {
     description?: string;
     surface?: string;
     entitlement?: string;
+    revision?: unknown;
+    source?: unknown;
   };
   if (typeof fm.name !== "string" || typeof fm.description !== "string")
     throw new Error("frontmatter needs name + description");
+  const revision =
+    typeof fm.revision === "number" && Number.isInteger(fm.revision) && fm.revision >= 0
+      ? fm.revision
+      : typeof fm.revision === "string" && /^\d+$/.test(fm.revision.trim())
+        ? Number(fm.revision.trim())
+        : 0; // missing/malformed = 0 (D2); never a throw
   return {
     name: fm.name,
     description: fm.description,
     surface: typeof fm.surface === "string" ? fm.surface : undefined,
     entitlement: typeof fm.entitlement === "string" ? fm.entitlement : undefined,
+    revision,
+    source: typeof fm.source === "string" ? fm.source : undefined,
   };
 }
 
@@ -165,15 +211,40 @@ export function resolvePackageSkills(allowlist: string[], roots: string[]): Skil
  *  session is the normal case, not an error).
  *  Untagged and malformed skills are DROPPED from every root. Staging
  *  (stageOpencodeSkills) copies only THIS selected set to the per-session stage
- *  dir — `skills.paths` never points at a library root itself. First root
- *  holding a given `<name>/SKILL.md` wins.
+ *  dir — `skills.paths` never points at a library root itself.
+ *
+ *  TYPED REVISION SELECTION (spec-20260905-063000 D2, #807) when the same
+ *  skill name is admitted by more than one root: equal revisions resolve to
+ *  the earlier root's copy (the in-repo canonical, given the default root
+ *  order); a STRICTLY NEWER later-root revision supersedes — but only after
+ *  validateSupersedingSkillRevision passes (the consumer floor AND
+ *  generated-region parity, BEFORE it supersedes); a mismatch declines to
+ *  canonical with disclosure (the named failure on the skill-index line and
+ *  the deploy receipt). Precedence of record: canonical wins at equal
+ *  revision; a newer vault revision wins for what stages; the in-repo copy
+ *  remains what the vsix ships and the tests pin.
  *
  *  The private tier is NOT otherwise a library concern: private-package skills
  *  live co-located in their package repos and are gated by resolvePackageSkills
  *  (entitlement-derived allowlist ∩ repo presence). */
 export function resolveLibrarySkills(roots: LibraryRootSpec[], entitlements: string[] = []): SkillIndexEntry[] {
+  return resolveLibrarySkillsWithProvenance(roots, entitlements).entries;
+}
+
+/** The provenance-returning form of resolveLibrarySkills (the session-prep
+ *  seam): the entries that stage, plus every typed revision-selection
+ *  decision for names admitted by more than one root — what the skills
+ *  deploy receipt records and the disclosures ride on. */
+export function resolveLibrarySkillsWithProvenance(
+  roots: LibraryRootSpec[],
+  entitlements: string[] = [],
+  opts: { consumerVersion?: string } = {},
+): { entries: SkillIndexEntry[]; provenance: SkillProvenanceRecord[] } {
   const out: SkillIndexEntry[] = [];
-  const seen = new Set<string>(); // first-root-wins, keyed by dir name
+  const provenance: SkillProvenanceRecord[] = [];
+  const winner = new Map<string, SkillIndexEntry>(); // dir name → current winner
+  const winnerText = new Map<string, string>(); // dir name → winner's raw SKILL.md
+  const consumerVersion = opts.consumerVersion ?? SUPPORTED_SKILL_CONTRACT_VERSION;
   for (const r of roots) {
     const root = normalizeLibraryRoot(r);
     const rootPath = expandHome(root.path);
@@ -184,11 +255,12 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[], entitlements: str
       continue; // missing library root — silently skipped (session proceeds)
     }
     for (const name of names.sort()) {
-      if (seen.has(name)) continue;
       const skillPath = path.join(rootPath, name, "SKILL.md");
       if (!fs.existsSync(skillPath)) continue;
-      let fm: { name: string; description: string; surface?: string; entitlement?: string };
+      let fm: ReturnType<typeof readFrontmatter>;
+      let raw: string;
       try {
+        raw = fs.readFileSync(skillPath, "utf8");
         fm = readFrontmatter(skillPath);
       } catch (e) {
         console.warn(`amicode: skipping malformed library skill ${skillPath}: ${e}`);
@@ -213,18 +285,85 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[], entitlements: str
         if (!entitlements.includes(code)) continue;
       }
       if (!root.surfaces.includes(fm.surface)) continue; // THE GUARD, per-root
-      seen.add(name); // this dir is the authoritative skill of that name (earlier root wins)
-      out.push({ source: "library", name: fm.name, description: fm.description, path: skillPath });
+      const earlier = winner.get(name);
+      if (earlier === undefined) {
+        const entry: SkillIndexEntry = {
+          source: "library",
+          name: fm.name,
+          description: fm.description,
+          path: skillPath,
+          revision: fm.revision,
+        };
+        winner.set(name, entry);
+        winnerText.set(name, raw);
+        out.push(entry);
+        continue;
+      }
+      // A same-name copy in a LATER root: typed revision selection (D2).
+      const earlierRev = earlier.revision ?? 0;
+      const laterRev = fm.revision;
+      if (laterRev <= earlierRev) {
+        provenance.push({
+          name,
+          outcome: "canonical",
+          canonical_revision: earlierRev,
+          superseding_revision: laterRev,
+          detail:
+            laterRev === earlierRev
+              ? "equal revision → the in-repo canonical copy wins (precedence of record)"
+              : "later root's revision is not strictly newer → the in-repo canonical copy wins",
+        });
+        continue;
+      }
+      const check = validateSupersedingSkillRevision(winnerText.get(name) ?? "", raw, consumerVersion);
+      if (!check.ok) {
+        // decline to canonical WITH disclosure — a generated-region mismatch
+        // reads the NAMED generator-mismatch failure, never a staged divergence
+        earlier.provenanceNote = `declined superseding revision ${laterRev}: ${check.detail}`;
+        provenance.push({
+          name,
+          outcome: "vault-declined",
+          canonical_revision: earlierRev,
+          superseding_revision: laterRev,
+          detail: check.detail,
+        });
+        continue;
+      }
+      const entry: SkillIndexEntry = {
+        source: "library",
+        name: fm.name,
+        description: fm.description,
+        path: skillPath,
+        revision: laterRev,
+        provenanceNote: `staged from superseding revision ${laterRev}${fm.source ? ` (source: ${fm.source})` : ""} — supersedes canonical revision ${earlierRev}`,
+      };
+      winner.set(name, entry);
+      winnerText.set(name, raw);
+      out.splice(out.indexOf(earlier), 1, entry);
+      provenance.push({
+        name,
+        outcome: "vault-superseded",
+        canonical_revision: earlierRev,
+        superseding_revision: laterRev,
+        detail: check.detail,
+      });
     }
   }
-  return out;
+  return { entries: out, provenance };
 }
+
+/** The skills deploy receipt's file name — written at the stage root by
+ *  stageOpencodeSkills, the audit trail for what staged and every typed
+ *  revision-selection decision (spec-20260905-063000 D2: the supersede/decline
+ *  disclosures land here AND on the skill-index line). A dotfile — opencode's recursive SKILL.md scan never reads
+ *  it. */
+export const SKILL_DEPLOY_RECEIPT_NAME = ".deploy-receipt.json";
 
 /** Stage the resolved (guarded) skill set as opencode-native skills for this
  *  session: copy each skill's WHOLE dir to `<stageRoot>/<name>/` so opencode's
  *  loader — pointed HERE via config `skills.paths` (an absolute dir) — registers
  *  exactly this set and no more. We must NOT point `skills.paths` at a library
- *  root: opencode scans it recursively for `**​/SKILL.md`, which would leak the
+ *  root: opencode scans it recursively for every SKILL.md it holds, which would leak the
  *  ~50 process skills (the exact guard from spec §3). Folder name = frontmatter
  *  `name`, satisfying opencode's name-matches-folder rule; content is copied
  *  verbatim (opencode ignores the extra `agents:` field — verified 2026-07-04).
@@ -232,27 +371,65 @@ export function resolveLibrarySkills(roots: LibraryRootSpec[], entitlements: str
  *  SKILL.md relative links must resolve inside the stage copy, and the source
  *  dir is already fully granted to the agent (skillGrants), so staging them
  *  exposes nothing new (amicode#393). Still ONLY the resolved set — one dir
- *  per entry, nothing else. Returns the stage root, or "" if nothing was
- *  staged (→ no `skills.paths`). */
-export function stageOpencodeSkills(stageRoot: string, entries: SkillIndexEntry[]): string {
+ *  per entry, nothing else. Writes the deploy receipt (what staged, at which
+ *  revisions, with every revision-selection decision). Returns the stage
+ *  root, or "" if nothing was staged (→ no `skills.paths`, no receipt). */
+export function stageOpencodeSkills(
+  stageRoot: string,
+  entries: SkillIndexEntry[],
+  provenance: SkillProvenanceRecord[] = [],
+): string {
   if (entries.length === 0) return "";
   let staged = 0;
+  const sha256hex = (buf: Buffer): string => "sha256:" + createHash("sha256").update(buf).digest("hex");
+  const stagedSkills: Array<{ name: string; revision: number; provenance_note: string | null; sha256: string }> = [];
   for (const e of entries) {
     try {
       const dir = path.join(stageRoot, e.name);
       fs.cpSync(path.dirname(e.path), dir, { recursive: true });
       staged++;
+      stagedSkills.push({
+        name: e.name,
+        revision: e.revision ?? 0,
+        provenance_note: e.provenanceNote ?? null,
+        sha256: sha256hex(fs.readFileSync(e.path)),
+      });
     } catch (err) {
       console.warn(`amicode: could not stage skill ${e.name} for opencode: ${err}`); // never dead-end (spec §9)
     }
   }
-  return staged > 0 ? stageRoot : "";
+  if (staged === 0) return "";
+  // The deploy receipt (D2): what staged, and every typed revision-selection
+  // decision — a superseding vault revision is disclosed here AND on the
+  // skill-index line, so an armonissima hotfix is never masked by a stale
+  // vsix copy and the session can always tell which provenance it read.
+  try {
+    fs.writeFileSync(
+      path.join(stageRoot, SKILL_DEPLOY_RECEIPT_NAME),
+      JSON.stringify(
+        {
+          receipt_version: 1,
+          staged_at: new Date().toISOString(),
+          dir: stageRoot,
+          skills: stagedSkills,
+          selections: provenance,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  } catch (err) {
+    console.warn(`amicode: could not write the skills deploy receipt: ${err}`); // never dead-end (spec §9)
+  }
+  return stageRoot;
 }
 
 /** Splice one merged index into the prompt — platform entries FIRST (spec §3),
  *  then custom, workspace, then package entries. Empty index → empty string
  *  (no section at all). Supports `overridesShipped` flag from mergeSkillEntries
- *  for labeling shadows. */
+ *  for labeling shadows, and the D2 `provenanceNote` disclosure on library
+ *  lines (supersede/decline — the session can always tell which provenance
+ *  it read). */
 export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return ""; // no section at all (spec §3)
   const platform = entries.filter((e) => e.source === "library");
@@ -271,7 +448,7 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
     "",
     ...platform.map(
       (e) =>
-        `- **${e.name}** (platform reference) — ${e.description}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
+        `- **${e.name}** (platform reference) — ${e.description}${e.provenanceNote ? ` **[${e.provenanceNote}]**` : ""}\n  - Use as physics reference — inline the constants; authored scripts stay self-contained (no \`include\` of demo-repo files).`,
     ),
     ...project.map((e) => {
       const label = (e as any).overridesShipped ? "(project, overrides platform)" : "(project)";

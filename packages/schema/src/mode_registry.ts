@@ -76,6 +76,11 @@ export const LEDGER_DISCOVERY_RULE_TEXT = [
   "ledger serves every posture the campaign runs.",
 ].join("\n");
 
+/** The generated region's NAME (the `region=` marker token) — the one region
+ *  this build's generator emits; consumers that enumerate known regions
+ *  (skill_revision.ts's parity check) key off this, never a bare string. */
+export const LEDGER_DISCOVERY_RULE_REGION_NAME = "ledger-discovery-rule";
+
 export const LEDGER_DISCOVERY_RULE_BEGIN =
   `<!-- AMICO-GENERATED: region=ledger-discovery-rule generator=${MODE_GENERATOR_VERSION} begin -->`;
 export const LEDGER_DISCOVERY_RULE_END = "<!-- AMICO-GENERATED: region=ledger-discovery-rule end -->";

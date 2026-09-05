@@ -82,6 +82,7 @@ export {
   LEDGER_DISCOVERY_RULE_TEXT,
   LEDGER_DISCOVERY_RULE_BEGIN,
   LEDGER_DISCOVERY_RULE_END,
+  LEDGER_DISCOVERY_RULE_REGION_NAME,
   generateLedgerDiscoveryRegion,
   classifyLedgerDiscoveryRegion,
   type GeneratedRegionStatus,
@@ -126,6 +127,21 @@ export {
   type StolenLock,
   type StagingLockVerdict,
 } from "./mode_staging.js";
+
+// The public workflow skills' typed revision contract (#807, spec
+// 20260905-063000 D2): frontmatter `source` + `revision` (monotonic integer,
+// missing = 0), the supersede-path consumer floor + generated-region parity
+// validation the extension's skill resolver runs BEFORE a strictly newer
+// vault revision may supersede the in-repo canonical copy. Same root seam.
+export {
+  SUPPORTED_SKILL_CONTRACT_VERSION,
+  KNOWN_GENERATED_REGIONS,
+  parseSkillRevisionFrontmatter,
+  validateSupersedingSkillRevision,
+  type SkillRevisionFrontmatter,
+  type SupersedingSkillRevisionCheck,
+  type SupersedingSkillDeclineKind,
+} from "./skill_revision.js";
 
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.

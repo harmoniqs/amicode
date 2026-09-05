@@ -120,6 +120,28 @@ ledger-abstinence is discipline + git history. The parent is the SOLE ledger wri
   Audit rule: a probe whose result is cited in the loop log as experiment evidence was
   misclassified — record the misclassification when caught.
 
+## Handoffs (cross-mode seeds)
+
+The research pack closes by handing an **issue seed** to `autodev` (its pack's
+closing handoff); this mode RECEIVES a **hypothesis seed** from `autodev`.
+The procedure, both directions:
+
+- **Receiving (autodev → autoresearch):** the seed is a typed note
+  (`kind: hypothesis`, the hypothesis-seed schema — the question, the
+  evidence, the suggested experiment shape). On the seed: re-read the ledger,
+  register the hypothesis in the H-queue (§2), and run the loop above on it.
+- **Emitting (autoresearch → autodev):** when a campaign closes with a
+  finding that needs code (a validated method, a tool gap, a result that
+  wants an implementation), write the issue-seed note — title, motivation,
+  evidence pointers, suggested repo + tier — name the target posture
+  (autodev), and hand it over; the receiving mode's protocol (the `autodev`
+  skill) renders it through `write-an-issue` and runs the dev walk on it.
+- **Switching modes mid-session: PENDING-D5.** Until the fork's posture
+  surfaces ship, the safe path is to spawn or open the target posture's
+  session on the seed rather than switching in place; the ledger discovery
+  rule holds either way. Seed-write failures are reported in-chat — never
+  silently dropped.
+
 ## Compaction honesty
 
 The agent cannot observe its own context usage, and auto-compact fires on a token threshold

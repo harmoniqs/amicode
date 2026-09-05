@@ -2,7 +2,9 @@
 name: director-core
 description: The canonical director-core protocol — the one loop every autonomous campaign runs (plan → dispatch through gates → analyze → record), the session-ledger discovery rule both mode cards quote verbatim, the four core clauses (ledger discipline, cast pattern, compaction honesty, anti-gaming), and the copilot/autoresearch/autodev posture model. Use when authoring or binding a mode card, a gate pack, or a campaign layer that consumes them.
 agents: [orchestrator]
-surface: internal
+surface: public
+source: amicode
+revision: 1
 ---
 
 # Director core — the canonical loop protocol
@@ -35,16 +37,21 @@ is typed data, not prose: `phases[]`, each phase carrying `gates[]` of
 `{ name, kind: mechanical|human|derived, owner, procedure }`, plus `roles[]`;
 one `closing_artifact`; and `handoffs[]`. Gates are named, owned, and
 procedural so a campaign layer can consume the pack mechanically. The packs
-themselves are committed fixtures; this core defines the shape and the
+themselves are committed data; this core defines the shape and the
 binding rule, not the packs.
 
-## The ledger discovery rule (canonical block)
+## The ledger discovery rule (generated region)
 
-The fenced block below is the load-bearing export of this skill: mode cards
-embed it verbatim inside their spine markers, so parity between the cards and
-containment here make it the one ledger rule every mode resolves. It is
-self-contained — quote it byte-identical or not at all.
+The delimited region below is the load-bearing export of this skill: the
+mode registry's generator emits it, the mode cards embed it verbatim inside
+their spine markers, and parity is asserted post-stage against the registry
+source. It is self-contained — quote it byte-identical or not at all. **The
+region is generated, never hand-edited**: a hotfix that would touch it goes
+through the registry generator instead; the stamp inside the region
+classifies mismatches, and a regenerate-and-compare always detects a hand
+edit.
 
+<!-- AMICO-GENERATED: region=ledger-discovery-rule generator=v1 begin -->
 ```text
 LEDGER DISCOVERY RULE v1
 
@@ -58,6 +65,7 @@ audit any context summary against it. A mode switch re-binds the director's
 posture only: the ledger itself is never rewritten by a switch, and the same
 ledger serves every posture the campaign runs.
 ```
+<!-- AMICO-GENERATED: region=ledger-discovery-rule end -->
 
 ## Postures — one director, three postures
 
