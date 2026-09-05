@@ -26,8 +26,17 @@ document; a silent pass does not exist anywhere in the suite.
   the pin-behind-HEAD check also runs on).
 - The diff baseline for each card below is the **engine-neutral definition**
   in the private amicissimo vault's agent records, pinned at amicissimo
-  revision `5c6a1cd0d5bd240e07f6bef6467986e2fb41d7a7` (the parity fixtures
-  carry this revision and digest-verify against it).
+  revision `5c6a1cd0d5bd240e07f6bef6467986e2fb41d7a7` (the pin record
+  `test/fixtures/vault-agents/pin.json` carries this revision and the
+  per-definition digests AT that revision — provenance without content).
+- **Review B1 (PR #811) hold:** the full-definition fixtures are NOT
+  published in this repo pending the signature — the committed copies failed
+  the amended content policy's per-line usage-vs-internals test (the
+  engineer definition's src/ module tree, how-to-extend recipe, and
+  internals sections; the experimenter definition's literal internal host
+  paths; see the two bold fixture flags below). The nightly pin check
+  verifies the pin against the vault revision directly, so the hold costs
+  nothing in coverage; the fixture publications convert with the signature.
 
 ## Overlap map
 
@@ -161,6 +170,38 @@ as the pin target with the write/propose delta adjudicated first.
 
 ---
 
+## 5. The fixture publications themselves — held pending signature (review B1)
+
+The two overlapping definitions above were initially committed verbatim as
+parity fixtures. The independent review of PR #811 found both committed
+copies fail the amended content policy's per-line usage-vs-internals test
+(ADR-0011's categories) on a PUBLIC repo, so **both fixture publications are
+held pending-signature alongside the flagged content** — removed from the
+repo, their parity pins held as named skips in the same gate mechanism, and
+nothing from the vault definitions is published-verbatim or pinned before
+this signature decides:
+
+1. **`fixture publication: engineer.md (full vault definition)`** — the
+   "Important Paths" src/ module tree, the how-to-extend recipe ("follow the
+   pattern of `TransmonSystem`…"), the "Complex Internals" architecture
+   section, and the roadmap lines ("later Legato", "Legato is a stub") are
+   package-internals categories, not usage.
+2. **`fixture publication: experimenter.md (full vault definition)`** —
+   literal internal host paths (`/home/aaron/harmoniqs/…`) are
+   cloud-infrastructure/roadmap-adjacent operational detail, not usage.
+
+**Recommended follow-up for the signature's morning decision (vault-side
+work, its own issue + PR under the amicissimo gate — never edited from this
+slice):** re-author both definitions at their source in amicissimo — move
+the package-internals categories out of the engine-neutral contracts (they
+belong in the layer/dev skills' vault-side homes) — then re-take the
+fixtures + the pin record at the NEW revision and publish. The nightly
+pin-behind-HEAD check guards the interim: it verifies the current pin
+against the vault revision directly (no published copy needed) and files a
+chore issue on drift.
+
+---
+
 ## What the signature authorizes
 
 Signing **accept-seed** (or accept-with-amendments) does two things:
@@ -168,8 +209,14 @@ Signing **accept-seed** (or accept-with-amendments) does two things:
 1. The parity suite's pending-signature skips convert to live pins — the
    divergences above are adjudicated as the coherent overlap of record, and
    any card amendment lands with `amended: true` + `amendment_signed_by` in
-   `.seed-provenance.json` (the seed-integrity test enforces the record).
-2. The campaign record (this campaign's ledger §obligations, O2) closes with
+   `.seed-provenance.json` (the seed-integrity test enforces the record; an
+   unsigned tree cannot claim an amendment).
+2. The fixture publications decide (section 5): either republish the
+   definitions at the pinned revision as-signed, or — recommended — run the
+   vault re-authoring follow-up first and re-take fixtures + pin at the new
+   revision. Until one of those lands, the fixture halves of the parity pins
+   stay held (the pin record stays `pending-signature`).
+3. The campaign record (this campaign's ledger §obligations, O2) closes with
    the seed machine's provenance hash and this signature.
 
 Until then: the seeded cards ARE live repo sources (staging, upgrade, and the
@@ -188,3 +235,5 @@ silently pinned.
   - experimenter ↔ experimenter: shipped never-grade/never-promote binding is the coherent overlap? ___
   - hypothesizer: no-counterpart confirmed (or pin target named)? ___
   - analyzer: no-counterpart confirmed (or pin target named)? ___
+- Fixture publications (section 5, review B1): republish as-signed, or run
+  the vault re-authoring follow-up first and re-take fixtures + pin? ___

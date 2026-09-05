@@ -26,6 +26,19 @@
 # does NOT change the exit code. The exact-title search covers OPEN issues
 # only: a human-closed tracker is history — the next drift opens a fresh epoch.
 #
+# FRESHNESS REQUIRES THE FETCH (review B2): the wrapper passes --fetch to the
+# check CLI, which fetches the ref's remote before comparing — local
+# remote-tracking refs only move when something fetches, so without this the
+# nightly compare would run against stale knowledge. A fetch failure reads
+# as the named unknown vault-unfetchable — never a green receipt.
+#
+# WHERE IT RUNS: the vault-visible machine — erlich (linux, systemd pair at
+# ops/systemd/co.harmoniqs.role-parity.{service,timer}); the launchd plist
+# (ops/launchd/co.harmoniqs.role-parity.plist) is the macOS-secondary
+# declaration for machines that can see a vault checkout. A CLI exit 2
+# (pre-flight/runtime failure) appends a NAMED "check-failed" receipt, never
+# a malformed `"status":""` line.
+#
 # Receipt: ONE JSON line per real run appended to the upgrade-receipts
 # journal (the doctor's receipt store):
 #   {"receipt_version":1,"ts":"…","kind":"role-parity","status":"…",
@@ -108,17 +121,40 @@ if [ ! -f "$PIN" ]; then
 fi
 
 # --- the check ----------------------------------------------------------------
+# --fetch (review B2): the drift compare must not run against stale local
+# remote-tracking refs — the check fetches the ref's remote first inside the
+# run, and a fetch failure reads as the named unknown vault-unfetchable
+# (never a green receipt off stale knowledge).
 TS_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-CHECK_JSON="$(node $NODE_FLAGS "$CHECK" --pin "$PIN" --vault "$VAULT" --ref "$REF")" || rc=$?
-RC="${rc:-0}"
+CHECK_JSON=""
+RC=0
+CHECK_JSON="$(node $NODE_FLAGS "$CHECK" --pin "$PIN" --vault "$VAULT" --ref "$REF" --fetch)" || RC=$?
+
+# a runtime/pre-flight failure (exit 2) or unparseable output is a NAMED
+# check-failed receipt, never a malformed `"status":""` line (review B2 nit)
+if [ "$RC" -eq 2 ] || ! node -e 'const r=JSON.parse(process.argv[1]);process.exit(r&&typeof r.status==="string"&&r.status.length>0?0:1)' "$CHECK_JSON" 2>/dev/null; then
+  echo "$SELF_NAME: check FAILED (exit $RC) — a named pre-flight/runtime failure, never an empty receipt" >&2
+  # the pinned revision for the receipt, straight from the pin record (the
+  # check CLI did not run to completion) — empty when the record itself is broken
+  PINNED_FALLBACK="$(node -e 'let r;try{r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"))}catch{};process.stdout.write(r&&typeof r.vault_revision==="string"?r.vault_revision:"")' "$PIN" 2>/dev/null || true)"
+  if [ "$DRY_RUN" = "1" ]; then
+    echo "$SELF_NAME: DRY-RUN — no receipt appended" >&2
+  else
+    RECEIPT_DIR="$(dirname "$RECEIPTS")"
+    mkdir -p "$RECEIPT_DIR" 2>/dev/null
+    echo "{\"receipt_version\":1,\"ts\":\"$TS_ISO\",\"kind\":\"role-parity\",\"status\":\"check-failed\",\"check_exit\":$RC,\"pinned_revision\":\"$PINNED_FALLBACK\",\"vault_revision\":null,\"drifted_files\":[]}" >> "$RECEIPTS"
+  fi
+  exit "$RC"
+fi
 
 # the report is ONE JSON line on stdout; parse the fields we need
 STATUS="$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.status)' "$CHECK_JSON")"
 PINNED_REV="$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.pinned_revision||"")' "$CHECK_JSON")"
 VAULT_REV="$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.vault_revision||"")' "$CHECK_JSON")"
+FIXTURE_PUB="$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.fixture_publication||"")' "$CHECK_JSON")"
 DRIFTED_CSV="$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write((r.drifted_files||[]).join(","))' "$CHECK_JSON")"
 
-echo "$SELF_NAME: status=$STATUS pinned=${PINNED_REV:0:12} vault=${VAULT_REV:0:12}${DRIFTED_CSV:+ drifted=$DRIFTED_CSV}" >&2
+echo "$SELF_NAME: status=$STATUS publication=$FIXTURE_PUB pinned=${PINNED_REV:0:12} vault=${VAULT_REV:0:12}${DRIFTED_CSV:+ drifted=$DRIFTED_CSV}" >&2
 node -e 'const r=JSON.parse(process.argv[1]);for (const e of r.evidence) console.error("  "+e)' "$CHECK_JSON" >&2
 
 # --- drift escalation: exactly one chore issue, updated never duplicated ------
@@ -178,7 +214,7 @@ case "$STATUS" in
     ;;
   *)
     if [ "$DRY_RUN" = "1" ]; then
-      echo "$SELF_NAME: WOULD-DO: no issue action — status $STATUS (no drift)" >&2
+      echo "$SELF_NAME: WOULD-DO: no issue action — status $STATUS (nothing to file)" >&2
     fi
     ;;
 esac
@@ -194,7 +230,7 @@ else
   [ -n "${TRACKING_ISSUE:-}" ] && extra="$extra,\"tracking_issue\":\"$TRACKING_ISSUE\""
   DRIFTED_JSON="[]"
   [ -n "$DRIFTED_CSV" ] && DRIFTED_JSON="$(node -e 'process.stdout.write(JSON.stringify(process.argv[1].split(",")))' "$DRIFTED_CSV")"
-  echo "{\"receipt_version\":1,\"ts\":\"$TS_ISO\",\"kind\":\"role-parity\",\"status\":\"$STATUS\",\"pinned_revision\":\"$PINNED_REV\",\"vault_revision\":\"$VAULT_REV\",\"drifted_files\":$DRIFTED_JSON$extra}" >> "$RECEIPTS"
+  echo "{\"receipt_version\":1,\"ts\":\"$TS_ISO\",\"kind\":\"role-parity\",\"status\":\"$STATUS\",\"fixture_publication\":\"$FIXTURE_PUB\",\"pinned_revision\":\"$PINNED_REV\",\"vault_revision\":\"$VAULT_REV\",\"drifted_files\":$DRIFTED_JSON$extra}" >> "$RECEIPTS"
 fi
 
 exit "$RC"
