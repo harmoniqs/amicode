@@ -27,6 +27,7 @@ import {
   fixtureGit,
   bumpExtensionOnRemote,
   addReleaseTagOnRemote,
+  advanceRegistryOnRemote,
   fakeBin,
   sha256File,
   LIVE_PLATFORM,
@@ -35,6 +36,7 @@ import {
   PAST_BUILD,
   type DoctorWorld,
 } from "./helpers.js";
+import { processStartTimeToken } from "@amicode/schema";
 
 const cleanup = cleanupTracked;
 
@@ -452,6 +454,208 @@ describe("doctor v2 surface inventory — reviewer adversarial variants (2026-08
   });
 });
 
+// ── #804: the mode-registry component verdicts (H5) — extend, never mint ─────
+// The byte authority is the machine's RELEASE TAG (never origin HEAD, never
+// the checkout); the revision authority is the RELEASE INDEX fetched from the
+// remote. Tampering any one component flips the record stale with the
+// component NAMED; a half-staged bundle reads stale, not current; locks and
+// version gaps read their named outcomes; unknowns are named, never verdicts.
+describe("doctor mode-registry component verdicts (#804)", () => {
+  const componentOf = (record: SurfaceRecord, match: (c: { mode: string; component: string }) => boolean) =>
+    (record.components ?? []).find(match);
+
+  test("current world: the agent-cards records carry component verdicts, all current", async () => {
+    const w = buildDoctorWorld();
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      expect(r.verdict).toBe("current");
+      expect(r.components, `${name} components`).toBeDefined();
+      for (const c of r.components!) {
+        expect(c.verdict, `${name}/${c.mode}/${c.component}: ${c.evidence.join("; ")}`).toBe("current");
+      }
+      // every bundle component of the fixture registry is walked
+      const components = r.components!.map((c) => `${c.mode}/${c.component}`);
+      expect(components).toContain("autodev/card.md");
+      expect(components).toContain("autodev/pack.toml");
+      expect(components).toContain("autodev/mode.toml");
+      expect(components).toContain("autodev/roles/implementer.md");
+      expect(components).toContain("autoresearch/roles/hypothesizer.md");
+      expect(components).toContain("registry/release-compare");
+      expect(components).toContain("registry/deploy-receipt");
+    }
+    cleanup();
+  });
+
+  test("tampering ONE bundle component flips the record stale with the component NAMED (AC4)", async () => {
+    const w = buildDoctorWorld();
+    writeFileSync(join(w.config, "modes", "autoresearch", "pack.toml"), "# TAMPERED PACK\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    const named = componentOf(g, (c) => c.mode === "autoresearch" && c.component === "pack.toml");
+    expect(named).toBeDefined();
+    expect(named!.verdict).toBe("stale");
+    expect(named!.evidence.join(" ")).toMatch(/component autoresearch\/pack\.toml changed/);
+    // the OTHER deployment is unaffected
+    expect(bySurface(report, "agent-cards-staging").verdict).toBe("current");
+    cleanup();
+  });
+
+  test("a half-staged bundle (card new, roles old) reads stale with roles named — never current (AC4)", async () => {
+    const w = buildDoctorWorld();
+    // the card keeps matching the release; the role copy is OLD (stale bytes)
+    writeFileSync(join(w.config, "modes", "autodev", "roles", "implementer.md"), "---\nmode: implementer\n---\n# OLD ROLE BYTES\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    const card = componentOf(g, (c) => c.mode === "autodev" && c.component === "card.md");
+    expect(card!.verdict).toBe("current"); // the card alone is fine —
+    const role = componentOf(g, (c) => c.mode === "autodev" && c.component === "roles/implementer.md");
+    expect(role!.verdict).toBe("stale"); // — but the bundle as a unit is stale
+    expect(role!.evidence.join(" ")).toMatch(/roles\/implementer\.md changed/);
+    cleanup();
+  });
+
+  test("a LIVE staging lock reads staging-in-progress → unknown (AC2)", async () => {
+    const w = buildDoctorWorld();
+    const modesDir = join(w.config, "modes");
+    const lock = {
+      lock_version: 1,
+      staging_root: modesDir,
+      owner_pid: process.pid,
+      owner_started: processStartTimeToken(process.pid) ?? "",
+      liveness_token: "probe-fixture",
+      acquired_at: new Date().toISOString(),
+      heartbeat_at: new Date().toISOString(),
+      ttl_ms: 120_000,
+    };
+    writeFileSync(join(modesDir, ".staging-lock.json"), JSON.stringify(lock, null, 2) + "\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("unknown");
+    expect(g.evidence.join(" ")).toMatch(/staging-in-progress/);
+    const lockRow = componentOf(g, (c) => c.component === "staging-lock");
+    expect(lockRow!.verdict).toBe("unknown");
+    // the OTHER deployment has no lock — unaffected
+    expect(bySurface(report, "agent-cards-staging").verdict).toBe("current");
+    cleanup();
+  });
+
+  test("a STALE lock (heartbeat past TTL) reads stale-lock → failed and the record stale (AC3)", async () => {
+    const w = buildDoctorWorld();
+    const modesDir = join(w.config, "modes");
+    const lock = {
+      lock_version: 1,
+      staging_root: modesDir,
+      owner_pid: 999_999, // dead
+      owner_started: "",
+      liveness_token: "probe-fixture",
+      acquired_at: "2020-01-01T00:00:00.000Z",
+      heartbeat_at: "2020-01-01T00:00:00.000Z",
+      ttl_ms: 120_000,
+    };
+    writeFileSync(join(modesDir, ".staging-lock.json"), JSON.stringify(lock, null, 2) + "\n");
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    const lockRow = componentOf(g, (c) => c.component === "staging-lock");
+    expect(lockRow!.verdict).toBe("failed");
+    expect(lockRow!.evidence.join(" ")).toMatch(/stale-lock/);
+    cleanup();
+  });
+
+  test("a version gap between the bundle's doctor floor and THIS doctor fails LOUDLY (AC5)", async () => {
+    const w = buildDoctorWorld();
+    const manifestPath = join(w.config, "modes", "autodev", "mode.toml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('doctor = "1"', 'doctor = "2"'));
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    const floorRow = componentOf(g, (c) => c.mode === "autodev" && c.component === "version-floor");
+    expect(floorRow!.verdict).toBe("failed");
+    expect(floorRow!.evidence.join(" ")).toMatch(/version gap/);
+    expect(floorRow!.evidence.join(" ")).toMatch(/never a silent degrade/);
+    // the staging deployment (same bundle content? no — its manifest still
+    // says floor 1) stays current: the gap is per-deployment
+    expect(bySurface(report, "agent-cards-staging").verdict).toBe("current");
+    cleanup();
+  });
+
+  test("a machine a release behind renders `current to vX, stale to release vY` (AC6)", async () => {
+    const w = buildDoctorWorld();
+    advanceRegistryOnRemote(w.remoteAmicode, "v0.2.7", 2);
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      expect(r.verdict, `${name} must not read current for a release-behind machine`).toBe("stale");
+      expect(r.evidence.join(" ")).toContain("current to v0.2.6, stale to release v0.2.7");
+      const rel = componentOf(r, (c) => c.component === "release-compare")!;
+      expect(rel.verdict).toBe("stale");
+    }
+    // the deployed bytes still match the machine's OWN release — the bundle
+    // components themselves are current; the release compare is the staleness
+    const g = bySurface(report, "agent-cards-global");
+    expect(componentOf(g, (c) => c.mode === "autodev" && c.component === "card.md")!.verdict).toBe("current");
+    cleanup();
+  });
+
+  test("a PRE-REGISTRY machine reads stale-to-release, never current (AC6, degraded_staging_is_honest)", async () => {
+    const w = buildDoctorWorld({ preRegistryMachine: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      expect(r.verdict, `pre-registry machine must never read current (${name})`).toBe("stale");
+      expect(r.evidence.join(" ")).toContain("current to v0.2.4, stale to release v0.2.6");
+    }
+    cleanup();
+  });
+
+  test("an untagged/dev build renders a NAMED unknown, never a verdict (AC6)", async () => {
+    const w = buildDoctorWorld();
+    cpSync(join(w.vscext, "harmoniqs.amicode-0.2.6"), join(w.vscext, "harmoniqs.amicode-0.2.7-dev.2099010100"), { recursive: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      expect(r.verdict).toBe("unknown");
+      expect(r.evidence.join(" ")).toMatch(/untagged\/dev build/);
+      const machineRow = componentOf(r, (c) => c.component === "machine-release");
+      expect(machineRow!.verdict).toBe("unknown");
+    }
+    cleanup();
+  });
+
+  test("remote unreachable: the release compare reads a NAMED unknown, never a verdict (AC6)", async () => {
+    const w = buildDoctorWorld();
+    fixtureGit(w.repoAmicode, ["remote", "set-url", "origin", "/nonexistent/doctors-fixture-remote.git"]);
+    const report = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      const r = bySurface(report, name);
+      const rel = componentOf(r, (c) => c.component === "release-compare")!;
+      expect(rel.verdict).toBe("unknown");
+      expect(rel.evidence.join(" ")).toMatch(/amicode fetch failed/);
+      // local facts still govern: the tag bytes match, so the record reads
+      // current WITH the named unknown riding it — never a silent pass
+      expect(r.verdict).toBe("current");
+    }
+    cleanup();
+  });
+
+  test("the byte authority is the RELEASE TAG, never origin HEAD: a checkout ahead of the release does not flip the verdict", async () => {
+    const w = buildDoctorWorld();
+    // drift the CHECKOUT's registry ahead (uncommitted) — deployed matches tag
+    writeFileSync(
+      join(w.repoAmicode, "packages", "extension", "modes", "autodev", "pack.toml"),
+      "# CHECKOUT-ONLY DRIFT\n",
+    );
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("current");
+    expect(componentOf(g, (c) => c.mode === "autodev" && c.component === "pack.toml")!.verdict).toBe("current");
+    cleanup();
+  });
+});
+
 // ── the JSON contract (AC: schema + canonical form) ─────────────────────────
 describe("doctor v2 JSON contract", () => {
   const schemaPath = joinPath(dirname(fileURLToPath(import.meta.url)), "..", "schemas", "doctor-report.schema.json");
@@ -498,7 +702,10 @@ describe("doctor v2 JSON contract", () => {
       const once = canonicalJson(report);
       expect(once.endsWith("\n")).toBe(true); // trailing newline
       expect(once).toBe(canonicalJson(JSON.parse(once))); // round-trip byte-equal
-      expect(once.split("\n")[1]).toBe('  "surfaces": ['); // 2-space indent, sorted keys
+      // #804 schema v2: every report is schema-stamped (sorted keys put it
+      // first), then the surfaces array — 2-space indent, deep-sorted keys
+      expect(once.split("\n")[1]).toBe('  "schema_version": "2",');
+      expect(once.split("\n")[2]).toBe('  "surfaces": [');
       cleanup();
     });
   }
@@ -518,6 +725,7 @@ describe("doctor v2 JSON contract", () => {
 
   test("schema rejects: five surfaces, missing field, bad verdict, non-array evidence", () => {
     const good = {
+      schema_version: "2",
       surfaces: [
         { surface: "server-binary", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
         { surface: "extension", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
@@ -529,22 +737,53 @@ describe("doctor v2 JSON contract", () => {
     };
     expect(validateDoctorReport(good).ok).toBe(true);
 
-    const five = { surfaces: good.surfaces.slice(0, 5) };
+    const five = { schema_version: "2", surfaces: good.surfaces.slice(0, 5) };
     expect(validateDoctorReport(five).errors.some((e) => /at least 6 items/.test(e.message))).toBe(true);
 
-    const missingField = { surfaces: good.surfaces.map((s, i) => (i === 0 ? { surface: "server-binary", verdict: "current", evidence: ["x"] } : s)) };
+    const missingField = { schema_version: "2", surfaces: good.surfaces.map((s, i) => (i === 0 ? { surface: "server-binary", verdict: "current", evidence: ["x"] } : s)) };
     expect(validateDoctorReport(missingField).errors.some((e) => e.path === "$.surfaces[0]" && /version/.test(e.message))).toBe(true);
 
-    const badVerdict = { surfaces: good.surfaces.map((s, i) => (i === 1 ? { ...s, verdict: "borked" } : s)) };
+    const badVerdict = { schema_version: "2", surfaces: good.surfaces.map((s, i) => (i === 1 ? { ...s, verdict: "borked" } : s)) };
     expect(validateDoctorReport(badVerdict).errors.some((e) => e.path === "$.surfaces[1].verdict")).toBe(true);
 
-    const badEvidence = { surfaces: good.surfaces.map((s, i) => (i === 2 ? { ...s, evidence: "ok" } : s)) };
+    const badEvidence = { schema_version: "2", surfaces: good.surfaces.map((s, i) => (i === 2 ? { ...s, evidence: "ok" } : s)) };
     expect(validateDoctorReport(badEvidence).errors.some((e) => e.path === "$.surfaces[2].evidence")).toBe(true);
 
-    const emptyEvidence = { surfaces: good.surfaces.map((s, i) => (i === 3 ? { ...s, evidence: [] } : s)) };
+    const emptyEvidence = { schema_version: "2", surfaces: good.surfaces.map((s, i) => (i === 3 ? { ...s, evidence: [] } : s)) };
     expect(validateDoctorReport(emptyEvidence).errors.some((e) => e.path === "$.surfaces[3].evidence")).toBe(true);
 
-    const unknownSurface = { surfaces: good.surfaces.map((s, i) => (i === 4 ? { ...s, surface: "sidecar-bin" } : s)) };
+    const unknownSurface = { schema_version: "2", surfaces: good.surfaces.map((s, i) => (i === 4 ? { ...s, surface: "sidecar-bin" } : s)) };
     expect(validateDoctorReport(unknownSurface).errors.some((e) => e.path === "$.surfaces[4].surface")).toBe(true);
+  });
+
+  // #804 — the v2 bump: component-level verdicts ride the agent-cards records
+  test("schema accepts component records; the bump is real (an unstamped v1 report is rejected)", () => {
+    const withComponents = {
+      schema_version: "2",
+      surfaces: [
+        { surface: "server-binary", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
+        { surface: "extension", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
+        { surface: "vendored-binary", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
+        { surface: "staged-skills", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
+        {
+          surface: "agent-cards-global", version: "1", source_version: "1", verdict: "current", evidence: ["ok"],
+          components: [
+            { mode: "autodev", component: "card.md", verdict: "current", evidence: ["byte-matches release"] },
+            { mode: "registry", component: "release-compare", verdict: "stale", evidence: ["current to v0.3.1, stale to release v0.3.2"] },
+          ],
+        },
+        { surface: "agent-cards-staging", version: "1", source_version: "1", verdict: "current", evidence: ["ok"] },
+      ],
+    };
+    expect(validateDoctorReport(withComponents).ok, JSON.stringify(validateDoctorReport(withComponents).errors)).toBe(true);
+
+    // component verdicts are enum-checked
+    const badComponent = JSON.parse(JSON.stringify(withComponents)) as typeof withComponents;
+    (badComponent.surfaces[4] as { components: { verdict: string }[] }).components[0].verdict = "borked";
+    expect(validateDoctorReport(badComponent).errors.some((e) => e.path === "$.surfaces[4].components[0].verdict")).toBe(true);
+
+    // the bump is REAL: a v1 report (no top-level schema_version) fails v2
+    const v1 = { surfaces: withComponents.surfaces } as unknown;
+    expect(validateDoctorReport(v1).errors.some((e) => e.path === "$" && /schema_version/.test(e.message))).toBe(true);
   });
 });

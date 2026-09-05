@@ -327,6 +327,14 @@ export function globalAgentsDir(): string {
   return path.join(os.homedir(), ".config", "opencode", "agents");
 }
 
+/** The global opencode CONFIG root — the parent of `agents/` and the staging
+ *  root of the #804 mode bundles (`<root>/modes/<mode>/…`): the deployed
+ *  layout mirrors the source (modes/ and agents/ siblings), so the bundles'
+ *  declared `../../agents/…` paths resolve identically deployed-side. */
+export function opencodeGlobalConfigRoot(): string {
+  return path.join(os.homedir(), ".config", "opencode");
+}
+
 /** Every mode-card markdown file shipped in <extensionPath>/agents/, sorted.
  *  #761: staging covers every card in the package's agents directory — the
  *  fixed two-file list is gone; a new shipped card stages automatically. */

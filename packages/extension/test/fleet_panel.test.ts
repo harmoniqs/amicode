@@ -168,6 +168,14 @@ describe("fleet panel — doctor fixtures validate against the committed schema"
     expect(surfaces.minItems).toBe(6);
   });
 
+  it("#804: the committed schema is v2 — schema-stamped + component verdicts on the agent-cards records", () => {
+    const top = DOCTOR_SCHEMA.properties as Record<string, JsonSchema>;
+    expect(top.schema_version.enum).toEqual(["2"]);
+    const items = (top.surfaces as JsonSchema).items as JsonSchema;
+    const recordProps = (items.properties as Record<string, JsonSchema>);
+    expect(recordProps.components).toBeDefined();
+  });
+
   for (const name of FIXTURE_NAMES) {
     it(`${name}: every record carries surface/version/verdict/evidence per the contract`, () => {
       const report = fixture(name);
@@ -175,6 +183,48 @@ describe("fleet panel — doctor fixtures validate against the committed schema"
       expect(errors.map((e) => `${e.path}: ${e.message}`).join("\n")).toBe("");
     });
   }
+
+  it("#804 AC7 — tolerate-then-warn: the PRE-BUMP (v1) schema accepts the bumped v2 report; the panel renders it unchanged", () => {
+    // the v1 contract shape, verbatim: open additionalProperties, no
+    // schema_version, no components — the fleet watchdog / settings panel
+    // validators that shipped ahead of the bump
+    const V1_SCHEMA: JsonSchema = {
+      type: "object",
+      properties: {
+        surfaces: {
+          type: "array",
+          minItems: 6,
+          items: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              surface: { enum: ["server-binary", "extension", "vendored-binary", "staged-skills", "agent-cards-global", "agent-cards-staging"] },
+              version: { type: ["string", "null"] },
+              source_version: { type: ["string", "null"] },
+              verdict: { enum: ["current", "stale", "integrity-failure", "unknown"] },
+              evidence: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+            },
+            required: ["surface", "version", "verdict", "evidence"],
+          },
+        },
+      },
+      required: ["surfaces"],
+    };
+    const report = fixture("doctor-current.json");
+    // the v2 fields (schema_version + components) ride through the old
+    // validator without a rejection — old validators never reject an entire
+    // report over a new field (H5's compat fixture, settings-panel side)
+    const errors = validateSubset(report, V1_SCHEMA);
+    expect(errors.map((e) => `${e.path}: ${e.message}`).join("\n")).toBe("");
+    // and the panel renders the bumped report the way it renders any report:
+    // surface rows verbatim, verdict chips verbatim, no crash on components
+    const html = renderFleetSection(report as DoctorReport);
+    expect(html).toContain("agent-cards-global");
+    expect(html).toContain("current");
+    const cards = (report as { surfaces: { surface: string; components?: unknown[] }[] }).surfaces
+      .find((s) => s.surface === "agent-cards-global")!;
+    expect(cards.components!.length).toBeGreaterThan(0); // the fixture exercises the tolerance
+  });
 });
 
 // ─── renderFleetSection: doctor's facts, verbatim (AC1) ──────────────────────

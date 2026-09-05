@@ -59,6 +59,7 @@ import {
   type SurfaceRecord,
   type SurfaceName,
 } from "./surfaces.js";
+import { stageModeBundles } from "@amicode/schema";
 import type { VerbResult } from "./verbs.js";
 
 export type UpgradeSurface = "server-binary" | "extension" | "agents" | "skills";
@@ -553,6 +554,42 @@ const agentsVerb = (argv: string[]): Promise<VerbResult> =>
       };
     }
     ctx.log(firstLine(deployed.stdout) || "deploy-agents.mjs completed");
+
+    // #804 — the mode bundles: the doctor now judges the deployed bundle sets
+    // (component-level verdicts on the SAME records this verb converges), so
+    // the verb stages them through the SAME atomic stager the extension's
+    // activation uses — locked, receipt-audited, and refusing an invalid
+    // source registry. A live staging lock aborts honestly (aborted-locked);
+    // a stale one is stolen, the steal recorded on the bundle deploy receipt.
+    const extRoot = join(rootRepoAmicode, "packages", "extension");
+    const bundleRoots: Array<[string, string]> = [
+      ["global", rootConfig],
+      ["staging", join(rootStaging, ".opencode")],
+    ];
+    for (const [label, destRoot] of bundleRoots) {
+      let staged: ReturnType<typeof stageModeBundles>;
+      try {
+        staged = stageModeBundles(extRoot, destRoot);
+      } catch (e) {
+        ctx.log(`mode-bundle staging to ${label} failed: ${e instanceof Error ? e.message : String(e)}`);
+        return {
+          outcome: "aborted-deploy",
+          verification: false,
+          post: await postRecords(ctx, ["agent-cards-global", "agent-cards-staging"]),
+          sourceDigests: {},
+        };
+      }
+      if (staged.outcome === "aborted-locked") {
+        ctx.log(`mode-bundle staging to ${label} aborted: ${staged.detail.join("; ")}`);
+        return {
+          outcome: "aborted-locked",
+          verification: null,
+          post: await postRecords(ctx, ["agent-cards-global", "agent-cards-staging"]),
+          sourceDigests: {},
+        };
+      }
+      ctx.log(`mode bundles staged to ${label} (${staged.modes.length} modes, ${staged.steals.length} stale lock(s) stolen)`);
+    }
 
     // BOTH receipt stores are now written (the script wrote the contract-path
     // .deploy-receipt.json; runVerb appends the JSONL). Verify through a

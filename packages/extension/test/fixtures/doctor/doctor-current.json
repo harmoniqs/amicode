@@ -1,4 +1,5 @@
 {
+  "schema_version": "2",
   "surfaces": [
     {
       "surface": "server-binary",
@@ -8,7 +9,7 @@
       "evidence": [
         "frozen 0.0.0-local/amicode-209901010000 sha256 5d41402abc4b2a76b9719d911017c592 = sidecar",
         "running /Users/aaron/.amico/server/bin/opencode sha256 = frozen sha256",
-        "build date 2099-01-01T00:00:00.000Z ≥ HEAD commit date 2026-08-01T12:00:00.000Z (origin/local/amicode a1b2c3d)"
+        "build date 2099-01-01T00:00:00.000Z \u2265 HEAD commit date 2026-08-01T12:00:00.000Z (origin/local/amicode a1b2c3d)"
       ]
     },
     {
@@ -17,7 +18,7 @@
       "source_version": "0.2.6",
       "verdict": "current",
       "evidence": [
-        "installed 0.2.6-darwin-arm64 — version-sorted newest under /Users/aaron/.vscode/extensions",
+        "installed 0.2.6-darwin-arm64 \u2014 version-sorted newest under /Users/aaron/.vscode/extensions",
         "installed 0.2.6 = origin/main 0.2.6"
       ]
     },
@@ -51,6 +52,32 @@
         "all 3 cards byte-match sources (/Users/aaron/.config/opencode/agents)",
         "deploy receipt source digests match current sources",
         "set digest sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20"
+      ],
+      "components": [
+        {
+          "mode": "autodev",
+          "component": "card.md",
+          "verdict": "current",
+          "evidence": [
+            "component autodev/card.md byte-matches release v0.3.2"
+          ]
+        },
+        {
+          "mode": "autodev",
+          "component": "pack.toml",
+          "verdict": "current",
+          "evidence": [
+            "component autodev/pack.toml byte-matches release v0.3.2"
+          ]
+        },
+        {
+          "mode": "registry",
+          "component": "release-compare",
+          "verdict": "current",
+          "evidence": [
+            "current to v0.3.2"
+          ]
+        }
       ]
     },
     {
@@ -62,6 +89,32 @@
         "all 3 cards byte-match sources (/Users/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents)",
         "deploy receipt source digests match current sources",
         "set digest sha256:fcde2b2edba56bf408601fb721359b6d1aef1d075fb551f96a73d2f5c5a44f20"
+      ],
+      "components": [
+        {
+          "mode": "autodev",
+          "component": "card.md",
+          "verdict": "current",
+          "evidence": [
+            "component autodev/card.md byte-matches release v0.3.2"
+          ]
+        },
+        {
+          "mode": "autodev",
+          "component": "pack.toml",
+          "verdict": "current",
+          "evidence": [
+            "component autodev/pack.toml byte-matches release v0.3.2"
+          ]
+        },
+        {
+          "mode": "registry",
+          "component": "release-compare",
+          "verdict": "current",
+          "evidence": [
+            "current to v0.3.2"
+          ]
+        }
       ]
     }
   ]

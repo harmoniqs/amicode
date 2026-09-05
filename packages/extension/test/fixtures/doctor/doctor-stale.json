@@ -1,4 +1,5 @@
 {
+  "schema_version": "2",
   "surfaces": [
     {
       "surface": "server-binary",
@@ -8,7 +9,7 @@
       "evidence": [
         "frozen 0.0.0-local/amicode-209901010000 sha256 5d41402abc4b2a76b9719d911017c592 = sidecar",
         "running /Users/aaron/.amico/server/bin/opencode sha256 = frozen sha256",
-        "build date 2099-01-01T00:00:00.000Z ≥ HEAD commit date 2026-08-01T12:00:00.000Z (origin/local/amicode a1b2c3d)"
+        "build date 2099-01-01T00:00:00.000Z \u2265 HEAD commit date 2026-08-01T12:00:00.000Z (origin/local/amicode a1b2c3d)"
       ]
     },
     {
@@ -17,7 +18,7 @@
       "source_version": "0.2.6",
       "verdict": "stale",
       "evidence": [
-        "installed 0.2.4-darwin-arm64 — version-sorted newest under /Users/aaron/.vscode/extensions",
+        "installed 0.2.4-darwin-arm64 \u2014 version-sorted newest under /Users/aaron/.vscode/extensions",
         "installed 0.2.4 behind origin/main 0.2.6"
       ]
     },

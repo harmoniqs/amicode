@@ -1,14 +1,57 @@
 {
   "$id": "https://harmoniqs.github.io/amicode/schemas/doctor-report.schema.json",
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": true,
-  "description": "The `amico doctor --json` machine contract (doctor v2, #525): the surface inventory the settings panel and watchdog consume. Canonical form: deep-sorted keys, 2-space indent, trailing newline.",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "description": "The `amico doctor --json` machine contract (doctor v2, #525; schema v2, #804): the surface inventory the settings panel and watchdog consume, with a top-level schema_version and component-level mode-registry verdicts riding the agent-cards records (the doctor extends, never mints). Consumers are tolerate-then-warn: the v1 schema (additionalProperties open) accepts v2 reports; v2 validators reject v1 reports (the bump is real). Canonical form: deep-sorted keys, 2-space indent, trailing newline.",
   "properties": {
+    "schema_version": {
+      "enum": [
+        "2"
+      ]
+    },
     "surfaces": {
       "additionalProperties": false,
       "items": {
-        "additionalProperties": true,
+        "additionalProperties": false,
         "properties": {
+          "components": {
+            "description": "#804: per-mode bundle components judged against the machine's release tag + registry-level rows (release-compare, staging-lock, deploy-receipt, version-floor). Absent on non-agent-cards surfaces and when the card probe exited early.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "component": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "items": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                },
+                "mode": {
+                  "type": "string"
+                },
+                "verdict": {
+                  "enum": [
+                    "current",
+                    "stale",
+                    "failed",
+                    "unknown",
+                    "integrity-failure"
+                  ]
+                }
+              },
+              "required": [
+                "mode",
+                "component",
+                "verdict",
+                "evidence"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
           "evidence": {
             "items": {
               "minLength": 1,
@@ -61,6 +104,7 @@
     }
   },
   "required": [
+    "schema_version",
     "surfaces"
   ],
   "title": "doctor --json report",
