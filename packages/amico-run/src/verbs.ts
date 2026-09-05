@@ -26,6 +26,7 @@ import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
 import { campaignVerb } from "./campaign_verb.js";
 import { projectVerb } from "./project_verb.js";
+import { sotaVerb } from "./sota_verb.js";
 
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
@@ -227,6 +228,20 @@ const project: Verb = {
   run: projectVerb,
 };
 
+// sota — the living-SOTA survey surface (#820, spec-20260905-103000 D1):
+// the dual-lens read-only survey (papers via the arXiv export API through
+// the fleet-wide serialized queue; codebases via the GitHub API against the
+// watched-repo registry's canonical repos). This slice fetches and reports —
+// staged routing/receipts are later slices; a survey that cannot run is a
+// NAMED outcome, never a block.
+const sota: Verb = {
+  name: "sota",
+  summary: "the SOTA survey: papers (arXiv export API via the serialized queue) / codebase (GitHub API over the watched-repo registry)",
+  generalizes: "the loops' external-currency survey step (the sota-review skill's driving surface)",
+  slice: "living-sota (spec-20260905-103000 D1)",
+  run: sotaVerb,
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -241,4 +256,5 @@ export const SPINE_VERBS: Verb[] = [
   papers,
   campaign,
   project,
+  sota,
 ];

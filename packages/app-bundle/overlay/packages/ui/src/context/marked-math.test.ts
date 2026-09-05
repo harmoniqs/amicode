@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Marked } from "marked"
 import { markedCodeSpanBoundary } from "./marked-code-span"
-import { katexExtension, renderMathInText } from "./marked-parser"
+import { katexExtension, renderMathInText } from "./marked"
 
 const parse = (src: string) => new Marked(markedCodeSpanBoundary, katexExtension).parse(src)
 

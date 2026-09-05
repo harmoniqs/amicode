@@ -151,7 +151,8 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
   const i18n = useI18n()
 
   createEffect(() => {
-    getWorkerPool(props.diffStyle)
+    const style = props.diffStyle
+    getWorkerPool(style === "preview" ? undefined : style)
   })
 
   const fileIndex = () => {
@@ -265,8 +266,8 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
         <SegmentedControlV2
           value={props.diffStyle}
           onChange={(value) => {
-            if (value !== "unified" && value !== "split") return
-            props.onDiffStyleChange?.(value)
+            if (value !== "unified" && value !== "split" && value !== "preview") return
+            props.onDiffStyleChange?.(value as any)
           }}
           class="session-review-v2-segmented-control session-review-v2-segmented-control--icon"
           aria-label={i18n.t("ui.sessionReviewV2.diffView")}
@@ -281,6 +282,13 @@ export function SessionReviewV2(props: SessionReviewV2Props) {
               <Icon name="split" />
             </SegmentedControlItemV2>
           </TooltipV2>
+          <Show when={props.activeFile && /\.md$/i.test(props.activeFile!)}>
+            <TooltipV2 openDelay={2000} value="Preview">
+              <SegmentedControlItemV2 value="preview" aria-label="Preview markdown">
+                <Icon name="eye" />
+              </SegmentedControlItemV2>
+            </TooltipV2>
+          </Show>
         </SegmentedControlV2>
       </Show>
     </>
