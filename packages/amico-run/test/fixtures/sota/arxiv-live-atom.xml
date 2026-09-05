@@ -1,0 +1,127 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/s6IRmEe7KLyTq1G1mDx2NR9i53g</id>
+  <title>arXiv Query: search_query=all:optimal OR all:control&amp;id_list=&amp;start=0&amp;max_results=5</title>
+  <updated>2026-09-05T18:22:27Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=all:optimal+OR+all:control&amp;start=0&amp;max_results=5&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>5</opensearch:itemsPerPage>
+  <opensearch:totalResults>547557</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/2211.12700v2</id>
+    <title>Tailored Presolve Techniques in Branch-and-Bound Method for Fast Mixed-Integer Optimal Control Applications</title>
+    <updated>2023-07-11T01:35:17Z</updated>
+    <link href="https://arxiv.org/abs/2211.12700v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2211.12700v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Mixed-integer model predictive control (MI-MPC) can be a powerful tool for modeling hybrid control systems. In case of a linear-quadratic objective in combination with linear or piecewise-linear system dynamics and inequality constraints, MI-MPC needs to solve a mixed-integer quadratic program (MIQP) at each sampling time step. This paper presents a collection of block-sparse presolve techniques to efficiently remove decision variables, and to remove or tighten inequality constraints, tailored to mixed-integer optimal control problems (MIOCP). In addition, we describe a novel heuristic approach based on an iterative presolve algorithm to compute a feasible but possibly suboptimal MIQP solution. We present benchmarking results for a C code implementation of the proposed BB-ASIPM solver, including a branch-and-bound (B&amp;B) method with the proposed tailored presolve techniques and an active-set based interior point method (ASIPM), compared against multiple state-of-the-art MIQP solvers on a case study of motion planning with obstacle avoidance constraints. Finally, we demonstrate the computational performance of the BB-ASIPM solver on the dSPACE Scalexio real-time embedded hardware using a second case study of stabilization for an underactuated cart-pole with soft contacts.</summary>
+    <category term="math.OC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SY" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2022-11-23T04:41:04Z</published>
+    <arxiv:comment>28 pages, 7 figures, 2 tables, published in journal of Optimal Control Applications and Methods</arxiv:comment>
+    <arxiv:primary_category term="math.OC"/>
+    <arxiv:journal_ref>Optim Control Appl Meth. 2023; 1- 29</arxiv:journal_ref>
+    <author>
+      <name>Rien Quirynen</name>
+    </author>
+    <author>
+      <name>Stefano Di Cairano</name>
+    </author>
+    <arxiv:doi>10.1002/oca.3030</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1002/oca.3030" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1810.09292v2</id>
+    <title>Optimal distributed control of a stochastic Cahn-Hilliard equation</title>
+    <updated>2019-07-05T16:40:30Z</updated>
+    <link href="https://arxiv.org/abs/1810.09292v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1810.09292v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We study an optimal distributed control problem associated to a stochastic Cahn-Hilliard equation with a classical double-well potential and Wiener multiplicative noise, where the control is represented by a source-term in the definition of the chemical potential. By means of probabilistic and analytical compactness arguments, existence of an optimal control is proved. Then the linearized system and the corresponding backward adjoint system are analysed through monotonicity and compactness arguments, and first-order necessary conditions for optimality are proved.</summary>
+    <category term="math.OC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.AP" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2018-10-22T13:53:58Z</published>
+    <arxiv:comment>Key words and phrases: stochastic Cahn-Hilliard equation, phase separation, optimal control, linearized state system, adjoint state system, first-order optimality conditions</arxiv:comment>
+    <arxiv:primary_category term="math.OC"/>
+    <arxiv:journal_ref>SIAM J. Control Optim. 57 (2019), no. 5, 3571-3602</arxiv:journal_ref>
+    <author>
+      <name>Luca Scarpa</name>
+    </author>
+    <arxiv:doi>10.1137/18M1222223</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1137/18M1222223" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1310.5377v2</id>
+    <title>Numerical Approximations to Fractional Problems of the Calculus of Variations and Optimal Control</title>
+    <updated>2013-11-01T01:26:25Z</updated>
+    <link href="https://arxiv.org/abs/1310.5377v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1310.5377v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>This chapter presents some numerical methods to solve problems in the fractional calculus of variations and fractional optimal control. Although there are plenty of methods available in the literature, we concentrate mainly on approximating the fractional problem either by discretizing the fractional term or expanding the fractional derivatives as a series involving integer order derivatives. The former method, as a subclass of direct methods in the theory of calculus of variations, uses finite differences, Grunwald-Letnikov definition in this case, to discretize the fractional term. Any quadrature rule for integration, regarding the desired accuracy, is then used to discretize the whole problem including constraints. The final task in this method is to solve a static optimization problem to reach approximated values of the unknown functions on some mesh points.
+  The latter method, however, approximates fractional problems by classical ones in which only derivatives of integer order are present. Precisely, two continuous approximations for fractional derivatives by series involving ordinary derivatives are introduced. Local upper bounds for truncation errors are provided and, through some test functions, the accuracy of the approximations are justified. Then we substitute the fractional term in the original problem with these series and transform the fractional problem to an ordinary one. Hereafter, we use indirect methods of classical theory, e.g. Euler-Lagrange equations, to solve the approximated problem. The methods are mainly developed through some concrete examples which either have obvious solutions or the solution is computed using the fractional Euler-Lagrange equation.</summary>
+    <category term="math.OC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.NA" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2013-10-20T21:55:29Z</published>
+    <arxiv:comment>This is a preprint of a paper whose final and definite form appeared in: Chapter V, Fractional Calculus in Analysis, Dynamics and Optimal Control (Editor: Jacky Cresson), Series: Mathematics Research Developments, Nova Science Publishers, New York, 2014. (See http://www.novapublishers.com/catalog/product_info.php?products_id=46851). Consists of 39 pages</arxiv:comment>
+    <arxiv:primary_category term="math.OC"/>
+    <arxiv:journal_ref>Fractional Calculus in Analysis, Dynamics and Optimal Control, Nova Science Publishers, New York, 2014, 201--239</arxiv:journal_ref>
+    <author>
+      <name>Shakoor Pooseh</name>
+    </author>
+    <author>
+      <name>Ricardo Almeida</name>
+    </author>
+    <author>
+      <name>Delfim F. M. Torres</name>
+    </author>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/1112.4113v1</id>
+    <title>Optimal Control of Vehicular Formations with Nearest Neighbor Interactions</title>
+    <updated>2011-12-18T03:41:13Z</updated>
+    <link href="https://arxiv.org/abs/1112.4113v1" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1112.4113v1" rel="related" type="application/pdf" title="pdf"/>
+    <summary>We consider the design of optimal localized feedback gains for one-dimensional formations in which vehicles only use information from their immediate neighbors. The control objective is to enhance coherence of the formation by making it behave like a rigid lattice. For the single-integrator model with symmetric gains, we establish convexity, implying that the globally optimal controller can be computed efficiently. We also identify a class of convex problems for double-integrators by restricting the controller to symmetric position and uniform diagonal velocity gains. To obtain the optimal non-symmetric gains for both the single- and the double-integrator models, we solve a parameterized family of optimal control problems ranging from an easily solvable problem to the problem of interest as the underlying parameter increases. When this parameter is kept small, we employ perturbation analysis to decouple the matrix equations that result from the optimality conditions, thereby rendering the unique optimal feedback gain. This solution is used to initialize a homotopy-based Newton's method to find the optimal localized gain. To investigate the performance of localized controllers, we examine how the coherence of large-scale stochastically forced formations scales with the number of vehicles. We establish several explicit scaling relationships and show that the best performance is achieved by a localized controller that is both non-symmetric and spatially-varying.</summary>
+    <category term="math.OC" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.MA" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="eess.SY" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2011-12-18T03:41:13Z</published>
+    <arxiv:comment>To appear in IEEE Trans. Automat. Control; 15 pages, 10 figures</arxiv:comment>
+    <arxiv:primary_category term="math.OC"/>
+    <arxiv:journal_ref>IEEE Trans. Automat. Control (2012), vol. 57, no. 9, pp. 2203-2218</arxiv:journal_ref>
+    <author>
+      <name>Fu Lin</name>
+    </author>
+    <author>
+      <name>Makan Fardad</name>
+    </author>
+    <author>
+      <name>Mihailo R. Jovanović</name>
+    </author>
+    <arxiv:doi>10.1109/TAC.2011.2181790</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1109/TAC.2011.2181790" title="doi"/>
+  </entry>
+  <entry>
+    <id>http://arxiv.org/abs/2107.08360v4</id>
+    <title>Duality-based Convex Optimization for Real-time Obstacle Avoidance between Polytopes with Control Barrier Functions</title>
+    <updated>2022-04-18T23:49:48Z</updated>
+    <link href="https://arxiv.org/abs/2107.08360v4" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/2107.08360v4" rel="related" type="application/pdf" title="pdf"/>
+    <summary>Developing controllers for obstacle avoidance between polytopes is a challenging and necessary problem for navigation in tight spaces. Traditional approaches can only formulate the obstacle avoidance problem as an offline optimization problem. To address these challenges, we propose a duality-based safety-critical optimal control using nonsmooth control barrier functions for obstacle avoidance between polytopes, which can be solved in real-time with a QP-based optimization problem. A dual optimization problem is introduced to represent the minimum distance between polytopes and the Lagrangian function for the dual form is applied to construct a control barrier function. We validate the obstacle avoidance with the proposed dual formulation for L-shaped (sofa-shaped) controlled robot in a corridor environment. We demonstrate real-time tight obstacle avoidance with non-conservative maneuvers on a moving sofa (piano) problem with nonlinear dynamics.</summary>
+    <category term="eess.SY" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="cs.RO" scheme="http://arxiv.org/schemas/atom"/>
+    <category term="math.OC" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2021-07-18T04:27:31Z</published>
+    <arxiv:comment>Accepted to 2022 American Control Conference (ACC) with full version of proofs in the appendix</arxiv:comment>
+    <arxiv:primary_category term="eess.SY"/>
+    <arxiv:journal_ref>American Control Conf. (2022) 2239-2246</arxiv:journal_ref>
+    <author>
+      <name>Akshay Thirugnanam</name>
+    </author>
+    <author>
+      <name>Jun Zeng</name>
+    </author>
+    <author>
+      <name>Koushil Sreenath</name>
+    </author>
+    <arxiv:doi>10.23919/ACC53348.2022.9867246</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.23919/ACC53348.2022.9867246" title="doi"/>
+  </entry>
+</feed>

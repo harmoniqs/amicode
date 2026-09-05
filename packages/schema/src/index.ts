@@ -143,6 +143,21 @@ export {
   type SupersedingSkillDeclineKind,
 } from "./skill_revision.js";
 
+// The watched-repo registry's ONE shared validator (#820, spec-20260905-103000
+// living-sota D3-data / S2): the SOTA codebase lens's data substrate —
+// validator-checked TOML where adding a repo is a data edit, never code. Same
+// documented root seam: amico-run's lenses and the extension's suite both
+// import from here, so a registry that passes tests passes the machinery.
+export {
+  DEFAULT_FAILURE_THRESHOLD,
+  validateWatchedRepoRegistry,
+  parseWatchedRepoRegistry,
+  flaggedForRetireOrConfirm,
+  type WatchedRepo,
+  type WatchedRepoRegistry,
+  type FetchSurface,
+} from "./watched_repos.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"
