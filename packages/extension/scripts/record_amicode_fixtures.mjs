@@ -280,6 +280,16 @@ const REQUESTS = [
     name: "project create — non-absolute parent refusal",
   },
   { method: "GET", path: "/amicode/projects", name: "projects list — prior + created" },
+  // ── solver mode (issue #798) — the release half of the toggle contract.
+  //    Kept LAST in the arc on purpose: a successful piccolo release rewrites
+  //    entitlements.toml + solver-mode.json in the ops dir, and no other
+  //    recorded entry may depend on that mutated state. The seeded sandbox has
+  //    NO entitlements.toml (fresh-install state), so the release takes the
+  //    fork's settled-piccolo no-op path — deterministic on both sides. The
+  //    revoke-writes path is unit-tested in amicode_service_solver_mode.test.ts.
+  { method: "POST", path: "/amicode/solver-mode", body: {}, name: "solver-mode — bad_request refusal" },
+  { method: "POST", path: "/amicode/solver-mode", body: { mode: "hp" }, name: "solver-mode — unsupported_mode refusal (hp follows a credential)" },
+  { method: "POST", path: "/amicode/solver-mode", body: { mode: "piccolo" }, name: "solver-mode — piccolo release accepted (settled no-op)" },
 ];
 
 async function main() {

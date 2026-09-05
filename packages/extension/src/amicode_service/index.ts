@@ -44,6 +44,7 @@ import {
   statusResponse,
   submitCredentialResponse,
 } from "./connections";
+import { solverModeResponse } from "./solver_mode";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -208,6 +209,18 @@ export function registerConnectionRoutes(server: AmicodeServiceServer): AmicodeS
   return server;
 }
 
+// Solver-mode route (#798): the release half of the toggle contract — the
+// fork's POST /amicode/solver-mode, mounted in the connections family's
+// neighborhood exactly as the fork's server.ts does (the app's status popover
+// fires it fire-and-forget beside the connection actions). Its own family
+// because its response shape is the sibling {ok, mode, error}, not a
+// connection card.
+export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("POST", "/amicode/solver-mode", ({ body }) => ({ body: solverModeResponse(body) }));
+
+  return server;
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process. */
 export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
@@ -220,5 +233,6 @@ export function createAmicodeService(opts: { password?: string } = {}): AmicodeS
   registerWidgetRoutes(server);
   registerProjectRoutes(server);
   registerConnectionRoutes(server);
+  registerSolverModeRoutes(server);
   return server;
 }

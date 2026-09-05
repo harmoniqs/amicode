@@ -66,6 +66,11 @@ export class AmicodeServiceServer {
   get port(): number | undefined {
     return this._port;
   }
+  /** Registered route count — the wiring log's inventory line reads this, so
+   *  it can never drift stale the way a hard-coded count does. */
+  get routeCount(): number {
+    return this.routes.size;
+  }
   get url(): URL | undefined {
     return this._port ? new URL(`http://127.0.0.1:${this._port}`) : undefined;
   }

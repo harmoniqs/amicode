@@ -1,7 +1,8 @@
 // AMICODE SERVICE wiring (#451, M1) — boot the extension-host amicode service
 // at activation, alongside the fork opencode server (the parallel-run harness:
-// both serve the 31 amicode routes; consumers stay on the fork until the M3
-// cutover, while the contract tests + dogfood probes hold the port to parity).
+// both serve the amicode route surface; consumers stay on the fork until the
+// M3 cutover, while the contract tests + dogfood probes hold the port to
+// parity).
 //
 // vscode-free on purpose (the log sink is a structural interface, mirroring
 // the service's own discipline) so the boot/lifecycle logic is unit-testable.
@@ -41,7 +42,7 @@ export async function startAmicodeService(log: {
     const service = createAmicodeService();
     const url = await service.start();
     log.appendLine(
-      `[amicode-service] parallel-run: listening on ${url.toString()} (31 routes; auth: per-boot Basic)`,
+      `[amicode-service] parallel-run: listening on ${url.toString()} (${service.routeCount} routes; auth: per-boot Basic)`,
     );
     return { service, url: url.toString().replace(/\/$/, ""), authHeader: service.authHeader };
   } catch (err) {
