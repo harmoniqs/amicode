@@ -281,3 +281,74 @@ describe("amico sessions index — regeneration vs the seeded DB (bundle)", () =
     expect(readFileSync(out, "utf8")).toMatch(/0 sessions: 0 visible · 0 archived/);
   });
 });
+
+// ── AC 5: the boot list fetch remains paginated under growth (D4: "the recent
+//    tail first, so the refetch contract does not degrade as the list grows") ──
+describe("amico sessions list — pagination under a 1000+ session store (bundle)", () => {
+  let tmp: string;
+  let db: string;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "amico-sessions-pg-"));
+    db = join(tmp, "opencode.db");
+  });
+  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+
+  it("a seeded 1200-session store walks fully through bounded pages, newest first, exactly once", () => {
+    const N = 1200;
+    const seeds: SeedOpts[] = [];
+    for (let i = 0; i < N; i++) {
+      seeds.push({ id: `ses_pg${String(i).padStart(4, "0")}`, title: `s${i}`, updatedDaysAgo: (i % 400) + (i / 400) * 0.01, createdDaysAgo: 500 });
+    }
+    seedDb(db, seeds);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: tmp };
+
+    // first page (the boot page): bounded at the default limit, recent tail first
+    const first = JSON.parse(run(["sessions", "list"], env).stdout);
+    expect(first.count).toBe(100);
+    expect(first.total).toBe(N);
+    expect(first.next_cursor).toBe(100);
+
+    // walk every page: 1200 sessions, each exactly once, no archive leakage
+    const seen: string[] = [];
+    let cursor: number | null = 0;
+    let pages = 0;
+    while (cursor !== null) {
+      const page = JSON.parse(run(["sessions", "list", "--cursor", String(cursor)], env).stdout);
+      expect(page.count).toBeLessThanOrEqual(100);
+      for (const s of page.sessions as { id: string }[]) seen.push(s.id);
+      cursor = page.next_cursor;
+      pages++;
+      expect(pages).toBeLessThan(50); // termination guard
+    }
+    expect(seen.length).toBe(N);
+    expect(new Set(seen).size).toBe(N);
+
+    // ordering: time_updated DESC — the first page is the recent tail, and the
+    // walk is globally descending (allowing the id tie-break within a tick)
+    const firstIds = (first.sessions as { id: string }[]).map((s) => s.id);
+    expect(firstIds[0]).toBe("ses_pg0000"); // most recently updated
+    const byUpdated = JSON.parse(run(["sessions", "list", "--limit", "1000"], env).stdout);
+    expect(byUpdated.count).toBe(1000); // --limit is honored up to a hard cap
+  });
+
+  it("pagination respects the visibility rules (archived rows never leak into a default walk)", () => {
+    const seeds: SeedOpts[] = [];
+    for (let i = 0; i < 250; i++) {
+      seeds.push({ id: `ses_v${String(i).padStart(3, "0")}`, updatedDaysAgo: i % 200 });
+    }
+    seeds.push({ id: "ses_hidden", updatedDaysAgo: 10, archived: true });
+    seedDb(db, seeds);
+    const env = { OPENCODE_DB: db, AMICODE_OPS_DIR: tmp };
+
+    const seen: string[] = [];
+    let cursor: number | null = 0;
+    while (cursor !== null) {
+      const page = JSON.parse(run(["sessions", "list", "--limit", "50", "--cursor", String(cursor)], env).stdout);
+      for (const s of page.sessions as { id: string }[]) seen.push(s.id);
+      cursor = page.next_cursor;
+    }
+    expect(seen).toHaveLength(250);
+    expect(seen).not.toContain("ses_hidden");
+  });
+});
