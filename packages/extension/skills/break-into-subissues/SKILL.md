@@ -39,7 +39,7 @@ In dependency order (blockers first, so you can reference real issue numbers), r
 
 Each sub-issue MUST be **TDD-executable** — the implementer writes the failing test first, implements, and passes:
 - **Acceptance Criteria** — each a *testable behavior*, phrased so a failing test can be written for it directly.
-- **Testing Decisions** — the tests to write (external behavior, not internals). **Extend/modify** the named existing or prior-slice tests where they cover the behavior (`reuse-first`); create new only for genuinely new surface. When the slice builds on a prior slice, **flag the cross-slice edge** — *"extends #A's test surface"* — but leave the local modify-vs-create call to the implementer (see ADR `docs/adr/0002`). This *is* the TDD spec.
+- **Testing Decisions** — the tests to write (external behavior, not internals). **Extend/modify** the named existing or prior-slice tests where they cover the behavior (`reuse-first`); create new only for genuinely new surface. When the slice builds on a prior slice, **flag the cross-slice edge** — *"extends #A's test surface"* — but leave the local modify-vs-create call to the implementer (the test is external behavior, not internals). This *is* the TDD spec.
 - **Key Decisions** (+ data contracts) and **Constraints & Invariants** — slice-local, decision-complete, **no file paths/code** (the dev reads current code).
 - **Source** — `Part of #<parent>` + the durable-record link, and a `Blocked by #<n>` line for each blocker. Reference the parent's cross-cutting sections; don't duplicate them. These lines are the human-readable mirror of the native edges wired in Step 6 — keep them consistent with those edges.
 

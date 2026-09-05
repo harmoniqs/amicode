@@ -161,7 +161,9 @@ describe("content lens — the public workflow skills carry no proprietary or in
   it("none of the six carries an internal-machine path shape (mount paths, fleet hosts, private repo paths)", () => {
     const INTERNAL_PATH_SHAPES = [
       "/home/", // absolute home paths (fleet hosts, user trees)
+      "/users/", // macOS-style absolute home paths (the fleet's other half)
       "~/armonia", // the workspace's internal mount layout
+      "~/.amico", // the tool's state tree (not just its vaults subpath)
       ".amico/vaults", // vault mount paths
       "armonissima", // the private team mount's name
       "repos/amico", // the private amico repo layout

@@ -71,8 +71,7 @@ const KEYWORDS = [...LOOP_VERBS, ...CORE_CLAUSES] as const;
 const cardText = (name: CardName): string =>
   readFileSync(path.join(AGENTS_DIR, name), "utf8");
 
-const fixtureSkill = readFileSync(CANONICAL_SKILL, "utf8");
-const canonicalSkill = fixtureSkill;
+const canonicalSkill = readFileSync(CANONICAL_SKILL, "utf8");
 
 /** Extract the spine between the marker pair; counts pairs for the one-pair rule. */
 function spineOf(text: string): { spine: string; pairs: number } {
@@ -177,7 +176,7 @@ describe("mode cards — ledger discovery rule (correctness by containment)", ()
   const spine = spineOf(cardText("autoresearch.md")).spine;
 
   it("the spine contains the canonical discovery-rule block verbatim", () => {
-    const rule = discoveryRuleFrom(fixtureSkill);
+    const rule = discoveryRuleFrom(canonicalSkill);
     expect(spine).toContain(rule);
   });
 
