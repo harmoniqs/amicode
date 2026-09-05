@@ -90,49 +90,57 @@ interface SeedOpts {
 }
 
 /** Seed a minimal session table shaped like the live DB's (the columns the verb
- *  queries exist in both; the engine owns the real DDL). Seeding runs in a
- *  spawned `node -e` so `node:sqlite` never enters vitest's module graph
- *  (vite-node's builtin list predates it and cannot load it). */
+ *  queries exist in both; the engine owns the real DDL). Seeding runs through
+ *  python3's stdlib sqlite3 — the same driver the verb uses (sqlite_bridge.ts),
+ *  which exists on the repo's CI node (20.x) where node:sqlite does not. */
 function seedDb(dbPath: string, seeds: SeedOpts[]): void {
   mkdirSync(join(dbPath, ".."), { recursive: true });
   const script = `
-    const { DatabaseSync } = require("node:sqlite");
-    const db = new DatabaseSync(process.argv[1]);
-    const now = Date.now();
-    db.exec(\`CREATE TABLE session (
-      id TEXT PRIMARY KEY,
-      project_id TEXT,
-      parent_id TEXT,
-      directory TEXT NOT NULL,
-      title TEXT NOT NULL,
-      time_created INTEGER NOT NULL,
-      time_updated INTEGER NOT NULL,
-      time_archived INTEGER
-    )\`);
-    db.exec(\`CREATE TABLE project (
-      id TEXT PRIMARY KEY,
-      worktree TEXT,
-      vcs TEXT,
-      name TEXT,
-      time_created INTEGER,
-      time_updated INTEGER
-    )\`);
-    db.prepare("INSERT INTO project (id, worktree, vcs, name, time_created, time_updated) VALUES (?,?,?,?,?,?)")
-      .run("proj_armonia", "/home/aaron/armonia", null, "armonia", now - 100 * ${DAY}, now - 1 * ${DAY});
-    const ins = db.prepare("INSERT INTO session (id, parent_id, directory, title, time_created, time_updated, time_archived) VALUES (?,?,?,?,?,?,?)");
-    for (const s of JSON.parse(process.argv[2])) {
-      const updated = now - s.updatedDaysAgo * ${DAY};
-      const created = now - (s.createdDaysAgo !== undefined ? s.createdDaysAgo : s.updatedDaysAgo + 1) * ${DAY};
-      ins.run(s.id, s.parent ?? null, s.directory ?? "/home/aaron/armonia", s.title ?? ("session " + s.id),
-        created, updated, s.archived ? now - s.updatedDaysAgo * ${DAY} : null);
-    }
-    db.close();
+import json, sqlite3, sys
+
+seeds = json.loads(sys.argv[2])
+now = int(sys.argv[3])
+day = ${DAY}
+con = sqlite3.connect(sys.argv[1], timeout=5)
+con.executescript("""
+CREATE TABLE session (
+  id TEXT PRIMARY KEY,
+  project_id TEXT,
+  parent_id TEXT,
+  directory TEXT NOT NULL,
+  title TEXT NOT NULL,
+  time_created INTEGER NOT NULL,
+  time_updated INTEGER NOT NULL,
+  time_archived INTEGER
+);
+CREATE TABLE project (
+  id TEXT PRIMARY KEY,
+  worktree TEXT,
+  vcs TEXT,
+  name TEXT,
+  time_created INTEGER,
+  time_updated INTEGER
+);
+""")
+con.execute("INSERT INTO project (id, worktree, vcs, name, time_created, time_updated) VALUES (?,?,?,?,?,?)",
+            ("proj_armonia", "/home/aaron/armonia", None, "armonia", now - 100 * day, now - 1 * day))
+for s in seeds:
+    updated = now - s["updatedDaysAgo"] * day
+    created = now - (s["createdDaysAgo"] if s.get("createdDaysAgo") is not None else s["updatedDaysAgo"] + 1) * day
+    con.execute(
+        "INSERT INTO session (id, parent_id, directory, title, time_created, time_updated, time_archived) VALUES (?,?,?,?,?,?,?)",
+        (s["id"], s.get("parent"), s.get("directory", "/home/aaron/armonia"), s.get("title", "session " + s["id"]),
+         created, updated, now - s["updatedDaysAgo"] * day if s.get("archived") else None),
+    )
+con.commit()
+con.close()
   `;
-  execFileSync(
-    process.execPath,
-    ["--no-warnings", "-e", script, dbPath, JSON.stringify(seeds)],
-    { encoding: "utf8" },
-  );
+  execFileSync(pythonBin(), ["-c", script, dbPath, JSON.stringify(seeds), String(Date.now())], { encoding: "utf8" });
+}
+
+/** The interpreter the verb's bridge resolves: $AMICO_PYTHON → python3. */
+function pythonBin(): string {
+  return process.env.AMICO_PYTHON && process.env.AMICO_PYTHON.trim() !== "" ? process.env.AMICO_PYTHON : "python3";
 }
 
 // ── AC 1: the archive visibility matrix ─────────────────────────────────────
@@ -386,14 +394,15 @@ describe("amico sessions archive — disjointness from the vault/coordination pl
 
   function dbRows(dbPath: string): string {
     return execFileSync(
-      process.execPath,
-      ["--no-warnings", "-e", `
-        const { DatabaseSync } = require("node:sqlite");
-        const db = new DatabaseSync(process.argv[1], { readOnly: true });
-        console.log(JSON.stringify({
-          sessions: db.prepare("SELECT * FROM session ORDER BY id").all(),
-          projects: db.prepare("SELECT * FROM project ORDER BY id").all(),
-        }));
+      pythonBin(),
+      ["-c", `
+import json, sqlite3, sys
+con = sqlite3.connect("file:" + sys.argv[1] + "?mode=ro", uri=True, timeout=5)
+con.row_factory = sqlite3.Row
+print(json.dumps({
+  "sessions": [dict(r) for r in con.execute("SELECT * FROM session ORDER BY id").fetchall()],
+  "projects": [dict(r) for r in con.execute("SELECT * FROM project ORDER BY id").fetchall()],
+}))
       `, dbPath],
       { encoding: "utf8" },
     );

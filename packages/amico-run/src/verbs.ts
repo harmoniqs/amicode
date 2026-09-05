@@ -238,9 +238,9 @@ const project: Verb = {
 // 30 days). The vault ledger plane and the coordination board are separate
 // transports — this verb never touches them.
 //
-// NOTE: the DB access lives behind a lazy `node:sqlite` import, so this module
-// stays import-safe in vitest's graph (vite-node's builtin list predates
-// node:sqlite); only calling the verb resolves it.
+// NOTE: the DB access runs through the python3 stdlib sqlite3 bridge
+// (sqlite_bridge.ts) — the repo's CI pins node 20, where node:sqlite does not
+// exist, and the store's other reader (open-threads) already uses python3.
 const sessions: Verb = {
   name: "sessions",
   summary: "session retention over the chat DB: list (visibility rules) / archive (relocate) / restore / index (generated) / prefs",

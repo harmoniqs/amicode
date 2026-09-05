@@ -16,10 +16,9 @@
 // did by hand SQL. `archive` is DRY-RUN BY DEFAULT: an agent running it
 // against the live DB without --apply must not relocate anything.
 //
-// node:sqlite is imported lazily (inside openDb): it must never enter vitest's
-// module graph (vite-node's builtin list predates it), and on node < 22.5 the
-// verb degrades to an honest usage error instead of a crash.
-import { createRequire } from "node:module";
+// The driver is the python3 stdlib sqlite3 bridge (src/sqlite_bridge.ts) —
+// NOT node:sqlite, which does not exist on the repo's CI node (20.x). See the
+// bridge module header for the full rationale.
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -29,11 +28,10 @@ import {
   writeArchiveDays,
   type IndexSession,
 } from "./session_retention.js";
+import { sqliteBatch, type BridgeStatement } from "./sqlite_bridge.js";
 import type { VerbResult } from "./verbs.js";
 
 export const DEFAULT_LIST_LIMIT = 100;
-
-const nodeRequire = createRequire(import.meta.url);
 
 function flagValue(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -54,14 +52,6 @@ export function resolveSessionDb(argv: string[], env: NodeJS.ProcessEnv = proces
   return join(env.XDG_DATA_HOME && env.XDG_DATA_HOME.trim() !== "" ? join(env.XDG_DATA_HOME, "opencode") : join(homedir(), ".local", "share", "opencode"), "opencode.db");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Db = any;
-
-function openDb(path: string, readOnly: boolean): Db {
-  const { DatabaseSync } = nodeRequire("node:sqlite") as typeof import("node:sqlite");
-  return new DatabaseSync(path, { readOnly });
-}
-
 function fail(error: string, extra: Record<string, unknown> = {}): VerbResult {
   return { json: { verb: "sessions", error, ...extra }, code: 64 };
 }
@@ -76,15 +66,16 @@ interface SessionRow {
   time_archived: number | null;
 }
 
-function fetchPage(db: Db, where: string, params: unknown[], limit: number, cursor: number): { rows: SessionRow[]; total: number } {
-  const total = (db.prepare(`SELECT count(*) AS n FROM session WHERE ${where}`).get(...params) as { n: number }).n;
-  const rows = db
-    .prepare(
-      `SELECT id, parent_id, directory, title, time_created, time_updated, time_archived
-       FROM session WHERE ${where} ORDER BY time_updated DESC, id LIMIT ? OFFSET ?`,
-    )
-    .all(...params, limit, cursor) as SessionRow[];
-  return { rows, total };
+function rowOf(r: Record<string, unknown>): SessionRow {
+  return {
+    id: String(r.id),
+    parent_id: (r.parent_id as string | null) ?? null,
+    directory: String(r.directory),
+    title: String(r.title),
+    time_created: Number(r.time_created),
+    time_updated: Number(r.time_updated),
+    time_archived: r.time_archived === null || r.time_archived === undefined ? null : Number(r.time_archived),
+  };
 }
 
 // ── list ────────────────────────────────────────────────────────────────────
@@ -95,27 +86,36 @@ function sessionsList(argv: string[]): VerbResult {
   const archived = hasFlag(argv, "--archived");
   const limit = Math.min(Math.max(Number(flagValue(argv, "--limit") ?? DEFAULT_LIST_LIMIT) || DEFAULT_LIST_LIMIT, 1), 1000);
   const cursor = Number(flagValue(argv, "--cursor") ?? 0) || 0;
+  const where = archived ? "time_archived IS NOT NULL" : "time_archived IS NULL";
 
-  const db = openDb(dbPath, true);
+  let batch;
   try {
-    const where = archived ? "time_archived IS NOT NULL" : "time_archived IS NULL";
-    const { rows, total } = fetchPage(db, where, [], limit, cursor);
-    const next = cursor + rows.length;
-    return {
-      json: {
-        verb: "sessions",
-        subcommand: "list",
-        archived,
-        count: rows.length,
-        total,
-        next_cursor: next < total ? next : null,
-        sessions: rows.map((r) => ({ ...r, archived: r.time_archived !== null })),
+    batch = sqliteBatch(dbPath, "ro", [
+      { sql: `SELECT count(*) AS n FROM session WHERE ${where}` },
+      {
+        sql: `SELECT id, parent_id, directory, title, time_created, time_updated, time_archived
+              FROM session WHERE ${where} ORDER BY time_updated DESC, id LIMIT ? OFFSET ?`,
+        params: [limit, cursor],
       },
-      code: 0,
-    };
-  } finally {
-    db.close();
+    ]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
   }
+  const rows = batch.results[1].rows.map(rowOf);
+  const total = Number(batch.results[0].rows[0]?.n ?? 0);
+  const next = cursor + rows.length;
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "list",
+      archived,
+      count: rows.length,
+      total,
+      next_cursor: next < total ? next : null,
+      sessions: rows.map((r) => ({ ...r, archived: r.time_archived !== null })),
+    },
+    code: 0,
+  };
 }
 
 // ── archive (relocate; dry-run by default) ──────────────────────────────────
@@ -128,34 +128,41 @@ function sessionsArchive(argv: string[], env: NodeJS.ProcessEnv): VerbResult {
   const apply = hasFlag(argv, "--apply");
   const cutoff = Date.now() - days * 86_400_000;
 
-  const db = openDb(dbPath, !apply);
-  try {
-    const candidates = (
-      db
-        .prepare("SELECT id FROM session WHERE time_archived IS NULL AND time_updated < ? ORDER BY time_updated DESC, id")
-        .all(cutoff) as { id: string }[]
-    ).map((r) => r.id);
-    if (apply) {
-      db.prepare("UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND time_updated < ?").run(Date.now(), cutoff);
-    }
-    return {
-      json: {
-        verb: "sessions",
-        subcommand: "archive",
-        dry_run: !apply,
-        days,
-        cutoff_ms: cutoff,
-        cutoff_iso: new Date(cutoff).toISOString(),
-        candidates: candidates.length,
-        candidate_ids: candidates.slice(0, 50),
-        archived: apply ? candidates.length : 0,
-        note: apply ? undefined : "dry-run: nothing written — pass --apply to stamp time_archived",
-      },
-      code: 0,
-    };
-  } finally {
-    db.close();
+  const statements: BridgeStatement[] = [
+    {
+      sql: "SELECT id FROM session WHERE time_archived IS NULL AND time_updated < ? ORDER BY time_updated DESC, id",
+      params: [cutoff],
+    },
+  ];
+  if (apply) {
+    statements.push({
+      sql: "UPDATE session SET time_archived = ? WHERE time_archived IS NULL AND time_updated < ?",
+      params: [Date.now(), cutoff],
+    });
   }
+
+  let batch;
+  try {
+    batch = sqliteBatch(dbPath, apply ? "rw" : "ro", statements);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+  const candidates = batch.results[0].rows.map((r) => String(r.id));
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "archive",
+      dry_run: !apply,
+      days,
+      cutoff_ms: cutoff,
+      cutoff_iso: new Date(cutoff).toISOString(),
+      candidates: candidates.length,
+      candidate_ids: candidates.slice(0, 50),
+      archived: apply ? Number(batch.results[1]?.changes ?? candidates.length) : 0,
+      note: apply ? undefined : "dry-run: nothing written — pass --apply to stamp time_archived",
+    },
+    code: 0,
+  };
 }
 
 // ── restore (clear the one field) ───────────────────────────────────────────
@@ -166,16 +173,23 @@ function sessionsRestore(argv: string[]): VerbResult {
   const dbPath = resolveSessionDb(argv);
   if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
 
-  const db = openDb(dbPath, false);
+  let probe;
   try {
-    const row = db.prepare("SELECT time_archived FROM session WHERE id = ?").get(id) as { time_archived: number | null } | undefined;
-    if (!row) return fail(`no such session: ${id}`);
-    if (row.time_archived === null) return { json: { verb: "sessions", subcommand: "restore", session_id: id, restored: false }, code: 0 };
-    db.prepare("UPDATE session SET time_archived = NULL WHERE id = ?").run(id);
-    return { json: { verb: "sessions", subcommand: "restore", session_id: id, restored: true }, code: 0 };
-  } finally {
-    db.close();
+    probe = sqliteBatch(dbPath, "ro", [{ sql: "SELECT time_archived FROM session WHERE id = ?", params: [id] }]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
   }
+  const row = probe.results[0].rows[0] as { time_archived: number | null } | undefined;
+  if (!row) return fail(`no such session: ${id}`);
+  if (row.time_archived === null || row.time_archived === undefined) {
+    return { json: { verb: "sessions", subcommand: "restore", session_id: id, restored: false }, code: 0 };
+  }
+  try {
+    sqliteBatch(dbPath, "rw", [{ sql: "UPDATE session SET time_archived = NULL WHERE id = ?", params: [id] }]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
+  }
+  return { json: { verb: "sessions", subcommand: "restore", session_id: id, restored: true }, code: 0 };
 }
 
 // ── index (generate; never author) ──────────────────────────────────────────
@@ -185,36 +199,35 @@ function sessionsIndex(argv: string[]): VerbResult {
   if (!existsSync(dbPath)) return fail(`session DB not found: ${dbPath}`);
   const out = flagValue(argv, "--out") ?? "SESSION-INDEX.md";
 
-  const db = openDb(dbPath, true);
+  let batch;
   try {
-    const rows = db
-      .prepare(
-        "SELECT id, directory, title, time_updated, time_archived FROM session ORDER BY time_updated DESC, id",
-      )
-      .all() as IndexSession[];
-    const visible = rows.filter((r) => r.time_archived === null).length;
-    const markdown = renderSessionIndex({
-      generated_at: new Date().toISOString(),
-      source_db: dbPath,
-      sessions: rows,
-    });
-    mkdirSync(join(out, ".."), { recursive: true });
-    writeFileSync(out, markdown);
-    return {
-      json: {
-        verb: "sessions",
-        subcommand: "index",
-        path: out,
-        sessions_indexed: rows.length,
-        visible,
-        archived: rows.length - visible,
-        source_db: dbPath,
-      },
-      code: 0,
-    };
-  } finally {
-    db.close();
+    batch = sqliteBatch(dbPath, "ro", [
+      { sql: "SELECT id, directory, title, time_updated, time_archived FROM session ORDER BY time_updated DESC, id" },
+    ]);
+  } catch (e) {
+    return fail(e instanceof Error ? e.message : String(e));
   }
+  const rows = batch.results[0].rows.map(rowOf).map((r) => ({ id: r.id, directory: r.directory, title: r.title, time_updated: r.time_updated, time_archived: r.time_archived }));
+  const visible = rows.filter((r) => r.time_archived === null).length;
+  const markdown = renderSessionIndex({
+    generated_at: new Date().toISOString(),
+    source_db: dbPath,
+    sessions: rows as IndexSession[],
+  });
+  mkdirSync(join(out, ".."), { recursive: true });
+  writeFileSync(out, markdown);
+  return {
+    json: {
+      verb: "sessions",
+      subcommand: "index",
+      path: out,
+      sessions_indexed: rows.length,
+      visible,
+      archived: rows.length - visible,
+      source_db: dbPath,
+    },
+    code: 0,
+  };
 }
 
 // ── prefs (the workspace preference surface) ────────────────────────────────
@@ -239,32 +252,26 @@ export async function sessionsVerb(argv: string[]): Promise<VerbResult> {
   const sub = argv[0];
   const rest = argv.slice(1);
   const env = process.env;
-  try {
-    switch (sub) {
-      case "list":
-        return sessionsList(rest);
-      case "archive":
-        return sessionsArchive(rest, env);
-      case "restore":
-        return sessionsRestore(rest);
-      case "index":
-        return sessionsIndex(rest);
-      case "prefs":
-        return sessionsPrefs(rest, env);
-      default:
-        return {
-          json: {
-            verb: "sessions",
-            error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
-            usage:
-              "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>]",
-          },
-          code: 64,
-        };
-    }
-  } catch (e) {
-    // node:sqlite unavailable (node < 22.5) or a DB-level fault: honest failure,
-    // never a crash — and never a silent fallthrough to the wrong answer.
-    return fail(`sessions ${sub} failed: ${e instanceof Error ? e.message : String(e)}`);
+  switch (sub) {
+    case "list":
+      return sessionsList(rest);
+    case "archive":
+      return sessionsArchive(rest, env);
+    case "restore":
+      return sessionsRestore(rest);
+    case "index":
+      return sessionsIndex(rest);
+    case "prefs":
+      return sessionsPrefs(rest, env);
+    default:
+      return {
+        json: {
+          verb: "sessions",
+          error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
+          usage:
+            "amico sessions list [--archived] [--limit <n>] [--cursor <c>] [--db <path>]  |  amico sessions archive [--days <n>] [--apply]  |  amico sessions restore <id>  |  amico sessions index [--out <path>]  |  amico sessions prefs [--days <n>]",
+        },
+        code: 64,
+      };
   }
 }
