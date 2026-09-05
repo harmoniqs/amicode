@@ -237,7 +237,13 @@ export function createAmicodeService(
     engine?: { password?: string; getUrl?: () => string | undefined };
   } = {},
 ): AmicodeServiceServer {
-  const server = new AmicodeServiceServer(opts);
+  const server = new AmicodeServiceServer({
+    password: opts.password,
+    // The engine mint arms accept-both auth even before the URL getter
+    // binds (the engine token is valid on /amicode/* from boot, not just
+    // once the upstream is reachable).
+    enginePassword: opts.engine?.password,
+  });
   if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
   if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));
   registerProfileRoutes(server);

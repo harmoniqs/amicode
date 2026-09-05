@@ -62,9 +62,17 @@ export class AmicodeServiceServer {
   private shelf?: AppShelf;
   private engineProxy?: EngineProxy;
   readonly password: string;
+  /** #822: the spawned engine's per-boot mint, accepted ALONGSIDE the
+   *  service's own — the framed app bootstraps with the ENGINE credential
+   *  (its auth machinery is the one that works against the engine today),
+   *  so every surface on this origin must take it with zero app-side
+   *  change. undefined = no engine bound (the proxy-less boots stay
+   *  single-mint, byte-compatible with the pre-#822 contract). */
+  private readonly enginePassword?: string;
 
-  constructor(opts: { password?: string } = {}) {
+  constructor(opts: { password?: string; enginePassword?: string } = {}) {
     this.password = opts.password ?? mintServerPassword();
+    this.enginePassword = opts.enginePassword;
   }
 
   get port(): number | undefined {
@@ -108,9 +116,17 @@ export class AmicodeServiceServer {
     // Decode the base64 credentials before comparing — the wire form is
     // base64("opencode:<password>"), the comparison form is the raw pair.
     const given = Buffer.from(header.slice(6).trim(), "base64");
-    const want = Buffer.from(`opencode:${this.password}`, "utf8");
-    if (given.length !== want.length) return false;
-    return timingSafeEqual(given, want);
+    // #822: accept BOTH mints — the service's own AND the engine's (the
+    // framed app bootstraps with the engine credential; the proxy forwards
+    // it unchanged, and the /amicode/* routes take it too so one credential
+    // works everywhere on this origin). Length checks before the constant-
+    // time compare, per credential, so a wrong-mint probe learns nothing.
+    for (const mint of [this.password, this.enginePassword]) {
+      if (mint === undefined) continue;
+      const want = Buffer.from(`opencode:${mint}`, "utf8");
+      if (given.length === want.length && timingSafeEqual(given, want)) return true;
+    }
+    return false;
   }
 
   private async readBody(req: http.IncomingMessage): Promise<string> {

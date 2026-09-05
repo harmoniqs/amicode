@@ -125,6 +125,36 @@ describe("amicode service — engine proxy (transparent passthrough to the spawn
     expect(hit!.headers["x-custom-probe"]).toBe("carried");
   });
 
+  it("the ENGINE token is accepted on an /amicode/* route (accept-both auth); an unknown token is still 401", async () => {
+    // The framed app bootstraps with the engine credential — the service's
+    // own /amicode/* route table must take it, not just the proxied paths.
+    const r = await fetch(base + "/amicode/profile", { headers: { Authorization: engineAuth } });
+    expect(r.status).toBe(200);
+    expect(((await r.json()) as { ok: boolean }).ok).toBe(true);
+    // The service's own mint keeps working everywhere (nothing was replaced).
+    const ownAuth = serverAuthHeader("service-own-mint");
+    const own = await fetch(base + "/amicode/profile", { headers: { Authorization: ownAuth } });
+    expect(own.status).toBe(200);
+    // A token that is NEITHER mint is rejected — accept-both is not accept-all.
+    const unknown = serverAuthHeader("not-any-mint");
+    const bad = await fetch(base + "/amicode/profile", { headers: { Authorization: unknown } });
+    expect(bad.status).toBe(401);
+  });
+
+  it("precedence: an exact /amicode/* route never reaches the proxy, and a static shelf hit never reaches the proxy", async () => {
+    // /amicode/* is the service's OWN namespace — the mock engine must never
+    // see it (a proxied /amicode/* would launder our route table upstream).
+    const route = await fetch(base + "/amicode/profile", { headers: { Authorization: engineAuth } });
+    expect(route.status).toBe(200);
+    expect(engine.hits.some((h) => h.url.startsWith("/amicode")), "no /amicode/* hit may reach the engine").toBe(false);
+    // A static asset is served by the shelf — the engine never sees it.
+    const asset = await fetch(base + "/assets/app.js", { headers: { Authorization: engineAuth } });
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-type")).toContain("text/javascript");
+    expect(await asset.text()).toContain("console.log");
+    expect(engine.hits.some((h) => h.url.startsWith("/assets")), "no /assets hit may reach the engine").toBe(false);
+  });
+
   it("SSE (/event) streams UNBUFFERED through the proxy (chunks arrive as the engine sends them)", async () => {
     const r = await fetch(base + "/event", { headers: { Authorization: engineAuth } });
     expect(r.status).toBe(200);
