@@ -1,0 +1,53 @@
+# The autodev mode bundle manifest — ONE unit (spec-20260905-063000 D1): the
+# card, the gate pack, the role cards the mode dispatches, the protocol skills
+# it binds, the handoff seed it receives, the schema version, and the
+# per-consumer minimum-version map. ONE shared validator (packages/schema,
+# mode_registry) enforces this against the pack schema and the declared set;
+# the vitest suite and the amico-run doctor probe import the same code.
+#
+# Slice 1 (#804): role cards stay where they ship today (packages/extension/
+# agents/) and are DECLARED here by path; slice 2 (D3) re-homes their content
+# into the bundle. Legacy card staging (mode_cards.ts, always-copy from
+# agents/) remains AUTHORITATIVE until the bundle is complete — this manifest
+# binds, it does not yet source.
+schema_version = "1"
+mode = "autodev"
+card = "card.md"
+pack = "pack.toml"
+
+# Declared roles — the pack's implement phase casts the implementer, exactly
+# one. Declared-set rule: the bundle may ship fewer roles/skills only by
+# EXPLICIT declaration here; a declared role that does not resolve is a
+# validation failure, never a silent skip.
+protocol_skills = [
+  "director-core",
+  "develop",
+  "implement-issue",
+  "write-an-issue",
+  "break-into-subissues",
+]
+
+[[roles]]
+name = "implementer"
+path = "../../agents/implementer.md"
+
+# The mode's protocol skills (the binding surface; the skill moves land in
+# slice 3, D2).
+
+# The handoff seed this mode RECEIVES: research closes with an issue seed and
+# hands it to autodev (D6). kind → receiving mode is registry data, checked
+# structurally by the registry-level validator: every pack handoff targeting
+# this mode must emit the kind this manifest declares.
+[[handoff_seeds]]
+kind = "issue_seed"
+schema = "../../handoff-seeds/issue-seed.schema.json"
+
+# Per-consumer minimum-version map: one floor cannot govern four consumer
+# kinds. A consumer whose supported version is below its floor fails LOUDLY
+# (a named failed outcome); a plugin-side gap renders the explicit
+# unresolvable block, never silence.
+[consumer_floors]
+doctor = "1"
+plugin = "1"
+stager = "1"
+tests = "1"

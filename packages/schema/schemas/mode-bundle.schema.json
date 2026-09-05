@@ -1,0 +1,120 @@
+{
+  "$id": "https://harmoniqs.github.io/amicode/schemas/mode-bundle.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The director-mode bundle manifest (mode.toml, spec-20260905-063000 D1): ONE unit binding the agent card, the gate pack, the declared role cards, the protocol skills, the received handoff seed, the schema version, and the per-consumer minimum-version map. Declared-set rule: a bundle ships fewer roles/skills only by explicit declaration here; a declared component that does not resolve fails validation in BOTH the vitest suite and the doctor probe (one shared validator).",
+  "properties": {
+    "card": {
+      "const": "card.md",
+      "description": "The bundle's agent card file, byte-identical to the legacy agents/ card it mirrors until slice 2 (D3) flips the source."
+    },
+    "consumer_floors": {
+      "additionalProperties": false,
+      "description": "Per-consumer minimum-version map — one floor cannot govern four consumer kinds. A consumer below its floor fails loudly; a plugin-side gap renders the explicit unresolvable block, never silence.",
+      "properties": {
+        "doctor": {
+          "type": "string"
+        },
+        "plugin": {
+          "type": "string"
+        },
+        "stager": {
+          "type": "string"
+        },
+        "tests": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "doctor",
+        "plugin",
+        "stager",
+        "tests"
+      ],
+      "type": "object"
+    },
+    "handoff_seeds": {
+      "description": "The handoff seeds this mode RECEIVES (D6). kind → receiving mode is registry data; the registry-level validator checks every pack handoff targeting this mode emits the kind declared here.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "issue_seed",
+              "hypothesis_seed"
+            ]
+          },
+          "schema": {
+            "description": "Path (relative to the bundle dir) of the seed's committed JSON Schema.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "schema"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "mode": {
+      "description": "The mode's slug; the bundle directory must be named the same.",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "type": "string"
+    },
+    "pack": {
+      "const": "pack.toml",
+      "description": "The mode's gate pack — schema'd, descriptive data (runtime reads expected; cast-time enforcement is out of scope)."
+    },
+    "protocol_skills": {
+      "description": "The mode's protocol skill names (the binding surface).",
+      "items": {
+        "minLength": 1,
+        "type": "string"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "roles": {
+      "description": "Declared roles — every role the pack casts, each naming its card file. A declared role that does not resolve under the extension root fails validation.",
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          },
+          "path": {
+            "description": "Path (relative to the bundle dir) of the role card. Must resolve under the extension root.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema_version": {
+      "enum": [
+        "1"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "mode",
+    "card",
+    "pack",
+    "roles",
+    "protocol_skills",
+    "handoff_seeds",
+    "consumer_floors"
+  ],
+  "title": "mode bundle manifest (mode.toml)",
+  "type": "object"
+}

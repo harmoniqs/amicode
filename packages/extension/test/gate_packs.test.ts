@@ -3,16 +3,24 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
+import { validateGatePack } from "@amicode/schema";
 
 // Gate-pack fixtures of record: the research pack (extracted from the live
 // director research protocol) and the dev pack (extracted from the issue-DAG
 // walk). This suite IS the spec's gate_pack_mapping_complete criterion:
 // pack schema, forward + reverse mapping completeness, non-triviality
 // floors, distinctness, and faithfulness of the extraction.
+//
+// #804 re-home: the packs live in their mode bundles — modes/autodev/pack.toml
+// and modes/autoresearch/pack.toml — same tests, new home. The structural
+// schema checks now run through the shared validator (validateGatePack), the
+// same code the amico-run doctor probe imports; the fixture-content floors
+// stay here.
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, "..");
-const PACK_DIR = path.join(EXT, "gate-packs");
+const MODES_DIR = path.join(EXT, "modes");
+const PACK_DIR = MODES_DIR; // each bundle's pack.toml — the registry layout
 
 const GATE_KINDS = ["mechanical", "human", "derived"] as const;
 const HANDOFF_KINDS = ["issue_seed", "hypothesis_seed"] as const;
@@ -46,8 +54,8 @@ function loadPack(file: string): Pack {
   return parse(fs.readFileSync(path.join(PACK_DIR, file), "utf8")) as unknown as Pack;
 }
 
-const research = loadPack("research.toml");
-const dev = loadPack("dev.toml");
+const research = loadPack(path.join("autoresearch", "pack.toml"));
+const dev = loadPack(path.join("autodev", "pack.toml"));
 const PACKS: Array<[string, Pack]> = [
   ["research", research],
   ["dev", dev],
@@ -85,8 +93,21 @@ function gateByName(pack: Pack, name: string): Gate {
 }
 
 describe("gate-pack fixtures of record", () => {
-  it("the pack directory holds exactly the research and dev fixtures", () => {
-    expect(fs.readdirSync(PACK_DIR).sort()).toEqual(["dev.toml", "research.toml"]);
+  it("the packs live inside their mode bundles (the registry re-home, #804) — no stray gate-packs dir", () => {
+    // the registry layout: one bundle per director mode, pack.toml inside
+    expect(fs.readdirSync(MODES_DIR).sort()).toEqual(["autodev", "autoresearch", "release-index.toml"]);
+    expect(fs.existsSync(path.join(EXT, "gate-packs"))).toBe(false);
+    for (const [name, mode] of [["dev", "autodev"], ["research", "autoresearch"]] as const) {
+      expect(fs.existsSync(path.join(MODES_DIR, mode, "pack.toml")), `${name} pack in its bundle`).toBe(true);
+    }
+  });
+
+  it("both packs pass the SHARED validator's gate-pack schema (one code path with the doctor)", () => {
+    for (const mode of ["autodev", "autoresearch"]) {
+      const v = validateGatePack(fs.readFileSync(path.join(MODES_DIR, mode, "pack.toml"), "utf8"));
+      expect(v.errors, `${mode}: ${v.errors.join("; ")}`).toEqual([]);
+      expect(v.ok).toBe(true);
+    }
   });
 });
 

@@ -1,0 +1,24 @@
+# The release index — the doctor's remote-compare authority (spec
+# 20260905-063000 D1): the vsix-tag → registry-revision mapping. NEVER origin
+# HEAD: `current to vX` means the release the machine's BUILD corresponds to;
+# a machine whose revision is below the newest release's renders
+# `current to vX, stale to release vY`, never plain current.
+#
+# registry_revision = 0 marks a PRE-REGISTRY release — it shipped no mode
+# registry; a machine on it reads stale-to-release, never current. The
+# registry itself is born at revision 1 with this slice; the NEXT release
+# tag that ships it carries revision 1, and every later registry change bumps
+# the revision with its release entry.
+#
+# Maintained at release time: cut a vsix tag → append its entry here (same
+# PR or the release notes) with the registry revision it ships.
+schema_version = "1"
+
+# Pre-registry releases (the registry did not exist at these tags).
+[[releases]]
+vsix_tag = "v0.3.1"
+registry_revision = 0
+
+[[releases]]
+vsix_tag = "v0.3.2"
+registry_revision = 0
