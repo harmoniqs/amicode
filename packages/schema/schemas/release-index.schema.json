@@ -1,0 +1,43 @@
+{
+  "$id": "https://harmoniqs.github.io/amicode/schemas/release-index.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The mode-registry release index (spec-20260905-063000 D1): the vsix-tag → registry-revision mapping — the doctor's remote-compare authority, never origin HEAD. `current to vX` means the release the machine's build corresponds to; a machine whose revision is below the newest release's renders `current to vX, stale to release vY`. registry_revision = 0 marks a pre-registry release.",
+  "properties": {
+    "releases": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "registry_revision": {
+            "description": "The mode-registry revision this release ships; 0 = the release predates the registry.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "vsix_tag": {
+            "description": "The release tag (clean vX.Y.Z or internal vX.Y.Z-alpha.N).",
+            "pattern": "^v\\d+\\.\\d+\\.\\d+(-alpha\\.\\d+)?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vsix_tag",
+          "registry_revision"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "schema_version": {
+      "enum": [
+        "1"
+      ]
+    }
+  },
+  "required": [
+    "schema_version",
+    "releases"
+  ],
+  "title": "mode-registry release index (release-index.toml)",
+  "type": "object"
+}

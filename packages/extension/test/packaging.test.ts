@@ -58,6 +58,17 @@ const REQUIRED = [
   "extension/scores/memory/free-phase-objective-only.md",
   "extension/scores/entitlements.toml", // entitlement registry — gating breaks silently without it
   "extension/skills/amico-vault/SKILL.md", // the in-repo public skill library (post-amico-plugin) — a dropped skills/ = zero library skills for a Marketplace user
+  // #804 — the mode registry: the bundles the activation stager deploys and
+  // the doctor probes ship in the vsix; a dropped modes/ = zero staged
+  // bundles on every Marketplace machine (packaging.test runs on the built
+  // vsix — the pin fires in the package gate).
+  "extension/modes/autodev/mode.toml",
+  "extension/modes/autodev/pack.toml",
+  "extension/modes/autodev/card.md",
+  "extension/modes/autoresearch/mode.toml",
+  "extension/modes/autoresearch/pack.toml",
+  "extension/modes/autoresearch/card.md",
+  "extension/modes/release-index.toml",
   // amicode_* plugin (Bun-transpiled .ts, loaded by absolute path) — every sibling
   // is load-bearing: a dropped file silently reverts the session to vanilla opencode.
   "extension/opencode-plugin/amicode_tools.ts",

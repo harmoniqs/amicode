@@ -134,6 +134,40 @@ describe("upgrade agents — idempotence (the AC fixture)", () => {
   });
 });
 
+describe("upgrade agents — mode-bundle convergence (#804)", () => {
+  test("a tampered deployed bundle component → pre-flight stale (component named) → verb converges BOTH roots → post current", async () => {
+    const w = buildDoctorWorld();
+    mkdirSync(join(w.repoAmicode, "scripts"), { recursive: true });
+    copyFileSync(REAL_SCRIPT, join(w.repoAmicode, "scripts", "deploy-agents.mjs"));
+    // stage stale: tamper the GLOBAL deployed bundle pack (component drift —
+    // the doctor names the component; the card digests alone stay clean)
+    writeFileSync(join(w.config, "modes", "autodev", "pack.toml"), "# TAMPERED PACK\n");
+
+    const pre = await surfaceInventory(ctxForWorld(w));
+    const preGlobal = pre.surfaces.find((r) => r.surface === "agent-cards-global")!;
+    expect(preGlobal.verdict).toBe("stale");
+    const named = (preGlobal.components ?? []).find(
+      (c) => c.mode === "autodev" && c.component === "pack.toml",
+    );
+    expect(named, "the offending component is named in the pre-flight record").toBeDefined();
+
+    const r = await upgradeVerb(verbArgs(w, ["--root-receipts", receiptsDir(w)]));
+    expect(r.code).toBe(0);
+    expect((r.json as Record<string, unknown>).outcome).toBe("upgraded");
+    expect((r.json as Record<string, unknown>).verification).toBe(true);
+    // the tampered component was repaired from the registry source
+    expect(readFileSync(join(w.config, "modes", "autodev", "pack.toml"), "utf8")).toBe(
+      readFileSync(join(w.repoAmicode, "packages", "extension", "modes", "autodev", "pack.toml"), "utf8"),
+    );
+    // an independent doctor re-run agrees: both records current
+    const independent = await surfaceInventory(ctxForWorld(w));
+    for (const name of ["agent-cards-global", "agent-cards-staging"]) {
+      expect(bySurface(independent.surfaces, name).verdict).toBe("current");
+    }
+    cleanup();
+  });
+});
+
 describe("upgrade agents — pre-flight gates + aborts", () => {
   test("both deployments current → no-op, deploy script NOT run (receipt untouched)", async () => {
     const w = stageAgentsWorld();

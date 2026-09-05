@@ -6,6 +6,7 @@ import { createHash } from "node:crypto";
 import { parse } from "smol-toml";
 import type { SurfaceContext } from "../src/surfaces.js";
 import { realExec } from "../src/surfaces.js";
+import { generateLedgerDiscoveryRegion, stageModeBundles } from "@amicode/schema";
 
 export function tmpRoot(): string {
   return mkdtempSync(join(tmpdir(), "amico-run-test-"));
@@ -113,12 +114,174 @@ export interface DoctorWorldOpts {
   frozenVersion?: string;
   /** running-process stub; undefined = byte-copy of frozen; null = no process */
   runningVersion?: string | null;
+  /** #804: build the machine as PRE-REGISTRY — its release (v0.2.4) predates
+   *  the mode registry (revision 0), the repo carries a second commit + tag
+   *  (v0.2.6, revision 1), and no bundles deploy. The doctor must surface it
+   *  as stale-to-release, never current. */
+  preRegistryMachine?: boolean;
 }
 
 /** The vendored-binary platform dir, derived from the LIVE platform — the
  *  default SurfaceContext resolves the same way, so the CLI-level tests are
  *  runner-portable (darwin-arm64 here, linux-x64 on CI). */
 export const LIVE_PLATFORM = `${process.platform}-${process.arch}`;
+
+// ── #804: the mode-registry fixture — a hermetic registry that is VALID
+// against the shared validator (the stager refuses an invalid source, and the
+// world builder stages the deployed bundles through the REAL stager, so the
+// fixture must parse + validate + carry a proper generated region). The
+// machine's release tag carries this registry; the doctor's bundle probes
+// compare deployed bytes against the TAG's bytes (never origin HEAD).
+function writeModeRegistryFixture(
+  extRoot: string,
+  releases: Array<{ vsix_tag: string; registry_revision: number }>,
+): void {
+  const modes = join(extRoot, "modes");
+  // handoff-seed schemas the manifests declare (tiny but present + JSON)
+  const seeds = join(extRoot, "handoff-seeds");
+  mkdirSync(seeds, { recursive: true });
+  for (const s of ["issue-seed.schema.json", "hypothesis-seed.schema.json"]) {
+    writeFileSync(join(seeds, s), JSON.stringify({ $schema: "http://json-schema.org/draft-07/schema#", type: "object" }, null, 2) + "\n");
+  }
+  const card = (mode: string): string =>
+    [
+      "---",
+      "description: fixture director card",
+      "mode: primary",
+      "---",
+      "",
+      `# Fixture ${mode} director`,
+      "",
+      "## The spine",
+      "",
+      "<!-- DIRECTOR-SPINE v1 START -->",
+      "Any campaign is one loop: plan, dispatch through gates, analyze, record.",
+      generateLedgerDiscoveryRegion(),
+      "<!-- DIRECTOR-SPINE v1 END -->",
+      "",
+    ].join("\n");
+  const bundle = (mode: string, roles: string[], pack: string, seed: string): void => {
+    const dir = join(modes, mode);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "card.md"), card(mode));
+    writeFileSync(join(dir, "pack.toml"), pack);
+    const roleLines = roles.map((r) => `\n[[roles]]\nname = "${r}"\npath = "../../agents/${r}.md"\n`).join("");
+    writeFileSync(
+      join(dir, "mode.toml"),
+      [
+        `schema_version = "1"`,
+        `mode = "${mode}"`,
+        'card = "card.md"',
+        'pack = "pack.toml"',
+        'protocol_skills = ["director-core"]',
+        roleLines.trimEnd(),
+        "",
+        "[[handoff_seeds]]",
+        `kind = "${seed === "issue" ? "issue_seed" : "hypothesis_seed"}"`,
+        `schema = "../../handoff-seeds/${seed === "issue" ? "issue" : "hypothesis"}-seed.schema.json"`,
+        "",
+        "[consumer_floors]",
+        'doctor = "1"',
+        'plugin = "1"',
+        'stager = "1"',
+        'tests = "1"',
+        "",
+      ].join("\n"),
+    );
+  };
+  bundle(
+    "autodev",
+    ["implementer"],
+    [
+      'closing_artifact = "landed-delta record"',
+      "",
+      "[[phases]]",
+      'name = "decompose"',
+      "",
+      "  [[phases.gates]]",
+      '  name = "dev-gate"',
+      '  kind = "mechanical"',
+      '  owner = "director"',
+      '  procedure = "Attach every unit of package work to an issue and a PR before any file is modified."',
+      "",
+      "[[phases]]",
+      'name = "implement"',
+      'roles = ["implementer"]',
+      "",
+      "  [[phases.gates]]",
+      '  name = "tdd-red-green"',
+      '  kind = "mechanical"',
+      '  owner = "implementer"',
+      '  procedure = "Drive each acceptance criterion red-then-green; never delete tests to force green."',
+      "",
+      "[[phases]]",
+      'name = "integrate"',
+      "",
+      "  [[phases.gates]]",
+      '  name = "draft-pr-lifecycle"',
+      '  kind = "derived"',
+      '  owner = "director"',
+      '  procedure = "Draft at first commit, ready only when green; never merge non-green work."',
+      "",
+      "[[handoffs]]",
+      'kind = "hypothesis_seed"',
+      'target = "autoresearch"',
+      "",
+    ].join("\n"),
+    "issue",
+  );
+  bundle(
+    "autoresearch",
+    ["hypothesizer", "experimenter", "analyzer"],
+    [
+      'closing_artifact = "experiment note + ledger delta"',
+      "",
+      "[[phases]]",
+      'name = "hypothesize"',
+      'roles = ["hypothesizer"]',
+      "",
+      "  [[phases.gates]]",
+      '  name = "ledger-currency"',
+      '  kind = "derived"',
+      '  owner = "director"',
+      '  procedure = "Re-read the session ledger from disk before trusting the hypothesis queue."',
+      "",
+      "[[phases]]",
+      'name = "experiment"',
+      'roles = ["experimenter"]',
+      "",
+      "  [[phases.gates]]",
+      '  name = "run-gates"',
+      '  kind = "mechanical"',
+      '  owner = "director"',
+      '  procedure = "Run the gates through the shell; verdicts derive from command output, never self-reported."',
+      "",
+      "[[phases]]",
+      'name = "analyze"',
+      'roles = ["analyzer"]',
+      "",
+      "  [[phases.gates]]",
+      '  name = "catalog-promotion"',
+      '  kind = "human"',
+      '  owner = "human"',
+      '  procedure = "Promotion to catalog is human-only, always."',
+      "",
+      "[[handoffs]]",
+      'kind = "issue_seed"',
+      'target = "autodev"',
+      "",
+    ].join("\n"),
+    "hypothesis",
+  );
+  writeFileSync(
+    join(modes, "release-index.toml"),
+    [
+      'schema_version = "1"',
+      "",
+      ...releases.flatMap((r) => ["[[releases]]", `vsix_tag = "${r.vsix_tag}"`, `registry_revision = ${r.registry_revision}`, ""]),
+    ].join("\n"),
+  );
+}
 
 /** The canonical CURRENT doctor-v2 world: every surface at its source of truth. */
 export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
@@ -216,11 +379,43 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
     ) + "\n",
   );
   fixtureGit(repoAmicode, ["init", "-b", "main"]);
+  // #804: the mode registry rides the fixture repo. A PRE-REGISTRY machine's
+  // release tag (v0.2.4) predates the registry — commit 1 carries no modes/,
+  // then the registry lands in commit 2 (tagged v0.2.6, revision 1) so the
+  // release index can map the old release to revision 0.
+  const extRoot = join(repoAmicode, "packages", "extension");
+  if (!opts.preRegistryMachine) {
+    writeModeRegistryFixture(extRoot, [{ vsix_tag: "v0.2.6", registry_revision: 1 }]);
+  }
   fixtureGit(repoAmicode, ["add", "-A"]);
   fixtureGit(repoAmicode, ["commit", "-m", "amicode fixture"]);
+  if (opts.preRegistryMachine) {
+    fixtureGit(repoAmicode, ["tag", "v0.2.4"]);
+    writeModeRegistryFixture(extRoot, [
+      { vsix_tag: "v0.2.4", registry_revision: 0 },
+      { vsix_tag: "v0.2.6", registry_revision: 1 },
+    ]);
+    fixtureGit(repoAmicode, ["add", "-A"]);
+    fixtureGit(repoAmicode, ["commit", "-m", "mode registry fixture"]);
+    fixtureGit(repoAmicode, ["tag", "v0.2.6"]);
+    // the pre-registry machine runs the OLD release: no 0.2.6 install at all
+    rmSync(join(vscext, "harmoniqs.amicode-0.2.6"), { recursive: true, force: true });
+  } else {
+    fixtureGit(repoAmicode, ["tag", "v0.2.6"]);
+  }
   execFileSync("git", ["init", "--bare", "-b", "main", remoteAmicode]);
   fixtureGit(repoAmicode, ["remote", "add", "origin", remoteAmicode]);
   fixtureGit(repoAmicode, ["push", "-u", "origin", "main"]);
+  fixtureGit(repoAmicode, ["push", "origin", "--tags"]);
+
+  // #804: the deployed mode bundles, staged through the REAL stager (valid
+  // source ⇒ staged with receipt, no lock left behind) into BOTH deployed
+  // roots — exactly what an activation or `amico upgrade agents` leaves. A
+  // pre-registry machine's old build has no stager: nothing deploys.
+  if (!opts.preRegistryMachine) {
+    stageModeBundles(extRoot, config);
+    stageModeBundles(extRoot, join(staging, ".opencode"));
+  }
 
   // ── fork repo (git fixture): branch local/amicode, release tag on tip ──
   mkdirSync(repoFork, { recursive: true });
@@ -290,5 +485,31 @@ export function addReleaseTagOnRemote(bare: string, tag: string): void {
   withBareClone(bare, "local/amicode", (clone) => {
     fixtureGit(clone, ["tag", tag]);
     fixtureGit(clone, ["push", "origin", tag]);
+  });
+}
+
+/** #804: cut a NEWER amicode release on the remote — a registry content bump
+ *  (a pack gate procedure gains a sentence) + an index entry mapping the new
+ *  tag to a higher registry revision + the extension version bump. The
+ *  fixture checkout learns of it ONLY through the doctor's fetch; a machine a
+ *  release behind must read `current to vX, stale to release vY`. */
+export function advanceRegistryOnRemote(bare: string, newTag: string, newRevision: number): void {
+  withBareClone(bare, "main", (clone) => {
+    const base = newTag.replace(/^v/, "");
+    writeFileSync(
+      join(clone, "packages", "extension", "package.json"),
+      JSON.stringify({ name: "amicode", version: base }, null, 2) + "\n",
+    );
+    const pack = join(clone, "packages", "extension", "modes", "autodev", "pack.toml");
+    writeFileSync(pack, readFileSync(pack, "utf8").replace("never delete tests to force green.", "never delete tests to force green. Bumped registry content."));
+    const index = join(clone, "packages", "extension", "modes", "release-index.toml");
+    writeFileSync(
+      index,
+      readFileSync(index, "utf8").trimEnd() + `\n\n[[releases]]\nvsix_tag = "${newTag}"\nregistry_revision = ${newRevision}\n`,
+    );
+    fixtureGit(clone, ["add", "-A"]);
+    fixtureGit(clone, ["commit", "-m", `release ${newTag} (registry revision ${newRevision})`]);
+    fixtureGit(clone, ["tag", newTag]);
+    fixtureGit(clone, ["push", "origin", newTag]);
   });
 }

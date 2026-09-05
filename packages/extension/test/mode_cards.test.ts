@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { classifyLedgerDiscoveryRegion, generateLedgerDiscoveryRegion } from "@amicode/schema";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.join(HERE, "..");
@@ -173,6 +174,21 @@ describe("mode cards — ledger discovery rule (correctness by containment)", ()
   it("the spine contains the canonical discovery-rule block verbatim", () => {
     const rule = discoveryRuleFrom(fixtureSkill);
     expect(spine).toContain(rule);
+  });
+
+  it("the discovery rule sits inside the delimited, generator-stamped generated region (AC8, #804)", () => {
+    // the region is emitted from the registry (one generator, one canonical
+    // body) — the delimited form carries the generator's version stamp
+    // inside the artifact, and the hand-edit ban is enforced by the shared
+    // validator's regenerate-and-compare (mode_registry.test.ts)
+    for (const name of CARDS) {
+      const text = cardText(name);
+      const c = classifyLedgerDiscoveryRegion(text);
+      expect(c.status, `${name}: ${c.detail}`).toBe("ok");
+      // the region lives INSIDE the director spine (the spine stays the
+      // parity-checked carrier; the generated region rides within it)
+      expect(spineOf(text).spine).toContain(generateLedgerDiscoveryRegion());
+    }
   });
 
   it("the committed fixture is the live armonissima director core when the mount is present", () => {

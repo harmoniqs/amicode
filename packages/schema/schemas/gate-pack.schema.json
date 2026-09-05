@@ -1,0 +1,105 @@
+{
+  "$id": "https://harmoniqs.github.io/amicode/schemas/gate-pack.schema.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "additionalProperties": false,
+  "description": "The director-mode gate pack (pack.toml, spec-20260905-063000 D1): descriptive, schema'd data — the phase graph with its gates, roles, closing artifact, and handoffs. Runtime reads are expected (the doctor, the mode block); cast-time enforcement by the runner is out of scope. The pack carries NO schema_version of its own: the bundle manifest (mode-bundle.schema.json) governs the unit's version.",
+  "properties": {
+    "closing_artifact": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "handoffs": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "issue_seed",
+              "hypothesis_seed"
+            ]
+          },
+          "target": {
+            "description": "The receiving mode's slug; the registry-level validator checks it is a registry mode that declares the kind.",
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "target"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    },
+    "phases": {
+      "items": {
+        "additionalProperties": false,
+        "properties": {
+          "gates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "enum": [
+                    "mechanical",
+                    "human",
+                    "derived"
+                  ]
+                },
+                "name": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "owner": {
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "procedure": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "kind",
+                "owner",
+                "procedure"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "roles": {
+            "items": {
+              "pattern": "^[a-z][a-z0-9-]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "name",
+          "gates"
+        ],
+        "type": "object"
+      },
+      "minItems": 1,
+      "type": "array"
+    }
+  },
+  "required": [
+    "closing_artifact",
+    "phases",
+    "handoffs"
+  ],
+  "title": "director-mode gate pack (pack.toml)",
+  "type": "object"
+}

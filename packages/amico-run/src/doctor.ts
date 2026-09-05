@@ -129,7 +129,7 @@ export async function doctorReport(
     const message = `doctor: ${parsed.message}`;
     return {
       diagnosis: { ok: false, errors: [message], warnings: [], checks: [] },
-      surfaces: { surfaces: [] },
+      surfaces: { schema_version: "2", surfaces: [] },
       rendered: message,
       json: null,
       exit: 64,
@@ -161,9 +161,11 @@ export async function doctorReport(
     ? `studio binding healthy${diagnosis.warnings.length ? ` (${diagnosis.warnings.length} warning${diagnosis.warnings.length > 1 ? "s" : ""})` : ""}`
     : `studio binding has ${diagnosis.errors.length} error${diagnosis.errors.length > 1 ? "s" : ""}`;
   const rendered = `${summary}\n${lines.join("\n")}\n\n${renderSurfacesTable(surfaces.surfaces)}`;
-  // the machine contract (panel + watchdog): canonical JSON, surfaces only —
-  // deep-sorted keys, 2-space indent, trailing newline (the vault-card form)
-  const json = parsed.args.json ? canonicalJson({ surfaces: surfaces.surfaces }) : null;
+  // the machine contract (panel + watchdog): canonical JSON, schema-stamped —
+  // deep-sorted keys, 2-space indent, trailing newline (the vault-card form).
+  // #804: schema v2 — the top-level schema_version rides every report; the
+  // consumers (fleet watchdog, settings panel) are tolerate-then-warn.
+  const json = parsed.args.json ? canonicalJson(surfaces) : null;
   return {
     diagnosis,
     surfaces,

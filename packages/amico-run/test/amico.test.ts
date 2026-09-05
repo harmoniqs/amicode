@@ -291,9 +291,17 @@ describe("amico router — doctor v2 (surface inventory, #525)", () => {
     expect(report.surfaces).toHaveLength(6);
     expect(report.surfaces.every((s: { verdict: string }) => s.verdict === "current")).toBe(true);
     expect(validateDoctorReport(report).ok).toBe(true);
-    // canonical form: 2-space indent + trailing newline
+    // canonical form: 2-space indent + trailing newline; #804 schema v2 —
+    // every report is schema-stamped (sorted keys put it first)
     expect(r.stdout.endsWith("\n")).toBe(true);
-    expect(r.stdout.split("\n")[1]).toBe('  "surfaces": [');
+    expect(r.stdout.split("\n")[1]).toBe('  "schema_version": "2",');
+    expect(r.stdout.split("\n")[2]).toBe('  "surfaces": [');
+    // the agent-cards records carry component verdicts (extended, not minted)
+    const cards = report.surfaces.filter((s: { surface: string }) => s.surface.startsWith("agent-cards"));
+    expect(cards.length).toBe(2);
+    for (const c of cards) {
+      expect(c.components.length, "component verdicts ride the agent-cards records").toBeGreaterThan(0);
+    }
     cleanupTracked();
   });
 

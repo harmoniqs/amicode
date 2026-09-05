@@ -20,6 +20,8 @@ import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { parseReleaseIndex, compareReleaseToIndex, type ReleaseIndex } from "@amicode/schema";
+import { probeModeRegistry, machineReleaseTag, type ModeComponentRecord, type ModeProbeState } from "./mode_probe.js";
 
 export type Verdict = "current" | "stale" | "integrity-failure" | "unknown";
 
@@ -43,9 +45,17 @@ export interface SurfaceRecord {
   verdict: Verdict;
   /** digests, version strings, reason codes — at least one line, always */
   evidence: string[];
+  /** #804: component-level verdicts riding the agent-cards records (the
+   *  doctor extends, never mints): per-mode bundle components judged against
+   *  the machine's release tag + registry-level rows (release-compare,
+   *  staging-lock, deploy-receipt). Absent on the other surfaces. */
+  components?: ModeComponentRecord[];
 }
 
 export interface SurfacesReport {
+  /** The report contract's version (#804 schema v2) — every report is
+   *  stamped; consumers are tolerate-then-warn across the bump. */
+  schema_version: "2";
   surfaces: SurfaceRecord[];
 }
 
@@ -511,6 +521,7 @@ async function probeAgentCards(
   ctx: SurfaceContext,
   deployedDir: string,
   surface: "agent-cards-global" | "agent-cards-staging",
+  modeProbe?: { state: ModeProbeState; deployedModesDir: string },
 ): Promise<SurfaceRecord> {
   const srcDir = join(ctx.rootRepoAmicode, "packages", "extension", "agents");
   const sourceCards = (await listFiles(srcDir)).filter((f) => f.endsWith(".md"));
@@ -579,13 +590,30 @@ async function probeAgentCards(
   if (receiptMismatches.length > 0) {
     return { surface, version: `sha256:${deployedSet}`, source_version: `sha256:${sourceSet}`, verdict: "stale", evidence: [...receiptMismatches, `all cards byte-match sources, but the receipt records different sources`] };
   }
-  return {
+  const record: SurfaceRecord = {
     surface,
     version: `sha256:${deployedSet}`,
     source_version: `sha256:${sourceSet}`,
     verdict: "current",
     evidence: [`all ${sourceDigests.size} cards byte-match sources (${deployedDir})`, `deploy receipt source digests match current sources`, `set digest sha256:${deployedSet}`],
   };
+  // #804 — the mode-bundle component probe EXTENDS this record: the deployed
+  // bundles are judged against the machine's RELEASE TAG (never this
+  // checkout, never origin HEAD), the release compare against the fetched
+  // index. Component verdicts only ever constrain the record DOWNWARD
+  // (current → unknown/stale); a record already stale/integrity-failed on
+  // card digests keeps its stronger local fact.
+  if (modeProbe !== undefined) {
+    const probe = await probeModeRegistry(modeProbe.state, modeProbe.deployedModesDir);
+    record.components = probe.components;
+    record.evidence.push(...probe.evidence);
+    if (probe.recordVerdict === "unknown") {
+      if (record.verdict === "current") record.verdict = "unknown";
+    } else if (probe.recordVerdict === "stale") {
+      if (record.verdict === "current" || record.verdict === "unknown") record.verdict = "stale";
+    }
+  }
+  return record;
 }
 
 // ── the inventory ────────────────────────────────────────────────────────────
@@ -601,17 +629,52 @@ async function guarded(name: SurfaceName, fn: () => Promise<SurfaceRecord>): Pro
 
 export async function surfaceInventory(partial: Partial<SurfaceContext> = {}): Promise<SurfacesReport> {
   const ctx: SurfaceContext = { ...defaultSurfaceContext(), ...partial };
-  // source-of-truth refresh: one fetch per source repo, shared by its probes
+  // source-of-truth refresh: one fetch per source repo, shared by its probes.
+  // #804: the amicode fetch now carries TAGS — the mode-registry byte
+  // authority is the machine's RELEASE TAG (never origin HEAD), and the
+  // release index is read at origin/main.
   const forkFetch = await fetchOrigin(ctx.run, ctx.rootRepoFork, true); // tags: release tags
-  const amicodeFetch = await fetchOrigin(ctx.run, ctx.rootRepoAmicode, false);
+  const amicodeFetch = await fetchOrigin(ctx.run, ctx.rootRepoAmicode, true);
   const surfaces: SurfaceRecord[] = [];
   surfaces.push(await guarded("server-binary", () => probeServerBinary(ctx, forkFetch)));
   surfaces.push(await guarded("extension", () => probeExtension(ctx, amicodeFetch)));
   surfaces.push(await guarded("vendored-binary", () => probeVendoredBinary(ctx, forkFetch)));
   surfaces.push(await guarded("staged-skills", () => probeStagedSkills(ctx)));
-  surfaces.push(await guarded("agent-cards-global", () => probeAgentCards(ctx, join(ctx.rootConfig, "agents"), "agent-cards-global")));
-  surfaces.push(await guarded("agent-cards-staging", () => probeAgentCards(ctx, join(ctx.rootStaging, ".opencode", "agents"), "agent-cards-staging")));
-  return { surfaces };
+
+  // #804: the mode-registry probe state, resolved ONCE and shared by both
+  // agent-cards records — the machine's release tag (from its newest
+  // installed extension dir) and the fetched release index. A fetch failure
+  // or an unreadable index is a NAMED unknown, never a verdict.
+  const newest = await newestExtensionDir(ctx.rootVscext);
+  const installedVersion = newest?.version ?? null;
+  const machineTag = machineReleaseTag(installedVersion);
+  let release: ModeProbeState["release"];
+  if (!amicodeFetch.ok) {
+    release = { status: "unknown", render: `amicode fetch failed — release index not refreshable: ${amicodeFetch.error}` };
+  } else {
+    const raw = await gitOutput(ctx.run, ctx.rootRepoAmicode, ["show", "origin/main:packages/extension/modes/release-index.toml"]);
+    if (raw === null) {
+      release = { status: "unknown", render: "no release index at origin/main (packages/extension/modes/release-index.toml) — registry revision unknown" };
+    } else {
+      try {
+        const index: ReleaseIndex = parseReleaseIndex(raw);
+        release = compareReleaseToIndex(installedVersion ?? "", index);
+      } catch (e) {
+        release = { status: "unknown", render: `release index unparseable — registry revision unknown: ${(e as Error).message}` };
+      }
+    }
+  }
+  const modeState: ModeProbeState = {
+    machineTag,
+    installedVersion,
+    release,
+    run: ctx.run,
+    rootRepoAmicode: ctx.rootRepoAmicode,
+    tagBytes: new Map<string, string | null>(),
+  };
+  surfaces.push(await guarded("agent-cards-global", () => probeAgentCards(ctx, join(ctx.rootConfig, "agents"), "agent-cards-global", { state: modeState, deployedModesDir: join(ctx.rootConfig, "modes") })));
+  surfaces.push(await guarded("agent-cards-staging", () => probeAgentCards(ctx, join(ctx.rootStaging, ".opencode", "agents"), "agent-cards-staging", { state: modeState, deployedModesDir: join(ctx.rootStaging, ".opencode", "modes") })));
+  return { schema_version: "2", surfaces };
 }
 
 // ── rendering + canonical JSON ───────────────────────────────────────────────

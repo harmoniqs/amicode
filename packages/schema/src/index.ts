@@ -72,6 +72,61 @@ export {
   type StudioPaths,
 } from "./studio.js";
 
+// The director-mode registry's ONE shared validator + stager (#804, spec
+// 20260905-063000 D1): mode bundles under packages/extension/modes/<mode>/ are
+// typed data; this module is the single code path both the extension's vitest
+// suite and the amico-run doctor probe import. Same documented root seam.
+export {
+  MODE_GENERATOR_VERSION,
+  MODE_CONSUMERS,
+  LEDGER_DISCOVERY_RULE_TEXT,
+  LEDGER_DISCOVERY_RULE_BEGIN,
+  LEDGER_DISCOVERY_RULE_END,
+  generateLedgerDiscoveryRegion,
+  classifyLedgerDiscoveryRegion,
+  type GeneratedRegionStatus,
+  type GeneratedRegionClassification,
+  compareModeVersions,
+  parseModeManifest,
+  validateGatePack,
+  validateModeBundle,
+  validateModeRegistry,
+  declaredComponents,
+  type DeclaredComponent,
+  type ModeManifest,
+  type ModeRole,
+  type ModeHandoffSeed,
+  type ModeConsumer,
+  type ModeBundleOpts,
+  checkConsumerFloor,
+  SUPPORTED_MODE_BUNDLE_VERSION,
+  type ConsumerFloorOk,
+  type ConsumerFloorGap,
+  parseReleaseIndex,
+  compareReleaseToIndex,
+  versionBaseOf,
+  type ReleaseIndex,
+  type ReleaseIndexEntry,
+  type ReleaseCompare,
+  type ReleaseCompareStatus,
+} from "./mode_registry.js";
+export {
+  stageModeBundles,
+  modeBundleStagingRoot,
+  readStagingLock,
+  stagingLockVerdict,
+  pidAlive,
+  processStartTimeToken,
+  MODE_STAGING_LOCK_NAME,
+  MODE_DEPLOY_RECEIPT_NAME,
+  MODE_STAGING_TTL_MS_DEFAULT,
+  type StageModeBundlesResult,
+  type ModeStagingLock,
+  type ModeStagingOpts,
+  type StolenLock,
+  type StagingLockVerdict,
+} from "./mode_staging.js";
+
 // ajv-formats ships a CJS default export; under NodeNext the default import can
 // bind the module namespace rather than the callable, so normalize defensively.
 const addFormats = (typeof addFormatsDefault === "function"

@@ -1,0 +1,45 @@
+# The autoresearch mode bundle manifest — ONE unit (spec-20260905-063000 D1).
+# Same contract as modes/autodev/mode.toml: ONE shared validator enforces the
+# pack schema and the declared set; slice 1 (#804) declares roles by path
+# (they ship in packages/extension/agents/ today, re-homed by slice 2/D3) and
+# legacy card staging stays authoritative until the bundle is complete.
+schema_version = "1"
+mode = "autoresearch"
+card = "card.md"
+pack = "pack.toml"
+
+# Declared roles — the research pack casts the hypothesizer/experimenter/
+# analyzer trio, one phase each.
+protocol_skills = [
+  "director-core",
+  "autoresearch",
+  "hypothesis-review",
+  "structural-analysis",
+]
+
+[[roles]]
+name = "hypothesizer"
+path = "../../agents/hypothesizer.md"
+
+[[roles]]
+name = "experimenter"
+path = "../../agents/experimenter.md"
+
+[[roles]]
+name = "analyzer"
+path = "../../agents/analyzer.md"
+
+# The mode's protocol skills (the binding surface; the skill moves land in
+# slice 3, D2).
+
+# The handoff seed this mode RECEIVES: dev closes with a hypothesis seed and
+# hands it to autoresearch (D6).
+[[handoff_seeds]]
+kind = "hypothesis_seed"
+schema = "../../handoff-seeds/hypothesis-seed.schema.json"
+
+[consumer_floors]
+doctor = "1"
+plugin = "1"
+stager = "1"
+tests = "1"

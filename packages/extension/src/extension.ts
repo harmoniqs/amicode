@@ -44,7 +44,8 @@ import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
 import { stagePasqalConnector } from "./pasqal_assets";
-import { stageModCards } from "./mode_cards";
+import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
+import { stageModeBundles } from "@amicode/schema";
 import { needsProvision, pasqalVenvDir, provisionPasqalPython } from "./pasqal_python";
 import { createLocalPersonalVault, sanitizeVaultName, suggestVaultName } from "./substrate/vault_setup";
 import {
@@ -259,6 +260,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }
   } catch (e) {
     opencodeChannel.appendLine(`[modes] mode-card staging failed: ${(e as Error).message}`);
+  }
+
+  // #804: stage the director-mode BUNDLES (card + gate pack + roles +
+  // manifest per mode) into the global config's modes/ root — atomic,
+  // liveness-locked, receipt-audited. The doctor probes the deployed bundles
+  // with the same shared validator. Legacy card staging ABOVE stays
+  // AUTHORITATIVE (the source flip lands with the role-cards slice); this
+  // stage never touches the legacy agents dir and never blocks activation.
+  try {
+    const bundles = stageModeBundles(ctx.extensionPath, opencodeGlobalConfigRoot());
+    const stealNote = bundles.steals.length > 0 ? `; ${bundles.steals.length} stale lock(s) stolen` : "";
+    opencodeChannel.appendLine(
+      `[modes] bundles staged: ${bundles.dir} (${bundles.modes.map((m) => m.mode).join(", ")})${stealNote}`,
+    );
+  } catch (e) {
+    opencodeChannel.appendLine(`[modes] mode-bundle staging failed: ${(e as Error).message}`);
   }
 
   // #561: stage ~/.local/bin/opencode symlink → best available binary

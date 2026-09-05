@@ -1,4 +1,5 @@
 {
+  "schema_version": "2",
   "surfaces": [
     {
       "surface": "server-binary",
@@ -6,7 +7,7 @@
       "source_version": null,
       "verdict": "integrity-failure",
       "evidence": [
-        "frozen sha256 7d865e959b24669bf3957a7f9c2d4f0c8e9f1a2b3c4d5e6f708192a3b4c5d6e ≠ sidecar 0000000000000000000000000000000000000000000000000000000000000000 (tampered binary or stale sidecar)",
+        "frozen sha256 7d865e959b24669bf3957a7f9c2d4f0c8e9f1a2b3c4d5e6f708192a3b4c5d6e \u2260 sidecar 0000000000000000000000000000000000000000000000000000000000000000 (tampered binary or stale sidecar)",
         "sidecar /Users/aaron/.amico/server/bin/opencode.sha256"
       ]
     },
@@ -16,7 +17,7 @@
       "source_version": "0.2.6",
       "verdict": "current",
       "evidence": [
-        "installed 0.2.6-darwin-arm64 — version-sorted newest under /Users/aaron/.vscode/extensions",
+        "installed 0.2.6-darwin-arm64 \u2014 version-sorted newest under /Users/aaron/.vscode/extensions",
         "installed 0.2.6 = origin/main 0.2.6"
       ]
     },
