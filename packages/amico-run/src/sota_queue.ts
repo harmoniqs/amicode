@@ -6,9 +6,18 @@
 //
 // The lock is a lease file (POSIX O_EXCL create, the mode_staging.ts
 // discipline): entries carry owner token + expiry; an expired or corrupt
-// lease is RECLAIMED so a dead fetcher never blocks the fleet; a release
-// unlinks ONLY the lease it still owns (token match), so a reclaimed lock is
-// never stolen back from its new owner.
+// lease is RECLAIMED so a dead fetcher never blocks the fleet; a release is
+// RENAME-TO-TOMBSTONE — the lock file is renamed away first and only then
+// read, so a release racing a reclaim can never unlink the NEW owner's lock
+// (the token check and the unlink are never two unguarded steps; a foreign
+// lease found in the tombstone is RESTORED, not dropped).
+//
+// KNOWN LIMIT (named, not hidden — a spec-level residual, A2): O_EXCL is
+// atomic per HOST; the lock file crosses machines by vault sync, whose
+// propagation latency makes fleet-wide mutual exclusion BEST-EFFORT — two
+// hosts can hold overlapping leases for the sync-gap window. The under-lock
+// cache RE-CHECK bounds the damage to a duplicate transport — the second
+// fetcher reads the first one's cache — never a correctness break.
 //
 // The wait is BOUNDED and falls through to the NAMED outcome — the survey
 // never blocks the loop: a fetcher that cannot get the lock inside
@@ -35,7 +44,7 @@
 // QUEUE_POLL_INTERVAL_MS = 250: release-to-acquire latency is one poll at
 //   most — imperceptible for a human survey — while a fleet of waiters
 //   cannot spin the lock file.
-import { closeSync, openSync, readFileSync, rmSync, writeSync, mkdirSync } from "node:fs";
+import { closeSync, openSync, readFileSync, renameSync, linkSync, rmSync, writeSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -162,16 +171,40 @@ export async function acquireQueueLock(root: string, opts: QueueOpts = {}): Prom
   }
 }
 
-/** Release a lock — ONLY if its lease still names our token (a reclaimed
- *  lock belongs to its new owner; a late release from a dead lease holder
- *  must never steal it back). */
+/** Release a lock — rename-to-tombstone (A3): the lock file is renamed to a
+ *  token-named tombstone FIRST (removing it from the slot atomically), then
+ *  the tombstone is read. If the lease is OURS: the tombstone is removed —
+ *  a clean release of exactly our own lease. If the lease is FOREIGN (the
+ *  reclaim raced the release): the tombstone is restored into the slot via
+ *  link() — which fails with EEXIST if a new owner already holds, in which
+ *  case the live owner stands and the tombstone is dropped. Either way, a
+ *  release can never unlink a lease it does not own. */
 export function releaseQueueLock(lock: QueueLock): void {
-  const held = readLease(lock.lockPath);
+  const tomb = `${lock.lockPath}.dead-${lock.token}`;
+  try {
+    renameSync(lock.lockPath, tomb);
+  } catch {
+    return; // nothing to release — already gone; never resurrect anything
+  }
+  const held = readLease(tomb);
   if (held !== null && held.token === lock.token) {
     try {
-      rmSync(lock.lockPath);
+      rmSync(tomb);
     } catch {
-      /* already gone — fine */
+      /* best effort — the tombstone is inert either way */
     }
+    return;
+  }
+  // a foreign lease (the reclaim raced the release): restore it if the slot
+  // is still empty; link() fails with EEXIST if a new owner already holds.
+  try {
+    linkSync(tomb, lock.lockPath);
+  } catch {
+    /* the slot is taken — the live owner's lock stands */
+  }
+  try {
+    rmSync(tomb);
+  } catch {
+    /* best effort */
   }
 }

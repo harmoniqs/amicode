@@ -6,7 +6,7 @@
 // by a named timeout that falls through to the NAMED outcome (the survey
 // never blocks the loop). O4's constants are pinned here as assertions.
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -147,5 +147,47 @@ describe("O4 — the queue constants, pinned (named, with reasons)", () => {
 
   it("the poll cadence is a poll, not a spin", () => {
     expect(QUEUE_POLL_INTERVAL_MS).toBeGreaterThanOrEqual(100);
+  });
+});
+
+// ── A3: the release is rename-to-tombstone — a release racing a reclaim ──────
+//    can never unlink the NEW owner's lock. The old release (read token →
+//    rm) had a TOCTOU between the check and the unlink; the rename-based
+//    release makes the invariant structural: whoever's lease the renamed
+//    file carries is who the release speaks for, and a foreign lease is
+//    RESTORED, not dropped.
+describe("A3 — releaseQueueLock: rename-to-tombstone (token check and unlink are never two steps)", () => {
+  it("a release that finds a FOREIGN lease restores it — the new owner keeps holding (the TOCTOU window is closed)", async () => {
+    const r = root();
+    const c = vclock();
+    const a = await acquireQueueLock(r, { nowMs: c.nowMs, sleep: c.sleep });
+    if (!a.acquired) throw new Error("setup: A must acquire");
+    // simulate the reclaim racing the release: the lease file now names a NEW owner
+    writeFileSync(lockPath(r), JSON.stringify({ token: "new-owner", acquired_at: c.nowMs(), expires_at: c.nowMs() + 60_000 }) + "\n");
+    releaseQueueLock(a.lock);
+    // the new owner STILL holds: the file exists and names THEM
+    const held = JSON.parse(readFileSync(lockPath(r), "utf8"));
+    expect(held.token).toBe("new-owner");
+  });
+
+  it("a release against a missing lock is a no-op that leaves no debris", async () => {
+    const r = root();
+    const c = vclock();
+    const a = await acquireQueueLock(r, { nowMs: c.nowMs, sleep: c.sleep });
+    if (!a.acquired) throw new Error("setup: A must acquire");
+    rmSync(lockPath(r)); // someone reclaimed + released first
+    releaseQueueLock(a.lock); // must not throw, must not resurrect anything
+    expect(existsSync(lockPath(r))).toBe(false);
+    expect(readdirSync(r).filter((f) => f.includes(QUEUE_LOCK_NAME))).toEqual([]); // no tombstones left behind
+  });
+
+  it("a clean acquire→release cycle leaves NO tombstone debris in the sota root", async () => {
+    const r = root();
+    const c = vclock();
+    const a = await acquireQueueLock(r, { nowMs: c.nowMs, sleep: c.sleep });
+    if (!a.acquired) throw new Error("setup: A must acquire");
+    releaseQueueLock(a.lock);
+    expect(existsSync(lockPath(r))).toBe(false);
+    expect(readdirSync(r).filter((f) => f.includes(QUEUE_LOCK_NAME))).toEqual([]);
   });
 });

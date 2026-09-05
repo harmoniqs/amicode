@@ -17,6 +17,7 @@
 // "scan returned nothing — anomalous", never "nothing new".
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import seedToml from "../resources/watched-repos.seed.toml";
 import {
@@ -28,19 +29,25 @@ import {
 } from "@amicode/schema";
 import {
   fetchThroughQueue,
+  curlArgs,
+  parseCurlOut,
   type FetchThroughQueueOpts,
   type FetchThroughQueueResult,
   type SotaFetch,
 } from "./sota_fetch.js";
-import type { AnomalyFloorVerdict } from "./sota_history.js";
+import { ANOMALY_FLOOR_WINDOW_DAYS, type AnomalyFloorVerdict } from "./sota_history.js";
 
 export const REGISTRY_FILENAME = "watched-repos.toml";
 
-/** The stable per-source history key for one repo+surface. The repo slug's
- *  `/` is flattened (`__`) — the key is a FILE NAME under fetch-history/,
- *  and a slash would invent a directory that does not exist. */
+/** The stable per-source history key for one repo+surface. The slug is
+ *  HASHED, not flattened: the key is a FILE NAME under fetch-history/ (a
+ *  slash would invent a directory that does not exist), and every
+ *  character-level flattening collides — `a/b__c` and `a__b/c` both
+ *  flatten to `a__b__c`, as do `a--b/c` and `a/b--c`. A 16-hex sha256
+ *  prefix is collision-free for any realistic watch list. */
 export function githubSourceKey(repo: string, surface: FetchSurface): string {
-  return `github:${repo.replace(/\//g, "__")}:${surface}`;
+  const slug = createHash("sha256").update(repo, "utf8").digest("hex").slice(0, 16);
+  return `github:${slug}:${surface}`;
 }
 
 /** The living registry's path under the sota root. */
@@ -144,21 +151,30 @@ export function parseGithubIssues(json: string, repo = "repo"): GithubIssue[] {
 // ── the production transport (the S31 curl doctrine) ────────────────────────
 
 /** The production SotaFetch for GitHub surfaces: one query's worth of
- *  network via curl against api.github.com. Count semantics feed the
- *  anomaly floor: the number of items the surface returned. */
+ *  network via curl against api.github.com, with the shared anti-laundering
+ *  flags (curlArgs: --fail + the %{http_code} write-out) — an HTTP 403/429
+ *  (rate-limited unauthenticated GitHub is 60 req/h, the most common real
+ *  failure) carries the REAL status as a named failure, never a successful
+ *  empty scan that would reset the failure stamps (B1). Count semantics
+ *  feed the anomaly floor: the number of items the surface returned. */
 export function curlGithubFetch(url: string): Promise<{ ok: true; status: number; body: string; count: number } | { ok: false; status: number; error: string }> {
   return (async () => {
+    let out: string;
     try {
-      const body = execFileSync(
-        "curl",
-        ["-sS", "--max-time", "30", "-H", "user-agent: amicode-sota-review/0.1", "-H", "accept: application/vnd.github+json", url],
-        { encoding: "utf8", maxBuffer: 4 << 20 },
-      );
-      const count = url.includes("/releases") ? parseGithubReleases(body).length : parseGithubIssues(body).length;
-      return { ok: true, status: 200, body, count };
+      out = execFileSync("curl", curlArgs(url, ["accept: application/vnd.github+json"]), { encoding: "utf8", maxBuffer: 4 << 20 });
     } catch (e) {
-      return { ok: false, status: 0, error: `curl: ${(e as Error).message}` };
+      const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message: string };
+      const stdout = (err.stdout ?? "").toString();
+      const stderr = (err.stderr ?? "").toString();
+      const { status } = parseCurlOut(stdout); // --fail still emits the write-out
+      return { ok: false, status: Number.isFinite(status) ? status : 0, error: `curl: ${stderr.trim() || err.message}` };
     }
+    const { body, status } = parseCurlOut(out);
+    if (!(status >= 200 && status < 300)) {
+      return { ok: false, status: Number.isFinite(status) ? status : 0, error: `HTTP ${status} (non-2xx from the GitHub API)` };
+    }
+    const count = url.includes("/releases") ? parseGithubReleases(body).length : parseGithubIssues(body).length;
+    return { ok: true, status, body, count };
   })();
 }
 
@@ -233,9 +249,9 @@ export function persistStampedRegistry(root: string, reg: WatchedRepoRegistry, u
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-/** Which of the entry's match keywords hit (title ×2-weighted word-boundary
- *  scan over title + body). An event surfaces in the brief iff it matched at
- *  least one keyword — and the brief names WHICH ones. */
+/** Which of the entry's match keywords hit (an unweighted word-boundary
+ *  scan over title + body). An event surfaces in the brief iff it matched
+ *  at least one keyword — and the brief names WHICH ones. */
 export function matchKeywords(title: string, body: string, keywords: string[]): string[] {
   const text = `${title}\n${body}`.toLowerCase();
   const hits: string[] = [];
@@ -394,7 +410,7 @@ export function renderCodebaseBrief(input: CodebaseBriefInput): string {
         } else if (s.anomaly?.armed) {
           lines.push(`- ${s.surface}: no matched events (trailing 7-fetch-day mean ${s.anomaly.mean?.toFixed(1) ?? "?"} — ordinary scan)`);
         } else {
-          lines.push(`- ${s.surface}: no matched events (floor not yet armed — too few fetch-days of history for this source)`);
+          lines.push(`- ${s.surface}: no matched events (floor not yet armed — ${s.anomaly?.days ?? 0}/${ANOMALY_FLOOR_WINDOW_DAYS} fetch-days of history for this source)`);
         }
         continue;
       }

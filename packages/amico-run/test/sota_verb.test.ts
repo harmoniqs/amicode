@@ -18,7 +18,10 @@ import { parseWatchedRepoRegistry } from "@amicode/schema";
 import { readFileSync as rf } from "node:fs";
 
 const ATOM_FIXTURE = rf(join(__dirname, "fixtures", "sota", "arxiv-live-atom.xml"), "utf8"); // the recorded real-API payload
-const FETCHED_AT = "2026-09-05T18:22:20Z"; // the recorded call's harvest time (the feed's own <updated>)
+// B2: the verb path injects NO clock — the cache seed must be fresh against the
+// REAL test clock (a fixed stamp goes stale past the 6h TTL and fires a live
+// curl in CI). new Date() here is always fresh: the test runs in seconds.
+const FETCHED_AT = new Date().toISOString();
 
 const RELEASES_JSON = JSON.stringify([
   {
@@ -39,7 +42,7 @@ describe("`amico sota papers` — one on-demand query through the queue", () => 
     const r = root();
     const url = arxivApiUrl(["optimal control"], 5);
     mkdirSync(join(r, "fetch-cache"), { recursive: true });
-    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: FETCHED_AT, body: ATOM_FIXTURE }) + "\n");
+    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: FETCHED_AT, body: ATOM_FIXTURE, count: parseArxivAtom(ATOM_FIXTURE).length }) + "\n");
     const res = await sotaVerb(["papers", "--query", "optimal control", "--top", "5", "--root", r]);
     expect(res.code).toBe(0);
     const j = res.json as { ok: boolean; via: string; results: number; brief: string; entries: { arxiv: string; url: string }[] };
@@ -81,7 +84,7 @@ match_keywords = ["trajectory"]
     writeFileSync(registryPath(r), REGISTRY_TOML);
     mkdirSync(join(r, "fetch-cache"), { recursive: true });
     const url = githubApiUrl("example/piccolo-adjacent", "releases");
-    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: "2026-09-05T18:00:00Z", body: RELEASES_JSON }) + "\n");
+    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: new Date().toISOString(), body: RELEASES_JSON, count: 1 }) + "\n");
     return r;
   }
 

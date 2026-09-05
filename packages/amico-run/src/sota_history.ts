@@ -7,15 +7,15 @@
 //
 // ── O1 — history storage + granularity, pinned ──────────────────────────
 //
-// STORAGE: one append-only JSON file per source under
+// STORAGE: one per-source JSON file under
 // <sota-root>/fetch-history/<source-key>.json — {entries: [{date, count}]}
 // (an object with a named field, extensible without a breaking read of the
-// old shape). Append-only: entries are never mutated or rewritten (the
-// ledger discipline — the floor's evidence must be trustable); a corrupt or
-// missing file reads as EMPTY, degrading to unarmed rather than crashing the
-// lens. The file is capped at HISTORY_CAP entries (a year+ of daily fetches
-// at 400) — the floor only reads the trailing window, and an unbounded file
-// is an unbounded cost for nothing.
+// old shape). An append-log in spirit, a bounded window in fact: entries are
+// never edited or reordered, but each append rewrites the file atomically
+// (tmp+rename) capped at HISTORY_CAP entries (a year+ of daily fetches at
+// 400) — the floor only reads the trailing window, and an unbounded file is
+// an unbounded cost for nothing. A corrupt or missing file reads as EMPTY,
+// degrading to unarmed rather than crashing the lens.
 //
 // GRANULARITY EDGE: a "fetch-day" is a DISTINCT UTC calendar date on which at
 // least one fetch was recorded. The floor is ARMED iff ≥7 distinct fetch-days
@@ -24,7 +24,7 @@
 // refetch supersedes — the day's final state is what the mean sees). The
 // trailing window is the LAST 7 distinct fetch-days, so a long-gone quiet
 // era drops out of the mean exactly 7 days after it ends.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface FetchHistoryEntry {
@@ -51,6 +51,9 @@ export interface AnomalyFloorVerdict {
   render?: string;
   /** The trailing-window mean (when armed). */
   mean?: number;
+  /** Distinct PRIOR fetch-days of history — the disarm line renders n/7
+   *  honestly instead of a bare "not armed". */
+  days?: number;
 }
 
 export function historyPath(root: string, sourceKey: string): string {
@@ -68,8 +71,8 @@ export function readFetchHistory(root: string, sourceKey: string): FetchHistoryE
   }
 }
 
-/** Append one fetch outcome to the source's history (append-only, capped,
- *  written atomically — tmp+rename, the house discipline). */
+/** Append one fetch outcome to the source's history (entries never edited or
+ *  reordered; the file rewritten atomically on append, capped at HISTORY_CAP). */
 export function recordFetchOutcome(root: string, sourceKey: string, entry: FetchHistoryEntry): void {
   const entries = [...readFetchHistory(root, sourceKey), entry].slice(-HISTORY_CAP);
   mkdirSync(join(root, "fetch-history"), { recursive: true });
@@ -91,9 +94,10 @@ export function trailingWindow(history: FetchHistoryEntry[]): { date: string; va
  *  with HTTP 200, against the PRIOR history (armed only after 7 distinct
  *  fetch-days — a fresh source cannot cry anomaly). */
 export function evaluateAnomalyFloor(priorHistory: FetchHistoryEntry[], current: { date: string; count: number }): AnomalyFloorVerdict {
+  const days = new Set(priorHistory.map((e) => e.date)).size;
   const window = trailingWindow(priorHistory);
   if (window.length < ANOMALY_FLOOR_WINDOW_DAYS) {
-    return { armed: false, anomaly: false };
+    return { armed: false, anomaly: false, days };
   }
   const mean = window.reduce((s, d) => s + d.value, 0) / window.length;
   if (current.count === 0 && mean > 0) {
@@ -102,15 +106,14 @@ export function evaluateAnomalyFloor(priorHistory: FetchHistoryEntry[], current:
       anomaly: true,
       name: "empty-200-vs-nonzero-mean",
       mean,
+      days,
       render: `scan returned nothing — anomalous (empty 200 against a trailing ${ANOMALY_FLOOR_WINDOW_DAYS}-fetch-day mean of ${mean.toFixed(1)})`,
     };
   }
-  return { armed: true, anomaly: false, mean };
+  return { armed: true, anomaly: false, mean, days };
 }
 
 /** The UTC calendar date of a timestamp (the granularity unit, O1). */
 export function utcFetchDay(nowIso: string): string {
   return new Date(nowIso).toISOString().slice(0, 10);
 }
-
-void existsSync;

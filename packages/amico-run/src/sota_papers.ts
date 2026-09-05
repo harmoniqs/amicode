@@ -20,11 +20,13 @@
 import { execFileSync } from "node:child_process";
 import {
   fetchThroughQueue,
+  curlArgs,
+  parseCurlOut,
   type FetchThroughQueueOpts,
   type FetchThroughQueueResult,
   type SotaFetch,
 } from "./sota_fetch.js";
-import type { AnomalyFloorVerdict } from "./sota_history.js";
+import { ANOMALY_FLOOR_WINDOW_DAYS, type AnomalyFloorVerdict } from "./sota_history.js";
 
 /** The real export API — https BY CONSTRUCTION (the recipe's gotcha: the
  *  http:// endpoint silently hangs; there is no http constant anywhere). */
@@ -95,21 +97,28 @@ export function parseArxivAtom(xml: string): ArxivEntry[] {
 
 // ── the production transport (the S31 zero-dep doctrine: curl subprocess) ────
 
-/** The production SotaFetch: one query's worth of network via curl, the same
- *  seam as papers_digest.ts's fetchFeed. https-only is enforced upstream
- *  (the endpoint constant + fetchThroughQueue's http:// refusal). */
+/** The production SotaFetch: one query's worth of network via curl with the
+ *  shared anti-laundering flags (curlArgs: --fail + the %{http_code}
+ *  write-out). https-only is enforced upstream (the endpoint constant +
+ *  fetchThroughQueue's http:// refusal). An HTTP 404/429 carries the REAL
+ *  status as a named failure — never a successful empty scan (B1). */
 export function curlSotaFetch(url: string): Promise<{ ok: true; status: number; body: string; count: number } | { ok: false; status: number; error: string }> {
   return (async () => {
+    let out: string;
     try {
-      const body = execFileSync(
-        "curl",
-        ["-sS", "--max-time", "30", "-H", "user-agent: amicode-sota-review/0.1", url],
-        { encoding: "utf8", maxBuffer: 4 << 20 },
-      );
-      return { ok: true, status: 200, body, count: parseArxivAtom(body).length };
+      out = execFileSync("curl", curlArgs(url), { encoding: "utf8", maxBuffer: 4 << 20 });
     } catch (e) {
-      return { ok: false, status: 0, error: `curl: ${(e as Error).message}` };
+      const err = e as { stdout?: string | Buffer; stderr?: string | Buffer; message: string };
+      const stdout = (err.stdout ?? "").toString();
+      const stderr = (err.stderr ?? "").toString();
+      const { status } = parseCurlOut(stdout); // --fail still emits the write-out
+      return { ok: false, status: Number.isFinite(status) ? status : 0, error: `curl: ${stderr.trim() || err.message}` };
     }
+    const { body, status } = parseCurlOut(out);
+    if (!(status >= 200 && status < 300)) {
+      return { ok: false, status: Number.isFinite(status) ? status : 0, error: `HTTP ${status} (non-2xx from the export API)` };
+    }
+    return { ok: true, status, body, count: parseArxivAtom(body).length };
   })();
 }
 
@@ -138,7 +147,9 @@ export function papersBrief(opts: PapersBriefOpts): string {
     if (anomaly.anomaly && anomaly.render) {
       lines.push(anomaly.render); // "scan returned nothing — anomalous (…)" — NEVER "nothing new"
     } else {
-      lines.push("no results (the anomaly floor is not yet armed for this source — too few fetch-days of history to call an empty scan anomalous)");
+      lines.push(
+        `no results (the anomaly floor is not yet armed for this source — ${anomaly.days ?? 0}/${ANOMALY_FLOOR_WINDOW_DAYS} fetch-days of history; an empty scan cannot be judged anomalous yet)`,
+      );
     }
   }
   entries.forEach((e, i) => {
@@ -177,6 +188,8 @@ export type PapersLensResult =
       via: "cache" | "fetched";
       ok: true;
       entries: ArxivEntry[];
+      /** The payload's entry count (the cache carries the FILL's count — A1). */
+      count: number;
       brief: string;
       anomaly?: AnomalyFloorVerdict;
       stamp: PapersProvenanceStamp;
@@ -184,6 +197,9 @@ export type PapersLensResult =
   | {
       via: "queue-timeout" | "fetch-failed" | "refused";
       ok: false;
+      /** The REAL HTTP status when one was carried (B1: a 404/429 is a named
+       *  failure with its status, never a successful empty scan). */
+      status?: number;
       brief: string;
       detail: string;
     };
@@ -207,6 +223,7 @@ export async function runPapersLens(opts: PapersLensOpts): Promise<PapersLensRes
   });
   const fetchedAt = new Date(nowMs()).toISOString();
   if (!res.ok) {
+    const status = "status" in res ? res.status : undefined;
     const detail =
       res.via === "queue-timeout"
         ? `${res.detail} (waited ${res.waitedMs}ms)`
@@ -215,7 +232,7 @@ export async function runPapersLens(opts: PapersLensOpts): Promise<PapersLensRes
           : res.error;
     const brief = [
       `# SOTA papers brief — ${terms.join(" ")} (0 results)`,
-      `no fetch: ${res.via} — ${detail}`,
+      `no fetch: ${res.via}${status !== undefined ? ` (HTTP ${status})` : ""} — ${detail}`,
       "the survey never blocks: read the fetch cache, or record the explicit waiver.",
       "",
       "provenance:",
@@ -224,11 +241,11 @@ export async function runPapersLens(opts: PapersLensOpts): Promise<PapersLensRes
       `- via: ${res.via}`,
       `- query: ${terms.join(" ")}`,
     ].join("\n");
-    return { via: res.via, ok: false, brief, detail };
+    return { via: res.via, ok: false, status, brief, detail };
   }
   const entries = parseArxivAtom(res.body);
   const stamp: PapersProvenanceStamp = { query: terms.join(" "), url, fetched_at: fetchedAt, via: res.via };
   const anomaly = res.anomaly ?? { armed: false, anomaly: false };
   const brief = papersBrief({ entries, stamp, anomaly });
-  return { via: res.via, ok: true, entries, brief, anomaly, stamp };
+  return { via: res.via, ok: true, entries, count: res.count, brief, anomaly, stamp };
 }

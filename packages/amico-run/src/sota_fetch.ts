@@ -28,7 +28,7 @@
 // FLEET-SHARED personal vault mount (the mounts resolver's personal mount —
 // vault-aaron, synced across the fleet) + amicode/sota. A per-host path
 // would serialize nothing; fleet-wide means the shared vault path.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
@@ -38,6 +38,29 @@ import { resolveMountStack, personalMount } from "./mounts.js";
 
 /** The fetch cache's freshness window — see the header. */
 export const FETCH_CACHE_TTL_MS = 6 * 60 * 60_000;
+
+/** The shared production curl flags (B1, review fold on #828): `--fail`
+ *  because WITHOUT it curl exits 0 on HTTP 403/404/429 and a server error
+ *  launders as an empty success (status hardcoded 200, count 0 — stamps
+ *  reset, last_success written, a fake zero in fetch history, the anomaly
+ *  floor disarmed exactly when the fleet chronically fails); the bounded
+ *  `--max-time 30` transport; a UA; and the `%{http_code}` write-out so the
+ *  REAL status always rides the output — never a hardcoded 200. */
+export function curlArgs(url: string, extraHeaders: string[] = []): string[] {
+  const args = ["-sS", "--fail", "--max-time", "30", "-H", "user-agent: amicode-sota-review/0.1"];
+  for (const h of extraHeaders) args.push("-H", h);
+  args.push("-w", "\n%{http_code}", url);
+  return args;
+}
+
+/** Split curl's stdout into body + the `-w %{http_code}` write-out. The
+ *  write-out ALWAYS emits (even under --fail, where the body is suppressed),
+ *  so this is the one place the real status is read. */
+export function parseCurlOut(out: string): { body: string; status: number } {
+  const idx = out.lastIndexOf("\n");
+  if (idx === -1) return { body: "", status: Number.NaN };
+  return { body: out.slice(0, idx), status: Number(out.slice(idx + 1).trim()) };
+}
 
 /** The transport seam — one query's worth of network. Injected in tests;
  *  the production body is subprocess curl (the S31 zero-dep doctrine,
@@ -64,8 +87,10 @@ export type FetchThroughQueueResult =
       status: number;
       body: string;
       count: number;
-      /** The anomaly-floor verdict for the returned payload (undefined when the floor
-       *  was not armed — a fresh source cannot cry anomaly). */
+      /** The anomaly-floor verdict for the returned payload — live fetches
+       *  AND cache reads (A1: a cached empty scan renders the fill's verdict,
+       *  never a false disarm). Undefined only when the floor could not be
+       *  evaluated; `armed: false` is the honest unarmed state. */
       anomaly?: AnomalyFloorVerdict;
     }
   | { via: "queue-timeout"; ok: false; detail: string; waitedMs: number }
@@ -98,29 +123,46 @@ interface CacheEntry {
   url: string;
   fetched_at: string; // ISO-8601
   body: string;
+  /** The payload's entry count, STORED AT FILL TIME (A1, review fold on
+   *  #828): a cache read reports the real count — never a sentinel — and the
+   *  anomaly floor is evaluated on the cache read, so an armed source served
+   *  a cached empty payload renders the armed anomaly, never a false disarm. */
+  count: number;
 }
 
 function readCache(root: string, url: string, opts: { nowMs: () => number; skipCache?: boolean }): CacheEntry | null {
   if (opts.skipCache) return null;
   const p = cachePath(root, url);
   try {
-    const j = JSON.parse(readFileSync(p, "utf8")) as CacheEntry;
-    if (typeof j.body !== "string" || typeof j.fetched_at !== "string") return null;
+    const j = JSON.parse(readFileSync(p, "utf8")) as Partial<CacheEntry>;
+    // count is REQUIRED (A1's shape): a legacy entry without it reads as a
+    // miss and refetches — the 6h TTL makes the upgrade harmless.
+    if (typeof j.body !== "string" || typeof j.fetched_at !== "string" || typeof j.count !== "number") return null;
     const age = opts.nowMs() - Date.parse(j.fetched_at);
     if (Number.isNaN(age) || age < 0 || age > FETCH_CACHE_TTL_MS) return null; // stale is not fresh
-    return j;
+    return j as CacheEntry;
   } catch {
     return null;
   }
 }
 
-function writeCache(root: string, url: string, body: string, nowMs: () => number): void {
+function writeCache(root: string, url: string, body: string, count: number, nowMs: () => number): void {
   mkdirSync(join(root, "fetch-cache"), { recursive: true });
   const p = cachePath(root, url);
   const tmp = `${p}.tmp-${process.pid}`;
-  const entry: CacheEntry = { url, fetched_at: new Date(nowMs()).toISOString(), body };
+  const entry: CacheEntry = { url, fetched_at: new Date(nowMs()).toISOString(), body, count };
   writeFileSync(tmp, JSON.stringify(entry) + "\n");
   renameSync(tmp, p);
+}
+
+/** The cache read's floor verdict (A1): evaluate against the fill's OWN prior
+ *  history — entries from STRICTLY EARLIER fetch-days — reproducing the
+ *  verdict the live fill computed. The fill already recorded its outcome; a
+ *  cache read records nothing. */
+function cachedAnomaly(root: string, sourceKey: string, cached: CacheEntry): AnomalyFloorVerdict {
+  const fillDay = cached.fetched_at.slice(0, 10);
+  const priorBeforeFill = readFetchHistory(root, sourceKey).filter((e) => e.date < fillDay);
+  return evaluateAnomalyFloor(priorBeforeFill, { date: fillDay, count: cached.count });
 }
 
 /** The one-fetcher flow — cache → queue → re-check cache → fetch → cache +
@@ -141,7 +183,7 @@ export async function fetchThroughQueue(url: string, opts: FetchThroughQueueOpts
 
   const cached = readCache(opts.root, url, { nowMs, skipCache: opts.skipCache });
   if (cached !== null) {
-    return { via: "cache", ok: true, status: 200, body: cached.body, count: -1 };
+    return { via: "cache", ok: true, status: 200, body: cached.body, count: cached.count, anomaly: cachedAnomaly(opts.root, sourceKey, cached) };
   }
 
   const lock = await acquireQueueLock(opts.root, opts);
@@ -153,13 +195,13 @@ export async function fetchThroughQueue(url: string, opts: FetchThroughQueueOpts
     // cache the lock-holder just wrote (the second-fetcher property).
     const underLock = readCache(opts.root, url, { nowMs, skipCache: opts.skipCache });
     if (underLock !== null) {
-      return { via: "cache", ok: true, status: 200, body: underLock.body, count: -1 };
+      return { via: "cache", ok: true, status: 200, body: underLock.body, count: underLock.count, anomaly: cachedAnomaly(opts.root, sourceKey, underLock) };
     }
     const res = await opts.fetchFn(url);
     if (!res.ok) {
       return { via: "fetch-failed", ok: false, status: res.status, error: res.error };
     }
-    writeCache(opts.root, url, res.body, nowMs);
+    writeCache(opts.root, url, res.body, res.count, nowMs);
     // the anomaly floor: armed only after 7 prior fetch-days of THIS source's
     // history; the current fetch is not part of its own window.
     const prior = readFetchHistory(opts.root, sourceKey);
@@ -170,5 +212,3 @@ export async function fetchThroughQueue(url: string, opts: FetchThroughQueueOpts
     releaseQueueLock(lock.lock);
   }
 }
-
-void existsSync;

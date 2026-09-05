@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fetchThroughQueue, FETCH_CACHE_TTL_MS, cachePath, sourceKeyOf, type SotaFetch } from "../src/sota_fetch.js";
+import { fetchThroughQueue, FETCH_CACHE_TTL_MS, cachePath, sourceKeyOf, curlArgs, type SotaFetch } from "../src/sota_fetch.js";
 import { QUEUE_LOCK_NAME, QUEUE_POLL_INTERVAL_MS, acquireQueueLock } from "../src/sota_queue.js";
 
 function root(): string {
@@ -177,5 +177,36 @@ describe("the fetch cache (the digest's FETCH cache — a shared referent, never
   it("the cache TTL is named and bounded: hours, not days — the daily cadence refetches, the fleet does not", () => {
     expect(FETCH_CACHE_TTL_MS).toBeGreaterThanOrEqual(60 * 60_000); // ≥ 1h: the fleet dedupes within a window
     expect(FETCH_CACHE_TTL_MS).toBeLessThan(24 * 60 * 60_000); // < 24h: a daily digest always refetches
+  });
+
+  it("a cache read reports the payload's REAL count (stored at fill time), and the floor verdict rides the cache too (A1)", async () => {
+    const r = root();
+    const c = vclock();
+    const url = "https://export.arxiv.org/api/query?search_query=all:cnt";
+    await fetchThroughQueue(url, { root: r, fetchFn: okFetch("<x/>", 7), nowMs: c.nowMs, sleep: c.sleep });
+    const res = await fetchThroughQueue(url, { root: r, fetchFn: okFetch("<x/>", 0), nowMs: c.nowMs, sleep: c.sleep });
+    expect(res.via).toBe("cache");
+    if (res.via === "cache") expect(res.count).toBe(7); // NOT -1: the cache carries the fill's count
+  });
+});
+
+describe("curlArgs — the shared production transport flags (B1: HTTP errors must not launder as empty successes)", () => {
+  it("pins --fail (without it curl exits 0 on HTTP 403/404/429 and the seam launders the error as a 200)", () => {
+    const args = curlArgs("https://export.arxiv.org/api/query?search_query=all:x");
+    expect(args).toContain("--fail");
+    // the transport stays bounded and identifies itself
+    expect(args).toContain("--max-time");
+    expect(args[args.indexOf("--max-time") + 1]).toBe("30");
+    expect(args.some((a) => a.includes("user-agent"))).toBe(true);
+    // the REAL status rides the write-out — never a hardcoded 200
+    expect(args).toContain("-w");
+    expect(args[args.indexOf("-w") + 1]).toBe("\n%{http_code}");
+    expect(args).toContain("https://export.arxiv.org/api/query?search_query=all:x");
+  });
+
+  it("extra headers append without disturbing the pinned flags (the GitHub accept header)", () => {
+    const args = curlArgs("https://api.github.com/repos/a/b", ["accept: application/vnd.github+json"]);
+    expect(args).toContain("--fail");
+    expect(args).toContain("accept: application/vnd.github+json");
   });
 });

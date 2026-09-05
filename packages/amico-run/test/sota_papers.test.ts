@@ -8,7 +8,7 @@
 // authoring time; the live-gated describe below re-verifies the full
 // queue+cache path on demand (AMICO_SOTA_LIVE=1).
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, mkdirSync, readFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,6 +17,7 @@ import {
   parseArxivAtom,
   papersBrief,
   runPapersLens,
+  curlSotaFetch,
   absUrlOf,
   type ArxivEntry,
 } from "../src/sota_papers.js";
@@ -236,9 +237,10 @@ describe("the REAL-API hermetic fixture (S1 — one call, cached)", () => {
     const r = root();
     const body = parseAtomFixture();
     const url = arxivApiUrl(["optimal control"], 5);
-    // seed the FETCH cache with the fixture payload (the one real call's harvest)
+    // seed the FETCH cache with the fixture payload (the one real call's
+    // harvest, count stored at fill time — A1's cache shape)
     mkdirSync(join(r, "fetch-cache"), { recursive: true });
-    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: FETCHED_AT, body }) + "\n");
+    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: FETCHED_AT, body, count: parseArxivAtom(body).length }) + "\n");
     let transports = 0;
     const res = await runPapersLens({
       root: r,
@@ -286,5 +288,137 @@ describe("the live arXiv call through the queue (opt-in — AMICO_SOTA_LIVE=1)",
     if (!res.ok) throw new Error("live: must be ok");
     expect(res.entries.length).toBeGreaterThan(0);
     expect(res.brief).toMatch(/provenance:/);
+  });
+});
+
+// ── B1: HTTP errors must not launder as empty successes ─────────────────────
+// curl WITHOUT --fail exits 0 on HTTP 403/404/429; the old transport then
+// hard-coded status:200 / ok:true / count:0 — a rate-limited or moved source
+// read as a SUCCESSFUL EMPTY SCAN: stamps reset, last_success written, a
+// zero recorded in fetch history, the anomaly floor disarmed exactly when
+// the fleet chronically fails. These tests run the PRODUCTION transport
+// against a fake curl on PATH (hermetic, deterministic, no network).
+
+/** Write a fake `curl` that behaves like real curl WITH --fail: the body
+ *  (if any) then the "-w %{http_code}" write-out on stdout, the error line
+ *  on stderr, exit 22 on HTTP errors / 0 on success. */
+function fakeCurlDir(httpCode: number, body: string): string {
+  const dir = mkdtempSync(join(tmpdir(), "sota-fakecurl-"));
+  if (body !== "") writeFileSync(join(dir, "body"), body);
+  const script = [
+    "#!/bin/sh",
+    ...(body !== "" ? [`cat '${join(dir, "body")}'`] : []),
+    `printf '\\n${httpCode}'`,
+    ...(httpCode >= 400 && httpCode < 600 ? [`printf 'curl: (22) The requested URL returned error: ${httpCode}\\n' >&2`] : []),
+    `exit ${httpCode >= 400 && httpCode < 600 ? 22 : 0}`,
+  ].join("\n") + "\n";
+  writeFileSync(join(dir, "curl"), script);
+  chmodSync(join(dir, "curl"), 0o755);
+  return dir;
+}
+
+describe("curlSotaFetch — the production transport carries the REAL status (B1)", () => {
+  it("an HTTP 404 is a NAMED failure with the REAL status — never a successful empty scan", async () => {
+    const dir = fakeCurlDir(404, "");
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${dir}:${prevPath}`;
+    try {
+      const res = await curlSotaFetch("https://export.arxiv.org/api/query?search_query=all:gone");
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.status).toBe(404); // the REAL status, carried from the write-out
+        expect(res.error).toMatch(/404/); // the named failure
+      }
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+
+  it("a 429 (rate-limited) is a named failure too — the most common real GitHub/arXiv failure mode", async () => {
+    const dir = fakeCurlDir(429, "");
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${dir}:${prevPath}`;
+    try {
+      const res = await curlSotaFetch("https://export.arxiv.org/api/query?search_query=all:busy");
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.status).toBe(429);
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+
+  it("a 200 parses body + status from the write-out without corrupting either (the count derives from the body)", async () => {
+    const dir = fakeCurlDir(200, ATOM_FIXTURE);
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${dir}:${prevPath}`;
+    try {
+      const res = await curlSotaFetch("https://export.arxiv.org/api/query?search_query=all:ok");
+      expect(res.ok).toBe(true);
+      if (res.ok) {
+        expect(res.status).toBe(200);
+        // the write-out's trailing status line must NOT leak into the body
+        expect(res.body.endsWith("200")).toBe(false);
+        expect(res.count).toBe(parseArxivAtom(ATOM_FIXTURE).length); // the count derives from the real body
+      }
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});
+
+describe("the lens through the production transport — B1 end-to-end", () => {
+  it("a 404 round is a NAMED failure: no history record, no cache write (the floor is not fed a fake zero)", async () => {
+    const r = root();
+    const c = vclock();
+    const dir = fakeCurlDir(404, "");
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${dir}:${prevPath}`;
+    try {
+      const res = await runPapersLens({ root: r, terms: ["optimal control"], maxResults: 5, nowMs: c.nowMs, sleep: c.sleep });
+      expect(res.via).toBe("fetch-failed");
+      if (res.via === "fetch-failed") expect(res.status).toBe(404);
+      const url = arxivApiUrl(["optimal control"], 5);
+      const { readFetchHistory } = await import("../src/sota_history.js");
+      expect(readFetchHistory(r, sourceKeyOf(url))).toEqual([]); // NO fake zero recorded
+      expect(existsSync(cachePath(r, url))).toBe(false); // no failed body cached
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});
+
+// ── A1: the floor verdict rides the CACHE too (a cached empty scan must not ──
+//    render a false disarm line)
+
+describe("A1 — an armed source served a CACHED EMPTY payload renders the armed anomaly, never a false disarm", () => {
+  it("the cache carries the fill's count and the floor verdict is evaluated on the cache read", async () => {
+    const r = root();
+    // the clock sits in 2026 so the fabricated prior history sorts BEFORE the
+    // cache's fill day (the floor reads strictly-earlier fetch-days)
+    const c = vclock(Date.parse("2026-09-01T00:00:00Z"));
+    const url = arxivApiUrl(["optimal control"], 5);
+    // arm the floor: 7 prior fetch-days of nonzero history
+    for (let i = 0; i < 7; i++) {
+      recordFetchOutcome(r, sourceKeyOf(url), { date: `2026-08-0${i + 1}`, count: 5 });
+    }
+    // seed the FETCH cache with an EMPTY payload fetched a minute ago (count stored at fill)
+    const fetchedAt = new Date(c.nowMs() - 60_000).toISOString();
+    mkdirSync(join(r, "fetch-cache"), { recursive: true });
+    writeFileSync(cachePath(r, url), JSON.stringify({ url, fetched_at: fetchedAt, body: "", count: 0 }) + "\n");
+    const res = await runPapersLens({
+      root: r,
+      terms: ["optimal control"],
+      maxResults: 5,
+      fetchFn: (async () => ({ ok: true as const, status: 200, body: "<never/>", count: 99 })) as SotaFetch, // must NOT run
+      nowMs: c.nowMs,
+      sleep: c.sleep,
+    });
+    expect(res.via).toBe("cache");
+    if (!res.ok) throw new Error("setup: must be ok");
+    expect(res.entries).toHaveLength(0);
+    expect(res.count).toBe(0); // the CACHED payload's count, not -1
+    expect(res.anomaly?.anomaly).toBe(true); // the verdict reproduces the fill's floor
+    expect(res.brief).toContain("scan returned nothing — anomalous"); // armed renders armed
+    expect(res.brief).not.toMatch(/not yet armed/); // the FALSE disarm line is gone
   });
 });

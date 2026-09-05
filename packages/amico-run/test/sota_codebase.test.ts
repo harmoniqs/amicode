@@ -8,17 +8,19 @@
 // the transport here is injected and REFUSES anything that is not an
 // https://api.github.com/repos/<canonical> URL.
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   REGISTRY_FILENAME,
   registryPath,
   githubApiUrl,
+  githubSourceKey,
   loadRegistry,
   parseGithubReleases,
   parseGithubIssues,
   runCodebaseLens,
+  curlGithubFetch,
   renderCodebaseBrief,
 } from "../src/sota_codebase.js";
 import { parseWatchedRepoRegistry, flaggedForRetireOrConfirm } from "@amicode/schema";
@@ -241,7 +243,7 @@ describe("runCodebaseLens — the fetch round, GitHub-shaped fixtures only (S1)"
     // …then craft 6 more fetch-days of nonzero history for that surface key…
     for (let i = 0; i < 6; i++) {
       const { recordFetchOutcome } = await import("../src/sota_history.js");
-      recordFetchOutcome(r, "github:example__agent-harness:issues", { date: `2026-08-0${i + 1}`, count: 3 });
+      recordFetchOutcome(r, githubSourceKey("example/agent-harness", "issues"), { date: `2026-08-0${i + 1}`, count: 3 });
     }
     // …and age past the cache TTL so the empty round actually fetches
     c.jump(7 * 60 * 60 * 1000);
@@ -329,5 +331,76 @@ describe("renderCodebaseBrief — the PI-register shape", () => {
     expect(res.brief).toMatch(/why-watched/); // details-informed: the human reason renders
     expect(res.brief).toMatch(/scanned at:/);
     expect(res.brief).toMatch(/source: GitHub API/);
+  });
+});
+
+// ── B1: HTTP errors must not launder as empty successes (the stamps end) ────
+// curl WITHOUT --fail exits 0 on a 403/429 (unauthenticated GitHub is 60
+// req/h — the most common real failure); the old transport hardcoded
+// status 200 / ok true / count 0, so a rate-limited round RESET
+// consecutive_failures, STAMPED last_success, and recorded a fake-zero
+// success in fetch history — the retire-or-confirm flag and the anomaly
+// floor both disarmed exactly when the fleet chronically fails.
+
+/** A fake `curl` that behaves like real curl WITH --fail on an HTTP error:
+ *  the write-out on stdout, the error on stderr, exit 22. */
+function fakeCurl404Dir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "sota-fakecurl-"));
+  writeFileSync(
+    join(dir, "curl"),
+    "#!/bin/sh\nprintf '\\n404'\nprintf 'curl: (22) The requested URL returned error: 404\\n' >&2\nexit 22\n",
+  );
+  chmodSync(join(dir, "curl"), 0o755);
+  return dir;
+}
+
+describe("B1 — a 404/429 round through the PRODUCTION transport is a named failure (stamps end)", () => {
+  it("accrues consecutive_failures, does NOT stamp last_success, records NO fetch history, and renders the real status", async () => {
+    const r = root();
+    writeFileSync(registryPath(r), REGISTRY_TOML);
+    const dir = fakeCurl404Dir();
+    const prevPath = process.env.PATH;
+    process.env.PATH = `${dir}:${prevPath}`;
+    try {
+      const res = await runCodebaseLens({ root: r, nowMs: vclock().nowMs, sleep: vclock().sleep }); // default fetch = curlGithubFetch
+      expect(res.ok).toBe(false); // the round FAILED — under the old laundering it "succeeded"
+      for (const repo of res.repos) {
+        expect(repo.ok).toBe(false);
+        for (const s of repo.surfaces) {
+          expect(s.ok).toBe(false);
+          expect(s.error).toMatch(/404/); // the NAMED failure
+          expect(s.error).not.toMatch(/anomalous|no matched/i); // never rendered as a scan verdict
+        }
+      }
+      // the stamps: failures accrue; last_success stays empty (no laundering reset)
+      const persisted = parseWatchedRepoRegistry(readFileSync(registryPath(r), "utf8"));
+      for (const repo of persisted.repos) {
+        expect(repo.last_success).toBe("");
+        expect(repo.consecutive_failures).toBe(1);
+      }
+      // the history: NO fake zero recorded for any surface
+      const { readFetchHistory } = await import("../src/sota_history.js");
+      for (const repo of persisted.repos) {
+        for (const surface of repo.fetch_surface) {
+          expect(readFetchHistory(r, githubSourceKey(repo.repo, surface))).toEqual([]);
+        }
+      }
+    } finally {
+      process.env.PATH = prevPath;
+    }
+  });
+});
+
+describe("githubSourceKey — collision-free, filesystem-safe (nit)", () => {
+  it("the flattening pair that collides (a/b__c vs a__b/c) produces DISTINCT keys", () => {
+    expect(githubSourceKey("a/b__c", "issues")).not.toBe(githubSourceKey("a__b/c", "issues"));
+    expect(githubSourceKey("a--b/c", "issues")).not.toBe(githubSourceKey("a/b--c", "issues")); // the `--` variant collides too
+  });
+
+  it("the key is always a safe single file name (no `/`, no invented directories)", () => {
+    for (const repo of ["example/piccolo-adjacent", "a/b__c", "a__b/c", "x/y/z"]) {
+      const key = githubSourceKey(repo, "releases");
+      expect(key).not.toMatch(/\//);
+    }
   });
 });
