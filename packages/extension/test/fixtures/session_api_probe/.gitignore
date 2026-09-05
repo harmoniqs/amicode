@@ -1,0 +1,6 @@
+# The session-API availability fixture durable outcome record (A2, PR #814
+# review fold of #808): probe JSONL + server log + outcome.json, re-written on
+# every fixture run. Machine-local by construction — never committed; it is
+# the artifact the D4 amendment decision consumes when the contract reads
+# insufficient.
+last-run/

@@ -182,6 +182,11 @@ export interface ModeHandoffSeed {
 export interface ModeManifest {
   schema_version: string;
   mode: string;
+  /** The agent id that BINDS this mode (#808, spec D4 posture-binding map) —
+   *  a session resolved to this agent runs this mode's director posture; every
+   *  other agent id binds copilot (silent). The plugin reads THIS field; the
+   *  map is manifest data, never a mode-name branch. */
+  agent: string;
   card: string;
   pack: string;
   roles: ModeRole[];
