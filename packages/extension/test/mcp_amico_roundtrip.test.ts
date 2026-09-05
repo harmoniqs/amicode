@@ -82,7 +82,8 @@ describe("MCP round-trip against the spawned server", () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain("pick_system"); // bare: the client (opencode) namespaces by server
     expect(names).not.toContain("amicode_pick_system"); // the server does not double-prefix
-    expect(names.length).toBeGreaterThanOrEqual(17);
+    expect(names).toContain("author_widget"); // #799: the widget-authoring tool rides the floor
+    expect(names.length).toBeGreaterThanOrEqual(18);
   });
 
   it("tools/call pick_system records the SAME entity, events, and return as the plugin path", async () => {

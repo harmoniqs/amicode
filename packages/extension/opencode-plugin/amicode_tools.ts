@@ -143,6 +143,14 @@ import {
 // schema itself; the twin follows it by construction + pin.
 import { validateWarrantBounds, boundsRefusal } from "./warrant_bounds";
 
+// Issue #799 — the widget-authoring twin executes against the SAME service
+// helper the core table calls (src/amicode_service/widgets.ts). The plugin
+// transport is retired from the runtime config (#700 A3 — this file is the
+// behavioral reference the parity test pins), so the ../src import rides the
+// vitest graph where the parity test exercises it; the runtime MCP server
+// bundles the core's own identical call.
+import { authorWidget } from "../src/amicode_service/widgets";
+
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
 // v1.17.3) — a stdout log here corrupts that JSON and breaks any caller that
@@ -395,6 +403,137 @@ export const AmicodeTools = async (input: unknown) => {
           `Question presented with ${opts.length} option buttons. STOP HERE: write no ` +
           `further text this turn, do NOT repeat the question in prose, and NEVER pick ` +
           `an option yourself — the user's next message is their click.`
+        );
+      },
+    },
+
+    // Issue #799 — the widget-authoring twin (the fork's registry delta ported
+    // into the harness-neutral floor; see the core table's entry for the full
+    // record). The description below is the fork's widget-author.txt CARRIED
+    // VERBATIM (byte-pinned to src/widget-author.txt and to the core table by
+    // the parity test). Bare MCP wire name: author_widget; the UI sentinel
+    // seam (AMICODE_WIDGET {id,name,size,height,hash,warnings}) parses the
+    // returned LAST line.
+    amicode_author_widget: {
+      description: `Author or update a widget on the user's Amicode home dashboard, from this conversation.
+
+Use this when the user asks to add, build, create, redesign, or change a home tile/widget
+("add a tile showing my recent runs", "make a fidelity leaderboard", "make that bigger").
+The widget is written to the user's widget folder and a LIVE PREVIEW renders in this chat
+immediately; the user clicks "Pin to dashboard" to place it on home. Calling this tool again
+with the SAME \`id\` UPDATES that widget in place and the preview hot-reloads — use that to
+refine after feedback rather than making a new widget.
+
+You supply the widget body as an ES module in \`js\`. Exact contract:
+
+  export default {
+    mount: function (el, amico) {
+      // Build the widget's DOM inside \`el\` (its root element). Vanilla DOM only.
+      // Leave \`el\` empty (no child elements, no text) to signal an EMPTY STATE —
+      // the host then hides the tile until there is something to show.
+    }
+  }
+
+The \`amico\` client passed to mount:
+  amico.fetch(path) -> Promise<data>   ONLY these routes are allowed (anything else rejects):
+    /amicode/profile          {ok, you:{name, stats:{problems,runs}, ...}}
+    /amicode/problems         {ok, active, problems:[{slug,name,status,score,recorded,entity_kinds}]}
+    /amicode/problem?slug=..  one problem's detail
+    /amicode/run-status?slug=..  {ok, runs:[{run_id, status, fidelity, iteration}]}
+        status is solving|stalled|finished|failed; \`fidelity\` is the objective value
+        (~ infidelity 1-F, LOWER is better).
+    /amicode/run-series?run=..&lab=..  one run's per-iteration series
+    /amicode/run-cards        shareable run cards (the showcase gallery)
+    /amicode/library          uploaded papers + learnings
+  amico.action(verb, payload) -> Promise   verbs: resume-session, warm-start, open-gallery,
+        open-external, upload-library, save-profile, lookup-institution, resolve-logo
+  amico.prompt(text)   start a new chat turn with \`text\` (good for click-to-ask)
+  amico.open(entity)   open an entity view
+  amico.config   amico.context ({resume, liveRun, library})   amico.theme   amico.density ('normal'|'compact'|'tight')
+  amico.onConfig(cb) / amico.onTheme(cb) / amico.onContext(cb)   re-render hooks
+
+STYLE — use the host theme tokens (CSS custom properties). NEVER hard-code colors:
+  colors:  --amc-bg --amc-layer --amc-layer2 --amc-border --amc-text --amc-text-muted
+           --amc-text-faint --amc-accent --amc-success --amc-warning --amc-danger
+  fonts:   --amc-font-sans --amc-font-mono
+  padding: --amc-pad (hero) --amc-pad-tile (tile)
+A card should fill its box: border 1px solid var(--amc-border); border-radius 10px;
+background var(--amc-layer); padding var(--amc-pad-tile). Give data an UPPERCASE eyebrow
+label in --amc-text-faint. Use font-variant-numeric: tabular-nums wherever digits line up.
+Show physics quantities the way the user writes them (infidelity as 2.1e-4, etc.).
+
+SIZE: "tile" = compact card in the tile row; "hero" = wide card in the top grid.
+\`height\` is the resting pixel height (the frame grows to content): tiles ~96-180, heroes ~180-320.
+
+Fetch is async — render a nothing/loading state first, then fill in on the promise. Handle
+fetch failure by rendering an empty state (leave \`el\` empty), not an error dump. Tell the user
+in one sentence what you built; the preview and Pin button appear on their own. If the tool
+returns an error, fix \`js\`/the fields and call it again.
+`,
+      args: {
+        id: {
+          type: "string",
+          description: "kebab-case widget id (also its folder name). Reuse an id to UPDATE that widget in place.",
+        },
+        name: {
+          type: "string",
+          description: "human title shown in the widget header / edit controls",
+        },
+        size: {
+          type: "string",
+          enum: ["tile", "hero"],
+          description: '"tile" = compact card in the tile row; "hero" = wide card in the top grid',
+        },
+        height: {
+          type: "number",
+          description: "resting pixel height (40..2000); the frame grows to content",
+        },
+        description: {
+          type: ["string", "null"],
+          description: "one-line description of the widget. Null for none.",
+        },
+        js: {
+          type: "string",
+          description: "the widget.js ES module body: export default { mount: function (el, amico) { ... } }",
+        },
+      },
+      async execute(a: {
+        id: string;
+        name: string;
+        size: string;
+        height: number;
+        description?: string | null;
+        js: string;
+      }) {
+        // Same helper, same never-reject discipline: a bad field returns
+        // {ok:false} with a precise error — refuse honestly, write nothing.
+        const r = authorWidget({
+          id: a.id,
+          name: a.name,
+          size: a.size,
+          height: a.height,
+          description: a.description ?? undefined,
+          js: a.js,
+        });
+        if (!r.ok) {
+          return (
+            `Widget rejected: ${a.id}. The widget was NOT written. ${r.error}. ` +
+            `Fix the input and call amicode_author_widget again.`
+          );
+        }
+        const sentinel = JSON.stringify({
+          id: r.id,
+          name: r.name,
+          size: r.size,
+          height: r.height,
+          hash: r.hash,
+          warnings: r.warnings,
+        });
+        const warnLine = r.warnings.length ? ` Warnings: ${r.warnings.join("; ")}.` : "";
+        return (
+          `Authored widget "${r.id}" — "${r.name}" (${r.size}) ✓.${warnLine} ` +
+          `A live preview is shown below — the user can Pin it to their dashboard.\n` +
+          `AMICODE_WIDGET ${sentinel}`
         );
       },
     },

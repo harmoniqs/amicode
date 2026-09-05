@@ -45,7 +45,7 @@ describe("MCP tools/list ≡ the plugin's registrations (drift guard)", () => {
     expect(mcp.sort()).toEqual([...core].sort().map((n: string) => CORE.mcpBareName(n)));
   });
 
-  it("the PRODUCT-IDENTICAL view: opencode's rendered MCP name ≡ the plugin's registered name, for all 17", () => {
+  it("the PRODUCT-IDENTICAL view: opencode's rendered MCP name ≡ the plugin's registered name, for all 18", () => {
     const canonical = Object.keys(CORE.AMICODE_TOOLS);
     const rendered = SERVER.listAmicodeMcpTools().map((t: McpTool) => `${OPENCODE_SERVER_NAME}_${t.name}`);
     // bijective: what opencode renders after namespacing the bare names IS the
