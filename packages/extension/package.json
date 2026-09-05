@@ -226,6 +226,11 @@
           "default": "",
           "description": "Override the extension's resource root for scores, templates, and bin/ (dev only). Empty = use the installed extension path. Set via the Developer Tools section in settings."
         },
+        "amicode.appBundleDir": {
+          "type": "string",
+          "default": "",
+          "description": "Path to a built app-bundle dist (dev override). The amicode service serves it as the app UI on its origin. Empty = the packaged dist (dist/app inside the extension, staged by `pnpm --filter amicode run build:app`). When neither exists the service serves an honest needs-setup placeholder — the /amicode/* API surface is unaffected."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,
