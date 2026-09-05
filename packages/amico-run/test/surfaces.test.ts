@@ -502,6 +502,25 @@ describe("doctor mode-registry component verdicts (#804)", () => {
     cleanup();
   });
 
+  test("a bundle MISSING a declared component reads stale in the doctor probe — the declared-set rule, both consumers (AC1)", async () => {
+    const w = buildDoctorWorld();
+    // delete the deployed role file: the manifest DECLARES it, the deployed
+    // set lacks it — the same violation the vitest-side validator cell
+    // pins on the SOURCE tree, judged here on the DEPLOYED tree
+    rmSync(join(w.config, "modes", "autodev", "roles", "implementer.md"), { force: true });
+    const report = await surfaceInventory(ctxForWorld(w));
+    const g = bySurface(report, "agent-cards-global");
+    expect(g.verdict).toBe("stale");
+    const named = componentOf(g, (c) => c.mode === "autodev" && c.component === "roles/implementer.md");
+    expect(named).toBeDefined();
+    expect(named!.verdict).toBe("stale");
+    expect(named!.evidence.join(" ")).toMatch(/missing from the deployed set/);
+    // the receipt no longer audits the deployed set either
+    expect(componentOf(g, (c) => c.component === "deploy-receipt")!.verdict).toBe("stale");
+    expect(bySurface(report, "agent-cards-staging").verdict).toBe("current");
+    cleanup();
+  });
+
   test("a half-staged bundle (card new, roles old) reads stale with roles named — never current (AC4)", async () => {
     const w = buildDoctorWorld();
     // the card keeps matching the release; the role copy is OLD (stale bytes)
