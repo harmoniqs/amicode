@@ -32,6 +32,7 @@ import { libraryBody, saveLibraryFile } from "./library";
 import { widgetsResponse, widgetCodeResponse, forkWidgetResponse, loadRegistry } from "./widgets";
 import { dashboardResponse, saveDashboardResponse } from "./dashboard";
 import { widgetFrameHtml, WIDGET_CSP } from "./widget_frame_html";
+import { AppShelf } from "./app_shelf";
 import { createProject, listProjects } from "./project";
 import {
   addCustomConnectionResponse,
@@ -222,9 +223,20 @@ export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeS
 }
 
 /** The service with every ported slice mounted. The extension wiring slice
- *  boots this at activation; the contract tests boot it in-process. */
-export function createAmicodeService(opts: { password?: string } = {}): AmicodeServiceServer {
+ *  boots this at activation; the contract tests boot it in-process.
+ *
+ *  #822 additions, both optional so the parity-contract boots stay
+ *  byte-identical: `shelf` mounts the app-bundle static server (the built
+ *  dist this origin serves the framed app from), `engine` arms engine-token
+ *  auth acceptance + the reverse proxy to the spawned opencode server. */
+export function createAmicodeService(
+  opts: {
+    password?: string;
+    shelf?: { distRoot?: string };
+  } = {},
+): AmicodeServiceServer {
   const server = new AmicodeServiceServer(opts);
+  if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
   registerProfileRoutes(server);
   registerVaultRoutes(server);
   registerProblemRoutes(server);

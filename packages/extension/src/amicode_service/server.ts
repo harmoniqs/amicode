@@ -18,6 +18,7 @@ import * as http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
+import { AppShelf, type AppShelfResult } from "./app_shelf";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -57,6 +58,7 @@ export class AmicodeServiceServer {
   private readonly routes = new Map<string, RouteEntry>();
   private server?: http.Server;
   private _port?: number;
+  private shelf?: AppShelf;
   readonly password: string;
 
   constructor(opts: { password?: string } = {}) {
@@ -84,6 +86,13 @@ export class AmicodeServiceServer {
     return this;
   }
 
+  /** Mount the app shelf (#822): static serving of the built app dist,
+   *  consulted AFTER the exact route table and BEFORE the engine proxy. */
+  attachAppShelf(shelf: AppShelf): this {
+    this.shelf = shelf;
+    return this;
+  }
+
   private authorized(req: http.IncomingMessage): boolean {
     const header = req.headers.authorization ?? "";
     if (!header.startsWith("Basic ")) return false;
@@ -107,7 +116,7 @@ export class AmicodeServiceServer {
   }
 
   private async dispatch(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const send = (r: AmicodeHandlerResult) => {
+    const send = (r: AmicodeHandlerResult | AppShelfResult) => {
       res.statusCode = r.status ?? 200;
       res.setHeader("Content-Type", r.contentType ?? "application/json");
       for (const [k, v] of Object.entries(r.headers ?? {})) res.setHeader(k, v);
@@ -122,13 +131,27 @@ export class AmicodeServiceServer {
       const host = req.headers.host ?? "127.0.0.1";
       const url = new URL(req.url ?? "/", `http://${host}`);
       const route = this.routes.get(`${req.method} ${url.pathname}`);
-      if (!route) {
+      if (route) {
+        const body = await this.readBody(req);
+        const result = await route.handler({ url, body });
+        send(result);
+        return;
+      }
+      // #822 precedence, after the exact route table: the /amicode/*
+      // namespace is OWNED by this service (unmatched paths 404 here — the
+      // fork-parity discipline; stock canonical serves no /amicode/* so
+      // proxying them would just launder our 404) → the app shelf → the
+      // engine proxy.
+      if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
         send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
         return;
       }
-      const body = await this.readBody(req);
-      const result = await route.handler({ url, body });
-      send(result);
+      const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
+      if (shelfHit) {
+        send(shelfHit);
+        return;
+      }
+      send({ status: 503, body: JSON.stringify({ ok: false, error: "engine upstream not available" }) });
     } catch (err) {
       // Never crash the service on one bad request; mirror the fork's
       // collapse-into-one-shape discipline at the transport layer.
