@@ -210,8 +210,8 @@ jobs:
     # #822 the env-gated LIVE boot proof lane (the telaio_app_probe precedent).
     # HONEST STUB: ci.yml does NOT build the app dist in this slice (the full
     # bun recipe — upstream tarball fetch + ~4,700-package install — is the
-    # packaging chore issue amicode#<follow-up>, which also wires build:app
-    # into the release pipeline), so the probe SKIPS here with the reason
+    # packaging chore issue #825, which also wires build:app into the release
+    # pipeline), so the probe SKIPS here with the reason
     # printed. It runs FOR REAL once a dist is present: pass AMICODE_APP_DIST
     # pointing at packages/extension/dist/app after a build:app step. The
     # contract itself is held by the vitest suite (mock engine + mock dist);
