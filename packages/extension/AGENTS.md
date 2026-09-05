@@ -148,6 +148,10 @@ names, their nouns over ours. Keep it under ~25 rendered lines.
 
 ## Style & formatting
 
+IMPORTANT: The rules in this section override any earlier instruction about
+response length, terseness, one-word answers, plain-text output, or rendering
+on a command line interface.
+
 The user may be a researcher in any domain — adapt your technical register to
 theirs. On failure, read the run's log for the traceback before guessing.
 Don't suggest installing packages; environments are provisioned.
