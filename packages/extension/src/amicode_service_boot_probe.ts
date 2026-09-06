@@ -1,27 +1,34 @@
-// amicode_service_boot_probe — the #822 env-gated LIVE boot proof ENTRY
-// (bundled + spawned by scripts/amicode_service_boot_probe.mjs; do not run
-// by hand — the wrapper carries the env gating). Boots the REAL service
-// (this same source, esbuild-bundled — no transcribed logic) against a REAL
-// spawned engine (the vendored opencode binary, password-armed) and a REAL
-// built app dist, then asserts the four end-to-end surfaces from the service
-// origin, all with the ENGINE credential (the framed app's bootstrap):
+// amicode_service_boot_probe — the #822 env-gated LIVE boot proof ENTRY,
+// extended at the #823 M3 cutover (bundled + spawned by
+// scripts/amicode_service_boot_probe.mjs; do not run by hand — the wrapper
+// carries the env gating). Boots the REAL service (this same source,
+// esbuild-bundled — no transcribed logic) against a REAL spawned engine
+// (the vendored opencode binary — STOCK canonical since the #823 pin flip,
+// password-armed) and a REAL built app dist, then asserts the end-to-end
+// surfaces from the service origin:
 //
 //   1. the app document from the shelf (200 text/html, NOT the placeholder)
 //   2. an engine API call through the proxy (GET /session, real engine answer)
 //   3. an SSE connect through the proxy (GET /event, text/event-stream)
 //   4. one /amicode/* route (GET /amicode/profile, ok:true)
+//   5. (#823) the BOOTSTRAP: the document GET authenticates with the
+//      engine's ?auth_token= carrier and NO header — the iframe's only
+//      carriage; what a real browser frame does at cutover
+//   6. (#823) an ANONYMOUS asset fetch (a real /assets/* bundle from the
+//      dist — the sub-resource a browser cannot credential, served via the
+//      public-UI exemption)
 //
 // CI never runs this (no dist there until the packaging-chore issue lands —
 // the wrapper skips honestly); the gate runs it once for real. The vitest
 // suite covers the contract with mock engine + mock dist.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:net";
 import { createAmicodeService } from "./amicode_service";
 import { APP_SHELF_NEEDS_SETUP_MARKER } from "./amicode_service/app_shelf";
-import { serverAuthHeader } from "./server_auth";
+import { serverAuthHeader, serverAuthToken } from "./server_auth";
 
 const APP_DIST = (process.env.AMICODE_APP_DIST ?? "").trim();
 const ENGINE_BIN = (process.env.AMICODE_ENGINE_BIN ?? "").trim();
@@ -97,6 +104,39 @@ async function main(): Promise<void> {
     if (docBody.includes(APP_SHELF_NEEDS_SETUP_MARKER))
       fail("GET / served the NEEDS-SETUP placeholder — the dist did not reach the shelf");
     console.log(`[boot-probe] ✓ app document from the service origin (${docBody.length} bytes, not the placeholder)`);
+
+    // 5. (#823) the BOOTSTRAP seam, for real: the iframe document GET with the
+    //    engine's ?auth_token= carrier and NO Authorization header — the only
+    //    carriage a browser frame has. If this 401s, the cutover's framed app
+    //    boots into a 401 wall.
+    const bootstrap = await fetch(`${origin}/?auth_token=${encodeURIComponent(serverAuthToken(ENGINE_PASSWORD))}`, {
+      headers: { Accept: "text/html" },
+    });
+    const bootstrapBody = await bootstrap.text();
+    if (bootstrap.status !== 200)
+      fail(`GET /?auth_token=… (no header) → ${bootstrap.status}, want 200 — the iframe bootstrap carrier`);
+    if (bootstrapBody.includes(APP_SHELF_NEEDS_SETUP_MARKER))
+      fail("the bootstrap document GET served the NEEDS-SETUP placeholder");
+    console.log("[boot-probe] ✓ iframe bootstrap: document GET via ?auth_token= (no header) — the framed carriage");
+
+    // 6. (#823) an ANONYMOUS asset fetch: a real /assets/* file from the
+    //    dist, no credentials at all — the browser sub-resource constraint
+    //    the public-UI exemption exists for. If this 401s, the framed app's
+    //    own bundle blanks the UI.
+    const assetsDir = join(APP_DIST, "assets");
+    let assetName: string | undefined;
+    try {
+      assetName = readdirSync(assetsDir).find((f) => f.endsWith(".js"));
+    } catch {
+      /* no assets dir */
+    }
+    if (assetName === undefined) fail(`no .js asset under ${assetsDir} — the dist is not a built app`);
+    const asset = await fetch(`${origin}/assets/${assetName}`);
+    if (asset.status !== 200)
+      fail(`GET /assets/${assetName} (anonymous) → ${asset.status}, want 200 — the public-UI exemption`);
+    if (!(asset.headers.get("content-type") ?? "").includes("javascript"))
+      fail(`GET /assets/${assetName} content-type: ${asset.headers.get("content-type")}, want javascript`);
+    console.log(`[boot-probe] ✓ anonymous asset fetch (GET /assets/${assetName}) — the browser sub-resource constraint`);
 
     // 2. an engine API call through the proxy (the real engine answers).
     const session = await fetch(`${origin}/session`, { headers: { Authorization: engineAuth } });
