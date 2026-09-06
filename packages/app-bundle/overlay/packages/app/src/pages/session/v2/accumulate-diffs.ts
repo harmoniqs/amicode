@@ -24,6 +24,11 @@ export interface MergeOpts {
   serverResponded: boolean
   directory: string
   home: string | undefined
+  /** External status overrides for cross-project files (e.g. from filesystem
+   *  watcher notifications). When a cross-project file is marked "deleted"
+   *  here, its status in the merged output is overridden regardless of the
+   *  tool-metadata's original status. */
+  crossProjectStatus?: Map<string, "deleted">
 }
 
 /**
@@ -39,7 +44,7 @@ export interface MergeOpts {
  * are returned as a fallback.
  */
 export function mergeServerAndToolDiffs(opts: MergeOpts): Array<SnapshotFileDiff & { file: string }> {
-  const { serverDiffs, toolDiffs, serverResponded, directory, home } = opts
+  const { serverDiffs, toolDiffs, serverResponded, directory, home, crossProjectStatus } = opts
   const prefix = home && directory.startsWith(home) ? "~" + directory.slice(home.length) : directory
   const projectPrefix = prefix + "/"
 
@@ -53,9 +58,12 @@ export function mergeServerAndToolDiffs(opts: MergeOpts): Array<SnapshotFileDiff
     // server set AND outside the project directory. In-project files trust
     // the server's authority — if the server excluded them (created + deleted,
     // or reverted), they should not leak through as phantom entries.
-    const crossProjectDiffs = toolDiffs.filter(
-      (d) => !serverFiles.has(d.file) && !d.file.startsWith(projectPrefix),
-    )
+    const crossProjectDiffs = toolDiffs
+      .filter((d) => !serverFiles.has(d.file) && !d.file.startsWith(projectPrefix))
+      .map((d) => {
+        const override = crossProjectStatus?.get(d.file)
+        return override ? { ...d, status: override } : d
+      })
 
     return [...normalizedServerDiffs, ...crossProjectDiffs]
   }
