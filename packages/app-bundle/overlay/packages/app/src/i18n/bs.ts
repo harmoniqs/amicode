@@ -708,6 +708,7 @@ export const dict = {
   "session.share.action.view": "Prikaži",
   "session.share.copy.copied": "Kopirano",
   "session.share.copy.copyLink": "Kopiraj link",
+  "session.exportTrace": "Izvezi trag",
 
   "lsp.tooltip.none": "Nema LSP servera",
   "lsp.label.connected": "{{count}} LSP",

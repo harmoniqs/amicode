@@ -702,6 +702,7 @@ export const dict = {
   "session.share.action.view": "ดู",
   "session.share.copy.copied": "คัดลอกแล้ว",
   "session.share.copy.copyLink": "คัดลอกลิงก์",
+  "session.exportTrace": "ส่งออก trace",
 
   "lsp.tooltip.none": "ไม่มีเซิร์ฟเวอร์ LSP",
   "lsp.label.connected": "{{count}} LSP",

@@ -713,6 +713,7 @@ export const dict = {
   "session.share.action.view": "Görüntüle",
   "session.share.copy.copied": "Kopyalandı",
   "session.share.copy.copyLink": "Bağlantı kopyala",
+  "session.exportTrace": "İzlemeyi dışa aktar",
 
   "lsp.tooltip.none": "LSP sunucusu yok",
   "lsp.label.connected": "{{count}} LSP",
