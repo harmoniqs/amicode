@@ -49,6 +49,13 @@ const PROV: StagingProvenance = {
   fetched_at: "2026-09-05T10:00:00.000Z",
 };
 
+
+/** Narrow an AppendResult to its refusal reason (the appended:true arm has none). */
+function refusal(r: import("../src/sota_staging.js").AppendResult): string {
+  if (r.appended) throw new Error("expected a refusal, got an append");
+  return r.reason;
+}
+
 function paperEntry(event_id = "arxiv:2606.05060", campaign = "session-20260901-rydberg-cz"): StageEntryInput {
   return {
     event_id,
@@ -114,7 +121,7 @@ describe("idempotency — double-delivery is impossible (S3 cell)", () => {
     const b = appendStageLine(path, paperEntry());
     expect(a.appended).toBe(true);
     expect(b.appended).toBe(false);
-    expect(b.reason).toMatch(/already staged|duplicate/);
+    expect(refusal(b)).toMatch(/already staged|duplicate/);
     const { lines } = readStagingStream(path);
     expect(lines).toHaveLength(1);
   });
@@ -158,7 +165,7 @@ describe("the acceptance stamp — the PI-instructed promote (S3 cell 2; O3's sc
     appendAcceptStamp(path, "arxiv:2606.05060", { channel: "chat", note: "first" });
     const again = appendAcceptStamp(path, "arxiv:2606.05060", { channel: "chat", note: "repeated instruction" });
     expect(again.appended).toBe(false);
-    expect(again.reason).toMatch(/already accepted|idempotent/i);
+    expect(refusal(again)).toMatch(/already accepted|idempotent/i);
     expect(readStagingStream(path).lines).toHaveLength(2);
   });
 
@@ -167,7 +174,7 @@ describe("the acceptance stamp — the PI-instructed promote (S3 cell 2; O3's sc
     const path = stagingStreamPath(dir, "session-20260901-rydberg-cz");
     const r = appendAcceptStamp(path, "arxiv:never-staged", { channel: "chat", note: "x" });
     expect(r.appended).toBe(false);
-    expect(r.reason).toMatch(/no staged match/i);
+    expect(refusal(r)).toMatch(/no staged match/i);
     expect(existsSync(path)).toBe(false);
   });
 
@@ -180,7 +187,7 @@ describe("the acceptance stamp — the PI-instructed promote (S3 cell 2; O3's sc
     sweepExpiry(path, { nowMs: c.nowMs });
     const r = appendAcceptStamp(path, "arxiv:2606.05060", { channel: "chat", note: "late" }, { nowMs: c.nowMs });
     expect(r.appended).toBe(false);
-    expect(r.reason).toMatch(/dropped|terminal/i);
+    expect(refusal(r)).toMatch(/dropped|terminal/i);
   });
 
   it("the instruction note is REQUIRED — an unstamped acceptance is refused (the schema records the instruction)", () => {
@@ -189,7 +196,7 @@ describe("the acceptance stamp — the PI-instructed promote (S3 cell 2; O3's sc
     appendStageLine(path, paperEntry());
     const r = appendAcceptStamp(path, "arxiv:2606.05060", { channel: "chat", note: "" });
     expect(r.appended).toBe(false);
-    expect(r.reason).toMatch(/instruction|note/i);
+    expect(refusal(r)).toMatch(/instruction|note/i);
   });
 });
 
@@ -240,7 +247,7 @@ describe("expiry — a match past its review window drops with the recorded line
     appendAcceptStamp(path, "arxiv:2606.05060", { channel: "chat", note: "accept" });
     const r = appendDropLine(path, "arxiv:2606.05060", EXPIRED_WITHOUT_REVIEW);
     expect(r.appended).toBe(false);
-    expect(r.reason).toMatch(/accepted|terminal/i);
+    expect(refusal(r)).toMatch(/accepted|terminal/i);
   });
 });
 

@@ -124,8 +124,8 @@ describe("routeItem — relevance against the campaign corpora (explainable, wor
       { title: "Fast Rydberg CZ gates via optimal control", detail: "We shape pulses in the blockade regime; the CZ gate reaches 0.9999." },
       campaigns,
     );
-    expect(r.target).toBe("campaign");
-    expect(r.campaign?.id).toBe(ACTIVE);
+    if (r.target !== "campaign") throw new Error("expected a campaign route");
+    expect(r.campaign.id).toBe(ACTIVE);
     expect(r.matched.length).toBeGreaterThanOrEqual(RELEVANCE_THRESHOLD);
     expect(r.matched).toContain("rydberg");
     expect(r.matched).toContain("cz");
@@ -135,13 +135,13 @@ describe("routeItem — relevance against the campaign corpora (explainable, wor
     seedLedgers();
     const { campaigns } = enumerateCampaigns(join(dir, "sessions"));
     const r = routeItem({ title: "Protein folding via deep learning", detail: "AlphaFold-style pipelines for structure prediction." }, campaigns);
-    expect(r.target).toBe("hopper");
+    if (r.target !== "hopper") throw new Error("expected a hopper route");
     expect(r.reason).toBe("below-threshold");
   });
 
   it("no campaigns at all → the hopper with the named no-campaign-match reason", () => {
     const r = routeItem({ title: "Anything at all", detail: "whatever" }, []);
-    expect(r.target).toBe("hopper");
+    if (r.target !== "hopper") throw new Error("expected a hopper route");
     expect(r.reason).toBe("no-campaign-match");
   });
 
@@ -149,7 +149,8 @@ describe("routeItem — relevance against the campaign corpora (explainable, wor
     const a: CampaignLedgerInfo = { id: "session-b", title: "Zeta rydberg cz", objectiveLine: "", open: [], terms: ["rydberg", "cz"] };
     const b: CampaignLedgerInfo = { id: "session-a", title: "Alpha rydberg cz", objectiveLine: "", open: [], terms: ["rydberg", "cz"] };
     const r = routeItem({ title: "rydberg cz", detail: "" }, [a, b]);
-    expect(r.campaign?.id).toBe("session-a");
+    if (r.target !== "campaign") throw new Error("expected a campaign route");
+    expect(r.campaign.id).toBe("session-a");
   });
 });
 
