@@ -83,6 +83,7 @@ type SaveStatus = "idle" | "saving" | "error"
  */
 function createSaveController(opts: {
   onSave: (path: string, content: string) => Promise<void>
+  onEditorRevert?: (original: string) => void
   errorDisplayMs?: number
 }) {
   const errorDisplayMs = opts.errorDisplayMs ?? 2000
@@ -144,6 +145,26 @@ function createSaveController(opts: {
     revert() {
       hasEdits = false
       latestContent = null
+    },
+    /**
+     * Revert to agent's original: write original to disk, then visually
+     * revert the editor. Clears dirty state on success; shows error on failure.
+     */
+    revertToOriginal(path: string, original: string) {
+      setStatus("saving")
+      opts
+        .onSave(path, original)
+        .then(() => {
+          opts.onEditorRevert?.(original)
+          hasEdits = false
+          latestContent = null
+          setStatus("idle")
+        })
+        .catch(() => {
+          setStatus("error")
+          if (errorTimer) clearTimeout(errorTimer)
+          errorTimer = setTimeout(() => setStatus("idle"), errorDisplayMs)
+        })
     },
     /** Cleanup — optionally saves on unmount (file-switch safety net). */
     cleanup(path?: string) {
@@ -298,6 +319,60 @@ describe("Save controller (explicit Cmd+S)", () => {
     ctrl.revert()
     expect(ctrl.hasEdits).toBe(false)
     expect(ctrl.latestContent).toBeNull()
+
+    ctrl.cleanup()
+  })
+
+  test("revertToOriginal writes original to disk and calls onEditorRevert on success", async () => {
+    const onSave = vi.fn(async () => {})
+    const onEditorRevert = vi.fn()
+    const ctrl = createSaveController({ onSave, onEditorRevert })
+
+    ctrl.onChange("user edits")
+    ctrl.revertToOriginal("test.ts", "agent original")
+
+    expect(onSave).toHaveBeenCalledWith("test.ts", "agent original")
+    expect(ctrl.status).toBe("saving")
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onEditorRevert).toHaveBeenCalledWith("agent original")
+    expect(ctrl.hasEdits).toBe(false)
+    expect(ctrl.latestContent).toBeNull()
+    expect(ctrl.status).toBe("idle")
+
+    ctrl.cleanup()
+  })
+
+  test("revertToOriginal shows error on failure, keeps hasEdits true", async () => {
+    const onSave = vi.fn(async () => { throw new Error("network") })
+    const onEditorRevert = vi.fn()
+    const ctrl = createSaveController({ onSave, onEditorRevert, errorDisplayMs: 100 })
+
+    ctrl.onChange("user edits")
+    ctrl.revertToOriginal("test.ts", "agent original")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onEditorRevert).not.toHaveBeenCalled()
+    expect(ctrl.hasEdits).toBe(true)
+    expect(ctrl.status).toBe("error")
+
+    vi.advanceTimersByTime(100)
+    expect(ctrl.status).toBe("idle")
+
+    ctrl.cleanup()
+  })
+
+  test("revertToOriginal works without onEditorRevert callback", async () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave }) // no onEditorRevert
+
+    ctrl.onChange("user edits")
+    ctrl.revertToOriginal("test.ts", "agent original")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(ctrl.hasEdits).toBe(false)
+    expect(ctrl.status).toBe("idle")
 
     ctrl.cleanup()
   })

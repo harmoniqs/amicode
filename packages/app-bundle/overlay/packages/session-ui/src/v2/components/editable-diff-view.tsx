@@ -59,6 +59,8 @@ export type EditableDiffViewProps = {
   onRevert: () => void
   /** Optional ref callback for the container element. */
   ref?: (el: HTMLElement) => void
+  /** Optional ref callback exposing the DiffEditorHandle (for programmatic revert). */
+  editorRef?: (handle: DiffEditorHandle | null) => void
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +118,9 @@ export function EditableDiffView(props: EditableDiffViewProps): JSX.Element {
       language: lang,
       onChange: readOnly ? undefined : onChange,
     })
+
+    // Expose the handle to the parent for programmatic revert
+    untrack(() => props.editorRef?.(handle))
   })
 
   // -----------------------------------------------------------------------
@@ -153,6 +158,7 @@ export function EditableDiffView(props: EditableDiffViewProps): JSX.Element {
       handle.destroy()
       handle = null
     }
+    props.editorRef?.(null)
   })
 
   return (

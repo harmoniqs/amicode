@@ -31,6 +31,7 @@ import { shouldVirtualizeReviewDiff } from "./session-review-file-preview-v2-vir
 import { LineCommentV2OverflowIcon } from "@opencode-ai/ui/v2/line-comment-v2"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { EditableDiffView } from "./editable-diff-view"
+import type { DiffEditorHandle } from "./editable-diff-view-core"
 import { Markdown } from "../../components/markdown"
 import "./session-review-v2.css"
 
@@ -123,6 +124,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const i18n = useI18n()
   const fileComponent = useFileComponent()
   let scrollRef: HTMLDivElement | undefined
+  let editorHandle: DiffEditorHandle | null = null
   let focusToken = 0
 
   const [store, setStore] = createStore({
@@ -358,6 +360,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       body: JSON.stringify({ path: fsPath, content: original }),
     })
       .then(() => {
+        editorHandle?.revert(original)
         setSaveStatus("idle")
         setHasEdits(false)
         latestContent = null
@@ -507,6 +510,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               readOnly={!!props.isAgentBusy}
               onChange={handleChangeWithTracking}
               onRevert={handleRevert}
+              editorRef={(h) => { editorHandle = h }}
             />
           </div>
         </Show>
