@@ -2,7 +2,7 @@
 // amico-run tsconfig includes test/, unlike the extension package's — hence
 // this declaration rather than an untyped import).
 
-export type BridgeRecordKind = "amicode-run" | "strumento-task";
+export type BridgeRecordKind = "amicode-run" | "strumento-task" | "sota-staging";
 
 export interface BridgeValidation {
   ok: boolean;

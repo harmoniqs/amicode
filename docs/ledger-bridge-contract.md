@@ -1,4 +1,4 @@
-# The ledger bridge contract — one doctrine, three record kinds
+# The ledger bridge contract — one doctrine, four record kinds
 
 > SEAM 4 of the outside-lab codesign (amicode's half; issue #704, part of #679;
 > design-of-record: `spec-20260831-120000-amicode-outside-lab-codesign.md`, SEAM 4).
@@ -99,6 +99,28 @@ completes as this note + the fixtures, and amicode's reports stay readable
 through its own surfaces (the Run Inspector, the problem-workspace spine, the
 `amico-run` launch/verify path) exactly as they do today.
 
+### (d) the SOTA staging sidecar (living-sota D3 — slice 2 of spec-20260905-103000)
+
+The per-campaign SIDECAR staging stream a session ledger carries BESIDE
+itself — the nine-section ledger grammar holds unamended; the sidecar is a
+SEPARATE file (`<ledger-stem>.sota-staging.jsonl` under the personal vault's
+`sessions/`, one per campaign, plus the reserved `hopper` stream as the
+no-match/below-threshold fallback). The doctrine's five clauses apply
+verbatim: append-only transition lines (`stage` / `accept` / `drop` /
+`compact`) at or under PIPE_BUF with O_APPEND line-atomicity; staging state
+DERIVED by replay, never stored; entries never mutated (the windowed
+compaction rewrite is the one sanctioned exception, and it RECORDS itself as
+an appended `compact` line); unknown `ev` values carried by readers; and
+single writer — the digest, the SOTA watcher, and the weekly synthesis are
+the ONLY stage/drop writers, with ONE sanctioned non-job append: the
+**acceptance stamp**, an agent appending an `accept` line on the PI's explicit
+instruction, carrying `instructed_by: "PI"` plus the recorded instruction
+(channel, note, received_at). Every `stage` line carries provenance
+(job/via/source/fetched_at) and the review-by/expiry stamps; every transition
+is keyed by its external `event_id` (idempotent — double delivery is
+impossible); accept and drop are both terminal and exactly one lands. The
+acceptance-stamp schema rides the bridge fixture below (obligation O3).
+
 ## The replay fixtures + validator (amicode's half, shipped here)
 
 - `packages/amico-run/fixtures/bridge/amicode-run/` — one canonical amicode run
@@ -110,11 +132,20 @@ through its own surfaces (the Run Inspector, the problem-workspace spine, the
   `task.toml` (`kind = "experiment"`), `progress.jsonl` with the known event
   kinds **plus one unknown `ev` on purpose** (the opacity rule, exercised, not
   asserted), `result.toml`, and the artifact the `artifact` event names.
+- `packages/amico-run/fixtures/bridge/2026-09-05-sota-staging/` — one
+  canonical SOTA staging sidecar record (living-sota slice 2): `staging.toml`
+  (the manifest), the campaign sidecar with a staged paper, a staged watcher
+  release, the PI-instructed accept stamp, an expired-without-review drop,
+  and a pending stage, plus the `hopper` stream carrying a below-threshold
+  stage and one unknown `ev` on purpose (the opacity probe, same as the
+  strumento fixture's).
 - `packages/amico-run/scripts/validate_bridge_replay.mjs` — the replay
-  validator: exit 0 on both fixtures, non-zero on doctrine violations (a torn
-  terminal marker, a mutated content hash, a missing terminal marker, a torn
-  append-only stream, a non-contiguous `seq`, an escaping/void artifact path, a
-  broken stdout-contract line). No Julia, no Python — the fixtures are
+  validator: exit 0 on all three fixtures, non-zero on doctrine violations (a
+  torn terminal marker, a mutated content hash, a missing terminal marker, a
+  torn append-only stream, a non-contiguous `seq`, an escaping/void artifact
+  path, a broken stdout-contract line, a laundered staging acceptance — an
+  accept without its stage behind it or without its PI-instruction record, a
+  double stage for one event id). No Julia, no Python — the fixtures are
   committed data. `node packages/amico-run/scripts/validate_bridge_replay.mjs`
   with no arguments validates both; pass a record dir to validate one.
 
