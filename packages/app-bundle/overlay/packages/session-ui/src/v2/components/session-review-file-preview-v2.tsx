@@ -269,12 +269,14 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: fsPath, content }),
     })
-      .then(() => {
+      .then((response) => {
+        if (!response.ok) throw new Error(`Save failed: ${response.status}`)
         // Race guard: only clear dirty state if no edits arrived during the save
         if (latestContent === contentAtSaveTime) {
           setHasEdits(false)
         }
         setSaveStatus("idle")
+        props.onRefresh?.()
       })
       .catch(() => {
         setSaveStatus("error")
@@ -304,7 +306,11 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ path: fsPath, content: latestContent }),
-        }).catch(() => {})
+        })
+          .then((response) => {
+            if (!response.ok) console.warn("[save] cleanup save failed:", response.status)
+          })
+          .catch(() => {})
       }
     }
   })
@@ -359,11 +365,13 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: fsPath, content: original }),
     })
-      .then(() => {
+      .then((response) => {
+        if (!response.ok) throw new Error(`Revert failed: ${response.status}`)
         editorHandle?.revert(original)
         setSaveStatus("idle")
         setHasEdits(false)
         latestContent = null
+        props.onRefresh?.()
       })
       .catch(() => {
         setSaveStatus("error")

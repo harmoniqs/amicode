@@ -84,6 +84,7 @@ type SaveStatus = "idle" | "saving" | "error"
 function createSaveController(opts: {
   onSave: (path: string, content: string) => Promise<void>
   onEditorRevert?: (original: string) => void
+  onRefresh?: () => void
   errorDisplayMs?: number
 }) {
   const errorDisplayMs = opts.errorDisplayMs ?? 2000
@@ -134,6 +135,7 @@ function createSaveController(opts: {
             for (const l of listeners) l(status) // notify hasEdits change
           }
           setStatus("idle")
+          opts.onRefresh?.()
         })
         .catch(() => {
           setStatus("error")
@@ -159,6 +161,7 @@ function createSaveController(opts: {
           hasEdits = false
           latestContent = null
           setStatus("idle")
+          opts.onRefresh?.()
         })
         .catch(() => {
           setStatus("error")
@@ -405,6 +408,83 @@ describe("Save controller (explicit Cmd+S)", () => {
     ctrl.cleanup("test.ts")
 
     expect(onSave).not.toHaveBeenCalled()
+  })
+
+  test("onRefresh fires after successful immediateSave", async () => {
+    const onSave = vi.fn(async () => {})
+    const onRefresh = vi.fn()
+    const ctrl = createSaveController({ onSave, onRefresh })
+
+    ctrl.onChange("content")
+    ctrl.immediateSave("test.ts")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+
+    ctrl.cleanup()
+  })
+
+  test("onRefresh does NOT fire after failed immediateSave", async () => {
+    const onSave = vi.fn(async () => { throw new Error("server error") })
+    const onRefresh = vi.fn()
+    const ctrl = createSaveController({ onSave, onRefresh, errorDisplayMs: 100 })
+
+    ctrl.onChange("content")
+    ctrl.immediateSave("test.ts")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(ctrl.status).toBe("error")
+
+    ctrl.cleanup()
+  })
+
+  test("onRefresh fires after successful revertToOriginal", async () => {
+    const onSave = vi.fn(async () => {})
+    const onRefresh = vi.fn()
+    const ctrl = createSaveController({ onSave, onRefresh })
+
+    ctrl.onChange("user edits")
+    ctrl.revertToOriginal("test.ts", "agent original")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onRefresh).toHaveBeenCalledTimes(1)
+
+    ctrl.cleanup()
+  })
+
+  test("onRefresh does NOT fire after failed revertToOriginal", async () => {
+    const onSave = vi.fn(async () => { throw new Error("server error") })
+    const onRefresh = vi.fn()
+    const ctrl = createSaveController({ onSave, onRefresh, errorDisplayMs: 100 })
+
+    ctrl.onChange("user edits")
+    ctrl.revertToOriginal("test.ts", "agent original")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onRefresh).not.toHaveBeenCalled()
+
+    ctrl.cleanup()
+  })
+
+  test("failed HTTP response (modeled as rejected onSave) shows error and keeps edits", async () => {
+    // In production, !response.ok throws into .catch() — modeled here as onSave rejection
+    const onSave = vi.fn(async () => { throw new Error("HTTP 403") })
+    const onRefresh = vi.fn()
+    const ctrl = createSaveController({ onSave, onRefresh, errorDisplayMs: 100 })
+
+    ctrl.onChange("content")
+    ctrl.immediateSave("test.ts")
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(ctrl.status).toBe("error")
+    expect(ctrl.hasEdits).toBe(true) // edits preserved on failure
+    expect(onRefresh).not.toHaveBeenCalled() // no refresh on failure
+
+    vi.advanceTimersByTime(100)
+    expect(ctrl.status).toBe("idle")
+
+    ctrl.cleanup()
   })
 })
 
