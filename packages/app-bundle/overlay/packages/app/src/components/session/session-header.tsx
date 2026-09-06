@@ -39,6 +39,7 @@ import { useServerSync } from "@/context/server-sync"
 import { useGlobal } from "@/context/global"
 import { base64Encode } from "@opencode-ai/core/util/encode"
 import { sessionListDirectories, sortedRootSessions } from "@/pages/layout/helpers"
+import { sessionListState } from "@/utils/session-list-state"
 import { useNavigate } from "@solidjs/router"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 
@@ -775,6 +776,31 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
     return [...openTabs, ...rest]
   })
 
+  // D2 honest states (issue #817): "not yet fetched" (a completed list
+  // request is the only authority for "genuinely empty") vs "empty" vs ready
+  // — never render the empty state while no fetch has resolved (#293's
+  // invisible failure).
+  const activeListState = createMemo(() => {
+    if (!open()) return "ready" as const
+    try {
+      const conn = server.current
+      if (!conn) return "unfetched" as const
+      const ctx = globalCtx.ensureServerCtx(conn)
+      if (!ctx) return "unfetched" as const
+      const directories = sessionListDirectories(ctx.projects.list(), ctx.sync.data?.project ?? [])
+      let fetched = false
+      let count = 0
+      for (const dir of directories) {
+        const [store] = ctx.sync.child(dir, { bootstrap: false })
+        if (store.sessions_fetched) fetched = true
+        count += store.session?.length ?? 0
+      }
+      return sessionListState({ fetched, count, searching: !!searchQuery() })
+    } catch {
+      return "unfetched" as const
+    }
+  })
+
   // Search filtering
   const searchQuery = createMemo(() => search().trim().toLowerCase())
   const filteredActiveSessions = createMemo(() => {
@@ -1071,7 +1097,11 @@ export function SessionChatsDropdown(props: { currentSessionID?: string } = {}) 
                   when={filteredActiveSessions().length > 0}
                   fallback={
                     <div class="pl-1.5 py-2 text-v2-text-text-faint" style={{ "font-size": "12px" }}>
-                      {searchQuery() ? language.t("home.sessions.search.noResults", { query: search() }) : language.t("home.sessions.empty")}
+                      {searchQuery()
+                        ? language.t("home.sessions.search.noResults", { query: search() })
+                        : activeListState() === "unfetched"
+                          ? language.t("common.loading")
+                          : language.t("home.sessions.empty")}
                     </div>
                   }
                 >

@@ -18,6 +18,7 @@ import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
 import type { CommandInfo, McpResource, McpServer, SessionMessageInfo } from "@opencode-ai/client/promise"
 import type { Accessor } from "solid-js"
 import type { SetStoreFunction, Store } from "solid-js/store"
+import type { SessionSnapshot } from "./session-snapshot"
 
 export type ProjectMeta = {
   name?: string
@@ -44,6 +45,11 @@ export type State = {
   path: Path
   session: Session[]
   sessionTotal: number
+  // D2 honest states (issue #817): has a session-list fetch completed for
+  // this directory? A persisted snapshot is a render accelerator, never an
+  // authority — until a fetch resolves, the UI renders "not yet fetched",
+  // never "empty".
+  sessions_fetched?: boolean
   session_status: {
     [sessionID: string]: SessionStatus
   }
@@ -103,6 +109,15 @@ export type MetaCache = {
 export type IconCache = {
   store: Store<{ value: string | undefined }>
   setStore: SetStoreFunction<{ value: string | undefined }>
+  ready: Accessor<boolean>
+}
+
+// D2 (issue #817): the persisted session snapshot's cache entry — a render
+// accelerator, never an authority; verified against the derived currency
+// token on every list response.
+export type SessionSnapshotCache = {
+  store: Store<{ value: SessionSnapshot | undefined }>
+  setStore: SetStoreFunction<{ value: SessionSnapshot | undefined }>
   ready: Accessor<boolean>
 }
 

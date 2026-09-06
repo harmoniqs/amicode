@@ -22,6 +22,7 @@ export const dict = {
   "theme.scheme.dark": "Oscuro",
 
   "command.sidebar.toggle": "Alternar barra lateral",
+  "command.panel.reset": "Restablecer estado del panel",
   "command.project.open": "Abrir proyecto",
   "command.project.previous": "Proyecto anterior",
   "command.project.next": "Siguiente proyecto",
