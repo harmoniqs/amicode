@@ -1,0 +1,6 @@
+kind = "sota-staging"
+schema_version = "1"
+campaign = "session-20260831-bridge-fixture"
+review_by_days = 7
+expires_after_days = 14
+compaction_window_days = 28

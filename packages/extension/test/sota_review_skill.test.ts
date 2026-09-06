@@ -94,9 +94,19 @@ describe("the sota-review skill carries both lenses with the recipe verbatim (#8
     expect(skill).toMatch(/amico sota codebase/);
   });
 
-  it("honest scope — this slice fetches and reports (staging is a named later layer)", () => {
-    expect(flat).toMatch(/fetches and reports/i);
-    expect(flat).toMatch(/later layer|later slices/i);
+  it("honest scope — the lenses fetch and report; the staged routing is its OWN layer with enumerated writers (living-sota slice 2)", () => {
+    expect(flat).toMatch(/fetches and reports|fetch and report/i);
+    // the staged-routing layer is LANDED, not "later": the skill names its writers
+    expect(flat).toMatch(/staged routing is its\s*own layer/i);
+    expect(skill).toMatch(/amico papers digest --route/);
+    expect(skill).toMatch(/amico sota watcher/);
+    expect(skill).toMatch(/amico sota accept/);
+    expect(skill).toMatch(/amico sota awaiting-the-eye/);
+    // stage-before-count: nothing counts until the PI's accept stamp lands
+    expect(flat).toMatch(/never rendered as currency/i);
+    expect(flat).toMatch(/PI's accept stamp|accept stamp lands/i);
+    // the lenses NEVER append — the on-demand survey commands are read-only
+    expect(flat).toMatch(/they never append/i);
   });
 });
 
@@ -117,6 +127,9 @@ describe("scraping patterns are banned by grep (#820 S1 — the recipe's rules, 
     "the codebase lens (sota_codebase.ts)": readFileSync(join(AMICO_RUN, "src", "sota_codebase.ts"), "utf8"),
     "the fetch seam (sota_fetch.ts)": readFileSync(join(AMICO_RUN, "src", "sota_fetch.ts"), "utf8"),
     "the verb (sota_verb.ts)": readFileSync(join(AMICO_RUN, "src", "sota_verb.ts"), "utf8"),
+    "the staging streams (sota_staging.ts)": readFileSync(join(AMICO_RUN, "src", "sota_staging.ts"), "utf8"),
+    "the router (sota_router.ts)": readFileSync(join(AMICO_RUN, "src", "sota_router.ts"), "utf8"),
+    "the watcher (sota_watcher.ts)": readFileSync(join(AMICO_RUN, "src", "sota_watcher.ts"), "utf8"),
   };
 
   for (const [name, text] of Object.entries(SURFACES)) {
@@ -127,10 +140,13 @@ describe("scraping patterns are banned by grep (#820 S1 — the recipe's rules, 
     }
   }
 
-  it("the only network endpoints in the lens code are the sanctioned APIs (arXiv export over https; GitHub API)", () => {
+  it("the only network endpoints in the lens + staging code are the sanctioned APIs (arXiv export over https; GitHub API; cited abs/release/issue URLs)", () => {
     const lensCode = [
       readFileSync(join(AMICO_RUN, "src", "sota_papers.ts"), "utf8"),
       readFileSync(join(AMICO_RUN, "src", "sota_codebase.ts"), "utf8"),
+      readFileSync(join(AMICO_RUN, "src", "sota_router.ts"), "utf8"),
+      readFileSync(join(AMICO_RUN, "src", "sota_watcher.ts"), "utf8"),
+      readFileSync(join(AMICO_RUN, "src", "sota_staging.ts"), "utf8"),
     ].join("\n");
     const httpsHosts = [...lensCode.matchAll(/https:\/\/([a-z0-9.-]+)/gi)].map((m) => m[1]);
     const sanctioned = new Set(["export.arxiv.org", "arxiv.org", "api.github.com", "github.com"]);

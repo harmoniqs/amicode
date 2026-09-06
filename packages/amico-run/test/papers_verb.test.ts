@@ -84,3 +84,99 @@ describe("papersVerb", () => {
     expect(r.code).toBe(64);
   });
 });
+
+// ── living-sota slice 2: the digest's relevance router (spec D3, S3) ──────────
+// the papers digest gains the staged router: its LAB-CORPUS picks route
+// against the active campaigns; matches stage into the campaign sidecar,
+// below-threshold/no-match into the hopper. Hermetic: --feed-xml seeds the
+// feed from a fixture file (the deterministic seam) — zero transports.
+
+import { mkdtempSync as mkd2, writeFileSync as wf2, readFileSync as rf2, mkdirSync as mkd2d } from "node:fs";
+import { deriveStagingState, stagingStreamPath, HOPPER_CAMPAIGN } from "../src/sota_staging.js";
+
+const FEED_XML = `<?xml version="1.0" encoding="UTF-8"?>
+<rss><channel>
+<item><title>Fast Rydberg CZ gates via optimal control</title><link>http://arxiv.org/abs/2606.05060</link><description>We shape pulses in the blockade regime; the CZ gate reaches 0.9999 on an eight-atom register.</description></item>
+<item><title>Protein folding via deep learning</title><link>http://arxiv.org/abs/2606.99999</link><description>AlphaFold-style pipelines for structure prediction.</description></item>
+<item><title>Unrelated condensed matter note</title><link>http://arxiv.org/abs/2606.11111</link><description>A note about something else entirely.</description></item>
+</channel></rss>`;
+
+const ACTIVE_LEDGER_2 = `# Session ledger — Rydberg blockade scaling
+
+## 2. Verdict table
+
+| item | status |
+|---|---|
+| H1 blockade radius calibration | pending |
+`;
+
+function corpusNote(terms: string[]): void {
+  // the lab corpus gives the profile the taste that picks the digest entries
+  // (a VALID library-paper record — the corpus fold skips invalid notes)
+  wf2(join(vaults, "mine", "papers", `note-${Math.random().toString(36).slice(2)}.md`), `---\ntype: paper\ntitle: "T"\nauthors: [Someone]\narxiv: "0000.00000"\nsystems: [${terms.join(", ")}]\ntags: [${terms.join(", ")}]\n---\n\n# t\n`);
+}
+
+describe("`amico papers digest --route` — matched picks stage into the campaign sidecar (the digest's router)", () => {
+  it("routes the digest picks: matched -> campaign sidecar; sub-corpus-threshold/unmatched -> hopper; idempotent re-run", async () => {
+    corpusNote(["rydberg", "cz", "blockade", "protein"]);
+    const sessions = mkd2(join(tmpdir(), "papers-sessions-"));
+    wf2(join(sessions, "session-20260901-rydberg-blockade.md"), ACTIVE_LEDGER_2);
+    const feedFile = join(mkd2(join(tmpdir(), "papers-feed-")), "feed.xml");
+    wf2(feedFile, FEED_XML);
+    const res = await papersVerb(["digest", "--feed-xml", feedFile, "--route", "--sessions", sessions]);
+    expect(res.code).toBe(0);
+    const j = res.json as { ok: boolean; routed: { staged: { event_id: string; campaign: string }[]; hopper: { event_id: string; reason: string }[]; deduped: string[] } };
+    expect(j.ok).toBe(true);
+    // the rydberg paper matched the active campaign; protein + the unrelated note did not
+    expect(j.routed.staged).toHaveLength(1);
+    expect(j.routed.staged[0]).toMatchObject({ event_id: "arxiv:2606.05060", campaign: "session-20260901-rydberg-blockade" });
+    expect(j.routed.hopper).toHaveLength(1);
+    expect(j.routed.hopper[0]).toMatchObject({ event_id: "arxiv:2606.99999" });
+    const sidecar = deriveStagingState(stagingStreamPath(sessions, "session-20260901-rydberg-blockade"));
+    expect(sidecar.entries.get("arxiv:2606.05060")?.state).toBe("staged");
+    expect(sidecar.entries.get("arxiv:2606.05060")?.provenance?.job).toBe("papers-digest");
+    expect(deriveStagingState(stagingStreamPath(sessions, HOPPER_CAMPAIGN)).entries.get("arxiv:2606.99999")?.state).toBe("staged");
+    // re-running the digest on the same feed dedupes by event id — one stage line each
+    const twice = await papersVerb(["digest", "--feed-xml", feedFile, "--route", "--sessions", sessions]);
+    const j2 = (twice.json as { routed: { deduped: string[] } }).routed;
+    expect(j2.deduped.sort()).toEqual(["arxiv:2606.05060", "arxiv:2606.99999"]);
+    expect(rf2(stagingStreamPath(sessions, "session-20260901-rydberg-blockade"), "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  it("without --route the digest does NOT stage (routing is the job's explicit act, never a side effect of a dry run)", async () => {
+    corpusNote(["rydberg", "cz"]);
+    const sessions = mkd2(join(tmpdir(), "papers-sessions-"));
+    wf2(join(sessions, "session-20260901-rydberg-blockade.md"), ACTIVE_LEDGER_2);
+    const feedFile = join(mkd2(join(tmpdir(), "papers-feed-")), "feed.xml");
+    wf2(feedFile, FEED_XML);
+    const res = await papersVerb(["digest", "--feed-xml", feedFile, "--sessions", sessions]);
+    expect(res.code).toBe(0);
+    expect((res.json as { routed?: unknown }).routed).toBeUndefined();
+    expect(mkd2d).toBeTruthy(); // (import sanity for the fs helpers)
+    expect(!existsSyncSync(stagingStreamPath(sessions, "session-20260901-rydberg-blockade"))).toBe(true);
+  });
+
+  it("a routing failure is a NAMED, non-fatal outcome (the digest still reports; the survey never blocks)", async () => {
+    corpusNote(["rydberg", "cz"]);
+    // sessions dir points into a FILE — enumerate/read fails -> named routing error, digest exit 0
+    const sessionsFile = join(mkd2(join(tmpdir(), "papers-badsessions-")), "sessions");
+    wf2(sessionsFile, "not a dir");
+    const feedFile = join(mkd2(join(tmpdir(), "papers-feed-")), "feed.xml");
+    wf2(feedFile, FEED_XML);
+    const res = await papersVerb(["digest", "--feed-xml", feedFile, "--route", "--sessions", sessionsFile]);
+    expect(res.code).toBe(0);
+    const j = res.json as { ok: boolean; routed: { staged: unknown[]; errors: string[] } };
+    expect(j.ok).toBe(true);
+    expect(j.routed.staged).toHaveLength(0);
+    expect(j.routed.errors.length).toBeGreaterThan(0);
+  });
+});
+
+function existsSyncSync(p: string): boolean {
+  try {
+    rf2(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
