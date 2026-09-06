@@ -567,6 +567,26 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
             </MenuV2.Context.Content>
           </MenuV2.Context.Portal>
         </MenuV2.Context>
+        {/* Dirty dot — visible when the user has unsaved edits.
+            Placed between the filename area and the diff counts as a direct
+            flex child of file-header, outside the file-diff stacking context
+            so it is never occluded by the ::after pseudo-element. */}
+        <Show when={isEditable() && hasEdits()}>
+          <TooltipV2 openDelay={300} value="Unsaved changes (Cmd+S to save)">
+            <span
+              data-slot="session-review-v2-dirty-dot"
+              style={{
+                "flex-shrink": "0",
+                "font-size": "14px",
+                "line-height": "1",
+                color: "var(--v2-text-text-muted, var(--amc-text-muted))",
+              }}
+              aria-label="Unsaved changes"
+            >
+              ●
+            </span>
+          </TooltipV2>
+        </Show>
         <div data-slot="session-review-v2-file-diff">
           <DiffChanges changes={view()} />
           <Show when={isEditable() && hasEdits()}>
@@ -589,6 +609,8 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                   cursor: "pointer",
                   color: "var(--amc-text-muted, var(--icon-base))",
                   "flex-shrink": "0",
+                  position: "relative",
+                  "z-index": "1",
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = "var(--amc-danger, #f44336)")}
                 onMouseLeave={(e) => (e.currentTarget.style.color = "var(--amc-text-muted, var(--icon-base))")}
@@ -597,30 +619,21 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               </button>
             </TooltipV2>
           </Show>
-          <Show when={isEditable() && saveStatus() !== "idle"}>
+          {/* Error-only save feedback — shown for 2s on save failure.
+              Uses position: relative + z-index: 1 to escape the ::after occlusion. */}
+          <Show when={isEditable() && saveStatus() === "error"}>
             <span
-              data-slot="session-review-v2-save-indicator"
+              data-slot="session-review-v2-save-error"
               style={{
                 "font-size": "11px",
                 "margin-left": "8px",
                 "white-space": "nowrap",
-                color:
-                  saveStatus() === "saving"
-                    ? "var(--amc-warning, #ffc107)"
-                    : saveStatus() === "saved"
-                      ? "var(--amc-success, #4caf50)"
-                      : saveStatus() === "error"
-                        ? "var(--amc-danger, #f44336)"
-                        : "var(--amc-text-muted)",
+                color: "var(--amc-danger, #f44336)",
+                position: "relative",
+                "z-index": "1",
               }}
             >
-              {saveStatus() === "saving"
-                ? "Saving…"
-                : saveStatus() === "saved"
-                  ? "Saved"
-                  : saveStatus() === "error"
-                    ? "Save failed"
-                    : ""}
+              Save failed
             </span>
           </Show>
         </div>
