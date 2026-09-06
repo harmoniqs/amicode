@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { handleAmicodeBridgeMessage } from "./chat_bridge";
 import { registerInspectorPoster } from "./inspector_bridge";
 import { getBugReport } from "./bug_report";
+import { FileWatcherBridge } from "./file_watcher_bridge";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -64,6 +65,9 @@ export class ChatPanel {
    *  Re-emitted when the panel gains focus so the sidebar highlight tracks
    *  the active tab. null = no selection yet (clears stale highlights). */
   private lastProjectPath: string | null = null;
+  /** Per-session file watcher (#844): watches every file the session has
+   *  touched and posts fs-diff-invalidate when any of them change on disk. */
+  private readonly fileWatcher: FileWatcherBridge;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -89,6 +93,12 @@ export class ChatPanel {
     ChatPanel.live.add(this);
     ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    // #844: per-session file watcher — watches every file the session has
+    // touched and posts fs-diff-invalidate to the iframe when any change.
+    this.fileWatcher = new FileWatcherBridge(
+      (msg) => void this.panel.webview.postMessage(msg),
+    );
+    this.disposables.push(this.fileWatcher);
     // #351: register this panel as an inspector poster — RunsManager / device
     // poll fan out run/device envelopes to every live chat webview.
     this.disposables.push(registerInspectorPoster((msg) => void this.panel.webview.postMessage(msg)));
@@ -117,6 +127,14 @@ export class ChatPanel {
           const cbs = ChatPanel.appReadyCallbacks.slice();
           ChatPanel.appReadyCallbacks = [];
           for (const cb of cbs) cb();
+          return;
+        }
+        // #844: watch-files — the session page sends the list of absolute file
+        // paths it wants watched. The FileWatcherBridge updates its watcher set
+        // and will post fs-diff-invalidate back when any of them change on disk.
+        if (msg && msg.source === "amicode" && msg.kind === "watch-files") {
+          const files = Array.isArray(msg.files) ? msg.files.filter((f: unknown) => typeof f === "string") : [];
+          this.fileWatcher.updateWatchSet(files);
           return;
         }
         // iframe → extension bridge: the outer webview relay (renderHtml)
@@ -420,7 +438,7 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files")) {
             vscode.postMessage(d);
           }
           return;
@@ -429,7 +447,7 @@ export class ChatPanel {
         // (webview-internal origin, never the opencode origin). Forward only
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
@@ -581,12 +599,12 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
-          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready")) {
+          if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files")) {
             vscode.postMessage(d);
           }
           return;
         }
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, origin);
         }
