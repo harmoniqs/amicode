@@ -30,9 +30,10 @@ export interface AmicodeTerminalDeps {
   getConfigContent: () => string | undefined;
   getSpawnEnv: () => Record<string, string> | undefined;
   channel: vscode.OutputChannel;
-  /** The extension-host amicode service (#451 parallel-run), when booted —
-   *  exported into the terminal env so a dogfood machine can probe the port
-   *  directly (curl $AMICODE_SERVICE_URL/amicode/profile with the auth header). */
+  /** The extension-host amicode service (#823: the framed app's origin at the
+   *  M3 cutover), when booted — exported into the terminal env so a dogfood
+   *  machine can probe the port directly (curl
+   *  $AMICODE_SERVICE_URL/amicode/profile with the auth header). */
   getAmicodeService?: () => { url: string; authHeader: string } | undefined;
 }
 
@@ -76,7 +77,7 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     if (configContent) env.OPENCODE_CONFIG_CONTENT = configContent;
     if (spawnEnv.OPENCODE_SERVER_PASSWORD) env.OPENCODE_SERVER_PASSWORD = spawnEnv.OPENCODE_SERVER_PASSWORD;
     if (spawnEnv.OPENCODE_SERVER_USERNAME) env.OPENCODE_SERVER_USERNAME = spawnEnv.OPENCODE_SERVER_USERNAME;
-    // Amicode service (parallel-run, #451): URL + auth for direct probing.
+    // Amicode service (#823, the framed origin): URL + auth for direct probing.
     const svc = deps.getAmicodeService?.();
     if (svc) {
       env.AMICODE_SERVICE_URL = svc.url;

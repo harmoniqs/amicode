@@ -8,6 +8,15 @@
 // sequence against the PORTED extension-host service with the same seed and
 // asserts deep-equal responses.
 //
+// #823 (the M3 cutover) FREEZES the parity record: the vendored pin is now
+// STOCK canonical opencode, which serves no /amicode/* routes (M0 gate (a)),
+// so this recorder can no longer run against the default vendored binary —
+// pass --binary <fork opencode at v1.18.10-amicode.21> explicitly if a
+// re-record is ever justified. The committed goldens stay pinned at the
+// last fork tag (the contract test asserts meta.fork.tag); their post-cutover
+// role is REGRESSION record for the service (the routes' owner), not a live
+// parity claim.
+//
 // Run by hand when a slice ports or the fork pin moves; the committed fixtures
 // are what CI replays (CI never boots the fork binary).
 //

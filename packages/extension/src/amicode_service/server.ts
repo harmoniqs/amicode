@@ -20,6 +20,7 @@ import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
 import { AppShelf, type AppShelfResult } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
+import { isPublicUiPath } from "./public_ui";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -110,12 +111,36 @@ export class AmicodeServiceServer {
     return this;
   }
 
-  private authorized(req: http.IncomingMessage): boolean {
+  /** #823 (the M3 cutover bootstrap seam): the credential source for one
+   *  request, mirroring the ENGINE's own middleware precedence — the
+   *  `?auth_token=` query carrier FIRST, the Basic header as the fallback.
+   *  The carrier is the iframe bootstrap's only vehicle (a document GET
+   *  cannot carry headers) and the engine reads it the same way, so the
+   *  service must too or the framed document 401s at the shelf while the
+   *  engine would have accepted it. GET-ONLY for the query form (the design
+   *  note's framed-path scope: document/SPA/pane GETs; the app's post-load
+   *  calls all carry the Basic header via its SDK). A present-but-garbage
+   *  carrier fails closed — it does NOT fall back to a header, exactly like
+   *  the engine (a request the service accepted but the engine would 401
+   *  must never happen). */
+  private credential(req: http.IncomingMessage, url: URL): Buffer | undefined {
+    const token = url.searchParams.get("auth_token");
+    if (token !== null) {
+      if ((req.method ?? "GET") !== "GET") return undefined; // GET-only seam
+      return Buffer.from(token, "base64");
+    }
     const header = req.headers.authorization ?? "";
-    if (!header.startsWith("Basic ")) return false;
-    // Decode the base64 credentials before comparing — the wire form is
-    // base64("opencode:<password>"), the comparison form is the raw pair.
-    const given = Buffer.from(header.slice(6).trim(), "base64");
+    if (!header.startsWith("Basic ")) return undefined;
+    return Buffer.from(header.slice(6).trim(), "base64");
+  }
+
+  private authorized(req: http.IncomingMessage, url: URL): boolean {
+    // The anonymous sub-resource surface (fork public-ui parity): GET-only
+    // static UI paths a browser cannot credential — exempt BEFORE anything
+    // else, exactly like the engine's middleware does for them.
+    if (isPublicUiPath(req.method ?? "GET", url.pathname)) return true;
+    const given = this.credential(req, url);
+    if (given === undefined) return false;
     // #822: accept BOTH mints — the service's own AND the engine's (the
     // framed app bootstraps with the engine credential; the proxy forwards
     // it unchanged, and the /amicode/* routes take it too so one credential
@@ -148,13 +173,13 @@ export class AmicodeServiceServer {
       res.end(r.body);
     };
     try {
-      if (!this.authorized(req)) {
+      const host = req.headers.host ?? "127.0.0.1";
+      const url = new URL(req.url ?? "/", `http://${host}`);
+      if (!this.authorized(req, url)) {
         res.setHeader("WWW-Authenticate", 'Basic realm="amicode-service"');
         send(unauthorized());
         return;
       }
-      const host = req.headers.host ?? "127.0.0.1";
-      const url = new URL(req.url ?? "/", `http://${host}`);
       const route = this.routes.get(`${req.method} ${url.pathname}`);
       if (route) {
         const body = await this.readBody(req);

@@ -202,14 +202,26 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it("fixtures were recorded from the CURRENT fork pin (re-record on pin bumps)", () => {
-    // Self-tracking: the fixtures must be re-recorded whenever the vendored
-    // pin moves (scripts/record_amicode_fixtures.mjs stamps the lock's tag).
-    // A failure here means the lock bumped but the goldens didn't follow —
-    // the recorded parity claim is stale, not broken.
-    const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
-    expect(meta.fork.tag).toBe(lock.tag);
+  it("the parity record is FROZEN at the last fork pin (the #823 M3 cutover note)", () => {
+    // Until the M3 cutover (#823), the fixtures were RE-RECORDED from the
+    // vendored FORK pin whenever it moved — the fork binary was the parity
+    // reference for this port. The cutover flips the vendored pin to STOCK
+    // canonical opencode, which serves NO /amicode/* routes (M0 gate (a)),
+    // so a parity recording from the current pin is structurally impossible
+    // and the fork itself is retiring (no new fork work). The goldens' role
+    // post-cutover is therefore REGRESSION record for this service (the
+    // routes' owner of record), and their provenance stays pinned at the
+    // LAST fork pin — the parity claim of record, frozen, never stale.
+    // A failure here means the goldens were re-recorded from anything other
+    // than the frozen fork reference — that would silently rewrite the
+    // recorded parity contract.
+    expect(meta.fork.tag).toBe("v1.18.10-amicode.21");
     expect(meta.entries.length).toBeGreaterThan(0);
+    // And the vendored pin must never regress to the fork lineage: the stock
+    // shape (no repo/tag — the fetch path's anomalyco/opencode default).
+    const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
+    expect(lock.repo).toBeUndefined();
+    expect(lock.tag).toBeUndefined();
   });
 
   for (const [i, entry] of meta.entries.entries()) {
