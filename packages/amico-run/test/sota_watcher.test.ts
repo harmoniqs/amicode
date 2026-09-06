@@ -116,6 +116,23 @@ describe("runSotaWatcher — the watcher rides the IDENTICAL staged path (S3, th
     expect(raw).toHaveLength(2);
   });
 
+  it("a changelog-surface event rides the identical path (kind: changelog — release notes ARE the changelog on GitHub-shaped data)", async () => {
+    seed();
+    // swap the registry's surfaces to changelog-only; the endpoint is the
+    // releases URL (slice 1's githubApiUrl), so the seeded cache serves it
+    writeFileSync(
+      registryPath(root),
+      REGISTRY_TOML.replace('fetch_surface = ["releases", "issues"]', 'fetch_surface = ["changelog"]'),
+    );
+    const res = await runSotaWatcher({ root, sessionsDir, nowMs: () => CLOCK_MS });
+    expect(res.staged).toHaveLength(1);
+    const st = deriveStagingState(stagingStreamPath(sessionsDir, "session-20260901-rydberg-integrator"));
+    const changelog = st.entries.get("github:example/piccolo-adjacent@v0.9.0");
+    expect(changelog?.kind).toBe("changelog"); // the kind maps, the shape is identical
+    expect(changelog?.state).toBe("staged");
+    expect((changelog?.provenance as Record<string, unknown>).surface).toBe("changelog");
+  });
+
   it("no campaign match → the hopper stream, same shape (the identical fixtures, hopper fallback)", async () => {
     seed();
     rmSync(join(sessionsDir, "session-20260901-rydberg-integrator.md")); // no active campaigns
