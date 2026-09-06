@@ -7,11 +7,8 @@ import type {
 } from "@opencode-ai/client/promise"
 import type { Agent, PermissionRequest, Project, Provider, ProviderListResponse } from "@opencode-ai/sdk/v2/client"
 import type { Project as CurrentProject } from "@opencode-ai/client/promise"
-import type { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
-// Overlay carry (issue #817): relative path (not the `@/` alias) so this pure
-// module resolves identically in the materialized tree and the extension
-// vitest suite; both spell the same file.
-export { pathKey as directoryKey, type PathKey as DirectoryKey } from "../../utils/path-key"
+import { NormalizedProviderListResponse } from "@opencode-ai/session-ui/context"
+export { pathKey as directoryKey, type PathKey as DirectoryKey } from "@/utils/path-key"
 
 export const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
@@ -142,7 +139,6 @@ export function normalizeProviderList(
   return {
     all,
     connected: providers.map((provider) => provider.id),
-    defaultModel: defaultModel ? { providerID: defaultModel.providerID, modelID: defaultModel.id } : null,
     default: Object.fromEntries(
       providers.flatMap((provider) => {
         const model =

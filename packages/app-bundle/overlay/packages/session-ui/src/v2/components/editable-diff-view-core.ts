@@ -11,18 +11,20 @@
 import { Annotation, Compartment, EditorState, Transaction, ChangeSet, type Extension } from "@codemirror/state"
 import {
   EditorView,
+  keymap,
   lineNumbers,
   drawSelection,
   highlightActiveLine,
   highlightSpecialChars,
 } from "@codemirror/view"
+import { history, isolateHistory, defaultKeymap, historyKeymap } from "@codemirror/commands"
 import {
   MergeView,
   unifiedMergeView,
   originalDocChangeEffect,
   getOriginalDoc,
 } from "@codemirror/merge"
-import { type LanguageSupport } from "@codemirror/language"
+import { type LanguageSupport, bracketMatching } from "@codemirror/language"
 import {
   HighlightStyle,
   syntaxHighlighting,
@@ -119,10 +121,15 @@ export function buildThemeExtension(mode: "light" | "dark"): Extension {
       ".cm-cursor, .cm-dropCursor": {
         borderLeftColor: "var(--v2-text-text-base, var(--text-strong))",
       },
-      "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-        {
-          backgroundColor: "var(--v2-background-bg-layer-03, var(--background-weak))",
-        },
+      // Selection highlight — override CM6's built-in defaults (#d7d4f0 light,
+      // #233 dark) with our theme tokens. The child-combinator selector matches
+      // CM6's internal specificity so our rule wins.
+      "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": {
+        background: "var(--v2-background-bg-layer-03, var(--background-weak))",
+      },
+      ".cm-selectionBackground": {
+        backgroundColor: "var(--v2-background-bg-layer-03, var(--background-weak))",
+      },
       ".cm-panels": {
         backgroundColor: "var(--v2-background-bg-base, var(--background-base))",
         color: "var(--v2-text-text-base, var(--text-strong))",
@@ -228,6 +235,10 @@ export function editableExtensions(opts: {
     EditorState.readOnly.of(opts.readOnly),
   ]
 
+  if (!opts.readOnly) {
+    exts.push(history())
+  }
+
   if (opts.onChange && !opts.readOnly) {
     exts.push(
       EditorView.updateListener.of((update) => {
@@ -250,6 +261,8 @@ export function baseExtensions(opts: {
     highlightActiveLine(),
     highlightSpecialChars(),
     drawSelection(),
+    bracketMatching(),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
     EditorView.lineWrapping,
     buildSyntaxHighlightStyle(),
     opts.theme,
@@ -270,7 +283,7 @@ export interface DiffEditorHandle {
   scrollDOM: HTMLElement | null
   /** Destroy all editor instances. */
   destroy: () => void
-  /** Revert to original: replace content, clear undo history. */
+  /** Revert to original: replace content (the revert itself is undoable via Cmd+Z). */
   revert: (original: string) => void
   /** Get the current document content. */
   getContent: () => string
@@ -382,6 +395,28 @@ export function createDiffEditor(opts: {
     return editorView
   }
 
+  // Stash a lightweight bridge on the parent element so the global clipboard
+  // handler can read/cut the CM6 model selection without importing @codemirror/*.
+  ;(opts.parent as any).__amcEditor = {
+    getSelectedText(): string {
+      const view = getActiveView()
+      if (!view) return ""
+      const { from, to } = view.state.selection.main
+      return from < to ? view.state.sliceDoc(from, to) : ""
+    },
+    cutSelectedText(): string {
+      const view = getActiveView()
+      if (!view) return ""
+      const { from, to } = view.state.selection.main
+      if (from >= to) return ""
+      const text = view.state.sliceDoc(from, to)
+      if (!view.state.readOnly) {
+        view.dispatch({ changes: { from, to }, userEvent: "delete.cut" })
+      }
+      return text
+    },
+  }
+
   return {
     get editorView() {
       return getActiveView()
@@ -401,6 +436,7 @@ export function createDiffEditor(opts: {
       editorView?.destroy()
       mergeView = null
       editorView = null
+      delete (opts.parent as any).__amcEditor
     },
     revert(original: string) {
       const view = getActiveView()
@@ -408,13 +444,18 @@ export function createDiffEditor(opts: {
 
       // Replace entire document with original — mark as external so
       // the onChange listener does not fire (the caller handles state).
+      // isolateHistory ensures the revert is its own undo group so
+      // Cmd+Z after revert restores the pre-revert edits (D7).
       view.dispatch({
         changes: {
           from: 0,
           to: view.state.doc.length,
           insert: original,
         },
-        annotations: externalUpdate.of(true),
+        annotations: [
+          externalUpdate.of(true),
+          isolateHistory.of("full"),
+        ],
       })
     },
     getContent() {

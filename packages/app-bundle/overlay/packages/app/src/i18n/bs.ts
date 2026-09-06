@@ -22,7 +22,6 @@ export const dict = {
   "theme.scheme.dark": "Tamno",
 
   "command.sidebar.toggle": "Prikaži/sakrij bočnu traku",
-  "command.panel.reset": "Resetuj stanje panela",
   "command.project.open": "Otvori projekat",
   "command.project.previous": "Prethodni projekat",
   "command.project.next": "Sljedeći projekat",
