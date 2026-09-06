@@ -71,7 +71,7 @@ interface PinRecord {
   vault_revision: string;
   /** v2: whether the full-definition fixtures are published. v1 records are
    *  published-by-construction (they carry a fixture path per entry). */
-  fixture_publication?: "published" | "pending-signature";
+  fixture_publication?: "published" | "pending-signature" | "pending-re-authoring";
   pinned: Array<{ role_card: string; vault_path: string; fixture?: string; sha256: string }>;
   no_counterpart?: Array<{ role_card: string }>;
 }
@@ -82,7 +82,7 @@ interface Report {
   vault_revision: string | null;
   /** "pending-signature" while the B1 hold stands (no full-definition
    *  fixture is published); "published" once the fixtures return. */
-  fixture_publication: "published" | "pending-signature";
+  fixture_publication: "published" | "pending-signature" | "pending-re-authoring";
   drifted_files: string[];
   evidence: string[];
 }
@@ -151,12 +151,17 @@ try {
 }
 if (
   !((pin.record_version === 1 && pin.pinned.every((p) => typeof p.fixture === "string")) ||
-    (pin.record_version === 2 && (pin.fixture_publication === "published" || pin.fixture_publication === "pending-signature"))) ||
+    (pin.record_version === 2 &&
+      (pin.fixture_publication === "published" ||
+        pin.fixture_publication === "pending-signature" ||
+        // SIGNED 2026-09-05 with the vault-re-authoring decision: the hold
+        // continues by decision — the third publication state.
+        pin.fixture_publication === "pending-re-authoring"))) ||
   typeof pin.vault_revision !== "string" || !Array.isArray(pin.pinned) || pin.pinned.length === 0
 ) {
   usage("pin record malformed: record_version must be 1 (fixtures published) or 2 (with fixture_publication), with vault_revision and a non-empty pinned set");
 }
-const publication: "published" | "pending-signature" = pin.fixture_publication
+const publication: "published" | "pending-signature" | "pending-re-authoring" = pin.fixture_publication
   ?? (pin.record_version === 1 ? "published" : "pending-signature");
 
 // ── 2. fixture integrity (self-contained: the committed fixtures vs the record)
@@ -169,6 +174,11 @@ const pinDir = dirname(resolve(pinPath));
 const evidence: string[] = [];
 if (publication === "pending-signature") {
   evidence.push("fixture publications held pending the seed-gate signature (review B1) — no full-definition fixture is published; pin genuineness is verified against the vault revision directly");
+} else if (publication === "pending-re-authoring") {
+  // SIGNED 2026-09-05 with the VAULT RE-AUTHORING decision: the hold
+  // continues by decision, not unsignedness — the fixtures re-take at the
+  // re-authored revision when the amicissimo follow-up lands.
+  evidence.push("fixture publications held pending the vault re-authoring (the signed seed-gate decision) — no full-definition fixture is published; pin genuineness is verified against the vault revision directly");
 } else {
   for (const p of pin.pinned) {
     const fixturePath = isAbsolute(p.fixture!) ? p.fixture! : join(pinDir, p.fixture!);

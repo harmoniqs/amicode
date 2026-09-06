@@ -259,10 +259,12 @@ const NODE_STRIPS_TYPES = STRIP_PROBE.status === 0 && STRIP_PROBE.stdout.trim() 
     });
     expect(r.status).toBe(0);
     expect(r.stderr).toMatch(/status=vault-absent/);
-    // the real record is the shipped pending-signature state: the hold is
-    // named, nothing published-verbatim
-    expect(r.stderr).toMatch(/publication=pending-signature/);
-    expect(r.stderr).toMatch(/fixture publications held pending the seed-gate signature/);
+    // the real record is the SIGNED state's hold: accepted 2026-09-05 with
+    // the vault-re-authoring decision — the fixtures stay unpublished
+    // (by decision now, not unsignedness) until the amicissimo follow-up
+    // lands; the hold is named, nothing published-verbatim
+    expect(r.stderr).toMatch(/publication=pending-re-authoring/);
+    expect(r.stderr).toMatch(/fixture publications held pending the vault re-authoring/);
   });
 
   // B2 — the fetch: a remote drift is INVISIBLE without the fetch and CAUGHT
