@@ -240,7 +240,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
   }
 
-  // #533/#761: stage every mode card (two directors + five workers) into the
+  // #533/#761: stage every mode card (two directors, the four D3-seeded role
+  // cards, and the worker) into the
   // global opencode agents directory so they appear in the agent picker.
   // Same always-copy semantics as Pasqal staging: extension-owned,
   // overwrite-on-activate, never blocks activation. When the premium

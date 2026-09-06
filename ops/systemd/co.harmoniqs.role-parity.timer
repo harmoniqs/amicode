@@ -1,0 +1,10 @@
+[Unit]
+Description=Amicode role-parity pin check nightly at 04:45 (after skill-freshness)
+
+[Timer]
+OnCalendar=*-*-* 04:45:00
+Persistent=true
+Unit=co.harmoniqs.role-parity.service
+
+[Install]
+WantedBy=timers.target
