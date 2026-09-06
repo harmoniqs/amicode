@@ -53,6 +53,8 @@ export type SessionReviewFilePreviewV2Props = {
   onRefresh?: () => void
   /** Server base URL for /file/write saves. */
   serverUrl?: string
+  /** Write a file to disk via the SDK (handles auth). */
+  writeFile?: (path: string, content: string) => Promise<void>
   /** Whether the agent is currently busy (locks editing). */
   isAgentBusy?: boolean
   onLineComment?: (comment: SessionReviewLineComment) => void
@@ -251,26 +253,13 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const isEditable = () => !isPreviewMd() && !isDeleted()
   const isReadOnly = () => !isEditable()
 
-  const resolvePath = (path: string) => {
-    const home = typeof process !== "undefined" ? process.env?.HOME ?? "" : ""
-    return path.startsWith("~/") ? path.replace("~", home) : path
-  }
-
-  /** Fire a POST /file/write — shared by Cmd+S, revert, and cleanup. */
+  /** Write a file to disk via the SDK-based writeFile prop. */
   const saveFile = (path: string, content: string) => {
-    const serverUrl = props.serverUrl
-    if (!serverUrl) return
-
-    const fsPath = resolvePath(path)
+    if (!props.writeFile) return
 
     setSaveStatus("saving")
-    fetch(new URL("/file/write", serverUrl), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: fsPath, content }),
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Save failed: ${response.status}`)
+    props.writeFile(path, content)
+      .then(() => {
         // Race guard: only clear dirty state if no edits arrived during the save
         if (latestContent === contentAtSaveTime) {
           setHasEdits(false)
@@ -299,19 +288,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
     if (errorTimer) clearTimeout(errorTimer)
     // Safety net: save on unmount if the user has unsaved edits (file switch)
     if (hasEdits() && latestContent !== null) {
-      const serverUrl = props.serverUrl
-      if (serverUrl) {
-        const fsPath = resolvePath(props.file)
-        fetch(new URL("/file/write", serverUrl), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ path: fsPath, content: latestContent }),
-        })
-          .then((response) => {
-            if (!response.ok) console.warn("[save] cleanup save failed:", response.status)
-          })
-          .catch(() => {})
-      }
+      props.writeFile?.(props.file, latestContent).catch(() => {})
     }
   })
 
@@ -355,18 +332,12 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   }
 
   const handleRevert = () => {
-    if (!props.serverUrl) return
+    if (!props.writeFile) return
     const original = text(view(), "deletions")
-    const fsPath = resolvePath(props.file)
 
     setSaveStatus("saving")
-    fetch(new URL("/file/write", props.serverUrl), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: fsPath, content: original }),
-    })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Revert failed: ${response.status}`)
+    props.writeFile(props.file, original)
+      .then(() => {
         editorHandle?.revert(original)
         setSaveStatus("idle")
         setHasEdits(false)

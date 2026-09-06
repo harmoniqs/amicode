@@ -180,6 +180,9 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
                   diffStyle={props.diffStyle}
                   expandMode={props.state.expandMode()}
                   readFile={readFile}
+                  writeFile={async (path, content) => {
+                    await sdk().client.file.write({ path, content })
+                  }}
                   serverUrl={props.serverUrl}
                   isAgentBusy={props.isAgentBusy}
                   onRefresh={props.onRefresh}
