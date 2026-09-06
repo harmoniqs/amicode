@@ -7,8 +7,9 @@
  *  agent discovery never globs it.
  *
  *  This module stages EVERY card in the package's agents directory (the two
- *  directors + the five workers) into the global config agents directory on
- *  every activation — the same always-copy semantics as `pasqal_assets.ts`.
+ *  directors, the four D3-seeded role cards, and the worker) into the global
+ *  config agents directory on every activation — the same always-copy
+ *  semantics as `pasqal_assets.ts`.
  *  When the premium entitlement is present and an overlay source resolves,
  *  method-class overlay fields are merged into the base cards before staging
  *  (precedence: public base < entitled overlay); provenance lands in a

@@ -82,13 +82,25 @@ function FileNameWithPicker(props: {
         dropdown.className = "session-review-v2-file-picker-dropdown"
         dropdown.setAttribute("data-testid", "file-picker-dropdown")
 
-        // Render the filePicker content
+        // Scroll-inner wrapper (mirrors real component)
+        const scrollInner = document.createElement("div")
+        scrollInner.className = "session-review-v2-file-picker-scroll-inner"
+
+        // Render the filePicker content inside the scroll wrapper
         const pickerContent = props.filePicker!({ onSelect })
         if (pickerContent instanceof Node) {
-          dropdown.appendChild(pickerContent)
+          scrollInner.appendChild(pickerContent)
         }
 
+        dropdown.appendChild(scrollInner)
         dropdownContainer.appendChild(dropdown)
+
+        // Cap max-width to remaining panel space (mirrors real component's ref callback)
+        requestAnimationFrame(() => {
+          const left = dropdown.getBoundingClientRect().left
+          const available = window.innerWidth - left - 16
+          dropdown.style.maxWidth = `${Math.max(200, available)}px`
+        })
       })
 
       return wrapper
@@ -164,6 +176,72 @@ describe("FileNameWithPicker (render prop)", () => {
     expect(host.querySelector("[data-testid='file-picker-dropdown']")).toBeNull()
     // onSelectFile called
     expect(selected).toEqual(["src/bar.ts"])
+
+    cleanup()
+  })
+
+  test("dropdown wraps filePicker content in a scroll-inner container", () => {
+    const { host, cleanup } = mount({
+      file: "src/deeply/nested/path/to/component.tsx",
+      filePicker: ({ onSelect }) => {
+        const div = document.createElement("div")
+        div.setAttribute("data-testid", "mock-tree")
+        div.textContent = "tree content"
+        return div
+      },
+      onSelectFile: () => {},
+    })
+
+    // Open dropdown
+    const trigger = host.querySelector("[data-testid='file-picker-trigger']") as HTMLButtonElement
+    trigger.click()
+
+    const dropdown = host.querySelector("[data-testid='file-picker-dropdown']")
+    expect(dropdown).not.toBeNull()
+
+    // The dropdown's direct child should be the scroll-inner wrapper
+    const scrollInner = dropdown!.querySelector(".session-review-v2-file-picker-scroll-inner")
+    expect(scrollInner).not.toBeNull()
+
+    // The filePicker content should be inside the scroll-inner, not directly in the dropdown
+    const tree = scrollInner!.querySelector("[data-testid='mock-tree']")
+    expect(tree).not.toBeNull()
+    expect(tree!.textContent).toBe("tree content")
+
+    cleanup()
+  })
+
+  test("dropdown max-width is capped to remaining panel width", async () => {
+    Object.defineProperty(window, "innerWidth", { value: 450, configurable: true })
+
+    const { host, cleanup } = mount({
+      file: "src/foo.ts",
+      filePicker: ({ onSelect }) => {
+        const div = document.createElement("div")
+        div.setAttribute("data-testid", "mock-tree")
+        return div
+      },
+      onSelectFile: () => {},
+    })
+
+    const trigger = host.querySelector("[data-testid='file-picker-trigger']") as HTMLButtonElement
+    trigger.click()
+
+    const dropdown = host.querySelector("[data-testid='file-picker-dropdown']") as HTMLElement
+    expect(dropdown).not.toBeNull()
+
+    // Simulate the dropdown sitting at x=120 from the panel's left edge
+    dropdown.getBoundingClientRect = () => ({
+      left: 120, top: 40, right: 520, bottom: 200,
+      width: 400, height: 160, x: 120, y: 40,
+      toJSON() { return this },
+    })
+
+    // Wait for the ref callback's requestAnimationFrame
+    await new Promise((r) => setTimeout(r, 50))
+
+    // Should cap at (450 - 120 - 16) = 314px
+    expect(dropdown.style.maxWidth).toBe("314px")
 
     cleanup()
   })

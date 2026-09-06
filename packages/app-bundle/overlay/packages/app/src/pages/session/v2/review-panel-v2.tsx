@@ -7,7 +7,7 @@ import {
   SessionReviewV2,
   SessionReviewV2Sidebar,
 } from "@opencode-ai/session-ui/v2/session-review-v2"
-import { SessionReviewFilePreviewV2 } from "@opencode-ai/session-ui/v2/session-review-file-preview-v2"
+import { SessionReviewFilePreviewV2, type SessionReviewFilePreviewV2Props } from "@opencode-ai/session-ui/v2/session-review-file-preview-v2"
 import { DiffChanges } from "@opencode-ai/ui/v2/diff-changes-v2"
 import { FileIcon } from "@opencode-ai/ui/file-icon"
 import type {
@@ -45,7 +45,9 @@ export type ReviewPanelV2Props = {
   onSelectFile: (path: string) => void
   diffStyle: SessionReviewDiffStyle
   onDiffStyleChange?: (style: SessionReviewDiffStyle) => void
+  serverUrl?: string
   state: ReviewPanelV2State
+  isAgentBusy?: boolean
   onRefresh?: () => void
   onLineComment?: (comment: SessionReviewLineComment) => void
   onLineCommentUpdate?: (comment: SessionReviewCommentUpdate) => void
@@ -79,6 +81,12 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
     if (searching()) return active
     const files = filteredFiles()
     if (active && files.includes(active)) return active
+    // During agent turns, keep the user's selection even when the file has
+    // briefly dropped from the diff list (the ~1s blind window between tool
+    // completion and server diff refetch). Without this, activeDiff falls
+    // through to files[0], the keyed <Show> sees a different key, and the
+    // preview component remounts — losing scroll position and editor state.
+    if (active && props.isAgentBusy) return active
     return files[0]
   })
   const sourceActiveItem = createMemo(() => diffs().find((diff) => diff.file === activeDiff()))
@@ -100,6 +108,22 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
     const loaded = loadedDiff()
     if (loaded && loaded.source === source && loaded.version === props.diffVersion) return loaded.value
     return source
+  })
+
+  // Latch the active file and diff during agent turns so the <Show> wrappers
+  // don't unmount SessionReviewFilePreviewV2 during the ~1s blind window
+  // between a tool completion and the server diff refetch. Without this,
+  // the component is destroyed and recreated, losing scroll position and
+  // editor state every time the agent edits a file.
+  const stableActiveDiff = createMemo<string | undefined>((prev) => {
+    const current = activeDiff()
+    if (!current && prev && props.isAgentBusy) return prev
+    return current
+  })
+  const stableActiveItem = createMemo<ReviewDiff | undefined>((prev) => {
+    const current = activeItem()
+    if (!current && prev && props.isAgentBusy) return prev
+    return current
   })
 
   const readFile = async (path: string) =>
@@ -132,7 +156,7 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
           activeDiff={activeDiff}
         />
       }
-      activeFile={activeDiff()}
+      activeFile={stableActiveDiff()}
       files={filteredFiles()}
       onSelectFile={props.onSelectFile}
       diffStyle={props.diffStyle}
@@ -143,16 +167,21 @@ export function ReviewPanelV2(props: ReviewPanelV2Props) {
       preview={
         // Key on the file path, not the diff object identity, so refreshed diff data
         // updates the mounted preview instead of remounting the whole viewer.
-        <Show when={activeDiff()} keyed>
+        // Use stable (latched) values so the component survives brief falsy
+        // gaps during the agent's turn (the ~1s blind window between tool
+        // completion and server diff refetch).
+        <Show when={stableActiveDiff()} keyed>
           {(file) => (
-            <Show when={activeItem()}>
+            <Show when={stableActiveItem()}>
               {(diff) => (
                 <SessionReviewFilePreviewV2
                   file={file}
-                  diff={diff()}
+                  diff={diff() as SessionReviewFilePreviewV2Props["diff"]}
                   diffStyle={props.diffStyle}
                   expandMode={props.state.expandMode()}
                   readFile={readFile}
+                  serverUrl={props.serverUrl}
+                  isAgentBusy={props.isAgentBusy}
                   onRefresh={props.onRefresh}
                   filePicker={({ onSelect }) => {
                     const files = filteredFiles()
