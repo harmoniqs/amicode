@@ -1,7 +1,5 @@
 import type { PermissionRequest, Session } from "@opencode-ai/sdk/v2/client"
 import { cmp } from "./utils"
-// Overlay carry (issue #817): types.ts is overlay-owned, so the runtime
-// constants resolve in both the materialized tree and the extension vitest.
 import { SESSION_RECENT_LIMIT, SESSION_RECENT_WINDOW } from "./types"
 
 export function sessionUpdatedAt(session: Session) {

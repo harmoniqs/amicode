@@ -382,10 +382,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   );
   // Mute the "Chat with Amico" button when a chat panel is open
   ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));
-  // #663: when the user picks a project in the composer dropdown, collapse
-  // other roots in the sidebar and expand the selected one. autoExpand
-  // distinguishes explicit selection from session/tab switch (highlight only).
-  ChatPanel.onProjectSelected((path, autoExpand) => sidebarProvider.setActiveProject(path, autoExpand));
+  // #663: when the user picks a project in the composer dropdown, update
+  // the sidebar with the appropriate mode. mode controls expand/collapse
+  // behavior: "reset" for explicit selection, "expand" for session/tab switch.
+  ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();

@@ -12,34 +12,34 @@ describe("amicode workspace-projects — notifyProjectSelected (#663)", () => {
       notifyProjectSelected("/Users/jj/harmoniqs")
       expect(calls).toHaveLength(1)
       const [msg, origin] = calls[0] as [Record<string, unknown>, string]
-      expect(msg).toEqual({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs", autoExpand: true })
+      expect(msg).toEqual({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs", mode: "reset" })
       expect(origin).toBe("*")
     } finally {
       window.parent.postMessage = orig
     }
   })
 
-  test("explicit selection defaults to autoExpand=true", () => {
+  test("explicit selection defaults to mode 'reset'", () => {
     const calls: unknown[] = []
     const orig = window.parent.postMessage
     window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
     try {
       notifyProjectSelected("/projects/foo")
       const [msg] = calls[0] as [Record<string, unknown>]
-      expect(msg.autoExpand).toBe(true)
+      expect(msg.mode).toBe("reset")
     } finally {
       window.parent.postMessage = orig
     }
   })
 
-  test("session navigation passes autoExpand=false", () => {
+  test("session navigation passes mode 'expand'", () => {
     const calls: unknown[] = []
     const orig = window.parent.postMessage
     window.parent.postMessage = (...args: unknown[]) => { calls.push(args) }
     try {
-      notifyProjectSelected("/projects/foo", false)
+      notifyProjectSelected("/projects/foo", "expand")
       const [msg] = calls[0] as [Record<string, unknown>]
-      expect(msg.autoExpand).toBe(false)
+      expect(msg.mode).toBe("expand")
     } finally {
       window.parent.postMessage = orig
     }
@@ -85,11 +85,11 @@ describe("session-composer-controls — toggle deselect (#673)", () => {
     expect(toggleBranch).toMatch(/notifyProjectSelected/)
   })
 
-  test("deselect notification passes autoExpand true so the folder collapses", () => {
+  test("deselect notification passes mode 'reset' so the sidebar collapses the old folder", () => {
     const selectFn = ctrlSrc.slice(ctrlSrc.indexOf("const selectProject"))
     // The toggle branch's notifyProjectSelected call (before the main one)
     const toggleBranch = selectFn.slice(0, selectFn.indexOf("notifyProjectSelected(worktree)"))
-    // Must NOT pass false — needs true (or default) so the sidebar collapses the old folder
-    expect(toggleBranch).not.toMatch(/notifyProjectSelected\([^)]*,\s*false/)
+    // Must NOT pass "none" — needs "reset" (or default) so the sidebar collapses the old folder
+    expect(toggleBranch).not.toMatch(/notifyProjectSelected\([^)]*,\s*["']none["']/)
   })
 })

@@ -1,6 +1,7 @@
 import type { Session } from "@opencode-ai/sdk/v2/client"
 import { preloadMarkdown } from "@opencode-ai/session-ui/markdown-cache"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useMarked } from "@opencode-ai/ui/context/marked"
 import { useQuery } from "@tanstack/solid-query"
 import { DateTime } from "luxon"
 import { type Accessor, createEffect, createMemo, createRoot, type JSX, startTransition } from "solid-js"
@@ -15,21 +16,20 @@ import type { LocalProject } from "@/context/layout"
 import { useLanguage } from "@/context/language"
 import { ServerConnection } from "@/context/server"
 import { sessionHasOpenTab, useTabs } from "@/context/tabs"
-import { errorMessage, projectForSession } from "@/pages/layout/helpers"
+import { displayName, errorMessage, projectForSession } from "@/pages/layout/helpers"
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
 import { pathKey } from "@/utils/path-key"
-import { sessionListState } from "@/utils/session-list-state"
 import { showToast } from "@/utils/toast"
 import { Binary } from "@opencode-ai/core/util/binary"
 import { archiveHomeSession } from "../home-session-archive"
 import type { HomeController } from "./home-controller"
-// D1 client-side (issue #817): the first-class home resolution lives in a
-// pure module (unit-tested headless); the controller wires it to the home
-// scope.
-import { buildHomeSessionRecords, type HomeSessionRecord } from "./home-session-groups"
 
 const HOME_SESSION_LIMIT = 64
-export type { HomeSessionRecord }
+export type HomeSessionRecord = {
+  session: Session
+  project: LocalProject
+  projectName: string
+}
 
 export type HomeSessionGroup = {
   id: "today" | "yesterday" | "older"
@@ -44,6 +44,7 @@ export function createHomeSessionsController(home: HomeController) {
   const command = useCommand()
   const dialog = useDialog()
   const language = useLanguage()
+  const marked = useMarked()
   const projectDirectories = createMemo(() => {
     const project = home.project.selected()
     if (!project) return home.project.list().flatMap(directories)
@@ -88,15 +89,11 @@ export function createHomeSessionsController(home: HomeController) {
     ),
   )
   const allRecords = createMemo(() =>
-    // D1 client-side (issue #817): in the all-projects scope no home is
-    // dropped — every session's directory resolves to a first-class group
-    // (opened project, or its own non-git home) without server project rows
-    // or backfill. The per-project scope keeps its deliberate filtering.
     buildHomeSessionRecords({
-      sessions: indexedSessions(),
-      projectDirectories: projectDirectories(),
-      projects: home.project.list(),
-      scopeAll: !home.project.selected(),
+      sessions: indexedSessions,
+      projectDirectories,
+      projects: home.project.list,
+      projectByID,
     }),
   )
   const records = createMemo(() => allRecords().slice(0, HOME_SESSION_LIMIT))
@@ -122,7 +119,7 @@ export function createHomeSessionsController(home: HomeController) {
                   (ctx.sync.session.data.message[record.session.id] ?? []).flatMap((message) =>
                     (ctx.sync.session.data.part[message.id] ?? []).flatMap((part) => {
                       if (part.type !== "text" || !part.text) return []
-                      return preloadMarkdown(part.text, part.id)
+                      return preloadMarkdown(part.text, part.id, marked)
                     }),
                   ),
                 ),
@@ -176,15 +173,6 @@ export function createHomeSessionsController(home: HomeController) {
       records,
       groups,
       loading: () => sessionLoad.isLoading,
-      // D2 honest states (issue #817): the home list distinguishes "not yet
-      // fetched" (no index fetch has ever resolved) from "genuinely empty"
-      // (it has, and the projection is empty) — never render the empty state
-      // during the boot fetch (#293's invisible failure shape).
-      listState: () =>
-        sessionListState({
-          fetched: sessionLoad.isSuccess,
-          count: records().length,
-        }),
       searchRecords: allRecords,
     },
     session: {
@@ -233,15 +221,13 @@ export function createHomeSessionsController(home: HomeController) {
               directory: session.directory,
               time: { archived: Date.now() },
             }),
-          remove: () => {
+          remove: () =>
             setStore(
               produce((draft) => {
                 const match = Binary.search(draft.session, session.id, (item) => item.id)
                 if (match.found) draft.session.splice(match.index, 1)
               }),
-            )
-            homeSessions().remove(session.id)
-          },
+            ),
           onError: (cause) =>
             showToast({
               title: language.t("common.requestFailed"),
@@ -259,6 +245,30 @@ export function createHomeSessionsController(home: HomeController) {
 
 function directories(project: LocalProject) {
   return [project.worktree, ...(project.sandboxes ?? [])]
+}
+
+function buildHomeSessionRecords(input: {
+  sessions: () => Session[]
+  projectDirectories: () => string[]
+  projects: () => LocalProject[]
+  projectByID: () => Map<string, LocalProject>
+}) {
+  const directories = new Set(input.projectDirectories().map(pathKey))
+  const sessions = input.sessions().filter((session) => directories.has(pathKey(session.directory)))
+  return [...new Map(sessions.map((session) => [session.id, session] as const)).values()]
+    .sort((a, b) => (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created))
+    .flatMap((session) => {
+      const directory = pathKey(session.directory)
+      const project =
+        input
+          .projects()
+          .find(
+            (item) =>
+              pathKey(item.worktree) === directory || item.sandboxes?.some((sandbox) => pathKey(sandbox) === directory),
+          ) ?? projectForSession(session, input.projects(), input.projectByID())
+      if (!project) return []
+      return { session, project, projectName: displayName(project) }
+    })
 }
 
 export function homeSessionSearchKey(record: HomeSessionRecord) {

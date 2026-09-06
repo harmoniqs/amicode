@@ -22,7 +22,6 @@ export const dict = {
   "theme.scheme.dark": "มืด",
 
   "command.sidebar.toggle": "สลับแถบข้าง",
-  "command.panel.reset": "รีเซ็ตสถานะแผง",
   "command.project.open": "เปิดโปรเจกต์",
   "command.project.previous": "โปรเจกต์ก่อนหน้า",
   "command.project.next": "โปรเจกต์ถัดไป",

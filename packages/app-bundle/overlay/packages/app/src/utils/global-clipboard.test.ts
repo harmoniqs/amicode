@@ -808,4 +808,221 @@ describe("installGlobalClipboardFallback", () => {
     expect(received[0].type).toBe("image/png")
     expect(el.value).toBe("") // text was NOT inserted
   })
+
+  // --- CM6 editor delegation (data-amc-clipboard="codemirror") ---
+
+  test('mod+Z on a CM6 target is NOT intercepted — CM6 history handles undo', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    // Simulate CM6 DOM: container[data-amc-clipboard="codemirror"] > .cm-editor > .cm-scroller > .cm-content[contenteditable]
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmEditor = document.createElement("div")
+    cmEditor.className = "cm-editor"
+    const cmScroller = document.createElement("div")
+    cmScroller.className = "cm-scroller"
+    const cmContent = document.createElement("div")
+    cmContent.className = "cm-content"
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "hello world"
+    cmScroller.appendChild(cmContent)
+    cmEditor.appendChild(cmScroller)
+    container.appendChild(cmEditor)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "z")
+
+    // NOT prevented — CM6's own history keymap handles undo
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  test('mod+Shift+Z (redo) on a CM6 target is NOT intercepted', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "z", { shiftKey: true })
+
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  test('mod+Y (redo) on a CM6 target is NOT intercepted', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "y")
+
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  test('mod+A on a CM6 target is NOT intercepted — CM6 selectAll handles it', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "code content"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "a")
+
+    // NOT prevented — CM6's defaultKeymap handles select-all (editor-scoped, not panel-wide)
+    expect(event.defaultPrevented).toBe(false)
+  })
+
+  test('mod+C on a CM6 target STILL bridges — clipboard needs the OS bridge in iframe', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "selected text"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+    selectWithin(cmContent, 0, 8)
+
+    const event = keydown(cmContent, "c")
+
+    // C/X/V still go through the bridge — only Z/Y/A are delegated to CM6
+    expect(event.defaultPrevented).toBe(true)
+    expect(bridge.posted).toEqual([{ source: "amicode", kind: "clipboard-write", text: "selected" }])
+  })
+
+  test('mod+V on a CM6 target STILL bridges — paste needs the OS bridge in iframe', async () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "hello"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "v")
+
+    // V is still intercepted — paste goes through the bridge
+    expect(event.defaultPrevented).toBe(true)
+    expect(bridge.posted.some((m) => m.kind === "clipboard-request")).toBe(true)
+  })
+
+  test('cut on a CM6 target uses execCommand("delete") — no manual deleteByCut dispatch', () => {
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "hello world"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+    selectWithin(cmContent, 0, 5)
+
+    // Observe input events — CM6 targets should NOT get a manual deleteByCut
+    const seen = observeInput()
+
+    const text = extractSelection(cmContent, { cut: true })
+
+    expect(text).toBe("hello")
+    // No manual deleteByCut event — CM6's execCommand("delete") fires its own beforeinput
+    expect(seen.filter((e) => e.inputType === "deleteByCut")).toHaveLength(0)
+  })
+
+  test("cut on a non-CM6 contenteditable still dispatches deleteByCut", () => {
+    const el = editableDiv("hello world")
+    selectWithin(el, 0, 6)
+    const seen = observeInput()
+
+    const text = extractSelection(el, { cut: true })
+
+    expect(text).toBe("hello ")
+    // Non-CM6 targets still get the manual deleteByCut
+    expect(seen.filter((e) => e.inputType === "deleteByCut")).toHaveLength(1)
+  })
+
+  // --- CM6 copy/cut via __amcEditor bridge ---
+
+  test('mod+C on a CM6 target reads from __amcEditor bridge, not DOM selection', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    // Stash a mock __amcEditor bridge that returns model text
+    ;(container as any).__amcEditor = {
+      getSelectedText: () => "model selection text",
+      cutSelectedText: () => "",
+    }
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    // DOM text is garbled (simulates unified mode with decoration widgets)
+    cmContent.textContent = "garbled deleted original modified mixed"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "c")
+
+    // The bridge should use the model text, not the DOM selection
+    expect(event.defaultPrevented).toBe(true)
+    expect(bridge.posted).toEqual([
+      { source: "amicode", kind: "clipboard-write", text: "model selection text" },
+    ])
+  })
+
+  test('mod+X on a CM6 target calls cutSelectedText on the bridge', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    let cutCalled = false
+    ;(container as any).__amcEditor = {
+      getSelectedText: () => "should not be called",
+      cutSelectedText: () => { cutCalled = true; return "cut text" },
+    }
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "hello world"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "x", { metaKey: true })
+
+    expect(event.defaultPrevented).toBe(true)
+    expect(cutCalled).toBe(true)
+    expect(bridge.posted).toEqual([
+      { source: "amicode", kind: "clipboard-write", text: "cut text" },
+    ])
+  })
+
+  test('mod+C on a CM6 target with no selection is a no-op', () => {
+    const bridge = framedWindow()
+    install(bridge.win)
+    const container = document.createElement("div")
+    container.setAttribute("data-amc-clipboard", "codemirror")
+    ;(container as any).__amcEditor = {
+      getSelectedText: () => "",
+      cutSelectedText: () => "",
+    }
+    const cmContent = document.createElement("div")
+    cmContent.setAttribute("contenteditable", "true")
+    cmContent.textContent = "hello"
+    container.appendChild(cmContent)
+    document.body.appendChild(container)
+
+    const event = keydown(cmContent, "c")
+
+    // No text selected — no bridge post, no preventDefault
+    expect(bridge.posted).toHaveLength(0)
+  })
 })

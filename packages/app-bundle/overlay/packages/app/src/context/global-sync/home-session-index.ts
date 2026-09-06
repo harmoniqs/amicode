@@ -1,10 +1,7 @@
 import type { Event, Session, SessionV2Info, V2SessionListResponse } from "@opencode-ai/sdk/v2/client"
 import type { QueryClient } from "@tanstack/solid-query"
 import { trimSessions } from "./session-trim"
-// Overlay carry (issue #817): relative path (not the `@/` alias) so this pure
-// module resolves identically in the materialized tree and the extension
-// vitest suite; both spell the same file.
-import { pathKey } from "../../utils/path-key"
+import { pathKey } from "@/utils/path-key"
 
 export const HOME_V2_SESSION_PAGE_LIMIT = 5_000
 
@@ -48,11 +45,8 @@ export async function loadHomeSessionIndex(
     )
     const page = response.data!
     data.push(...page.data)
-    // D2/D4 (issue #817): the cursor is the only exhaustion signal — a page
-    // shorter than the requested limit does NOT mean the store ended. A hub
-    // that caps page size below the request would otherwise silently drop
-    // everything past its first short page.
-    if (!page.cursor.next) return { sessions: parseHomeSessionIndex(data), eventSequence }
+    if (page.data.length < HOME_V2_SESSION_PAGE_LIMIT || !page.cursor.next)
+      return { sessions: parseHomeSessionIndex(data), eventSequence }
     cursor = page.cursor.next
   }
 }
@@ -91,7 +85,6 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
   const indexKey = homeSessionIndexKey(server)
   const eventsKey = homeSessionEventsKey(server)
   let connected = false
-  const removed = new Set<string>()
 
   return {
     indexKey,
@@ -104,8 +97,7 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
       queryClient.setQueryData<HomeSessionEvents>(eventsKey, (current) => trimHomeSessionEvents(current, sequence))
     },
     sessions(index: HomeSessionIndex | undefined, events: HomeSessionEvents | undefined) {
-      const sessions = homeSessionIndexSessions(index, events)
-      return removed.size === 0 ? sessions : sessions.filter((session) => !removed.has(session.id))
+      return homeSessionIndexSessions(index, events)
     },
     apply(event: HomeSessionEvent) {
       if (!queryClient.getQueryState(indexKey)) return
@@ -123,16 +115,6 @@ export function createHomeSessionIndexCache(queryClient: QueryClient, server: st
         })
       }
       queryClient.setQueryData<HomeSessionEvents>(eventsKey, { sequence: next.sequence, entries: [] })
-    },
-    remove(sessionID: string) {
-      removed.add(sessionID)
-      if (!queryClient.getQueryState(indexKey)) return
-      queryClient.setQueryData<HomeSessionIndex>(indexKey, (index) => {
-        if (!index) return index
-        const at = index.sessions.findIndex((session) => session.id === sessionID)
-        if (at === -1) return index
-        return { ...index, sessions: index.sessions.toSpliced(at, 1) }
-      })
     },
     refresh(event: Event["type"]) {
       const result = homeSessionIndexRefresh(event, connected)

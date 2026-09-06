@@ -321,13 +321,13 @@ describe("layout workspace helpers", () => {
   })
 
   describe("sessionListDirectories", () => {
-    test("uses opened projects when present", () => {
+    test("unions opened and server projects, opened first", () => {
       const opened = [{ worktree: "/a", sandboxes: ["/a-sbx"] }, { worktree: "/b" }]
       const server = [{ worktree: "/server", sandboxes: ["/server-sbx"] }]
-      expect(sessionListDirectories(opened, server)).toEqual(["/a", "/a-sbx", "/b"])
+      expect(sessionListDirectories(opened, server)).toEqual(["/a", "/a-sbx", "/b", "/server", "/server-sbx"])
     })
 
-    test("falls back to server projects when nothing is opened (fresh client, amicode#288)", () => {
+    test("returns only server projects when nothing is opened (fresh client, amicode#288)", () => {
       const server = [
         { worktree: "/", sandboxes: ["/staging"] },
         { worktree: "/amicode" },
@@ -336,7 +336,13 @@ describe("layout workspace helpers", () => {
       expect(sessionListDirectories([], server)).toEqual(["/", "/staging", "/amicode", "/opencode"])
     })
 
-    test("fallback dedupes and drops empty entries", () => {
+    test("dedupes across opened and server projects", () => {
+      const opened = [{ worktree: "/a", sandboxes: ["/shared"] }]
+      const server = [{ worktree: "/a" }, { worktree: "/b", sandboxes: ["/shared"] }]
+      expect(sessionListDirectories(opened, server)).toEqual(["/a", "/shared", "/b"])
+    })
+
+    test("dedupes and drops empty entries from server-only path", () => {
       const server = [
         { worktree: "/a", sandboxes: ["/a"] },
         { worktree: "/a" },

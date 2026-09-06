@@ -109,7 +109,7 @@ export function createPromptProjectControls() {
     if (pathKey(worktree) === pathKey(sdk().directory)) {
       const fallback = hiddenProjectWorktree()
       if (search.draftId && fallback) {
-        notifyProjectSelected(fallback, true)
+        notifyProjectSelected(fallback, "reset")
         tabs.updateDraft(search.draftId, { directory: fallback })
       }
       return

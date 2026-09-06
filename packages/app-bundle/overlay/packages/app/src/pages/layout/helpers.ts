@@ -59,24 +59,33 @@ export const displayName = (project: { name?: string; worktree: string }) =>
 
 /**
  * Directories whose sessions the list surfaces (Sessions dropdown, home list)
- * aggregate over: the user's opened projects, falling back to the server's
- * registered projects when nothing has been opened yet (fresh client, empty
- * persisted registry — amicode#288). Session listing only; this must NOT feed
- * the project switcher, or closing a server-registered project becomes
- * impossible (the fallback would re-add it).
+ * — always the union of opened projects (first) and server-registered projects
+ * (deduplicated, appended). Every historical project the server knows about
+ * contributes sessions, not just the ones currently open. Session listing only;
+ * this must NOT feed the project switcher, or closing a server-registered
+ * project becomes impossible (amicode#839, replacing the fallback-only behavior
+ * from amicode#288).
  */
 export function sessionListDirectories(
   opened: { worktree: string; sandboxes?: string[] }[],
   serverProjects: { worktree: string; sandboxes?: string[] }[],
 ): string[] {
-  const dirs = opened.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])])
-  if (dirs.length > 0) return dirs
   const seen = new Set<string>()
-  return serverProjects.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])]).filter((d) => {
-    if (!d || seen.has(d)) return false
+  const result: string[] = []
+  const add = (d: string) => {
+    if (!d || seen.has(d)) return
     seen.add(d)
-    return true
-  })
+    result.push(d)
+  }
+  for (const p of opened) {
+    add(p.worktree)
+    for (const s of p.sandboxes ?? []) add(s)
+  }
+  for (const p of serverProjects) {
+    add(p.worktree)
+    for (const s of p.sandboxes ?? []) add(s)
+  }
+  return result
 }
 
 export function toggleHomeProjectSelection(

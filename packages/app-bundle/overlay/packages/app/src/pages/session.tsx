@@ -268,11 +268,11 @@ function ResolvedTargetSessionRoute() {
   })
 
   // Notify the extension which project this session is bound to so the
-  // sidebar highlight tracks the active tab. autoExpand=false: session
-  // navigation should only change the highlight, never toggle folder state.
+  // sidebar highlight tracks the active tab. mode="expand": opening a session
+  // expands its project folder if collapsed, without collapsing others.
   createEffect(() => {
     const dir = directory()
-    if (dir) notifyProjectSelected(dir, false)
+    if (dir) notifyProjectSelected(dir, "expand")
   })
 
   return (
