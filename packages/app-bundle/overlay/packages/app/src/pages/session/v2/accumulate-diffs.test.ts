@@ -108,8 +108,10 @@ describe("accumulateDiffs", () => {
     expect(result[0].additions).toBe(6)
     expect(result[0].deletions).toBe(5)
     // A hypothetical net diff would be lower — the client must never show
-    // this stale/inflated data during a refetch. The fix is keepPreviousData
-    // on the query so the fallback never fires while server data exists.
+    // this stale/inflated data during a refetch. The fix is scoped
+    // placeholderData on the query (keep previous data only for the SAME
+    // session) so the fallback never fires during intra-session refetches,
+    // while inter-session switches correctly drop the stale data.
   })
 })
 

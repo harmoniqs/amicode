@@ -705,7 +705,7 @@ export const dict = {
   "session.share.action.view": "Vis",
   "session.share.copy.copied": "Kopieret",
   "session.share.copy.copyLink": "Kopier link",
-  "session.exportTrace": "Eksportér sporing",
+  "session.exportTrace": "Export trace",
 
   "lsp.tooltip.none": "Ingen LSP-servere",
   "lsp.label.connected": "{{count}} LSP",

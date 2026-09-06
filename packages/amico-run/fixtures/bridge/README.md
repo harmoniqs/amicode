@@ -1,10 +1,12 @@
 # SEAM 4 bridge fixtures — the canonical replay records
 
-Two committed, synthetic, stable record dirs the Telaio fold must replay —
-issued #704, amicode's half of the ledger bridge. The doctrine they carry is
+Three committed, synthetic, stable record dirs the Telaio fold must replay —
+issued #704, amicode's half of the ledger bridge (the sota-staging record is
+the living-sota campaign's slice-2 extension, spec-20260905-103000 D3).
+The doctrine they carry is
 [`docs/ledger-bridge-contract.md`](../../../../docs/ledger-bridge-contract.md);
 the validator is
-`packages/amico-run/scripts/validate_bridge_replay.mjs` (exit 0 on both by
+`packages/amico-run/scripts/validate_bridge_replay.mjs` (exit 0 on all by
 default; pass a dir to check one; the corruption directions are pinned by
 `packages/amico-run/test/bridge_replay.test.ts`).
 
@@ -54,3 +56,16 @@ Named by its id — the TaskRecord contract binds `id == directory basename`.
 - `artifacts/fit_002.json` — the file the `artifact` event names; the contract
   requires a recorded artifact path to resolve to a real file inside the task
   dir, so it does.
+
+## `2026-09-05-sota-staging/` — one canonical SOTA staging sidecar record
+
+The per-campaign SIDECAR staging stream (living-sota slice 2, D3): the
+append-only transition stream a campaign ledger carries BESIDE itself (the
+nine-section ledger grammar unamended), plus the hopper fallback stream.
+`staging.toml` is the manifest (record kind + campaign + the stamped
+windows); `session-20260831-bridge-fixture.sota-staging.jsonl` carries a
+staged paper, a staged watcher release, the PI-instructed accept stamp (the
+acceptance-stamp schema — obligation O3 — lives HERE), an
+expired-without-review drop, and a pending stage; `hopper.sota-staging.jsonl`
+carries a below-threshold stage plus one unknown `ev` on purpose (the
+reader-opacity probe, same as the strumento fixture's unknown `ev`).

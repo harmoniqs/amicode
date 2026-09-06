@@ -28,12 +28,16 @@ const AMICODE_FIXTURE = join(BRIDGE_FIXTURES, "amicode-run");
 // The strumento record dir is named BY ITS ID (the contract: "the id is always
 // the directory's basename") — the fixture honors the shape it replays.
 const STRUMENTO_FIXTURE = join(BRIDGE_FIXTURES, "2026-08-31-strumento-task-b3a7");
+// living-sota slice 2: the SOTA staging sidecar record (the acceptance-stamp
+// schema rides THIS fixture — obligation O3).
+const SOTA_STAGING_FIXTURE = join(BRIDGE_FIXTURES, "2026-09-05-sota-staging");
+const SIDECAR = "session-20260831-bridge-fixture.sota-staging.jsonl";
 
 /** Copy a committed fixture to a tmp dir and hand the copy to `mutate` —
  * corruption tests never touch the committed bytes. The copy keeps the
  * fixture's basename (the strumento id contract binds id == basename). */
-function mutatedFixture(kind: "amicode-run" | "strumento-task", mutate: (dir: string) => void): string {
-  const src = kind === "amicode-run" ? AMICODE_FIXTURE : STRUMENTO_FIXTURE;
+function mutatedFixture(kind: "amicode-run" | "strumento-task" | "sota-staging", mutate: (dir: string) => void): string {
+  const src = kind === "amicode-run" ? AMICODE_FIXTURE : kind === "strumento-task" ? STRUMENTO_FIXTURE : SOTA_STAGING_FIXTURE;
   const dir = join(mkdtempSync(join(tmpdir(), "bridge-replay-")), basename(src));
   cpSync(src, dir, { recursive: true });
   mutate(dir);
@@ -307,5 +311,107 @@ describe("SEAM 4 replay fixtures — the canonical records validate", () => {
     const r = validateBridgeRecord(STRUMENTO_FIXTURE, "strumento-task");
     expect(r.errors).toEqual([]);
     expect(r.ok).toBe(true);
+  });
+});
+
+// ─── the SOTA staging sidecar record (living-sota slice 2, O3) ──────────────
+// The acceptance-stamp schema rides THIS fixture: stage/accept/drop/compact
+// transition lines, event-id idempotent, provenance-stamped, the PI-instructed
+// accept carrying its instruction record. The corruption directions exercise
+// the transition grammar — a laundered accept, a double stage, an orphan
+// transition, a silent drop — each reds by name.
+
+describe("living-sota staging record — the committed fixture validates; the transition grammar reds on corruption", () => {
+  it("the committed sota-staging fixture is present and validates against the grammar", () => {
+    expect(existsSync(join(SOTA_STAGING_FIXTURE, "staging.toml"))).toBe(true);
+    const r = validateBridgeRecord(SOTA_STAGING_FIXTURE, "sota-staging");
+    expect(r.errors).toEqual([]);
+    expect(r.ok).toBe(true);
+  });
+
+  it("the fixture's own unknown-ev probe (the hopper stream's triage-tag) validates by design — readers carry, never fail", () => {
+    const raw = readFileSync(join(SOTA_STAGING_FIXTURE, "hopper.sota-staging.jsonl"), "utf8");
+    expect(raw).toContain('"ev":"triage-tag"');
+    const r = validateBridgeRecord(SOTA_STAGING_FIXTURE, "sota-staging");
+    expect(r.ok).toBe(true);
+  });
+
+  it("a duplicate stage line (double delivery) reds — idempotency is the shape, not the writer's mood", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) =>
+        s +
+        '{"ev":"stage","seq":7,"ts":"2026-09-21T08:00:00.000Z","event_id":"arxiv:2606.05060","campaign":"session-20260831-bridge-fixture","kind":"paper","title":"dup","url":"https://arxiv.org/abs/2606.05060","provenance":{"job":"papers-digest","via":"cache","source":"arXiv export API over HTTPS","fetched_at":"2026-09-21T07:00:00.000Z"},"review_by":"2026-09-28T08:00:00.000Z","expires_at":"2026-10-05T08:00:00.000Z"}\n',
+      );
+    });
+    expectNotOk(dir, "sota-staging", /second stage|double-delivery/);
+  });
+
+  it("an accept with no stage behind it reds (a free-floating stamp is a laundered acceptance)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) =>
+        s +
+        '{"ev":"accept","seq":7,"ts":"2026-09-21T08:00:00.000Z","event_id":"arxiv:9999.99999","campaign":"session-20260831-bridge-fixture","instructed_by":"PI","instruction":{"channel":"chat","note":"ghost","received_at":"2026-09-21T08:00:00.000Z"}}\n',
+      );
+    });
+    expectNotOk(dir, "sota-staging", /no stage behind it/);
+  });
+
+  it("a drop after an accept reds — accept and drop are both terminal, exactly one lands", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) =>
+        s +
+        '{"ev":"drop","seq":7,"ts":"2026-09-21T08:00:00.000Z","event_id":"arxiv:2606.05060","campaign":"session-20260831-bridge-fixture","reason":"expired-without-review","recorded":"2026-09-21T08:00:00.000Z"}\n',
+      );
+    });
+    expectNotOk(dir, "sota-staging", /terminal/);
+  });
+
+  it("an accept without the PI instruction record reds — the schema IS the human decision's record (O3)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) => s.replace(/"instructed_by":"PI","instruction":\{[^}]*\}/, '"instructed_by":"job"'));
+    });
+    expectNotOk(dir, "sota-staging", /instructed_by is not "PI"/);
+  });
+
+  it("a stage line without provenance reds — a match never lands unprovenance-stamped", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) => s.replace(/"provenance":\{"job":"papers-digest"[^}]*\}/g, '"provenance":{}'));
+    });
+    expectNotOk(dir, "sota-staging", /provenance/);
+  });
+
+  it("a stage line missing its review-by/expiry stamps reds (the stamps are the shape)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      // remove the fields cleanly (keeping the line whole JSON) — the corruption
+      // under test is the MISSING STAMP, not a torn line
+      edit(d, SIDECAR, (s) =>
+        s.replace(
+          ',"review_by":"2026-09-12T09:10:00.000Z","expires_at":"2026-09-19T09:10:00.000Z"',
+          "",
+        ),
+      );
+    });
+    expectNotOk(dir, "sota-staging", /review_by/);
+  });
+
+  it("a stage line whose campaign disagrees with the stream's stem reds (a sidecar carries its own campaign)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) => s.replace('"campaign":"session-20260831-bridge-fixture","kind":"paper","title":"Marginal drift note"', '"campaign":"some-other-campaign","kind":"paper","title":"Marginal drift note"'));
+    });
+    expectNotOk(dir, "sota-staging", /≠ the stream's stem/);
+  });
+
+  it("a torn mid-stream line reds (the writers append whole flushed lines under PIPE_BUF)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) => s.slice(0, s.length - 60));
+    });
+    expectNotOk(dir, "sota-staging", /torn/);
+  });
+
+  it("a non-contiguous seq reds (an append-only violation: a dropped or replayed line)", () => {
+    const dir = mutatedFixture("sota-staging", (d) => {
+      edit(d, SIDECAR, (s) => s.replace('"seq":5', '"seq":9'));
+    });
+    expectNotOk(dir, "sota-staging", /seq/);
   });
 });

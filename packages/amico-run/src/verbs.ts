@@ -248,17 +248,18 @@ const sessions: Verb = {
   slice: "session-device lifecycle D4 (slice 3, #795)",
   run: (args) => sessionsVerb(args),
 };
-// sota — the living-SOTA survey surface (#820, spec-20260905-103000 D1):
+// sota — the living-SOTA survey surface (#820, spec-20260905-103000 D1+D3):
 // the dual-lens read-only survey (papers via the arXiv export API through
 // the fleet-wide serialized queue; codebases via the GitHub API against the
-// watched-repo registry's canonical repos). This slice fetches and reports —
-// staged routing/receipts are later slices; a survey that cannot run is a
-// NAMED outcome, never a block.
+// watched-repo registry's canonical repos) + the staged routing (the watcher,
+// the PI-instructed accept stamp, the awaiting-the-eye listing, the expiry/
+// compaction sweep). A survey that cannot run is a NAMED outcome, never a
+// block; a match never counts until the PI's accept stamp lands.
 const sota: Verb = {
   name: "sota",
-  summary: "the SOTA survey: papers (arXiv export API via the serialized queue) / codebase (GitHub API over the watched-repo registry)",
+  summary: "the SOTA survey + staged routing: papers/codebase lenses, the watcher, the accept stamp, the awaiting-the-eye listing, the sweep",
   generalizes: "the loops' external-currency survey step (the sota-review skill's driving surface)",
-  slice: "living-sota (spec-20260905-103000 D1)",
+  slice: "living-sota (spec-20260905-103000 D1+D3)",
   run: sotaVerb,
 };
 
