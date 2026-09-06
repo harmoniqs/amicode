@@ -2,6 +2,16 @@
 // (#412): fetch → rank against the lab corpus → dedup → print (dry-run default)
 // or post to Slack as the Amico bot. The posted-state file makes reruns
 // idempotent. Runs on the server (the Slack token is server-only by posture).
+//
+// living-sota slice 2 (spec-20260905-103000 D3): `--route` adds the digest's
+// RELEVANCE ROUTER — the lab-corpus picks route against the active campaigns
+// and stage into the per-campaign SIDECAR streams (below-threshold / no-match
+// → the hopper stream), idempotent by event id. Routing is explicit (the
+// daily job's act, never a side effect of a dry run) and NEVER fatal: a
+// routing failure is a named `routed.errors` entry and the digest proceeds —
+// the survey never blocks. `--feed-xml <file>` is the deterministic fixture
+// seam (read the feed from a file instead of the wire — the same zero-dep
+// escape as AMICO_PAPERS_VAULTS).
 import {
   parseArxivRss,
   buildProfile,
@@ -20,6 +30,8 @@ import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { VerbResult } from "./verbs.js";
+import { routePapersToStaging, type RoutePapersResult } from "./sota_router.js";
+import { sotaSessionsDir } from "./sota_verb.js";
 
 function flagValue(argv: string[], name: string): string | undefined {
   const i = argv.indexOf(name);
@@ -56,16 +68,27 @@ export async function papersDigestVerb(argv: string[]): Promise<VerbResult> {
   const top = Number(flagValue(argv, "--top") ?? 5);
   const post = flagValue(argv, "--post");
   const dryRun = argv.includes("--dry-run") || post === undefined;
+  const route = argv.includes("--route");
+  const feedXml = flagValue(argv, "--feed-xml");
+  const sessionsDir = flagValue(argv, "--sessions") ?? sotaSessionsDir();
 
   // hermetic escapes (tests) → studio ladder (production)
   const vaults = process.env.AMICO_PAPERS_VAULTS ?? studioPathsOrLegacy().vaultsRoot;
   const library = process.env.AMICO_PAPERS_LIBRARY ?? join(homedir(), ".amico", "library");
 
   let xml: string;
-  try {
-    xml = fetchFeed(feedUrl(feed));
-  } catch (e) {
-    return { json: { ok: false, error: `feed fetch failed: ${e}` }, code: 1 };
+  if (feedXml !== undefined) {
+    try {
+      xml = readFileSync(feedXml, "utf8"); // the deterministic fixture seam — no transport
+    } catch (e) {
+      return { json: { ok: false, error: `--feed-xml unreadable: ${e}` }, code: 64 };
+    }
+  } else {
+    try {
+      xml = fetchFeed(feedUrl(feed));
+    } catch (e) {
+      return { json: { ok: false, error: `feed fetch failed: ${e}` }, code: 1 };
+    }
   }
   const items = parseArxivRss(xml);
   if (items.length === 0) {
@@ -85,6 +108,31 @@ export async function papersDigestVerb(argv: string[]): Promise<VerbResult> {
     };
   }
 
+  // the relevance router (living-sota D3): the picks stage into the campaign
+  // SIDECARs / the hopper. Explicit (--route), NEVER fatal: a routing failure
+  // is a named error and the digest proceeds — the survey never blocks.
+  let routed: RoutePapersResult | undefined;
+  const routingErrors: string[] = [];
+  const routedField = () => (routed !== undefined || routingErrors.length > 0
+    ? { routed: { staged: [], hopper: [], deduped: [], ...routed, errors: routingErrors } }
+    : {});
+  if (route) {
+    try {
+      routed = routePapersToStaging({
+        items: r.picks.map((p) => ({ arxiv: p.item.arxiv, title: p.item.title, abstract: p.item.abstract })),
+        sessionsDir,
+        provenance: {
+          job: "papers-digest",
+          via: "feed",
+          source: `arXiv RSS ${feed}`,
+          fetched_at: new Date().toISOString(),
+        },
+      });
+    } catch (e) {
+      routingErrors.push(`routing failed: ${(e as Error).message} — the digest proceeds; the router re-runs on the next pass`);
+    }
+  }
+
   const text = formatDigest({ feedName: feed, total: items.length, picks: r.picks, skipped: r.skipped });
 
   if (dryRun) {
@@ -95,6 +143,7 @@ export async function papersDigestVerb(argv: string[]): Promise<VerbResult> {
         text,
         fingerprint: digestFingerprint(text),
         counts: { total: items.length, picks: r.picks.length, skipped_corpus: r.skipped.corpus.length, dropped: r.dropped.length },
+        ...routedField(),
       },
       code: 0,
     };
@@ -104,7 +153,15 @@ export async function papersDigestVerb(argv: string[]): Promise<VerbResult> {
   if (!res.ok) return { json: { ok: false, error: `slack post failed: ${res.error}` }, code: 1 };
   writePostedIds(r.picks.map((p) => p.item.arxiv));
   return {
-    json: { ok: true, posted: true, channel: post, ts: res.ts, fingerprint: digestFingerprint(text), counts: { total: items.length, picks: r.picks.length } },
+    json: {
+      ok: true,
+      posted: true,
+      channel: post,
+      ts: res.ts,
+      fingerprint: digestFingerprint(text),
+      counts: { total: items.length, picks: r.picks.length },
+      ...routedField(),
+    },
     code: 0,
   };
 }

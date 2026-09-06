@@ -699,7 +699,7 @@ export const dict = {
   "session.share.action.view": "查看",
   "session.share.copy.copied": "已复制",
   "session.share.copy.copyLink": "复制链接",
-  "session.exportTrace": "导出追踪",
+  "session.exportTrace": "Export trace",
 
   "lsp.tooltip.none": "没有 LSP 服务器",
   "lsp.label.connected": "{{count}} LSP",

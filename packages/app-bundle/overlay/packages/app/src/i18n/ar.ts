@@ -644,7 +644,7 @@ export const dict = {
   "session.share.action.view": "عرض",
   "session.share.copy.copied": "تم النسخ",
   "session.share.copy.copyLink": "نسخ الرابط",
-  "session.exportTrace": "تصدير التتبع",
+  "session.exportTrace": "Export trace",
   "lsp.tooltip.none": "لا توجد خوادم LSP",
   "lsp.label.connected": "{{count}} LSP",
   "prompt.loading": "جارٍ تحميل الموجه...",

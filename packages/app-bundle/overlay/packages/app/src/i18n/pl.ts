@@ -652,7 +652,7 @@ export const dict = {
   "session.share.action.view": "Widok",
   "session.share.copy.copied": "Skopiowano",
   "session.share.copy.copyLink": "Kopiuj link",
-  "session.exportTrace": "Eksportuj ślad",
+  "session.exportTrace": "Export trace",
   "lsp.tooltip.none": "Brak serwerów LSP",
   "lsp.label.connected": "{{count}} LSP",
   "prompt.loading": "Ładowanie promptu...",

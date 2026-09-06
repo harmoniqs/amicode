@@ -12,9 +12,11 @@ revision: 1
 One survey, two lenses, one discipline: **read-only toward the world,
 append-only toward the vault**. The survey seeds hypotheses and design
 decisions; it never blocks the loop (a survey that cannot run records a
-NAMED outcome and the loop proceeds), and its matches route through staging
-for a human eye before they count as currency — this skill fetches and
-reports; the staged routing is a later layer.
+NAMED outcome and the loop proceeds), and its matches **stage before they
+count**: the daily digest and the SOTA watcher append `stage` lines to
+per-campaign SIDECAR staging streams beside the session ledgers, and nothing
+counts as currency until the PI's accept stamp lands. This skill's lenses
+fetch and report — they never append; the staged routing is its own layer.
 
 ## Usage
 
@@ -128,6 +130,13 @@ Run through this list before publishing any brief:
 - **Network unavailable**: the survey records the named outcome and the
   loop proceeds (currency is a seed, not a stall). The brief renders the
   failure and its provenance honestly.
-- **This slice fetches and reports**: it does not stage matches into a
-  campaign ledger, render strategy compositions, or gate anything — those
-  layers exist later; do not simulate their effects.
+- **The lenses fetch and report; they never append.** Staged routing is its
+  own layer, and its writers are enumerated: the papers digest
+  (`amico papers digest --route`) and the SOTA watcher
+  (`amico sota watcher`) are the match writers; the **accept stamp**
+  (`amico sota accept`, recording the PI's explicit instruction) is the only
+  sanctioned other writer. The **awaiting-the-eye listing**
+  (`amico sota awaiting-the-eye`) renders everything pending — staged
+  matches are never rendered as currency until accepted. No strategy
+  composition renders here either — that layer lives elsewhere; do not
+  simulate its effects.

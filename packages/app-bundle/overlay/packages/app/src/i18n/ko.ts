@@ -524,7 +524,7 @@ export const dict = {
   "session.share.action.view": "보기",
   "session.share.copy.copied": "복사됨",
   "session.share.copy.copyLink": "링크 복사",
-  "session.exportTrace": "트레이스 내보내기",
+  "session.exportTrace": "Export trace",
   "lsp.tooltip.none": "LSP 서버 없음",
   "lsp.label.connected": "{{count}} LSP",
   "prompt.loading": "프롬프트 로드 중...",

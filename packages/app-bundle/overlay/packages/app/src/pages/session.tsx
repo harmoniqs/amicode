@@ -1,7 +1,7 @@
 import type { FilePart, Project, SnapshotFileDiff, UserMessage } from "@opencode-ai/sdk/v2"
 import { getFilename } from "@opencode-ai/core/util/path"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
-import { createQuery, keepPreviousData, skipToken, useMutation } from "@tanstack/solid-query"
+import { createQuery, skipToken, useMutation } from "@tanstack/solid-query"
 import {
   batch,
   ErrorBoundary,
@@ -736,7 +736,14 @@ export default function Page() {
     return {
       queryKey: sessionDiffKey(),
       enabled: !!sessionID,
-      placeholderData: keepPreviousData,
+      // Keep previous data only for intra-session refetches (e.g. diff_version
+      // bumps), NOT across session switches. Cross-session keepPreviousData was
+      // the secondary leak vector: the old session's diffs appeared as
+      // placeholder in the new session's review panel.
+      placeholderData: (prev: SnapshotFileDiff[] | undefined, prevQuery: { queryKey?: readonly unknown[] } | undefined) => {
+        if (prevQuery?.queryKey?.[1] === sessionID) return prev
+        return undefined
+      },
       queryFn: sessionID
         ? () =>
             sdk()
@@ -799,7 +806,10 @@ export default function Page() {
     return {
       queryKey: ["session-touched-files", sessionID ?? "", sessionDiffVersion()] as const,
       enabled: !!sessionID,
-      placeholderData: keepPreviousData,
+      placeholderData: (prev: Array<{ file: string; status: string }> | undefined, prevQuery: { queryKey?: readonly unknown[] } | undefined) => {
+        if (prevQuery?.queryKey?.[1] === sessionID) return prev
+        return undefined
+      },
       staleTime: 30_000,
       queryFn: sessionID
         ? async () => {

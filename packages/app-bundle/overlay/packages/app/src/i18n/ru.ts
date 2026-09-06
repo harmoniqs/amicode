@@ -709,7 +709,7 @@ export const dict = {
   "session.share.action.view": "Посмотреть",
   "session.share.copy.copied": "Скопировано",
   "session.share.copy.copyLink": "Копировать ссылку",
-  "session.exportTrace": "Экспортировать трассировку",
+  "session.exportTrace": "Export trace",
 
   "lsp.tooltip.none": "Нет LSP серверов",
   "lsp.label.connected": "{{count}} LSP",

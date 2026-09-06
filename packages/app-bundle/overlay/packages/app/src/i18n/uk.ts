@@ -757,7 +757,7 @@ export const dict = {
   "session.share.action.view": "Переглянути",
   "session.share.copy.copied": "Скопійовано",
   "session.share.copy.copyLink": "Копіювати посилання",
-  "session.exportTrace": "Експортувати трасування",
+  "session.exportTrace": "Export trace",
 
   "lsp.tooltip.none": "Немає серверів LSP",
   "lsp.label.connected": "{{count}} LSP",

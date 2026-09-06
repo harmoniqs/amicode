@@ -25,7 +25,7 @@
 // belongs to the .d.mts surface next to it, the assert_built_bundles.mjs
 // pattern).
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parse as parseToml } from "smol-toml";
@@ -63,14 +63,16 @@ export function defaultFixtureDirs() {
   return [
     { kind: "amicode-run", dir: join(PKG_ROOT, "fixtures", "bridge", "amicode-run") },
     { kind: "strumento-task", dir: join(PKG_ROOT, "fixtures", "bridge", "2026-08-31-strumento-task-b3a7") },
+    { kind: "sota-staging", dir: join(PKG_ROOT, "fixtures", "bridge", "2026-09-05-sota-staging") },
   ];
 }
 
 /** Infer the record kind from the directory's own manifest (the record is the
- * truth; neither kind ever contains the other's manifest). */
+ * truth; no kind ever contains another's manifest). */
 export function inferRecordKind(dir) {
   if (existsSync(join(dir, "run.toml"))) return "amicode-run";
   if (existsSync(join(dir, "task.toml"))) return "strumento-task";
+  if (existsSync(join(dir, "staging.toml"))) return "sota-staging";
   return undefined;
 }
 
@@ -326,6 +328,109 @@ function validateStrumentoTask(dir, errors) {
   }
 }
 
+// ─── the SOTA staging sidecar record (living-sota D3, slice 2) ───────────────
+//
+// The per-campaign SIDECAR staging stream: append-only transition lines
+// (stage/accept/drop/compact) beside the session ledger; state derived by
+// replay. The grammar this validator enforces IS the acceptance-stamp schema
+// (obligation O3): an accept line carries instructed_by: "PI" + the recorded
+// instruction; transitions reference their stage; a stage is unique by event
+// id; accept and drop are mutually terminal; unknown `ev` values are carried
+// (reader opacity — the fixture ships one on purpose).
+
+const STAGING_KINDS = new Set(["paper", "release", "changelog", "issue"]);
+
+function validateSotaStaging(dir, errors) {
+  const manifest = readTomlFile("staging.toml", dir, errors);
+  let campaign;
+  if (manifest !== undefined) {
+    if (manifest.kind !== "sota-staging") {
+      errors.push("staging.toml: kind is not sota-staging — the manifest names the record kind");
+    }
+    if (typeof manifest.campaign !== "string" || manifest.campaign === "") {
+      errors.push("staging.toml: campaign missing — the manifest names the sidecar's campaign");
+    } else {
+      campaign = manifest.campaign;
+    }
+  }
+  // the campaign's own sidecar must be present
+  if (campaign !== undefined && !existsSync(join(dir, `${campaign}.sota-staging.jsonl`))) {
+    errors.push(`${campaign}.sota-staging.jsonl: missing — the manifest's campaign must have its sidecar`);
+  }
+
+  let streams = [];
+  try {
+    streams = readdirSync(dir).filter((n) => n.endsWith(".sota-staging.jsonl"));
+  } catch {
+    /* none */
+  }
+  if (streams.length === 0) {
+    errors.push("no *.sota-staging.jsonl stream in the record — a staging record is its streams");
+  }
+  for (const name of streams) {
+    validateStagingStream(dir, name, errors);
+  }
+}
+
+function validateStagingStream(dir, name, errors) {
+  const stem = name.replace(/\.sota-staging\.jsonl$/, "");
+  const events = readJsonlFile(name, dir, errors);
+  if (events === undefined) return;
+  const seenStage = new Set();
+  const terminal = new Map(); // event_id → ev ("accept" | "drop")
+  events.forEach((e, i) => {
+    const at = `${name}: line ${i + 1}`;
+    if (e.seq !== i + 1) errors.push(`${at}: seq is ${e.seq} — seq is the line count at write time (monotonic from 1)`);
+    if (typeof e.ts !== "string" || !ISO_RE.test(e.ts)) errors.push(`${at}: ts missing or not ISO-8601`);
+    const ev = typeof e.ev === "string" ? e.ev : "";
+    if (ev === "" || typeof e.event_id !== "string" || e.event_id === "") {
+      if (ev !== "") errors.push(`${at}: event_id missing — every transition is keyed by its external identity`);
+      else if (typeof e.ev !== "string") errors.push(`${at}: ev missing — unknown ev VALUES skip, but ev itself is required`);
+      return;
+    }
+    if (ev === "stage") {
+      if (typeof e.campaign !== "string" || e.campaign !== stem) {
+        errors.push(`${at}: campaign "${e.campaign}" ≠ the stream's stem "${stem}" — a sidecar carries its own campaign only`);
+      }
+      if (!STAGING_KINDS.has(e.kind)) errors.push(`${at}: kind "${e.kind}" outside paper|release|changelog|issue`);
+      if (typeof e.title !== "string" || e.title === "") errors.push(`${at}: title missing — the listing renders it`);
+      if (typeof e.url !== "string" || e.url === "") errors.push(`${at}: url missing — every staged match is cited`);
+      if (e.provenance === null || typeof e.provenance !== "object" || Array.isArray(e.provenance)) {
+        errors.push(`${at}: provenance missing — a match never lands unprovenance-stamped`);
+      } else {
+        for (const k of ["job", "via", "source", "fetched_at"]) {
+          if (typeof e.provenance[k] !== "string" || e.provenance[k] === "") {
+            errors.push(`${at}: provenance.${k} missing — the stamp carries {job, via, source, fetched_at}`);
+          }
+        }
+      }
+      if (typeof e.review_by !== "string" || !ISO_RE.test(e.review_by)) errors.push(`${at}: review_by missing or not ISO-8601 — the review-by stamp is the shape`);
+      if (typeof e.expires_at !== "string" || !ISO_RE.test(e.expires_at)) errors.push(`${at}: expires_at missing or not ISO-8601 — the expiry stamp is the shape`);
+      if (seenStage.has(e.event_id)) errors.push(`${at}: a second stage for ${e.event_id} — double-delivery is impossible (idempotent by event id)`);
+      seenStage.add(e.event_id);
+      return;
+    }
+    if (ev === "accept") {
+      // O3: the acceptance-stamp schema — the PI-instructed record
+      if (e.instructed_by !== "PI") errors.push(`${at}: instructed_by is not "PI" — the stamp records the human decision, not a job append`);
+      if (e.instruction === null || typeof e.instruction !== "object" || Array.isArray(e.instruction)) {
+        errors.push(`${at}: instruction missing — an unstamped acceptance is a laundered one`);
+      } else {
+        if (typeof e.instruction.channel !== "string" || e.instruction.channel === "") errors.push(`${at}: instruction.channel missing`);
+        if (typeof e.instruction.note !== "string" || e.instruction.note.trim() === "") errors.push(`${at}: instruction.note missing — the PI's explicit instruction is required`);
+        if (typeof e.instruction.received_at !== "string" || !ISO_RE.test(e.instruction.received_at)) errors.push(`${at}: instruction.received_at missing or not ISO-8601`);
+      }
+    } else if (ev === "drop") {
+      if (typeof e.reason !== "string" || e.reason === "") errors.push(`${at}: reason missing — a drop is a recorded line, never a silent skip`);
+      if (typeof e.recorded !== "string" || !ISO_RE.test(e.recorded)) errors.push(`${at}: recorded missing or not ISO-8601`);
+    }
+    // transition grammar: references its stage; accept XOR drop per event id
+    if (!seenStage.has(e.event_id)) errors.push(`${at}: ${ev} for ${e.event_id} with no stage behind it — a transition records the fate of a STAGED match`);
+    else if (terminal.has(e.event_id)) errors.push(`${at}: ${ev} after ${terminal.get(e.event_id)} for ${e.event_id} — accept and drop are both terminal, exactly one lands`);
+    else terminal.set(e.event_id, ev);
+  });
+}
+
 /** Validate one record directory against the bridge doctrine. Pure: reads the
  * dir, returns every violation it finds (never throws). */
 export function validateBridgeRecord(dir, kind) {
@@ -336,12 +441,13 @@ export function validateBridgeRecord(dir, kind) {
       ok: false,
       kind: "amicode-run",
       errors: [
-        `${dir}: no record manifest found (run.toml for an amicode run dir, task.toml for a strumento task dir)`,
+        `${dir}: no record manifest found (run.toml for an amicode run dir, task.toml for a strumento task dir, staging.toml for a SOTA staging record)`,
       ],
     };
   }
   if (k === "amicode-run") validateAmicodeRun(dir, errors);
-  else validateStrumentoTask(dir, errors);
+  else if (k === "strumento-task") validateStrumentoTask(dir, errors);
+  else if (k === "sota-staging") validateSotaStaging(dir, errors);
   return { ok: errors.length === 0, kind: k, errors };
 }
 
