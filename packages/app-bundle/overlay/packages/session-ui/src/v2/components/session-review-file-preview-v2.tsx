@@ -609,8 +609,6 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                   cursor: "pointer",
                   color: "var(--amc-text-muted, var(--icon-base))",
                   "flex-shrink": "0",
-                  position: "relative",
-                  "z-index": "1",
                 }}
                 onMouseEnter={(e) => (e.currentTarget.style.color = "var(--amc-danger, #f44336)")}
                 onMouseLeave={(e) => (e.currentTarget.style.color = "var(--amc-text-muted, var(--icon-base))")}
@@ -629,8 +627,6 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                 "margin-left": "8px",
                 "white-space": "nowrap",
                 color: "var(--amc-danger, #f44336)",
-                position: "relative",
-                "z-index": "1",
               }}
             >
               Save failed

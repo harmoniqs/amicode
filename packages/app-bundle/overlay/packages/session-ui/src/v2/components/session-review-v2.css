@@ -358,6 +358,18 @@
     position: relative;
     z-index: 1;
   }
+
+  /* Revert button and error text must escape the ::after (z-index: 0)
+     stacking context — same fix as diff-changes above (#837). */
+  [data-slot="session-review-v2-revert-button"] {
+    position: relative;
+    z-index: 1;
+  }
+
+  [data-slot="session-review-v2-save-error"] {
+    position: relative;
+    z-index: 1;
+  }
 }
 
 [data-component="session-review-v2"] [data-slot="session-review-v2-file-status"] {
