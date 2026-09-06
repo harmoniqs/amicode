@@ -1,6 +1,6 @@
 # The harness is a contract, not a product: a fixture-pinned subset of the opencode server API is Harness Contract v1
 
-Status: accepted (2026-08-27)
+Status: accepted (2026-08-27) · amended with vNext session-contract surfaces (2026-09-05, see vNext)
 
 Amicode runs on switchable chat harnesses. The default is canonical opencode; the
 proprietary telaio harness (subscription) arrives with Telaio.jl's serve daemon; a
@@ -76,3 +76,62 @@ Implementation: harmoniqs/amicode#621 (this record). The implementing campaign
 (`harness-agnostic`, personal-vault ledger `sessions/session-20260827-harness-agnostic.md`)
 queues T4 (Telaio.jl serve), T1b (the effort knob), T3 (the battery/bakeoff
 apparatus), and A3 (the MCP floor).
+
+## vNext (2026-09-05): session-contract fields beyond v1 — optional richer surfaces + the per-harness conformance suite
+
+Design of record: spec-20260905-045114-session-device-lifecycle (§ Placement under
+harness-agnostic, the post-approval amendment). Everything above stands: the base
+contract remains fully implementable by a harness serving only today's canonical
+API. This section declares what harnesses MAY serve beyond that subset — each
+surface OPTIONAL, with the client-side fallback that keeps the product fully
+functional when none are served — and one new MUST for every harness: the
+conformance suite.
+
+**The richer session surfaces (all OPTIONAL).** Three surfaces, born from the
+session & device lifecycle spec's founding incidents, enter the contract rather
+than staying product behavior so every backend can serve them:
+
+- **Server-computed list currency.** A currency field on session-list responses:
+  `list-generation = (count, max time_updated, sum of time_updated)` over the rows
+  the default list returns, plus the server build id — computed on every list
+  response, never hand-bumped, so same-tick touches, archive churn, and
+  out-of-band writes advance it by construction. *Fallback:* the client derives
+  the same token over the projection it fetches (count, max, sum + a
+  server-version stamp read from the API responses) and checks it against the
+  boot-time fetch-before-render — no server field needed; a stale persisted
+  snapshot dies exactly as dead.
+
+- **Server-side project resolution with first-class non-git homes.** Any directory
+  a session opens, creates, or boots in resolves to a project row (worktree = the
+  directory, vcs = none), auto-created at boot with a backfill over the existing
+  session table, re-keyed if a non-git home later becomes a git repo. *Fallback:*
+  project grouping is client-side over `directory`/`projectID` — data the global
+  list already returns — so non-git homes render as their own groups with no
+  server rows, no backfill, no junk lint.
+
+- **Boot parity records (three outcomes).** Build parity asserted at boot with a
+  recorded outcome — `parity-ok | parity-drift | channel-unreachable` — where an
+  unreachable channel fails OPEN but is never rendered as ok. *Fallback:* parity
+  is checked client-side against the release channel using the server-reported
+  version.
+
+**The conformance suite (MUST, per harness).** The query semantics of every
+session-list endpoint — scoping keys, filter fields, defaults, v1 and v2 routes —
+are declared surface. Every harness (opencode canonical, Telaio.jl, future) is
+validated against the declared session-list semantics fixture set, and a build
+that changes what a query *means* without a companion fixture update fails that
+harness's conformance run. Additive optional fields with base defaults are
+permitted; semantic changes are not — premium needs ride that rule like anyone
+else's. This generalizes the fork-only drift gate the spec originally specified
+(H5): the client's expectations of session-list semantics are declared and tested
+per harness, which is stronger than gating one incumbent.
+
+**Contract, not premium.** The richer surfaces live in the public contract so
+every backend can serve them — the public base is complete without any overlay
+(the boundary amicissimo ADR-0002/0003 established, transposed to the session &
+device plane). Premium adds no contract fields: fleet-driven additions to public
+APIs land as additive optional fields with base defaults, never requirements, and
+the overlay may never fork the base session contract. Upstream contribution of
+the currency field, project resolution, and parity record to anomalyco/opencode
+is RECOMMENDED, not required — nothing blocks on it; the held fork PRs (#296/#298)
+are the reference deltas.
