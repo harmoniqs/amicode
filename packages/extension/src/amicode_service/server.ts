@@ -18,6 +18,8 @@ import * as http from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
+import { AppShelf, type AppShelfResult } from "./app_shelf";
+import { EngineProxy } from "./engine_proxy";
 
 export interface AmicodeRequestCtx {
   /** Fully-parsed request URL (query params included — POST /amicode/profile
@@ -57,10 +59,20 @@ export class AmicodeServiceServer {
   private readonly routes = new Map<string, RouteEntry>();
   private server?: http.Server;
   private _port?: number;
+  private shelf?: AppShelf;
+  private engineProxy?: EngineProxy;
   readonly password: string;
+  /** #822: the spawned engine's per-boot mint, accepted ALONGSIDE the
+   *  service's own — the framed app bootstraps with the ENGINE credential
+   *  (its auth machinery is the one that works against the engine today),
+   *  so every surface on this origin must take it with zero app-side
+   *  change. undefined = no engine bound (the proxy-less boots stay
+   *  single-mint, byte-compatible with the pre-#822 contract). */
+  private readonly enginePassword?: string;
 
-  constructor(opts: { password?: string } = {}) {
+  constructor(opts: { password?: string; enginePassword?: string } = {}) {
     this.password = opts.password ?? mintServerPassword();
+    this.enginePassword = opts.enginePassword;
   }
 
   get port(): number | undefined {
@@ -84,15 +96,37 @@ export class AmicodeServiceServer {
     return this;
   }
 
+  /** Mount the app shelf (#822): static serving of the built app dist,
+   *  consulted AFTER the exact route table and BEFORE the engine proxy. */
+  attachAppShelf(shelf: AppShelf): this {
+    this.shelf = shelf;
+    return this;
+  }
+
+  /** Mount the engine reverse proxy (#822): the fallback for non-amicode,
+   *  non-static requests, streaming to/from the spawned engine. */
+  attachEngineProxy(proxy: EngineProxy): this {
+    this.engineProxy = proxy;
+    return this;
+  }
+
   private authorized(req: http.IncomingMessage): boolean {
     const header = req.headers.authorization ?? "";
     if (!header.startsWith("Basic ")) return false;
     // Decode the base64 credentials before comparing — the wire form is
     // base64("opencode:<password>"), the comparison form is the raw pair.
     const given = Buffer.from(header.slice(6).trim(), "base64");
-    const want = Buffer.from(`opencode:${this.password}`, "utf8");
-    if (given.length !== want.length) return false;
-    return timingSafeEqual(given, want);
+    // #822: accept BOTH mints — the service's own AND the engine's (the
+    // framed app bootstraps with the engine credential; the proxy forwards
+    // it unchanged, and the /amicode/* routes take it too so one credential
+    // works everywhere on this origin). Length checks before the constant-
+    // time compare, per credential, so a wrong-mint probe learns nothing.
+    for (const mint of [this.password, this.enginePassword]) {
+      if (mint === undefined) continue;
+      const want = Buffer.from(`opencode:${mint}`, "utf8");
+      if (given.length === want.length && timingSafeEqual(given, want)) return true;
+    }
+    return false;
   }
 
   private async readBody(req: http.IncomingMessage): Promise<string> {
@@ -107,7 +141,7 @@ export class AmicodeServiceServer {
   }
 
   private async dispatch(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const send = (r: AmicodeHandlerResult) => {
+    const send = (r: AmicodeHandlerResult | AppShelfResult) => {
       res.statusCode = r.status ?? 200;
       res.setHeader("Content-Type", r.contentType ?? "application/json");
       for (const [k, v] of Object.entries(r.headers ?? {})) res.setHeader(k, v);
@@ -122,13 +156,32 @@ export class AmicodeServiceServer {
       const host = req.headers.host ?? "127.0.0.1";
       const url = new URL(req.url ?? "/", `http://${host}`);
       const route = this.routes.get(`${req.method} ${url.pathname}`);
-      if (!route) {
+      if (route) {
+        const body = await this.readBody(req);
+        const result = await route.handler({ url, body });
+        send(result);
+        return;
+      }
+      // #822 precedence, after the exact route table: the /amicode/*
+      // namespace is OWNED by this service (unmatched paths 404 here — the
+      // fork-parity discipline; stock canonical serves no /amicode/* so
+      // proxying them would just launder our 404) → the app shelf → the
+      // engine proxy.
+      if (url.pathname === "/amicode" || url.pathname.startsWith("/amicode/")) {
         send({ status: 404, body: JSON.stringify({ ok: false, error: `no route: ${req.method} ${url.pathname}` }) });
         return;
       }
-      const body = await this.readBody(req);
-      const result = await route.handler({ url, body });
-      send(result);
+      const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
+      if (shelfHit) {
+        send(shelfHit);
+        return;
+      }
+      if (this.engineProxy) {
+        // Streams method/headers/body through to the engine (SSE included);
+        // false = no upstream bound yet → the honest 503 below.
+        if (this.engineProxy.handle(req, res)) return;
+      }
+      send({ status: 503, body: JSON.stringify({ ok: false, error: "engine upstream not available" }) });
     } catch (err) {
       // Never crash the service on one bad request; mirror the fork's
       // collapse-into-one-shape discipline at the transport layer.

@@ -9,14 +9,6 @@ type SessionStore = {
   path: { directory: string }
 }
 
-export function compareSessionTime(a: Session, b: Session) {
-  const updated = (b.time.updated ?? b.time.created) - (a.time.updated ?? a.time.created)
-  if (updated !== 0) return updated
-  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
-}
-
-// amicode: recency-window sort — sessions touched in the last minute sort by
-// creation order (a live session's bubbling), older ones by last update.
 function sortSessions(now: number) {
   const oneMinuteAgo = now - 60 * 1000
   return (a: Session, b: Session) => {
@@ -42,28 +34,6 @@ export const sortedRootSessions = (store: SessionStore, now: number) => roots(st
 export const latestRootSession = (stores: SessionStore[], now: number) =>
   stores.flatMap(roots).sort(sortSessions(now))[0]
 
-/**
- * Directories whose sessions the list surfaces (Sessions dropdown, home list)
- * aggregate over: the user's opened projects, falling back to the server's
- * registered projects when nothing has been opened yet (fresh client, empty
- * persisted registry — amicode#288). Session listing only; this must NOT feed
- * the project switcher, or closing a server-registered project becomes
- * impossible (the fallback would re-add it).
- */
-export function sessionListDirectories(
-  opened: { worktree: string; sandboxes?: string[] }[],
-  serverProjects: { worktree: string; sandboxes?: string[] }[],
-): string[] {
-  const dirs = opened.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])])
-  if (dirs.length > 0) return dirs
-  const seen = new Set<string>()
-  return serverProjects.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])]).filter((d) => {
-    if (!d || seen.has(d)) return false
-    seen.add(d)
-    return true
-  })
-}
-
 export function hasProjectPermissions<T>(
   request: Record<string, T[] | undefined> | undefined,
   include: (item: T) => boolean = () => true,
@@ -86,6 +56,28 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
 
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree) || project.worktree
+
+/**
+ * Directories whose sessions the list surfaces (Sessions dropdown, home list)
+ * aggregate over: the user's opened projects, falling back to the server's
+ * registered projects when nothing has been opened yet (fresh client, empty
+ * persisted registry — amicode#288). Session listing only; this must NOT feed
+ * the project switcher, or closing a server-registered project becomes
+ * impossible (the fallback would re-add it).
+ */
+export function sessionListDirectories(
+  opened: { worktree: string; sandboxes?: string[] }[],
+  serverProjects: { worktree: string; sandboxes?: string[] }[],
+): string[] {
+  const dirs = opened.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])])
+  if (dirs.length > 0) return dirs
+  const seen = new Set<string>()
+  return serverProjects.flatMap((p) => [p.worktree, ...(p.sandboxes ?? [])]).filter((d) => {
+    if (!d || seen.has(d)) return false
+    seen.add(d)
+    return true
+  })
+}
 
 export function toggleHomeProjectSelection(
   current: HomeProjectSelection | undefined,

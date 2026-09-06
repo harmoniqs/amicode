@@ -166,15 +166,45 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         }
       });
 
-      const kill = (): void => {
+      // (issue #830) The teardown must never be the flake. The vendored
+      // binary's background package-install into the temp HOME outlives the
+      // client shutdown; the old fire-and-forget kill (SIGTERM + an unref'd
+      // SIGKILL timer) let it keep WRITING while the finally's recursive
+      // rmdir ran — ENOTEMPTY on CI, reproduced twice on different subdirs
+      // (zod/src/v3/tests, effect/dist/unstable), never on a warm local
+      // run. Fix, both halves: (a) SEQUENTIAL shutdown awaited to process
+      // exit — SIGTERM → bounded wait → SIGKILL → bounded wait — and (b) a
+      // RETRYING rmSync (Node natively retries ENOTEMPTY/EBUSY per
+      // maxRetries × retryDelay), bounding any residual grandchild writer.
+      const waitForExit = (ms: number): Promise<boolean> =>
+        new Promise((resolve) => {
+          const done = child.exitCode !== null || child.signalCode !== null;
+          if (done) {
+            resolve(true);
+            return;
+          }
+          const timer = setTimeout(() => {
+            child.removeListener("exit", onExit);
+            child.removeListener("error", onExit);
+            resolve(false);
+          }, ms);
+          timer.unref?.();
+          const onExit = (): void => {
+            clearTimeout(timer);
+            resolve(true);
+          };
+          child.once("exit", onExit);
+          child.once("error", onExit);
+        });
+      const killAndWait = async (): Promise<void> => {
         try {
           child.kill("SIGTERM");
         } catch {}
-        setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {}
-        }, 3000).unref();
+        if (await waitForExit(10_000)) return;
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+        await waitForExit(5_000);
       };
 
       // hoisted for the A2 finally: the outcome record is computed from the
@@ -205,7 +235,11 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ agent: "autodev" }),
-          signal: AbortSignal.timeout(10_000),
+          // (#830) the FIRST session spins up the instance lazily — the
+          // plugin factory + the cold-HOME package install happen inside
+          // this POST on a fresh runner; 10s aborted it on CI. 60s is the
+          // honest bound for a cold spin-up (the warm path stays instant).
+          signal: AbortSignal.timeout(60_000),
         });
         expect(created.status, `POST /session failed (${created.status})\n${log}`).toBe(200);
         const session = (await created.json()) as { id?: string; agent?: string };
@@ -217,7 +251,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         // (3) the probe plugin LOADED with the session's instance and its
         //     factory got the engine client (the same PluginInput handoff
         //     amicode_tools.ts relies on in production).
-        let lines = await waitFor(probeOut, (l) => l.event === "factory", 15_000);
+        let lines = await waitFor(probeOut, (l) => l.event === "factory", 30_000);
         const factory = lines.find((l) => l.event === "factory")!;
         expect(factory, "the probe plugin never loaded — the factory record is absent").toBeTruthy();
         expect(factory.has_client, "the plugin factory input did NOT carry the engine client").toBe(true);
@@ -381,12 +415,12 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           console.error(`[session-api-fixture] durable record write failed: ${e instanceof Error ? e.message : String(e)}`);
         }
         console.log(`[session-api-fixture] OUTCOME ${JSON.stringify(outcome)}`);
-        kill();
-        rmSync(home, { recursive: true, force: true });
-        rmSync(proj, { recursive: true, force: true });
+        await killAndWait();
+        rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+        rmSync(proj, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
       }
     },
-    150_000,
+    300_000,
   );
 });
 

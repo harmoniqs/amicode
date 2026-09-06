@@ -1,0 +1,34 @@
+{
+  "record_version": 1,
+  "issue": 806,
+  "note": "The seed record for slice 2 / D3 (#806, spec-20260905-063000): the four director-cast role cards were seeded VERBATIM from the live deployed staging artifacts on the seed machine below — the only live copies (the cards had no repo source before this slice; the #758 worker-card authoring at the same paths never deployed and is superseded by this seed per D3). The seed is GATED: the human diff against the engine-neutral vault definitions is prepared at docs/seed-gate/role-cards-seed-diff.md and AARON's signature is PENDING — parity content pins block on it (role_cards_parity.test.ts skips flagged anchors with named reasons). A card may drift from its seeded hash ONLY via a recorded, signed amendment: set amended=true + amendment_signed_by + update this record's seeded_sha256 to the amended bytes in the SAME change that lands the amendment.",
+  "seed_machine": "erlich",
+  "seed_root": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents",
+  "captured_at": "2026-09-05T03:45:00.000Z",
+  "roles": [
+    {
+      "role": "hypothesizer",
+      "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/hypothesizer.md",
+      "seeded_sha256": "sha256:7386cce14291b0d6a120999e689f3042e34cdb1a9224075830f1442b3fd11ffd",
+      "seeded_at": "2026-08-18T19:45:34.000Z"
+    },
+    {
+      "role": "experimenter",
+      "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/experimenter.md",
+      "seeded_sha256": "sha256:faa3e0370dabfbffacb6d4d57f3d671f412ef2557c39cfd6fc2bdae8dd6ce0b2",
+      "seeded_at": "2026-08-18T19:45:39.000Z"
+    },
+    {
+      "role": "analyzer",
+      "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/analyzer.md",
+      "seeded_sha256": "sha256:8a6972d527fc33c99e64c500b6c5a351c39f50a00081ddafb41bf97d1f037aab",
+      "seeded_at": "2026-08-18T19:45:39.000Z"
+    },
+    {
+      "role": "implementer",
+      "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/implementer.md",
+      "seeded_sha256": "sha256:b7661f7fe4b8464893d29904d6bc087f64fbc094bfe64e084b980dc477d2534e",
+      "seeded_at": "2026-08-20T18:24:56.000Z"
+    }
+  ]
+}

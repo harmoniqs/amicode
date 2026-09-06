@@ -71,7 +71,7 @@ describe("amico router — help + unknown verb", () => {
   it("--help lists the full verb surface, exit 0", () => {
     const r = run(["--help"]);
     expect(r.code).toBe(0);
-    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "doctor", "upgrade", "mcp-serve"]) {
+    for (const v of ["run", "resolve", "sandbox", "catalog", "vault", "device", "note", "cloud", "doctor", "upgrade", "mcp-serve", "sota"]) {
       expect(r.stdout).toContain(`amico ${v}`);
     }
   });
