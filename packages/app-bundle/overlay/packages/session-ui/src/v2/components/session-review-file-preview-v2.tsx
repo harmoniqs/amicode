@@ -333,7 +333,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
 
   const handleRevert = () => {
     if (!props.writeFile) return
-    const original = text(view(), "deletions")
+    const original = text(view(), "additions")
 
     setSaveStatus("saving")
     props.writeFile(props.file, original)
@@ -539,7 +539,6 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               gap: "6px",
               "min-width": "0",
               flex: "1 1 0",
-              overflow: "hidden",
             }}
           >
             <TooltipV2 openDelay={500} value={statusTooltip(view().status)}>

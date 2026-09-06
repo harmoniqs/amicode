@@ -325,7 +325,6 @@
   gap: 6px;
   min-width: 0;
   flex: 1;
-  overflow: hidden;
 }
 
 [data-component="session-review-v2"] [data-slot="session-review-v2-file-diff"] {

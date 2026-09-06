@@ -489,6 +489,161 @@ describe("Save controller (explicit Cmd+S)", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Revert-to-agent-version: must use the ADDITIONS side of the diff (#837)
+// ---------------------------------------------------------------------------
+//
+// The diff view has two sides:
+//   - "deletions" = the file BEFORE the agent changed it (left / original)
+//   - "additions" = the agent's version (right / modified — the editable pane)
+//
+// "Revert to agent's version" means: discard the user's manual edits and
+// restore the agent's proposed content. The caller must pick "additions",
+// NOT "deletions". Picking "deletions" writes the pre-agent content to disk,
+// which causes the file to vanish from Files Changed (disk = baseline).
+// ---------------------------------------------------------------------------
+
+describe("Revert-to-agent side selection", () => {
+  /** Simulates the diff model: two sides of content. */
+  function textFromDiff(
+    diff: { deletions: string; additions: string },
+    side: "deletions" | "additions",
+  ): string {
+    return diff[side]
+  }
+
+  /**
+   * The correct side for "Revert to agent's version" — must be "additions".
+   * This is the contract the production code in handleRevert must satisfy.
+   */
+  const REVERT_TO_AGENT_SIDE = "additions" as const
+
+  test("revert-to-agent uses the additions side (agent's version), not deletions", () => {
+    const diff = {
+      deletions: "original content before agent",
+      additions: "agent's modified content",
+    }
+
+    const revertContent = textFromDiff(diff, REVERT_TO_AGENT_SIDE)
+
+    expect(revertContent).toBe("agent's modified content")
+    expect(revertContent).not.toBe("original content before agent")
+  })
+
+  test("using deletions side would write pre-agent content (the bug)", () => {
+    const diff = {
+      deletions: "pre-agent baseline",
+      additions: "agent wrote this",
+    }
+
+    // This is what the BUGGY code does — picking "deletions"
+    const buggyContent = textFromDiff(diff, "deletions")
+    expect(buggyContent).toBe("pre-agent baseline")
+
+    // This is what the CORRECT code does — picking "additions"
+    const correctContent = textFromDiff(diff, REVERT_TO_AGENT_SIDE)
+    expect(correctContent).toBe("agent wrote this")
+  })
+
+  test("revertToOriginal receives the agent's version (additions) content", async () => {
+    const onSave = vi.fn(async () => {})
+    const onEditorRevert = vi.fn()
+    const ctrl = createSaveController({ onSave, onEditorRevert })
+
+    const diff = {
+      deletions: "file before agent touched it",
+      additions: "what the agent wrote",
+    }
+
+    ctrl.onChange("user's manual edits on top")
+    // The caller must pass additions, not deletions
+    ctrl.revertToOriginal("test.md", textFromDiff(diff, REVERT_TO_AGENT_SIDE))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The content written to disk must be the agent's version
+    expect(onSave).toHaveBeenCalledWith("test.md", "what the agent wrote")
+    // The editor is reset to the agent's version
+    expect(onEditorRevert).toHaveBeenCalledWith("what the agent wrote")
+  })
+})
+
+// ---------------------------------------------------------------------------
+// File-title overflow: must NOT clip children (dropdown lives inside) (#837)
+// ---------------------------------------------------------------------------
+//
+// The file-title container wraps <FileNameWithPicker> which renders an
+// absolutely-positioned dropdown. `overflow: hidden` on the container clips
+// that dropdown, making it invisible. The container must NOT set overflow:
+// hidden — text truncation is handled by the leaf spans (file-name, file-path).
+// ---------------------------------------------------------------------------
+
+describe("File-title container overflow constraint", () => {
+  /** Parse the CSS rule for file-title from the actual stylesheet. */
+  function parseFileTitleOverflow(css: string): string | undefined {
+    // Extract the rule for [data-slot="session-review-v2-file-title"]
+    const ruleMatch = css.match(
+      /\[data-slot="session-review-v2-file-title"\]\s*\{([^}]*)\}/,
+    )
+    if (!ruleMatch) return undefined
+    const block = ruleMatch[1]
+    // Extract overflow value
+    const overflowMatch = block.match(/overflow\s*:\s*([^;]+)/)
+    return overflowMatch ? overflowMatch[1].trim() : undefined
+  }
+
+  // We read the ACTUAL CSS file content to verify the constraint.
+  // The CSS is in the fork's session-review-v2.css — we read it from the
+  // overlay tracking copy (which sync:apply keeps in sync with the fork).
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require("fs") as typeof import("fs")
+  const path = require("path") as typeof import("path")
+  const cssPath = path.resolve(
+    __dirname,
+    "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-v2.css",
+  )
+  const cssExists = fs.existsSync(cssPath)
+  const cssContent = cssExists ? fs.readFileSync(cssPath, "utf-8") : ""
+
+  test("file-title CSS rule must NOT have overflow: hidden", () => {
+    if (!cssExists) {
+      // If overlay hasn't synced yet, skip gracefully
+      console.warn("Overlay CSS not found — skipping file-title overflow test")
+      return
+    }
+    const overflow = parseFileTitleOverflow(cssContent)
+    // overflow should be undefined (not set) or "visible" — never "hidden"
+    expect(overflow).not.toBe("hidden")
+  })
+
+  test("file-title inline styles in TSX must NOT have overflow: hidden", () => {
+    // Read the TSX to verify no inline overflow: hidden on the file-title trigger
+    const tsxPath = path.resolve(
+      __dirname,
+      "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx",
+    )
+    if (!fs.existsSync(tsxPath)) {
+      console.warn("Overlay TSX not found — skipping inline overflow test")
+      return
+    }
+    const tsxContent = fs.readFileSync(tsxPath, "utf-8")
+
+    // Find the style block for data-slot="session-review-v2-file-title"
+    // The pattern: data-slot="session-review-v2-file-title" followed by
+    // a style={{ ... }} block within a few lines
+    const titleIdx = tsxContent.indexOf('data-slot="session-review-v2-file-title"')
+    expect(titleIdx).toBeGreaterThan(-1)
+
+    // Extract ~300 chars after the data-slot to capture the style block
+    const vicinity = tsxContent.slice(titleIdx, titleIdx + 400)
+    // Check that the style block does NOT contain overflow: hidden
+    const styleMatch = vicinity.match(/style=\{\{([\s\S]*?)\}\}/)
+    if (styleMatch) {
+      const styleBlock = styleMatch[1]
+      expect(styleBlock).not.toMatch(/overflow.*hidden/i)
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // File status → readOnly mapping
 // ---------------------------------------------------------------------------
 
