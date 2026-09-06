@@ -6,7 +6,7 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-05T05:30:14.193Z",
+  "extracted_at": "2026-09-05T23:59:52.231Z",
   "per_package": {
     "packages/app": {
       "A": 124,
@@ -29,7 +29,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 14,
+      "A": 17,
       "M": 28,
       "D": 0
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 576,
+    "overlay_total": 579,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -853,6 +853,9 @@
     "packages/session-ui/src/v2/components/attachment-card-v2.css": "M",
     "packages/session-ui/src/v2/components/basic-tool-v2.css": "M",
     "packages/session-ui/src/v2/components/basic-tool-v2.tsx": "M",
+    "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "A",
+    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "A",
+    "packages/session-ui/src/v2/components/editable-diff-view.tsx": "A",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "A",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "M",
     "packages/session-ui/src/v2/components/session-review-v2.css": "M",
@@ -919,10 +922,7 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "M",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "M",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "M",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "M",
-    "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "A",
-    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "A",
-    "packages/session-ui/src/v2/components/editable-diff-view.tsx": "A"
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "M"
   },
   "files": {
     "packages/app/CONTEXT.md": "7dc4bf176a32ee578a54593a58a6b97907ffc5a9baf7ae7c16a8fa920d8e6e86",
@@ -1053,26 +1053,26 @@
     "packages/app/src/context/vault-panel.ts": "f91cb5fb49a9f0d46bd2a1b131f9a218b30147e2ad3617d2a2dc4f1e14599a53",
     "packages/app/src/context/workbench.tsx": "69a44da2b69989bd2c67ebffdb49941841f3f4718d6a70d659c828b57928d9eb",
     "packages/app/src/context/zoom-keybind.test.ts": "a1385c93639687a7dac7d21f8f02841d82a55e42465ce3836b97b16c82b52469",
-    "packages/app/src/i18n/ar.ts": "28cd812279cf0435d59b90912cb94044d95b9476b9f125de219e856928230681",
-    "packages/app/src/i18n/br.ts": "4dbccb7c1b618de7adb8182a26fd8033b42937613d9a8c31dbb329e0dce5e64f",
-    "packages/app/src/i18n/bs.ts": "09f6e5fed81e06a1dcabe2cf011b4cdbbc04ce7dce3b62792cca33867eeeb009",
-    "packages/app/src/i18n/da.ts": "3b9aa81a934df108e3201a771452a0df1d1e3410516ef8b5e78d1fdc89e05b8c",
-    "packages/app/src/i18n/de.ts": "3e7c56e1b38c6c8555fe9c944097b87de563c43990ac62d0d341b820fa292724",
+    "packages/app/src/i18n/ar.ts": "73590a04f4337b9c550446754bd55e71487188b4ad0b1eae924ba4eb8ae8b3d0",
+    "packages/app/src/i18n/br.ts": "7fc9b3a14b87a9d351bd3aed6560682c75b7e1a86b76059261b52615465a454c",
+    "packages/app/src/i18n/bs.ts": "84f86c37de46f3523a0bfbcd2c6cee05f6a5c495e0df4bd76df8736f6e1e3ba8",
+    "packages/app/src/i18n/da.ts": "f57efad216b9b172ee1e0d919a9abab2238201b028d126f58dd10b3641b40e7b",
+    "packages/app/src/i18n/de.ts": "491b979b355bd1f9199eee52d7b6ed9b4c973adeb1abd270c643d38a1fe9ce76",
     "packages/app/src/i18n/desktop-native.ts": "8fed66d36a0b6cdbf50e3a50f14b6f8ab3570e342e0905e5a926d7dc6c57f8fa",
     "packages/app/src/i18n/en.ts": "60a5ef27885a1dbfd52407cdded8c2bb82ed855099eacbe22b6c50c232a420ce",
-    "packages/app/src/i18n/es.ts": "4da12deea30d5a59a1951b117b796ae200f9e276a253bbf12f38ce493bcabf61",
-    "packages/app/src/i18n/fr.ts": "b4e44f910b6329384d6b829f5062a73b7ae63c8d9095b04aaf80c1335603674d",
-    "packages/app/src/i18n/ja.ts": "659865ed067c1dde1444c8561de26eac95e54dcb2407267f14b9f45994c5ac4f",
-    "packages/app/src/i18n/ko.ts": "df31dc838120bcc0b31d7837ad87bde0c573b519e37080e6bce5cbf9dcfe08cf",
-    "packages/app/src/i18n/no.ts": "25e8ef730b71829e71c232a58797b7130f17461fb6b707bc9ec04c22ac4e389c",
+    "packages/app/src/i18n/es.ts": "0c237b7ba382206cb56490ea59465fa14eb88edf1bd36bc9d86f299a524c05b7",
+    "packages/app/src/i18n/fr.ts": "972ec4f769c54008842e6139ccfa86c69ed92cc9a3dc40016f3c45df23397148",
+    "packages/app/src/i18n/ja.ts": "290210752ccc43483305563d8605839356bbcd7c5e0271e82ea6798a56e6888e",
+    "packages/app/src/i18n/ko.ts": "c8a904103386f3045ced7d3078969829c15a22fb0f55b49f2fa533e7954179e6",
+    "packages/app/src/i18n/no.ts": "f00ea84634534835dee8f5cba884d460ba24fe0a6929838f544077c7f276d8ff",
     "packages/app/src/i18n/parity.test.ts": "2c8a1d3af6648cbce73c4fee45008c9928d1126a6b044cb0a32dbc566967c161",
-    "packages/app/src/i18n/pl.ts": "26ac13d31f7b0c835e4b5c3c6a5d118b610098487ec3132ab6e2cdf2f28ce02a",
-    "packages/app/src/i18n/ru.ts": "22c7053a3323ac70607e4c298ed8e39cd93188712a3b521760ffd18c20e3b206",
-    "packages/app/src/i18n/th.ts": "4fb6bc8ad159c1dc6968e04ecb7d9b13502518ccc011e0b8cf31457f9696e7f4",
-    "packages/app/src/i18n/tr.ts": "a1323a199ed765e3a85e2f231213d4f0732c7eedbc57fb497d34fca0775b2a11",
-    "packages/app/src/i18n/uk.ts": "1e19646ad7c00359633c31afccd26ad2e818b4daeb13dbeefe1f6645f110c157",
-    "packages/app/src/i18n/zh.ts": "f029176c561e5ae2c05311a0f03f77308ac97982c90b6ddca2a350f5f34079a5",
-    "packages/app/src/i18n/zht.ts": "0eca67807223cafee656cf1b06e92721bf9d51608c03e1dc0a1c9204fc675a97",
+    "packages/app/src/i18n/pl.ts": "94d01bcdf3118b1b32b145c11d7feba1aae7dc3779628ca5ffde32a0741e96bd",
+    "packages/app/src/i18n/ru.ts": "b5915b2caa6abaed282e98199199f16d1c07ade665dcc1d4f3712748b71f834c",
+    "packages/app/src/i18n/th.ts": "9b303b59d37d32543037408c68dd36938fd21810c60a7ee5c96a4d50bea056c7",
+    "packages/app/src/i18n/tr.ts": "34856c6612e26a275474c5541590efa5dd62f1611691ed5b78e5a73fb95e4f14",
+    "packages/app/src/i18n/uk.ts": "86946f950242eee4d7899179f5dc988a80919670fbb775ebf262652028bed6df",
+    "packages/app/src/i18n/zh.ts": "afac0a2d6c520de3e85e6ab9473ace3f555a6ef625193c8513095dab55559754",
+    "packages/app/src/i18n/zht.ts": "c557224be62151611f6d051ee77115ddf3b4b3359dbc656d89b9f0c6534846bb",
     "packages/app/src/pages/error.tsx": "db9ba0847cfb205100ad6133cce30c6ea2ce983802af44947e6d2b746c2a6ec5",
     "packages/app/src/pages/home-projects.test.ts": "a90155c37210a0e5b7a095bbfc3ba2d40681f02927d9726148a706bed5ba7891",
     "packages/app/src/pages/home-projects.ts": "d55124578dc839b98e2084b488d818e30e4a1abf1ae264499b83e403c2aabca7",
@@ -1402,7 +1402,7 @@
     "packages/app/src/context/global-sync/event-reducer.test.ts": "600cd7654854b910f25c61b20d8ae69f043f52ed544e6bf9be5ee9e5bbd6c96e",
     "packages/app/src/context/global-sync/event-reducer.ts": "667fbae1259f6deed77573edd2b742beee4f825b4306b6d861670443e381a55f",
     "packages/app/src/context/global-sync/session-cache.test.ts": "c66d790c6336794b2b1d707e2739fe0992ccad7ed3b96187b124b5c783ef332a",
-    "packages/app/src/context/global-sync/session-cache.ts": "1849408caba0f114809f37153e7d531bf2776572433880a96c5ebd31d7b30aa3",
+    "packages/app/src/context/global-sync/session-cache.ts": "b901b3cb392f29f011765ce8be5451a255853964c46b6a2053b3c2b178a65281",
     "packages/app/src/context/global-sync/types.ts": "901c9bd1fda63dab676d33dc1a8582a29f8ee00aa20458e843aed5f93414fa84",
     "packages/app/src/pages/home/home-projects-view.tsx": "074f1cdd7926db9574164824666cd63f1f5bd0f8e8dfb65453f6fe8f2dca0ec8",
     "packages/app/src/pages/home/home-sessions-view.tsx": "5b73b18e4349a628a15e09a3810ecf2319bde222e18fe8de5d08373ac91fb37c",
@@ -1434,6 +1434,9 @@
     "packages/session-ui/src/v2/components/attachment-card-v2.css": "3b4b9c23d69e76b35488bc3a65fb51211038c3e8aac015df3f531b4e97e96359",
     "packages/session-ui/src/v2/components/basic-tool-v2.css": "55d3aa179704deddda7149342a951229ff5561127f786dd551e5df9aea8a7835",
     "packages/session-ui/src/v2/components/basic-tool-v2.tsx": "ece46d761f7d51a7a0925b3df00a5c289d891e9a514ee721016eb723d87fb406",
+    "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "aed07587c0c9a5f110f9ea91aa42679d6f9f66b2ec4de9043d6e2233a375acb8",
+    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "75174c6b3378639a4dfc6fedd8b0119b048fd08665111f0f9ef25247b3a95366",
+    "packages/session-ui/src/v2/components/editable-diff-view.tsx": "e95276e111b5a3eb0172a2066ed3a436bb917baa1b65575626f94a17923194f1",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "456d122f4ef68d8c265ad51d95ff77bf3f8c16dd5e7e9cccaaf73a0de781778c",
     "packages/session-ui/src/v2/components/session-review-v2.css": "34cfe1428aafa2c05f5025a180d56ccc5b04746ccdffc7d537d1d69068f02662",
@@ -1500,10 +1503,7 @@
     "packages/sdk/js/src/v2/gen/sdk.gen.ts": "57597d710845cc0004ba778522c9bdf088fe9f7c23d7d9a3d947038a1fdc2674",
     "packages/sdk/js/src/v2/gen/types.gen.ts": "40460004bb971a4f8dcc5dcd9f9643cc839f5d75b6820a103ecf7cc21235d9b6",
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
-    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997",
-    "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "aed07587c0c9a5f110f9ea91aa42679d6f9f66b2ec4de9043d6e2233a375acb8",
-    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "75174c6b3378639a4dfc6fedd8b0119b048fd08665111f0f9ef25247b3a95366",
-    "packages/session-ui/src/v2/components/editable-diff-view.tsx": "e95276e111b5a3eb0172a2066ed3a436bb917baa1b65575626f94a17923194f1"
+    "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997"
   },
   "upstream_base_archive_sha256": "8fd2a4e179a6a001e68f1f0986e6687be524a9a28239b8997c6b7e9a72033231"
 }

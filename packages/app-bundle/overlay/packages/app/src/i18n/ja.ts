@@ -647,6 +647,7 @@ export const dict = {
   "session.share.action.view": "表示",
   "session.share.copy.copied": "コピーしました",
   "session.share.copy.copyLink": "リンクをコピー",
+  "session.exportTrace": "トレースをエクスポート",
   "lsp.tooltip.none": "LSPサーバーなし",
   "lsp.label.connected": "{{count}} LSP",
   "prompt.loading": "プロンプトを読み込み中...",
