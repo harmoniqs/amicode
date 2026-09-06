@@ -1435,7 +1435,7 @@
     "packages/session-ui/src/v2/components/basic-tool-v2.css": "55d3aa179704deddda7149342a951229ff5561127f786dd551e5df9aea8a7835",
     "packages/session-ui/src/v2/components/basic-tool-v2.tsx": "ece46d761f7d51a7a0925b3df00a5c289d891e9a514ee721016eb723d87fb406",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
-    "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "1029d5bad6b3d15a7e240ce0dfe34f42f0bcb29e5b278f37cc2be068dd9212dd",
+    "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "2a4c062cd78012482d569d35e3d62de2ee24f18931f798fff57e971469d3f93e",
     "packages/session-ui/src/v2/components/session-review-v2.css": "bf0b445bd4cfacabf47e686d2cd125fb9c9dccab2dad06ee8751324ac681a1df",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "4151286efb6e0e148246ee3eebae24a2e5d4eac2603fd5ea8546d0839a694161",
     "packages/session-ui/src/v2/components/tool-error-card-v2.css": "9eb0bf8b583a18159f3855465118ff6a853d0193ea783037d5c90a868fdb3ff1",

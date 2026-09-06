@@ -612,7 +612,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
                 onMouseEnter={(e) => (e.currentTarget.style.color = "var(--amc-danger, #f44336)")}
                 onMouseLeave={(e) => (e.currentTarget.style.color = "var(--amc-text-muted, var(--icon-base))")}
               >
-                <Icon name="undo" size="small" />
+                <Icon name="reset" size="small" />
               </button>
             </TooltipV2>
           </Show>
