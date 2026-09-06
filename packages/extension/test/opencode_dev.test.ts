@@ -120,15 +120,22 @@ describe("assert_ui_gate.sh", () => {
   const script = fileURLToPath(new URL("../scripts/assert_ui_gate.sh", import.meta.url));
 
   /** The vendor tree shape: <root>/opencode.lock.json +
-   *  <root>/vendor/opencode/linux-x64/opencode (a fake that prints `version`
-   *  on --version and otherwise contains `body`). */
-  const fixture = (version: string, body: string, lockVersion = version): { bin: string; root: string } => {
+   *  <root>/vendor/opencode/<platform>/opencode (a fake that prints `version`
+   *  on --version and otherwise contains `body`). `platform` defaults to THIS
+   *  machine's (so the same-arch version check always fires); pass a foreign
+   *  name to exercise the honest skip. */
+  const fixture = (
+    version: string,
+    body: string,
+    opts: { lockVersion?: string; platform?: string } = {},
+  ): { bin: string; root: string } => {
+    const platform = opts.platform ?? `${process.platform}-${process.arch}`;
     const root = mkdtempSync(join(tmpdir(), "gate-"));
-    const dir = join(root, "vendor", "opencode", "linux-x64");
+    const dir = join(root, "vendor", "opencode", platform);
     mkdirSync(dir, { recursive: true });
     writeFileSync(
       join(root, "opencode.lock.json"),
-      JSON.stringify({ version: lockVersion, source: "release", platforms: {} }),
+      JSON.stringify({ version: opts.lockVersion ?? version, source: "release", platforms: {} }),
     );
     const f = join(dir, "opencode");
     writeFileSync(f, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\n# ${body}\n`);
@@ -144,7 +151,7 @@ describe("assert_ui_gate.sh", () => {
     expect(out).toMatch(/auth_token/);
   });
   it("fails closed when the binary reports a version the lock does not pin", () => {
-    const { bin } = fixture("1.18.10", 'const AUTH_TOKEN_QUERY = "auth_token"', "1.18.29");
+    const { bin } = fixture("1.18.10", 'const AUTH_TOKEN_QUERY = "auth_token"', { lockVersion: "1.18.29" });
     expect(() => run(bin)).toThrow();
   });
   it("fails closed when the auth_token carrier machinery is absent (the framed path would 401)", () => {
@@ -155,5 +162,17 @@ describe("assert_ui_gate.sh", () => {
     const { bin, root } = fixture("1.18.29", "auth_token machinery");
     rmSync(join(root, "opencode.lock.json"));
     expect(() => run(bin)).toThrow();
+  });
+  it("a foreign-arch binary skips the version re-assertion honestly (the sha download gate holds the pin) but the carrier grep still applies", () => {
+    // "win32-x64" never matches a runner platform mapping — deterministic on
+    // every machine. The version is deliberately WRONG: the skip means the
+    // gate does not execute a foreign binary; the auth_token grep still runs.
+    const ok = fixture("9.9.9", 'const AUTH_TOKEN_QUERY = "auth_token"', {
+      platform: "win32-x64",
+      lockVersion: "1.18.29",
+    });
+    expect(run(ok.bin)).toMatch(/foreign-arch/);
+    const noCarrier = fixture("1.18.29", "nothing relevant here", { platform: "win32-x64" });
+    expect(() => run(noCarrier.bin)).toThrow();
   });
 });
