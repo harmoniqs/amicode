@@ -1,13 +1,73 @@
+// @vitest-environment happy-dom
 import { describe, expect, test, vi, beforeEach } from "vitest"
 
 /**
- * Tests for #768: Wire editable diffs into Files Changed + auto-save.
+ * Tests for #768/#837: Editable diffs wiring + dirty-dot explicit save.
  *
  * These tests verify the overlay's integration of EditableDiffView:
- * - Save utility logic (debounce, immediate, status transitions)
+ * - CM6 externalUpdate annotation filtering contract (#837)
+ * - Save controller logic (explicit Cmd+S, race guard, no autosave)
  * - ReviewDiffStyle type widening
  * - File status → readOnly mapping
  */
+
+// ---------------------------------------------------------------------------
+// CM6 externalUpdate annotation — contract verification
+// ---------------------------------------------------------------------------
+//
+// The full CM6 integration lives in the overlay (editable-diff-view-core.ts).
+// These tests verify the FILTERING CONTRACT that editableExtensions must
+// satisfy: transactions annotated with externalUpdate must NOT fire onChange.
+// We test the filtering predicate in isolation rather than constructing a
+// live CM6 EditorView (whose dependencies are resolved at the fork build, not
+// in this workspace's node_modules).
+//
+// The predicate under test:
+//   if (update.docChanged && !update.transactions.some(tr => tr.annotation(externalUpdate)))
+//     opts.onChange!(update.state.doc.toString())
+// ---------------------------------------------------------------------------
+
+describe("externalUpdate annotation filtering contract", () => {
+  /**
+   * Simulates the onChange filtering logic from editableExtensions.
+   * This is the exact predicate the production code uses — if it changes,
+   * the test must be updated in lock-step.
+   */
+  function shouldFireOnChange(transactions: Array<{
+    docChanged: boolean
+    annotatedExternal: boolean
+  }>): boolean {
+    const anyDocChanged = transactions.some(t => t.docChanged)
+    if (!anyDocChanged) return false
+    const anyExternal = transactions.some(t => t.annotatedExternal)
+    return !anyExternal
+  }
+
+  test("user edit (no annotation) fires onChange", () => {
+    expect(shouldFireOnChange([
+      { docChanged: true, annotatedExternal: false },
+    ])).toBe(true)
+  })
+
+  test("programmatic update (with annotation) does NOT fire onChange", () => {
+    expect(shouldFireOnChange([
+      { docChanged: true, annotatedExternal: true },
+    ])).toBe(false)
+  })
+
+  test("non-doc-changing transaction does not fire onChange", () => {
+    expect(shouldFireOnChange([
+      { docChanged: false, annotatedExternal: false },
+    ])).toBe(false)
+  })
+
+  test("mixed batch: if any transaction is external, onChange is suppressed", () => {
+    expect(shouldFireOnChange([
+      { docChanged: true, annotatedExternal: false },
+      { docChanged: true, annotatedExternal: true },
+    ])).toBe(false)
+  })
+})
 
 // ---------------------------------------------------------------------------
 // Save utility logic
