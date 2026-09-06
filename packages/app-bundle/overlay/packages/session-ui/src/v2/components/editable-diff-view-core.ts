@@ -8,7 +8,7 @@
  * @module
  */
 
-import { Compartment, EditorState, Transaction, ChangeSet, type Extension } from "@codemirror/state"
+import { Annotation, Compartment, EditorState, Transaction, ChangeSet, type Extension } from "@codemirror/state"
 import {
   EditorView,
   lineNumbers,
@@ -28,6 +28,20 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language"
 import { tags } from "@lezer/highlight"
+
+// ---------------------------------------------------------------------------
+// External-update annotation — marks programmatic content dispatches so the
+// onChange listener can distinguish them from user keystrokes (#837).
+// ---------------------------------------------------------------------------
+
+/**
+ * CM6 annotation that marks a transaction as a programmatic (external) update.
+ * Transactions annotated with `externalUpdate.of(true)` are filtered out by
+ * the `editableExtensions` updateListener — they do NOT fire the `onChange`
+ * callback. This prevents `updateModified` / `updateOriginal` dispatches
+ * (server diff refreshes, agent file edits) from setting false dirty state.
+ */
+export const externalUpdate = Annotation.define<boolean>()
 
 // ---------------------------------------------------------------------------
 // Language loader — dynamic imports so unused grammars stay out of the bundle.
@@ -217,7 +231,7 @@ export function editableExtensions(opts: {
   if (opts.onChange && !opts.readOnly) {
     exts.push(
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
+        if (update.docChanged && !update.transactions.some(tr => tr.annotation(externalUpdate))) {
           opts.onChange!(update.state.doc.toString())
         }
       }),
@@ -392,13 +406,15 @@ export function createDiffEditor(opts: {
       const view = getActiveView()
       if (!view) return
 
-      // Replace entire document with original
+      // Replace entire document with original — mark as external so
+      // the onChange listener does not fire (the caller handles state).
       view.dispatch({
         changes: {
           from: 0,
           to: view.state.doc.length,
           insert: original,
         },
+        annotations: externalUpdate.of(true),
       })
     },
     getContent() {
@@ -414,7 +430,10 @@ export function createDiffEditor(opts: {
         if (!change) return
         aView.dispatch({
           changes: change,
-          annotations: Transaction.addToHistory.of(false),
+          annotations: [
+            Transaction.addToHistory.of(false),
+            externalUpdate.of(true),
+          ],
         })
       } else if (editorView) {
         // Unified mode: update via originalDocChangeEffect
@@ -427,7 +446,10 @@ export function createDiffEditor(opts: {
         )
         editorView.dispatch({
           effects: originalDocChangeEffect(editorView.state, changes),
-          annotations: Transaction.addToHistory.of(false),
+          annotations: [
+            Transaction.addToHistory.of(false),
+            externalUpdate.of(true),
+          ],
         })
       }
     },
@@ -439,7 +461,10 @@ export function createDiffEditor(opts: {
       if (!change) return
       view.dispatch({
         changes: change,
-        annotations: Transaction.addToHistory.of(false),
+        annotations: [
+          Transaction.addToHistory.of(false),
+          externalUpdate.of(true),
+        ],
       })
     },
     setReadOnly(readOnly: boolean, onChange?: (content: string) => void) {
