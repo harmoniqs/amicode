@@ -70,25 +70,26 @@ describe("externalUpdate annotation filtering contract", () => {
 })
 
 // ---------------------------------------------------------------------------
-// Save utility logic
+// Save controller — explicit Cmd+S only, no autosave (#837)
 // ---------------------------------------------------------------------------
 
-type SaveStatus = "idle" | "saving" | "saved" | "error"
+type SaveStatus = "idle" | "saving" | "error"
 
 /**
- * Minimal reproduction of the save utility for testable isolation.
- * The actual implementation lives in the overlay component.
+ * Minimal reproduction of the explicit-save controller for testable isolation.
+ * The actual implementation lives in the overlay component. This mirrors the
+ * new save model: no debounced autosave, only explicit Cmd+S, with a race
+ * guard (content-at-save-time snapshot) and a cleanup safety net.
  */
 function createSaveController(opts: {
   onSave: (path: string, content: string) => Promise<void>
-  debounceMs?: number
-  savedDisplayMs?: number
+  errorDisplayMs?: number
 }) {
-  const debounceMs = opts.debounceMs ?? 1000
-  const savedDisplayMs = opts.savedDisplayMs ?? 2000
+  const errorDisplayMs = opts.errorDisplayMs ?? 2000
   let status: SaveStatus = "idle"
-  let saveTimer: ReturnType<typeof setTimeout> | undefined
-  let savedTimer: ReturnType<typeof setTimeout> | undefined
+  let errorTimer: ReturnType<typeof setTimeout> | undefined
+  let hasEdits = false
+  let latestContent: string | null = null
   const listeners: Array<(s: SaveStatus) => void> = []
 
   function setStatus(s: SaveStatus) {
@@ -100,140 +101,187 @@ function createSaveController(opts: {
     get status() {
       return status
     },
+    get hasEdits() {
+      return hasEdits
+    },
+    get latestContent() {
+      return latestContent
+    },
     onStatusChange(cb: (s: SaveStatus) => void) {
       listeners.push(cb)
     },
-    debouncedSave(path: string, content: string) {
-      if (saveTimer) clearTimeout(saveTimer)
-      saveTimer = setTimeout(() => {
-        setStatus("saving")
-        opts
-          .onSave(path, content)
-          .then(() => {
-            setStatus("saved")
-            if (savedTimer) clearTimeout(savedTimer)
-            savedTimer = setTimeout(() => setStatus("idle"), savedDisplayMs)
-          })
-          .catch(() => {
-            setStatus("error")
-            if (savedTimer) clearTimeout(savedTimer)
-            savedTimer = setTimeout(() => setStatus("idle"), savedDisplayMs)
-          })
-      }, debounceMs)
+    /** Called on every user edit — updates dirty state, does NOT trigger save. */
+    onChange(content: string) {
+      hasEdits = true
+      latestContent = content
     },
-    immediateSave(path: string, content: string) {
-      if (saveTimer) clearTimeout(saveTimer)
+    /**
+     * Explicit save (Cmd+S). No-op if no edits or null content.
+     * Uses a content-at-save-time snapshot for the race guard: only clears
+     * hasEdits if no further edits arrived during the async save.
+     */
+    immediateSave(path: string) {
+      if (!hasEdits || latestContent === null) return
+      const contentAtSaveTime = latestContent
       setStatus("saving")
       opts
-        .onSave(path, content)
+        .onSave(path, contentAtSaveTime)
         .then(() => {
-          setStatus("saved")
-          if (savedTimer) clearTimeout(savedTimer)
-          savedTimer = setTimeout(() => setStatus("idle"), savedDisplayMs)
+          // Race guard: only clear dirty state if content unchanged since save started
+          if (latestContent === contentAtSaveTime) {
+            hasEdits = false
+            for (const l of listeners) l(status) // notify hasEdits change
+          }
+          setStatus("idle")
         })
         .catch(() => {
           setStatus("error")
-          if (savedTimer) clearTimeout(savedTimer)
-          savedTimer = setTimeout(() => setStatus("idle"), savedDisplayMs)
+          if (errorTimer) clearTimeout(errorTimer)
+          errorTimer = setTimeout(() => setStatus("idle"), errorDisplayMs)
         })
     },
-    cleanup() {
-      if (saveTimer) clearTimeout(saveTimer)
-      if (savedTimer) clearTimeout(savedTimer)
+    /** Revert clears dirty state immediately. */
+    revert() {
+      hasEdits = false
+      latestContent = null
+    },
+    /** Cleanup — optionally saves on unmount (file-switch safety net). */
+    cleanup(path?: string) {
+      if (errorTimer) clearTimeout(errorTimer)
+      if (path && hasEdits && latestContent !== null) {
+        // Fire-and-forget save on unmount
+        opts.onSave(path, latestContent).catch(() => {})
+        hasEdits = false
+      }
     },
   }
 }
 
-describe("Save controller", () => {
+describe("Save controller (explicit Cmd+S)", () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
 
-  test("starts at idle", () => {
+  test("starts at idle with no edits", () => {
     const ctrl = createSaveController({ onSave: async () => {} })
     expect(ctrl.status).toBe("idle")
+    expect(ctrl.hasEdits).toBe(false)
+    expect(ctrl.latestContent).toBeNull()
     ctrl.cleanup()
   })
 
-  test("debouncedSave transitions to saving after debounce period", async () => {
+  test("onChange sets hasEdits and latestContent but does NOT trigger a save", () => {
     const onSave = vi.fn(async () => {})
-    const ctrl = createSaveController({ onSave, debounceMs: 100 })
-    const statuses: SaveStatus[] = []
-    ctrl.onStatusChange((s) => statuses.push(s))
+    const ctrl = createSaveController({ onSave })
 
-    ctrl.debouncedSave("test.ts", "content")
+    ctrl.onChange("new content")
 
-    // Not called yet (within debounce)
+    expect(ctrl.hasEdits).toBe(true)
+    expect(ctrl.latestContent).toBe("new content")
     expect(onSave).not.toHaveBeenCalled()
 
-    vi.advanceTimersByTime(100)
-    expect(onSave).toHaveBeenCalledWith("test.ts", "content")
-    expect(statuses).toContain("saving")
+    // Advance time — no debounced save should fire
+    vi.advanceTimersByTime(5000)
+    expect(onSave).not.toHaveBeenCalled()
 
     ctrl.cleanup()
   })
 
-  test("immediateSave cancels pending debounced save and fires immediately", async () => {
-    const calls: string[] = []
-    const onSave = vi.fn(async (_path: string, content: string) => {
-      calls.push(content)
-    })
-    const ctrl = createSaveController({ onSave, debounceMs: 1000 })
+  test("immediateSave fires onSave with current content", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
 
-    ctrl.debouncedSave("test.ts", "debounced-content")
-    ctrl.immediateSave("test.ts", "immediate-content")
+    ctrl.onChange("hello world")
+    ctrl.immediateSave("test.ts")
 
     expect(onSave).toHaveBeenCalledTimes(1)
-    expect(onSave).toHaveBeenCalledWith("test.ts", "immediate-content")
-
-    // Advance past debounce — should NOT fire the debounced save
-    vi.advanceTimersByTime(1500)
-    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledWith("test.ts", "hello world")
 
     ctrl.cleanup()
   })
 
-  test("transitions to saved after successful save, then back to idle", async () => {
+  test("immediateSave is a no-op when hasEdits is false", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
+
+    ctrl.immediateSave("test.ts")
+
+    expect(onSave).not.toHaveBeenCalled()
+
+    ctrl.cleanup()
+  })
+
+  test("immediateSave is a no-op when latestContent is null", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
+
+    // Force hasEdits without setting content (edge case)
+    ctrl.onChange("some content")
+    ctrl.revert() // clears both
+    ctrl.immediateSave("test.ts")
+
+    expect(onSave).not.toHaveBeenCalled()
+
+    ctrl.cleanup()
+  })
+
+  test("successful save clears hasEdits when no edits during save", async () => {
     let resolvePromise!: () => void
     const onSave = vi.fn(
       () => new Promise<void>((r) => (resolvePromise = r)),
     )
-    const ctrl = createSaveController({
-      onSave,
-      debounceMs: 0,
-      savedDisplayMs: 100,
-    })
-    const statuses: SaveStatus[] = []
-    ctrl.onStatusChange((s) => statuses.push(s))
+    const ctrl = createSaveController({ onSave })
 
-    ctrl.immediateSave("test.ts", "content")
+    ctrl.onChange("content")
+    ctrl.immediateSave("test.ts")
     expect(ctrl.status).toBe("saving")
+    expect(ctrl.hasEdits).toBe(true) // still dirty during save
 
-    // Resolve the save
     resolvePromise()
     await vi.advanceTimersByTimeAsync(0)
-    expect(ctrl.status).toBe("saved")
 
-    // After savedDisplayMs, back to idle
-    vi.advanceTimersByTime(100)
+    expect(ctrl.hasEdits).toBe(false) // cleared after save
     expect(ctrl.status).toBe("idle")
 
     ctrl.cleanup()
   })
 
-  test("transitions to error on save failure, then back to idle", async () => {
+  test("race guard: save does NOT clear hasEdits when edits arrived during save", async () => {
+    let resolvePromise!: () => void
+    const onSave = vi.fn(
+      () => new Promise<void>((r) => (resolvePromise = r)),
+    )
+    const ctrl = createSaveController({ onSave })
+
+    ctrl.onChange("v1")
+    ctrl.immediateSave("test.ts")
+
+    // User edits during the in-flight save
+    ctrl.onChange("v2")
+
+    resolvePromise()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // hasEdits must remain true — the save was for "v1" but "v2" is unsaved
+    expect(ctrl.hasEdits).toBe(true)
+    expect(ctrl.latestContent).toBe("v2")
+
+    ctrl.cleanup()
+  })
+
+  test("failed save transitions to error, then back to idle", async () => {
     const onSave = vi.fn(async () => {
       throw new Error("network error")
     })
-    const ctrl = createSaveController({
-      onSave,
-      debounceMs: 0,
-      savedDisplayMs: 100,
-    })
+    const ctrl = createSaveController({ onSave, errorDisplayMs: 100 })
 
-    ctrl.immediateSave("test.ts", "content")
+    ctrl.onChange("content")
+    ctrl.immediateSave("test.ts")
     await vi.advanceTimersByTimeAsync(0)
     expect(ctrl.status).toBe("error")
+
+    // hasEdits remains true on error — user data not lost
+    expect(ctrl.hasEdits).toBe(true)
 
     vi.advanceTimersByTime(100)
     expect(ctrl.status).toBe("idle")
@@ -241,21 +289,47 @@ describe("Save controller", () => {
     ctrl.cleanup()
   })
 
-  test("multiple rapid debouncedSave calls only fires once", () => {
-    const onSave = vi.fn(async () => {})
-    const ctrl = createSaveController({ onSave, debounceMs: 100 })
+  test("revert clears hasEdits and latestContent", () => {
+    const ctrl = createSaveController({ onSave: async () => {} })
 
-    ctrl.debouncedSave("test.ts", "v1")
-    vi.advanceTimersByTime(50)
-    ctrl.debouncedSave("test.ts", "v2")
-    vi.advanceTimersByTime(50)
-    ctrl.debouncedSave("test.ts", "v3")
-    vi.advanceTimersByTime(100)
+    ctrl.onChange("edited content")
+    expect(ctrl.hasEdits).toBe(true)
 
-    expect(onSave).toHaveBeenCalledTimes(1)
-    expect(onSave).toHaveBeenCalledWith("test.ts", "v3")
+    ctrl.revert()
+    expect(ctrl.hasEdits).toBe(false)
+    expect(ctrl.latestContent).toBeNull()
 
     ctrl.cleanup()
+  })
+
+  test("cleanup with path and hasEdits fires a safety-net save", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
+
+    ctrl.onChange("unsaved content")
+    ctrl.cleanup("test.ts")
+
+    expect(onSave).toHaveBeenCalledTimes(1)
+    expect(onSave).toHaveBeenCalledWith("test.ts", "unsaved content")
+  })
+
+  test("cleanup without path does not fire a save", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
+
+    ctrl.onChange("unsaved content")
+    ctrl.cleanup()
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  test("cleanup with path but no edits does not fire a save", () => {
+    const onSave = vi.fn(async () => {})
+    const ctrl = createSaveController({ onSave })
+
+    ctrl.cleanup("test.ts")
+
+    expect(onSave).not.toHaveBeenCalled()
   })
 })
 

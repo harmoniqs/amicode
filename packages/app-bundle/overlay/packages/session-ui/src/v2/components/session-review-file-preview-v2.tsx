@@ -237,25 +237,29 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
 
   const expandUnchanged = () => props.expandMode === "expand"
 
-  // ─── Save logic (debounced auto-save + Cmd/Ctrl+S) ──────────────────────
+  // ─── Save logic (explicit Cmd/Ctrl+S only, no autosave — #837) ───────────
 
-  type SaveStatus = "idle" | "saving" | "saved" | "error"
+  type SaveStatus = "idle" | "saving" | "error"
   const [saveStatus, setSaveStatus] = createSignal<SaveStatus>("idle")
-  let saveTimer: ReturnType<typeof setTimeout> | undefined
-  let savedTimer: ReturnType<typeof setTimeout> | undefined
+  let errorTimer: ReturnType<typeof setTimeout> | undefined
+  let latestContent: string | null = null
+  let contentAtSaveTime: string | null = null
   const isPreviewMd = () => props.diffStyle === "preview" && /\.md$/i.test(props.file)
   const isDeleted = () => view().status === "deleted"
   const isEditable = () => !isPreviewMd() && !isDeleted()
   const isReadOnly = () => !isEditable()
 
+  const resolvePath = (path: string) => {
+    const home = typeof process !== "undefined" ? process.env?.HOME ?? "" : ""
+    return path.startsWith("~/") ? path.replace("~", home) : path
+  }
+
+  /** Fire a POST /file/write — shared by Cmd+S, revert, and cleanup. */
   const saveFile = (path: string, content: string) => {
     const serverUrl = props.serverUrl
     if (!serverUrl) return
 
-    const home = typeof process !== "undefined" ? process.env?.HOME ?? "" : ""
-    const fsPath = path.startsWith("~/")
-      ? path.replace("~", home)
-      : path
+    const fsPath = resolvePath(path)
 
     setSaveStatus("saving")
     fetch(new URL("/file/write", serverUrl), {
@@ -264,39 +268,43 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       body: JSON.stringify({ path: fsPath, content }),
     })
       .then(() => {
-        setSaveStatus("saved")
-        if (savedTimer) clearTimeout(savedTimer)
-        savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+        // Race guard: only clear dirty state if no edits arrived during the save
+        if (latestContent === contentAtSaveTime) {
+          setHasEdits(false)
+        }
+        setSaveStatus("idle")
       })
       .catch(() => {
         setSaveStatus("error")
-        if (savedTimer) clearTimeout(savedTimer)
-        savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+        if (errorTimer) clearTimeout(errorTimer)
+        errorTimer = setTimeout(() => setSaveStatus("idle"), 2000)
       })
   }
 
-  const debouncedSave = (path: string, content: string) => {
-    if (saveTimer) clearTimeout(saveTimer)
-    saveTimer = setTimeout(() => saveFile(path, content), 1000)
-  }
-
-  const handleChange = (content: string) => {
-    if (isReadOnly()) return
-    debouncedSave(props.file, content)
-  }
-
+  /** Cmd/Ctrl+S handler — explicit save with race guard. */
   const handleImmediateSave = (e: KeyboardEvent) => {
     if ((e.metaKey || e.ctrlKey) && e.key === "s") {
       e.preventDefault()
-      if (saveTimer) clearTimeout(saveTimer)
-      // Get current content from the editor — use the most recent onChange value
-      // The save fires with the file's current content on disk (the last onChange)
+      if (!hasEdits() || latestContent === null) return
+      contentAtSaveTime = latestContent
+      saveFile(props.file, contentAtSaveTime)
     }
   }
 
   onCleanup(() => {
-    if (saveTimer) clearTimeout(saveTimer)
-    if (savedTimer) clearTimeout(savedTimer)
+    if (errorTimer) clearTimeout(errorTimer)
+    // Safety net: save on unmount if the user has unsaved edits (file switch)
+    if (hasEdits() && latestContent !== null) {
+      const serverUrl = props.serverUrl
+      if (serverUrl) {
+        const fsPath = resolvePath(props.file)
+        fetch(new URL("/file/write", serverUrl), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: fsPath, content: latestContent }),
+        }).catch(() => {})
+      }
+    }
   })
 
   // ─── Revert + concurrent edit detection (#770) ───────────────────────────
@@ -305,11 +313,11 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const [externalChange, setExternalChange] = createSignal(false)
   let prevDiffRef: string | null = null
 
-  // Track when user makes edits
+  // Track when user makes edits — updates dirty state only, no save trigger
   const handleChangeWithTracking = (content: string) => {
     if (isReadOnly()) return
     setHasEdits(true)
-    debouncedSave(props.file, content)
+    latestContent = content
   }
 
   // Detect external changes (agent modifying the same file)
@@ -341,10 +349,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const handleRevert = () => {
     if (!props.serverUrl) return
     const original = text(view(), "deletions")
-    const homeDir = typeof process !== "undefined" ? process.env?.HOME ?? "" : ""
-    const fsPath = props.file.startsWith("~/")
-      ? props.file.replace("~", homeDir)
-      : props.file
+    const fsPath = resolvePath(props.file)
 
     setSaveStatus("saving")
     fetch(new URL("/file/write", props.serverUrl), {
@@ -353,15 +358,14 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
       body: JSON.stringify({ path: fsPath, content: original }),
     })
       .then(() => {
-        setSaveStatus("saved")
+        setSaveStatus("idle")
         setHasEdits(false)
-        if (savedTimer) clearTimeout(savedTimer)
-        savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+        latestContent = null
       })
       .catch(() => {
         setSaveStatus("error")
-        if (savedTimer) clearTimeout(savedTimer)
-        savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
+        if (errorTimer) clearTimeout(errorTimer)
+        errorTimer = setTimeout(() => setSaveStatus("idle"), 2000)
       })
   }
 
