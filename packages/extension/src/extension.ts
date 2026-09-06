@@ -63,6 +63,7 @@ import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLega
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
+import { resolveAppDistRoot } from "./amicode_service/app_shelf";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
@@ -240,7 +241,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     opencodeChannel.appendLine(`[pasqal] connector staging failed: ${(e as Error).message}`);
   }
 
-  // #533/#761: stage every mode card (two directors + five workers) into the
+  // #533/#761: stage every mode card (two directors, the four D3-seeded role
+  // cards, and the worker) into the
   // global opencode agents directory so they appear in the agent picker.
   // Same always-copy semantics as Pasqal staging: extension-owned,
   // overwrite-on-activate, never blocks activation. When the premium
@@ -374,7 +376,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // 1. UI surfaces — Workspace sidebar (webview, #673)
   const sidebarProvider = new SidebarViewProvider(ctx.extensionUri);
   ctx.subscriptions.push(
-    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider),
+    vscode.window.registerWebviewViewProvider("amicode.workspace", sidebarProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
   );
   // Mute the "Chat with Amico" button when a chat panel is open
   ChatPanel.onLiveChange((count) => sidebarProvider.setChatActive(count > 0));
@@ -759,11 +763,28 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
 
-    // Amicode service (#451 M1): the extension-host port of the 31 fork
-    // amicode routes, booted in PARALLEL-RUN alongside the fork server (the
-    // chat/widgets still hit the fork until the M3 cutover). Stateless — no
-    // restart coupling with solver-mode switches or config re-preps.
-    const serviceBoot = await startAmicodeService(opencodeChannel);
+    // Amicode service (#451 M1; #822 adds the shelf + the engine proxy): the
+    // extension-host port of the 31 fork amicode routes, booted in
+    // PARALLEL-RUN alongside the fork server (the chat/widgets still hit the
+    // fork until the M3 cutover). Stateless — no restart coupling with
+    // solver-mode switches or config re-preps. #822: it also serves the app
+    // dist (the shelf) and fronts the spawned engine (the proxy) so the
+    // framed app can come from THIS origin — the engine context is LATE-BOUND
+    // (the module-level serverManager is REPLACED on solver-mode switches /
+    // vault respawns while this service keeps running, so the getter reads it
+    // per request; a restart gap reads as the honest 503), and the engine
+    // mint is accepted alongside the service's own (the framed app
+    // bootstraps with the engine credential).
+    const serviceBoot = await startAmicodeService(opencodeChannel, {
+      engine: {
+        password: serverPassword,
+        getUrl: () => serverManager?.url?.toString(),
+      },
+      appDistRoot: resolveAppDistRoot(
+        vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
+        ctx.extensionPath,
+      ),
+    });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
 

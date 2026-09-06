@@ -148,6 +148,18 @@ export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloa
 
 function build() {
   const cloneDir = resolveCloneDir(PKG_ROOT);
+  // Warn if the overlay is stale relative to the fork (non-blocking).
+  try {
+    execFileSync("node", [join(PKG_ROOT, "..", "app-bundle", "scripts", "overlay-sync.mjs"), "--check"], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    console.warn(
+      `[opencode:build] ⚠ overlay drift detected — the overlay does not match the fork.\n` +
+        `  Run: pnpm --filter @amicode/app-bundle sync:apply\n` +
+        `  Building anyway (the binary uses the fork, not the overlay).\n`,
+    );
+  }
   console.log(`[opencode:build] building from ${cloneDir} with OPENCODE_CHANNEL=dev, re-vendoring…`);
   // --any-ref: during active dev your clone is off the pinned ref by design.
   execFileSync("node", [join(PKG_ROOT, "scripts", "fetch_opencode.mjs"), "--local", "--any-ref"], {

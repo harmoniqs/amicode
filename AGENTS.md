@@ -79,6 +79,12 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
   `harmoniqs/opencode` (thin fork, patch stack in its `AMICODE-PATCHES.md`). Rebrand/UI work
   happens THERE, product logic lives HERE in config/plugin/scores (Layer 0). To change the
   fork, see "Changing opencode (the vendored fork)" below.
+- **`packages/app-bundle/overlay/` is a read-only tracking copy** — never edit the overlay
+  directly. It is copied FROM the opencode fork, never TO it, and is not a build input. To
+  change any app-layer file (components, pages, styles), edit the fork
+  (`~/harmoniqs/opencode` or `$AMICODE_OPENCODE_SRC`), rebuild with
+  `pnpm --filter amicode opencode:build`, then `sync:apply`. Edits to the overlay
+  silently vanish on the next sync.
 - `packages/extension/opencode-plugin/` executes inside opencode's Bun runtime — it is NOT
   part of the extension bundle; keep it dependency-free; exactly one export.
 - `packages/extension/scores/` — interview flows as data. New user path = new `SCORE.md`
@@ -122,6 +128,20 @@ and breaks fork-PR CI).
 built with `OPENCODE_CHANNEL=latest` (→ `"prod"`) compiles the features in but hides them.
 `opencode:build` and the release workflow both force `dev`; `scripts/assert_ui_gate.sh` fails
 CI and release if a binary ever ships with the gate off.
+
+**Overlay sync:** `packages/app-bundle/overlay/` is a **tracking copy** of the fork's diff
+against upstream — it is NOT a build input (the binary builds from the fork directly). The fork
+is the source of truth for all app source files. **Never edit the overlay directly; never copy
+overlay → fork** for files that exist in both; that overwrites newer fork code with stale
+overlay snapshots.
+
+After editing the fork:
+```bash
+pnpm --filter @amicode/app-bundle sync:check   # detect overlay ↔ fork drift
+pnpm --filter @amicode/app-bundle sync:apply   # fix: copy fork → overlay + update hashes
+```
+`opencode:build` warns on drift but does not block. The `sync:apply` command is one-way
+(fork → overlay) and updates `manifest.json` hashes automatically.
 
 ## Releasing & publishing (amicode → Marketplace)
 

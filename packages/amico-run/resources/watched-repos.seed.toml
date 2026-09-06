@@ -1,0 +1,81 @@
+# watched-repos.seed.toml — the SEED registry (#820, spec spec-20260905-103000
+# living-sota D3): the SOTA codebase lens's shipped data. A fresh sota root
+# bootstraps its living copy from this seed; thereafter adding a repo is a
+# DATA EDIT of the living registry (never code). The categories are the
+# spec's D3 seed set: canonical opencode + the harness-agnostic SOTA field,
+# Julia optimal-control adjacent to the Piccolo stack, QEC/qLDPC challenge
+# repos, quantum SDK release tracks, the agent-framework field the
+# fork-split session surveyed by hand.
+schema_version = "1"
+
+[[repos]]
+repo = "anomalyco/opencode"
+why_watched = "the canonical harness our vendored fork tracks — upstream drift is product drift"
+domains = ["agent-harness"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["plugin", "permission", "session", "agent", "mcp"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "earendil-works/pi"
+why_watched = "the minimal-core extension harness the fork-split SOTA pass surveyed — session trees, steering queues"
+domains = ["agent-harness"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["session", "branch", "steering", "extension"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "JuliaQuantumControl/QuantumControl.jl"
+why_watched = "the Julia optimal-control framework adjacent to the Piccolo stack — API and method shifts propagate into our authoring map"
+domains = ["julia-optimal-control"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["GRAPE", "Krotov", "propagator", "objective", "trajectory"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "JuliaQuantumControl/QuantumPropagators.jl"
+why_watched = "the propagator layer under QuantumControl — integrator changes move our convergence behavior"
+domains = ["julia-optimal-control"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["Magnus", "integrator", "Chebyshev", "exponential"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "errorcorrectionzoo/ecz"
+why_watched = "the error-correction zoo — new qLDPC code families feed the qLDPC challenge campaign's hypothesis space"
+domains = ["qec-qldpc"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["qLDPC", "quantum LDPC", "code", "decoder"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "Qiskit/qiskit"
+why_watched = "the canonical quantum SDK release track — pulse-level and transpiler moves define the field's direction"
+domains = ["quantum-sdk"]
+fetch_surface = ["releases"]
+match_keywords = ["pulse", "transpiler", "qasm", "backend"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "quantumlib/Cirq"
+why_watched = "the second quantum SDK track — schedule/pulse surface changes signal field moves"
+domains = ["quantum-sdk"]
+fetch_surface = ["releases"]
+match_keywords = ["pulse", "schedule", "gate", "simulator"]
+last_success = ""
+consecutive_failures = 0
+
+[[repos]]
+repo = "pasqal-io/Pulser"
+why_watched = "the neutral-atom SDK — Pasqal device-path changes move our pasqal submission contract"
+domains = ["quantum-sdk", "neutral-atoms"]
+fetch_surface = ["releases", "issues"]
+match_keywords = ["sequence", "register", "pulse", "emulator", "device"]
+last_success = ""
+consecutive_failures = 0

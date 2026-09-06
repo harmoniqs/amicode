@@ -432,6 +432,27 @@
   --line-comment-open-z: 6;
 }
 
+[data-component="session-review-v2"] [data-slot="session-review-v2-lock-indicator"] {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: var(--radius-md, 8px);
+  pointer-events: none;
+  animation: session-review-v2-lock-fade-in 200ms ease both;
+}
+
+@keyframes session-review-v2-lock-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 [data-component="session-review-v2"] .session-review-v2-toolbar-group--segments {
   gap: 12px;
 }
@@ -573,14 +594,21 @@
   z-index: var(--z-overlay, 100);
   padding: 4px;
   max-height: 320px;
-  min-width: 200px;
-  max-width: 400px;
   overflow-x: auto;
   overflow-y: auto;
+  overscroll-behavior: contain;
   border-radius: var(--radius-md, 8px);
   background-color: var(--surface-raised-stronger-non-alpha, var(--v2-background-bg-layer-01));
   border: 1px solid color-mix(in oklch, var(--border-base, var(--v2-border-border-base)) 50%, transparent);
   box-shadow: var(--shadow-md, 0 4px 12px rgba(0,0,0,0.15));
+}
+
+/* Scroll-inner wrapper: min-width: max-content ensures the wrapper is at
+   least as wide as its widest child.  When that exceeds the dropdown's
+   capped width, overflow-x: auto on the dropdown provides horizontal
+   scrolling.  Block items inside fill the wrapper width naturally. */
+.session-review-v2-file-picker-scroll-inner {
+  min-width: max-content;
 }
 
 /* File picker popover content (legacy, kept for compat) */
@@ -605,8 +633,6 @@
   line-height: 1.4;
   color: var(--v2-text-text-muted);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
   border-bottom: 1px solid color-mix(in oklch, var(--border-base, var(--v2-border-border-weak)) 30%, transparent);
   margin-bottom: 2px;
 }
@@ -626,7 +652,6 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  width: 100%;
   padding: 4px 8px;
   border: none;
   border-radius: var(--radius-xs, 4px);
