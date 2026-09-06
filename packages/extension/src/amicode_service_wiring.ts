@@ -33,6 +33,7 @@
 //    getter yields undefined and the proxy answers the honest 503.
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
+import { fleetStagingSummary, stageFleetDataPlane } from "./amicode_service/fleet_staging";
 
 /** What consumers (terminal env, dogfood probes, the frame picker) need. */
 export interface AmicodeServiceHandle {
@@ -60,6 +61,16 @@ export interface AmicodeServiceWiringOptions {
    *  placeholder covers a missing dist honestly). Absent = no shelf (the
    *  pre-#822 boot shape, kept for parity-contract tests). */
   appDistRoot?: string;
+  /** #391: the fleet plane's staging input. Passing it arms NOTHING by
+   *  itself — the entitlement-staged gate decides whether the fleet surfaces
+   *  exist; the boot log carries the staging outcome either way. */
+  fleet?: {
+    entitlements?: string[] | null;
+    entitlementConfigDir?: string;
+    overlaySource?: string | null;
+    hub: { getUrl: () => string | undefined };
+    getMode?: () => "engine" | "fleet";
+  };
 }
 
 /**
@@ -78,13 +89,26 @@ export async function startAmicodeService(
     const service = createAmicodeService({
       engine: opts.engine,
       shelf: opts.appDistRoot !== undefined ? { distRoot: opts.appDistRoot } : undefined,
+      fleet: opts.fleet,
     });
     const url = await service.start();
     const authNote = opts.engine !== undefined ? "per-boot Basic + engine token" : "per-boot Basic";
     const engineNote = opts.engine !== undefined ? "; engine proxy armed (late-bound upstream)" : "";
     const shelfNote = opts.appDistRoot !== undefined ? "; app shelf mounted" : "";
+    // #391: the staging outcome is logged either way — an un-staged fleet
+    // input is a NAMED outcome (which reason), never a silent no-op.
+    const fleetNote =
+      opts.fleet !== undefined
+        ? `; ${fleetStagingSummary(
+            stageFleetDataPlane({
+              entitlements: opts.fleet.entitlements,
+              entitlementConfigDir: opts.fleet.entitlementConfigDir,
+              overlaySource: opts.fleet.overlaySource,
+            }),
+          )}`
+        : "";
     log.appendLine(
-      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}`,
+      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}${fleetNote}`,
     );
     return { service, url: url.toString().replace(/\/$/, ""), authHeader: service.authHeader };
   } catch (err) {

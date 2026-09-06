@@ -20,6 +20,8 @@ import { mintServerPassword, serverAuthHeader } from "../server_auth";
 import { setBindHostname } from "./bind_host";
 import { AppShelf, type AppShelfResult } from "./app_shelf";
 import { EngineProxy } from "./engine_proxy";
+import { HubProxy } from "./hub_proxy";
+import type { UpstreamMode } from "./merged_projection";
 import { isPublicUiPath } from "./public_ui";
 
 export interface AmicodeRequestCtx {
@@ -40,6 +42,15 @@ export interface AmicodeHandlerResult {
 }
 
 export type AmicodeHandler = (ctx: AmicodeRequestCtx) => AmicodeHandlerResult | Promise<AmicodeHandlerResult>;
+
+/** #391 (the local-shell data plane, D1): the fleet plane the staged path
+ *  arms. Mode selection is DATA-DRIVEN (read per request, like every
+ *  late-bound upstream here); "degraded" is Slice B's steady state of the
+ *  SAME fleet mode — this plane carries only the engine | fleet decision. */
+export interface FleetPlane {
+  getMode(): UpstreamMode;
+  hub: HubProxy;
+}
 
 interface RouteEntry {
   method: "GET" | "POST";
@@ -62,6 +73,10 @@ export class AmicodeServiceServer {
   private _port?: number;
   private shelf?: AppShelf;
   private engineProxy?: EngineProxy;
+  /** #391 (D1): the fleet plane — armed ONLY through the entitlement-staged
+   *  path (fleet_staging.ts); absent on every base boot, which is what makes
+   *  the no-entitlement byte identity structural. */
+  private fleetPlane?: FleetPlane;
   readonly password: string;
   /** #822: the spawned engine's per-boot mint, accepted ALONGSIDE the
    *  service's own — the framed app bootstraps with the ENGINE credential
@@ -109,6 +124,20 @@ export class AmicodeServiceServer {
   attachEngineProxy(proxy: EngineProxy): this {
     this.engineProxy = proxy;
     return this;
+  }
+
+  /** #391 (D1): arm the fleet plane — the late-bound routing mode plus the
+   *  hub proxy. Called ONLY by the staged path in index.ts; a boot without
+   *  it never carries a fleet surface. */
+  attachFleetPlane(plane: FleetPlane): this {
+    this.fleetPlane = plane;
+    return this;
+  }
+
+  /** The current routing mode (D1's data-driven selection): the fleet
+   *  plane's late-bound getter when armed, the base engine mode otherwise. */
+  get routingMode(): UpstreamMode {
+    return this.fleetPlane?.getMode() ?? "engine";
   }
 
   /** #823 (the M3 cutover bootstrap seam): the credential source for one
@@ -199,6 +228,18 @@ export class AmicodeServiceServer {
       const shelfHit = this.shelf?.handle(req.method ?? "GET", url.pathname, String(req.headers.accept ?? ""));
       if (shelfHit) {
         send(shelfHit);
+        return;
+      }
+      // #391 (D1): the upstream is chosen by the CURRENT routing mode —
+      // fleet routes data + SSE to the hub over the tunnel (the shelf above
+      // already served the UI locally: zero assets cross the WAN); the
+      // engine mode keeps the base behavior. No silent fallback: a fleet
+      // boot with the tunnel down answers its OWN named 503, never the
+      // engine's.
+      const mode = this.routingMode;
+      if (mode === "fleet" && this.fleetPlane) {
+        if (this.fleetPlane.hub.handle(req, res)) return;
+        send({ status: 503, body: JSON.stringify({ ok: false, error: "hub upstream not available" }) });
         return;
       }
       if (this.engineProxy) {
