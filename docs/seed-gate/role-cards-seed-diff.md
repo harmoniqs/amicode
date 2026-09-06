@@ -1,6 +1,6 @@
 # Seed gate — the four role cards, diffed for signature (D3, #806)
 
-**Status: PENDING SIGNATURE — prepared by the implementing cast (slice 2, worktree `slice2-role-cards`); Aaron performs and signs.**
+**Status: SIGNED 2026-09-05 (accept-seed, by chat directive "do as you rec" — see the Signature section; the fixture publications remain held under the re-authoring decision).** Prepared by the implementing cast (slice 2, worktree `slice2-role-cards`); Aaron performed and signed.
 
 This is the human diff the seed gate requires (spec `spec-20260905-063000` D3,
 issue #806, obligation O2). The four director-cast role cards —
@@ -227,13 +227,23 @@ silently pinned.
 
 ## Signature
 
-- [ ] **Signed:** ______________  Date: __________
-- Decision: `accept-seed` | `accept-with-amendments` (attach amendments)
+- [x] **Signed: Aaron Trowbridge** — by chat directive ("do as you rec",
+  2026-09-05, this campaign's session ledger; the PI read the rendered
+  packet and delegated to the recorded recommendations; the directive is
+  the human decision and this record says so plainly). Date: 2026-09-05
+- Decision: **`accept-seed`** (no amendments — the cards stand as seeded;
+  `.seed-provenance.json` stays `amended: false`)
 - Per-card adjudications (only where flagged):
-  - implementer ↔ engineer: merge/PR governance — shipped never-merge binding is the coherent overlap? ___
-  - implementer ↔ engineer: scope perimeter acknowledged? ___
-  - experimenter ↔ experimenter: shipped never-grade/never-promote binding is the coherent overlap? ___
-  - hypothesizer: no-counterpart confirmed (or pin target named)? ___
-  - analyzer: no-counterpart confirmed (or pin target named)? ___
+  - implementer ↔ engineer: merge/PR governance — shipped never-merge binding is the coherent overlap? **YES** (repo wins; the vault def's auto-merge line reads stale against the orchestrated walk — vault re-authoring follow-up)
+  - implementer ↔ engineer: scope perimeter acknowledged? **YES** (two modes of operation, one role)
+  - experimenter ↔ experimenter: shipped never-grade/never-promote binding is the coherent overlap? **YES** (repo wins; the vault def is the pre-loop Phase-2-era contract — vault re-authoring follow-up)
+  - hypothesizer: no-counterpart confirmed (or pin target named)? **CONFIRMED no-counterpart** (researcher.md is the decider, not a read-only proposer — no false overlap pinned)
+  - analyzer: no-counterpart confirmed (or pin target named)? **CONFIRMED no-counterpart** (librarian.md writes; the analyzer is read-only — no false overlap pinned)
 - Fixture publications (section 5, review B1): republish as-signed, or run
-  the vault re-authoring follow-up first and re-take fixtures + pin? ___
+  the vault re-authoring follow-up first and re-take fixtures + pin?
+  **VAULT RE-AUTHORING FIRST** — the fixture hold CONTINUES by decision
+  (not by unsignedness): the pin's `fixture_publication` reads
+  `pending-re-authoring`; the amicissimo re-authoring issue (its own gate)
+  moves the package-internals categories out of the two engine-neutral
+  definitions at their source, then the fixtures re-take at the new
+  revision and publish. The nightly pin check covers the interim.

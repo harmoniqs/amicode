@@ -49,8 +49,12 @@ const PROVENANCE_PATH = join(AGENTS_DIR, ".seed-provenance.json");
 
 /** The seed gate's switch of record. Flip to true ONLY in the same change
  *  that lands Aaron's signature in docs/seed-gate/role-cards-seed-diff.md
- *  (the coupling test below fails otherwise — never flip it alone). */
-const SEED_GATE_SIGNED = false;
+ *  (the coupling test below fails otherwise — never flip it alone).
+ *  Flipped 2026-09-05 with the signature (accept-seed, by chat directive
+ *  "do as you rec" — recorded in the doc's Signature section). The fixture
+ *  publications remain HELD by the re-authoring decision, not by
+ *  unsignedness: pin.fixture_publication reads "pending-re-authoring". */
+const SEED_GATE_SIGNED = true;
 
 interface PinEntry {
   role_card: string;
@@ -64,10 +68,11 @@ interface PinRecord {
   record_version: number;
   vault_repo: string;
   vault_revision: string;
-  /** "pending-signature" pre-signature (B1: no full-definition fixture is
-   *  published); "published" once the signature lands and the fixtures
-   *  return (at the re-authored revision, if the follow-up runs first). */
-  fixture_publication: "published" | "pending-signature";
+  /** "pending-signature" pre-signature; "pending-re-authoring" once signed
+   *  with the VAULT RE-AUTHORING decision (B1: no full-definition fixture
+   *  is published until the amicissimo re-authoring lands and the fixtures
+   *  re-take at the new revision); "published" once they return. */
+  fixture_publication: "published" | "pending-signature" | "pending-re-authoring";
   pinned: PinEntry[];
   no_counterpart: Array<{ role_card: string; nearest_kin: string; reason: string }>;
 }
@@ -98,17 +103,21 @@ describe("the parity pin record is revision-pinned (it carries the vault revisio
 // ── B1 (review, PR #811): the fixture publications are held pending signature ─
 
 describe("fixture publications held pending signature (review B1 — nothing published-verbatim pre-signature)", () => {
-  it("the full-definition fixtures are ABSENT from the repo while the gate is unsigned (the B1 hold)", () => {
-    expect(SEED_GATE_SIGNED).toBe(false); // this cell flips with the signature
+  it("the full-definition fixtures are ABSENT from the repo while the re-authoring hold runs (the B1 hold, post-signature form)", () => {
+    // Signed 2026-09-05 (accept-seed) with the VAULT RE-AUTHORING decision:
+    // the hold now continues BY DECISION, not by unsignedness — the pin's
+    // publication field says so, the fixtures stay unpublished until the
+    // amicissimo re-authoring lands and the fixtures re-take at the new
+    // revision.
     for (const p of pin.pinned) {
       if (p.fixture === undefined) continue;
-      expect(existsSync(join(FIXTURES, p.fixture)), `${p.fixture} must not be published pre-signature`).toBe(false);
+      expect(existsSync(join(FIXTURES, p.fixture)), `${p.fixture} must not be published under the re-authoring hold`).toBe(false);
     }
-    // and the record says so
-    expect(pin.fixture_publication).toBe("pending-signature");
+    // and the record says so — the hold's REASON changed with the signature
+    expect(pin.fixture_publication).toBe("pending-re-authoring");
     // no pinned entry carries a committed fixture path while held
     for (const p of pin.pinned) {
-      expect(p.fixture, `${p.role_card}: no committed fixture path pre-signature`).toBeUndefined();
+      expect(p.fixture, `${p.role_card}: no committed fixture path under the re-authoring hold`).toBeUndefined();
     }
   });
 
@@ -315,7 +324,12 @@ describe("flagged content is pinned only after Aaron signs (the seed gate)", () 
 
 describe.skipIf(!SEED_GATE_SIGNED)("post-signature: the adjudicated overlap of record (repo wins for shipped bindings)", () => {
   it("the shipped implementer stays merge-free: no PR/merge/push authorization enters the binding", () => {
-    expect(cardText("implementer")).toMatch(/never opens PRs, never merges/);
+    // (the shipped card's own words: the description's never-opens-PRs
+    // clause + the No-PR-no-merge-no-push rule; this cell was authored
+    // dormant against a paraphrase — pinned to the card's actual text
+    // when the signature activated it, semantics unchanged)
+    expect(cardText("implementer")).toMatch(/Never opens PRs or merges in orchestrated mode/);
+    expect(cardText("implementer")).toMatch(/No PR, no merge, no push to shared branches/);
     expect(cardText("implementer")).not.toMatch(/auto-merge/i);
   });
   it("the shipped experimenter stays grade-free: verdicts belong to the gates + parent + analyzer", () => {
