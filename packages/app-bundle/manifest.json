@@ -1107,7 +1107,7 @@
     "packages/app/src/utils/amicode-hidden-project.ts": "d845a80ecad2d497528a5071f55cffab72e7b451f16d106cdb594f5bbd62c0ee",
     "packages/app/src/utils/amicode-pane.ts": "46c18a2dc47c5db154f70272d25031e6834539ad03f6ab25613f082426f7c642",
     "packages/app/src/utils/amicode-route-info.ts": "a0268a223e8de09fae9d4de8bee6a7774c14c87c6254cb4ed1d921db18587f44",
-    "packages/app/src/utils/amicode-workspace-projects.test.ts": "f8ce6098800d5a1564d8e1e4a59044b378ebedfd5f9ba758fa51afbcd3d1b727",
+    "packages/app/src/utils/amicode-workspace-projects.test.ts": "8d6f68cfec613bd470c991dcb5f49f6171606b09cbbd37c2fabd37a9129a3896",
     "packages/app/src/utils/amicode-workspace-projects.ts": "cbe091c463177375c93cb43676c202bd7bf06baf36fdec779f7d641558ff6bee",
     "packages/app/src/utils/boot-parity.ts": "5231be428fc832cd941aafbe70e4620b696321b87a2769d28372ecd2feb9dc41",
     "packages/app/src/utils/chrome-dropdown.ts": "f8b878c5df4e1afd96b0751c73daaad0a8127411030724cb8f9a5089ebb29eac",
