@@ -83,10 +83,10 @@ export interface BridgeIo {
   bugReport?: BugReportSink;
   /** Project-selected lifecycle (#663): the app posts a project-selected
    *  envelope when the user picks a project in the composer dropdown. The
-   *  extension wires this to sidebar focus (collapse others, expand selected).
-   *  autoExpand distinguishes explicit selection (true) from session navigation
-   *  (false) — the sidebar highlights either way but only expands on explicit. */
-  onProjectSelected?: (path: string, autoExpand?: boolean) => void;
+   *  extension wires this to sidebar focus. mode controls sidebar behavior:
+   *  "reset" = expand selected + collapse others, "expand" = expand selected
+   *  only, "none" = highlight only. */
+  onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -1130,13 +1130,15 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   }
 
   // #663: the chat app posts project-selected when the user picks a project in
-  // the composer dropdown. Forward to the sidebar so it can collapse other roots
-  // and expand the selected one. autoExpand defaults to true (explicit click);
-  // session-navigation emits set it to false (highlight only, no folder toggle).
+  // the composer dropdown. Forward to the sidebar so it can update folder state.
+  // mode controls expand/collapse behavior: "reset" (default) for explicit
+  // dropdown clicks, "expand" for session open/tab switch, "none" for replay.
   if (msg.kind === "project-selected") {
     const p = (msg as { path?: unknown }).path;
-    const autoExpand = (msg as { autoExpand?: unknown }).autoExpand;
-    if (typeof p === "string" && p !== "") io.onProjectSelected?.(p, autoExpand !== false);
+    const mode = (msg as { mode?: unknown }).mode;
+    const validModes = new Set(["none", "expand", "reset"]);
+    const resolvedMode = typeof mode === "string" && validModes.has(mode) ? mode as "none" | "expand" | "reset" : "reset";
+    if (typeof p === "string" && p !== "") io.onProjectSelected?.(p, resolvedMode);
     return true;
   }
 

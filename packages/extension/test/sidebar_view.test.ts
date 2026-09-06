@@ -616,7 +616,7 @@ describe("SidebarViewProvider — session awareness", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       kind: "active-project",
       path: "/projects/quantum-sim",
-      autoExpand: true,
+      mode: "reset",
     });
   });
 
@@ -631,7 +631,7 @@ describe("SidebarViewProvider — session awareness", () => {
     expect(view.webview.postMessage).toHaveBeenCalledWith({
       kind: "active-project",
       path: null,
-      autoExpand: true,
+      mode: "reset",
     });
   });
 
@@ -906,20 +906,66 @@ describe("sidebar webview — section reorder bug fixes", () => {
     expect(fnBody).toMatch(/focusBorder/);
   });
 
-  it("applyActiveProject accepts an autoExpand parameter", () => {
-    // The function signature must include autoExpand
-    expect(src).toMatch(/function applyActiveProject\(.*autoExpand/);
+  it("applyActiveProject accepts a mode parameter", () => {
+    // The function signature must include mode
+    expect(src).toMatch(/function applyActiveProject\(.*mode/);
   });
 
-  it("applyActiveProject only expands when autoExpand is true", () => {
+  it("applyActiveProject uses mode to control expand behavior", () => {
     const fnBody = src.slice(src.indexOf("function applyActiveProject"));
-    // The expand logic must be gated on autoExpand
-    expect(fnBody).toMatch(/autoExpand/);
+    // The expand logic must be gated on mode
+    expect(fnBody).toMatch(/mode/);
   });
 
-  it("active-project message handler reads autoExpand from the message", () => {
+  it("active-project message handler reads mode from the message", () => {
     const handler = src.slice(src.indexOf("case \"active-project\""));
-    expect(handler).toMatch(/autoExpand/);
+    expect(handler).toMatch(/mode/);
+  });
+});
+
+// ── Scroll active project into view (#839) ───────────────────────────────────
+
+describe("sidebar webview — scroll active project into view", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  const fnBody = src.slice(src.indexOf("function applyActiveProject"));
+
+  it("applyActiveProject calls scrollIntoView on the active root element", () => {
+    expect(fnBody).toMatch(/scrollIntoView/);
+  });
+
+  it("scroll uses block 'start' to bring the project to the top", () => {
+    expect(fnBody).toMatch(/block.*["']start["']/);
+  });
+
+  it("scroll uses smooth behavior", () => {
+    expect(fnBody).toMatch(/behavior.*["']smooth["']/);
+  });
+
+  it("scrollIntoView is NOT called for mode 'none'", () => {
+    // The scroll path must be gated: only for "expand" or "reset"
+    // The scroll call must be inside a conditional that checks mode
+    expect(fnBody).toMatch(/mode\s*===\s*["']expand["']|mode\s*===\s*["']reset["']/);
+  });
+
+  it("auto-expands the parent section if collapsed before scrolling", () => {
+    // Must check sectionExpanded for the target's section key
+    expect(fnBody).toMatch(/sectionExpanded/);
+    // Must call toggleSectionBody to expand the section
+    expect(fnBody).toMatch(/toggleSectionBody/);
+  });
+
+  it("defers scroll when section was just expanded to let animation finish", () => {
+    // Must reference SECTION_ANIM_MS for the delay
+    expect(fnBody).toMatch(/SECTION_ANIM_MS/);
+    expect(fnBody).toMatch(/setTimeout/);
+  });
+
+  it("uses requestAnimationFrame for scroll when section is already expanded", () => {
+    expect(fnBody).toMatch(/requestAnimationFrame/);
   });
 });
 

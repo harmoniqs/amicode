@@ -392,8 +392,8 @@ describe("ChatPanel — onProjectSelected callback (#663)", () => {
   });
 
   it("re-emits last project selection when the panel gains focus (tab switch)", () => {
-    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
-    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+    const selected: Array<{ path: string | null; mode?: string }> = [];
+    ChatPanel.onProjectSelected((p, m) => selected.push({ path: p, mode: m }));
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
@@ -410,13 +410,13 @@ describe("ChatPanel — onProjectSelected callback (#663)", () => {
     panel._simulateViewState(true, true);
     expect(selected).toHaveLength(1);
     expect(selected[0].path).toBe("/Users/jj/harmoniqs");
-    // Tab switch must NOT auto-expand — only highlight
-    expect(selected[0].autoExpand).toBe(false);
+    // Tab switch uses "expand" — expands the target project but never collapses others
+    expect(selected[0].mode).toBe("expand");
   });
 
   it("emits null when a panel with no project selection gains focus (clears stale highlight)", () => {
-    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
-    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+    const selected: Array<{ path: string | null; mode?: string }> = [];
+    ChatPanel.onProjectSelected((p, m) => selected.push({ path: p, mode: m }));
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
@@ -428,22 +428,22 @@ describe("ChatPanel — onProjectSelected callback (#663)", () => {
     panel._simulateViewState(true, true);
     expect(selected).toHaveLength(1);
     expect(selected[0].path).toBeNull();
-    expect(selected[0].autoExpand).toBe(false);
+    expect(selected[0].mode).toBe("expand");
   });
 
-  it("explicit dropdown selection passes autoExpand true through the callback", () => {
-    const selected: Array<{ path: string | null; autoExpand?: boolean }> = [];
-    ChatPanel.onProjectSelected((p, ae) => selected.push({ path: p, autoExpand: ae }));
+  it("explicit dropdown selection passes mode 'reset' through the callback", () => {
+    const selected: Array<{ path: string | null; mode?: string }> = [];
+    ChatPanel.onProjectSelected((p, m) => selected.push({ path: p, mode: m }));
     const cap = capturePanel();
     restore = cap.restore;
     created = cap.created;
     ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
     const panel = cap.created[0] as unknown as { webview: { _simulateMessage(msg: unknown): void } };
-    // Simulate the iframe sending a project-selected envelope (explicit click)
+    // Simulate the iframe sending a project-selected envelope (explicit click — mode defaults to "reset")
     panel.webview._simulateMessage({ source: "amicode", kind: "project-selected", path: "/Users/jj/harmoniqs" });
     expect(selected).toHaveLength(1);
     expect(selected[0].path).toBe("/Users/jj/harmoniqs");
-    expect(selected[0].autoExpand).toBe(true);
+    expect(selected[0].mode).toBe("reset");
   });
 });
 

@@ -126,11 +126,12 @@ function createIconEl(icon: string): HTMLElement {
   // then the host's section-order message from globalState overwrites if needed.
   let currentSectionOrder: string[] = savedState?.sectionOrder ?? ["research", "dev", "fleet"];
 
-  // Cache the last active-project path. If the active-project message arrives
-  // before roots render (tab switch, webview recreation), the DOM is empty and
-  // the handler is a no-op. renderRoots checks this after building the DOM and
-  // re-dispatches the active-project logic so the node gets expanded + highlighted.
-  let pendingActiveProject: string | null = null;
+  // Cache the last active-project path + mode. If the active-project message
+  // arrives before roots render (tab switch, webview recreation), the DOM is
+  // empty and the handler is a no-op. renderRoots checks this after building
+  // the DOM and re-dispatches with mode "none" (highlight only — the persisted
+  // expanded state already handles folder visibility after re-render).
+  let pendingActiveProject: { path: string | null; mode: "none" | "expand" | "reset" } | null = null;
 
   /** Resolve rendering order: saved keys filtered to available, new keys appended. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
@@ -1002,9 +1003,11 @@ function createIconEl(icon: string): HTMLElement {
 
     // Apply pending active-project if it arrived before roots were rendered.
     // The active-project handler is a no-op when the DOM is empty; now that
-    // the tree exists, re-dispatch the expand + highlight logic.
+    // the tree exists, replay with "none" (highlight only). The persisted
+    // expanded state already handles folder visibility after re-render —
+    // replaying with the original mode would snap folders back (#839).
     if (pendingActiveProject !== null) {
-      applyActiveProject(pendingActiveProject);
+      applyActiveProject(pendingActiveProject.path, "none");
     }
   }
 
@@ -1549,8 +1552,17 @@ function createIconEl(icon: string): HTMLElement {
 
   // ── Active project logic (extracted for reuse by renderRoots) ────────────
 
-  function applyActiveProject(activePath: string | null, autoExpand = true): void {
+  function applyActiveProject(activePath: string | null, mode: "none" | "expand" | "reset" = "reset"): void {
     const rootPaths = new Set(currentRoots.map((r) => r.path));
+
+    // Orphan guard: if the active path doesn't match any sidebar root,
+    // downgrade any mode to "none" — highlight-only, no folder changes.
+    if (activePath && !rootPaths.has(activePath)) {
+      mode = "none";
+    }
+
+    let activeEl: HTMLElement | null = null;
+
     const allRootNodes = Array.from(treeRoot?.querySelectorAll("[data-path][data-type='directory']") ?? []);
     for (const node of allRootNodes) {
       const el = node as HTMLElement;
@@ -1560,6 +1572,8 @@ function createIconEl(icon: string): HTMLElement {
       if (!row) continue;
 
       if (nodePath === activePath) {
+        activeEl = el;
+
         // Typed highlight: Harmoniqs yellow for research, VS Code blue for dev
         const activeRoot = currentRoots.find((r) => r.path === nodePath);
         const highlightColor = activeRoot?.projectType === "research"
@@ -1567,9 +1581,10 @@ function createIconEl(icon: string): HTMLElement {
           : "var(--vscode-focusBorder)";
         row.style.borderLeft = `2px solid ${highlightColor}`;
         row.style.background = "var(--vscode-list-activeSelectionBackground)";
-        // Only expand/collapse when autoExpand is true (explicit user selection).
-        // Session/tab switches pass autoExpand=false to preserve folder state.
-        if (autoExpand) {
+
+        // "expand" and "reset" both expand the target if collapsed.
+        // "none" never touches folder state.
+        if (mode === "expand" || mode === "reset") {
           if (!expanded[nodePath]) {
             expanded[nodePath] = true;
             saveExpandedState();
@@ -1597,8 +1612,8 @@ function createIconEl(icon: string): HTMLElement {
       } else {
         row.style.borderLeft = "";
         row.style.background = "";
-        // Only collapse other roots when autoExpand is true (explicit selection).
-        if (autoExpand && expanded[nodePath]) {
+        // Only "reset" collapses other roots.
+        if (mode === "reset" && expanded[nodePath]) {
           expanded[nodePath] = false;
           saveExpandedState();
           const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
@@ -1611,6 +1626,46 @@ function createIconEl(icon: string): HTMLElement {
           const childrenEl = el.querySelector(".children") as HTMLElement | null;
           if (childrenEl) childrenEl.style.display = "none";
         }
+      }
+    }
+
+    // Scroll the active project into view ("expand" and "reset" only).
+    // "none" is highlight-only — used for orphan fallback and renderRoots
+    // replay — and must never scroll.
+    if (activeEl && activePath && (mode === "expand" || mode === "reset")) {
+      const activeRoot = currentRoots.find((r) => r.path === activePath);
+      let sectionWasExpanded = false;
+
+      // Auto-expand the parent section if collapsed, so the project is
+      // actually visible before we scroll to it.
+      if (activeRoot) {
+        const sectionKey = activeRoot.projectType; // "research" | "dev"
+        if (!sectionExpanded[sectionKey]) {
+          sectionExpanded[sectionKey] = true;
+          saveSectionState();
+          const section = getAllSections().find((s) => s.dataset.sectionKey === sectionKey);
+          if (section) {
+            const chevron = section.querySelector(".section-chevron") as HTMLElement | null;
+            if (chevron) chevron.classList.add("expanded");
+            const body = section.querySelector(".section-body") as HTMLElement | null;
+            if (body) {
+              toggleSectionBody(body, true, section);
+              sectionWasExpanded = true;
+            }
+          }
+        }
+      }
+
+      // Defer the scroll so the browser has a
+      // stable layout after any expand/collapse DOM changes.
+      // If we just expanded the section (animated), wait for the CSS
+      // transition to finish; otherwise a single rAF is enough.
+      const scrollTarget = activeEl;
+      const doScroll = () => scrollTarget.scrollIntoView({ block: "start", behavior: "smooth" });
+      if (sectionWasExpanded) {
+        setTimeout(doScroll, SECTION_ANIM_MS + 50);
+      } else {
+        requestAnimationFrame(doScroll);
       }
     }
   }
@@ -1673,11 +1728,16 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "active-project": {
-        // Cache the path — if the DOM is empty (roots haven't arrived yet),
-        // renderRoots will pick this up and apply it after building the tree.
-        pendingActiveProject = msg.path ?? null;
-        const autoExpand = msg.autoExpand !== false;
-        applyActiveProject(pendingActiveProject, autoExpand);
+        // Cache the path + mode — if the DOM is empty (roots haven't arrived
+        // yet), renderRoots will pick this up and replay with "none" (highlight
+        // only) after building the tree.
+        const activePath = msg.path ?? null;
+        const validModes = new Set(["none", "expand", "reset"]);
+        const mode = typeof msg.mode === "string" && validModes.has(msg.mode)
+          ? msg.mode as "none" | "expand" | "reset"
+          : "reset";
+        pendingActiveProject = { path: activePath, mode };
+        applyActiveProject(activePath, mode);
         break;
       }
 
