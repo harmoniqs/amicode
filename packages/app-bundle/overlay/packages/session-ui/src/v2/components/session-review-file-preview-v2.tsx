@@ -558,6 +558,7 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
               file={props.file}
               filePicker={props.filePicker}
               onSelectFile={props.onSelectFile}
+              dirty={isEditable() && hasEdits()}
             />
           </MenuV2.Context.Trigger>
           <MenuV2.Context.Portal>
@@ -567,26 +568,6 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
             </MenuV2.Context.Content>
           </MenuV2.Context.Portal>
         </MenuV2.Context>
-        {/* Dirty dot — visible when the user has unsaved edits.
-            Placed between the filename area and the diff counts as a direct
-            flex child of file-header, outside the file-diff stacking context
-            so it is never occluded by the ::after pseudo-element. */}
-        <Show when={isEditable() && hasEdits()}>
-          <TooltipV2 openDelay={300} value="Unsaved changes (Cmd+S to save)">
-            <span
-              data-slot="session-review-v2-dirty-dot"
-              style={{
-                "flex-shrink": "0",
-                "font-size": "14px",
-                "line-height": "1",
-                color: "var(--v2-text-text-muted, var(--amc-text-muted))",
-              }}
-              aria-label="Unsaved changes"
-            >
-              ●
-            </span>
-          </TooltipV2>
-        </Show>
         <div data-slot="session-review-v2-file-diff">
           <DiffChanges changes={view()} />
           <Show when={isEditable() && hasEdits()}>
@@ -668,6 +649,8 @@ function FileNameWithPicker(props: {
   file: string
   filePicker?: (pickerProps: { onSelect: (path: string) => void }) => JSX.Element
   onSelectFile?: (file: string) => void
+  /** Show the dirty dot (●) between filename and path. */
+  dirty?: boolean
 }) {
   const [open, setOpen] = createSignal(false)
   let triggerRef: HTMLButtonElement | undefined
@@ -704,6 +687,22 @@ function FileNameWithPicker(props: {
           <TooltipV2 value={props.file}>
             <span data-slot="session-review-v2-file-name">{getFilename(props.file)}</span>
           </TooltipV2>
+          <Show when={props.dirty}>
+            <TooltipV2 openDelay={300} value="Unsaved changes (Cmd+S to save)">
+              <span
+                data-slot="session-review-v2-dirty-dot"
+                style={{
+                  "flex-shrink": "0",
+                  "font-size": "14px",
+                  "line-height": "1",
+                  color: "var(--v2-text-text-muted, var(--amc-text-muted))",
+                }}
+                aria-label="Unsaved changes"
+              >
+                ●
+              </span>
+            </TooltipV2>
+          </Show>
           <Show when={props.file.includes("/")}>
             <TooltipV2 value={props.file}>
               <span data-slot="session-review-v2-file-path">{getDirectory(props.file)}</span>
@@ -723,6 +722,22 @@ function FileNameWithPicker(props: {
             {getFilename(props.file)}
           </span>
         </button>
+        <Show when={props.dirty}>
+          <TooltipV2 openDelay={300} value="Unsaved changes (Cmd+S to save)">
+            <span
+              data-slot="session-review-v2-dirty-dot"
+              style={{
+                "flex-shrink": "0",
+                "font-size": "14px",
+                "line-height": "1",
+                color: "var(--v2-text-text-muted, var(--amc-text-muted))",
+              }}
+              aria-label="Unsaved changes"
+            >
+              ●
+            </span>
+          </TooltipV2>
+        </Show>
         <Show when={props.file.includes("/")}>
           <TooltipV2 value={props.file}>
             <span data-slot="session-review-v2-file-path">
