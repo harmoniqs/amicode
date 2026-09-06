@@ -547,7 +547,18 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
           )}
         </Show>
         <MenuV2.Context>
-          <MenuV2.Context.Trigger as="div" data-slot="session-review-v2-file-title">
+          <MenuV2.Context.Trigger
+            as="div"
+            data-slot="session-review-v2-file-title"
+            style={{
+              display: "flex",
+              "align-items": "center",
+              gap: "6px",
+              "min-width": "0",
+              flex: "1 1 0",
+              overflow: "hidden",
+            }}
+          >
             <TooltipV2 openDelay={500} value={statusTooltip(view().status)}>
               <div data-slot="session-review-v2-file-status" data-type={statusType(view().status)}>
                 {statusLabel(view().status)}
@@ -568,7 +579,14 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
             </MenuV2.Context.Content>
           </MenuV2.Context.Portal>
         </MenuV2.Context>
-        <div data-slot="session-review-v2-file-diff">
+        <div
+          data-slot="session-review-v2-file-diff"
+          style={{
+            display: "flex",
+            "align-items": "center",
+            "flex-shrink": "0",
+          }}
+        >
           <DiffChanges changes={view()} />
           <Show when={isEditable() && hasEdits()}>
             <TooltipV2 openDelay={300} value="Revert to agent's version">
