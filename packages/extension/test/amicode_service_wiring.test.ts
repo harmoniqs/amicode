@@ -1,12 +1,12 @@
-// amicode_service wiring tests (#451, M1; #822 adds the engine/shelf boot
-// shape) — the activation/lifecycle slice: boot on an ephemeral port, serve a
-// route with the per-boot auth, export the terminal-env handle shape, dispose
-// cleanly, and NEVER throw into activation (a boot failure logs and returns
-// undefined — parallel-run means the service is additive, never load-bearing,
-// until the M3 cutover). The #822 tests cover the full boot: engine context
-// (late-bound URL getter + engine mint) and the app dist root both reach the
-// booted service — against a mock engine upstream (node:http), per the issue's
-// Testing Decisions.
+// amicode_service wiring tests (#451, M1; #822 added the engine/shelf boot
+// shape; #823 executes the M3 cutover) — the activation/lifecycle slice: boot
+// on an ephemeral port, serve a route with the per-boot auth, export the
+// terminal-env handle shape, dispose cleanly, and NEVER throw into activation
+// (a boot failure logs and returns undefined — the extension then frames the
+// engine origin directly, degraded to the engine's own UI). The #822 tests
+// cover the full boot: engine context (late-bound URL getter + engine mint)
+// and the app dist root both reach the booted service — against a mock engine
+// upstream (node:http), per the issue's Testing Decisions.
 import { describe, it, expect } from "vitest";
 import * as http from "node:http";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
@@ -47,7 +47,9 @@ describe("startAmicodeService", () => {
     try {
       expect(boot.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
       expect(boot.authHeader).toMatch(/^Basic /);
-      expect(lines.some((l) => l.includes("[amicode-service] parallel-run"))).toBe(true);
+      // #823: the parallel-run log prefix retired at the cutover — the
+      // service is the framed origin now, not a second harness alongside.
+      expect(lines.some((l) => l.includes("[amicode-service] listening on"))).toBe(true);
       // The service answers (profile route shape — ok:true, fork contract).
       const r = await fetch(`${boot.url}/amicode/profile`, { headers: { Authorization: boot.authHeader } });
       expect(r.status).toBe(200);

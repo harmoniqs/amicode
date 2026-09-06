@@ -1,8 +1,10 @@
 // Amicode service roots (M1 port slice 1 — #451).
 // Ported from the fork's packages/opencode/src/server/amicode/problems.ts
 // (root-resolution functions only; the problems module itself ports in a
-// later slice). Same env overrides, same defaults — the parallel-run contract
-// tests pin the port to the fork's behavior, so resolution must not diverge.
+// later slice). Same env overrides, same defaults — the ported-route contract
+// tests pin the port to the fork's behavior, so resolution must not diverge
+// (#823: the parity goldens stay the routes' regression record after the
+// cutover froze their fork provenance).
 import { homedir } from "node:os";
 import path from "node:path";
 

@@ -62,7 +62,7 @@ import { fleetHealthReport, FLEET_GUARD_REL } from "./fleet_health";
 import { isFleetClient, getFleetRole, goStandalone, readFleetConfig, migrateLegacyFallback } from "./fleet_fallback";
 import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
-import { amicodeServiceDisposal, startAmicodeService } from "./amicode_service_wiring";
+import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
@@ -555,6 +555,18 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // (via the app's ?auth_token= bootstrap).
   const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
 
+  /** #823 (the M3 cutover consumer flip): the origin every engine-origin UI
+   *  consumer frames — the amicode service's origin when it booted (the
+   *  framed app's document + assets come from the shelf; the connections
+   *  bridge's /amicode/* calls are native there; the engine is fronted by
+   *  the proxy), else the engine origin (the honest degraded path when the
+   *  service failed to boot — e.g. a fleet client with no local service:
+   *  chat keeps working against the engine origin it has). Read LIVE per
+   *  call — the service boots once but the engine URL rotates across
+   *  restarts, and a restart gap still frames the stateless service (its
+   *  proxy answers honest 503s until the engine returns). */
+  const frameUrl = (): URL | undefined => frameOriginUrl(amicodeService, opencodeReadyUrl);
+
   // Bug-report orchestration (amicode#250, ADR 0004): the window's ONE
   // BugReportManager — owns the bug session's id end-to-end (create / arm /
   // open), the machine-managed lifecycle (archive-on-filed, abort+delete on
@@ -568,7 +580,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     postDown: (msg) => {
       // The dock lives in the main app surface — ensure a chat panel when we
       // can (palette invocation with none open), else post to the live one.
-      const url = opencodeReadyUrl;
+      // #823: the panel frames the service origin at cutover.
+      const url = frameUrl();
       const panel = url
         ? ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir)
         : ChatPanel.peek();
@@ -647,7 +660,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           statusBar?.setServerReady(true);
           sseClient?.connect(opencodeReadyUrl);
           if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-            ChatPanel.openOrReveal(ctx, opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            // Fleet client: no local service boots in this mode, so frameUrl()
+            // resolves the tunnel engine origin — the honest available frame.
+            ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
           }
           void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
             opencodeChannel.appendLine(sig.ok ? `[fleet] LLM provider: configured (${sig.provider})` : `[fleet] LLM provider: ${sig.reason} → ${sig.fix}`);
@@ -763,18 +778,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     });
     ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
 
-    // Amicode service (#451 M1; #822 adds the shelf + the engine proxy): the
-    // extension-host port of the 31 fork amicode routes, booted in
-    // PARALLEL-RUN alongside the fork server (the chat/widgets still hit the
-    // fork until the M3 cutover). Stateless — no restart coupling with
-    // solver-mode switches or config re-preps. #822: it also serves the app
-    // dist (the shelf) and fronts the spawned engine (the proxy) so the
-    // framed app can come from THIS origin — the engine context is LATE-BOUND
-    // (the module-level serverManager is REPLACED on solver-mode switches /
-    // vault respawns while this service keeps running, so the getter reads it
-    // per request; a restart gap reads as the honest 503), and the engine
-    // mint is accepted alongside the service's own (the framed app
-    // bootstraps with the engine credential).
+    // Amicode service (#451 M1; #822 added the shelf + the engine proxy; #823
+    // is the M3 cutover): the extension-host owner of the 31 ported amicode
+    // routes — the vendored engine is now STOCK canonical opencode, which
+    // serves no /amicode/* (M0 gate (a)), so this service is the framed app's
+    // origin, its /amicode/* surface, and the engine's front (the proxy).
+    // Consumers frame it (frameUrl below); the extension's own engine calls
+    // (SSE client, provider probes) keep their direct header-authenticated
+    // path. Stateless — no restart coupling with solver-mode switches or
+    // config re-preps. The engine context is LATE-BOUND (the module-level
+    // serverManager is REPLACED on solver-mode switches / vault respawns
+    // while this service keeps running, so the getter reads it per request; a
+    // restart gap reads as the honest 503), and the engine mint is accepted
+    // alongside the service's own (the framed app bootstraps with the
+    // engine credential — the ?auth_token= carrier the service parses for
+    // document GETs, per the #823 bootstrap seam).
     const serviceBoot = await startAmicodeService(opencodeChannel, {
       engine: {
         password: serverPassword,
@@ -909,7 +927,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // and show behind the transition splash.
         // Wire: when onboarding is cancelled (X), open chat normally
         onOnboardingCancelled(() => {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         });
       } else if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         // Normal path: model configured → open chat directly
@@ -919,15 +937,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           const onboardPanel = getOnboardingPanel();
           if (onboardPanel) {
             releaseOnboardingPanel(); // detach from onboarding lifecycle
-            const panel = ChatPanel.adopt(onboardPanel, ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            const panel = ChatPanel.adopt(onboardPanel, ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
             panel.postOnboardingGreeting();
           } else {
             // Fallback: no onboarding panel alive (user closed it manually)
-            const panel = ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+            const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
             panel.postOnboardingGreeting();
           }
         } else {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         }
       }
       // Surface ONE explicit LLM-provider signal at boot, read from opencode's
@@ -1461,7 +1479,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         statusBar?.setServerReady(true);
         sseClient?.connect(url);
         if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
-          ChatPanel.openOrReveal(ctx, url, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          ChatPanel.openOrReveal(ctx, frameUrl() ?? url, serverAuthToken(serverPassword), opencodeProject.projectDir);
         }
       });
       await freshManager.start();
@@ -1588,8 +1606,12 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         showErrorMessage: (m) => void vscode.window.showErrorMessage(m),
       },
       cloudUrl: vscode.workspace.getConfiguration("amicode").get<string>("cloudUrl", ""),
-      server: opencodeReadyUrl
-        ? { url: opencodeReadyUrl.toString(), authorization: serverAuthHeaders.Authorization }
+      // #823: the connections routes are native on the amicode service (the
+      // stock engine serves none) — the fallback submit targets the SERVICE,
+      // and only when the service is up; an engine-only boot has no route to
+      // POST to (the panel flow is the primary path anyway).
+      server: amicodeService
+        ? { url: amicodeService.url, authorization: amicodeService.authHeader }
         : undefined,
       log: (line) => opencodeChannel.appendLine(line),
     });
@@ -1601,7 +1623,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.commands.registerCommand("amicode.setCloudKey", () => {
       const readyUrl = opencodeReadyUrl;
       if (readyUrl) {
-        ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir).postComputeConnect();
+        ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir).postComputeConnect();
         return;
       }
       void runSetCloudKey();
@@ -1690,7 +1712,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       if (creds.warning) {
         opencodeChannel.appendLine(`[openChat] ${creds.warning}`);
       }
-      ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     // Side-by-side sessions: ALWAYS a fresh editor tab (ViewColumn.Beside, so
     // it splits next to whatever is focused) pinned to the app's /new-session
@@ -1710,7 +1732,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      const draftUrl = new URL(readyUrl.href);
+      // The draft tab rides the FRAME origin (#823): the /new-session route is
+      // the shelf's SPA fallback at the service origin, a plain engine route
+      // on the degraded path.
+      const draftUrl = new URL((frameUrl() ?? readyUrl).href);
       draftUrl.pathname = "/new-session";
       draftUrl.search = "";
       draftUrl.hash = "";
@@ -1728,7 +1753,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         launchSession: (prompt: string) => {
           const readyUrl = opencodeReadyUrl;
           if (!readyUrl) return;
-          const panel = ChatPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
           const encodedPrompt = encodeURIComponent(prompt);
           const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
           const envelope = { source: "amicode", kind: "navigate", path: navPath };
@@ -1754,7 +1779,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.window.showWarningMessage(`Amicode: ${creds.reason} → ${creds.fix}`);
         return;
       }
-      DeckPanel.openOrReveal(ctx, readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      DeckPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
     }),
     // Report a Bug (amicode#250): the palette entry + the composer bug button's
     // bridge command share this one handler — the manager owns create/arm/open,

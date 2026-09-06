@@ -1,8 +1,12 @@
-// AMICODE SERVICE wiring (#451, M1; #822 adds the engine upstream + the app
-// shelf) — boot the extension-host amicode service at activation, alongside
-// the fork opencode server (the parallel-run harness: both serve the amicode
-// route surface; consumers stay on the fork until the M3 cutover, while the
-// contract tests + dogfood probes hold the port to parity).
+// AMICODE SERVICE wiring (#451, M1; #822 added the engine upstream + the app
+// shelf; #823 executes the M3 cutover) — boot the extension-host amicode
+// service at activation, alongside the spawned opencode engine. The service
+// owns the /amicode/* route surface (stock canonical serves none), serves the
+// built app dist at its origin (the shelf), and fronts the engine (the
+// proxy) — every engine-origin UI consumer (chat panel iframe, deck panes,
+// connections bridge) frames THIS origin at cutover (frameOriginUrl below),
+// while the extension's own direct engine calls (SSE client, provider
+// probes) keep their header-authenticated engine path.
 //
 // vscode-free on purpose (the log sink is a structural interface, mirroring
 // the service's own discipline) so the boot/lifecycle logic is unit-testable;
@@ -12,11 +16,10 @@
 // Lifecycle notes:
 //  - The service is STATELESS across requests (every route reads state at call
 //    time via env overrides — same contract as the fork's routes), so unlike the
-//    opencode server it needs NO restart on solver-mode switches, config
-//    re-preps, or telemetry flips. One boot per activation; dispose stops it.
+//    engine it needs NO restart on solver-mode switches, config re-preps, or
+//    telemetry flips. One boot per activation; dispose stops it.
 //  - The password is the service's OWN per-boot mint (server_auth idiom).
-//    #822 SUPERSEDES the old total separation from the opencode server's
-//    credential: the service now ALSO accepts the ENGINE token (on /amicode/*
+//    Since #822 the service ALSO accepts the ENGINE token (on /amicode/*
 //    routes and proxied paths alike) because the framed app bootstraps with
 //    the engine credential and must work everywhere on this origin with zero
 //    app-side change. This is an accepted-ALONGSIDE credential, not a shared
@@ -31,7 +34,7 @@
 import { createAmicodeService } from "./amicode_service";
 import type { AmicodeServiceServer } from "./amicode_service/server";
 
-/** What consumers (terminal env, future iframe auth, dogfood probes) need. */
+/** What consumers (terminal env, dogfood probes, the frame picker) need. */
 export interface AmicodeServiceHandle {
   url: string;
   authHeader: string;
@@ -62,8 +65,8 @@ export interface AmicodeServiceWiringOptions {
 /**
  * Boot the amicode service on an ephemeral loopback port. Never throws past
  * activation wiring: a boot failure is logged and returns undefined — the
- * extension must keep working with the fork server alone (parallel-run means
- * the service is additive, never load-bearing, until the M3 cutover).
+ * extension then frames the engine origin directly (frameOriginUrl's
+ * fallback), so the chat keeps working, degraded to the engine's own UI.
  */
 export async function startAmicodeService(
   log: {
@@ -81,11 +84,11 @@ export async function startAmicodeService(
     const engineNote = opts.engine !== undefined ? "; engine proxy armed (late-bound upstream)" : "";
     const shelfNote = opts.appDistRoot !== undefined ? "; app shelf mounted" : "";
     log.appendLine(
-      `[amicode-service] parallel-run: listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}`,
+      `[amicode-service] listening on ${url.toString()} (${service.routeCount} routes; auth: ${authNote})${engineNote}${shelfNote}`,
     );
     return { service, url: url.toString().replace(/\/$/, ""), authHeader: service.authHeader };
   } catch (err) {
-    log.appendLine(`[amicode-service] boot FAILED (continuing without it): ${err}`);
+    log.appendLine(`[amicode-service] boot FAILED (framing the engine origin directly): ${err}`);
     return undefined;
   }
 }
@@ -97,4 +100,24 @@ export function amicodeServiceDisposal(boot: AmicodeServiceBoot | undefined): { 
       void boot?.service.stop().catch(() => undefined);
     },
   };
+}
+
+/**
+ * #823 (the M3 cutover consumer flip): the origin every engine-origin UI
+ * consumer frames — the amicode service's origin when it booted (the framed
+ * app's document + assets come from the shelf; the connections bridge's
+ * /amicode/* calls are native there; the engine is fronted by the proxy and
+ * the framed app bootstraps with the engine's ?auth_token= carrier, which
+ * the service accepts), else the engine origin (the honest degraded path
+ * when the service failed to boot: the chat keeps working against the
+ * engine's own UI). The service is STATELESS across engine restarts, so a
+ * frame bound to it survives the engine gap — that, plus the shelf, is the
+ * point of framing the service instead of the engine.
+ */
+export function frameOriginUrl(
+  service: AmicodeServiceHandle | undefined,
+  engineUrl: URL | undefined,
+): URL | undefined {
+  if (service !== undefined) return new URL(service.url);
+  return engineUrl;
 }
