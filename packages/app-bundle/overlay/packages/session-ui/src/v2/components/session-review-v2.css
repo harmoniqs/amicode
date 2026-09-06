@@ -411,7 +411,6 @@
 }
 
 [data-component="session-review-v2"] [data-slot="session-review-v2-file-name"] {
-  flex-shrink: 0;
   font-size: 13px;
   font-weight: 530;
   line-height: 1;
@@ -419,6 +418,9 @@
   font-variant-numeric: tabular-nums lining-nums;
   color: var(--v2-text-text-base);
   white-space: nowrap;
+  overflow: hidden;
+  mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 12px), transparent);
 }
 
 [data-component="session-review-v2"] [data-slot="session-review-v2-file-path"] {
@@ -581,6 +583,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+  overflow: hidden;
   padding: 2px 6px;
   margin: -2px -6px;
   border: none;

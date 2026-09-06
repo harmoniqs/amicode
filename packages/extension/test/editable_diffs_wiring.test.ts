@@ -644,6 +644,81 @@ describe("File-title container overflow constraint", () => {
 })
 
 // ---------------------------------------------------------------------------
+// Filename gradient-fade truncation (#837)
+// ---------------------------------------------------------------------------
+//
+// Long filenames must fade to transparent at their trailing edge rather than
+// bleeding into the diff indicator (+N -M). The CSS contract:
+//   1. file-name span must NOT have flex-shrink: 0 (must be shrinkable)
+//   2. file-name span must have overflow: hidden (clip when shrunk)
+//   3. file-name span must have mask-image with a linear-gradient (fade effect)
+//   4. .file-picker-trigger must have overflow: hidden (so the filename
+//      shrinks inside the button in the picker case)
+// ---------------------------------------------------------------------------
+
+describe("Filename gradient-fade truncation", () => {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const fs = require("fs") as typeof import("fs")
+  const path = require("path") as typeof import("path")
+  const cssPath = path.resolve(
+    __dirname,
+    "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-v2.css",
+  )
+  const cssExists = fs.existsSync(cssPath)
+  const cssContent = cssExists ? fs.readFileSync(cssPath, "utf-8") : ""
+
+  /** Extract the declaration block for a given CSS selector from the stylesheet. */
+  function extractRuleBlock(css: string, selectorPattern: RegExp): string | undefined {
+    const match = css.match(new RegExp(selectorPattern.source + "\\s*\\{([^}]*)\\}", "m"))
+    return match?.[1]
+  }
+
+  /** Extract a specific CSS property value from a declaration block. */
+  function extractProp(block: string, prop: string): string | undefined {
+    // Match the property name, allowing for vendor prefixes in the value
+    const re = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`, "m")
+    const match = block.match(re)
+    return match?.[1].trim()
+  }
+
+  const fileNameBlock = cssExists
+    ? extractRuleBlock(cssContent, /\[data-slot="session-review-v2-file-name"\]/)
+    : undefined
+
+  const pickerTriggerBlock = cssExists
+    ? extractRuleBlock(cssContent, /\.session-review-v2-file-picker-trigger\s*(?![:[])/)
+    : undefined
+
+  test("file-name must NOT have flex-shrink: 0 (must be shrinkable)", () => {
+    if (!fileNameBlock) { console.warn("file-name rule not found — skipping"); return }
+    const flexShrink = extractProp(fileNameBlock, "flex-shrink")
+    // flex-shrink should be absent (defaults to 1) or explicitly not "0"
+    expect(flexShrink).not.toBe("0")
+  })
+
+  test("file-name must have overflow: hidden", () => {
+    if (!fileNameBlock) { console.warn("file-name rule not found — skipping"); return }
+    const overflow = extractProp(fileNameBlock, "overflow")
+    expect(overflow).toBe("hidden")
+  })
+
+  test("file-name must have mask-image gradient for fade effect", () => {
+    if (!fileNameBlock) { console.warn("file-name rule not found — skipping"); return }
+    // Accept either standard or -webkit- prefixed
+    const maskImage = extractProp(fileNameBlock, "mask-image")
+      ?? extractProp(fileNameBlock, "-webkit-mask-image")
+    expect(maskImage).toBeDefined()
+    expect(maskImage).toMatch(/linear-gradient/)
+  })
+
+  test("file-picker-trigger must have overflow: hidden (filename shrinks inside button)", () => {
+    if (!pickerTriggerBlock) { console.warn("picker-trigger rule not found — skipping"); return }
+    const overflow = extractProp(pickerTriggerBlock, "overflow")
+    expect(overflow).toBe("hidden")
+  })
+})
+
+// ---------------------------------------------------------------------------
 // File status → readOnly mapping
 // ---------------------------------------------------------------------------
 

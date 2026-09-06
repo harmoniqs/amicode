@@ -1436,7 +1436,7 @@
     "packages/session-ui/src/v2/components/basic-tool-v2.tsx": "ece46d761f7d51a7a0925b3df00a5c289d891e9a514ee721016eb723d87fb406",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "4f1fdc944b0d422689176d04cb3580f628578915f97ea8d78594dfb9ac217146",
-    "packages/session-ui/src/v2/components/session-review-v2.css": "5a0099a2ee5d15d7d1567419b252b107772f094a8eac2b56474517633ad7078b",
+    "packages/session-ui/src/v2/components/session-review-v2.css": "bb306f226fda8f8ba6cf0ae706843ba9f2b48f3a3446433515e8a8dd1f9dc626",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "4151286efb6e0e148246ee3eebae24a2e5d4eac2603fd5ea8546d0839a694161",
     "packages/session-ui/src/v2/components/tool-error-card-v2.css": "9eb0bf8b583a18159f3855465118ff6a853d0193ea783037d5c90a868fdb3ff1",
     "packages/ui/src/amicode/fixtures/formulation-migration.json": "e573355a5eeb29f1611e52f0fb716697281b16f899331fa7fb5ada9eac4e74bc",
@@ -1502,7 +1502,7 @@
     "packages/session-ui/src/v2/components/prompt-input/attachments.ts": "ff66078f2edc9a67a4df0d7dfd76a49be5eab27ac332b303f3412721ef7268ea",
     "packages/session-ui/src/v2/components/prompt-input/index.tsx": "6cbd3a1e3a4fd789284526e5981c6fd2d4952f3926c5a1be0609bb6832453997",
     "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "aed07587c0c9a5f110f9ea91aa42679d6f9f66b2ec4de9043d6e2233a375acb8",
-    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "75174c6b3378639a4dfc6fedd8b0119b048fd08665111f0f9ef25247b3a95366",
+    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "d162e4a1d4449279df27f782e344dee89993a8ce0f1d43419b8261d55d09952a",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "05519fd5b8697c178401a6b948a41f4a1e6d5bde9a1ad245333697423759ffa0"
   },
   "upstream_base_archive_sha256": "8fd2a4e179a6a001e68f1f0986e6687be524a9a28239b8997c6b7e9a72033231"
