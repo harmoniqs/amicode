@@ -327,6 +327,131 @@ describe("Active Research Project injection (#670)", () => {
   });
 });
 
+// ── Active Research Environment injection (#883) ─────────────────────────────
+
+describe("Active Research Environment injection (#883)", () => {
+  it("environment-bound session → '## Active Research Environment' block in context", () => {
+    const envDir = mkTmp("env-");
+    fs.writeFileSync(
+      path.join(envDir, "research-environment.toml"),
+      'schema_version = 1\nname = "Transmon OC"\nslug = "transmon-oc"\ncreated = "2026-09-07"\ndescription = "Shared env"\n',
+    );
+    // Create some scaffold dirs with contents
+    fs.mkdirSync(path.join(envDir, "insights"), { recursive: true });
+    fs.writeFileSync(path.join(envDir, "insights", "note1.md"), "# Note");
+    fs.writeFileSync(path.join(envDir, "insights", "note2.md"), "# Note 2");
+    fs.mkdirSync(path.join(envDir, "lib"), { recursive: true });
+    fs.writeFileSync(path.join(envDir, "lib", "Project.toml"), "# Julia project");
+    fs.mkdirSync(path.join(envDir, "methods"), { recursive: true });
+
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_RESOLVED_ENVIRONMENT = envDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).toContain("## Active Research Environment");
+      expect(block).toContain("**Transmon OC**");
+      expect(block).toContain(`**Path:** \`${envDir}\``);
+      expect(block).toContain("insights (2)");
+      expect(block).toContain("lib (Julia)");
+      // methods has zero files → absent from listing
+      expect(block).not.toContain("methods (0)");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("no environment resolved → no Active Research Environment block", () => {
+    const stubs = stubAllSeams({});
+    // No AMICODE_RESOLVED_ENVIRONMENT set (cleared by stubAllSeams)
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).not.toContain("## Active Research Environment");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("malformed TOML → no Active Research Environment block, no throw", () => {
+    const envDir = mkTmp("bad-env-");
+    fs.writeFileSync(
+      path.join(envDir, "research-environment.toml"),
+      "this is not valid {{{{ toml",
+    );
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_RESOLVED_ENVIRONMENT = envDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).not.toContain("## Active Research Environment");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("absent directories omitted from listing (AC-28)", () => {
+    const envDir = mkTmp("sparse-env-");
+    fs.writeFileSync(
+      path.join(envDir, "research-environment.toml"),
+      'schema_version = 1\nname = "Sparse"\nslug = "sparse"\ncreated = "2026-09-07"\n',
+    );
+    // Only create one directory with files
+    fs.mkdirSync(path.join(envDir, "results"), { recursive: true });
+    fs.writeFileSync(path.join(envDir, "results", "run1.toml"), "# run");
+
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_RESOLVED_ENVIRONMENT = envDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).toContain("## Active Research Environment");
+      expect(block).toContain("results (1)");
+      // Absent dirs should NOT appear
+      expect(block).not.toContain("insights");
+      expect(block).not.toContain("methods");
+      expect(block).not.toContain("literature");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("researcher-added directories appear automatically (AC-29)", () => {
+    const envDir = mkTmp("extra-dirs-");
+    fs.writeFileSync(
+      path.join(envDir, "research-environment.toml"),
+      'schema_version = 1\nname = "Extra"\nslug = "extra"\ncreated = "2026-09-07"\n',
+    );
+    // Create a researcher-added dir (not in scaffold)
+    fs.mkdirSync(path.join(envDir, "calibration"), { recursive: true });
+    fs.writeFileSync(path.join(envDir, "calibration", "data.json"), "{}");
+
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_RESOLVED_ENVIRONMENT = envDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).toContain("calibration (1)");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+
+  it("skills/ directory listed when present", () => {
+    const envDir = mkTmp("skills-env-");
+    fs.writeFileSync(
+      path.join(envDir, "research-environment.toml"),
+      'schema_version = 1\nname = "Skilled"\nslug = "skilled"\ncreated = "2026-09-07"\n',
+    );
+    fs.mkdirSync(path.join(envDir, "skills", "my-skill"), { recursive: true });
+    fs.writeFileSync(path.join(envDir, "skills", "my-skill", "SKILL.md"), "# Skill");
+
+    const stubs = stubAllSeams({});
+    process.env.AMICODE_RESOLVED_ENVIRONMENT = envDir;
+    try {
+      const block = buildStackStateBlock() ?? "";
+      expect(block).toContain("**Skills:** my-skill");
+    } finally {
+      restoreSeams(stubs);
+    }
+  });
+});
+
 // ── Caps + composition ───────────────────────────────────────────────────────
 
 describe("caps + composition", () => {
@@ -616,6 +741,7 @@ const SEAM_KEYS = [
   "AMICODE_PROBLEMS_DIR",
   "AMICODE_RUNS_DIR",
   "AMICODE_WORKSPACE_FOLDERS",
+  "AMICODE_RESOLVED_ENVIRONMENT",
 ] as const;
 
 let fixtureRoot: string | undefined;
