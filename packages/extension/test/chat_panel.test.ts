@@ -447,6 +447,130 @@ describe("ChatPanel — onProjectSelected callback (#663)", () => {
   });
 });
 
+describe("ChatPanel — persistent app-ready handlers (#870)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  it("persistent callbacks fire on every app-ready, not just the first (AC2)", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    let fireCount = 0;
+    ChatPanel.onAppReadyPersistent(() => { fireCount++; });
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const webview = cap.created[0] as unknown as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+    };
+
+    // First app-ready
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fireCount).toBe(1);
+
+    // Second app-ready — persistent callback should fire again
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fireCount).toBe(2);
+  });
+
+  it("persistent callbacks survive even after one-shot callbacks are drained", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    let persistentFired = 0;
+    let oneShotFired = 0;
+    ChatPanel.onAppReady(() => { oneShotFired++; });
+    ChatPanel.onAppReadyPersistent(() => { persistentFired++; });
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const webview = cap.created[0] as unknown as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+    };
+
+    // First app-ready — both fire
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(oneShotFired).toBe(1);
+    expect(persistentFired).toBe(1);
+
+    // Second app-ready — only persistent fires (one-shot was drained)
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(oneShotFired).toBe(1); // still 1
+    expect(persistentFired).toBe(2);
+  });
+
+  it("clearAppReadyCallbacks clears both one-shot and persistent callbacks", async () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    let fired = false;
+    ChatPanel.onAppReadyPersistent(() => { fired = true; });
+    ChatPanel.clearAppReadyCallbacks();
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const webview = cap.created[0] as unknown as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+    };
+
+    webview.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(fired).toBe(false);
+  });
+});
+
+describe("ChatPanel — postToAll broadcasts to every live panel (#870 AC3)", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+    ChatPanel.clearAppReadyCallbacks();
+  });
+
+  it("postToAll sends a message to both the primary and a side-by-side panel", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    ChatPanel.openNew(fakeCtx(), new URL("http://127.0.0.1:43117/new-session"));
+    expect(cap.created).toHaveLength(2);
+
+    // Spy on postMessage for both panels
+    const msgs0: unknown[] = [];
+    const msgs1: unknown[] = [];
+    (cap.created[0] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } }).webview.postMessage =
+      (m: unknown) => { msgs0.push(m); return Promise.resolve(true); };
+    (cap.created[1] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } }).webview.postMessage =
+      (m: unknown) => { msgs1.push(m); return Promise.resolve(true); };
+
+    const envelope = { source: "amicode", kind: "workspace-projects", projects: [] };
+    ChatPanel.postToAll(envelope);
+
+    expect(msgs0).toContainEqual(envelope);
+    expect(msgs1).toContainEqual(envelope);
+  });
+
+  it("postToAll is a no-op when no panels are live", () => {
+    // No panels created — should not throw
+    expect(() => ChatPanel.postToAll({ source: "amicode", kind: "test" })).not.toThrow();
+  });
+});
+
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];
