@@ -17,6 +17,8 @@ export interface WorkspaceProjectEntry {
   worktree: string;
   type: ProjectType;
   status?: string;
+  /** Environment name for bound research projects (#886). Absent for unbound or dev. */
+  environment?: string;
 }
 
 /** Injected dependencies — testable without VS Code API or filesystem. */
@@ -24,6 +26,8 @@ export interface WorkspaceProjectDeps {
   getWorkspaceFolders: () => ReadonlyArray<{ uri: { fsPath: string }; name: string }>;
   detectProjectType: (dir: string) => ProjectType;
   readToml: (dir: string) => { name?: string; status?: string };
+  /** Resolve the environment for a project directory. Returns null if unbound. */
+  resolveEnvironment?: (projectPath: string, workspaceRoots: string[]) => { name: string } | null;
 }
 
 // ── Scanner ──────────────────────────────────────────────────────────────────
@@ -35,6 +39,7 @@ export interface WorkspaceProjectDeps {
  */
 export function getWorkspaceProjects(deps: WorkspaceProjectDeps): WorkspaceProjectEntry[] {
   const folders = deps.getWorkspaceFolders();
+  const workspaceRoots = folders.map((f) => f.uri.fsPath);
   const research: WorkspaceProjectEntry[] = [];
   const dev: WorkspaceProjectEntry[] = [];
 
@@ -58,6 +63,15 @@ export function getWorkspaceProjects(deps: WorkspaceProjectDeps): WorkspaceProje
         type: "research",
       };
       if (toml.status) entry.status = toml.status;
+      // Resolve environment for subtitle (#886)
+      if (deps.resolveEnvironment) {
+        try {
+          const env = deps.resolveEnvironment(dir, workspaceRoots);
+          if (env) entry.environment = env.name;
+        } catch {
+          // Resolution failure → no subtitle
+        }
+      }
       research.push(entry);
     } else {
       dev.push({

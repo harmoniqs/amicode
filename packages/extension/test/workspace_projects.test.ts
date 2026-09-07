@@ -150,4 +150,50 @@ describe("getWorkspaceProjects (#663)", () => {
     );
     expect(result).toEqual([]);
   });
+
+  // ── environment subtitle (#886) ──────────────────────────────────────
+
+  it("research project with environment gets subtitle (AC-19)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "fast-cz", path: "/fast-cz" }],
+        {
+          detectProjectType: () => "research",
+          readToml: () => ({ name: "Fast CZ Gate", status: "running" }),
+          resolveEnvironment: () => ({ name: "Transmon OC" }),
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBe("Transmon OC");
+  });
+
+  it("research project without environment has no subtitle (AC-20)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "solo-proj", path: "/solo" }],
+        {
+          detectProjectType: () => "research",
+          readToml: () => ({ name: "Solo" }),
+          resolveEnvironment: () => null,
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBeUndefined();
+  });
+
+  it("dev projects never get environment subtitle (AC-20)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "dev", path: "/dev" }],
+        {
+          detectProjectType: () => "dev",
+          resolveEnvironment: () => ({ name: "Should not appear" }),
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBeUndefined();
+  });
 });
