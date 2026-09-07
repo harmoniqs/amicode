@@ -569,6 +569,28 @@ describe("ChatPanel — postToAll broadcasts to every live panel (#870 AC3)", ()
     // No panels created — should not throw
     expect(() => ChatPanel.postToAll({ source: "amicode", kind: "test" })).not.toThrow();
   });
+
+  it("postToAll reaches a panel even after the primary is disposed (AC4 — folder-change push)", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    ChatPanel.openNew(fakeCtx(), new URL("http://127.0.0.1:43117/new-session"));
+
+    // Dispose the primary — the secondary is still live
+    cap.created[0].dispose();
+
+    const msgs: unknown[] = [];
+    (cap.created[1] as unknown as { webview: { postMessage: (m: unknown) => Promise<boolean> } }).webview.postMessage =
+      (m: unknown) => { msgs.push(m); return Promise.resolve(true); };
+
+    const envelope = { source: "amicode", kind: "workspace-projects", projects: [{ name: "new-folder" }] };
+    ChatPanel.postToAll(envelope);
+
+    // The secondary panel still receives the push — this is the folder-change path
+    expect(msgs).toContainEqual(envelope);
+  });
 });
 
 describe("ChatPanel — clipboard-image-request routes through extension host", () => {
