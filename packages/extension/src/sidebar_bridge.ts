@@ -6,11 +6,41 @@
 
 // ── Data types ───────────────────────────────────────────────────────────────
 
+// ── Color palette utility (#884) ─────────────────────────────────────────────
+
+/** Deterministic hash code for a string (Java-style hashCode). */
+export function hashCode(s: string): number {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (Math.imul(31, hash) + s.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+/** Map an environment slug to a palette index (0-7). */
+export function envColorIndex(slug: string): number {
+  return ((hashCode(slug) % 8) + 8) % 8; // ensure non-negative
+}
+
+/** Truncate a string to maxLen characters with ellipsis. */
+export function truncateWithEllipsis(s: string, maxLen: number): string {
+  return s.length > maxLen ? s.slice(0, maxLen) + "\u2026" : s;
+}
+
+// ── Tree data types ──────────────────────────────────────────────────────────
+
 export interface TreeRoot {
   path: string;
   name: string;
   projectType: "research" | "dev" | "environment";
   metadata?: { phase?: string; lastActive?: string };
+  /** Resolved environment info, present when a research project is bound to an environment. */
+  environment?: {
+    name: string;       // display name from manifest
+    slug: string;       // for tooltip and dedup
+    path: string;       // absolute path, for tooltip
+    colorIndex: number; // 0-7, from hashCode(slug) % 8
+  };
 }
 
 export interface TreeEntry {

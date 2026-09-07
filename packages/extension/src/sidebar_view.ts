@@ -15,7 +15,7 @@ import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMess
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
-import { invalidateEnvironmentCache } from "./project/resolve_environment";
+import { invalidateEnvironmentCache, resolveEnvironment } from "./project/resolve_environment";
 
 // ── Icon theme resolution ────────────────────────────────────────────────────
 
@@ -305,6 +305,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
+      resolveEnvironment: (projectPath, workspaceRoots) => resolveEnvironment(projectPath, workspaceRoots),
       readDirectory: (dir) => readDirectoryEntries(dir),
       getExcludePatterns: () => getExcludePatterns(),
       getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
