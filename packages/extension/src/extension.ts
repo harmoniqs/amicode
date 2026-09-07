@@ -1037,20 +1037,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     readToml: readResearchToml,
   };
 
-  /** Build and push the workspace-projects message to the chat panel. */
+  /** Build and push the workspace-projects message to all live chat panels (#870). */
   const pushWorkspaceProjects = () => {
-    const panel = ChatPanel.peek();
-    if (!panel) return;
     const projects = getWorkspaceProjects(workspaceProjectDeps);
-    void panel.postMessage({
+    ChatPanel.postToAll({
       source: "amicode",
       kind: "workspace-projects",
       projects,
     });
   };
 
-  // On app-ready: push the initial project list.
-  ChatPanel.onAppReady(pushWorkspaceProjects);
+  // On app-ready: push the initial project list. Persistent (#870) — fires
+  // on EVERY app-ready (new panels, re-activations), not just the first.
+  ChatPanel.onAppReadyPersistent(pushWorkspaceProjects);
 
   // On workspace folder change: push the updated list.
   ctx.subscriptions.push(

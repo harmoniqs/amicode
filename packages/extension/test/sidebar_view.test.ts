@@ -3152,3 +3152,99 @@ describe("sidebar — flicker prevention", () => {
     expect(regBlock).toContain("true");
   });
 });
+
+// ── #870: renderRoots replay preserves original mode ─────────────────────────
+
+describe("sidebar webview — renderRoots replays with original mode (#870)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRoots replays pendingActiveProject with the stored mode, not hardcoded 'none'", () => {
+    // Find the renderRoots replay of pendingActiveProject
+    const fnBody = src.slice(src.indexOf("function renderRoots"));
+    const replaySection = fnBody.slice(
+      fnBody.indexOf("pendingActiveProject"),
+      fnBody.indexOf("pendingActiveProject") + 200,
+    );
+    // Must use the stored mode from pendingActiveProject, not "none"
+    expect(replaySection).toContain("pendingActiveProject.mode");
+    // Must NOT hardcode "none" in the replay call
+    expect(replaySection).not.toMatch(/applyActiveProject\([^)]*["']none["']/);
+  });
+});
+
+// ── #870: dedup guard allows same-path different-mode ────────────────────────
+
+describe("SidebarViewProvider — dedup guard relaxed for mode changes (#870)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("setActiveProject re-posts when the path is the same but mode differs", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    // First call with "none" (from renderRoots replay)
+    provider.setActiveProject("/projects/quantum-sim", "none");
+    // Second call with "expand" (from tab switch) — same path, different mode
+    provider.setActiveProject("/projects/quantum-sim", "expand");
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    // Both calls should go through — the second is NOT deduped
+    expect(activeProjectCalls).toHaveLength(2);
+    expect(activeProjectCalls[0][0].mode).toBe("none");
+    expect(activeProjectCalls[1][0].mode).toBe("expand");
+  });
+
+  it("setActiveProject still deduplicates when path AND mode are both the same", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    provider.setActiveProject("/projects/quantum-sim", "expand");
+    provider.setActiveProject("/projects/quantum-sim", "expand");
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    expect(activeProjectCalls).toHaveLength(1);
+  });
+});
+
+// ── #870: sidebar replay carries mode ────────────────────────────────────────
+
+describe("SidebarViewProvider — replay carries mode (#870)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("replays stored activeProjectPath WITH the stored mode when the webview resolves", () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+
+    // setActiveProject BEFORE the webview is resolved — with "expand" mode
+    provider.setActiveProject("/projects/diraq-esr-demo", "expand");
+
+    // Now resolve the webview — the stored path AND mode should be replayed
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+
+    const calls = (view.webview.postMessage as any).mock.calls;
+    const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
+    expect(activeProjectCalls).toHaveLength(1);
+    expect(activeProjectCalls[0][0].path).toBe("/projects/diraq-esr-demo");
+    expect(activeProjectCalls[0][0].mode).toBe("expand");
+  });
+});

@@ -60,6 +60,8 @@ export class ChatPanel {
   private static pendingOnboardingGreeting = false;
   /** Callbacks fired when the app signals ready (app-ready message from iframe). */
   private static appReadyCallbacks: Array<() => void> = [];
+  /** Persistent callbacks — survive the one-shot drain and fire on EVERY app-ready (#870). */
+  private static appReadyPersistentCallbacks: Array<() => void> = [];
   private readonly disposables: vscode.Disposable[] = [];
   /** Last project path selected in THIS session's composer dropdown.
    *  Re-emitted when the panel gains focus so the sidebar highlight tracks
@@ -127,6 +129,8 @@ export class ChatPanel {
           const cbs = ChatPanel.appReadyCallbacks.slice();
           ChatPanel.appReadyCallbacks = [];
           for (const cb of cbs) cb();
+          // #870: persistent callbacks fire on EVERY app-ready (not drained).
+          for (const cb of ChatPanel.appReadyPersistentCallbacks) cb();
           return;
         }
         // #844: watch-files — the session page sends the list of absolute file
@@ -239,9 +243,16 @@ export class ChatPanel {
     ChatPanel.appReadyCallbacks.push(cb);
   }
 
-  /** Clear app-ready callbacks (test cleanup). */
+  /** Register a persistent callback that fires on EVERY app-ready message.
+   *  Unlike onAppReady, these are NOT cleared after the first fire (#870). */
+  static onAppReadyPersistent(cb: () => void): void {
+    ChatPanel.appReadyPersistentCallbacks.push(cb);
+  }
+
+  /** Clear app-ready callbacks — both one-shot and persistent (test cleanup). */
   static clearAppReadyCallbacks(): void {
     ChatPanel.appReadyCallbacks = [];
+    ChatPanel.appReadyPersistentCallbacks = [];
   }
 
   /** Consume and clear the pending greeting flag. Returns true if it was set. */
@@ -255,6 +266,14 @@ export class ChatPanel {
    *  fallback when the server is mid-restart and no ready URL exists. */
   static peek(): ChatPanel | undefined {
     return ChatPanel.current;
+  }
+
+  /** Broadcast a message to EVERY live chat panel (#870).
+   *  Used by workspace-projects push so side-by-side panels all receive data. */
+  static postToAll(msg: unknown): void {
+    for (const panel of ChatPanel.live) {
+      void panel.panel.webview.postMessage(msg);
+    }
   }
 
   /** DOWN lane for the bug-report dock (amicode#250): open-bug-report /
