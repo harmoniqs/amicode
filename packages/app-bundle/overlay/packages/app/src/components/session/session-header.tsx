@@ -33,6 +33,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { sessionTitle } from "@/utils/session-title"
 import { SessionTabStatusDot, sessionTabStatus } from "@/pages/layout/session-tab-status"
 import { useSessionTabAvatarState } from "@/pages/layout/project-avatar-state"
+import { PostureIndicator } from "@/components/posture-indicator-view"
 import { StatusPopover, StatusPopoverV2 } from "../status-popover"
 import { statusTriggerVisibility } from "../status-popover-model"
 import { useServerSync } from "@/context/server-sync"
@@ -559,6 +560,16 @@ export function SessionHeader() {
               {/* V2 is now handled by per-button portals below; render nothing here. */}
               <></>
             </Show>
+            {/* amicode#859 (S2, spec D2): the posture indicator on the titlebar
+                right — the in-session mount of the plan-exit confirm surface.
+                The switch here IS the mid-session re-bind (the Tab-switch
+                contract): local.agent.set re-binds the open session and the
+                posture change lands on the session record (ADR-0011 vNext
+                metadata). Ambient-when-ignored; renders nothing when the
+                /amicode/posture route does not exist. */}
+            <span class="flex shrink-0" data-component="posture-indicator-mount">
+              <PostureIndicator server={server.current} />
+            </span>
           </Portal>
         )}
       </Show>

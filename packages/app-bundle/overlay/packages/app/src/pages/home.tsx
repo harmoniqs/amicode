@@ -55,6 +55,7 @@ import {
 } from "@/pages/layout/helpers"
 import { hiddenCwdWorktree, parseAmicodeProjects, reconcileProjectList, sameProjectList } from "@/pages/home-projects"
 import { FleetSessions } from "@/pages/home/fleet-sessions-view"
+import { PostureIndicator } from "@/components/posture-indicator-view"
 import { sessionTitle } from "@/utils/session-title"
 import { showToast } from "@/utils/toast"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
@@ -1239,6 +1240,14 @@ function HomeDesign() {
                       </div>
                       {/* Tab content */}
                       <div class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                        {/* amicode#859 (S2, spec D2): the posture indicator — the plan-exit
+                            confirm surface, ambient-when-ignored. Reads the
+                            /amicode/posture route (the compiled plan's STAMPED
+                            recommendation); renders nothing when the route does not
+                            exist. On home the switch acts on the default/draft posture
+                            (no session open); the session header mounts the same
+                            component for the mid-session re-bind. */}
+                        <PostureIndicator server={focusedServer()} />
                         <Show when={flyoutTab() === "active"}>
                           {/* amicissimo#393 (Slice C): the fleet merged sessions view wraps the
                               base list — with the amicissimo entitlement staged it renders the

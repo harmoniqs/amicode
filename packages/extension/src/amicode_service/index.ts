@@ -54,6 +54,7 @@ import {
   submitCredentialResponse,
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
+import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -226,6 +227,23 @@ export function registerConnectionRoutes(server: AmicodeServiceServer): AmicodeS
 // connection card.
 export function registerSolverModeRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("POST", "/amicode/solver-mode", ({ body }) => ({ body: solverModeResponse(body) }));
+
+  return server;
+}
+
+// Posture routes (S2, spec-20260907-011500 D2, #859): the plan-exit posture
+// surface. GET /amicode/posture — the latest compiled plan's STAMPED
+// posture_recommendation (a dumb reader: the indicator reads data, never
+// re-derives) + the plan.auto_switch pref + the dismissal state.
+// POST /amicode/posture — the pref write {auto_switch: confirm|auto}.
+// POST /amicode/posture/dismiss — record the per-plan dismissal. Own family
+// because the shape is the posture tuple, not a connection card.
+export function registerPostureRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
+  server.add("GET", "/amicode/posture", () => ({ body: postureResponse() }));
+
+  server.add("POST", "/amicode/posture", ({ body }) => ({ body: savePostureResponse(body) }));
+
+  server.add("POST", "/amicode/posture/dismiss", ({ body }) => ({ body: dismissPostureResponse(body) }));
 
   return server;
 }
@@ -446,5 +464,6 @@ export function createAmicodeService(
   registerProjectRoutes(server);
   registerConnectionRoutes(server);
   registerSolverModeRoutes(server);
+  registerPostureRoutes(server);
   return server;
 }

@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { canonicalJson, designHash, planHash, validate } from "@amicode/schema";
 import { runAgent, criticModel, resolveAgentBin, type AgentOutcome } from "./agent_spawn.js";
 import { parseFrontmatter } from "./frontmatter.js";
+import { postureRecommendation, type PostureRecommendation } from "./posture_recommendation.js";
 import {
   appendRecord,
   readRecords,
@@ -75,6 +76,11 @@ export interface CompileSuccess {
   advisory_count: number;
   suggested_ttl_s: number;
   allow_unreviewed: boolean;
+  /** S2 (#859, spec D2): the plan-exit posture recommendation, derived from
+   *  the plan's ARTIFACT SHAPE (+ the spec's executor hint) — data on the
+   *  artifact, the doctrine-clean crossing. kind "none" is data too: the
+   *  posture offer never fires for an abandoned plan. */
+  posture_recommendation: PostureRecommendation;
   unchecked: readonly string[];
   compiled_by?: { model: string; variant: string };
 }
@@ -303,6 +309,12 @@ export async function compilePlan(specPath: string, raw: string, opts: CompileOp
   const suggested_ttl_s = suggestedTtlFor(shaped.steps.length);
   const plan_id = `plan-${nowIso.replace(/[-:]/g, "").replace(/\..*$/, "").replace("T", "-")}-${slug(goal)}`;
   const compiled_by = out.model ? { model: out.model, variant: out.variant ?? "default" } : undefined;
+  // S2 (#859): the posture recommendation rides the artifact. The executor
+  // hint is the spec frontmatter's `agent` key (additionalProperties — an
+  // authored free-form field); absent/blank means "no executor named", and
+  // the shape alone decides.
+  const executorAgent = typeof spec.agent === "string" ? spec.agent : undefined;
+  const posture_recommendation = postureRecommendation(shaped.steps, { executorAgent });
 
   const planObject: Record<string, unknown> = {
     type: "plan",
@@ -317,6 +329,7 @@ export async function compilePlan(specPath: string, raw: string, opts: CompileOp
     suggested_ttl_s,
     spec: spec_id,
     steps: shaped.steps,
+    posture_recommendation,
     ...(advisories.length > 0 ? { advisories } : {}),
   };
   const planValid = validate(planObject, "plan");
@@ -355,14 +368,35 @@ export async function compilePlan(specPath: string, raw: string, opts: CompileOp
     advisory_count: advisories.length,
     suggested_ttl_s,
     allow_unreviewed,
+    posture_recommendation,
     unchecked: UNCHECKED_BOUNDS,
     compiled_by,
   };
 }
 
+/** S2 (#859): the plan-exit posture section, rendered from the STAMPED
+ *  recommendation — the human-readable echo of the machine field, never a
+ *  re-derivation. */
+function postureNoteSection(rec: PostureRecommendation | undefined): string {
+  if (rec === undefined || rec.kind === "none") {
+    return "## Posture recommendation\n\nNone — this plan carries no terminal execution artifact, so no posture offer fires.";
+  }
+  if (rec.kind === "ambiguous") {
+    return [
+      "## Posture recommendation",
+      "",
+      `AMBIGUOUS — ${rec.reason}. The plan could run as \`${rec.modes.join("\` or \`")}\`; pick the posture when the offer fires.`,
+    ].join("\n");
+  }
+  return [
+    "## Posture recommendation",
+    "",
+    `\`${rec.mode}\` — ${rec.reason}. Confirm from the posture indicator when the offer fires.`,
+  ].join("\n");
+}
+
 /** Surviving advisories become the plan's obligations: a plan cannot reach `complete` while one
- *  is open, which is where tier-2 critics get their teeth (§3.6). */
-function advisoriesFrom(spec: Record<string, unknown>): Array<Record<string, unknown>> {
+ *  is open, which is where tier-2 critics get their teeth (§3.6). */function advisoriesFrom(spec: Record<string, unknown>): Array<Record<string, unknown>> {
   const review = spec.review;
   if (!review || typeof review !== "object") return [];
   const raw = (review as { advisories?: unknown }).advisories;
@@ -434,6 +468,8 @@ function renderPlanNote(
         `${s.gates?.length ? `, gated by ${s.gates.join(", ")}` : ""}` +
         `${s.permissions?.device && s.permissions.device !== "none" ? `, device ${s.permissions.device}` : ""}`,
     ),
+    "",
+    postureNoteSection(plan.posture_recommendation as PostureRecommendation | undefined),
     "",
     ...(advisories.length === 0
       ? ["## Advisories", "", "None surviving. (A plan cannot reach `complete` while an advisory is open.)"]
