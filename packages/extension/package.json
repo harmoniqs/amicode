@@ -420,6 +420,7 @@
     "test": "vitest run --passWithNoTests --exclude '**/slow/**'",
     "test:slow": "vitest run test/slow",
     "test:smoke": "node test/boot_smoke.mjs",
+ "smoke:fleet": "node scripts/fleet_beta_smoke.mjs",
     "fetch:opencode": "node scripts/fetch_opencode.mjs",
     "opencode:dev": "node scripts/opencode_dev.mjs",
     "opencode:build": "node scripts/opencode_dev.mjs build",
