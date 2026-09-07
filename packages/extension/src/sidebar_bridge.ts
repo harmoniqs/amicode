@@ -48,6 +48,10 @@ export interface TreeEntry {
   type: "file" | "directory";
   path: string;
   gitStatus?: "modified" | "added" | "deleted" | "untracked" | "ignored" | "conflict";
+  /** Discriminant for the environment root row (#885). */
+  entryKind?: "environment-root";
+  /** Environment slug for coloring the environment root row (#885). */
+  environmentSlug?: string;
 }
 
 // ── File operation types ─────────────────────────────────────────────────────

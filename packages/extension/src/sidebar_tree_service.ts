@@ -38,6 +38,8 @@ export interface TreeServiceDeps {
  */
 export class SidebarTreeService {
   private deps: TreeServiceDeps;
+  /** Map root path → resolved environment info from the last getRoots() call (#885). */
+  private rootEnvironments = new Map<string, { name: string; slug: string; path: string }>();
 
   constructor(deps: TreeServiceDeps) {
     this.deps = deps;
@@ -53,6 +55,7 @@ export class SidebarTreeService {
 
     const research: TreeRoot[] = [];
     const dev: TreeRoot[] = [];
+    this.rootEnvironments.clear();
 
     for (const folder of workspaceFolders) {
       const dir = folder.uri.fsPath;
@@ -80,6 +83,7 @@ export class SidebarTreeService {
                 path: env.path,
                 colorIndex: envColorIndex(env.slug),
               };
+              this.rootEnvironments.set(dir, { name: env.name, slug: env.slug, path: env.path });
             }
           } catch {
             // Resolution failure → no pill, not a crash
@@ -125,10 +129,25 @@ export class SidebarTreeService {
       return a.name.localeCompare(b.name);
     });
 
-    return filtered.map((entry) => ({
+    const entries: TreeEntry[] = filtered.map((entry) => ({
       name: entry.name,
       type: entry.type,
       path: `${dirPath}/${entry.name}`,
     }));
+
+    // If this is a project root with a bound environment, append the
+    // environment as the last child (#885)
+    const envInfo = this.rootEnvironments.get(dirPath);
+    if (envInfo) {
+      entries.push({
+        name: envInfo.name,
+        type: "directory",
+        path: envInfo.path,
+        entryKind: "environment-root",
+        environmentSlug: envInfo.slug,
+      });
+    }
+
+    return entries;
   }
 }
