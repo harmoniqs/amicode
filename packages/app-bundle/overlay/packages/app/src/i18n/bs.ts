@@ -612,6 +612,9 @@ export const dict = {
   "home.sessions.group.today": "Danas",
   "home.sessions.group.yesterday": "Jučer",
   "home.sessions.group.older": "Starije",
+  "fleet.sessions.degraded": "Hub je spor — degradirano",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "lokalno",
   "home.providerTip":
     "Povežite se s više od 75 pružalaca usluga kako biste koristili druge modele, uključujući Claude, GPT, Gemini i druge",
 

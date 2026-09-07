@@ -562,6 +562,9 @@ export const dict = {
   "home.sessions.group.today": "Dzisiaj",
   "home.sessions.group.yesterday": "Wczoraj",
   "home.sessions.group.older": "Starsze",
+  "fleet.sessions.degraded": "Hub działa wolno — tryb awaryjny",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "lokalne",
   "home.providerTip":
     "Połącz się z ponad 75 dostawcami, aby korzystać z innych modeli, w tym Claude, GPT, Gemini i innych",
   "session.tab.session": "Sesja",

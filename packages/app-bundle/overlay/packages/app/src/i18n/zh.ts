@@ -609,6 +609,9 @@ export const dict = {
   "home.sessions.group.today": "今天",
   "home.sessions.group.yesterday": "昨天",
   "home.sessions.group.older": "更早",
+  "fleet.sessions.degraded": "Hub 缓慢 — 已降级",
+  "fleet.sessions.provenance.hub": "Hub",
+  "fleet.sessions.provenance.local": "本地",
   "home.providerTip": "连接 75 个以上的提供商，使用 Claude、GPT、Gemini 等其他模型",
 
   "session.tab.session": "会话",

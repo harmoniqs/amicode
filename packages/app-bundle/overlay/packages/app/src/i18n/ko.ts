@@ -985,6 +985,9 @@ export const dict = {
   "home.sessions.group.today": "오늘",
   "home.sessions.group.yesterday": "어제",
   "home.sessions.group.older": "이전",
+  "fleet.sessions.degraded": "허브가 느립니다 — 저하됨",
+  "fleet.sessions.provenance.hub": "허브",
+  "fleet.sessions.provenance.local": "로컬",
   "home.providerTip": "75개 이상의 제공업체에 연결하여 Claude, GPT, Gemini 등의 다른 모델을 사용하세요",
 
   "session.tab.unknown": "알 수 없는 세션",

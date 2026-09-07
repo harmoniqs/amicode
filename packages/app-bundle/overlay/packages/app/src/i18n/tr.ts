@@ -617,6 +617,9 @@ export const dict = {
   "home.sessions.group.today": "Bugün",
   "home.sessions.group.yesterday": "Dün",
   "home.sessions.group.older": "Daha eski",
+  "fleet.sessions.degraded": "Hub yavaş — düşürülmüş durum",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "yerel",
   "home.providerTip": "Claude, GPT, Gemini ve diğer modelleri kullanmak için 75'ten fazla sağlayıcıya bağlanın",
 
   "session.tab.session": "Oturum",
