@@ -26,3 +26,10 @@ export function fetchProviderSignal(
   baseUrl: string,
   opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
 ): Promise<LlmCredsSignal>;
+
+/** The live provider id list (S3 model routing, amicode#860) — key-free ids
+ *  only; undefined when the query fails (unknown, never "none"). */
+export function fetchProviderIds(
+  baseUrl: string,
+  opts?: { fetchImpl?: typeof fetch; timeoutMs?: number; headers?: Record<string, string> },
+): Promise<string[] | undefined>;

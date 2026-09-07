@@ -96,9 +96,14 @@ export interface AmicodeServiceWiringOptions {
   fleetTransport?: { dataPlaneTimeoutMs?: number; writeTimeoutMs?: number; writeMaxRetries?: number };
   /** Fixed port for the service. When set, the service binds to this port
    *  so the iframe origin stays stable across window reloads — preserving
-   *  the app's localStorage (settings, titlebar positions, etc.). Falls back
-   *  to an ephemeral port if the fixed port is unavailable. */
+   *  localStorage (settings, titlebar positions, etc.). Falls back to an
+   *  ephemeral port if the fixed port is unavailable. */
   port?: number;
+  /** S3 subagent model routing (#860): the settings surface's inputs. The
+   *  caller (extension.ts) supplies the shipped role cards' dir + the
+   *  LIVE-provider getter (the running engine's /config/providers, key-free
+   *  ids only) — the credential gate's refresh loop. */
+  modelRouting?: import("./amicode_service/model_routing").ModelRoutingDeps;
 }
 
 /**
@@ -162,6 +167,7 @@ export async function startAmicodeService(
       engine: opts.engine,
       shelf: opts.appDistRoot !== undefined ? { distRoot: opts.appDistRoot } : undefined,
       fleet: fleet ?? opts.fleet,
+      modelRouting: opts.modelRouting,
     });
     let url: URL;
     if (opts.port && opts.port > 0) {

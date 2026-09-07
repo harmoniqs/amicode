@@ -110,6 +110,7 @@ import {
   spawnGateKey,
   type SpawnedChild,
 } from "../opencode-plugin/session_spawn";
+import { routeSpawnModel, routingSummaryLine } from "../opencode-plugin/model_routing";
 import {
   onboardingStreamDir,
   isOnboardingEntity,
@@ -141,6 +142,23 @@ import {
 // the same directory, so a tool call lands in the inventory end-to-end
 // without an HTTP hop and without touching the harness server.
 import { authorWidget } from "./amicode_service/widgets";
+
+/** The shipped role cards' directory, for the S3 routing resolver (#860):
+ *  the suggestion source + the hand-set `model:` tier. The bundled core
+ *  runs from dist/extension.js (dist/../agents = the package's agents/);
+ *  the vitest graph runs from src/ (src/../agents — the same dir).
+ *  $AMICODE_AGENTS_DIR overrides. null = cards unknown → the suggested and
+ *  hand-set tiers resolve as absent (fail-safe, never fabricated). */
+function agentsDirForRouting(): string | null {
+  try {
+    const env = process.env.AMICODE_AGENTS_DIR;
+    if (env && env.trim() !== "") return env;
+    if (typeof __dirname === "string" && __dirname !== "") return path.join(__dirname, "..", "agents");
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 
 
 
@@ -2006,8 +2024,30 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         }
         const depth = computeDepth(own?.metadata);
         if (depth >= SPAWN_MAX_DEPTH && !args.force) return depthRefusal(depth);
-        // Model precedence: explicit arg > this session's model > server default.
+        // S3 model routing (#860): spawning THROUGH a role card consults the
+        // routing resolver (user-set > fleet-locked > tuned > suggested >
+        // default, credential-gated, failover announced). Zero-config
+        // byte-identity: with nothing configured the resolver is
+        // un-consulted in effect — routed.model is null and the model
+        // expression below is exactly today's. An explicit model arg IS the
+        // hand-set for this dispatch and outranks the chain. Any routing
+        // failure fails safe to today's dispatch.
+        const routed = (() => {
+          try {
+            return routeSpawnModel({
+              agent: args.agent,
+              explicitModel: args.model,
+              agentsDir: agentsDirForRouting(),
+              fleetSession: false, // the fleet lock never applies to product-initiated work
+            });
+          } catch {
+            return { model: null, resolution: null };
+          }
+        })();
+        // Model precedence: routed policy > explicit arg (already excluded
+        // by the seam) > this session's model > server default.
         const model =
+          routed.model ??
           args.model ??
           (own?.model?.providerID && own?.model?.modelID
             ? { providerID: own.model.providerID, modelID: own.model.modelID }
@@ -2068,7 +2108,11 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           if (children.length > 0) return `${summarizeSpawned(children, args.mode)}\nStopped early: ${msg}`;
           return `Cannot spawn: ${msg}`;
         }
-        return summarizeSpawned(children, args.mode);
+        // The routing note rides the dispatch summary (observability clause:
+        // ambient when ignored, inspectable on click) — never in the
+        // zero-config case, where the summary stays byte-identical.
+        const summary = summarizeSpawned(children, args.mode);
+        return routed.resolution ? `${summary}\n${routingSummaryLine(routed.resolution)}` : summary;
         });
       },
     },

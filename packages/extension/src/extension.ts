@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { ServerManager } from "./server_manager";
-import { fetchProviderSignal } from "./llm_creds.mjs";
+import { fetchProviderSignal, fetchProviderIds } from "./llm_creds.mjs";
 import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "./opencode_binary";
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
@@ -832,6 +832,22 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       engine: {
         password: serverPassword,
         getUrl: () => serverManager?.url?.toString(),
+      },
+      // S3 subagent model routing (#860): the settings surface's inputs —
+      // the shipped role cards (the suggestion source + the hand-set tier)
+      // and the LIVE-provider getter over the running engine's
+      // /config/providers (key-free ids only — the no-leak boundary lives in
+      // llm_creds). LATE-BOUND per call: the engine restarts under the
+      // service's feet, so the URL is re-read per refresh, never a boot
+      // snapshot. A failed read is undefined — the resolver reads unknown as
+      // unknown, never as "no credentials".
+      modelRouting: {
+        agentsDir: path.join(ctx.extensionPath, "agents"),
+        getProviders: async () => {
+          const engineUrl = serverManager?.url?.toString();
+          if (!engineUrl) return undefined;
+          return fetchProviderIds(engineUrl, { headers: serverAuthHeaders });
+        },
       },
       appDistRoot: resolveAppDistRoot(
         vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),

@@ -107,3 +107,22 @@ export async function fetchProviderSignal(baseUrl, { fetchImpl = fetch, timeoutM
   }
   return resolveLlmCreds({ providers, model });
 }
+
+/**
+ * The live provider ID list (S3 model routing, amicode#860): query a running
+ * opencode server's /config/providers and return the KEY-FREE provider ids
+ * the engine resolves — the credential snapshot's input (the resolver's
+ * uniform credential gate). Same no-leak boundary as stripProviders: only
+ * ids cross. A failed query yields undefined (UNKNOWN — the resolver fails
+ * safe to the default tier; it never reads unknown as "no credentials").
+ */
+export async function fetchProviderIds(baseUrl, { fetchImpl = fetch, timeoutMs = 4000, headers } = {}) {
+  const base = String(baseUrl).replace(/\/$/, "");
+  try {
+    const r = await fetchImpl(`${base}/config/providers`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (!r.ok) return undefined;
+    return stripProviders(await r.json()).map((p) => p.id);
+  } catch {
+    return undefined;
+  }
+}

@@ -55,6 +55,13 @@ import {
 } from "./connections";
 import { solverModeResponse } from "./solver_mode";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "./posture";
+import {
+  modelRoutingResponse,
+  saveModelRoutingResponse,
+  saveRoutingOptInResponse,
+  resetModelRoutingResponse,
+  type ModelRoutingDeps,
+} from "./model_routing";
 
 export function registerProfileRoutes(server: AmicodeServiceServer): AmicodeServiceServer {
   server.add("GET", "/amicode/profile", () => ({ body: profileResponse() }));
@@ -248,6 +255,36 @@ export function registerPostureRoutes(server: AmicodeServiceServer): AmicodeServ
   return server;
 }
 
+// Model-routing routes (S3, spec-20260907-011500 D3, #860): the subagent
+// model-routing settings surface. GET — per-role rows with provenance per
+// row (user-set / fleet-locked / tuned / suggested / default), the
+// display-only suggestions (credential-filtered against the LIVE providers),
+// and the drift seat. POST — the user-set write; POST /opt-in — the
+// zero-config fold's flag; POST /reset — clear the user-set row. The GET
+// doubles as the credential snapshot's refresh loop (the dispatch seam
+// re-checks it per dispatch). Own family because the shape is the role-row
+// tuple, not a connection card or the posture tuple.
+export function registerModelRoutingRoutes(
+  server: AmicodeServiceServer,
+  deps: ModelRoutingDeps = {},
+): AmicodeServiceServer {
+  server.add("GET", "/amicode/model-routing", async () => ({ body: await modelRoutingResponse(deps) }));
+
+  server.add("POST", "/amicode/model-routing", async ({ body }) => ({
+    body: await saveModelRoutingResponse(body, deps),
+  }));
+
+  server.add("POST", "/amicode/model-routing/opt-in", async ({ body }) => ({
+    body: await saveRoutingOptInResponse(body, deps),
+  }));
+
+  server.add("POST", "/amicode/model-routing/reset", async ({ body }) => ({
+    body: await resetModelRoutingResponse(body, deps),
+  }));
+
+  return server;
+}
+
 // ── #391: the fleet routes — STAGED SURFACES ────────────────────────────────
 // Registered ONLY by the entitlement-staged path below (createAmicodeService's
 // fleet option → stageFleetDataPlane). A boot without a staged fleet plane
@@ -350,6 +387,11 @@ export function createAmicodeService(
     password?: string;
     shelf?: { distRoot?: string };
     engine?: { password?: string; getUrl?: () => string | undefined };
+    /** S3 (#860): the model-routing settings surface's inputs — the shipped
+     *  role cards (the suggestion source) + the live-provider getter (the
+     *  credential gate's refresh loop). Absent → the surface renders empty
+     *  roles (no cards known) with providers from the stored snapshot. */
+    modelRouting?: ModelRoutingDeps;
     fleet?: {
       /** Resolved entitlements (injectable for tests); null resolves the
        *  machine's real set. */
@@ -465,5 +507,6 @@ export function createAmicodeService(
   registerConnectionRoutes(server);
   registerSolverModeRoutes(server);
   registerPostureRoutes(server);
+  registerModelRoutingRoutes(server, opts.modelRouting);
   return server;
 }

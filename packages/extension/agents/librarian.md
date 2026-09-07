@@ -64,10 +64,10 @@ never replaces it:
 6. Validate the frontmatter (amico-schema-check) and return the filing receipt.
    A note that fails validation is fixed, not filed as-is.
 
-Model routing, default: the standard class — schema-conformant authoring and
-curation is disciplined writing, not heavy reasoning. Escalate (the brief's
-routing field asks for the stronger class) for synthesis casts: a literature
-digest across many papers, or a cross-campaign curation where the
+Model routing, default: workhorse → strongest-reasoner — schema-conformant authoring and
+curation is disciplined writing, not heavy reasoning; the reliable workhorse class files
+it. Escalate (the brief's routing field asks for the stronger class) for synthesis casts:
+a literature digest across many papers, or a cross-campaign curation where the
 classification itself is the hard part.
 
 Iteration budget, default: one note per artifact, one pass per cast. A curation
