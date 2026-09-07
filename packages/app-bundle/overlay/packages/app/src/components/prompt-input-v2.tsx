@@ -22,7 +22,6 @@ import { useCommand } from "@/context/command"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { usePermission } from "@/context/permission"
-import { isDefaultAgent } from "@/context/local-agent"
 import { type ImageAttachmentPart, usePrompt } from "@/context/prompt"
 import { usePlatform } from "@/context/platform"
 import { useSDK } from "@/context/sdk"
@@ -399,16 +398,7 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       get agent() {
         return props.controls.agents.visible && props.controls.agents.options.length > 0
           ? {
-              // #868 rev 3 — build is a NAMED tile again AND the default
-              // posture: it renders under its own name marked default, not
-              // implied-absent (#858's original D1, amended by real usage).
-              options: () =>
-                props.controls.agents.options.map((name) => ({
-                  id: name,
-                  label: isDefaultAgent(name)
-                    ? `${name} · ${language.t("agent.picker.default")}`
-                    : name,
-                })),
+              options: () => props.controls.agents.options.map((name) => ({ id: name, label: name })),
               current: () => props.controls.agents.current,
               onSelect: (value: string) => props.controls.agents.select(value),
               keybind: () => command.keybindParts("agent.cycle"),

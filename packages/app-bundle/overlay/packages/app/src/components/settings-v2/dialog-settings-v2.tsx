@@ -10,7 +10,6 @@ import { SettingsProvidersV2 } from "./providers"
 import { SettingsModelsV2 } from "./models"
 import { SettingsPermissionsV2 } from "./permissions"
 import { SettingsSkillsV2 } from "./skills"
-import { SettingsSubagentRoutingV2 } from "./subagent-routing"
 import "./settings-v2.css"
 import { SettingsServersV2 } from "./servers"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
@@ -113,10 +112,6 @@ export const DialogSettings: Component<{
                       <Icon name="models" />
                       {language.t("settings.models.title")}
                     </TabsV2.Trigger>
-                    <TabsV2.Trigger value="subagents">
-                      <Icon name="brain" />
-                      {language.t("settings.subagents.title")}
-                    </TabsV2.Trigger>
                     <TabsV2.Trigger value="skills">
                       <Icon name="brain" />
                       {language.t("settings.skills.title")}
@@ -149,9 +144,6 @@ export const DialogSettings: Component<{
         </TabsV2.Content>
         <TabsV2.Content value="models" class="settings-v2-panel">
           <SettingsModelsV2 />
-        </TabsV2.Content>
-        <TabsV2.Content value="subagents" class="settings-v2-panel">
-          <SettingsSubagentRoutingV2 />
         </TabsV2.Content>
         <TabsV2.Content value="skills" class="settings-v2-panel">
           <SettingsSkillsV2 />

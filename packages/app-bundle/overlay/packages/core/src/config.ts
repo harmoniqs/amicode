@@ -40,6 +40,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   default_agent: Schema.String.pipe(Schema.optional).annotate({
     description: "Default primary agent to use when no session agent is selected",
   }),
+  agent_order: Schema.Array(Schema.String).pipe(Schema.optional).annotate({
+    description: "Display order for agents in pickers; agents not listed follow in their default order",
+  }),
   autoupdate: Schema.Union([Schema.Boolean, Schema.Literal("notify")])
     .pipe(Schema.optional)
     .annotate({

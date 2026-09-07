@@ -54,8 +54,6 @@ import {
   toggleHomeProjectSelection,
 } from "@/pages/layout/helpers"
 import { hiddenCwdWorktree, parseAmicodeProjects, reconcileProjectList, sameProjectList } from "@/pages/home-projects"
-import { FleetSessions } from "@/pages/home/fleet-sessions-view"
-import { PostureIndicator } from "@/components/posture-indicator-view"
 import { sessionTitle } from "@/utils/session-title"
 import { showToast } from "@/utils/toast"
 import { hiddenProjectWorktree } from "@/utils/amicode-hidden-project"
@@ -1240,56 +1238,35 @@ function HomeDesign() {
                       </div>
                       {/* Tab content */}
                       <div class="min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                        {/* amicode#859 (S2, spec D2): the posture indicator — the plan-exit
-                            confirm surface, ambient-when-ignored. Reads the
-                            /amicode/posture route (the compiled plan's STAMPED
-                            recommendation); renders nothing when the route does not
-                            exist. On home the switch acts on the default/draft posture
-                            (no session open); the session header mounts the same
-                            component for the mid-session re-bind. */}
-                        <PostureIndicator server={focusedServer()} />
                         <Show when={flyoutTab() === "active"}>
-                          {/* amicissimo#393 (Slice C): the fleet merged sessions view wraps the
-                              base list — with the amicissimo entitlement staged it renders the
-                              /amicode/fleet/sessions merged projection (both stores,
-                              provenance-tagged, posture-honest); WITHOUT the entitlement it
-                              passes the base list through byte-identical (the view does not exist). */}
-                          <FleetSessions
-                            server={focusedServer()}
-                            onOpenSession={(row) => {
-                              const session = { ...row.session, id: row.id, directory: row.directory } as unknown as Session
-                              openSession(session)
-                            }}
+                          <Show
+                            when={!sessionLoad.isLoading}
+                            fallback={<HomeSessionSkeleton label={language.t("common.loading")} />}
                           >
                             <Show
-                              when={!sessionLoad.isLoading}
-                              fallback={<HomeSessionSkeleton label={language.t("common.loading")} />}
-                            >
-                              <Show
-                                when={records().length > 0}
-                                fallback={
-                                  <div class="pl-1.5 py-2 text-v2-text-text-faint" style={{ "font-size": "12px" }}>
-                                    {language.t("home.sessions.empty")}
-                                  </div>
-                                }
-                              >
-                                <div class="flex min-w-0 flex-col gap-px">
-                                  <For each={records()}>
-                                    {(record) => (
-                                      <HomeSessionRow
-                                        record={record}
-                                        server={state.selection.server}
-                                        activeServer={state.selection.server === server.key}
-                                        openSession={openSession}
-                                        archiveSession={archiveSession}
-                                        isOpenTab={sessionHasOpenTab(tabs.store, state.selection.server, record.session)}
-                                      />
-                                    )}
-                                  </For>
+                              when={records().length > 0}
+                              fallback={
+                                <div class="pl-1.5 py-2 text-v2-text-text-faint" style={{ "font-size": "12px" }}>
+                                  {language.t("home.sessions.empty")}
                                 </div>
-                              </Show>
+                              }
+                            >
+                              <div class="flex min-w-0 flex-col gap-px">
+                                <For each={records()}>
+                                  {(record) => (
+                                    <HomeSessionRow
+                                      record={record}
+                                      server={state.selection.server}
+                                      activeServer={state.selection.server === server.key}
+                                      openSession={openSession}
+                                      archiveSession={archiveSession}
+                                      isOpenTab={sessionHasOpenTab(tabs.store, state.selection.server, record.session)}
+                                    />
+                                  )}
+                                </For>
+                              </div>
                             </Show>
-                          </FleetSessions>
+                          </Show>
                         </Show>
                         <Show when={flyoutTab() === "archived"}>
                           <Show
