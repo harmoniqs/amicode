@@ -94,3 +94,39 @@ describe("the visibility authoring gate (PR #45's two one-line tags)", () => {
     expect(vault).toMatch(/only `team`\/`public` notes are eligible for promotion/);
   });
 });
+
+// ── PR #42: the intonatoqick public skill ────────────────────────────────────
+
+describe("salvaged intonatoqick skill (amico-plugin PR #42 → amicode#851)", () => {
+  const skill = readSkill("intonatoqick");
+
+  it("carries shippable public frontmatter with the experimenter/engineer agents", () => {
+    const fm = frontmatter(skill);
+    expect(fm).toMatch(/^name:\s*intonatoqick\s*$/m);
+    expect(fm).toMatch(/^surface:\s*public\b/m);
+    expect(fm).toMatch(/^agents:\s*\[experimenter, engineer\]/m);
+  });
+
+  it("carries its salvage provenance (amico-plugin PR #42, archived repo)", () => {
+    expect(skill).toMatch(/amico-plugin.*PR #42/);
+    expect(skill).toMatch(/#851/);
+  });
+
+  it("names the entitled tuning tier as `intonatissimo` (current package reality), not the archived private path", () => {
+    expect(skill).toMatch(/intonatissimo/);
+    expect(skill).not.toMatch(/qilc-calibration/); // the archived repo's private-skill name
+    expect(skill).toMatch(/IdentityStrategy/); // the public no-op default the boundary is defined against
+  });
+
+  it("references the sibling skills without duplicating them (hardware-loop, strumento)", () => {
+    expect(skill).toMatch(/hardware-loop/);
+    expect(skill).toMatch(/strumento/);
+    expect(skill).toMatch(/Sibling skills/);
+  });
+
+  it("carries no internal-machine path shape (it is public surface)", () => {
+    for (const shape of ["/home/", "/users/", "~/.amico", "armonissima", "~/armonia"]) {
+      expect(skill.includes(shape), `intonatoqick must not carry "${shape}"`).toBe(false);
+    }
+  });
+});
