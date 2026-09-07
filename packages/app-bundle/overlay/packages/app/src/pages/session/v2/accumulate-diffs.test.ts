@@ -205,48 +205,82 @@ describe("mergeServerAndToolDiffs", () => {
     expect(result).toHaveLength(1)
   })
 
-  test("crossProjectStatus overrides status to 'deleted' for cross-project files", () => {
-    const crossProjectStatus = new Map([["~/other-project/bar.ts", "deleted" as const]])
+  // --- externalFileStatus: filesystem watcher deletion overrides ---
+
+  test("externalFileStatus overrides status to 'deleted' for cross-project files", () => {
+    const externalFileStatus = new Map([["~/other-project/bar.ts", "deleted" as const]])
     const result = mergeServerAndToolDiffs({
       serverDiffs: [],
       toolDiffs: [diff("~/other-project/bar.ts", "stale-patch", 3, 0, "added")],
       serverResponded: true,
       directory: DIR,
       home: HOME,
-      crossProjectStatus,
+      externalFileStatus,
     })
     expect(result).toHaveLength(1)
     expect(result[0].file).toBe("~/other-project/bar.ts")
     expect(result[0].status).toBe("deleted")
   })
 
-  test("crossProjectStatus does not affect files NOT in the status map", () => {
-    const crossProjectStatus = new Map([["~/other-project/bar.ts", "deleted" as const]])
+  test("externalFileStatus does not affect files NOT in the status map", () => {
+    const externalFileStatus = new Map([["~/other-project/bar.ts", "deleted" as const]])
     const result = mergeServerAndToolDiffs({
       serverDiffs: [diff("src/foo.ts")],
       toolDiffs: [diff("~/other-project/baz.ts", "patch", 1, 0, "added")],
       serverResponded: true,
       directory: DIR,
       home: HOME,
-      crossProjectStatus,
+      externalFileStatus,
     })
     const baz = result.find((d) => d.file === "~/other-project/baz.ts")
     expect(baz).toBeDefined()
     expect(baz!.status).toBe("added")
   })
 
-  test("crossProjectStatus with empty map has no effect", () => {
-    const crossProjectStatus = new Map<string, "deleted">()
+  test("externalFileStatus with empty map has no effect", () => {
+    const externalFileStatus = new Map<string, "deleted">()
     const result = mergeServerAndToolDiffs({
       serverDiffs: [],
       toolDiffs: [diff("~/other-project/bar.ts", "patch", 1, 0, "added")],
       serverResponded: true,
       directory: DIR,
       home: HOME,
-      crossProjectStatus,
+      externalFileStatus,
     })
     expect(result).toHaveLength(1)
     expect(result[0].status).toBe("added")
+  })
+
+  test("externalFileStatus overrides status to 'deleted' for in-project server diffs", () => {
+    // Server still returns the file (snapshot-based diff shows "added"),
+    // but the watcher detected an external deletion. Override the status.
+    const externalFileStatus = new Map([["~/harmoniqs/amicode/test.md", "deleted" as const]])
+    const result = mergeServerAndToolDiffs({
+      serverDiffs: [diff("test.md", "patch", 3, 0, "added")],
+      toolDiffs: [diff("~/harmoniqs/amicode/test.md", "tool-patch", 3, 0, "added")],
+      serverResponded: true,
+      directory: DIR,
+      home: HOME,
+      externalFileStatus,
+    })
+    const entry = result.find((d) => d.file === "~/harmoniqs/amicode/test.md")
+    expect(entry).toBeDefined()
+    expect(entry!.status).toBe("deleted")
+  })
+
+  test("externalFileStatus does not affect in-project server diffs NOT in the map", () => {
+    const externalFileStatus = new Map([["~/harmoniqs/amicode/other.md", "deleted" as const]])
+    const result = mergeServerAndToolDiffs({
+      serverDiffs: [diff("test.md", "patch", 3, 0, "added")],
+      toolDiffs: [],
+      serverResponded: true,
+      directory: DIR,
+      home: HOME,
+      externalFileStatus,
+    })
+    const entry = result.find((d) => d.file === "~/harmoniqs/amicode/test.md")
+    expect(entry).toBeDefined()
+    expect(entry!.status).toBe("added")
   })
 })
 

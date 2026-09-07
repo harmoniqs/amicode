@@ -687,11 +687,12 @@ export default function Page() {
   // file-op-notify message. We track the rename so the tool-metadata diffs
   // (which still have the old path) are displayed at the new location.
   const [fileRenames, setFileRenames] = createSignal(new Map<string, string>())
-  // --- Cross-project file status tracking (#844) ---
-  // When the FileWatcherBridge in the extension host detects that a cross-project
-  // file has been deleted, it posts fs-diff-invalidate. We track the deletion
-  // status here so mergeServerAndToolDiffs can override the tool-metadata status.
-  const [crossProjectStatus, setCrossProjectStatus] = createSignal(new Map<string, "deleted">())
+  // --- External file status tracking (#844) ---
+  // When the FileWatcherBridge in the extension host detects that a file has
+  // been deleted (or recreated), it posts fs-diff-invalidate. We track the
+  // status here so mergeServerAndToolDiffs can override the original status
+  // for both in-project and cross-project files.
+  const [externalFileStatus, setExternalFileStatus] = createSignal(new Map<string, "deleted">())
   const onFileOpNotify = (e: MessageEvent) => {
     const d = e.data as { source?: string; kind?: string; op?: string; oldPath?: string; newPath?: string; home?: string } | undefined
     if (d?.source !== "amicode" || d?.kind !== "file-op-notify") return
@@ -728,7 +729,7 @@ export default function Page() {
   onCleanup(() => window.removeEventListener("message", onFileOpNotify))
 
   // #844: fs-diff-invalidate — the FileWatcherBridge detected a change to a
-  // file we're watching. Update crossProjectStatus for deletions and bump
+  // file we're watching. Update externalFileStatus for deletions and bump
   // diff_version to trigger a server refetch.
   const onFsDiffInvalidate = (e: MessageEvent) => {
     const d = e.data as { source?: string; kind?: string; file?: string; changeType?: string } | undefined
@@ -740,27 +741,23 @@ export default function Page() {
     const dir = sdk().directory
     const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
     const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
-    const projectPrefix = prefix + "/"
     const normFile = toHomePath(d.file, home, prefix)
-    // Only track cross-project deletions — in-project files trust the server
-    if (!normFile.startsWith(projectPrefix)) {
-      if (d.changeType === "deleted") {
-        setCrossProjectStatus((prev) => {
-          const next = new Map(prev)
-          next.set(normFile, "deleted")
-          return next
-        })
-      } else {
-        // File was recreated or modified — clear any stale deletion status
-        setCrossProjectStatus((prev) => {
-          if (!prev.has(normFile)) return prev
-          const next = new Map(prev)
-          next.delete(normFile)
-          return next
-        })
-      }
+    if (d.changeType === "deleted") {
+      setExternalFileStatus((prev) => {
+        const next = new Map(prev)
+        next.set(normFile, "deleted")
+        return next
+      })
+    } else {
+      // File was recreated or modified — clear any stale deletion status
+      setExternalFileStatus((prev) => {
+        if (!prev.has(normFile)) return prev
+        const next = new Map(prev)
+        next.delete(normFile)
+        return next
+      })
     }
-    // Bump diff_version to trigger a server refetch (in-project files benefit too)
+    // Bump diff_version to trigger a server refetch
     sync().set("diff_version", sessionID, (v: number | undefined) => (v ?? 0) + 1)
   }
   window.addEventListener("message", onFsDiffInvalidate)
@@ -840,7 +837,7 @@ export default function Page() {
       serverResponded,
       directory: dir,
       home,
-      crossProjectStatus: crossProjectStatus(),
+      externalFileStatus: externalFileStatus(),
     })
   })
 
