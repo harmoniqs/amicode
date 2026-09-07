@@ -65,6 +65,7 @@ export const dict = {
   "command.agent.cycle.description": "Przełącz na następnego agenta",
   "command.agent.cycle.reverse": "Przełącz agenta wstecz",
   "command.agent.cycle.reverse.description": "Przełącz na poprzedniego agenta",
+  "agent.picker.implied": "niejawny",
   "command.model.variant.cycle": "Przełącz wysiłek myślowy",
   "command.model.variant.cycle.description": "Przełącz na następny poziom wysiłku",
   "command.prompt.mode.shell": "Terminal",

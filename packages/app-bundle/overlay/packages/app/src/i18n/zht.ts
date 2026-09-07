@@ -75,6 +75,7 @@ export const dict = {
   "command.agent.cycle.description": "切換到下一個代理程式",
   "command.agent.cycle.reverse": "反向循環代理程式",
   "command.agent.cycle.reverse.description": "切換到上一個代理程式",
+  "agent.picker.implied": "隱式",
   "command.model.variant.cycle": "循環思考強度",
   "command.model.variant.cycle.description": "切換到下一個強度等級",
   "command.prompt.mode.shell": "Shell",

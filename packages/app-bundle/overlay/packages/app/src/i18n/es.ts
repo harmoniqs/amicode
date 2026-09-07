@@ -71,6 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Cambiar al siguiente agente",
   "command.agent.cycle.reverse": "Alternar agente hacia atrás",
   "command.agent.cycle.reverse.description": "Cambiar al agente anterior",
+  "agent.picker.implied": "implícito",
   "command.model.variant.cycle": "Alternar esfuerzo de pensamiento",
   "command.model.variant.cycle.description": "Cambiar al siguiente nivel de esfuerzo",
   "command.prompt.mode.shell": "Shell",

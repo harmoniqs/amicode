@@ -65,6 +65,7 @@ export const dict = {
   "command.agent.cycle.description": "التبديل إلى الوكيل التالي",
   "command.agent.cycle.reverse": "تغيير الوكيل للخلف",
   "command.agent.cycle.reverse.description": "التبديل إلى الوكيل السابق",
+  "agent.picker.implied": "ضمني",
   "command.model.variant.cycle": "تغيير جهد التفكير",
   "command.model.variant.cycle.description": "التبديل إلى مستوى الجهد التالي",
   "command.prompt.mode.shell": "Shell",
