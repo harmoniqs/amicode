@@ -183,6 +183,17 @@
         "command": "amicode.selectHarness",
         "title": "Select Harness",
         "category": "Amicode"
+      },
+      {
+        "command": "amicode.cycleAgent",
+        "title": "Amicode: Cycle Agent"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "amicode.cycleAgent",
+        "key": "shift+tab",
+        "when": "activeWebviewPanelId == 'amicode.chat'"
       }
     ],
     "configuration": {

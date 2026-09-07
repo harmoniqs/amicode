@@ -255,7 +255,23 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
   gate: false,
   init: () => {
     const platform = usePlatform()
-    const [store, setStore, settingsInit, ready] = persisted("settings.v3", createStore<Settings>(defaultSettings))
+    const [store, setStore, settingsInit, ready] = persisted(
+      {
+        key: "settings.v3",
+        migrate: (value: unknown) => {
+          // #878: agent.cycle keybind changed from "mod+." to "shift+tab".
+          // Strip the stale override so the new default takes effect.
+          if (value && typeof value === "object" && "keybinds" in value) {
+            const kb = (value as Record<string, unknown>).keybinds
+            if (kb && typeof kb === "object" && (kb as Record<string, unknown>).agent_cycle === "mod+.") {
+              delete (kb as Record<string, string>).agent_cycle
+            }
+          }
+          return value
+        },
+      },
+      createStore<Settings>(defaultSettings),
+    )
     const [launch, setLaunch, , launchReady] = persisted(
       "app-version.v1",
       createStore<{ version?: string }>({ version: undefined }),

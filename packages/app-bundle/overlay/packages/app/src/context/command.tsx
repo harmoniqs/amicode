@@ -275,7 +275,20 @@ export const { use: useCommand, provider: CommandProvider } = createSimpleContex
 
     type CommandCatalog = Record<string, CommandCatalogItem>
     const [catalog, setCatalog, _, catalogReady] = persisted(
-      Persist.global("command.catalog.v1"),
+      {
+        ...Persist.global("command.catalog.v1"),
+        migrate: (value: unknown) => {
+          // #878: agent.cycle keybind changed from "mod+." to "shift+tab".
+          // Clear the stale catalog entry so the live registration overwrites it.
+          if (value && typeof value === "object") {
+            const v = value as Record<string, { keybind?: string }>
+            if (v.agent_cycle?.keybind === "mod+.") {
+              delete v.agent_cycle
+            }
+          }
+          return value
+        },
+      },
       createStore<CommandCatalog>({}),
     )
 
