@@ -16,9 +16,6 @@ export type ProjectType = "research" | "dev" | "environment";
  *   2. `research-project.toml` exists → `"research"`
  *   3. Otherwise → `"dev"`
  *
- * Environment takes priority (handles the monorepo root case where both
- * manifests might coexist).
- *
  * Re-evaluated on each call — no caching — so a directory that gains
  * a manifest after initial registration updates its type on next
  * resolution.

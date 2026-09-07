@@ -1,13 +1,15 @@
-// resolve_environment.test.ts — fixture-based tests for the four-strategy
+// resolve_environment.test.ts — fixture-based tests for the three-strategy
 // environment resolution + edge cases. Part of #882.
+//
+// Multi-repo only: walk-up was removed — projects and environments are always
+// separate repos linked by [environment].slug (or .path).
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   resolveEnvironment,
   invalidateEnvironmentCache,
-  type ResolvedEnvironment,
 } from "../../src/project/resolve_environment";
 
 describe("resolveEnvironment", () => {
@@ -42,45 +44,7 @@ describe("resolveEnvironment", () => {
     writeFileSync(join(dir, "research-project.toml"), toml);
   }
 
-  // ── Strategy 1: walk-up ────────────────────────────────────────────────
-
-  it("walk-up: finds environment in parent directory", () => {
-    const envDir = tmpDir;
-    makeEnv(envDir, "my-env", "My Env");
-    const projectDir = join(envDir, "projects", "my-project");
-    makeProject(projectDir);
-
-    const result = resolveEnvironment(projectDir, [tmpDir]);
-    expect(result).not.toBeNull();
-    expect(result!.slug).toBe("my-env");
-    expect(result!.name).toBe("My Env");
-    expect(result!.path).toBe(envDir);
-  });
-
-  it("walk-up: stops at workspace folder root (AC-53)", () => {
-    // Environment is ABOVE the workspace root — should NOT be found
-    const wsRoot = join(tmpDir, "workspace");
-    mkdirSync(wsRoot, { recursive: true });
-    makeEnv(tmpDir, "above-ws");
-    const projectDir = join(wsRoot, "my-project");
-    makeProject(projectDir);
-
-    const result = resolveEnvironment(projectDir, [wsRoot]);
-    expect(result).toBeNull();
-  });
-
-  it("walk-up: finds environment at the workspace root itself", () => {
-    const wsRoot = join(tmpDir, "workspace");
-    makeEnv(wsRoot, "ws-env");
-    const projectDir = join(wsRoot, "projects", "child");
-    makeProject(projectDir);
-
-    const result = resolveEnvironment(projectDir, [wsRoot]);
-    expect(result).not.toBeNull();
-    expect(result!.slug).toBe("ws-env");
-  });
-
-  // ── Strategy 2: explicit path ──────────────────────────────────────────
+  // ── Strategy 1: explicit path ──────────────────────────────────────────
 
   it("explicit path: resolves via [environment].path in project TOML", () => {
     const envDir = join(tmpDir, "shared-env");
@@ -104,7 +68,7 @@ describe("resolveEnvironment", () => {
     expect(result).toBeNull();
   });
 
-  // ── Strategy 3: workspace scan ─────────────────────────────────────────
+  // ── Strategy 2: workspace scan ─────────────────────────────────────────
 
   it("workspace scan: finds environment in a sibling workspace folder", () => {
     const envDir = join(tmpDir, "env-folder");
@@ -118,7 +82,7 @@ describe("resolveEnvironment", () => {
     expect(result!.path).toBe(envDir);
   });
 
-  // ── Strategy 4: registry ───────────────────────────────────────────────
+  // ── Strategy 3: registry ───────────────────────────────────────────────
 
   it("registry: finds environment from ~/.amico/environments.toml", () => {
     const envDir = join(tmpDir, "registered-env");
@@ -135,6 +99,26 @@ describe("resolveEnvironment", () => {
     expect(result!.path).toBe(envDir);
   });
 
+  // ── Priority: explicit path wins over workspace scan ───────────────────
+
+  it("explicit path wins over workspace scan when both match", () => {
+    // Environment A: reachable via explicit path
+    const envA = join(tmpDir, "env-explicit");
+    makeEnv(envA, "env-a", "Env A");
+
+    // Environment B: reachable via workspace scan (same slug as project's [environment].slug)
+    const envB = join(tmpDir, "env-workspace");
+    makeEnv(envB, "env-a", "Env B"); // same slug, different dir
+
+    const projectDir = join(tmpDir, "my-project");
+    makeProject(projectDir, { slug: "env-a", path: envA });
+
+    // Both strategies could match — explicit path should win
+    const result = resolveEnvironment(projectDir, [projectDir, envB]);
+    expect(result).not.toBeNull();
+    expect(result!.path).toBe(envA);
+  });
+
   // ── Edge cases ─────────────────────────────────────────────────────────
 
   it("project without [environment] section returns null (AC-4)", () => {
@@ -149,8 +133,8 @@ describe("resolveEnvironment", () => {
     const envDir = join(tmpDir, "bad-env");
     mkdirSync(envDir, { recursive: true });
     writeFileSync(join(envDir, "research-environment.toml"), "this is not valid toml {{{{");
-    const projectDir = join(envDir, "projects", "test");
-    makeProject(projectDir);
+    const projectDir = join(tmpDir, "my-project");
+    makeProject(projectDir, { slug: "bad", path: envDir });
 
     const result = resolveEnvironment(projectDir, [tmpDir]);
     expect(result).toBeNull();
@@ -163,36 +147,18 @@ describe("resolveEnvironment", () => {
       join(envDir, "research-environment.toml"),
       `schema_version = 999\nname = "future"\nslug = "future"\ncreated = "2026-09-07"\n`,
     );
-    const projectDir = join(envDir, "projects", "test");
-    makeProject(projectDir);
+    const projectDir = join(tmpDir, "my-project");
+    makeProject(projectDir, { slug: "future", path: envDir });
 
     const result = resolveEnvironment(projectDir, [tmpDir]);
     expect(result).toBeNull();
   });
 
-  it("walk-up vs explicit slug conflict: prefers walk-up", () => {
-    // Walk-up environment
-    const walkupEnv = tmpDir;
-    makeEnv(walkupEnv, "walkup-env");
-
-    // Explicit path environment (different slug)
-    const explicitEnv = join(tmpDir, "other-env");
-    makeEnv(explicitEnv, "explicit-env");
-
-    // Project has [environment].slug pointing to explicit, but walk-up finds walkup-env
-    const projectDir = join(tmpDir, "projects", "child");
-    makeProject(projectDir, { slug: "explicit-env", path: explicitEnv });
-
-    const result = resolveEnvironment(projectDir, [tmpDir]);
-    expect(result).not.toBeNull();
-    expect(result!.slug).toBe("walkup-env");
-  });
-
   it("caches result per project path", () => {
-    const envDir = tmpDir;
+    const envDir = join(tmpDir, "cached-env");
     makeEnv(envDir, "cached-env");
-    const projectDir = join(envDir, "projects", "test");
-    makeProject(projectDir);
+    const projectDir = join(tmpDir, "my-project");
+    makeProject(projectDir, { slug: "cached-env", path: envDir });
 
     const first = resolveEnvironment(projectDir, [tmpDir]);
     expect(first).not.toBeNull();

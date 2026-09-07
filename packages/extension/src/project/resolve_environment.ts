@@ -1,20 +1,18 @@
-// resolve_environment.ts — Four-strategy environment resolution for a given
+// resolve_environment.ts — Three-strategy environment resolution for a given
 // project path. Part of #882 (sub-issue of #880 Research Environments).
 //
-// Resolution order:
-//   1. Walk-up: look for research-environment.toml in ancestor directories,
-//      stopping at the workspace folder root
-//   2. Explicit path: read [environment].path from the project's TOML
-//   3. Workspace scan: check sibling workspace folders for a matching slug
-//   4. Registry: look up the slug in ~/.amico/environments.toml
+// Resolution order (multi-repo only — monorepo topology is not supported):
+//   1. Explicit path: read [environment].path from the project's TOML
+//   2. Workspace scan: check sibling workspace folders for a matching slug
+//   3. Registry: look up the slug in ~/.amico/environments.toml
 //
-// Walk-up wins over explicit path when both resolve (physical topology is
-// authoritative). All failures are null + console.warn — never thrown errors.
+// All strategies require an [environment] section in the project's TOML.
+// All failures are null + console.warn — never thrown errors.
 //
 // NO VS Code API dependency — `workspaceRoots` is passed by the caller.
 
 import { existsSync, readFileSync } from "node:fs";
-import { join, dirname, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseToml } from "smol-toml";
 
@@ -118,32 +116,7 @@ function readProjectEnvironmentSection(
 
 // ── Strategy implementations ────────────────────────────────────────────────
 
-/** Strategy 1: Walk up from projectDir, stopping at any workspace root. */
-function walkUp(
-  projectDir: string,
-  workspaceRoots: string[],
-): ResolvedEnvironment | null {
-  const rootSet = new Set(workspaceRoots.map((r) => resolve(r)));
-  let current = resolve(projectDir);
-
-  // Walk up, including the project dir itself (but typically skipped since
-  // a project dir doesn't have research-environment.toml)
-  while (true) {
-    const env = readEnvManifest(current);
-    if (env) return env;
-
-    // Stop if we've reached a workspace root
-    if (rootSet.has(current)) break;
-
-    const parent = dirname(current);
-    if (parent === current) break; // filesystem root
-    current = parent;
-  }
-
-  return null;
-}
-
-/** Strategy 2: Resolve via [environment].path in the project TOML. */
+/** Strategy 1: Resolve via [environment].path in the project TOML. */
 function explicitPath(projectDir: string): ResolvedEnvironment | null {
   const section = readProjectEnvironmentSection(projectDir);
   if (!section?.path) return null;
@@ -161,7 +134,7 @@ function explicitPath(projectDir: string): ResolvedEnvironment | null {
   return env;
 }
 
-/** Strategy 3: Scan workspace folders for one whose manifest slug matches. */
+/** Strategy 2: Scan workspace folders for one whose manifest slug matches. */
 function workspaceScan(
   projectDir: string,
   workspaceRoots: string[],
@@ -179,7 +152,7 @@ function workspaceScan(
   return null;
 }
 
-/** Strategy 4: Look up the slug in the environment registry. */
+/** Strategy 3: Look up the slug in the environment registry. */
 function registryLookup(
   projectDir: string,
   registryPath: string,
@@ -217,8 +190,9 @@ function registryLookup(
  * Resolve the research environment for a project directory.
  * Returns null if no environment is found or all candidates are invalid.
  *
- * Resolution order: walk-up → explicit path → workspace scan → registry.
- * Walk-up wins over explicit path (physical topology is authoritative).
+ * Resolution order: explicit path → workspace scan → registry.
+ * All strategies require an [environment] section in the project's TOML
+ * (multi-repo topology only — projects and environments are separate repos).
  *
  * Results are cached per project path. Call `invalidateEnvironmentCache()`
  * when manifest files change.
@@ -236,28 +210,21 @@ export function resolveEnvironment(
 
   const registryPath = opts?.registryPath ?? join(homedir(), ".amico", "environments.toml");
 
-  // Strategy 1: walk-up (physical topology — authoritative)
-  const walkUpResult = walkUp(projectPath, workspaceRoots);
-  if (walkUpResult) {
-    cache.set(key, walkUpResult);
-    return walkUpResult;
-  }
-
-  // Strategy 2: explicit [environment].path
+  // Strategy 1: explicit [environment].path
   const explicitResult = explicitPath(projectPath);
   if (explicitResult) {
     cache.set(key, explicitResult);
     return explicitResult;
   }
 
-  // Strategy 3: workspace folder scan
+  // Strategy 2: workspace folder scan
   const scanResult = workspaceScan(projectPath, workspaceRoots);
   if (scanResult) {
     cache.set(key, scanResult);
     return scanResult;
   }
 
-  // Strategy 4: registry lookup
+  // Strategy 3: registry lookup
   const regResult = registryLookup(projectPath, registryPath);
   if (regResult) {
     cache.set(key, regResult);
