@@ -71,6 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Skift til næste agent",
   "command.agent.cycle.reverse": "Skift agent baglæns",
   "command.agent.cycle.reverse.description": "Skift til forrige agent",
+  "agent.picker.implied": "implicit",
   "command.model.variant.cycle": "Skift tænkeindsats",
   "command.model.variant.cycle.description": "Skift til næste indsatsniveau",
   "command.prompt.mode.shell": "Shell",

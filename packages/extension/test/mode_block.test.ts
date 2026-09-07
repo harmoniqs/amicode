@@ -94,7 +94,7 @@ function readProbeLines(out: string): ProbeLine[] {
 //
 // Boots the pinned binary with OPENCODE_CONFIG_CONTENT registering the probe
 // plugin (the same registration mechanism the extension uses for
-// amicode_context.ts), a config-declared `autodev` director agent, and a
+// amicode_context.ts), a config-declared `develop` director agent, and a
 // fixture provider whose baseURL is a DEAD local port: model RESOLUTION is
 // offline (config models are metadata), the transform hook fires in
 // LLMRequestPrep.prepare BEFORE the provider SDK loads and before the network
@@ -126,7 +126,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         $schema: "https://opencode.ai/config.json",
         plugin: [PROBE_PLUGIN, CONTEXT_PLUGIN],
         agent: {
-          autodev: {
+          develop: {
             description: "the fixture director agent",
             prompt: "You are the fixture director. This turn's answer never matters.",
           },
@@ -234,7 +234,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         const created = await fetch(`http://127.0.0.1:${port}/session`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ agent: "autodev" }),
+          body: JSON.stringify({ agent: "develop" }),
           // (#830) the FIRST session spins up the instance lazily — the
           // plugin factory + the cold-HOME package install happen inside
           // this POST on a fresh runner; 10s aborted it on CI. 60s is the
@@ -246,7 +246,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(typeof session.id).toBe("string");
         sessionID = session.id!;
         // the wire contract's first leg: the session's own agent round-trips
-        expect(session.agent, "GET /session response did not carry the created agent on the wire").toBe("autodev");
+        expect(session.agent, "GET /session response did not carry the created agent on the wire").toBe("develop");
 
         // (3) the probe plugin LOADED with the session's instance and its
         //     factory got the engine client (the same PluginInput handoff
@@ -259,7 +259,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(factory.has_messages, "the engine client has no session.messages callable (the A1 leg's transport)").toBe(true);
         expect(factory.has_directory, "the plugin factory input did not carry the directory").toBe(true);
 
-        // (4) prompt the session — the user message lands with agent=autodev,
+        // (4) prompt the session — the user message lands with agent=develop,
         //     the LLM request prepares, the transform fires, the probe
         //     resolves session.get from INSIDE the hook. The turn itself then
         //     dies on the dead provider port (connection refused, retried) —
@@ -273,7 +273,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             parts: [{ type: "text", text: "resolve the posture" }],
-            agent: "autodev",
+            agent: "develop",
             model: { providerID: "fixtureprov", modelID: "fixturemodel" },
           }),
         });
@@ -293,7 +293,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(
           resolution.agent,
           "session.get returned but Session.Info.agent is absent — the primary path is insufficient",
-        ).toBe("autodev");
+        ).toBe("develop");
 
         // (6) (A1, PR #814 review fold) PIN THE MESSAGES-ORDERING FACT LIVE.
         //     fallbackResolve picks the LAST assistant message by ARRAY ORDER
@@ -312,7 +312,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             parts: [{ type: "text", text: "resolve the posture, again" }],
-            agent: "autodev",
+            agent: "develop",
             model: { providerID: "fixtureprov", modelID: "fixturemodel" },
           }),
         });
@@ -350,7 +350,7 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
         expect(
           mAgents,
           "session.messages did not carry the per-message agent on the wire — the fallback's read data is absent",
-        ).toEqual(mAgents.map(() => "autodev"));
+        ).toEqual(mAgents.map(() => "develop"));
 
         // (7) the PRODUCT context plugin LOADS cleanly under the pinned
         //     binary's Bun runtime (a broken sibling import or a bad
@@ -389,13 +389,13 @@ describe.skipIf(!existsSync(OC_BIN))("H4 FIRST — the session-API availability 
           factory_has_client: factoryRec?.has_client === true,
           hook_fires_with_sessionID: typeof transformRec?.sessionID === "string" && transformRec.sessionID === sessionID,
           session_get_resolves_inside_hook: resolveRec?.ok === true,
-          info_agent_round_trips: resolveRec?.agent === "autodev",
+          info_agent_round_trips: resolveRec?.agent === "develop",
           messages_endpoint_ascending: idsAscending,
           per_message_agent_on_the_wire:
             lastMessages !== undefined &&
             Array.isArray(lastMessages.agents) &&
             (lastMessages.agents as Array<unknown>).length > 0 &&
-            (lastMessages.agents as Array<unknown>).every((a) => a === "autodev"),
+            (lastMessages.agents as Array<unknown>).every((a) => a === "develop"),
         };
         const outcome = {
           fixture: "session-api-availability",
@@ -458,6 +458,7 @@ async function waitFor(out: string, pred: (l: ProbeLine) => boolean, ms: number)
 import {
   buildModeBlock,
   PLUGIN_SUPPORTED_MODE_BUNDLE_VERSION,
+  PLUGIN_MODE_ID_ALIASES,
   compareModeVersionsPlugin,
   UNRESOLVABLE_HEADLINE,
 } from "../opencode-plugin/mode_block";
@@ -466,6 +467,7 @@ import {
   checkConsumerFloor,
   compareModeVersions,
   SUPPORTED_MODE_BUNDLE_VERSION,
+  MODE_ID_ALIASES,
 } from "@amicode/schema";
 
 const UNRESOLVABLE_LINE = "posture: unresolvable — re-bind from the ledger";
@@ -488,7 +490,7 @@ function stagedRegistry(
   } = {},
 ): string {
   const modesRoot = mkdtempSync(join(tmpdir(), "mode-block-reg-"));
-  const modes = opts.modes ?? [{ mode: "autodev" }, { mode: "autoresearch" }];
+  const modes = opts.modes ?? [{ mode: "develop" }, { mode: "research" }];
   for (const m of modes) {
     const dir = join(modesRoot, m.mode);
     mkdirSync(dir, { recursive: true });
@@ -525,7 +527,7 @@ function stagedRegistry(
     if (!m.omitPack) {
       writeFileSync(
         join(dir, "pack.toml"),
-        m.mode === "autoresearch"
+        m.mode === "research"
           ? [
               'closing_artifact = "validated-findings record"',
               "",
@@ -549,7 +551,7 @@ function stagedRegistry(
               "",
               "[[handoffs]]",
               'kind = "issue_seed"',
-              'target = "autodev"',
+              'target = "develop"',
             ].join("\n") + "\n"
           : [
               'closing_artifact = "landed-delta record"',
@@ -575,7 +577,7 @@ function stagedRegistry(
               "",
               "[[handoffs]]",
               'kind = "hypothesis_seed"',
-              'target = "autoresearch"',
+              'target = "research"',
             ].join("\n") + "\n",
       );
     }
@@ -641,12 +643,12 @@ const deps = (registryRoot: string, client: ReturnType<typeof fakeClient>["clien
 describe("H4 — the posture-binding map (D4: a MAP, not a heuristic)", () => {
   it("a director-agent session emits the stamped `## Active mode` block (primary resolution)", async () => {
     const reg = stagedRegistry();
-    const { client, calls } = fakeClient({ agent: "autodev" });
+    const { client, calls } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
     expect(block!.startsWith("## Active mode")).toBe(true);
     // posture name
-    expect(block!).toContain("posture: `autodev`");
+    expect(block!).toContain("posture: `develop`");
     // the phase/gate summary read from the registry bundle
     expect(block!).toContain("decompose");
     expect(block!).toContain("dev-gate");
@@ -654,8 +656,8 @@ describe("H4 — the posture-binding map (D4: a MAP, not a heuristic)", () => {
     // the ledger path convention read from the bundle card's generated region
     expect(block!).toContain("sessions/session-<YYYYMMDD>-<slug>.md");
     // the stamp: resolved agent id + registry digest
-    expect(block!).toContain("agent=autodev");
-    expect(block!).toContain("mode=autodev");
+    expect(block!).toContain("agent=develop");
+    expect(block!).toContain("mode=develop");
     expect(block!).toContain("resolved=primary");
     expect(/\bregistry-digest=sha256:[0-9a-f]{64}\b/.test(block!)).toBe(true);
     expect(calls.get).toBe(1); // primary path — one session.get, no messages read
@@ -665,10 +667,10 @@ describe("H4 — the posture-binding map (D4: a MAP, not a heuristic)", () => {
   it("the block reads the REAL shipped registry bundles correctly (no drift between plugin reader and validator data)", async () => {
     // the real modes/ dir, the way the extension stages it — the block's
     // summary must match the real packs the shared validator enforces.
-    const { client } = fakeClient({ agent: "autodev" });
+    const { client } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock({ sessionID: "ses_x", engineClient: client, registryRoot: join(EXT, "modes") });
     expect(block).not.toBeNull();
-    expect(block!).toContain("posture: `autodev`");
+    expect(block!).toContain("posture: `develop`");
     expect(block!).toContain("dev-gate");
     expect(block!).toContain("blocked-by-clearance");
     expect(block!).toContain("tdd-red-green");
@@ -676,10 +678,10 @@ describe("H4 — the posture-binding map (D4: a MAP, not a heuristic)", () => {
     expect(block!).toContain("review");
     // the real card's generated region (the ledger discovery rule) is spliced
     expect(block!).toContain("LEDGER DISCOVERY RULE v1");
-    // and the autoresearch bundle binds its own agent
-    const { client: c2 } = fakeClient({ agent: "autoresearch" });
+    // and the research bundle binds its own agent
+    const { client: c2 } = fakeClient({ agent: "research" });
     const b2 = await buildModeBlock({ sessionID: "ses_y", engineClient: c2, registryRoot: join(EXT, "modes") });
-    expect(b2).toContain("posture: `autoresearch`");
+    expect(b2).toContain("posture: `research`");
   });
 
   it.each(["plan", "build", "implementer", "hypothesizer", "reviewer"])(
@@ -709,24 +711,79 @@ describe("H4 — the posture-binding map (D4: a MAP, not a heuristic)", () => {
 
   it("a machine with NO staged registry (pre-registry build) emits nothing — silent is honest, the doctor owns the staleness verdict", async () => {
     const reg = join(mkdtempSync(join(tmpdir(), "mode-block-noreg-")), "modes"); // never created
-    const { client } = fakeClient({ agent: "autodev" });
+    const { client } = fakeClient({ agent: "develop" });
     expect(await buildModeBlock(deps(reg, client))).toBeNull();
   });
 
   it("a bundle whose manifest is missing/unparseable is SKIPPED (mid-staging or corrupt — the doctor names it), and its agent does NOT bind by name", async () => {
     const reg = stagedRegistry({
       modes: [
-        { mode: "autodev", omitManifest: true },
-        { mode: "autoresearch" },
+        { mode: "develop", omitManifest: true },
+        { mode: "research" },
       ],
     });
-    // autodev's bundle is unreadable: no binding exists → copilot-silent (the
+    // develop's bundle is unreadable: no binding exists → copilot-silent (the
     // doctor's verdict owns the corruption; the plugin never guesses)
-    const { client } = fakeClient({ agent: "autodev" });
+    const { client } = fakeClient({ agent: "develop" });
     expect(await buildModeBlock(deps(reg, client))).toBeNull();
     // the OTHER bundle still serves its sessions normally
-    const { client: c2 } = fakeClient({ agent: "autoresearch" });
-    expect((await buildModeBlock(deps(reg, c2)))!).toContain("posture: `autoresearch`");
+    const { client: c2 } = fakeClient({ agent: "research" });
+    expect((await buildModeBlock(deps(reg, c2)))!).toContain("posture: `research`");
+  });
+});
+
+describe("the read-resolve alias — old-id sessions bind the renamed posture (#858, spec-20260907-011500 D1)", () => {
+  // Append-only artifacts (old sessions) legitimately carry the pre-rename
+  // agent ids forever; resolution happens at READ time, never by rewriting
+  // the artifact. The binding map lookup resolves the session's agent id
+  // through the alias table before matching.
+  it("a session whose agent is the old id `autodev` emits the `develop` posture block", async () => {
+    const reg = stagedRegistry({ modes: [{ mode: "develop" }, { mode: "research" }] });
+    const { client } = fakeClient({ agent: "autodev" });
+    const block = await buildModeBlock(deps(reg, client));
+    expect(block).not.toBeNull();
+    expect(block!).toContain("posture: `develop`");
+    // the stamp names the session's ACTUAL agent id and the resolved mode —
+    // the artifact is never rewritten, the posture is never guessed
+    expect(block!).toContain("agent=autodev");
+    expect(block!).toContain("mode=develop");
+  });
+
+  it("a session whose agent is the old id `autoresearch` emits the `research` posture block", async () => {
+    const reg = stagedRegistry({ modes: [{ mode: "develop" }, { mode: "research" }] });
+    const { client } = fakeClient({ agent: "autoresearch" });
+    const block = await buildModeBlock(deps(reg, client));
+    expect(block).not.toBeNull();
+    expect(block!).toContain("posture: `research`");
+    expect(block!).toContain("agent=autoresearch");
+    expect(block!).toContain("mode=research");
+  });
+
+  it("the fallback path resolves the alias too (an old-id assistant message binds the renamed posture)", async () => {
+    const reg = stagedRegistry({ modes: [{ mode: "develop" }, { mode: "research" }] });
+    const { client } = fakeClient({
+      getThrows: true,
+      messages: [
+        { id: "msg_001", role: "user", agent: "autoresearch" },
+        { id: "msg_002", role: "assistant", agent: "autoresearch" },
+      ],
+    });
+    const block = await buildModeBlock(deps(reg, client));
+    expect(block).not.toBeNull();
+    expect(block!).toContain("posture: `research`");
+    expect(block!).toContain("resolved=fallback");
+  });
+
+  it("`build` is not aliased — an explicit build session stays copilot-silent (it exits the picker, not the vocabulary)", async () => {
+    const reg = stagedRegistry({ modes: [{ mode: "develop" }, { mode: "research" }] });
+    const { client } = fakeClient({ agent: "build" });
+    expect(await buildModeBlock(deps(reg, client))).toBeNull();
+  });
+
+  it("an old id with NO renamed bundle staged stays copilot-silent (an alias resolves onto a real bundle, never into a guess)", async () => {
+    const reg = stagedRegistry({ modes: [{ mode: "research" }] });
+    const { client } = fakeClient({ agent: "autodev" }); // develop's bundle is not staged
+    expect(await buildModeBlock(deps(reg, client))).toBeNull();
   });
 });
 
@@ -735,10 +792,10 @@ describe("H4 — compaction survival (the block is per-request, from session sta
     const reg = stagedRegistry();
     // history DROPPED: no messages at all — the block must come from session
     // state alone (session.get), exactly the post-compaction shape.
-    const { client, calls } = fakeClient({ agent: "autodev", messages: null });
+    const { client, calls } = fakeClient({ agent: "develop", messages: null });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
-    expect(block!).toContain("posture: `autodev`");
+    expect(block!).toContain("posture: `develop`");
     expect(calls.get).toBe(1);
     expect(calls.messages).toBe(0); // the history was never consulted
   });
@@ -772,21 +829,21 @@ describe("H4 — the unresolvable line (staged bundle, no resolution)", () => {
 
 describe("H4 — honest degradation (resolved director posture, missing bundle parts)", () => {
   it("a missing pack.toml emits the block with a degraded line NAMING it (no phase/gate summary fabricated)", async () => {
-    const reg = stagedRegistry({ modes: [{ mode: "autodev", omitPack: true }] });
-    const { client } = fakeClient({ agent: "autodev" });
+    const reg = stagedRegistry({ modes: [{ mode: "develop", omitPack: true }] });
+    const { client } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
-    expect(block!).toContain("posture: `autodev`");
+    expect(block!).toContain("posture: `develop`");
     expect(block!).toContain("DEGRADED");
     expect(block!).toContain("pack.toml"); // the missing part is NAMED
     expect(block!).not.toContain("dev-gate"); // nothing fabricated
     expect(block!).toContain("LEDGER DISCOVERY RULE v1"); // the readable parts still bind
-    expect(block!).toContain("agent=autodev");
+    expect(block!).toContain("agent=develop");
   });
 
   it("a missing card.md names it and omits the ledger rule section", async () => {
-    const reg = stagedRegistry({ modes: [{ mode: "autodev", omitCard: true }] });
-    const { client } = fakeClient({ agent: "autodev" });
+    const reg = stagedRegistry({ modes: [{ mode: "develop", omitCard: true }] });
+    const { client } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
     expect(block!).toContain("DEGRADED");
@@ -795,8 +852,8 @@ describe("H4 — honest degradation (resolved director posture, missing bundle p
   });
 
   it("a card present but missing its generated region names the region", async () => {
-    const reg = stagedRegistry({ modes: [{ mode: "autodev", omitRegion: true }] });
-    const { client } = fakeClient({ agent: "autodev" });
+    const reg = stagedRegistry({ modes: [{ mode: "develop", omitRegion: true }] });
+    const { client } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
     expect(block!).toContain("DEGRADED");
@@ -806,8 +863,8 @@ describe("H4 — honest degradation (resolved director posture, missing bundle p
 
 describe("H4 — the plugin version gap (the loud failure, never silence)", () => {
   it("a bundle floor above the plugin's supported version emits the unresolvable block with the gap render (byte-parity with checkConsumerFloor)", async () => {
-    const reg = stagedRegistry({ modes: [{ mode: "autodev", pluginFloor: "2" }] });
-    const { client } = fakeClient({ agent: "autodev" });
+    const reg = stagedRegistry({ modes: [{ mode: "develop", pluginFloor: "2" }] });
+    const { client } = fakeClient({ agent: "develop" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
     expect(block!.startsWith("## Active mode")).toBe(true);
@@ -816,11 +873,11 @@ describe("H4 — the plugin version gap (the loud failure, never silence)", () =
     const gap = checkConsumerFloor({ doctor: "1", plugin: "2", stager: "1", tests: "1" }, "plugin", "1");
     expect(gap.ok).toBe(false);
     if (!gap.ok) expect(block!).toContain(gap.render);
-    expect(block!).not.toContain("posture: `autodev`"); // never a guessed posture over an untrustable registry
+    expect(block!).not.toContain("posture: `develop`"); // never a guessed posture over an untrustable registry
   });
 
   it("the version gap is loud even for a session that would otherwise bind copilot — the map itself is untrustable", async () => {
-    const reg = stagedRegistry({ modes: [{ mode: "autodev", pluginFloor: "2" }] });
+    const reg = stagedRegistry({ modes: [{ mode: "develop", pluginFloor: "2" }] });
     const { client } = fakeClient({ agent: "plan" });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull(); // NEVER silence on a version gap
@@ -834,36 +891,36 @@ describe("H4 — the last-assistant-message fallback (guarded, decline-correct)"
     const { client, calls } = fakeClient({
       getThrows: true,
       messages: [
-        { id: "msg_001", role: "user", agent: "autoresearch" },
-        { id: "msg_002", role: "assistant", agent: "autoresearch" },
-        { id: "msg_003", role: "user", agent: "autoresearch" }, // same agent — no switch
+        { id: "msg_001", role: "user", agent: "research" },
+        { id: "msg_002", role: "assistant", agent: "research" },
+        { id: "msg_003", role: "user", agent: "research" }, // same agent — no switch
       ],
     });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
-    expect(block!).toContain("posture: `autoresearch`");
+    expect(block!).toContain("posture: `research`");
     expect(block!).toContain("resolved=fallback");
     expect(calls.messages).toBe(1);
   });
 
   it("DECLINES when the agent-switched stream shows a switch newer on the monotonic key — the unresolvable line, never a wrong posture", async () => {
     const reg = stagedRegistry();
-    // the last assistant message ran autoresearch; the user then SWITCHED to
-    // autodev (a newer user message carries the new agent). The fallback would
+    // the last assistant message ran research; the user then SWITCHED to
+    // develop (a newer user message carries the new agent). The fallback would
     // read msg_002's stale agent — it declines instead.
     const { client } = fakeClient({
       getThrows: true,
       messages: [
-        { id: "msg_001", role: "user", agent: "autoresearch" },
-        { id: "msg_002", role: "assistant", agent: "autoresearch" },
-        { id: "msg_003", role: "user", agent: "autodev" }, // the switch — NEWER on the message id (the monotonic key, same store)
+        { id: "msg_001", role: "user", agent: "research" },
+        { id: "msg_002", role: "assistant", agent: "research" },
+        { id: "msg_003", role: "user", agent: "develop" }, // the switch — NEWER on the message id (the monotonic key, same store)
       ],
     });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
     expect(block!).toContain(UNRESOLVABLE_LINE);
-    // never a wrong posture: no autoresearch binding is emitted
-    expect(block!).not.toContain("posture: `autoresearch`");
+    // never a wrong posture: no research binding is emitted
+    expect(block!).not.toContain("posture: `research`");
     expect(block!).not.toContain("resolved=fallback");
   });
 
@@ -872,7 +929,7 @@ describe("H4 — the last-assistant-message fallback (guarded, decline-correct)"
     const { client } = fakeClient({
       getThrows: true,
       messages: [
-        { id: "msg_001", role: "assistant", agent: "autodev" },
+        { id: "msg_001", role: "assistant", agent: "develop" },
         { id: "msg_002", role: "user", agent: "implementer" }, // dispatched cast switch, newer key
       ],
     });
@@ -927,6 +984,10 @@ describe("H4 — parity with the shared validator (the plugin stays dependency-f
     expect(PLUGIN_SUPPORTED_MODE_BUNDLE_VERSION).toBe(SUPPORTED_MODE_BUNDLE_VERSION);
   });
 
+  it("the plugin's mode-id alias table ≡ schema's MODE_ID_ALIASES (#858 — read-resolve, both ids forever)", () => {
+    expect(PLUGIN_MODE_ID_ALIASES).toEqual(MODE_ID_ALIASES);
+  });
+
   it("the unresolvable headline is byte-exact the spec's D4 line", () => {
     expect(UNRESOLVABLE_HEADLINE).toBe(UNRESOLVABLE_LINE);
   });
@@ -944,10 +1005,10 @@ describe("H4 — parity with the shared validator (the plugin stays dependency-f
 
   it("the raw-payload client shape (older call shapes) is tolerated — same unwrap idiom as session_spawn.ts", async () => {
     const reg = stagedRegistry();
-    const { client } = fakeClient({ agent: "autodev", rawShape: true });
+    const { client } = fakeClient({ agent: "develop", rawShape: true });
     const block = await buildModeBlock(deps(reg, client));
     expect(block).not.toBeNull();
-    expect(block!).toContain("posture: `autodev`");
+    expect(block!).toContain("posture: `develop`");
   });
 });
 

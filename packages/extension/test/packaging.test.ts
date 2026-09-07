@@ -16,7 +16,7 @@ const PUBLIC_WORKFLOW_SKILLS = [
   "implement-issue",
   "write-an-issue",
   "break-into-subissues",
-  "autodev",
+  "develop",
   // #820 — the dual-lens SOTA survey skill (living-sota D1): public with the
   // same shipping discipline; a dropped copy = the loops' external-currency
   // survey never stages.
@@ -80,24 +80,24 @@ const REQUIRED = [
   // #807 — the PUBLIC workflow skill set (spec-20260905-063000 D2, ADR-0011
   // amendment: workflow public, package-proprietary gated). A dropped copy =
   // the 2026-09-03 missing-director-core incident on every Marketplace
-  // machine: the autodev card points at skills that never stage.
+  // machine: the develop card points at skills that never stage.
   "extension/skills/director-core/SKILL.md",
   "extension/skills/develop/SKILL.md",
   "extension/skills/implement-issue/SKILL.md",
   "extension/skills/write-an-issue/SKILL.md",
   "extension/skills/break-into-subissues/SKILL.md",
-  "extension/skills/autodev/SKILL.md",
+  "extension/skills/develop/SKILL.md",
   "extension/skills/sota-review/SKILL.md", // #820 — the public SOTA survey skill must ship (living-sota D1)
   // #804 — the mode registry: the bundles the activation stager deploys and
   // the doctor probes ship in the vsix; a dropped modes/ = zero staged
   // bundles on every Marketplace machine (packaging.test runs on the built
   // vsix — the pin fires in the package gate).
-  "extension/modes/autodev/mode.toml",
-  "extension/modes/autodev/pack.toml",
-  "extension/modes/autodev/card.md",
-  "extension/modes/autoresearch/mode.toml",
-  "extension/modes/autoresearch/pack.toml",
-  "extension/modes/autoresearch/card.md",
+  "extension/modes/develop/mode.toml",
+  "extension/modes/develop/pack.toml",
+  "extension/modes/develop/card.md",
+  "extension/modes/research/mode.toml",
+  "extension/modes/research/pack.toml",
+  "extension/modes/research/card.md",
   "extension/modes/release-index.toml",
   // amicode_* plugin (Bun-transpiled .ts, loaded by absolute path) — every sibling
   // is load-bearing: a dropped file silently reverts the session to vanilla opencode.
@@ -143,7 +143,7 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
       /extension\/skills\/.+\/SKILL\.md/.test(listing),
       "no shipped skill SKILL.md — skills/ was excluded from the vsix",
     ).toBe(true);
-    // #807 — the five workflow skills + the autodev mode-protocol skill are
+    // #807 — the five workflow skills + the develop mode-protocol skill are
     // PUBLIC with in-repo canonical copies (ADR-0011 amendment): each must
     // ship. The PROPRIETARY set must never appear in the artifact — the
     // package-proprietary skills (`*-dev`) stay vault-only, never ship.
@@ -183,10 +183,10 @@ describe("in-repo skill library — repo-boundary leak guard (ADR-0003 as amende
   it("the public workflow skills ARE the shipped set with revision-pinned frontmatter; the proprietary `-dev` set stays absent (AC5 → #807's policy of record)", () => {
     const names = readdirSync(SKILLS_DIR);
     // ADR-0011 amendment (2026-09-05, workflow-public / package-proprietary):
-    // the five dev-workflow skills + autodev are PUBLIC in-repo canonical
+    // the five dev-workflow skills + develop are PUBLIC in-repo canonical
     // copies — the old "dev skills stay internal" pin is superseded by the
     // amended policy, and this test now pins the NEW boundary: the five +
-    // autodev present with shipping frontmatter (public + source + revision);
+    // develop present with shipping frontmatter (public + source + revision);
     // the package-proprietary set (`*-dev`) stays out of the shipped library
     // (vault-only, never ships).
     for (const name of PUBLIC_WORKFLOW_SKILLS) {

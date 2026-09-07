@@ -46,4 +46,4 @@ name = "integrate"
 
 [[handoffs]]
 kind = "hypothesis_seed"
-target = "autoresearch"
+target = "research"

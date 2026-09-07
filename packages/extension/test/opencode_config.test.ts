@@ -107,9 +107,15 @@ describe("buildOpencodeConfigContent", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
     expect(cfg.agent ?? {}).toEqual({}); // no custom agents: the interview lives in AGENTS.md, agent-agnostic
   });
-  it("pins default_agent to plan (plan-first posture — ordered picker plan → build → autodev → autoresearch)", () => {
+  it("pins default_agent to plan (plan-first posture — the three named modes plan → develop → research)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.default_agent).toBe("plan"); // plan first; Agent.list keeps default first then alphabetical (custom sort makes build second)
+    expect(cfg.default_agent).toBe("plan"); // plan first; the picker order is agent_order's, honored app-side
+  });
+  it("writes agent_order: plan → develop → research (#858 — the fixed picker order, #305's field)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
+    expect(cfg.agent_order).toEqual(["plan", "develop", "research"]);
+    // `build` is NOT in the named set — it exits the picker, not the vocabulary
+    expect(cfg.agent_order).not.toContain("build");
   });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override), and the MCP server's environment follows BOTH", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";
@@ -264,7 +270,7 @@ describe.skipIf(!existsSync(OC_BIN))("opencode config injection + merge (1.17.3)
     // the MCP transport is declared for the REAL binary to consume:
     expect(cfg.mcp?.amicode?.type).toBe("local");
     expect(cfg.mcp?.amicode?.command?.[1]?.endsWith(join("bin", "dist", "mcp-amico.mjs"))).toBe(true);
-    // #389: the pulse-designer agent shell is retired; default is plan (ordered picker plan → build → autodev → autoresearch).
+    // #389: the pulse-designer agent shell is retired; default is plan (ordered picker plan → build → develop → research).
     expect(cfg.agent?.["pulse-designer"]).toBeUndefined();
     expect(cfg.default_agent).toBe("plan");
   });

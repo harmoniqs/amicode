@@ -63,12 +63,12 @@ describe("the shipped registry validates (one validator, two consumers)", () => 
   });
 
   it("each bundle validates on its own too", () => {
-    validationOk(validateModeBundle(join(MODES_DIR, "autodev"), { extensionRoot: EXT }));
-    validationOk(validateModeBundle(join(MODES_DIR, "autoresearch"), { extensionRoot: EXT }));
+    validationOk(validateModeBundle(join(MODES_DIR, "develop"), { extensionRoot: EXT }));
+    validationOk(validateModeBundle(join(MODES_DIR, "research"), { extensionRoot: EXT }));
   });
 
   it("the modes directory holds exactly the two director bundles + the release index", () => {
-    expect(readdirSync(MODES_DIR).sort()).toEqual(["autodev", "autoresearch", "release-index.toml"]);
+    expect(readdirSync(MODES_DIR).sort()).toEqual(["develop", "release-index.toml", "research"]);
   });
 });
 
@@ -83,7 +83,7 @@ describe("the shipped registry validates (one validator, two consumers)", () => 
 // posture-blind — the exact failure this slice exists to close).
 describe("the posture-binding map: each manifest declares its binding agent (#808)", () => {
   it("both shipped manifests declare their binding agent", () => {
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       const manifest = parseModeManifest(readFileSync(join(MODES_DIR, mode, "mode.toml"), "utf8"));
       expect(manifest.agent, `${mode}/mode.toml must declare the agent id that binds its mode`).toBe(mode);
     }
@@ -91,9 +91,9 @@ describe("the posture-binding map: each manifest declares its binding agent (#80
 
   it("a manifest with NO declared agent fails the manifest schema, named", () => {
     const root = bundleCopy();
-    const manifestPath = join(root, "modes", "autodev", "mode.toml");
-    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(/^agent = "autodev"\n/m, ""));
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    const manifestPath = join(root, "modes", "develop", "mode.toml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(/^agent = "develop"\n/m, ""));
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /agent/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -101,9 +101,9 @@ describe("the posture-binding map: each manifest declares its binding agent (#80
 
   it("a manifest whose declared agent is not a valid agent id fails the schema", () => {
     const root = bundleCopy();
-    const manifestPath = join(root, "modes", "autodev", "mode.toml");
-    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('agent = "autodev"', 'agent = "Not An Agent"'));
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    const manifestPath = join(root, "modes", "develop", "mode.toml");
+    writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('agent = "develop"', 'agent = "Not An Agent"'));
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /agent/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -112,7 +112,7 @@ describe("the posture-binding map: each manifest declares its binding agent (#80
 
 describe("bundle card parity (legacy staging stays authoritative — AC9)", () => {
   it("each bundle card.md is byte-identical to the legacy agents/ card it mirrors", () => {
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       expect(readFileSync(join(MODES_DIR, mode, "card.md"), "utf8")).toBe(
         readFileSync(join(AGENTS_DIR, `${mode}.md`), "utf8"),
       );
@@ -123,8 +123,8 @@ describe("bundle card parity (legacy staging stays authoritative — AC9)", () =
 describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () => {
   it("missing pack.toml → fails, named", () => {
     const root = bundleCopy();
-    rmSync(join(root, "modes", "autodev", "pack.toml"));
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    rmSync(join(root, "modes", "develop", "pack.toml"));
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /pack\.toml/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -133,7 +133,7 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
   it("missing manifest-declared role file → fails, role named", () => {
     const root = bundleCopy();
     rmSync(join(root, "agents", "implementer.md"));
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /implementer/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -142,7 +142,7 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
   it("missing handoff-seed schema → fails, seed named", () => {
     const root = bundleCopy();
     rmSync(join(root, "handoff-seeds", "issue-seed.schema.json"));
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /issue-seed\.schema\.json/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -150,8 +150,8 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
 
   it("missing card.md → fails, named", () => {
     const root = bundleCopy();
-    rmSync(join(root, "modes", "autoresearch", "card.md"));
-    const v = validateModeBundle(join(root, "modes", "autoresearch"), { extensionRoot: root });
+    rmSync(join(root, "modes", "research", "card.md"));
+    const v = validateModeBundle(join(root, "modes", "research"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /card\.md/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -159,7 +159,7 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
 
   it("a pack phase with zero gates fails the gate-pack schema (declared phases carry gates)", () => {
     const v = validateGatePack(
-      'closing_artifact = "x"\n\n[[phases]]\nname = "decompose"\n\n[[handoffs]]\nkind = "issue_seed"\ntarget = "autodev"\n',
+      'closing_artifact = "x"\n\n[[phases]]\nname = "decompose"\n\n[[handoffs]]\nkind = "issue_seed"\ntarget = "develop"\n',
     );
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /gates/.test(e))).toBe(true);
@@ -168,21 +168,21 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
   it("declared-set consistency: a manifest role absent from the pack fails; a pack role undeclared in the manifest fails", () => {
     // manifest declares a role the pack never casts
     const root = bundleCopy();
-    const manifestPath = join(root, "modes", "autodev", "mode.toml");
+    const manifestPath = join(root, "modes", "develop", "mode.toml");
     writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace(
       'name = "implementer"',
       'name = "librarian"\npath = "../../agents/librarian.md"',
     ));
-    let v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    let v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /librarian/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
 
     // the pack casts a role the manifest never declares
     const root2 = bundleCopy();
-    const packPath = join(root2, "modes", "autoresearch", "pack.toml");
+    const packPath = join(root2, "modes", "research", "pack.toml");
     writeFileSync(packPath, readFileSync(packPath, "utf8").replace('roles = ["analyzer"]', 'roles = ["analyzer", "librarian"]'));
-    v = validateModeBundle(join(root2, "modes", "autoresearch"), { extensionRoot: root2 });
+    v = validateModeBundle(join(root2, "modes", "research"), { extensionRoot: root2 });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /librarian/.test(e))).toBe(true);
     rmSync(root2, { recursive: true, force: true });
@@ -192,8 +192,8 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
     // corrupt the dev pack's handoff to target a mode that does not exist
     const root = bundleCopy();
     writeFileSync(
-      join(root, "modes", "autodev", "pack.toml"),
-      readFileSync(join(root, "modes", "autodev", "pack.toml"), "utf8").replace('target = "autoresearch"', 'target = "nonexistent-mode"'),
+      join(root, "modes", "develop", "pack.toml"),
+      readFileSync(join(root, "modes", "develop", "pack.toml"), "utf8").replace('target = "research"', 'target = "nonexistent-mode"'),
     );
     const v = validateModeRegistry(join(root, "modes"), root);
     expect(v.ok).toBe(false);
@@ -203,8 +203,8 @@ describe("a bundle missing a DECLARED component fails (declared-set, AC1)", () =
 
   it("a malformed manifest fails the manifest schema with named errors", () => {
     const root = bundleCopy();
-    writeFileSync(join(root, "modes", "autodev", "mode.toml"), 'schema_version = "99"\nmode = "autodev"\n');
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    writeFileSync(join(root, "modes", "develop", "mode.toml"), 'schema_version = "99"\nmode = "develop"\n');
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /schema_version/.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
@@ -221,7 +221,7 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
   });
 
   it("both bundle cards carry the region byte-identical to the generator", () => {
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       const card = readFileSync(join(MODES_DIR, mode, "card.md"), "utf8");
       expect(classifyLedgerDiscoveryRegion(card).status).toBe("ok");
       expect(card).toContain(region);
@@ -234,7 +234,7 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
     const close = skill.indexOf("```", open + "```text".length);
     const skillBlock = skill.slice(open, close + 3);
     expect(region).toContain(skillBlock);
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       const card = readFileSync(join(MODES_DIR, mode, "card.md"), "utf8");
       expect(card).toContain(skillBlock);
     }
@@ -245,13 +245,13 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
   });
 
   it("classification: a missing region is a named mismatch", () => {
-    const card = readFileSync(join(MODES_DIR, "autodev", "card.md"), "utf8");
+    const card = readFileSync(join(MODES_DIR, "develop", "card.md"), "utf8");
     const c = classifyLedgerDiscoveryRegion(card.replace(region, ""));
     expect(c.status).toBe("missing");
   });
 
   it("classification: an outdated stamp is a named mismatch (regenerate-and-compare detects)", () => {
-    const card = readFileSync(join(MODES_DIR, "autodev", "card.md"), "utf8");
+    const card = readFileSync(join(MODES_DIR, "develop", "card.md"), "utf8");
     const c = classifyLedgerDiscoveryRegion(
       card.replace(`generator=${MODE_GENERATOR_VERSION}`, "generator=v0"),
     );
@@ -259,7 +259,7 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
   });
 
   it("the stamp never authorizes a pass: a FORGED current stamp over divergent bytes still fails", () => {
-    const card = readFileSync(join(MODES_DIR, "autodev", "card.md"), "utf8");
+    const card = readFileSync(join(MODES_DIR, "develop", "card.md"), "utf8");
     const tampered = card.replace(
       "Path convention — the session ledger lives in the personal vault at",
       "Path convention — TAMPERED hand-edited region body",
@@ -270,22 +270,22 @@ describe("the ledger-discovery-rule generated region (AC8)", () => {
     expect(c.status).toBe("divergent");
     // and the bundle validator refuses it
     const root = bundleCopy();
-    writeFileSync(join(root, "modes", "autodev", "card.md"), tampered);
-    const v = validateModeBundle(join(root, "modes", "autodev"), { extensionRoot: root });
+    writeFileSync(join(root, "modes", "develop", "card.md"), tampered);
+    const v = validateModeBundle(join(root, "modes", "develop"), { extensionRoot: root });
     expect(v.ok).toBe(false);
     expect(v.errors.some((e) => /generated region|divergent|ledger-discovery/i.test(e))).toBe(true);
     rmSync(root, { recursive: true, force: true });
   });
 
   it("an unmarked hand-edited region body (delimiters stripped) is the missing case, never a pass", () => {
-    const card = readFileSync(join(MODES_DIR, "autodev", "card.md"), "utf8");
+    const card = readFileSync(join(MODES_DIR, "develop", "card.md"), "utf8");
     const stripped = card.replace(/<!-- AMICO-GENERATED[^\n]*-->\n/g, "");
     expect(classifyLedgerDiscoveryRegion(stripped).status).toBe("missing");
   });
 });
 
 describe("version floors (AC5 — per-consumer floor map)", () => {
-  const floors = parseModeManifest(readFileSync(join(MODES_DIR, "autodev", "mode.toml"), "utf8")).consumer_floors;
+  const floors = parseModeManifest(readFileSync(join(MODES_DIR, "develop", "mode.toml"), "utf8")).consumer_floors;
   const CONSUMERS = ["doctor", "plugin", "stager", "tests"] as const;
 
   it("the shipped manifest carries a floor for every consumer kind", () => {
@@ -364,7 +364,7 @@ registry_revision = 1
 
 describe("gate packs validate through the shared schema (re-homed)", () => {
   it("both shipped packs pass validateGatePack", () => {
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       const pack = readFileSync(join(MODES_DIR, mode, "pack.toml"), "utf8");
       const v = validateGatePack(pack);
       validationOk(v as unknown as ModeBundleValidation);

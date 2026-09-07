@@ -11,8 +11,8 @@ import { validateGatePack } from "@amicode/schema";
 // pack schema, forward + reverse mapping completeness, non-triviality
 // floors, distinctness, and faithfulness of the extraction.
 //
-// #804 re-home: the packs live in their mode bundles — modes/autodev/pack.toml
-// and modes/autoresearch/pack.toml — same tests, new home. The structural
+// #804 re-home: the packs live in their mode bundles — modes/develop/pack.toml
+// and modes/research/pack.toml — same tests, new home. The structural
 // schema checks now run through the shared validator (validateGatePack), the
 // same code the amico-run doctor probe imports; the fixture-content floors
 // stay here.
@@ -24,7 +24,7 @@ const PACK_DIR = MODES_DIR; // each bundle's pack.toml — the registry layout
 
 const GATE_KINDS = ["mechanical", "human", "derived"] as const;
 const HANDOFF_KINDS = ["issue_seed", "hypothesis_seed"] as const;
-const HANDOFF_TARGETS = ["autoresearch", "autodev"] as const;
+const HANDOFF_TARGETS = ["research", "develop"] as const;
 
 interface Gate {
   name: string;
@@ -54,8 +54,8 @@ function loadPack(file: string): Pack {
   return parse(fs.readFileSync(path.join(PACK_DIR, file), "utf8")) as unknown as Pack;
 }
 
-const research = loadPack(path.join("autoresearch", "pack.toml"));
-const dev = loadPack(path.join("autodev", "pack.toml"));
+const research = loadPack(path.join("research", "pack.toml"));
+const dev = loadPack(path.join("develop", "pack.toml"));
 const PACKS: Array<[string, Pack]> = [
   ["research", research],
   ["dev", dev],
@@ -95,15 +95,15 @@ function gateByName(pack: Pack, name: string): Gate {
 describe("gate-pack fixtures of record", () => {
   it("the packs live inside their mode bundles (the registry re-home, #804) — no stray gate-packs dir", () => {
     // the registry layout: one bundle per director mode, pack.toml inside
-    expect(fs.readdirSync(MODES_DIR).sort()).toEqual(["autodev", "autoresearch", "release-index.toml"]);
+    expect(fs.readdirSync(MODES_DIR).sort()).toEqual(["develop", "release-index.toml", "research"]);
     expect(fs.existsSync(path.join(EXT, "gate-packs"))).toBe(false);
-    for (const [name, mode] of [["dev", "autodev"], ["research", "autoresearch"]] as const) {
+    for (const [name, mode] of [["dev", "develop"], ["research", "research"]] as const) {
       expect(fs.existsSync(path.join(MODES_DIR, mode, "pack.toml")), `${name} pack in its bundle`).toBe(true);
     }
   });
 
   it("both packs pass the SHARED validator's gate-pack schema (one code path with the doctor)", () => {
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       const v = validateGatePack(fs.readFileSync(path.join(MODES_DIR, mode, "pack.toml"), "utf8"));
       expect(v.errors, `${mode}: ${v.errors.join("; ")}`).toEqual([]);
       expect(v.ok).toBe(true);
@@ -309,7 +309,7 @@ describe("research pack extraction (faithful to the director research protocol)"
     expect((research.handoffs ?? []).length).toBeGreaterThanOrEqual(1);
     for (const handoff of research.handoffs ?? []) {
       expect(handoff.kind).toBe("issue_seed");
-      expect(handoff.target).toBe("autodev");
+      expect(handoff.target).toBe("develop");
     }
   });
 });
@@ -361,7 +361,7 @@ describe("dev pack extraction (faithful to the issue-DAG walk)", () => {
     expect((dev.handoffs ?? []).length).toBeGreaterThanOrEqual(1);
     for (const handoff of dev.handoffs ?? []) {
       expect(handoff.kind).toBe("hypothesis_seed");
-      expect(handoff.target).toBe("autoresearch");
+      expect(handoff.target).toBe("research");
     }
   });
 });

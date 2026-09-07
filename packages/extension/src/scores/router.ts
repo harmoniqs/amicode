@@ -28,7 +28,7 @@ export function buildRouterSection(visible: Score[]): string {
     "actually shows:",
     "",
     "- **Resume the active problem** — ONLY when the stack state shows one; name it and where it stands (system ✓ / formulation ✓ / mid-solve).",
-    "- **Resume your research campaign** — ONLY when a session ledger exists under the personal vault's `sessions/`; the autoresearch director re-reads the latest ledger and continues the loop.",
+    "- **Resume your research campaign** — ONLY when a session ledger exists under the personal vault's `sessions/`; the research director re-reads the latest ledger and continues the loop.",
     "- **Fleet & studio ops** — ONLY when fleet state is present; status digest, sync rituals, healthcheck.",
     "- **Bring your own problem** — papers, notes, or a graph file; extract candidate entities, confirm each one before recording, then join the best-matching workflow.",
     "- **Just explore** — free-form; no rail.",

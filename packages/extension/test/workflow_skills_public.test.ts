@@ -1,9 +1,13 @@
 // workflow_skills_public.test.ts — the public workflow skill surface (#807,
-// spec-20260905-063000 D2): the five dev-workflow skills + the NEW `autodev`
+// spec-20260905-063000 D2): the five dev-workflow skills + the `autodev`
 // mode-protocol skill live as in-repo canonical copies under
 // packages/extension/skills/ with `surface: public`. This file pins:
 //
-//   - the `autodev` skill's structure, mirroring `autoresearch` (entry
+//   - the `autodev` skill's structure, mirroring `research` (#858 renamed
+//     the mode autodev→develop, autoresearch→research; the mode-protocol
+//     skill keeps its id — the workflow skill `develop` owns that id — and
+//     the read-resolve alias covers the old mode id everywhere)
+//     (entry
 //     points, loop bound to the dev pack's phases/gates, ledger discipline,
 //     honest degradation naming what is missing, handoff section with the
 //     mid-session switch marked PENDING-D5 — parameterized on D5 state per
@@ -38,23 +42,28 @@ const SIX = [
 const skillText = (name: string): string =>
   readFileSync(join(SKILLS, name, "SKILL.md"), "utf8");
 
-// ── the autodev skill: structure mirroring autoresearch (D2) ──────────────────
+// ── the autodev skill: the develop mode's protocol, mirroring research (D2,
+//    renamed per spec-20260907-011500 D1) ──────────────────────────────────
+// The MODE is `develop` (#858); the mode-protocol skill's id stays `autodev`
+// (the workflow skill `develop` owns that id — the read-resolve alias covers
+// the old mode id at every reference surface). The mirror skill renames
+// cleanly: `autoresearch` → `research`.
 
-describe("the autodev mode-protocol skill (#807, D2 — mirrors autoresearch)", () => {
+describe("the autodev mode-protocol skill of the develop mode (#807, D2 — mirrors research)", () => {
   const autodev = skillText("autodev");
-  const autoresearch = skillText("autoresearch");
+  const research = skillText("research");
 
   it("carries the three entry points (the agent card, the skill itself, kickoff-prompt lines)", () => {
-    expect(autodev).toMatch(/## Autodev|entry points/i);
+    expect(autodev).toMatch(/## Develop|entry points/i);
     expect(autodev).toMatch(/Entry points/i);
-    // mirroring autoresearch's entry-point shape: card, skill, kickoff lines
+    // mirroring research's entry-point shape: card, skill, kickoff lines
     expect(autodev).toMatch(/agent card/i);
     expect(autodev).toMatch(/kickoff/i);
-    expect(autoresearch).toMatch(/Entry points/i); // the mirror's shape — guard against drifting the mirror
+    expect(research).toMatch(/Entry points/i); // the mirror's shape — guard against drifting the mirror
   });
 
   it("binds the loop to the dev pack's phases and gates (read from the landed registry's bundle, not prose)", () => {
-    const pack = readFileSync(join(MODES, "autodev", "pack.toml"), "utf8");
+    const pack = readFileSync(join(MODES, "develop", "pack.toml"), "utf8");
     for (const phase of ["decompose", "implement", "integrate"]) {
       expect(pack, `the shipped pack carries the ${phase} phase`).toMatch(new RegExp(`^name = "${phase}"`, "m"));
       expect(autodev, `the skill binds the ${phase} phase`).toContain(phase);
@@ -64,7 +73,7 @@ describe("the autodev mode-protocol skill (#807, D2 — mirrors autoresearch)", 
       expect(autodev, `the skill binds the ${gate} gate`).toContain(gate);
     }
     // and the mode's manifest declares the skill among its protocol skills
-    const manifest = readFileSync(join(MODES, "autodev", "mode.toml"), "utf8");
+    const manifest = readFileSync(join(MODES, "develop", "mode.toml"), "utf8");
     expect(manifest).toMatch(/"autodev"/);
   });
 
@@ -79,11 +88,11 @@ describe("the autodev mode-protocol skill (#807, D2 — mirrors autoresearch)", 
     expect(autodev).toMatch(/## Handoffs/);
     expect(autodev).toContain("issue"); // receives the issue seed (issue-seed schema)
     expect(autodev).toContain("hypothesis"); // emits the hypothesis seed
-    // the pack's handoff target is autoresearch — the skill's emit matches it
-    const pack = readFileSync(join(MODES, "autodev", "pack.toml"), "utf8");
+    // the pack's handoff target is research — the skill's emit matches it
+    const pack = readFileSync(join(MODES, "develop", "pack.toml"), "utf8");
     expect(pack).toMatch(/hypothesis_seed/);
-    expect(pack).toMatch(/target = "autoresearch"/);
-    expect(autodev).toMatch(/autoresearch/);
+    expect(pack).toMatch(/target = "research"/);
+    expect(autodev).toMatch(/research/);
   });
 
   it("the handoff section marks the mid-session switch PENDING-D5 — parameterized: the assertion flips when slice 5 lands", () => {
@@ -111,7 +120,7 @@ describe("the autodev mode-protocol skill (#807, D2 — mirrors autoresearch)", 
     }
     // names the ABSENT BUNDLE PARTS case (card / gate pack not staged)
     expect(section).toMatch(/Absent bundle parts/i);
-    expect(section).toMatch(/gate pack|modes\/autodev/i);
+    expect(section).toMatch(/gate pack|modes\/develop/i);
     expect(section).toMatch(/never pretend|do not fabricate|never a silent/i);
     // and the absent dispatch surface (the walk's own fallback)
     expect(section).toMatch(/Absent dispatch surface/i);

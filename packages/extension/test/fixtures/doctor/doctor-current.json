@@ -55,19 +55,19 @@
       ],
       "components": [
         {
-          "mode": "autodev",
+          "mode": "develop",
           "component": "card.md",
           "verdict": "current",
           "evidence": [
-            "component autodev/card.md byte-matches release v0.3.2"
+            "component develop/card.md byte-matches release v0.3.2"
           ]
         },
         {
-          "mode": "autodev",
+          "mode": "develop",
           "component": "pack.toml",
           "verdict": "current",
           "evidence": [
-            "component autodev/pack.toml byte-matches release v0.3.2"
+            "component develop/pack.toml byte-matches release v0.3.2"
           ]
         },
         {
@@ -92,19 +92,19 @@
       ],
       "components": [
         {
-          "mode": "autodev",
+          "mode": "develop",
           "component": "card.md",
           "verdict": "current",
           "evidence": [
-            "component autodev/card.md byte-matches release v0.3.2"
+            "component develop/card.md byte-matches release v0.3.2"
           ]
         },
         {
-          "mode": "autodev",
+          "mode": "develop",
           "component": "pack.toml",
           "verdict": "current",
           "evidence": [
-            "component autodev/pack.toml byte-matches release v0.3.2"
+            "component develop/pack.toml byte-matches release v0.3.2"
           ]
         },
         {

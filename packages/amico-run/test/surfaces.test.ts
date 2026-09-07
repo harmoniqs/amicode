@@ -144,11 +144,11 @@ describe("doctor v2 surface inventory — stale cells", () => {
 
   test("agent-cards-global stale: deployed card tampered (per-card digest diff)", async () => {
     const w = buildDoctorWorld();
-    writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
+    writeFileSync(join(w.config, "agents", "develop.md"), "---\nmode: develop\n---\n# TAMPERED\n");
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    expect(g.evidence.join(" ")).toMatch(/card autodev\.md changed/);
+    expect(g.evidence.join(" ")).toMatch(/card develop\.md changed/);
     const st = bySurface(report, "agent-cards-staging");
     expect(st.verdict).toBe("current"); // the OTHER deployment is unaffected
     cleanup();
@@ -171,12 +171,12 @@ describe("doctor v2 surface inventory — stale cells", () => {
     const w = buildDoctorWorld();
     const receiptPath = join(w.repoAmicode, "packages", "extension", "agents", ".deploy-receipt.json");
     const receipt = JSON.parse(readFileSync(receiptPath, "utf8")) as { sources: { card: string; sha256: string }[] };
-    receipt.sources.find((s) => s.card === "autodev.md")!.sha256 = "sha256:" + "0".repeat(64); // lies about autodev.md, by name — order-independent (the fixture stages the full 7-card surface)
+    receipt.sources.find((s) => s.card === "develop.md")!.sha256 = "sha256:" + "0".repeat(64); // lies about develop.md, by name — order-independent (the fixture stages the full 7-card surface)
     writeFileSync(receiptPath, JSON.stringify(receipt, null, 2) + "\n");
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    expect(g.evidence.join(" ")).toMatch(/receipt source digest for autodev\.md ≠ current source/);
+    expect(g.evidence.join(" ")).toMatch(/receipt source digest for develop\.md ≠ current source/);
     cleanup();
   });
 });
@@ -480,11 +480,11 @@ describe("doctor mode-registry component verdicts (#804)", () => {
       }
       // every bundle component of the fixture registry is walked
       const components = r.components!.map((c) => `${c.mode}/${c.component}`);
-      expect(components).toContain("autodev/card.md");
-      expect(components).toContain("autodev/pack.toml");
-      expect(components).toContain("autodev/mode.toml");
-      expect(components).toContain("autodev/roles/implementer.md");
-      expect(components).toContain("autoresearch/roles/hypothesizer.md");
+      expect(components).toContain("develop/card.md");
+      expect(components).toContain("develop/pack.toml");
+      expect(components).toContain("develop/mode.toml");
+      expect(components).toContain("develop/roles/implementer.md");
+      expect(components).toContain("research/roles/hypothesizer.md");
       expect(components).toContain("registry/release-compare");
       expect(components).toContain("registry/deploy-receipt");
     }
@@ -493,14 +493,14 @@ describe("doctor mode-registry component verdicts (#804)", () => {
 
   test("tampering ONE bundle component flips the record stale with the component NAMED (AC4)", async () => {
     const w = buildDoctorWorld();
-    writeFileSync(join(w.config, "modes", "autoresearch", "pack.toml"), "# TAMPERED PACK\n");
+    writeFileSync(join(w.config, "modes", "research", "pack.toml"), "# TAMPERED PACK\n");
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    const named = componentOf(g, (c) => c.mode === "autoresearch" && c.component === "pack.toml");
+    const named = componentOf(g, (c) => c.mode === "research" && c.component === "pack.toml");
     expect(named).toBeDefined();
     expect(named!.verdict).toBe("stale");
-    expect(named!.evidence.join(" ")).toMatch(/component autoresearch\/pack\.toml changed/);
+    expect(named!.evidence.join(" ")).toMatch(/component research\/pack\.toml changed/);
     // the OTHER deployment is unaffected
     expect(bySurface(report, "agent-cards-staging").verdict).toBe("current");
     cleanup();
@@ -511,11 +511,11 @@ describe("doctor mode-registry component verdicts (#804)", () => {
     // delete the deployed role file: the manifest DECLARES it, the deployed
     // set lacks it — the same violation the vitest-side validator cell
     // pins on the SOURCE tree, judged here on the DEPLOYED tree
-    rmSync(join(w.config, "modes", "autodev", "roles", "implementer.md"), { force: true });
+    rmSync(join(w.config, "modes", "develop", "roles", "implementer.md"), { force: true });
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    const named = componentOf(g, (c) => c.mode === "autodev" && c.component === "roles/implementer.md");
+    const named = componentOf(g, (c) => c.mode === "develop" && c.component === "roles/implementer.md");
     expect(named).toBeDefined();
     expect(named!.verdict).toBe("stale");
     expect(named!.evidence.join(" ")).toMatch(/missing from the deployed set/);
@@ -528,13 +528,13 @@ describe("doctor mode-registry component verdicts (#804)", () => {
   test("a half-staged bundle (card new, roles old) reads stale with roles named — never current (AC4)", async () => {
     const w = buildDoctorWorld();
     // the card keeps matching the release; the role copy is OLD (stale bytes)
-    writeFileSync(join(w.config, "modes", "autodev", "roles", "implementer.md"), "---\nmode: implementer\n---\n# OLD ROLE BYTES\n");
+    writeFileSync(join(w.config, "modes", "develop", "roles", "implementer.md"), "---\nmode: implementer\n---\n# OLD ROLE BYTES\n");
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    const card = componentOf(g, (c) => c.mode === "autodev" && c.component === "card.md");
+    const card = componentOf(g, (c) => c.mode === "develop" && c.component === "card.md");
     expect(card!.verdict).toBe("current"); // the card alone is fine —
-    const role = componentOf(g, (c) => c.mode === "autodev" && c.component === "roles/implementer.md");
+    const role = componentOf(g, (c) => c.mode === "develop" && c.component === "roles/implementer.md");
     expect(role!.verdict).toBe("stale"); // — but the bundle as a unit is stale
     expect(role!.evidence.join(" ")).toMatch(/roles\/implementer\.md changed/);
     cleanup();
@@ -590,12 +590,12 @@ describe("doctor mode-registry component verdicts (#804)", () => {
 
   test("a version gap between the bundle's doctor floor and THIS doctor fails LOUDLY (AC5)", async () => {
     const w = buildDoctorWorld();
-    const manifestPath = join(w.config, "modes", "autodev", "mode.toml");
+    const manifestPath = join(w.config, "modes", "develop", "mode.toml");
     writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('doctor = "1"', 'doctor = "2"'));
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("stale");
-    const floorRow = componentOf(g, (c) => c.mode === "autodev" && c.component === "version-floor");
+    const floorRow = componentOf(g, (c) => c.mode === "develop" && c.component === "version-floor");
     expect(floorRow!.verdict).toBe("failed");
     expect(floorRow!.evidence.join(" ")).toMatch(/version gap/);
     expect(floorRow!.evidence.join(" ")).toMatch(/never a silent degrade/);
@@ -619,7 +619,7 @@ describe("doctor mode-registry component verdicts (#804)", () => {
     // the deployed bytes still match the machine's OWN release — the bundle
     // components themselves are current; the release compare is the staleness
     const g = bySurface(report, "agent-cards-global");
-    expect(componentOf(g, (c) => c.mode === "autodev" && c.component === "card.md")!.verdict).toBe("current");
+    expect(componentOf(g, (c) => c.mode === "develop" && c.component === "card.md")!.verdict).toBe("current");
     cleanup();
   });
 
@@ -671,13 +671,13 @@ describe("doctor mode-registry component verdicts (#804)", () => {
     const w = buildDoctorWorld();
     // drift the CHECKOUT's registry ahead (uncommitted) — deployed matches tag
     writeFileSync(
-      join(w.repoAmicode, "packages", "extension", "modes", "autodev", "pack.toml"),
+      join(w.repoAmicode, "packages", "extension", "modes", "develop", "pack.toml"),
       "# CHECKOUT-ONLY DRIFT\n",
     );
     const report = await surfaceInventory(ctxForWorld(w));
     const g = bySurface(report, "agent-cards-global");
     expect(g.verdict).toBe("current");
-    expect(componentOf(g, (c) => c.mode === "autodev" && c.component === "pack.toml")!.verdict).toBe("current");
+    expect(componentOf(g, (c) => c.mode === "develop" && c.component === "pack.toml")!.verdict).toBe("current");
     cleanup();
   });
 });
@@ -794,7 +794,7 @@ describe("doctor v2 JSON contract", () => {
         {
           surface: "agent-cards-global", version: "1", source_version: "1", verdict: "current", evidence: ["ok"],
           components: [
-            { mode: "autodev", component: "card.md", verdict: "current", evidence: ["byte-matches release"] },
+            { mode: "develop", component: "card.md", verdict: "current", evidence: ["byte-matches release"] },
             { mode: "registry", component: "release-compare", verdict: "stale", evidence: ["current to v0.3.1, stale to release v0.3.2"] },
           ],
         },

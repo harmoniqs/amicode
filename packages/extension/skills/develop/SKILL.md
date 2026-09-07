@@ -19,7 +19,7 @@ Run one or more GitHub issues to completion. Each issue you pass is a **delivera
 
 This is the orchestration layer above the `/implement-issue` leaf: `develop` schedules and integrates; the leaf implements one slice via `tdd`.
 
-**Mode binding:** this skill is the issue-DAG walk. The dev mode's *posture* binding — the loop protocol, the ledger discipline, the handoffs — is the **`autodev`** mode-protocol skill; defer to it for the mode, and to `director-core` for the shared spine.
+**Mode binding:** this skill is the issue-DAG walk inside the **develop** mode (renamed from `autodev`; old ids read-resolve). The dev mode's *posture* binding — the loop protocol, the ledger discipline, the handoffs — is the **`autodev`** mode-protocol skill (its id keeps the pre-rename mode name; the workflow skill owns `develop`); defer to it for the mode, and to `director-core` for the shared spine.
 
 **Announce at start:** "I'm using the develop skill to implement #\<n\> … via Amico."
 
@@ -98,7 +98,7 @@ Engine-specific bindings stay engine-side; this skill names the role. A session 
 
 ## Related skills
 
-- **autodev** — the dev mode's protocol binding; this skill is the walk that runs inside it.
+- **autodev** — the develop mode's protocol binding; this skill is the walk that runs inside it.
 - **implement-issue** — the leaf this skill dispatches per slice (`--orchestrated`).
 - **write-an-issue** / **break-into-subissues** — produce the issues this skill consumes.
 - **tdd** — the RED→GREEN loop the leaf runs inside each slice.

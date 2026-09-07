@@ -43,7 +43,7 @@ plan, and executing approved moves. No CLI middleman for the interactive path.
     hypotheses/            # open questions, future directions
     observations/          # experiment records, results summaries, methodology notes
     literature/            # reading notes
-    campaigns/             # autoresearch campaign ledgers
+    campaigns/             # research campaign ledgers
   reports/
     weekly/                # weekly updates (template.md provided)
     presentations/         # slide decks
@@ -196,7 +196,7 @@ Format:
 | 10 | `Project.toml` | `Project.toml` | stays | Julia package manifest |
 | — | `paper/outline.md` | — | scaffold | template with inferred question |
 | — | `paper/main.tex` | — | scaffold | minimal article template |
-| — | `ledger/campaigns/` | — | scaffold | empty, for autoresearch |
+| — | `ledger/campaigns/` | — | scaffold | empty, for research |
 | — | `reports/weekly/template.md` | — | scaffold | weekly update template |
 | — | `config/system.toml` | — | scaffold | stub |
 | — | `research-project.toml` | — | scaffold | manifest |

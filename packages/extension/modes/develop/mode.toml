@@ -1,4 +1,4 @@
-# The autodev mode bundle manifest — ONE unit (spec-20260905-063000 D1): the
+# The develop mode bundle manifest — ONE unit (spec-20260905-063000 D1): the
 # card, the gate pack, the role cards the mode dispatches, the protocol skills
 # it binds, the handoff seed it receives, the schema version, and the
 # per-consumer minimum-version map. ONE shared validator (packages/schema,
@@ -14,11 +14,11 @@
 # Content parity against the engine-neutral vault definition is seed-gated
 # on Aaron's signature — see docs/seed-gate/role-cards-seed-diff.md.
 schema_version = "1"
-mode = "autodev"
+mode = "develop"
 # The agent id that BINDS this mode (D4 posture-binding map, #808): a session
-# resolved to this agent runs the autodev director posture; every other agent
+# resolved to this agent runs the develop director posture; every other agent
 # id (plan, build, role agents, custom) binds copilot and is silent.
-agent = "autodev"
+agent = "develop"
 card = "card.md"
 pack = "pack.toml"
 
@@ -40,12 +40,13 @@ name = "implementer"
 path = "../../agents/implementer.md"
 
 # The mode's protocol skills (the binding surface). The five dev-workflow
-# skills + the `autodev` mode-protocol skill are PUBLIC with in-repo canonical
-# copies under packages/extension/skills/ (#807, D2, ADR-0011 amendment:
-# workflow public, package-proprietary gated).
+# skills + the `autodev` mode-protocol skill (its id keeps the pre-rename
+# mode name; the mode id is `develop` per spec-20260907-011500 D1) are PUBLIC
+# with in-repo canonical copies under packages/extension/skills/ (#807, D2,
+# ADR-0011 amendment: workflow public, package-proprietary gated).
 
 # The handoff seed this mode RECEIVES: research closes with an issue seed and
-# hands it to autodev (D6). kind → receiving mode is registry data, checked
+# hands it to develop (D6). kind → receiving mode is registry data, checked
 # structurally by the registry-level validator: every pack handoff targeting
 # this mode must emit the kind this manifest declares.
 [[handoff_seeds]]

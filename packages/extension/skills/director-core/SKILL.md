@@ -1,6 +1,6 @@
 ---
 name: director-core
-description: The canonical director-core protocol — the one loop every autonomous campaign runs (plan → dispatch through gates → analyze → record), the session-ledger discovery rule both mode cards quote verbatim, the four core clauses (ledger discipline, cast pattern, compaction honesty, anti-gaming), and the copilot/autoresearch/autodev posture model. Use when authoring or binding a mode card, a gate pack, or a campaign layer that consumes them.
+description: The canonical director-core protocol — the one loop every autonomous campaign runs (plan → dispatch through gates → analyze → record), the session-ledger discovery rule both mode cards quote verbatim, the four core clauses (ledger discipline, cast pattern, compaction honesty, anti-gaming), and the copilot/research/develop posture model (modes renamed from autoresearch/autodev — old ids read-resolve, spec-20260907-011500 D1). Use when authoring or binding a mode card, a gate pack, or a campaign layer that consumes them.
 agents: [orchestrator]
 surface: public
 source: amicode
@@ -11,9 +11,9 @@ revision: 1
 
 One director, one loop, every campaign. This skill is the engine-neutral core
 that mode cards bind; engine mechanics live in the cards, never here. It
-extends the autoresearch protocol's spine — ledger discipline, cast pattern,
+extends the research protocol's spine — ledger discipline, cast pattern,
 compaction honesty, anti-gaming — with the loop abstraction that makes that
-spine mode-general. The autoresearch skill remains the research-mode
+spine mode-general. The research skill remains the research-mode
 instantiation; this file is the shared spine both modes embed, not a copy of
 either protocol.
 
@@ -74,8 +74,8 @@ A **mode** is a posture of the one director, never a new session:
 | Posture | Gate pack | Shape |
 | --- | --- | --- |
 | **copilot** — the zeroth | none (packless) | interactive: answers, designs, runs what the human asks — no autonomous loop, no campaign, no session ledger |
-| **autoresearch** | the research pack | hypothesis queue → deliberate spec → experiment → gates → analyzer |
-| **autodev** | the dev pack | issue DAG → TDD slices → CI/review → landed delta |
+| **research** | the research pack | hypothesis queue → deliberate spec → experiment → gates → analyzer |
+| **develop** | the dev pack | issue DAG → TDD slices → CI/review → landed delta |
 
 A mode switch re-binds the posture and re-reads the ledger (the discovery
 rule above); the session ledger survives every switch. A mode may still
@@ -142,7 +142,7 @@ human-only, always.
 Engine bindings (agent cards, dispatch mechanics, permission tooling) live
 in the mode cards, engine-side. The research loop's specifics — the spec
 gate's review budget, the checkout registry, the probe/experiment boundary —
-stay with the autoresearch skill; the dev walk's — branch and draft-PR
+stay with the research skill; the dev walk's — branch and draft-PR
 lifecycle, worktree binding — stay with the develop and implement-issue
 skills. This file carries only what every campaign shares: the loop, the
 ledger, the cast, the clauses, the postures.

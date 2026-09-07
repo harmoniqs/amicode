@@ -480,6 +480,34 @@ export function checkConsumerFloor(
  *  what the floor map catches). */
 export const SUPPORTED_MODE_BUNDLE_VERSION = "1";
 
+// ── the mode-id read-resolve alias table (spec-20260907-011500 D1, #858) ─────
+//
+// The three-mode surface renamed the director modes: autodev → develop,
+// autoresearch → research. The aliases are READ-RESOLVE, never
+// migrate-on-write: append-only artifacts (session ledgers, spec
+// frontmatter, campaign fixtures) legitimately keep old ids forever and are
+// resolved at read time; tooling that joins on a mode id supports both ids
+// permanently. `build` is deliberately NOT aliased — it exits the PICKER,
+// not the vocabulary (it remains a valid explicit id everywhere:
+// default_agent, spawn params, CLI args).
+//
+// THE ALIAS WINDOW'S EXIT is contract-version-gated, not calendar-gated:
+// removing an alias is NON-ADDITIVE (the freeze validator's rule), so it
+// rides the next CONTRACT-VERSION bump (SUPPORTED_MODE_BUNDLE_VERSION), not
+// a release date. The lint in test/mode_aliases.test.ts pins this gate.
+export const MODE_ID_ALIASES: Record<string, string> = {
+  autodev: "develop",
+  autoresearch: "research",
+};
+
+/** Resolve a mode id through the read-resolve alias table: an old id
+ *  resolves to its renamed mode; every other id (renamed ids, `build`,
+ *  plan, role agents, custom agents) passes through identity. One hop by
+ *  construction — no alias target is itself an alias key. */
+export function resolveModeId(id: string): string {
+  return MODE_ID_ALIASES[id] ?? id;
+}
+
 // ── the release index (AC6) ──────────────────────────────────────────────────
 
 export interface ReleaseIndexEntry {

@@ -47,10 +47,10 @@ const PROVENANCE_PATH = join(AGENTS_DIR, ".seed-provenance.json");
 
 /** The four role cards this slice owns, by bundle. */
 const ROLE_CARDS = {
-  autoresearch: ["hypothesizer", "experimenter", "analyzer"] as const,
-  autodev: ["implementer"] as const,
+  research: ["hypothesizer", "experimenter", "analyzer"] as const,
+  develop: ["implementer"] as const,
 } as const;
-const ALL_ROLES = [...ROLE_CARDS.autoresearch, ...ROLE_CARDS.autodev] as const;
+const ALL_ROLES = [...ROLE_CARDS.research, ...ROLE_CARDS.develop] as const;
 type Role = (typeof ALL_ROLES)[number];
 
 const cardPath = (role: Role): string => join(AGENTS_DIR, `${role}.md`);
@@ -186,7 +186,7 @@ describe("staging — the seeded role cards ride the bundle, digest-verified (H2
     cpSync(join(EXT, "handoff-seeds"), join(src, "handoff-seeds"), { recursive: true });
     const dest = mkdtempSync(join(tmpdir(), "role-cards-dest2-"));
     stageModeBundles(src, dest);
-    const deployedRole = join(dest, "modes", "autodev", "roles", "implementer.md");
+    const deployedRole = join(dest, "modes", "develop", "roles", "implementer.md");
     writeFileSync(deployedRole, "# TAMPERED ROLE\n");
     const r = stageModeBundles(src, dest);
     expect(r.outcome).toBe("staged");

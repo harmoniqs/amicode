@@ -71,6 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Перемкнути на наступного агента",
   "command.agent.cycle.reverse": "Перемкнути агента в зворотному напрямку",
   "command.agent.cycle.reverse.description": "Перемкнути на попереднього агента",
+  "agent.picker.implied": "неявний",
   "command.model.variant.cycle": "Перемкнути рівень мислення",
   "command.model.variant.cycle.description": "Перемкнути на наступний рівень зусилля",
   "command.prompt.mode.shell": "Команда",

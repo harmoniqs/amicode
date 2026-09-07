@@ -95,7 +95,7 @@ describe("stageModeBundles — the full-bundle stage", () => {
     const dest = freshDest();
     const r = stageModeBundles(src, dest);
     expect(r.outcome).toBe("staged");
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       for (const f of BUNDLE_FILES(mode)) {
         expect(existsSync(join(dest, "modes", mode, f)), `missing ${mode}/${f}`).toBe(true);
         expect(readFileSync(join(dest, "modes", mode, f), "utf8")).toBe(
@@ -109,7 +109,7 @@ describe("stageModeBundles — the full-bundle stage", () => {
     expect(r.receiptPath).toBe(join(dest, "modes", ".deploy-receipt.json"));
     const receipt = JSON.parse(readFileSync(r.receiptPath!, "utf8"));
     expect(receipt.receipt_version).toBe(1);
-    expect(receipt.modes.map((m: { mode: string }) => m.mode).sort()).toEqual(["autodev", "autoresearch"]);
+    expect(receipt.modes.map((m: { mode: string }) => m.mode).sort()).toEqual(["develop", "research"]);
     for (const m of receipt.modes) {
       for (const file of m.files) {
         expect(file.sha256).toMatch(/^sha256:[0-9a-f]{64}$/);
@@ -145,7 +145,7 @@ describe("stageModeBundles — idempotence (reconciled always-copy semantics)", 
     // artifact bytes unchanged (same injected clock ⇒ even the receipt is
     // byte-identical; with a real clock only staged_at moves)
     expect(second).toBe(first);
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       for (const f of BUNDLE_FILES(mode)) {
         expect(readFileSync(join(dest, "modes", mode, f), "utf8")).toBe(
           readFileSync(join(src, "modes", mode, f), "utf8"),
@@ -162,11 +162,11 @@ describe("stageModeBundles — idempotence (reconciled always-copy semantics)", 
     const src = sourceFixture();
     const dest = freshDest();
     stageModeBundles(src, dest);
-    writeFileSync(join(dest, "modes", "autodev", "pack.toml"), "# TAMPERED\n");
+    writeFileSync(join(dest, "modes", "develop", "pack.toml"), "# TAMPERED\n");
     const r = stageModeBundles(src, dest);
     expect(r.outcome).toBe("staged");
-    expect(readFileSync(join(dest, "modes", "autodev", "pack.toml"), "utf8")).toBe(
-      readFileSync(join(src, "modes", "autodev", "pack.toml"), "utf8"),
+    expect(readFileSync(join(dest, "modes", "develop", "pack.toml"), "utf8")).toBe(
+      readFileSync(join(src, "modes", "develop", "pack.toml"), "utf8"),
     );
     rmSync(src, { recursive: true, force: true });
     rmSync(dest, { recursive: true, force: true });
@@ -180,11 +180,11 @@ describe("stageModeBundles — atomic rename under a concurrent probe (AC2)", ()
     // pre-stage so OLD complete content exists, then mutate the source so the
     // stage writes NEW content over it
     stageModeBundles(src, dest);
-    const modeDir = join(src, "modes", "autodev");
+    const modeDir = join(src, "modes", "develop");
     writeFileSync(join(modeDir, "card.md"), readFileSync(join(modeDir, "card.md"), "utf8") + "<!-- NEW CONTENT -->\n");
     const oldBytes = new Map<string, string>();
     const newBytes = new Map<string, string>();
-    for (const mode of ["autodev", "autoresearch"]) {
+    for (const mode of ["develop", "research"]) {
       for (const f of BUNDLE_FILES(mode)) {
         oldBytes.set(`${mode}/${f}`, safeRead(join(dest, "modes", mode, f)));
         newBytes.set(`${mode}/${f}`, readFileSync(join(src, "modes", mode, f), "utf8"));
@@ -229,10 +229,10 @@ describe("the staging lock (one lock per staging root)", () => {
     stageModeBundles(src, dest); // populate + no lock left
     const modesDir = join(dest, "modes");
     writeLock(modesDir); // fresh heartbeat, OUR pid (alive), matching start-time
-    const before = safeRead(join(modesDir, "autodev", "pack.toml"));
+    const before = safeRead(join(modesDir, "develop", "pack.toml"));
     const r = stageModeBundles(src, dest);
     expect(r.outcome).toBe("aborted-locked");
-    expect(safeRead(join(modesDir, "autodev", "pack.toml"))).toBe(before); // untouched
+    expect(safeRead(join(modesDir, "develop", "pack.toml"))).toBe(before); // untouched
     expect(readStagingLock(modesDir)).not.toBeNull(); // the live holder's lock stands
     rmSync(src, { recursive: true, force: true });
     rmSync(dest, { recursive: true, force: true });
@@ -306,7 +306,7 @@ describe("stager version floor (AC5 — the stager is a consumer too)", () => {
   it("a bundle whose stager floor exceeds this stager's version aborts LOUDLY, nothing staged", () => {
     const src = sourceFixture();
     // raise the floor above what this build supports
-    const manifestPath = join(src, "modes", "autodev", "mode.toml");
+    const manifestPath = join(src, "modes", "develop", "mode.toml");
     writeFileSync(manifestPath, readFileSync(manifestPath, "utf8").replace('stager = "1"', 'stager = "2"'));
     const dest = freshDest();
     expect(() => stageModeBundles(src, dest)).toThrow(/version gap/);
@@ -319,7 +319,7 @@ describe("stager version floor (AC5 — the stager is a consumer too)", () => {
 describe("staging refuses a broken SOURCE registry (anti-gaming: never stage what does not validate)", () => {
   it("a source card with a tampered generated region refuses staging (regenerate-and-compare)", () => {
     const src = sourceFixture();
-    const cardPath = join(src, "modes", "autodev", "card.md");
+    const cardPath = join(src, "modes", "develop", "card.md");
     writeFileSync(cardPath, readFileSync(cardPath, "utf8").replace("kickoff before any work.", "TAMPERED RULE BODY."));
     // keep the region's delimiters + stamp — a forged current stamp
     const dest = freshDest();

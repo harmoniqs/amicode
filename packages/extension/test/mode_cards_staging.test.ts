@@ -15,6 +15,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { globalAgentsDir, stageModCards } from "../src/mode_cards";
+import { validateModeRegistry } from "@amicode/schema";
 
 // The REAL extension root — packages/extension/agents/ ships in the vsix.
 const EXTENSION_PATH = join(__dirname, "..");
@@ -66,9 +67,9 @@ describe("stageModCards", () => {
   it("overwrites a stale copy (extension-owned; always-copy on activate)", () => {
     const destDir = mkdtempSync(join(tmpdir(), "mode-cards-stale-"));
     mkdirSync(destDir, { recursive: true });
-    writeFileSync(join(destDir, "autodev.md"), "# BOGUS_PLACEHOLDER_NOT_IN_REAL_CARD\n");
+    writeFileSync(join(destDir, "develop.md"), "# BOGUS_PLACEHOLDER_NOT_IN_REAL_CARD\n");
     stageModCards(EXTENSION_PATH, destDir, HERMETIC);
-    expect(readFileSync(join(destDir, "autodev.md"), "utf8")).not.toContain("BOGUS_PLACEHOLDER_NOT_IN_REAL_CARD");
+    expect(readFileSync(join(destDir, "develop.md"), "utf8")).not.toContain("BOGUS_PLACEHOLDER_NOT_IN_REAL_CARD");
   });
 
   it("is idempotent — second call stages identical content without error", () => {
@@ -86,7 +87,7 @@ describe("stageModCards", () => {
   it("throws (naming a shipped card) when the extension bundle carries no cards", () => {
     const fakeExtension = mkdtempSync(join(tmpdir(), "mode-cards-noext-"));
     const destDir = mkdtempSync(join(tmpdir(), "mode-cards-dest-"));
-    expect(() => stageModCards(fakeExtension, destDir, HERMETIC)).toThrow(/autodev\.md/);
+    expect(() => stageModCards(fakeExtension, destDir, HERMETIC)).toThrow(/develop\.md/);
   });
 
   it("tripwire: the extension really ships the cards at the source path", () => {
@@ -249,7 +250,7 @@ describe("stageModCards — overlay merge (entitlement + overlays present)", () 
     const { destDir, receipt, result } = stageEntitled();
     // D3 (#806): the four seeded role cards carry no dispatch target —
     // bundle-owned registry artifacts, never overlay-tuned
-    for (const card of ["hypothesizer.md", "experimenter.md", "analyzer.md", "implementer.md", "autodev.md", "autoresearch.md"]) {
+    for (const card of ["hypothesizer.md", "experimenter.md", "analyzer.md", "implementer.md", "develop.md", "research.md"]) {
       expect(readFileSync(join(destDir, card), "utf8")).toBe(
         readFileSync(join(AGENTS_SRC, card), "utf8"),
       );
@@ -602,5 +603,102 @@ describe("unreadable overlays dir (review F3)", () => {
     } finally {
       chmodSync(dir, 0o755);
     }
+  });
+});
+
+// ── the public-rename independence lint (spec-20260907-011500 D1, #858) ─────
+//
+// The mode registry is PUBLIC product surface; the freeze validator governs
+// the PREMIUM overlay merge. The registry BORROWS the freeze validator as a
+// lint (the renamed cards' Method sections must stay mergeable deltas) — but
+// the dependency is ONE-WAY: a premium-staging regression (a hostile or
+// absent overlay source, a malformed registry, any rejection) must never
+// block the public rename from shipping.
+
+describe("public-rename independence (#858 — premium staging never blocks the public path)", () => {
+  const RENAMED = ["develop.md", "research.md"];
+
+  it("the renamed director cards ship byte-identical with the premium entitlement present and a HOSTILE overlay source", () => {
+    // hostile = the overlays dir exists but every read degrades: malformed
+    // JSON, id/version mismatches, non-string fields — the registry loads
+    // with rejection records and NO overlay merges
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-hostile-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "broken.json"), "{not json at all");
+    writeFileSync(
+      join(dir, "mismatched.json"),
+      JSON.stringify({ overlay_version: 1, id: "other-id", fields: { model_routing: "TUNED" } }),
+    );
+    writeFileSync(join(dir, "badfield.json"), JSON.stringify({ overlay_version: 1, id: "badfield", fields: { model_routing: 42 } }));
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-hostile-dest-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: ENTITLED,
+      overlaySource: root,
+    });
+    // the PUBLIC path shipped: the renamed cards land byte-identical
+    for (const f of RENAMED) {
+      expect(readFileSync(join(destDir, f), "utf8")).toBe(readFileSync(join(AGENTS_SRC, f), "utf8"));
+    }
+    // the premium side degraded HONESTLY: rejection records, never a throw,
+    // never a partial card
+    expect(r.rejections.length).toBeGreaterThanOrEqual(3);
+    expect(r.merges).toEqual([]);
+  });
+
+  it("the renamed director cards ship with NO entitlement and an absent overlay source (the zero-premium machine)", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-noent-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, {
+      entitlements: [],
+      overlaySource: join(mkdtempSync(join(tmpdir(), "mode-cards-noent-src-")), "never-created"),
+    });
+    for (const f of RENAMED) {
+      expect(readFileSync(join(destDir, f), "utf8")).toBe(readFileSync(join(AGENTS_SRC, f), "utf8"));
+    }
+    expect(r.rejections).toEqual([]);
+    const receipt = JSON.parse(readFileSync(r.receiptPath, "utf8"));
+    expect(receipt.cards.every((c: { overlay_id: string | null }) => c.overlay_id === null)).toBe(true);
+  });
+
+  it("the freeze validator passes with the renamed set — the cards stay mergeable deltas (the borrowed lint)", () => {
+    // the renamed cards are not dispatch targets, so the freeze merge is
+    // exercised through a synthetic card shaped like the renamed directors —
+    // proving the lint is alive on the renamed surface, not vacuous
+    const fakeExt = mkdtempSync(join(tmpdir(), "mode-cards-lint-"));
+    mkdirSync(join(fakeExt, "agents"), { recursive: true });
+    writeFileSync(join(fakeExt, "agents", "develop.md"), fixtureCard("text"));
+    const root = mkdtempSync(join(tmpdir(), "mode-cards-lint-src-"));
+    const dir = join(root, "vault", "agents", "overlays");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "fixture-tuning.json"),
+      JSON.stringify({
+        overlay_version: 1,
+        id: "fixture-tuning",
+        fields: {
+          model_routing: "TUNED-ROUTING",
+          iteration_budget: "TUNED-BUDGET",
+          prompt_body: "TUNED-BODY",
+          example_brief: "TUNED-BRIEF",
+        },
+      }),
+    );
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-lint-dest-"));
+    const r = stageModCards(fakeExt, destDir, { entitlements: ENTITLED, overlaySource: root });
+    expect(r.merges).toEqual([{ card: "develop.md", overlay_id: "fixture-tuning", merged_fields: ["prompt_body", "model_routing", "iteration_budget", "example_brief"] }]);
+    const staged = readFileSync(join(destDir, "develop.md"), "utf8");
+    expect(staged).toContain("Model routing, tuned: TUNED-ROUTING");
+    // the frozen contract stays out of reach
+    expect(staged).toContain("## Output contract");
+  });
+
+  it("the public registry validation is disjoint from the premium staging path (one-way borrow)", () => {
+    // the registry-level validator reads modes/ + the declared files — it
+    // never imports the overlay source, so a premium-staging regression
+    // cannot even reach it (asserted structurally: validateModeRegistry on
+    // the renamed registry with the overlay machinery entirely absent)
+    const v = validateModeRegistry(join(EXTENSION_PATH, "modes"), EXTENSION_PATH);
+    expect(v.errors).toEqual([]);
+    expect(v.ok).toBe(true);
   });
 });

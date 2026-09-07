@@ -1,6 +1,6 @@
 # Amicode
 
-The VSCode extension + CLI autoresearch studio — researchers propose, run, verify, and record experiments through a structured loop. Quantum optimal control is the primary Domain Pack; the product is the loop, not the domain.
+The VSCode extension + CLI research studio — researchers propose, run, verify, and record experiments through a structured loop. Quantum optimal control is the primary Domain Pack; the product is the loop, not the domain.
 
 ## Language
 
@@ -71,12 +71,13 @@ _Avoid_: cron, scheduler (as concept names), night shift
 The role that leads any autonomous loop — one canonical protocol (ledger discipline, dispatch through gates, analyze, record) that every campaign runs under, whichever mode it is bound to. Research and development differ in their gate packs, never in their director.
 _Avoid_: conductor (standing decision)
 
-**Autoresearch**:
-The research mode: hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
+**Research**:
+The research mode (renamed from `autoresearch` — the three-mode surface, spec-20260907-011500; old ids read-resolve for one release cycle, never migrated in place): hypothesis queue → deliberate spec → experiment → gates → analyzer — the shipped, name-frozen autonomous mode, binding the research gate pack over the director core.
+_Avoid_: autoresearch (the pre-rename id — an alias at read time, not a name)
 
-**Autodev**:
-The development mode: issue DAG → TDD slices → CI/review → landed delta — the second autonomous mode, binding the dev gate pack. The loop is issue → PR → merge; automating the walk never weakens the dev gate or the never-merge-non-green rule.
-_Avoid_: autobuild ("build" already means CI to everyone)
+**Develop**:
+The development mode (renamed from `autodev` — the three-mode surface, spec-20260907-011500; old ids read-resolve for one release cycle, never migrated in place): issue DAG → TDD slices → CI/review → landed delta — the second autonomous mode, binding the dev gate pack. The loop is issue → PR → merge; automating the walk never weakens the dev gate or the never-merge-non-green rule.
+_Avoid_: autobuild ("build" already means CI to everyone), autodev (the pre-rename id — an alias at read time, not a name)
 
 **Campaign**:
 One bounded run of either autonomous mode, with a ledger and a closing artifact — the umbrella word for what a director executes. Copilot sessions are not campaigns; campaign-internal state (receipts, dispatch logs, scratch) crosses a campaign boundary only by distilling into issues, vault cards, or the artifact banks. Within a Research Project, campaign ledgers live at `ledger/campaigns/campaign-<YYYYMMDD>-<slug>.md`; outside a project, they live in the personal vault's `sessions/` directory.
@@ -86,7 +87,7 @@ _Avoid_: session (a copilot session is never a campaign; a campaign ledger is ne
 The typed set of gates + phase templates an autonomous mode binds — the entire mode-specific part of the loop, held as committed data rather than prose, so the same director core runs any pack.
 
 **Mode**:
-One of the three director postures — copilot (the zeroth: default, interactive, packless), autoresearch, autodev. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
+One of the three director postures — copilot (the zeroth: default, interactive, packless), research, develop. A mode binds a gate pack iff it is autonomous; the copilot mode binds none.
 _Avoid_: surface, rail (they render and switch modes; a mode is a posture, not a surface)
 
 ### Fleet & serving

@@ -43,8 +43,8 @@ const RECEIPT_PATH = path.join(SOURCE_DIR, ".deploy-receipt.json");
 // discovers the dir at runtime.
 const CARDS = [
   "analyzer.md",
-  "autodev.md",
-  "autoresearch.md",
+  "develop.md",
+  "research.md",
   "experimenter.md",
   "hypothesizer.md",
   "implementer.md",

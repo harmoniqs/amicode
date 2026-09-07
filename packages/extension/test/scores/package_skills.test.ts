@@ -532,7 +532,7 @@ describe("resolveLibrarySkills — typed revision selection (spec-20260905-06300
     expect(r1.provenance.find((p) => p.name === "develop")!.outcome).toBe("canonical");
   });
 
-  it("H3 matrix — the five workflow skills + autodev stage for a NON-entitled session (the standalone gap, closed)", () => {
+  it("H3 matrix — the five workflow skills + develop stage for a NON-entitled session (the standalone gap, closed)", () => {
     // A non-entitled session: NO entitlements, and the ONLY root it has is the
     // in-repo library (a Marketplace machine has no vault mount). The public
     // workflow set must be there — this is the 2026-09-03 incident's fixture.
@@ -546,7 +546,7 @@ describe("resolveLibrarySkills — typed revision selection (spec-20260905-06300
       "implement-issue",
       "write-an-issue",
       "break-into-subissues",
-      "autodev",
+      "develop",
     ]) {
       expect(names, `non-entitled session stages ${name}`).toContain(name);
     }
@@ -555,7 +555,7 @@ describe("resolveLibrarySkills — typed revision selection (spec-20260905-06300
   it("every real in-repo workflow skill carries the D2 revision frontmatter (source + revision ≥ 1)", () => {
     const root = inRepoLibraryRoot();
     if (!root) return;
-    for (const name of ["director-core", "develop", "implement-issue", "write-an-issue", "break-into-subissues", "autodev"]) {
+    for (const name of ["director-core", "develop", "implement-issue", "write-an-issue", "break-into-subissues", "develop"]) {
       const raw = fs.readFileSync(path.join(root, name, "SKILL.md"), "utf8");
       const fm = raw.match(/^---\n([\s\S]*?)\n---/)![1];
       expect(fm, `${name}: source label`).toMatch(/^source:\s*\S/m);

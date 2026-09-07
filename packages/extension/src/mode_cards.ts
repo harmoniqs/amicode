@@ -347,7 +347,7 @@ export function listModeCardFiles(extensionPath: string): string[] {
   } catch {
     throw new Error(
       `no mode cards found in ${srcDir} — the extension bundle must ship ` +
-        `autodev.md, autoresearch.md, and the worker cards ` +
+        `develop.md, research.md, and the worker cards ` +
         `(packaging dropped the agents dir: .vscodeignore?)`,
     );
   }
@@ -355,7 +355,7 @@ export function listModeCardFiles(extensionPath: string): string[] {
   if (cards.length === 0) {
     throw new Error(
       `no mode cards found in ${srcDir} — the extension bundle must ship ` +
-        `autodev.md, autoresearch.md, and the worker cards ` +
+        `develop.md, research.md, and the worker cards ` +
         `(packaging dropped the agents dir: .vscodeignore?)`,
     );
   }
