@@ -288,6 +288,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
+  /** Whether any pending fs event touched a project-type file (research-project.toml). */
+  private fsPendingProjectTypeChange = false;
   private workspaceSub?: vscode.Disposable;
   private gitSubs: vscode.Disposable[] = [];
   private treeService: SidebarTreeService;
@@ -401,6 +403,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       clearTimeout(this.fsDebounceTimer);
       this.fsPendingFolders.clear();
+      this.fsPendingProjectTypeChange = false;
       this.watcher?.dispose();
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
@@ -486,8 +489,22 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       const folder = vscode.workspace.getWorkspaceFolder(uri);
       if (folder) {
         this.fsPendingFolders.add(folder.uri.fsPath);
+        // Track whether this event might change a project's type classification
+        if (path.basename(uri.fsPath) === "research-project.toml") {
+          this.fsPendingProjectTypeChange = true;
+        }
         clearTimeout(this.fsDebounceTimer);
         this.fsDebounceTimer = setTimeout(() => {
+          // If a project-type-affecting file changed, push updated roots so
+          // the webview can re-classify research/dev sections. This is the
+          // only fs-change scenario that requires a roots refresh — normal
+          // file changes only need the children cache invalidation that the
+          // webview's fs-changed handler already performs.
+          if (this.fsPendingProjectTypeChange) {
+            this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
+            queueMicrotask(() => this.pushGitStatus());
+            this.fsPendingProjectTypeChange = false;
+          }
           for (const f of this.fsPendingFolders) {
             void webviewView.webview.postMessage({
               kind: "fs-changed",
