@@ -1078,6 +1078,9 @@ export const dict = {
   "home.sessions.group.today": "I dag",
   "home.sessions.group.yesterday": "I går",
   "home.sessions.group.older": "Eldre",
+  "fleet.sessions.degraded": "Hub er treg — degradert",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "lokal",
   "home.providerTip":
     "Koble til over 75 leverandører for å bruke andre modeller, inkludert Claude, GPT, Gemini og flere",
 

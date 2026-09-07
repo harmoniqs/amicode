@@ -637,6 +637,9 @@ export const dict = {
   "home.sessions.group.today": "Сьогодні",
   "home.sessions.group.yesterday": "Учора",
   "home.sessions.group.older": "Раніше",
+  "fleet.sessions.degraded": "Хаб повільний — деградація",
+  "fleet.sessions.provenance.hub": "хаб",
+  "fleet.sessions.provenance.local": "локальний",
   "home.providerTip":
     "Підключіться до понад 75 провайдерів, щоб використовувати інші моделі, зокрема Claude, GPT, Gemini та інші",
 

@@ -643,6 +643,9 @@ export const dict = {
   "home.sessions.group.today": "Today",
   "home.sessions.group.yesterday": "Yesterday",
   "home.sessions.group.older": "Older",
+  "fleet.sessions.degraded": "Hub is slow — degraded",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "local",
   "home.connections.trigger": "Connections",
   "home.providerTip": "Connect to 75+ providers to use other models, including Claude, GPT, Gemini, etc",
 

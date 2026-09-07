@@ -561,6 +561,9 @@ export const dict = {
   "home.sessions.group.today": "Hoje",
   "home.sessions.group.yesterday": "Ontem",
   "home.sessions.group.older": "Mais antigas",
+  "fleet.sessions.degraded": "O hub está lento — degradado",
+  "fleet.sessions.provenance.hub": "hub",
+  "fleet.sessions.provenance.local": "local",
   "home.providerTip":
     "Conecte-se a mais de 75 provedores para usar outros modelos, incluindo Claude, GPT, Gemini e muito mais",
   "session.tab.session": "Sessão",
