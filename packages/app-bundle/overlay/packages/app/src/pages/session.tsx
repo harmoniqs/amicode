@@ -687,6 +687,12 @@ export default function Page() {
   // file-op-notify message. We track the rename so the tool-metadata diffs
   // (which still have the old path) are displayed at the new location.
   const [fileRenames, setFileRenames] = createSignal(new Map<string, string>())
+  // --- External file status tracking (#844) ---
+  // When the FileWatcherBridge in the extension host detects that a file has
+  // been deleted (or recreated), it posts fs-diff-invalidate. We track the
+  // status here so mergeServerAndToolDiffs can override the original status
+  // for both in-project and cross-project files.
+  const [externalFileStatus, setExternalFileStatus] = createSignal(new Map<string, "deleted">())
   const onFileOpNotify = (e: MessageEvent) => {
     const d = e.data as { source?: string; kind?: string; op?: string; oldPath?: string; newPath?: string; home?: string } | undefined
     if (d?.source !== "amicode" || d?.kind !== "file-op-notify") return
@@ -721,6 +727,41 @@ export default function Page() {
   }
   window.addEventListener("message", onFileOpNotify)
   onCleanup(() => window.removeEventListener("message", onFileOpNotify))
+
+  // #844: fs-diff-invalidate — the FileWatcherBridge detected a change to a
+  // file we're watching. Update externalFileStatus for deletions and bump
+  // diff_version to trigger a server refetch.
+  const onFsDiffInvalidate = (e: MessageEvent) => {
+    const d = e.data as { source?: string; kind?: string; file?: string; changeType?: string } | undefined
+    if (d?.source !== "amicode" || d?.kind !== "fs-diff-invalidate") return
+    if (!d.file) return
+    const sessionID = params.id
+    if (!sessionID) return
+    // Normalize the file path the same way reviewDiffs does
+    const dir = sdk().directory
+    const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
+    const prefix = home && dir.startsWith(home) ? "~" + dir.slice(home.length) : dir
+    const normFile = toHomePath(d.file, home, prefix)
+    if (d.changeType === "deleted") {
+      setExternalFileStatus((prev) => {
+        const next = new Map(prev)
+        next.set(normFile, "deleted")
+        return next
+      })
+    } else {
+      // File was recreated or modified — clear any stale deletion status
+      setExternalFileStatus((prev) => {
+        if (!prev.has(normFile)) return prev
+        const next = new Map(prev)
+        next.delete(normFile)
+        return next
+      })
+    }
+    // Bump diff_version to trigger a server refetch
+    sync().set("diff_version", sessionID, (v: number | undefined) => (v ?? 0) + 1)
+  }
+  window.addEventListener("message", onFsDiffInvalidate)
+  onCleanup(() => window.removeEventListener("message", onFsDiffInvalidate))
 
   // Refetch when the session transitions to idle (assistant finished, snapshot taken)
   // or when a file-editing tool completes mid-turn (diff_version bumps)
@@ -796,7 +837,25 @@ export default function Page() {
       serverResponded,
       directory: dir,
       home,
+      externalFileStatus: externalFileStatus(),
     })
+  })
+
+  // #844: Send watch-files to the extension host whenever the file list changes.
+  // The FileWatcherBridge watches these paths for external create/change/delete.
+  // We resolve ~/... paths back to absolute for the OS-level watcher.
+  createEffect(() => {
+    const diffs = reviewDiffs()
+    const home = typeof globalThis.process !== "undefined" ? globalThis.process.env?.HOME : undefined
+    const files = diffs
+      .map((d) => {
+        if (!d.file) return ""
+        // Resolve ~/... back to absolute
+        if (home && d.file.startsWith("~/")) return home + d.file.slice(1)
+        return d.file
+      })
+      .filter((f) => f.length > 0)
+    window.parent.postMessage({ source: "amicode", kind: "watch-files", files }, "*")
   })
 
   // All files touched by edit tools in this session — fetched from the server

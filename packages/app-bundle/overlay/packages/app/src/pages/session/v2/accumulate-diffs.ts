@@ -24,6 +24,11 @@ export interface MergeOpts {
   serverResponded: boolean
   directory: string
   home: string | undefined
+  /** External status overrides from the filesystem watcher. When a file is
+   *  marked "deleted" here, its status in the merged output is overridden
+   *  regardless of the server's or tool-metadata's original status — applies
+   *  to both in-project and cross-project files. */
+  externalFileStatus?: Map<string, "deleted">
 }
 
 /**
@@ -39,23 +44,30 @@ export interface MergeOpts {
  * are returned as a fallback.
  */
 export function mergeServerAndToolDiffs(opts: MergeOpts): Array<SnapshotFileDiff & { file: string }> {
-  const { serverDiffs, toolDiffs, serverResponded, directory, home } = opts
+  const { serverDiffs, toolDiffs, serverResponded, directory, home, externalFileStatus } = opts
   const prefix = home && directory.startsWith(home) ? "~" + directory.slice(home.length) : directory
   const projectPrefix = prefix + "/"
 
   if (serverDiffs.length > 0 || serverResponded) {
     const normalizedServerDiffs = serverDiffs
       .filter((d): d is SnapshotFileDiff & { file: string } => !!d.file)
-      .map((d) => ({ ...d, file: toHomePath(d.file, home, prefix) }))
+      .map((d) => {
+        const normed = { ...d, file: toHomePath(d.file, home, prefix) }
+        const override = externalFileStatus?.get(normed.file)
+        return override ? { ...normed, status: override } : normed
+      })
 
     const serverFiles = new Set(normalizedServerDiffs.map((d) => d.file))
     // Only pass through tool-metadata diffs that are BOTH absent from the
     // server set AND outside the project directory. In-project files trust
     // the server's authority — if the server excluded them (created + deleted,
     // or reverted), they should not leak through as phantom entries.
-    const crossProjectDiffs = toolDiffs.filter(
-      (d) => !serverFiles.has(d.file) && !d.file.startsWith(projectPrefix),
-    )
+    const crossProjectDiffs = toolDiffs
+      .filter((d) => !serverFiles.has(d.file) && !d.file.startsWith(projectPrefix))
+      .map((d) => {
+        const override = externalFileStatus?.get(d.file)
+        return override ? { ...d, status: override } : d
+      })
 
     return [...normalizedServerDiffs, ...crossProjectDiffs]
   }

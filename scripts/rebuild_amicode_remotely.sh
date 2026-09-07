@@ -49,6 +49,12 @@ echo "==> Building amicode extension..."
 cd "$AMICODE_ROOT"
 bun run build
 
+# ── Build app bundle from the fork (#822: shelf serves the app dist) ───────────
+echo ""
+echo "==> Building app bundle from fork tree..."
+cd "$AMICODE_ROOT"
+pnpm --filter amicode run build:app -- --work "$OPENCODE_ROOT"
+
 # ── Codesign the built binary (macOS) ──────────────────────────────────────────
 BUILT="$OPENCODE_ROOT/packages/opencode/dist/opencode-darwin-arm64/bin/opencode"
 if [ -f "$BUILT" ]; then
@@ -74,6 +80,12 @@ if [ -n "$INSTALLED_EXT" ] && [ -d "$INSTALLED_EXT/dist" ]; then
     cp -f "$f" "$INSTALLED_EXT/dist/"
     copied=$((copied + 1))
   done
+  # Copy the app bundle dist (#822: shelf serves from dist/app/)
+  if [ -d "$BUILT_DIST/app" ]; then
+    rm -rf "$INSTALLED_EXT/dist/app"
+    cp -R "$BUILT_DIST/app" "$INSTALLED_EXT/dist/app"
+    echo "==> Copied app bundle dist to $INSTALLED_EXT/dist/app/"
+  fi
   echo "==> Copied $copied file(s) to installed extension at $INSTALLED_EXT/dist/"
 else
   echo "==> WARNING: could not find installed amicode extension to copy into"
@@ -109,6 +121,7 @@ with open(path) as f:
     settings = json.load(f)
 settings['amicode.opencodeBinary'] = sys.argv[2]
 settings['amicode.devAssetRoot'] = sys.argv[3]
+settings['amicode.appBundleDir'] = sys.argv[3] + '/dist/app'
 with open(path, 'w') as f:
     json.dump(settings, f, indent=2)
     f.write('\n')
