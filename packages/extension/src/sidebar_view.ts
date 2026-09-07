@@ -284,6 +284,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private view?: vscode.WebviewView;
   private chatActive = false;
   private activeProjectPath: string | null | undefined = undefined;
+  private activeProjectMode: "none" | "expand" | "reset" = "reset";
   private watcher?: vscode.FileSystemWatcher;
   private fsDebounceTimer?: ReturnType<typeof setTimeout>;
   private fsPendingFolders = new Set<string>();
@@ -411,9 +412,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // called before the webview was resolved (sidebar hidden, or the chat
     // selected a project before the sidebar mounted). The postDown at that
     // time was a no-op (this.view was undefined). Now that the view exists,
-    // push the stored path so the webview highlights + expands it.
+    // push the stored path + mode so the webview highlights + expands it (#870).
     if (this.activeProjectPath !== undefined) {
-      this.postDown({ kind: "active-project", path: this.activeProjectPath });
+      this.postDown({ kind: "active-project", path: this.activeProjectPath, mode: this.activeProjectMode });
     }
 
     // Replay saved section order so the webview renders sections in the
@@ -441,8 +442,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
    * collapse others, "expand" = expand target only, "none" = highlight only.
    */
   setActiveProject(projectPath: string | null, mode: "none" | "expand" | "reset" = "reset"): void {
-    if (this.activeProjectPath === projectPath) return; // deduplicate
+    if (this.activeProjectPath === projectPath && this.activeProjectMode === mode) return; // deduplicate
     this.activeProjectPath = projectPath;
+    this.activeProjectMode = mode;
     this.postDown({ kind: "active-project", path: projectPath, mode });
   }
 

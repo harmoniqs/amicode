@@ -1003,11 +1003,14 @@ function createIconEl(icon: string): HTMLElement {
 
     // Apply pending active-project if it arrived before roots were rendered.
     // The active-project handler is a no-op when the DOM is empty; now that
-    // the tree exists, replay with "none" (highlight only). The persisted
-    // expanded state already handles folder visibility after re-render —
-    // replaying with the original mode would snap folders back (#839).
+    // the tree exists, replay with the STORED mode (#870). The original
+    // hardcoded "none" (#839 snap-back guard) silently killed expand/scroll
+    // for every session-change that beat the roots render — the dedup guard
+    // then blocked the tab-switch rescue. "expand" is safe (it never
+    // collapses other folders); "reset" from an explicit click is the user's
+    // intent and should survive the race too.
     if (pendingActiveProject !== null) {
-      applyActiveProject(pendingActiveProject.path, "none");
+      applyActiveProject(pendingActiveProject.path, pendingActiveProject.mode);
     }
   }
 
