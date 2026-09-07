@@ -17,6 +17,7 @@ import {
   type EnvironmentRegistryEntry,
   type EnvironmentToml,
 } from "./environment.js";
+import { renderProjectToml, type ProjectToml } from "./project.js";
 import type { VerbResult } from "./verbs.js";
 
 /** Options for DI in tests (registry path override). */
@@ -483,6 +484,118 @@ export function envPromote(argv: string[]): VerbResult {
   };
 }
 
+// ── bind ────────────────────────────────────────────────────────────────────
+
+export function envBind(argv: string[], opts?: EnvVerbOptions): VerbResult {
+  const fail = (error: string): VerbResult => ({
+    json: { verb: "env", subcommand: "bind", error },
+    code: 64,
+  });
+
+  const slug = positionalArg(argv);
+  if (!slug) return fail("slug is required: amico env bind <slug> [--path <dir>] [--env-path <abs>] [--force]");
+
+  const projectDir = resolve(flagValue(argv, "--path") ?? process.cwd());
+  const envPath = flagValue(argv, "--env-path");
+  const force = argv.includes("--force");
+
+  // Validate: research-project.toml must exist
+  const tomlPath = join(projectDir, "research-project.toml");
+  if (!existsSync(tomlPath)) {
+    return fail(`no research-project.toml found in ${projectDir}`);
+  }
+
+  let content: string;
+  try {
+    content = readFileSync(tomlPath, "utf8");
+  } catch (e) {
+    return fail(`failed to read ${tomlPath}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Check registry for a warning
+  const registryPath = opts?.registryPath ?? defaultRegistryPath();
+  const entries = readRegistry(registryPath);
+  const inRegistry = entries.some((e) => e.slug === slug);
+  const warning = inRegistry ? undefined : `slug "${slug}" not found in registry — binding anyway`;
+
+  // Check if [environment] section already exists
+  const parsed = parseToml(content) as Record<string, unknown>;
+  const existingEnv = parsed.environment as { slug?: string; path?: string } | undefined;
+
+  if (existingEnv?.slug) {
+    if (existingEnv.slug === slug) {
+      // Idempotent — same slug already bound
+      return {
+        json: {
+          verb: "env",
+          subcommand: "bind",
+          bound: true,
+          idempotent: true,
+          slug,
+          ...(warning ? { warning } : {}),
+        },
+        code: 0,
+      };
+    }
+    // Different slug — require --force
+    if (!force) {
+      return fail(
+        `project is already bound to "${existingEnv.slug}" — use --force to rebind to "${slug}"`,
+      );
+    }
+    // Force: full parse → mutate → re-render
+    try {
+      const projectData = parsed as Record<string, unknown>;
+      (projectData.environment as Record<string, unknown>) = {
+        slug,
+        ...(envPath ? { path: envPath } : {}),
+      };
+      writeFileSync(tomlPath, renderProjectToml(projectData as ProjectToml));
+    } catch (e) {
+      return fail(`failed to write ${tomlPath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    return {
+      json: {
+        verb: "env",
+        subcommand: "bind",
+        bound: true,
+        slug,
+        forced: true,
+        ...(warning ? { warning } : {}),
+      },
+      code: 0,
+    };
+  }
+
+  // Initial bind: string append (preserves comments and formatting)
+  const envSection = [
+    "",
+    "[environment]",
+    `slug = "${slug}"`,
+    ...(envPath ? [`path = "${envPath}"`] : []),
+    "",
+  ].join("\n");
+
+  try {
+    const appendContent = content.endsWith("\n") ? envSection : "\n" + envSection;
+    writeFileSync(tomlPath, content + appendContent);
+  } catch (e) {
+    return fail(`failed to write ${tomlPath}: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  return {
+    json: {
+      verb: "env",
+      subcommand: "bind",
+      bound: true,
+      slug,
+      ...(warning ? { warning } : {}),
+    },
+    code: 0,
+  };
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 export function envVerb(argv: string[]): VerbResult {
@@ -491,11 +604,12 @@ export function envVerb(argv: string[]): VerbResult {
   if (sub === "create") return envCreate(rest);
   if (sub === "register") return envRegister(rest);
   if (sub === "promote") return envPromote(rest);
+  if (sub === "bind") return envBind(rest);
   return {
     json: {
       verb: "env",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
-      usage: "amico env create <name> [--path <dir>] [--platform <p>] [--field <f>] [--author <a>]  |  amico env register <path>  |  amico env promote <file> --env <path> [--dry-run] [--target-dir <dir>]",
+      usage: "amico env create <name> [--path <dir>] [--platform <p>] [--field <f>] [--author <a>]  |  amico env register <path>  |  amico env promote <file> --env <path> [--dry-run] [--target-dir <dir>]  |  amico env bind <slug> [--path <dir>] [--env-path <abs>] [--force]",
     },
     code: 64,
   };

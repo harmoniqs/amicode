@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
-import { envCreate, envRegister, checkNestingViolation } from "../src/env_verb.js";
+import { envCreate, envRegister, envBind, checkNestingViolation } from "../src/env_verb.js";
 import { ENV_SCAFFOLD_DIRS, renderEnvironmentToml, type EnvironmentToml } from "../src/environment.js";
 
 // ── integration: env create verb ───────────────────────────────────────────
@@ -214,6 +214,144 @@ describe("envRegister", () => {
   it("exits non-zero for a nonexistent path", () => {
     const result = envRegister([join(tmpDir, "does-not-exist")], { registryPath });
     expect(result.code).toBe(64);
+  });
+});
+
+// ── integration: env bind verb ──────────────────────────────────────────────
+
+describe("envBind", () => {
+  let tmpDir: string;
+  let registryPath: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "amico-env-bind-"));
+    registryPath = join(tmpDir, "environments.toml");
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  /** Helper: create a minimal research-project.toml in a project directory. */
+  function makeProjectDir(name = "my-project", extraToml = ""): string {
+    const dir = join(tmpDir, name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "research-project.toml"),
+      `schema_version = 1\nname = "Test"\nslug = "test"\nquestion = "?"\nstatus = "running"\ncreated = "2026-09-07"\n${extraToml}`,
+    );
+    return dir;
+  }
+
+  /** Helper: create a minimal environment and register it. */
+  function makeEnvAndRegister(slug: string): string {
+    const dir = join(tmpDir, slug);
+    envCreate([slug, "--path", dir], { registryPath });
+    return dir;
+  }
+
+  it("writes [environment] section via string append (preserves comments)", () => {
+    const projectDir = makeProjectDir("proj1");
+    makeEnvAndRegister("shared-env");
+
+    const result = envBind(["shared-env", "--path", projectDir], { registryPath });
+
+    expect(result.code).toBe(0);
+    const json = result.json as Record<string, unknown>;
+    expect(json.bound).toBe(true);
+    expect(json.slug).toBe("shared-env");
+
+    // Verify the TOML was appended (not re-rendered): original content intact
+    const content = readFileSync(join(projectDir, "research-project.toml"), "utf8");
+    expect(content).toContain('[environment]');
+    expect(content).toContain('slug = "shared-env"');
+    // Original top-level fields still present in original form
+    expect(content).toContain('schema_version = 1');
+    expect(content).toContain('question = "?"');
+  });
+
+  it("is idempotent on same slug", () => {
+    const projectDir = makeProjectDir("proj2");
+    makeEnvAndRegister("my-env");
+
+    const first = envBind(["my-env", "--path", projectDir], { registryPath });
+    expect(first.code).toBe(0);
+
+    const second = envBind(["my-env", "--path", projectDir], { registryPath });
+    expect(second.code).toBe(0);
+    const json = second.json as Record<string, unknown>;
+    expect(json.idempotent).toBe(true);
+  });
+
+  it("refuses different slug without --force", () => {
+    const projectDir = makeProjectDir("proj3");
+    makeEnvAndRegister("env-a");
+    makeEnvAndRegister("env-b");
+
+    envBind(["env-a", "--path", projectDir], { registryPath });
+    const result = envBind(["env-b", "--path", projectDir], { registryPath });
+
+    expect(result.code).toBe(64);
+    const json = result.json as Record<string, unknown>;
+    expect(json.error).toContain("env-a");
+  });
+
+  it("allows different slug with --force (full re-render)", () => {
+    const projectDir = makeProjectDir("proj4");
+    makeEnvAndRegister("env-a");
+    makeEnvAndRegister("env-b");
+
+    envBind(["env-a", "--path", projectDir], { registryPath });
+    const result = envBind(["env-b", "--path", projectDir, "--force"], { registryPath });
+
+    expect(result.code).toBe(0);
+    const json = result.json as Record<string, unknown>;
+    expect(json.bound).toBe(true);
+    expect(json.slug).toBe("env-b");
+
+    // Verify the slug was updated
+    const content = readFileSync(join(projectDir, "research-project.toml"), "utf8");
+    expect(content).toContain('slug = "env-b"');
+    // Should NOT contain the old slug in an [environment] context
+    const envSection = content.slice(content.indexOf("[environment]"));
+    expect(envSection).not.toContain("env-a");
+  });
+
+  it("returns error when no research-project.toml found", () => {
+    const emptyDir = join(tmpDir, "no-manifest");
+    mkdirSync(emptyDir, { recursive: true });
+
+    const result = envBind(["some-env", "--path", emptyDir], { registryPath });
+    expect(result.code).toBe(64);
+    expect((result.json as Record<string, unknown>).error).toContain("research-project.toml");
+  });
+
+  it("warns but allows when slug is not in the registry", () => {
+    const projectDir = makeProjectDir("proj5");
+    // Do NOT create/register the environment — just bind the slug
+
+    const result = envBind(["unknown-env", "--path", projectDir], { registryPath });
+
+    expect(result.code).toBe(0);
+    const json = result.json as Record<string, unknown>;
+    expect(json.bound).toBe(true);
+    expect(json.warning).toContain("not found in registry");
+
+    // Verify it still wrote the binding
+    const content = readFileSync(join(projectDir, "research-project.toml"), "utf8");
+    expect(content).toContain('slug = "unknown-env"');
+  });
+
+  it("supports --env-path to set an explicit path in the [environment] section", () => {
+    const projectDir = makeProjectDir("proj6");
+    makeEnvAndRegister("env-with-path");
+
+    const envPath = "/some/absolute/path/to/env";
+    const result = envBind(["env-with-path", "--path", projectDir, "--env-path", envPath], { registryPath });
+
+    expect(result.code).toBe(0);
+    const content = readFileSync(join(projectDir, "research-project.toml"), "utf8");
+    expect(content).toContain(`path = "${envPath}"`);
   });
 });
 
