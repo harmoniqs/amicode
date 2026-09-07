@@ -231,6 +231,46 @@
           "default": "",
           "description": "Path to a built app-bundle dist (dev override). The amicode service serves it as the app UI on its origin. Empty = the packaged dist (dist/app inside the extension, staged by `pnpm --filter amicode run build:app`). When neither exists the service serves an honest needs-setup placeholder — the /amicode/* API surface is unaffected."
         },
+        "amicode.fleetHubUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Fleet activation (beta): the hub's base URL over the fleet tunnel (e.g. http://127.0.0.1:4096). Env override: AMICODE_FLEET_HUB_URL. Fleet mode arms ONLY when BOTH this and amicode.fleetTunnelAlias are set AND the amicissimo entitlement stages — absent config means a byte-identical base."
+        },
+        "amicode.fleetTunnelAlias": {
+          "type": "string",
+          "default": "",
+          "description": "Fleet activation (beta): the fleet tunnel's ssh alias — the installed tunnel config must carry it stamped (never the FLEET_SSH_ALIAS placeholder). Env override: AMICODE_FLEET_TUNNEL_ALIAS."
+        },
+        "amicode.fleetTunnelConfigPath": {
+          "type": "string",
+          "default": "",
+          "description": "Fleet activation (beta): path to the installed tunnel config (plist/sh), read per request so /amicode/fleet/status can surface the D7 stamp (stamped alias + tunnel generation). Env override: AMICODE_FLEET_TUNNEL_CONFIG. Empty = the stamp is not surfaced."
+        },
+        "amicode.fleetOverlaySource": {
+          "type": "string",
+          "default": "",
+          "description": "Fleet activation (beta): explicit amicissimo source root holding the fleet_overlay manifests. Env override: AMICO_OVERLAY_SOURCE (then AMICISSIMO_ROOT, then the default checkout path). Empty = the staging ladder resolves it."
+        },
+        "amicode.fleetDegradedLatencyP95Ms": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet posture tuning (D6): the p95 latency threshold (ms) that enters the degraded posture over the measurement window. 0 = the default (2000 ms)."
+        },
+        "amicode.fleetDegradedWindowSamples": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet posture tuning (D6): the measurement window (data-plane response samples) the p95 is computed over. 0 = the default (5 samples)."
+        },
+        "amicode.fleetHubDownConsecutiveNoResponses": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet posture tuning (D6): consecutive no-responses (client-enforced timeouts or transport errors) that enter the hub-down posture. 0 = the default (3)."
+        },
+        "amicode.fleetRecoveryConsecutiveHealthy": {
+          "type": "number",
+          "default": 0,
+          "description": "Fleet posture tuning (D6): consecutive healthy responses required to re-enter fleet mode (hysteresis — flapping cannot flap the posture). 0 = the default (3)."
+        },
         "amicode.opencodePort": {
           "type": "number",
           "default": 43117,

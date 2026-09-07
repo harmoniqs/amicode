@@ -64,6 +64,7 @@ import { resolveHubTarget, restartHub } from "./hub_ops";
 import { registerAmicodeTerminal } from "./terminal";
 import { amicodeServiceDisposal, startAmicodeService, frameOriginUrl } from "./amicode_service_wiring";
 import { resolveAppDistRoot } from "./amicode_service/app_shelf";
+import { resolveFleetActivation, type FleetActivationConfig } from "./fleet_activation";
 import { registerOpencodeUpdater } from "./opencode_updater_wiring";
 import { stageOpencodeCliLink } from "./opencode_cli_link";
 import { resolveMountStack, personalMount, defaultVaultsRoot } from "./substrate/mount_store";
@@ -117,6 +118,40 @@ function isFleetClientGuard(binary: string | undefined): boolean {
   if (!binary || !binary.endsWith("amico-opencode-fleet-guard")) return false;
   // Role from fleet.json — "client" means ride the tunnel, anything else means spawn locally
   return isFleetClient();
+}
+
+/** #398 (slice 4e): the fleet activation config, read from the workspace
+ *  settings into the env-agnostic shape resolveFleetActivation applies
+ *  (env equivalents — AMICODE_FLEET_HUB_URL / AMICODE_FLEET_TUNNEL_ALIAS /
+ *  AMICODE_FLEET_TUNNEL_CONFIG — override these per fleet_activation.ts).
+ *  Empty strings are absent: NO activation config → the fleet option is
+ *  never passed → byte-identical base. The posture tuning keys default to
+ *  0 = "unset" (the fixture defaults stand; a positive value overrides). */
+function readFleetActivationConfig(cfg: vscode.WorkspaceConfiguration): FleetActivationConfig {
+  const num = (key: string): number | undefined => {
+    const v = cfg.get<number>(key, 0);
+    return Number.isFinite(v) && v > 0 ? v : undefined;
+  };
+  const str = (key: string): string | undefined => {
+    const v = cfg.get<string>(key, "");
+    return v.trim() !== "" ? v : undefined;
+  };
+  return {
+    hubUrl: str("fleetHubUrl"),
+    tunnelAlias: str("fleetTunnelAlias"),
+    tunnelConfigPath: str("fleetTunnelConfigPath"),
+    overlaySource: str("fleetOverlaySource"),
+    posture: {
+      ...(num("fleetDegradedLatencyP95Ms") !== undefined ? { degradedLatencyP95Ms: num("fleetDegradedLatencyP95Ms") } : {}),
+      ...(num("fleetDegradedWindowSamples") !== undefined ? { degradedWindowSamples: num("fleetDegradedWindowSamples") } : {}),
+      ...(num("fleetHubDownConsecutiveNoResponses") !== undefined
+        ? { hubDownConsecutiveNoResponses: num("fleetHubDownConsecutiveNoResponses") }
+        : {}),
+      ...(num("fleetRecoveryConsecutiveHealthy") !== undefined
+        ? { recoveryConsecutiveHealthy: num("fleetRecoveryConsecutiveHealthy") }
+        : {}),
+    },
+  };
 }
 
 /** Drive-line + qubit list from a device card's YAML frontmatter (§3.1). The
@@ -802,6 +837,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         vscode.workspace.getConfiguration("amicode").get<string>("appBundleDir", ""),
         ctx.extensionPath,
       ),
+      // #398 (slice 4e): the fleet plane's activation — config/env-driven.
+      // The LATE-BOUND resolver is re-read per request (a config change or
+      // a cleared hub URL is the honest upstream absence, not a stale boot
+      // snapshot). NO activation config → resolveFleetActivation is not
+      // armed → the fleet option is NEVER passed → the base posture stays
+      // byte-identical (the H3 discipline extends to activation). The
+      // entitlement-staged gate still decides whether fleet surfaces exist.
+      fleetActivation: () =>
+        resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));
