@@ -70,7 +70,6 @@ export const dict = {
   "command.agent.cycle.description": "Bytt til neste agent",
   "command.agent.cycle.reverse": "Bytt agent bakover",
   "command.agent.cycle.reverse.description": "Bytt til forrige agent",
-  "agent.picker.implied": "implisitt",
   "command.model.variant.cycle": "Bytt tenkeinnsats",
   "command.model.variant.cycle.description": "Bytt til neste innsatsnivå",
   "command.prompt.mode.shell": "Shell",
@@ -1079,9 +1078,6 @@ export const dict = {
   "home.sessions.group.today": "I dag",
   "home.sessions.group.yesterday": "I går",
   "home.sessions.group.older": "Eldre",
-  "fleet.sessions.degraded": "Hub er treg — degradert",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "lokal",
   "home.providerTip":
     "Koble til over 75 leverandører for å bruke andre modeller, inkludert Claude, GPT, Gemini og flere",
 

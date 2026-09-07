@@ -61,7 +61,6 @@ export const dict = {
   "command.agent.cycle.description": "다음 에이전트로 전환",
   "command.agent.cycle.reverse": "에이전트 역순환",
   "command.agent.cycle.reverse.description": "이전 에이전트로 전환",
-  "agent.picker.implied": "암시됨",
   "command.model.variant.cycle": "생각 수준 순환",
   "command.model.variant.cycle.description": "다음 생각 수준으로 전환",
   "command.prompt.mode.shell": "셸",
@@ -986,9 +985,6 @@ export const dict = {
   "home.sessions.group.today": "오늘",
   "home.sessions.group.yesterday": "어제",
   "home.sessions.group.older": "이전",
-  "fleet.sessions.degraded": "허브가 느립니다 — 저하됨",
-  "fleet.sessions.provenance.hub": "허브",
-  "fleet.sessions.provenance.local": "로컬",
   "home.providerTip": "75개 이상의 제공업체에 연결하여 Claude, GPT, Gemini 등의 다른 모델을 사용하세요",
 
   "session.tab.unknown": "알 수 없는 세션",

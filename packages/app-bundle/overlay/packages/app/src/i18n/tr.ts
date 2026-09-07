@@ -75,7 +75,6 @@ export const dict = {
   "command.agent.cycle.description": "Sonraki ajana geç",
   "command.agent.cycle.reverse": "Ajanı geri değiştir",
   "command.agent.cycle.reverse.description": "Önceki ajana geç",
-  "agent.picker.implied": "örtük",
   "command.model.variant.cycle": "Düşünme eforu değiştir",
   "command.model.variant.cycle.description": "Sonraki efor seviyesine geç",
   "command.prompt.mode.shell": "Kabuk",
@@ -618,9 +617,6 @@ export const dict = {
   "home.sessions.group.today": "Bugün",
   "home.sessions.group.yesterday": "Dün",
   "home.sessions.group.older": "Daha eski",
-  "fleet.sessions.degraded": "Hub yavaş — düşürülmüş durum",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "yerel",
   "home.providerTip": "Claude, GPT, Gemini ve diğer modelleri kullanmak için 75'ten fazla sağlayıcıya bağlanın",
 
   "session.tab.session": "Oturum",

@@ -7,7 +7,7 @@ import { useModels } from "@/context/models"
 import { useSettings } from "@/context/settings"
 import { useProviders } from "@/hooks/use-providers"
 import { Persist, persisted } from "@/utils/persist"
-import { hasAgentChoice, orderByPickerConfig, resolveAgent } from "./local-agent"
+import { hasAgentChoice, resolveAgent } from "./local-agent"
 import { cycleModelVariant, getConfiguredAgentVariant, resolveModelVariant } from "./model-variant"
 import { useSDK } from "./sdk"
 import { useSync } from "./sync"
@@ -67,19 +67,7 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const settings = useSettings()
 
     const id = createMemo(() => params.id || undefined)
-    // #858 — the fixed picker order plan → develop → research: the config's
-    // `agent_order` (fork PR #305's field, written by the extension) is the
-    // PRIMARY sort key, honored APP-SIDE per the overlay architecture — an
-    // engine build without the #305 sort still renders the product order.
-    // The SDK config type may predate the field; read it defensively, never
-    // guess.
-    const pickerConfig = () => {
-      const cfg = sync().data.config as { agent_order?: string[]; default_agent?: string } | undefined
-      return cfg && typeof cfg === "object" ? { agent_order: cfg.agent_order, default_agent: cfg.default_agent } : undefined
-    }
-    const list = createMemo(() =>
-      orderByPickerConfig(sync().data.agent.filter((item) => item.mode !== "subagent" && !item.hidden), pickerConfig()),
-    )
+    const list = createMemo(() => sync().data.agent.filter((item) => item.mode !== "subagent" && !item.hidden))
     const agentsVisible = createMemo(() => settings.visibility.customAgents() || hasAgentChoice(list()))
     const connected = createMemo(() => new Set(providers.connected().map((item) => item.id)))
 

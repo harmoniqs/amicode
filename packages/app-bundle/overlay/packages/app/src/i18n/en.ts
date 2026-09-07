@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "Switch to the next agent",
   "command.agent.cycle.reverse": "Cycle agent backwards",
   "command.agent.cycle.reverse.description": "Switch to the previous agent",
-  "agent.picker.implied": "implied",
   "command.model.variant.cycle": "Cycle thinking effort",
   "command.model.variant.cycle.description": "Switch to the next effort level",
   "command.prompt.mode.shell": "Shell",
@@ -644,9 +643,6 @@ export const dict = {
   "home.sessions.group.today": "Today",
   "home.sessions.group.yesterday": "Yesterday",
   "home.sessions.group.older": "Older",
-  "fleet.sessions.degraded": "Hub is slow — degraded",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "local",
   "home.connections.trigger": "Connections",
   "home.providerTip": "Connect to 75+ providers to use other models, including Claude, GPT, Gemini, etc",
 

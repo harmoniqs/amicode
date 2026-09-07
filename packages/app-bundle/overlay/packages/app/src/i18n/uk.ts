@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "Перемкнути на наступного агента",
   "command.agent.cycle.reverse": "Перемкнути агента в зворотному напрямку",
   "command.agent.cycle.reverse.description": "Перемкнути на попереднього агента",
-  "agent.picker.implied": "неявний",
   "command.model.variant.cycle": "Перемкнути рівень мислення",
   "command.model.variant.cycle.description": "Перемкнути на наступний рівень зусилля",
   "command.prompt.mode.shell": "Команда",
@@ -638,9 +637,6 @@ export const dict = {
   "home.sessions.group.today": "Сьогодні",
   "home.sessions.group.yesterday": "Учора",
   "home.sessions.group.older": "Раніше",
-  "fleet.sessions.degraded": "Хаб повільний — деградація",
-  "fleet.sessions.provenance.hub": "хаб",
-  "fleet.sessions.provenance.local": "локальний",
   "home.providerTip":
     "Підключіться до понад 75 провайдерів, щоб використовувати інші моделі, зокрема Claude, GPT, Gemini та інші",
 

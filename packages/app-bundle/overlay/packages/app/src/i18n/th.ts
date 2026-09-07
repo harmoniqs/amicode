@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "สลับไปยังเอเจนต์ถัดไป",
   "command.agent.cycle.reverse": "เปลี่ยนเอเจนต์ย้อนกลับ",
   "command.agent.cycle.reverse.description": "สลับไปยังเอเจนต์ก่อนหน้า",
-  "agent.picker.implied": "โดยนัย",
   "command.model.variant.cycle": "เปลี่ยนความพยายามในการคิด",
   "command.model.variant.cycle.description": "สลับไปยังระดับความพยายามถัดไป",
   "command.prompt.mode.shell": "เชลล์",
@@ -609,9 +608,6 @@ export const dict = {
   "home.sessions.group.today": "วันนี้",
   "home.sessions.group.yesterday": "เมื่อวาน",
   "home.sessions.group.older": "ก่อนหน้านี้",
-  "fleet.sessions.degraded": "ฮับช้า — ลดระดับ",
-  "fleet.sessions.provenance.hub": "ฮับ",
-  "fleet.sessions.provenance.local": "ในเครื่อง",
   "home.providerTip": "เชื่อมต่อกับผู้ให้บริการกว่า 75 รายเพื่อใช้โมเดลอื่นๆ รวมถึง Claude, GPT, Gemini และอีกมากมาย",
 
   "session.tab.session": "เซสชัน",

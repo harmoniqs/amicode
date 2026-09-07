@@ -65,7 +65,6 @@ export const dict = {
   "command.agent.cycle.description": "Mudar para o próximo agente",
   "command.agent.cycle.reverse": "Alternar agente (reverso)",
   "command.agent.cycle.reverse.description": "Mudar para o agente anterior",
-  "agent.picker.implied": "implícito",
   "command.model.variant.cycle": "Alternar nível de raciocínio",
   "command.model.variant.cycle.description": "Mudar para o próximo nível de esforço",
   "command.prompt.mode.shell": "Shell",
@@ -562,9 +561,6 @@ export const dict = {
   "home.sessions.group.today": "Hoje",
   "home.sessions.group.yesterday": "Ontem",
   "home.sessions.group.older": "Mais antigas",
-  "fleet.sessions.degraded": "O hub está lento — degradado",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "local",
   "home.providerTip":
     "Conecte-se a mais de 75 provedores para usar outros modelos, incluindo Claude, GPT, Gemini e muito mais",
   "session.tab.session": "Sessão",

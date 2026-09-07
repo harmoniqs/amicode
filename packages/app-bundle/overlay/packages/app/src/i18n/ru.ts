@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "Переключиться к следующему агенту",
   "command.agent.cycle.reverse": "Цикл агентов назад",
   "command.agent.cycle.reverse.description": "Переключиться к предыдущему агенту",
-  "agent.picker.implied": "неявный",
   "command.model.variant.cycle": "Цикл режимов мышления",
   "command.model.variant.cycle.description": "Переключиться к следующему уровню усилий",
   "command.prompt.mode.shell": "Оболочка",
@@ -614,9 +613,6 @@ export const dict = {
   "home.sessions.group.today": "Сегодня",
   "home.sessions.group.yesterday": "Вчера",
   "home.sessions.group.older": "Ранее",
-  "fleet.sessions.degraded": "Хаб работает медленно — деградация",
-  "fleet.sessions.provenance.hub": "хаб",
-  "fleet.sessions.provenance.local": "локальный",
   "home.providerTip":
     "Подключитесь к более чем 75 провайдерам, чтобы использовать другие модели, включая Claude, GPT, Gemini и другие",
 

@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "Skift til næste agent",
   "command.agent.cycle.reverse": "Skift agent baglæns",
   "command.agent.cycle.reverse.description": "Skift til forrige agent",
-  "agent.picker.implied": "implicit",
   "command.model.variant.cycle": "Skift tænkeindsats",
   "command.model.variant.cycle.description": "Skift til næste indsatsniveau",
   "command.prompt.mode.shell": "Shell",
@@ -610,9 +609,6 @@ export const dict = {
   "home.sessions.group.today": "I dag",
   "home.sessions.group.yesterday": "I går",
   "home.sessions.group.older": "Ældre",
-  "fleet.sessions.degraded": "Hub er langsom — degraderet",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "lokal",
   "home.providerTip":
     "Opret forbindelse til mere end 75 udbydere for at bruge andre modeller, herunder Claude, GPT, Gemini og flere",
 

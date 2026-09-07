@@ -71,7 +71,6 @@ export const dict = {
   "command.agent.cycle.description": "Prebaci na sljedećeg agenta",
   "command.agent.cycle.reverse": "Promijeni agenta unazad",
   "command.agent.cycle.reverse.description": "Prebaci na prethodnog agenta",
-  "agent.picker.implied": "implicitno",
   "command.model.variant.cycle": "Promijeni nivo razmišljanja",
   "command.model.variant.cycle.description": "Prebaci na sljedeći nivo",
   "command.prompt.mode.shell": "Shell",
@@ -613,9 +612,6 @@ export const dict = {
   "home.sessions.group.today": "Danas",
   "home.sessions.group.yesterday": "Jučer",
   "home.sessions.group.older": "Starije",
-  "fleet.sessions.degraded": "Hub je spor — degradirano",
-  "fleet.sessions.provenance.hub": "hub",
-  "fleet.sessions.provenance.local": "lokalno",
   "home.providerTip":
     "Povežite se s više od 75 pružalaca usluga kako biste koristili druge modele, uključujući Claude, GPT, Gemini i druge",
 
