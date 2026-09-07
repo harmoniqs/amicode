@@ -27,7 +27,7 @@ describe("the mode-id read-resolve alias table (spec-20260907-011500 D1, #858)",
     // the renamed ids are identity
     expect(resolveModeId("develop")).toBe("develop");
     expect(resolveModeId("research")).toBe("research");
-    // `build` remains a valid explicit id — it exits the picker, not the vocabulary
+    // `build` remains a valid explicit id — never renamed (it re-enters the picker as a named tile, #868 rev 3)
     expect(resolveModeId("build")).toBe("build");
     // plan, role agents, custom agents, empty — all identity
     expect(resolveModeId("plan")).toBe("plan");

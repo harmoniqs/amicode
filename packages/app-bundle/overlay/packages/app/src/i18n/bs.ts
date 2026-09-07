@@ -71,7 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Prebaci na sljedećeg agenta",
   "command.agent.cycle.reverse": "Promijeni agenta unazad",
   "command.agent.cycle.reverse.description": "Prebaci na prethodnog agenta",
-  "agent.picker.implied": "implicitno",
+  "agent.picker.default": "podrazumijevano",
   "posture.indicator.label": "Poza",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

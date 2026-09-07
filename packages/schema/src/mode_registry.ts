@@ -487,8 +487,9 @@ export const SUPPORTED_MODE_BUNDLE_VERSION = "1";
 // migrate-on-write: append-only artifacts (session ledgers, spec
 // frontmatter, campaign fixtures) legitimately keep old ids forever and are
 // resolved at read time; tooling that joins on a mode id supports both ids
-// permanently. `build` is deliberately NOT aliased — it exits the PICKER,
-// not the vocabulary (it remains a valid explicit id everywhere:
+// permanently. `build` is deliberately NOT aliased — it was never renamed
+// (it re-entered the picker as a named tile in D1 rev 3, #868; it remains a
+// valid explicit id everywhere:
 // default_agent, spawn params, CLI args).
 //
 // THE ALIAS WINDOW'S EXIT is contract-version-gated, not calendar-gated:

@@ -111,11 +111,11 @@ export function resolveJuliaProject(configValue: string): string {
  *      MCP projection against. The MCP environment carries AMICODE_PROBLEMS_DIR
  *      so the server resolves the same workspace root the grants use.
  *    - `default_agent: "plan"` — plan-first posture: new sessions open on
- *      opencode's plan agent; the named modes are plan → develop → research
- *      (the three-mode surface, spec-20260907-011500 D1: autodev → develop,
+ *      opencode's plan agent; the named modes are plan → build → develop →
+ *      research (spec-20260907-011500 D1 rev 3: autodev → develop,
  *      autoresearch → research, old ids read-resolve for one release cycle;
- *      stock `build` is the implied auto — the underlying default agent,
- *      still a valid explicit id, out of the picker's named set).
+ *      `build` is a named, selectable tile AND the default posture — marked
+ *      default in the picker, still a valid explicit id).
  *      `agent_order` (fork PR #305's field, honored APP-SIDE by the overlay's
  *      picker sort) pins the fixed display order; without an honoring engine
  *      build the picker still reads it client-side. Roles-not-modes (#368):
@@ -484,17 +484,18 @@ export function buildOpencodeConfigContent(
     $schema: "https://opencode.ai/config.json",
     // Plan-first posture (product default for ALL users): every new Amicode
     // session opens on opencode's `plan` agent. The named modes are
-    // plan → develop → research (spec-20260907-011500 D1, #858: autodev →
-    // develop, autoresearch → research; stock `build` is the implied auto —
-    // the underlying default agent, a valid explicit id, out of the named
-    // set). `agent_order` (fork PR #305's config field) is the fixed display
+    // plan → build → develop → research (spec-20260907-011500 D1 rev 3,
+    // #868: autodev → develop, autoresearch → research; `build` is a named,
+    // selectable tile AND the default posture — marked default in the picker,
+    // not implied-absent). `agent_order` (fork PR #305's config field) is the
+    // fixed display
     // order: PRIMARY sort key in the app-side picker sort (unlisted agents
     // follow, default_agent pin secondary, alphabetical last). Like
     // everything in this blob, it deep-merges OVER the user's global config —
     // an explicit per-message `agent` (the e2e tests, the distiller's --agent)
     // is unaffected.
     default_agent: "plan",
-    agent_order: ["plan", "develop", "research"],
+    agent_order: ["plan", "build", "develop", "research"],
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     // #700 A3: the amicode_* tool plugin is RETIRED — the tools come from the

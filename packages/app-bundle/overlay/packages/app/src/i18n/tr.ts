@@ -75,7 +75,7 @@ export const dict = {
   "command.agent.cycle.description": "Sonraki ajana geç",
   "command.agent.cycle.reverse": "Ajanı geri değiştir",
   "command.agent.cycle.reverse.description": "Önceki ajana geç",
-  "agent.picker.implied": "örtük",
+  "agent.picker.default": "varsayılan",
   "posture.indicator.label": "Duruş",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

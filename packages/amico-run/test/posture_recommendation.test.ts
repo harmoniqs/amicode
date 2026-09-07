@@ -115,6 +115,26 @@ describe("posture recommendation — tie-breaks (spec D2 folds)", () => {
     expect(r2.mode).toBe("develop");
   });
 
+  it("build is NEVER a recommendation target (#868 rev 3 — the resting state, not a recommendation target)", () => {
+    // Across every shape split and every executor hint (including the old
+    // director ids and build itself), the emitted target is always one of the
+    // two campaign postures — never build.
+    const shapes: CompiledStep[][] = [
+      [],
+      [step("triage")],
+      [step("implement-slice")],
+      [step("experiment-sim")],
+      [step("implement-slice"), step("experiment-sim")],
+    ];
+    const executors = [undefined, "plan", "build", "develop", "research", "autodev", "autoresearch", "some-role-agent"];
+    for (const steps of shapes)
+      for (const executorAgent of executors) {
+        const r = postureRecommendation(steps, { executorAgent });
+        if (r.kind === "recommend") expect(r.mode).not.toBe("build");
+        if (r.kind === "ambiguous") for (const m of r.modes) expect(m).not.toBe("build");
+      }
+  });
+
   it("an abandoned plan (no steps) never fires the offer", () => {
     const r = postureRecommendation([]);
     expect(r.kind).toBe("none");

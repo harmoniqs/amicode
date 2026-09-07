@@ -75,7 +75,7 @@ export const dict = {
   "command.agent.cycle.description": "切換到下一個代理程式",
   "command.agent.cycle.reverse": "反向循環代理程式",
   "command.agent.cycle.reverse.description": "切換到上一個代理程式",
-  "agent.picker.implied": "隱式",
+  "agent.picker.default": "預設",
   "posture.indicator.label": "姿態",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",
