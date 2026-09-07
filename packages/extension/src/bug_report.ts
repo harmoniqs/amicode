@@ -271,11 +271,11 @@ export class BugReportManager {
     // Context envelope (pointer-only): assembled BEFORE create so the new bug
     // session can never be picked as its own origin. Each field degrades to
     // absent rather than failing the report.
-    const envelope = await this.buildEnvelope(server);
+    const { envelope, originModel } = await this.buildEnvelope(server);
     let sessionID: string | undefined;
     try {
       sessionID = await this.createSession(server, envelope);
-      await this.armSession(server, sessionID, liveModel);
+      await this.armSession(server, sessionID, liveModel, originModel);
     } catch (e) {
       // No orphans: a created-but-unarmed (or ambiguous) session is deleted.
       if (sessionID) await this.deleteSession(server, sessionID);
@@ -287,15 +287,15 @@ export class BugReportManager {
     this.deps.postDown({ source: "amicode", kind: OPEN_BUG_REPORT_KIND, sessionID });
   }
 
-  private async buildEnvelope(server: BugReportServer): Promise<Record<string, string>> {
+  private async buildEnvelope(server: BugReportServer): Promise<{ envelope: Record<string, string>; originModel?: ReportBugModel }> {
     const envelope: Record<string, string> = {};
     const dir = this.deps.workspaceDir();
     if (dir) envelope.project = path.basename(dir);
     const runPointer = this.deps.activeRunPointer();
     if (runPointer && !path.isAbsolute(runPointer)) envelope.run_pointer = runPointer;
     const origin = await this.findOriginSession(server);
-    if (origin) envelope.origin_session_id = origin;
-    return envelope;
+    if (origin) envelope.origin_session_id = origin.id;
+    return { envelope, originModel: origin?.model };
   }
 
   /** Session-collection URL scoped to the app's project (the VS Code workspace
@@ -312,8 +312,10 @@ export class BugReportManager {
   /** The originating session, best-effort: the most recently updated root
    *  session in the app's project scope that isn't itself a bug session (the
    *  list is updated-DESC and excludes archived). READ-ONLY provenance — this
-   *  id is never a mutation target (AC6). undefined when unknowable. */
-  private async findOriginSession(server: BugReportServer): Promise<string | undefined> {
+   *  id is never a mutation target (AC6). Returns both the id AND the model
+   *  (when present) from the same list fetch — zero extra network calls
+   *  (amicode#606). undefined when unknowable. */
+  private async findOriginSession(server: BugReportServer): Promise<{ id: string; model?: ReportBugModel } | undefined> {
     try {
       const res = await this.fetch(this.collectionUrl(server), server, { method: "GET" });
       if (!res.ok) return undefined;
@@ -321,6 +323,7 @@ export class BugReportManager {
         id?: unknown;
         parentID?: unknown;
         metadata?: unknown;
+        model?: unknown;
       }>;
       if (!Array.isArray(sessions)) return undefined;
       const origin = sessions.find(
@@ -329,7 +332,20 @@ export class BugReportManager {
           !s.parentID &&
           !(s.metadata && typeof s.metadata === "object" && "bug_report" in s.metadata),
       );
-      return origin?.id as string | undefined;
+      if (!origin || typeof origin.id !== "string") return undefined;
+      // Extract the model from the same list entry — no extra fetch.
+      let model: ReportBugModel | undefined;
+      if (
+        origin.model &&
+        typeof origin.model === "object" &&
+        "providerID" in origin.model &&
+        "modelID" in origin.model &&
+        typeof (origin.model as ReportBugModel).providerID === "string" &&
+        typeof (origin.model as ReportBugModel).modelID === "string"
+      ) {
+        model = origin.model as ReportBugModel;
+      }
+      return { id: origin.id, model };
     } catch {
       return undefined; // best-effort: a failed list never blocks the report
     }
@@ -357,14 +373,16 @@ export class BugReportManager {
 
   /** Arm: the report-a-bug slash command as the session's first turn.
    *
-   *  Precedence is live selection → configured default → server default
-   *  (omit). Each level is a strict fallback; an empty or malformed value
-   *  never pins the session — it falls through. The live variant travels with
-   *  its model; the configured pin cannot express a variant. */
-  private async armSession(server: BugReportServer, sessionID: string, liveModel?: ReportBugModel): Promise<void> {
+   *  Precedence is live selection → origin session model (#606) → configured
+   *  default → server default (omit). Each level is a strict fallback; an
+   *  empty or malformed value never pins the session — it falls through. The
+   *  live variant travels with its model; the configured pin cannot express a
+   *  variant. */
+  private async armSession(server: BugReportServer, sessionID: string, liveModel?: ReportBugModel, originModel?: ReportBugModel): Promise<void> {
     const body: Record<string, unknown> = { command: REPORT_A_BUG_SKILL, arguments: "" };
-    // Precedence: live → configured → omit. Validation mirrors the bridge's
-    // bounded-string checks; a malformed live value never blocks the command.
+    // Precedence: live → origin → configured → omit. Validation mirrors the
+    // bridge's bounded-string checks; a malformed live value never blocks the
+    // command.
     const liveValid =
       liveModel &&
       typeof liveModel.providerID === "string" &&
@@ -377,6 +395,19 @@ export class BugReportManager {
       body.model = `${liveModel.providerID}/${liveModel.modelID}`;
       if (typeof liveModel.variant === "string" && liveModel.variant !== "" && liveModel.variant.length <= 200) {
         body.variant = liveModel.variant;
+      }
+    } else if (
+      originModel &&
+      typeof originModel.providerID === "string" &&
+      originModel.providerID !== "" &&
+      originModel.providerID.length <= 200 &&
+      typeof originModel.modelID === "string" &&
+      originModel.modelID !== "" &&
+      originModel.modelID.length <= 200
+    ) {
+      body.model = `${originModel.providerID}/${originModel.modelID}`;
+      if (typeof originModel.variant === "string" && originModel.variant !== "" && originModel.variant.length <= 200) {
+        body.variant = originModel.variant;
       }
     } else {
       const configured = this.deps.defaultModel?.()?.trim();
