@@ -118,6 +118,7 @@ async function compile(argv: string[], ctx: PlanVerbCtx): Promise<VerbResult> {
       advisory_count: r.advisory_count,
       suggested_ttl_s: r.suggested_ttl_s,
       allow_unreviewed: r.allow_unreviewed,
+      posture_recommendation: r.posture_recommendation,
       // Never silently: the caller is told which bounds compile could not check, so "compiled"
       // does not read as "fully budget-checked".
       unchecked: r.unchecked,

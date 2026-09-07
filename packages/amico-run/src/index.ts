@@ -9,3 +9,4 @@ export * from "./scheduler.js";
 export * from "./remote_config.js";
 export * from "./cloud_client.js";
 export * from "./remote_executor.js";
+export * from "./posture_recommendation.js";

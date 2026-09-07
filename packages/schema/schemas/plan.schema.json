@@ -31,6 +31,42 @@
       "minimum": 1,
       "description": "A RECOMMENDATION from step_count. `amico ledger approve` reads it to default --expires-in and remains the sole writer of expires_at — compile must not own a warrant's lifetime."
     },
+    "posture_recommendation": {
+      "type": "object",
+      "description": "S2 (spec-20260907-011500 D2, #859): the plan-exit posture recommendation, stamped by compile from the plan's ARTIFACT SHAPE (step task_types) + the spec's optional `agent` executor hint. kind 'recommend' names ONE posture; kind 'ambiguous' names BOTH (mixed shape or an unresolvable executor — the user picks, no silent coin-flip); kind 'none' is an abandoned plan — the posture offer never fires. Data on the artifact: the indicator reads it, never re-derives it.",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "mode", "reason"],
+          "properties": {
+            "kind": { "const": "recommend" },
+            "mode": { "enum": ["develop", "research"] },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "modes", "reason"],
+          "properties": {
+            "kind": { "const": "ambiguous" },
+            "modes": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "enum": ["develop", "research"] } },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": { "const": "none" },
+            "reason": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
     "steps": {
       "type": "array",
       "minItems": 1,
