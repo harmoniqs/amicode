@@ -102,6 +102,18 @@ export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
 export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; targetPath: string; position: "before" | "after" };
 
+// ── Environment action messages (#887) ───────────────────────────────────────
+
+export interface BindToEnvironmentMessage {
+  kind: "bind-to-environment";
+  projectPath: string;
+}
+
+export interface PromoteToEnvironmentMessage {
+  kind: "promote-to-environment";
+  filePath: string;
+}
+
 export type SidebarUpMessage =
   | OpenChatMessage
   | NewProjectMessage
@@ -111,7 +123,9 @@ export type SidebarUpMessage =
   | OpenFileMessage
   | FileOpMessage
   | SetSectionOrderMessage
-  | ReorderRootMessage;
+  | ReorderRootMessage
+  | BindToEnvironmentMessage
+  | PromoteToEnvironmentMessage;
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
