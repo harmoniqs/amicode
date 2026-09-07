@@ -133,6 +133,13 @@ function createIconEl(icon: string): HTMLElement {
   // expanded state already handles folder visibility after re-render).
   let pendingActiveProject: { path: string | null; mode: "none" | "expand" | "reset" } | null = null;
 
+  // Track the last path we scrolled the sidebar to. "expand" mode (tab switch /
+  // session re-focus) only scrolls when the path actually changes — re-focusing
+  // the SAME session must not yank the scroll position while the user is
+  // browsing another repo. "reset" mode (explicit dropdown selection) always
+  // scrolls regardless.
+  let lastScrolledPath: string | null = null;
+
   /** Resolve rendering order: saved keys filtered to available, new keys appended. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
     const availableSet = new Set(available);
@@ -1558,6 +1565,10 @@ function createIconEl(icon: string): HTMLElement {
   function applyActiveProject(activePath: string | null, mode: "none" | "expand" | "reset" = "reset"): void {
     const rootPaths = new Set(currentRoots.map((r) => r.path));
 
+    // Clear the scroll tracker when the active project is cleared, so the
+    // next activation scrolls even if it's the same path as before.
+    if (!activePath) lastScrolledPath = null;
+
     // Orphan guard: if the active path doesn't match any sidebar root,
     // downgrade any mode to "none" — highlight-only, no folder changes.
     if (activePath && !rootPaths.has(activePath)) {
@@ -1632,10 +1643,20 @@ function createIconEl(icon: string): HTMLElement {
       }
     }
 
-    // Scroll the active project into view ("expand" and "reset" only).
+    // Scroll the active project into view ("expand" and "reset" modes).
     // "none" is highlight-only — used for orphan fallback and renderRoots
     // replay — and must never scroll.
+    //
+    // "expand" (tab switch / session re-focus) only scrolls when the path
+    // actually changed — re-focusing the SAME session must not yank the
+    // sidebar while the user is browsing another repo. "reset" (explicit
+    // dropdown selection) always scrolls regardless of lastScrolledPath.
     if (activeEl && activePath && (mode === "expand" || mode === "reset")) {
+      if (mode === "expand" && activePath === lastScrolledPath) {
+        // Same session re-gaining focus — skip scroll + section expand.
+        return;
+      }
+      lastScrolledPath = activePath;
       const activeRoot = currentRoots.find((r) => r.path === activePath);
       let sectionWasExpanded = false;
 

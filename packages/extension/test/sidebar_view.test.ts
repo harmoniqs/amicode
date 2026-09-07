@@ -946,9 +946,52 @@ describe("sidebar webview — scroll active project into view", () => {
   });
 
   it("scrollIntoView is NOT called for mode 'none'", () => {
-    // The scroll path must be gated: only for "expand" or "reset"
-    // The scroll call must be inside a conditional that checks mode
-    expect(fnBody).toMatch(/mode\s*===\s*["']expand["']|mode\s*===\s*["']reset["']/);
+    // The scroll path must be gated — the scroll call must be inside a
+    // conditional that checks mode
+    expect(fnBody).toMatch(/mode\s*===\s*["']reset["']/);
+  });
+
+  it("expand mode tracks lastScrolledPath so re-focus on the same session does NOT scroll", () => {
+    // When the same session regains focus (user clicks back into the chat
+    // from the sidebar), applyActiveProject fires with mode="expand" and the
+    // SAME path. The sidebar must NOT scroll in this case — otherwise browsing
+    // another repo is interrupted every time the chat regains focus.
+    //
+    // The mechanism: a `lastScrolledPath` variable remembers the last path
+    // that was scrolled to. For "expand" mode, the scroll block is skipped
+    // when activePath === lastScrolledPath.
+    expect(fnBody).toMatch(/lastScrolledPath/);
+    // The guard for "expand" must compare activePath against lastScrolledPath
+    // to suppress repeated scrolls for the same project.
+    const guardLine = fnBody.split("\n").find(
+      (l: string) => l.includes("lastScrolledPath") && l.includes("activePath"),
+    );
+    expect(guardLine).toBeDefined();
+  });
+
+  it("expand mode with a DIFFERENT path DOES scroll — session switch navigates the sidebar", () => {
+    // Switching from session A (project /foo) to session B (project /bar)
+    // fires mode="expand" with a NEW path. The sidebar SHOULD scroll to the
+    // new project so the user can see where the new session lives.
+    //
+    // The guard allows the scroll when activePath !== lastScrolledPath.
+    // After scrolling, lastScrolledPath is updated so subsequent re-focus
+    // events on the same session are suppressed.
+    expect(fnBody).toMatch(/lastScrolledPath\s*=\s*activePath/);
+  });
+
+  it("reset mode always scrolls regardless of lastScrolledPath — dropdown is explicit user action", () => {
+    // An explicit dropdown selection (mode="reset") must always scroll, even
+    // if the path matches lastScrolledPath. This is deliberate user action.
+    // The guard must only apply the lastScrolledPath check for "expand" mode.
+    const guardLine = fnBody.split("\n").find(
+      (l: string) => l.includes("activeEl") && l.includes("activePath") && l.includes("mode"),
+    );
+    expect(guardLine).toBeDefined();
+    // "reset" must still be admitted by the outer scroll guard
+    expect(guardLine).toMatch(/mode\s*===\s*["']reset["']/);
+    // "expand" must also be admitted (but path-gated separately inside)
+    expect(guardLine).toMatch(/mode\s*===\s*["']expand["']/);
   });
 
   it("auto-expands the parent section if collapsed before scrolling", () => {
