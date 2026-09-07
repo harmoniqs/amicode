@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { compileScore, spliceIntoAgentsMd } from "../src/scores/compiler";
 import { buildRouterSection } from "../src/scores/router";
@@ -298,5 +298,47 @@ describe("AGENTS.md overlay prohibition", () => {
 
   it("warns that overlay edits silently vanish", () => {
     expect(ROOT_AGENTS).toMatch(/silently (vanish|overwritten|lost)/i);
+  });
+});
+
+// #856: the live hub prompt (the staged server AGENTS.md) shipped with
+// mac-rendered absolute paths baked in — a `darwin-arm64` VS Code extension
+// path for the vetted template and `/Users/aaron/…` Julia-project paths —
+// load-bearing instructions that misroute on every other machine in the fleet.
+// The shipped prompt surfaces below are the source of everything an agent
+// reads; none of them may carry a machine-specific absolute path. The two
+// dot-JSON audit artifacts under agents/ (the deploy receipt, the seed
+// provenance) are committed historical records of real deploys — deliberately
+// excluded from this scan, not falsified to pass it.
+describe("prompt surfaces carry no machine-specific absolute paths (#856)", () => {
+  const MACHINE_PATH = /\/Users\/[A-Za-z]|\/home\/[a-z]+\/|(?:darwin|linux|win32)-(?:x64|arm64)/;
+  const EXT = join(__dirname, "..");
+
+  const surfaces: string[] = [join(EXT, "AGENTS.md")];
+  for (const dir of ["agents", "scores", "templates"]) {
+    const walk = (d: string): void => {
+      for (const e of readdirSync(d, { withFileTypes: true })) {
+        const p = join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (/\.(md|jl|toml)$/.test(e.name) && !e.name.startsWith("."))
+          surfaces.push(p);
+      }
+    };
+    walk(join(EXT, dir));
+  }
+
+  it("collects a non-trivial surface (the scan must never go vacuously green)", () => {
+    expect(surfaces.length).toBeGreaterThan(10);
+  });
+
+  it("every shipped prompt surface is free of machine-specific absolute paths", () => {
+    const offenders: string[] = [];
+    for (const p of surfaces) {
+      const lines = readFileSync(p, "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (MACHINE_PATH.test(line)) offenders.push(`${p}:${i + 1}: ${line.trim()}`);
+      });
+    }
+    expect(offenders).toEqual([]);
   });
 });
