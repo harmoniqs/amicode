@@ -130,3 +130,36 @@ describe("salvaged intonatoqick skill (amico-plugin PR #42 → amicode#851)", ()
     }
   });
 });
+
+// ── PRs #48/#27: the restricted 6th vault kind, prompt ↔ skill agreement ─────
+
+describe("the restricted 6th vault kind — skill of record matches the live prompt (PRs #48/#27)", () => {
+  const vault = readSkill("amico-vault");
+  const stackState = readFileSync(join(EXT, "opencode-plugin", "stack_state.ts"), "utf8");
+
+  it("the amico-vault kind table says SIX kinds and carries the restricted row", () => {
+    expect(vault).toMatch(/### The six kinds and read precedence/);
+    expect(vault).not.toMatch(/five kinds/);
+    const table = vault.slice(vault.indexOf("| **personal**"), vault.indexOf("**Read precedence:"));
+    expect(table).toMatch(/\| \*\*restricted\*\* \| `kind = "restricted"` \|/);
+    expect(table).toMatch(/Not attached by default/);
+  });
+
+  it("the read precedence line places restricted(3) between project(2) and team(4)", () => {
+    expect(vault).toMatch(
+      /Read precedence: personal → engagement → project\(s\) → restricted → team → public/,
+    );
+  });
+
+  it("the write-routing table routes business-confidential content to the restricted vault", () => {
+    const routing = vault.slice(vault.indexOf("### Write routing"), vault.indexOf("### Visibility"));
+    expect(routing).toMatch(/\*\*restricted\*\* vault/);
+  });
+
+  it("the prompt-side condensed routing already routes restricted — the parity pin (divergence fails here)", () => {
+    // stack_state.ts:695 — the live prompt routes restricted/team/public; the
+    // audit (amicode#850 lens 0a) found the skill said five kinds. Both sides
+    // now carry restricted; this pin keeps them from silently diverging again.
+    expect(stackState).toMatch(/restricted\/team\/public→their own kind/);
+  });
+});
