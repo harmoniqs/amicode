@@ -101,6 +101,8 @@ export {
   type ModeBundleOpts,
   checkConsumerFloor,
   SUPPORTED_MODE_BUNDLE_VERSION,
+  MODE_ID_ALIASES,
+  resolveModeId,
   type ConsumerFloorOk,
   type ConsumerFloorGap,
   parseReleaseIndex,
