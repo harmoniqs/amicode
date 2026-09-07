@@ -43,3 +43,10 @@ path to write when done.
   for the parent, not a failure to hide.
 - If the env assignment conflicts with reality (path missing, branch moved), STOP and
   report the conflict — never silently switch checkouts.
+
+## Model routing
+
+Model routing, suggested: workhorse — brief-driven execution over a reviewed spec is
+disciplined engineering, not open-ended reasoning; the reliable workhorse class runs
+it. Escalate to strongest-reasoner only when the brief's analysis step demands
+interpretation the gates do not mechanically check.

@@ -45,3 +45,9 @@ experiment notes and the insight corpus where relevant.
 
 **Return (final message):** the ranked hypothesis list + the full spec-card draft for the
 top one.
+
+## Model routing
+
+Model routing, suggested: strongest-reasoner — ranking hypotheses by testability ×
+impact and drafting falsifiable spec cards is judgment work; the strongest reasoner
+available should hold the pen.

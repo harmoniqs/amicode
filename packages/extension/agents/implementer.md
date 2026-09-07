@@ -42,3 +42,10 @@ the structured return. You execute it in this fresh context.
 **Return (final message):** the implement-issue step-7 structured yaml, verbatim
 contract — issue, status (complete | blocked | failed), branch, commit_shas,
 ac_results with per-criterion green flags, notes.
+
+## Model routing
+
+Model routing, suggested: workhorse — TDD red-green over a TDD-ready issue is
+disciplined engineering with mechanical verification; the reliable workhorse class
+runs it. Escalate to strongest-reasoner only when the slice's Key Decisions demand
+design judgment the issue did not settle.

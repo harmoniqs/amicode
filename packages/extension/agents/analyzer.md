@@ -36,3 +36,10 @@ result files); the session ledger path; the gate verdicts the parent already rec
 - You never read the experimenter's chat transcript. Files only.
 - You PROPOSE verdicts; the gates + parent decide. If the gates and the artifacts
   disagree, say so plainly — that disagreement is the most valuable thing you can report.
+
+## Model routing
+
+Model routing, suggested: strongest-reasoner → workhorse — independent analysis and
+verdict proposals are the loop's judgment passes; the strongest reasoner available
+reads the raw artifacts. The workhorse class suffices when the brief is a mechanical
+re-extraction with no interpretive surface.

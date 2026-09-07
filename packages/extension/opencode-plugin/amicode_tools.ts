@@ -112,6 +112,7 @@ import {
   spawnGateKey,
   type SpawnedChild,
 } from "./session_spawn";
+import { routeSpawnModel, routingSummaryLine } from "./model_routing";
 import {
   onboardingStreamDir,
   isOnboardingEntity,
@@ -119,6 +120,29 @@ import {
   statusSummary,
   triggerOnboardingDistill,
 } from "./onboarding";
+import { fileURLToPath } from "node:url";
+
+/** The shipped role cards' directory for the S3 routing resolver (#860) —
+ *  the plugin twin's twin of the core's agentsDirForRouting. The plugin file
+ *  lives at <ext>/opencode-plugin/, so the cards ride ../agents via
+ *  import.meta.url (Bun and node both supply it); $AMICODE_AGENTS_DIR
+ *  overrides; null = cards unknown → those tiers resolve as absent. */
+function agentsDirForRouting(): string | null {
+  try {
+    const env = process.env.AMICODE_AGENTS_DIR;
+    if (env && env.trim() !== "") return env;
+    const url = import.meta.url;
+    if (typeof url === "string" && url.startsWith("file:")) return path.join(fileURLToPath(new URL("..", url)), "agents");
+  } catch {
+    /* fall through */
+  }
+  try {
+    if (typeof __dirname === "string" && __dirname !== "") return path.join(__dirname, "..", "agents");
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
 import {
   appendStanza,
   queryLedger,
@@ -1944,8 +1968,27 @@ returns an error, fix \`js\`/the fields and call it again.
         }
         const depth = computeDepth(own?.metadata);
         if (depth >= SPAWN_MAX_DEPTH && !args.force) return depthRefusal(depth);
-        // Model precedence: explicit arg > this session's model > server default.
+        // S3 model routing (#860) — the twin of the core seam: spawning
+        // THROUGH a role card consults the routing resolver; zero-config is
+        // byte-identical (routed.model null → today's expression); an
+        // explicit model arg IS the hand-set for this dispatch; any routing
+        // failure fails safe to today's dispatch.
+        const routed = (() => {
+          try {
+            return routeSpawnModel({
+              agent: args.agent,
+              explicitModel: args.model,
+              agentsDir: agentsDirForRouting(),
+              fleetSession: false, // the fleet lock never applies to product-initiated work
+            });
+          } catch {
+            return { model: null, resolution: null };
+          }
+        })();
+        // Model precedence: routed policy > explicit arg (already excluded
+        // by the seam) > this session's model > server default.
         const model =
+          routed.model ??
           args.model ??
           (own?.model?.providerID && own?.model?.modelID
             ? { providerID: own.model.providerID, modelID: own.model.modelID }
@@ -2006,7 +2049,10 @@ returns an error, fix \`js\`/the fields and call it again.
           if (children.length > 0) return `${summarizeSpawned(children, args.mode)}\nStopped early: ${msg}`;
           return `Cannot spawn: ${msg}`;
         }
-        return summarizeSpawned(children, args.mode);
+        // The routing note rides the dispatch summary (observability clause)
+        // — never in the zero-config case: byte-identity.
+        const summary = summarizeSpawned(children, args.mode);
+        return routed.resolution ? `${summary}\n${routingSummaryLine(routed.resolution)}` : summary;
         });
       },
     },
