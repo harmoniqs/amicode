@@ -9,26 +9,30 @@
     {
       "role": "hypothesizer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/hypothesizer.md",
-      "seeded_sha256": "sha256:7386cce14291b0d6a120999e689f3042e34cdb1a9224075830f1442b3fd11ffd",
+      "seeded_sha256": "sha256:f6864945d5f1b737a9503aa5466f3026ecc39fc7901883a7d85c03857f0bb2b8",
       "seeded_at": "2026-08-18T19:45:34.000Z"
     },
     {
       "role": "experimenter",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/experimenter.md",
-      "seeded_sha256": "sha256:faa3e0370dabfbffacb6d4d57f3d671f412ef2557c39cfd6fc2bdae8dd6ce0b2",
+      "seeded_sha256": "sha256:1bed34b410c31e00489360b1ed750b1edb27668b49bcce8ff8c61198b7321abf",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "analyzer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/analyzer.md",
-      "seeded_sha256": "sha256:8a6972d527fc33c99e64c500b6c5a351c39f50a00081ddafb41bf97d1f037aab",
+      "seeded_sha256": "sha256:13314049129ad4f9dbcadd961b0cbfc05fba01e3800380aad500b530411139ce",
       "seeded_at": "2026-08-18T19:45:39.000Z"
     },
     {
       "role": "implementer",
       "source_path": "/home/aaron/.amico/server/opencode-project-staging/opencode-project/.opencode/agents/implementer.md",
-      "seeded_sha256": "sha256:b7661f7fe4b8464893d29904d6bc087f64fbc094bfe64e084b980dc477d2534e",
+      "seeded_sha256": "sha256:4c27b6ff55b13f6680293a59160479cfc29dea256fd4ef8b29ce22508e4478ac",
       "seeded_at": "2026-08-20T18:24:56.000Z"
     }
-  ]
+  ],
+  "amended": true,
+  "amended_at": "2026-09-07T00:00:00.000Z",
+  "amendment_signed_by": "aaron via harmoniqs/amicode#860 (the S3 issue's role-card acceptance criterion; spec-20260907-011500 D3 rev 3 — AFK walk)",
+  "amendment_note": "S3 model routing: the model_routing slots of the four seeded role cards are filled with CLASS-level prefer-lists (a '## Model routing' section appending one 'Model routing, suggested:' line naming workhorse / strongest-reasoner / fast-cheap — the public suggestion vocabulary, never tuned assignments). No other card content changed. seeded_sha256 entries updated to the amended bytes per this record's amendment protocol."
 }
