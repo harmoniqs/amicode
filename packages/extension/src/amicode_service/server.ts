@@ -275,13 +275,20 @@ export class AmicodeServiceServer {
     }
   }
 
-  async start(): Promise<URL> {
+  async start(port?: number): Promise<URL> {
     if (this.server) throw new Error("amicode service already running");
     const server = http.createServer((req, res) => {
       void this.dispatch(req, res);
     });
     this.server = server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const listenPort = port ?? 0;
+    await new Promise<void>((resolve, reject) => {
+      server.on("error", reject);
+      server.listen(listenPort, "127.0.0.1", () => {
+        server.removeListener("error", reject);
+        resolve();
+      });
+    });
     const addr = server.address();
     if (!addr || typeof addr === "string") throw new Error("amicode service: no port");
     this._port = addr.port;

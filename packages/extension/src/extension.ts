@@ -846,6 +846,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // entitlement-staged gate still decides whether fleet surfaces exist.
       fleetActivation: () =>
         resolveFleetActivation({ config: readFleetActivationConfig(vscode.workspace.getConfiguration("amicode")) }),
+      // Derive a fixed service port from the engine port so the iframe origin
+      // stays stable across window reloads — preserving localStorage (settings,
+      // titlebar positions, developer tool paths). Falls back to ephemeral if
+      // the derived port is busy.
+      port: configuredPort > 0 ? configuredPort + 1 : undefined,
     });
     amicodeService = serviceBoot ?? undefined;
     ctx.subscriptions.push(amicodeServiceDisposal(serviceBoot));

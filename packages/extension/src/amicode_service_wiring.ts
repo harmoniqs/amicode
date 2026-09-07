@@ -94,10 +94,17 @@ export interface AmicodeServiceWiringOptions {
    *  The harness tightens these for the kill/hang legs; production uses
    *  the defaults. */
   fleetTransport?: { dataPlaneTimeoutMs?: number; writeTimeoutMs?: number; writeMaxRetries?: number };
+  /** Fixed port for the service. When set, the service binds to this port
+   *  so the iframe origin stays stable across window reloads — preserving
+   *  the app's localStorage (settings, titlebar positions, etc.). Falls back
+   *  to an ephemeral port if the fixed port is unavailable. */
+  port?: number;
 }
 
 /**
- * Boot the amicode service on an ephemeral loopback port. Never throws past
+ * Boot the amicode service on a loopback port. Uses the configured fixed
+ * port when provided (stable origin → persistent localStorage), falling back
+ * to an ephemeral port if the fixed port is busy. Never throws past
  * activation wiring: a boot failure is logged and returns undefined — the
  * extension then frames the engine origin directly (frameOriginUrl's
  * fallback), so the chat keeps working, degraded to the engine's own UI.
@@ -156,7 +163,19 @@ export async function startAmicodeService(
       shelf: opts.appDistRoot !== undefined ? { distRoot: opts.appDistRoot } : undefined,
       fleet: fleet ?? opts.fleet,
     });
-    const url = await service.start();
+    let url: URL;
+    if (opts.port && opts.port > 0) {
+      try {
+        url = await service.start(opts.port);
+      } catch {
+        // Fixed port unavailable — fall back to ephemeral so the service
+        // always boots. localStorage won't persist, but the app still works.
+        log.appendLine(`[amicode-service] port ${opts.port} busy, falling back to ephemeral`);
+        url = await service.start();
+      }
+    } else {
+      url = await service.start();
+    }
     const authNote = opts.engine !== undefined ? "per-boot Basic + engine token" : "per-boot Basic";
     const engineNote = opts.engine !== undefined ? "; engine proxy armed (late-bound upstream)" : "";
     const shelfNote = opts.appDistRoot !== undefined ? "; app shelf mounted" : "";
