@@ -10,8 +10,10 @@
 // on failure, fixed error strings (nothing the caller sent is echoed).
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import * as fs from "node:fs";
+import { mkdtempSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { join } from "node:path";
 import { postureResponse, savePostureResponse, dismissPostureResponse } from "../src/amicode_service/posture";
 
 let tmp: string;
@@ -210,5 +212,52 @@ describe("POST /amicode/posture/dismiss — dismissPostureResponse", () => {
     const out = JSON.parse(dismissPostureResponse({}, deps()));
     expect(out.ok).toBe(false);
     expect(out.error).toContain("bad_request");
+  });
+});
+
+// ── served wiring (the boot proof): the routes answer on the REAL service ──
+import { createAmicodeService } from "../src/amicode_service";
+
+describe("posture routes on the service — served wiring", () => {
+  it("GET/POST /amicode/posture + /dismiss round-trip through the service", async () => {
+    const ops = mkdtempSync(path.join(os.tmpdir(), "amicode-posture-svc-"));
+    const plans = mkdtempSync(path.join(os.tmpdir(), "amicode-posture-svc-plans-"));
+    const savedOps = process.env.AMICODE_OPS_DIR;
+    const savedPlans = process.env.AMICODE_PLANS_DIR;
+    process.env.AMICODE_OPS_DIR = ops;
+    process.env.AMICODE_PLANS_DIR = plans;
+    const service = createAmicodeService({ password: "posture-test" });
+    try {
+      const url = await service.start();
+      const auth = { Authorization: service.authHeader, "Content-Type": "application/json" };
+
+      const r0 = await fetch(new URL("/amicode/posture", url), { headers: auth });
+      expect(r0.status).toBe(200);
+      const b0 = await r0.json();
+      expect(b0.ok).toBe(true);
+      expect(b0.plan).toBeNull();
+      expect(b0.recommendation).toBeNull();
+      expect(b0.auto_switch).toBe("confirm");
+
+      const r1 = await fetch(new URL("/amicode/posture", url), { method: "POST", headers: auth, body: JSON.stringify({ auto_switch: "auto" }) });
+      expect(r1.status).toBe(200);
+      expect(await r1.json()).toEqual({ ok: true, auto_switch: "auto", error: null });
+      expect(JSON.parse(postureResponse({ prefsFile: path.join(ops, "plan-posture.json") })).auto_switch).toBe("auto");
+
+      const hash = "c".repeat(64);
+      const r2 = await fetch(new URL("/amicode/posture/dismiss", url), { method: "POST", headers: auth, body: JSON.stringify({ plan_hash: hash }) });
+      expect(r2.status).toBe(200);
+      expect((await r2.json()).dismissed).toBe(hash);
+
+      const r3 = await fetch(new URL("/amicode/posture", url), { method: "POST", headers: auth, body: JSON.stringify({ auto_switch: "nope" }) });
+      expect(r3.status).toBe(200);
+      expect((await r3.json()).error).toContain("bad_request");
+    } finally {
+      await service.stop?.();
+      if (savedOps === undefined) delete process.env.AMICODE_OPS_DIR; else process.env.AMICODE_OPS_DIR = savedOps;
+      if (savedPlans === undefined) delete process.env.AMICODE_PLANS_DIR; else process.env.AMICODE_PLANS_DIR = savedPlans;
+      fs.rmSync(ops, { recursive: true, force: true });
+      fs.rmSync(plans, { recursive: true, force: true });
+    }
   });
 });
