@@ -15,8 +15,8 @@ export interface RawDirEntry {
 }
 
 export interface TreeServiceDeps {
-  /** Classify a directory as research or dev. */
-  detectProjectType: (dir: string) => "research" | "dev";
+  /** Classify a directory as research, dev, or environment. */
+  detectProjectType: (dir: string) => "research" | "dev" | "environment";
   /** Read research-project.toml fields (name, status). Returns {} on failure. */
   readToml: (dir: string) => { name?: string; status?: string };
   /** Read immediate children of a directory. */
@@ -53,6 +53,9 @@ export class SidebarTreeService {
     for (const folder of workspaceFolders) {
       const dir = folder.uri.fsPath;
       const projectType = this.deps.detectProjectType(dir);
+
+      // Environment folders are not shown as sidebar roots (AC-49)
+      if (projectType === "environment") continue;
 
       if (projectType === "research") {
         const toml = this.deps.readToml(dir);

@@ -42,6 +42,9 @@ export function getWorkspaceProjects(deps: WorkspaceProjectDeps): WorkspaceProje
     const dir = folder.uri.fsPath;
     const projectType = deps.detectProjectType(dir);
 
+    // Environment folders are excluded from the workspace project list (AC-49)
+    if (projectType === "environment") continue;
+
     if (projectType === "research") {
       let toml: { name?: string; status?: string } = {};
       try {

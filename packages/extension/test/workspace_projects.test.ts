@@ -117,4 +117,37 @@ describe("getWorkspaceProjects (#663)", () => {
     expect(result[0].name).toBe("bad-toml");
     expect(result[0].type).toBe("research");
   });
+
+  // ── environment filtering (#882) ──────────────────────────────────────
+
+  it("excludes environment folders from workspace projects (AC-49)", () => {
+    const typeMap: Record<string, "research" | "dev" | "environment"> = {
+      "/research": "research",
+      "/env": "environment",
+      "/dev": "dev",
+    };
+    const result = getWorkspaceProjects(
+      deps(
+        [
+          { name: "research", path: "/research" },
+          { name: "env", path: "/env" },
+          { name: "dev", path: "/dev" },
+        ],
+        { detectProjectType: (dir) => typeMap[dir] ?? "dev" },
+      ),
+    );
+    expect(result).toHaveLength(2);
+    expect(result.map((p) => p.type)).toEqual(["research", "dev"]);
+    expect(result.find((p) => p.type === "environment" as string)).toBeUndefined();
+  });
+
+  it("environment-only workspace returns empty array (AC-50)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "env", path: "/env" }],
+        { detectProjectType: () => "environment" },
+      ),
+    );
+    expect(result).toEqual([]);
+  });
 });

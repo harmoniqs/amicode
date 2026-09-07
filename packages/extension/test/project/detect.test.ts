@@ -36,6 +36,19 @@ describe("detectProjectType", () => {
     writeFileSync(join(tmpDir, "research-project.toml"), 'schema_version = 1\n');
     expect(detectProjectType(tmpDir)).toBe("research");
   });
+
+  // ── environment detection (#882) ──────────────────────────────────────
+
+  it("returns 'environment' when research-environment.toml exists", () => {
+    writeFileSync(join(tmpDir, "research-environment.toml"), 'schema_version = 1\nname = "env"\nslug = "env"\ncreated = "2026-09-07"\n');
+    expect(detectProjectType(tmpDir)).toBe("environment");
+  });
+
+  it("'environment' takes priority over 'research' when both manifests exist", () => {
+    writeFileSync(join(tmpDir, "research-environment.toml"), 'schema_version = 1\nname = "env"\nslug = "env"\ncreated = "2026-09-07"\n');
+    writeFileSync(join(tmpDir, "research-project.toml"), 'schema_version = 1\nname = "proj"\n');
+    expect(detectProjectType(tmpDir)).toBe("environment");
+  });
 });
 
 // ── integration: listProjectDirs carries type ──────────────────────────────

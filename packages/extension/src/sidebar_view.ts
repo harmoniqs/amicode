@@ -15,6 +15,7 @@ import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMess
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
+import { invalidateEnvironmentCache } from "./project/resolve_environment";
 
 // ── Icon theme resolution ────────────────────────────────────────────────────
 
@@ -490,7 +491,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       if (folder) {
         this.fsPendingFolders.add(folder.uri.fsPath);
         // Track whether this event might change a project's type classification
-        if (path.basename(uri.fsPath) === "research-project.toml") {
+        if (path.basename(uri.fsPath) === "research-project.toml" || path.basename(uri.fsPath) === "research-environment.toml") {
           this.fsPendingProjectTypeChange = true;
         }
         clearTimeout(this.fsDebounceTimer);
@@ -501,6 +502,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // file changes only need the children cache invalidation that the
           // webview's fs-changed handler already performs.
           if (this.fsPendingProjectTypeChange) {
+            invalidateEnvironmentCache();
             this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
             queueMicrotask(() => this.pushGitStatus());
             this.fsPendingProjectTypeChange = false;

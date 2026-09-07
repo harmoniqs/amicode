@@ -9,7 +9,7 @@
 export interface TreeRoot {
   path: string;
   name: string;
-  projectType: "research" | "dev";
+  projectType: "research" | "dev" | "environment";
   metadata?: { phase?: string; lastActive?: string };
 }
 
