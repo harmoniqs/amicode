@@ -1200,6 +1200,54 @@ describe("sidebar — reorderWorkspaceFolder end-to-end", () => {
   });
 });
 
+// ── Environment bridge messages (#892) ───────────────────────────────────────
+
+describe("sidebar bridge — environment messages", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  function makeHandlers(overrides: Record<string, any> = {}) {
+    return {
+      openChat: vi.fn(),
+      newProject: vi.fn(),
+      addExisting: vi.fn(),
+      getRoots: vi.fn(),
+      getChildren: vi.fn().mockResolvedValue([]),
+      openFile: vi.fn(),
+      fileOp: vi.fn().mockResolvedValue({ ok: true }),
+      postMessage: vi.fn(),
+      setSectionOrder: vi.fn(),
+      reorderRoot: vi.fn(),
+      bindToEnvironment: vi.fn(),
+      promoteToEnvironment: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("bind-to-environment calls bindToEnvironment handler with projectPath", () => {
+    const handlers = makeHandlers();
+    handleSidebarMessage(
+      { kind: "bind-to-environment", projectPath: "/projects/quantum-sim" },
+      handlers,
+    );
+    expect(handlers.bindToEnvironment).toHaveBeenCalledWith("/projects/quantum-sim");
+  });
+
+  it("promote-to-environment calls promoteToEnvironment handler with filePath", () => {
+    const handlers = makeHandlers();
+    handleSidebarMessage(
+      { kind: "promote-to-environment", filePath: "/projects/quantum-sim/insights/finding.md" },
+      handlers,
+    );
+    expect(handlers.promoteToEnvironment).toHaveBeenCalledWith("/projects/quantum-sim/insights/finding.md");
+  });
+});
+
 // ── Section labels and text (#673 polish) ────────────────────────────────────
 
 describe("sidebar webview — section labels", () => {

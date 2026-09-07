@@ -172,6 +172,10 @@ export interface SidebarMessageHandlers {
   reorderRoot: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
   /** Notify the chat panel that a file was moved/renamed so Files Changed updates. */
   notifyFileMove?: (oldPath: string, newPath: string, op: string) => void;
+  /** Bind a research project to an environment (#892). */
+  bindToEnvironment?: (projectPath: string) => void;
+  /** Promote a file to the resolved environment (#892). */
+  promoteToEnvironment?: (filePath: string) => void;
 }
 
 /**
@@ -216,6 +220,12 @@ export function handleSidebarMessage(
       break;
     case "reorder-root":
       handlers.reorderRoot(msg.sourcePath, msg.targetPath, msg.position);
+      break;
+    case "bind-to-environment":
+      handlers.bindToEnvironment?.(msg.projectPath);
+      break;
+    case "promote-to-environment":
+      handlers.promoteToEnvironment?.(msg.filePath);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;
