@@ -1686,9 +1686,26 @@ function createIconEl(icon: string): HTMLElement {
         }
         break;
 
-      case "roots":
-        renderRoots(msg.roots ?? []);
+      case "roots": {
+        const incoming = msg.roots ?? [];
+        // Skip the full DOM wipe when the roots array is structurally unchanged.
+        // fs-changed events trigger get-roots on every file change, but the
+        // roots almost never actually change — only adding/removing a workspace
+        // folder or a research-project.toml mutation changes them. The children
+        // cache invalidation + re-fetch (via the "children" handler) is what
+        // actually updates the visible tree; the renderRoots wipe just causes
+        // an empty-expand flash during the async gap.
+        const same = incoming.length === currentRoots.length &&
+          incoming.every((r: TreeRoot, i: number) =>
+            r.path === currentRoots[i].path &&
+            r.name === currentRoots[i].name &&
+            r.projectType === currentRoots[i].projectType
+          );
+        if (!same) {
+          renderRoots(incoming);
+        }
         break;
+      }
 
       case "children": {
         childrenCache[msg.path] = msg.entries ?? [];
@@ -1719,8 +1736,14 @@ function createIconEl(icon: string): HTMLElement {
             delete childrenCache[key];
           }
         }
-        // Re-request roots (workspace may have changed project type)
-        vscode.postMessage({ kind: "get-roots" });
+        // NOTE: we do NOT re-request roots here. Roots only change when
+        // workspace folders change (host pushes via onDidChangeWorkspaceFolders)
+        // or when a research-project.toml is added/removed (the host checks
+        // that in setupWatcher and pushes roots only when project types change).
+        // Sending get-roots on every fs-changed caused renderRoots to wipe the
+        // entire DOM, creating a visible empty-expand flash during the async gap
+        // while children re-loaded.
+
         // Re-request children for expanded nodes under this folder
         for (const key of Object.keys(expanded)) {
           if (expanded[key] && (key === folder || key.startsWith(folder + "/"))) {

@@ -3117,6 +3117,56 @@ describe("sidebar — flicker prevention", () => {
     (vscodeMock.workspace as any).workspaceFolders = [];
   });
 
+  it("watcher pushes roots only when research-project.toml changes, not for normal files", async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    const fsCbs: { create: Array<(uri: any) => void>; change: Array<(uri: any) => void>; del: Array<(uri: any) => void> } = {
+      create: [], change: [], del: [],
+    };
+    const vscodeMock = await import("vscode");
+    (vscodeMock.workspace as any).createFileSystemWatcher = () => ({
+      onDidCreate: (cb: (uri: any) => void) => { fsCbs.create.push(cb); return { dispose() {} }; },
+      onDidChange: (cb: (uri: any) => void) => { fsCbs.change.push(cb); return { dispose() {} }; },
+      onDidDelete: (cb: (uri: any) => void) => { fsCbs.del.push(cb); return { dispose() {} }; },
+      dispose() {},
+    });
+    (vscodeMock.workspace as any).workspaceFolders = [
+      { uri: { fsPath: "/project" }, name: "project", index: 0 },
+    ];
+
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    (view.webview.postMessage as any).mockClear();
+
+    // Normal file change — should NOT produce a roots message
+    for (const cb of fsCbs.change) cb({ fsPath: "/project/src/main.ts" });
+    vi.advanceTimersByTime(350);
+
+    const rootsMsgs = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "roots");
+    expect(rootsMsgs).toHaveLength(0);
+
+    // fs-changed should still be sent (children refresh still works)
+    const fsMsgs = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "fs-changed");
+    expect(fsMsgs).toHaveLength(1);
+
+    (view.webview.postMessage as any).mockClear();
+
+    // research-project.toml change — SHOULD produce a roots message
+    for (const cb of fsCbs.create) cb({ fsPath: "/project/research-project.toml" });
+    vi.advanceTimersByTime(350);
+
+    const rootsMsgsAfterToml = (view.webview.postMessage as any).mock.calls
+      .filter((c: any[]) => c[0]?.kind === "roots");
+    expect(rootsMsgsAfterToml).toHaveLength(1);
+
+    (vscodeMock.workspace as any).workspaceFolders = [];
+  });
+
   it("section-order handler skips re-render when order is unchanged", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
@@ -3217,6 +3267,51 @@ describe("SidebarViewProvider — dedup guard relaxed for mode changes (#870)", 
     const calls = (view.webview.postMessage as any).mock.calls;
     const activeProjectCalls = calls.filter((c: any) => c[0]?.kind === "active-project");
     expect(activeProjectCalls).toHaveLength(1);
+  });
+});
+
+// ── Empty-expand fix: roots change detection ────────────────────────────────
+
+describe("sidebar webview — roots change detection (empty-expand fix)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("roots handler skips renderRoots when incoming roots match currentRoots", () => {
+    // The "roots" message handler must compare incoming roots with currentRoots
+    // before calling renderRoots, to avoid unnecessary DOM wipe + empty-expand flash.
+    // Pattern: like the section-order guard, check before calling renderRoots.
+    const handlerStart = src.indexOf('case "roots"');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerBlock = src.slice(handlerStart, handlerStart + 1200);
+
+    // Must reference currentRoots for comparison
+    expect(handlerBlock).toMatch(/currentRoots/);
+
+    // Must have a conditional guard around renderRoots (not unconditional)
+    expect(handlerBlock).toMatch(/if\s*\(/);
+
+    // The comparison must check structural equality (path, name, projectType)
+    // before the renderRoots call (use the function-call form to avoid comment matches)
+    const guardIdx = handlerBlock.search(/currentRoots\[/);
+    const renderIdx = handlerBlock.search(/renderRoots\s*\(/);
+    expect(guardIdx).toBeGreaterThan(-1);
+    expect(renderIdx).toBeGreaterThan(guardIdx);
+  });
+
+  it("fs-changed handler does not unconditionally send get-roots", () => {
+    // The fs-changed handler should NOT always send get-roots — that triggers
+    // renderRoots which wipes the DOM. Children cache invalidation + re-fetch
+    // is sufficient for normal file changes.
+    const handlerStart = src.indexOf('case "fs-changed"');
+    expect(handlerStart).toBeGreaterThan(-1);
+    const handlerBlock = src.slice(handlerStart, src.indexOf("break;", handlerStart) + 10);
+
+    // get-roots should NOT appear in the fs-changed handler at all — the host
+    // pushes a roots message only when workspace folders actually change, not
+    // on every file-system event.
+    expect(handlerBlock).not.toMatch(/["']get-roots["']/);
   });
 });
 
