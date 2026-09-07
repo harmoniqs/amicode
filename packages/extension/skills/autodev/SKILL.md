@@ -1,23 +1,25 @@
 ---
 name: autodev
-description: The director's loop protocol for autonomous development sessions — the dev gate pack's phases and gates (decompose → implement → integrate), the implementer cast, session-ledger discipline, cross-mode handoff seeds, and honest degradation on machines missing bundle parts or skill copies. Use when starting, running, or resuming an autodev issue-DAG campaign.
+description: The develop mode's director loop protocol — the dev gate pack's phases and gates (decompose → implement → integrate), the implementer cast, session-ledger discipline, cross-mode handoff seeds, and honest degradation on machines missing bundle parts or skill copies. Use when starting, running, or resuming a develop-mode issue-DAG campaign. (This skill's id keeps the pre-rename mode name `autodev` — the workflow skill owns `develop`; the read-resolve alias binds old references to the renamed mode.)
 agents: [implementer]
 surface: public
 source: amicode
 revision: 1
 ---
 
-# Autodev — the director's protocol
+# Develop — the director's protocol
 
 > **Install conventions** — this skill is the dev mode's protocol, engine- and
 > install-neutral; bindings for a given engine stay engine-side (the opencode
-> binding of the director role is the `autodev` primary agent card, and the
+> binding of the director role is the `develop` primary agent card (the mode
+> id renamed from `autodev` per the three-mode surface; old ids read-resolve
+> to it), and the
 > engine-neutral loop core is the `director-core` skill — invoke it first at
 > kickoff or resume; this file binds the mode's specifics to it).
 
-**Entry points:** the `autodev` agent card (Tab-switch into dev mode — its
+**Entry points:** the `develop` agent card (Tab-switch into dev mode — its
 prompt embeds the director spine), direct invocation of this skill, or the
-standing line in the user's autodev kickoff prompts. All three lead here; this
+standing line in the user's develop-mode kickoff prompts. All three lead here; this
 file is the protocol.
 
 The operating principle: **the context window is a cache; the session ledger is
@@ -63,7 +65,7 @@ current verdict table, reference the in-flight casts? Append the audit row to §
 
 ## The loop (one iteration) — bound to the dev gate pack
 
-The mode's phase graph is the **dev gate pack** (`modes/autodev/pack.toml` in
+The mode's phase graph is the **dev gate pack** (`modes/develop/pack.toml` in
 the amicode repo, schema'd data): phases **decompose → implement → integrate**,
 one gate set per phase. One loop:
 
@@ -114,20 +116,20 @@ merges, board moves, issue closure) for orchestrated slices.
 
 ## Handoffs (cross-mode seeds)
 
-The dev pack closes by handing a **hypothesis seed** to `autoresearch`
-(`handoffs: hypothesis_seed → autoresearch`); this mode RECEIVES an **issue
-seed** from `autoresearch`. The procedure, both directions:
+The dev pack closes by handing a **hypothesis seed** to `research`
+(`handoffs: hypothesis_seed → research`); this mode RECEIVES an **issue
+seed** from `research`. The procedure, both directions:
 
-- **Receiving (autoresearch → autodev):** the seed is a typed note
+- **Receiving (research → develop):** the seed is a typed note
   (`kind: issue`, `issue-seed` schema — title, motivation, evidence,
   suggested repo + tier). On the seed: re-read the ledger, render the seed
   through `write-an-issue` at its suggested tier (the evidence pointers become
   Prior Art), and run the loop above on the resulting issue.
-- **Emitting (autodev → autoresearch):** when a campaign closes with an open
+- **Emitting (develop → research):** when a campaign closes with an open
   research question (a gate verdict that needs an experiment, a design
   question the issues surfaced), write the hypothesis-seed note (name the
   target posture, the question, the evidence), then hand it over — the
-  receiving mode's protocol (the `autoresearch` skill) picks it up from there.
+  receiving mode's protocol (the `research` skill) picks it up from there.
 - **Switching modes mid-session: PENDING-D5.** The posture switcher (the
   titlebar's mid-session agent switch) is not landed on every install yet —
   until the fork's posture surfaces ship, the safe path is to **spawn or open
@@ -150,7 +152,7 @@ is present:
   note the gap in the ledger — do not fabricate the skills' procedures from
   memory when a step references one that is absent.
 - **Absent bundle parts** — if the mode card or the gate pack did not stage
-  (`modes/autodev/` missing or incomplete), the phase/gate summary above is
+  (`modes/develop/` missing or incomplete), the phase/gate summary above is
   the only copy you have; name the gap, and record it for the doctor to
   surface.
 - **Absent dispatch surface** — with no dispatchable implementer binding,

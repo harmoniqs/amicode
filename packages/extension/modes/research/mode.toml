@@ -1,5 +1,5 @@
-# The autoresearch mode bundle manifest — ONE unit (spec-20260905-063000 D1).
-# Same contract as modes/autodev/mode.toml: ONE shared validator enforces the
+# The research mode bundle manifest — ONE unit (spec-20260905-063000 D1).
+# Same contract as modes/develop/mode.toml: ONE shared validator enforces the
 # pack schema and the declared set. Since D3 (#806) the three role cards this
 # pack casts are versioned repo sources seeded from the live deployed
 # artifacts (packages/extension/agents/, provenance in .seed-provenance.json
@@ -7,11 +7,11 @@
 # director card. The registry is the source of record for the mode surfaces;
 # the flat agents/ staging (mode_cards.ts) remains opencode's discovery path.
 schema_version = "1"
-mode = "autoresearch"
+mode = "research"
 # The agent id that BINDS this mode (D4 posture-binding map, #808): a session
-# resolved to this agent runs the autoresearch director posture; every other
+# resolved to this agent runs the research director posture; every other
 # agent id (plan, build, role agents, custom) binds copilot and is silent.
-agent = "autoresearch"
+agent = "research"
 card = "card.md"
 pack = "pack.toml"
 
@@ -21,7 +21,7 @@ pack = "pack.toml"
 # seed-gated on Aaron's signature — see docs/seed-gate/role-cards-seed-diff.md.
 protocol_skills = [
   "director-core",
-  "autoresearch",
+  "research",
   "hypothesis-review",
   "structural-analysis",
 ]
@@ -45,7 +45,7 @@ path = "../../agents/analyzer.md"
 # team-vault copy on machines that sync it (honest degradation names it).
 
 # The handoff seed this mode RECEIVES: dev closes with a hypothesis seed and
-# hands it to autoresearch (D6).
+# hands it to research (D6).
 [[handoff_seeds]]
 kind = "hypothesis_seed"
 schema = "../../handoff-seeds/hypothesis-seed.schema.json"

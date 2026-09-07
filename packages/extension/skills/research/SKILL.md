@@ -1,24 +1,24 @@
 ---
-name: autoresearch
-description: The director's loop protocol for autonomous research sessions — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming an autoresearch loop.
+name: research
+description: The research mode's director loop protocol — session-ledger discipline, the hypothesizer/experimenter/analyzer trio, deliberate spec gates, checkout registry, and compaction-any-time safety. Use when starting, running, or resuming a research loop. (The mode and this skill renamed from `autoresearch` per the three-mode surface; old ids read-resolve to `research`.)
 agents: [hypothesizer, experimenter, analyzer]
 surface: public
 project_contract:
   folders: [ledger/hypotheses, ledger/observations, ledger/campaigns, scripts, data, reports, config]
 ---
 
-# Autoresearch — the director's protocol
+# Research — the director's protocol
 
 > **Install conventions** — this skill operates on a **Research Project** (detected by
 > `research-project.toml` in the workspace). All load-bearing state — campaign ledgers,
 > hypotheses, observations, specs, scripts, data, and reports — lives in the project
 > directory. The protocol is engine- and install-neutral; bindings for a given engine stay
-> engine-side (the opencode binding of the director role is the `autoresearch` primary
+> engine-side (the opencode binding of the director role is the `research` primary
 > agent card).
 
-**Entry points:** the `autoresearch` primary agent (Tab-switch into research mode —
+**Entry points:** the `research` primary agent (Tab-switch into research mode —
 its prompt embeds this spine), direct invocation of this skill, or the standing line in
-the user's autoresearch kickoff prompts. All three lead here; this file is the protocol.
+the user's research kickoff prompts. All three lead here; this file is the protocol.
 
 The operating principle: **the context window is a cache; the project is the database.**
 Every piece of load-bearing state lives in project files — campaign ledgers, hypotheses,
@@ -122,19 +122,19 @@ ledger-abstinence is discipline + git history. The parent is the SOLE ledger wri
 
 ## Handoffs (cross-mode seeds)
 
-The research pack closes by handing an **issue seed** to `autodev` (its pack's
-closing handoff); this mode RECEIVES a **hypothesis seed** from `autodev`.
+The research pack closes by handing an **issue seed** to `develop` (its pack's
+closing handoff); this mode RECEIVES a **hypothesis seed** from `develop`.
 The procedure, both directions:
 
-- **Receiving (autodev → autoresearch):** the seed is a typed note
+- **Receiving (develop → research):** the seed is a typed note
   (`kind: hypothesis`, the hypothesis-seed schema — the question, the
   evidence, the suggested experiment shape). On the seed: re-read the ledger,
   register the hypothesis in the H-queue (§2), and run the loop above on it.
-- **Emitting (autoresearch → autodev):** when a campaign closes with a
+- **Emitting (research → develop):** when a campaign closes with a
   finding that needs code (a validated method, a tool gap, a result that
   wants an implementation), write the issue-seed note — title, motivation,
   evidence pointers, suggested repo + tier — name the target posture
-  (autodev), and hand it over; the receiving mode's protocol (the `autodev`
+  (develop), and hand it over; the receiving mode's protocol (the `develop`
   skill) renders it through `write-an-issue` and runs the dev walk on it.
 - **Switching modes mid-session: PENDING-D5.** Until the fork's posture
   surfaces ship, the safe path is to spawn or open the target posture's

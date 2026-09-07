@@ -41,7 +41,7 @@ const LIVE_SKILL = path.join(
   "SKILL.md",
 );
 
-const CARDS = ["autodev.md", "autoresearch.md"] as const;
+const CARDS = ["develop.md", "research.md"] as const;
 type CardName = (typeof CARDS)[number];
 
 const SPINE_START = "<!-- DIRECTOR-SPINE v1 START -->";
@@ -137,7 +137,7 @@ describe("mode cards — spine parity (byte-identity)", () => {
   const spines = CARDS.map((name) => spineOf(cardText(name)).spine);
 
   it("the two spines are byte-identical", () => {
-    expect(spines[0], "autodev spine === autoresearch spine, byte for byte").toBe(
+    expect(spines[0], "develop spine === research spine, byte for byte").toBe(
       spines[1],
     );
   });
@@ -153,7 +153,7 @@ describe("mode cards — spine parity (byte-identity)", () => {
 });
 
 describe("mode cards — spine content floor", () => {
-  const spine = spineOf(cardText("autodev.md")).spine; // parity ⇒ one check suffices
+  const spine = spineOf(cardText("develop.md")).spine; // parity ⇒ one check suffices
 
   it("carries all five loop verbs, each in a sentence of at least 8 words", () => {
     for (const verb of LOOP_VERBS) {
@@ -173,7 +173,7 @@ describe("mode cards — spine content floor", () => {
 });
 
 describe("mode cards — ledger discovery rule (correctness by containment)", () => {
-  const spine = spineOf(cardText("autoresearch.md")).spine;
+  const spine = spineOf(cardText("research.md")).spine;
 
   it("the spine contains the canonical discovery-rule block verbatim", () => {
     const rule = discoveryRuleFrom(canonicalSkill);

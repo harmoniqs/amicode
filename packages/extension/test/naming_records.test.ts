@@ -34,8 +34,8 @@ const CONTEXT = readFileSync(CONTEXT_PATH, "utf8");
 // after the term, exactly as the table writes it.
 const LOCKED_TERMS: ReadonlyArray<{ term: string; head: string }> = [
   { term: "director", head: "the role that leads any autonomous loop" },
-  { term: "autoresearch", head: "the research mode" },
-  { term: "autodev", head: "the development mode" },
+  { term: "research", head: "the research mode" },
+  { term: "develop", head: "the development mode" },
   { term: "campaign", head: "one bounded run of either autonomous mode" },
   { term: "gate pack", head: "the typed set of gates + phase templates" },
   { term: "mode", head: "one of the three director postures" },
@@ -102,15 +102,15 @@ describe("naming records — six locked terms in the amicode glossary", () => {
     }
   });
 
-  it("director and autodev carry Avoid lines recording the banned names", () => {
+  it("director and develop carry Avoid lines recording the banned names", () => {
     const director = glossaryEntry("director");
-    const autodev = glossaryEntry("autodev");
+    const develop = glossaryEntry("develop");
     expect(director, "director entry").not.toBeNull();
-    expect(autodev, "autodev entry").not.toBeNull();
+    expect(develop, "develop entry").not.toBeNull();
     expect((director?.avoid ?? "").toLowerCase(), "director avoids 'conductor'").toContain(
       "conductor",
     );
-    expect((autodev?.avoid ?? "").toLowerCase(), "autodev avoids 'autobuild'").toContain(
+    expect((develop?.avoid ?? "").toLowerCase(), "develop avoids 'autobuild'").toContain(
       "autobuild",
     );
   });
@@ -140,7 +140,7 @@ describe("naming records — six locked terms in the amicode glossary", () => {
 });
 
 // #807 (#809 fold) — the public workflow skill surface joins the naming
-// discipline: the five dev-workflow skills + the autodev mode-protocol skill
+// discipline: the five dev-workflow skills + the develop mode-protocol skill
 // are now user-facing product content (surface: public, in-repo canonical
 // copies), so the same locked vocabulary governs them. The pin reads the
 // fixture of record (protocol-blocklist.json) — never a private copy of the
@@ -154,7 +154,7 @@ describe("naming records — the public workflow skills carry open-protocol voca
     "implement-issue",
     "write-an-issue",
     "break-into-subissues",
-    "autodev",
+    "autodev", // the develop mode's protocol skill — id retained at the #858 rename
     "sota-review", // #820 — the public SOTA survey skill joins the naming discipline
   ];
   const blocklist = JSON.parse(readFileSync(BLOCKLIST_PATH, "utf8")) as {
@@ -162,12 +162,12 @@ describe("naming records — the public workflow skills carry open-protocol voca
     banned_names: string[];
   };
 
-  it("the glossary's autodev entry governs the new skill: it names the mode, never a banned alias", () => {
-    const entry = glossaryEntry("autodev");
-    expect(entry, "autodev entry").not.toBeNull();
+  it("the glossary's develop entry governs the new skill: it names the mode, never a banned alias", () => {
+    const entry = glossaryEntry("develop");
+    expect(entry, "develop entry").not.toBeNull();
     expect((entry?.avoid ?? "").toLowerCase()).toContain("autobuild");
-    const skill = readFileSync(join(SKILLS_DIR, "autodev", "SKILL.md"), "utf8").toLowerCase();
-    expect(skill).toContain("autodev");
+    const skill = readFileSync(join(SKILLS_DIR, "develop", "SKILL.md"), "utf8").toLowerCase();
+    expect(skill).toContain("develop");
     expect(skill).not.toContain("autobuild");
   });
 

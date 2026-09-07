@@ -92,6 +92,25 @@ import { unwrap } from "./session_spawn";
  *  test/mode_block.test.ts (drift fails the suite loudly). */
 export const PLUGIN_SUPPORTED_MODE_BUNDLE_VERSION = "1";
 
+/** The mode-id read-resolve alias table (spec-20260907-011500 D1, #858) —
+ *  autodev → develop, autoresearch → research. Duplicated from the schema
+ *  package by the dependency-free contract; PARITY-PINNED by
+ *  test/mode_block.test.ts. READ-RESOLVE, never migrate-on-write: old-id
+ *  sessions (append-only artifacts) resolve at read time, onto the renamed
+ *  bundle's declared agent — never onto a guess. `build` is NOT aliased: it
+ *  exits the picker, not the vocabulary. The alias window's exit rides the
+ *  next mode-bundle CONTRACT-VERSION bump (removal is non-additive). */
+export const PLUGIN_MODE_ID_ALIASES: Record<string, string> = {
+  autodev: "develop",
+  autoresearch: "research",
+};
+
+/** Resolve an agent id through the read-resolve alias table (identity for
+ *  everything the table does not name). */
+export function resolveModeIdPlugin(id: string): string {
+  return PLUGIN_MODE_ID_ALIASES[id] ?? id;
+}
+
 /** The explicit unresolvable line — byte-exact the spec's D4 text. */
 export const UNRESOLVABLE_HEADLINE = "posture: unresolvable — re-bind from the ledger";
 
@@ -671,8 +690,10 @@ export async function buildModeBlock(deps: ModeBlockDeps): Promise<string | null
     resolvedVia = "fallback";
   }
   // the posture-binding MAP: registry mode agents bind their mode; every other
-  // agent id binds copilot and is SILENT
-  const bound = registry.bundles.find((b) => b.agent === agent);
+  // agent id binds copilot and is SILENT. The resolved id goes through the
+  // read-resolve alias table first (#858): an old-id session (append-only
+  // artifact) binds the renamed posture at read time.
+  const bound = registry.bundles.find((b) => b.agent === resolveModeIdPlugin(agent));
   if (bound === undefined) return null; // copilot posture — silent, whatever resolved the id
   return bound.missingParts.length === 0
     ? fullBlock(bound, agent, resolvedVia)

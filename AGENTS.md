@@ -93,11 +93,13 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
   lines, `iter_*.png`, `result.toml`, `pulse.jld2`, `FINISHED`). Validate files with
   `packages/schema/launcher/amico-validate <file>`.
 - **New sessions open on opencode's `plan` agent** (plan-first posture for all
-  users): `buildOpencodeConfigContent` injects `default_agent: "plan"`; the
-  ordered picker is `plan → build → autodev → autoresearch` (default first,
-  then the director modes). The pulse-designer agent shell is retired (#389);
-  the interview content lives in the compiled AGENTS.md score section, visible
-  to every agent.
+  users): `buildOpencodeConfigContent` injects `default_agent: "plan"` and
+  `agent_order: ["plan", "develop", "research"]` — the three-mode surface
+  (spec-20260907-011500 D1, #858: autodev → develop, autoresearch → research;
+  old ids read-resolve for one release cycle; stock `build` is the implied
+  auto — a valid explicit id, out of the named set). The pulse-designer agent
+  shell is retired (#389); the interview content lives in the compiled
+  AGENTS.md score section, visible to every agent.
 - Never commit to `main`; branch + PR.
 
 ## Changing opencode (the vendored fork)

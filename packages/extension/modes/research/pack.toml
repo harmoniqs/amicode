@@ -73,4 +73,4 @@ roles = ["analyzer"]
 
 [[handoffs]]
 kind = "issue_seed"
-target = "autodev"
+target = "develop"

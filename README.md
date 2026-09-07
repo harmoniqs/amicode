@@ -115,7 +115,7 @@ Skills are not configuration — they are the capability surface. **26 skills** 
 
 | Surface | What it covers |
 |---|---|
-| Research loop | `autoresearch`, `analyze`, `hypothesis-review`, `dream-reflect`, `open-threads`, `paper-writer`, `create-research-project`, `migrate-research-project` |
+| Research loop | `research`, `analyze`, `hypothesis-review`, `dream-reflect`, `open-threads`, `paper-writer`, `create-research-project`, `migrate-research-project` |
 | Lab + catalog + vault | `amico-lab`, `amico-catalog`, `amico-vault`, `amico-strategy`, `amico-schema-check`, `amico-slack` |
 | Engineering | `debugging`, `tdd`, `verification`, `brainstorming`, `deliberate`, `grill-me`, `grill-with-docs`, `improve-codebase-architecture`, `teach`, `report-a-bug` |
 | Entitled surfaces | `piccolissimo`, `intonatissimo` — usage guidance for the `-issimo` performance tiers; ship in the vsix, stage only for entitled sessions |

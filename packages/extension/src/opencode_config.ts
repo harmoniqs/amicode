@@ -111,12 +111,14 @@ export function resolveJuliaProject(configValue: string): string {
  *      MCP projection against. The MCP environment carries AMICODE_PROBLEMS_DIR
  *      so the server resolves the same workspace root the grants use.
  *    - `default_agent: "plan"` — plan-first posture: new sessions open on
- *      opencode's plan agent; the ordered picker is plan → build → autodev →
- *      autoresearch (opencode's Agent.list keeps the default first, then
- *      alphabetical among the rest — so plan first, build next after the
- *      autodev/autoresearch custom sort fix, else plan, autodev,
- *      autoresearch, build). The picker is plan/build + the two director
- *      modes (roles-not-modes, #368):
+ *      opencode's plan agent; the named modes are plan → develop → research
+ *      (the three-mode surface, spec-20260907-011500 D1: autodev → develop,
+ *      autoresearch → research, old ids read-resolve for one release cycle;
+ *      stock `build` is the implied auto — the underlying default agent,
+ *      still a valid explicit id, out of the picker's named set).
+ *      `agent_order` (fork PR #305's field, honored APP-SIDE by the overlay's
+ *      picker sort) pins the fixed display order; without an honoring engine
+ *      build the picker still reads it client-side. Roles-not-modes (#368):
  *      the interview content lives in the compiled AGENTS.md score section
  *      (visible to every agent), and the pulse-designer agent entry is RETIRED
  *      (#389) — it was a four-line prompt shell over the config-root permission
@@ -481,14 +483,18 @@ export function buildOpencodeConfigContent(
   return JSON.stringify({
     $schema: "https://opencode.ai/config.json",
     // Plan-first posture (product default for ALL users): every new Amicode
-    // session opens on opencode's `plan` agent. The desired picker order is
-    // plan → build → autodev → autoresearch (Agent.list keeps the default
-    // first, then alphabetical — so plan first; the exact
-    // plan/build/autodev/autoresearch sequence requires the custom Agent.list
-    // sort patch when that ordering is required). Like everything in this blob,
-    // it deep-merges OVER the user's global config — an explicit per-message
-    // `agent` (the e2e tests, the distiller's --agent) is unaffected.
+    // session opens on opencode's `plan` agent. The named modes are
+    // plan → develop → research (spec-20260907-011500 D1, #858: autodev →
+    // develop, autoresearch → research; stock `build` is the implied auto —
+    // the underlying default agent, a valid explicit id, out of the named
+    // set). `agent_order` (fork PR #305's config field) is the fixed display
+    // order: PRIMARY sort key in the app-side picker sort (unlisted agents
+    // follow, default_agent pin secondary, alphabetical last). Like
+    // everything in this blob, it deep-merges OVER the user's global config —
+    // an explicit per-message `agent` (the e2e tests, the distiller's --agent)
+    // is unaffected.
     default_agent: "plan",
+    agent_order: ["plan", "develop", "research"],
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     // #700 A3: the amicode_* tool plugin is RETIRED — the tools come from the
@@ -522,7 +528,7 @@ export function buildOpencodeConfigContent(
     // into cfg.experimental alongside any user keys (see telemetryOpen above).
     ...(telemetryOpen ? { experimental: { openTelemetry: true } } : {}),
     // No `agent` overrides: the picker is opencode's native plan/build plus
-    // the two director modes autodev/autoresearch (#389 — the pulse-designer
+    // the two director modes develop/research (#389 — the pulse-designer
     // agent entry is retired; its prompt was a shell deferring to the
     // compiled AGENTS.md interview section, and its permission grants were
     // always the config-root block above). The interview runs from ANY agent
@@ -729,7 +735,7 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
       const preamble = [
         "<!-- AMICODE_SCORE_SECTION -->",
         "",
-        "You are a general-purpose autoresearch copilot. Do NOT proactively start",
+        "You are a general-purpose research copilot. Do NOT proactively start",
         "any domain-specific interview (pulse design, calibration, etc.) unless the",
         "user explicitly asks for it. When they do, invoke the relevant skill from",
         "the Skill index and follow the workflow in the ## Workflow section above.",

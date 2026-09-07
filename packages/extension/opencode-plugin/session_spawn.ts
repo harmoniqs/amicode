@@ -19,6 +19,23 @@
 export const SPAWN_MAX_DEPTH = 2;
 export const SPAWN_MAX_COUNT = 4;
 
+// The mode-id read-resolve alias table (spec-20260907-011500 D1, #858) —
+// autodev → develop, autoresearch → research. NO-IMPORT contract: duplicated
+// from @amicode/schema's MODE_ID_ALIASES, parity-pinned by
+// test/session_spawn.test.ts. READ-RESOLVE, never migrate-on-write; `build`
+// is NOT aliased (it exits the picker, not the vocabulary). The alias
+// window's exit rides the next mode-bundle CONTRACT-VERSION bump.
+const MODE_ID_ALIASES: Record<string, string> = {
+  autodev: "develop",
+  autoresearch: "research",
+};
+
+/** Resolve an agent id through the read-resolve alias table (identity for
+ *  everything the table does not name). */
+export function resolveModeIdSpawn(id: string): string {
+  return MODE_ID_ALIASES[id] ?? id;
+}
+
 export type SpawnMode = "fresh" | "fork";
 
 export type SpawnArgs = {
@@ -55,7 +72,21 @@ export function parseSpawnArgs(a: {
   }
   const agent = typeof a.agent === "string" && a.agent.trim() !== "" ? a.agent.trim() : null;
   const title = typeof a.title === "string" && a.title.trim() !== "" ? a.title.trim() : null;
-  return { ok: true, args: { prompt, count, title, agent, model, mode, force: a.force === true } };
+  // the read-resolve alias (spec-20260907-011500 D1, #858): an old director
+  // id on the amico_session agent param binds the renamed card. READ-RESOLVE,
+  // never migrate-on-write; `build` and every non-aliased id pass through.
+  return {
+    ok: true,
+    args: {
+      prompt,
+      count,
+      title,
+      agent: agent === null ? null : resolveModeIdSpawn(agent),
+      model,
+      mode,
+      force: a.force === true,
+    },
+  };
 }
 
 // The calling session's own spawned_depth (absent for never-spawned sessions

@@ -88,7 +88,7 @@ describe("prepareOpencodeProject × scores (spec §6)", () => {
     const proj = prep();
     const agents = fs.readFileSync(proj.agentsPath, "utf8");
     expect(agents).toContain("## Onset router");
-    expect(agents).toContain("general-purpose autoresearch copilot"); // stub injected
+    expect(agents).toContain("general-purpose research copilot"); // stub injected
     expect(agents).not.toContain("Stages, in order:"); // hardcoded body replaced
     expect(agents).toContain("## Identity"); // engine sections intact
     expect(agents).toContain("## Style & formatting"); // harness sections intact (ADR 0008: run-dir contract moved to solve skill)
@@ -402,7 +402,7 @@ PACKDRIVEN-BODY-MARKER.
     const proj = prep({ packsRoot });
     const md = fs.readFileSync(proj.agentsPath, "utf8");
     expect(md).toContain("## Onset router"); // router is always spliced
-    expect(md).toContain("general-purpose autoresearch copilot"); // stub present
+    expect(md).toContain("general-purpose research copilot"); // stub present
     const manifest = JSON.parse(fs.readFileSync(path.join(proj.projectDir, "score_manifest.json"), "utf8"));
     expect(manifest.manifest.id).toBe("custom-interview");
     expect(manifest.score_dir).toBe(path.join(packsRoot, "quantum-control", "scores", "custom"));
@@ -413,7 +413,7 @@ PACKDRIVEN-BODY-MARKER.
     const md = fs.readFileSync(proj.agentsPath, "utf8");
     // Today: on-demand stub, no compiled score content
     expect(md).toContain("## Onset router");
-    expect(md).toContain("general-purpose autoresearch copilot");
+    expect(md).toContain("general-purpose research copilot");
   });
 });
 

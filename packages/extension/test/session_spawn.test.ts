@@ -12,9 +12,11 @@ import {
   depthRefusal,
   defaultTitle,
   childTitle,
+  resolveModeIdSpawn,
   unwrap,
   summarizeSpawned,
 } from "../opencode-plugin/session_spawn";
+import { MODE_ID_ALIASES } from "@amicode/schema";
 
 describe("parseSpawnArgs", () => {
   it("defaults count=1, mode=fresh, force=false and trims the prompt", () => {
@@ -87,6 +89,27 @@ describe("parseSpawnArgs", () => {
   it("trims title and agent, nulling empties", () => {
     const r = parseSpawnArgs({ prompt: "x", title: "  CZ sweep  ", agent: "  " });
     expect(r.ok && r.args.title === "CZ sweep" && r.args.agent === null).toBe(true);
+  });
+
+  it("resolves the old director ids through the read-resolve alias (spec-20260907-011500 D1, #858)", () => {
+    const dev = parseSpawnArgs({ prompt: "x", agent: "autodev" });
+    const res = parseSpawnArgs({ prompt: "x", agent: "autoresearch" });
+    expect(dev.ok && dev.args.agent).toBe("develop");
+    expect(res.ok && res.args.agent).toBe("research");
+  });
+
+  it("passes new ids and explicit non-mode ids through untouched (build stays valid)", () => {
+    for (const id of ["develop", "research", "plan", "build", "implementer", "my-custom-agent"]) {
+      const r = parseSpawnArgs({ prompt: "x", agent: id });
+      expect(r.ok && r.args.agent).toBe(id);
+    }
+  });
+
+  it("the spawn-side alias table is parity-pinned to the schema's MODE_ID_ALIASES (no-import contract)", () => {
+    expect(MODE_ID_ALIASES).toEqual({ autodev: "develop", autoresearch: "research" });
+    expect(resolveModeIdSpawn("autodev")).toBe("develop");
+    expect(resolveModeIdSpawn("autoresearch")).toBe("research");
+    expect(resolveModeIdSpawn("build")).toBe("build");
   });
 });
 
