@@ -73,7 +73,7 @@ import {
 } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
-import { WORK_COLUMN_WIDTH_MIN } from "@/pages/session/session-panel-width"
+import { floorPanelColumnWidth, WORK_COLUMN_WIDTH_MIN } from "@/pages/session/session-panel-width"
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
 
 type PulseInspectorStage = "optimization" | "calibration" | "compilation"
@@ -325,7 +325,10 @@ export function SessionSidePanel(props: {
     if (!open()) return "0px"
     // the tabs column owns its width (never flex-fills the window) and can be
     // dragged much narrower — Kate 2026-07-27
-    if (reviewOpen()) return `${layout.panelColumn.width()}px`
+    // Floor at WORK_COLUMN_WIDTH_MIN so the <aside> always fills its work column
+    // container (which uses clampWorkColumnWidth); without this a stored width
+    // below the floor leaves a transparent gap on the right side.
+    if (reviewOpen()) return `${floorPanelColumnWidth(layout.panelColumn.width())}px`
     return `${fileTreeWidth()}px`
   })
   const treeWidth = createMemo(() => (fileOpen() ? `${fileTreeWidth()}px` : "0px"))
