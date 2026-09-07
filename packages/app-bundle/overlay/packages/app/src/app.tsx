@@ -358,6 +358,20 @@ function DesktopCommands() {
     return commands
   })
 
+  // amicode#878: VS Code intercepts Tab keys before they reach the webview,
+  // so the extension catches Shift+Tab and bridges it here as an agent-cycle
+  // message. Trigger the same command the in-app keybind would.
+  if (window.parent !== window) {
+    const onAgentCycle = (e: MessageEvent) => {
+      const d = e.data as { source?: string; kind?: string } | undefined
+      if (d?.source === "amicode" && d.kind === "agent-cycle") {
+        command.trigger("agent.cycle", "keybind")
+      }
+    }
+    window.addEventListener("message", onAgentCycle)
+    onCleanup(() => window.removeEventListener("message", onAgentCycle))
+  }
+
   return null
 }
 

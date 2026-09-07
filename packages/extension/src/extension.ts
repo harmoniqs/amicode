@@ -2081,6 +2081,15 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     }),
   );
 
+  // #878: Shift+Tab agent cycle — VS Code intercepts Tab keys before they
+  // reach the webview, so we catch the keybinding here and bridge it to the
+  // app via the lane 2 relay (extension → iframe postMessage).
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.cycleAgent", () => {
+      ChatPanel.postToAll({ source: "amicode", kind: "agent-cycle" });
+    }),
+  );
+
   opencodeChannel.appendLine(`[boot] activated; runsRoot=${runsRoot}; amicoRunBinDir=${amicoRunBinDir ?? "(none)"}`);
 }
 

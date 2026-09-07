@@ -954,7 +954,7 @@
     "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
     "packages/app/public/amico.svg": "a14b9d543d895bcdf0758f7b9ef5908ee0acaac794446494af059b159247db8f",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
-    "packages/app/src/app.tsx": "c4ae567006dcc0fd1a530ac5ccf837444e67534fbe08dda1dc85ca9e25d822bd",
+    "packages/app/src/app.tsx": "a72e7cef35d5de80980fbb1fc26c14d8551d1677821e72798c624842927b55fd",
     "packages/app/src/design-polish.css": "42cc6efaefe9a71dedd12fcb0bf2549453d9a46097cb025cf087064b29d3ccce",
     "packages/app/src/entry.tsx": "f35e1017f4c9d478d254b2a38043e5750064b6bef25169c3e07ae9f72ff1049c",
     "packages/app/src/index.css": "08179e06ce2d419a2d98acc96025f91c7709062ea9f3ad245e88dc35e75ff9f7",
