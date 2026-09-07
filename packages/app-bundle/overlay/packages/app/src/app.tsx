@@ -1,7 +1,7 @@
 import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
-import { adoptWorkspaceProjects } from "@/utils/amicode-workspace-projects"
+import { adoptWorkspaceProjects, workspaceProjects } from "@/utils/amicode-workspace-projects"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -482,7 +482,13 @@ function AmicodeNavigateBridge() {
       if (url.pathname === "/new-session") {
         const prompt = url.searchParams.get("prompt") || undefined
         const autoSend = url.searchParams.get("autoSend") === "1"
-        await tabs.newDraft({ server: server.key, directory: server.projects.list()[0]?.worktree ?? "" }, prompt)
+        // amicode#872: prefer workspace-projects (real VS Code folders) over
+        // the engine's project list (which returns the scaffold dir).
+        const wsProjects = workspaceProjects()
+        const directory = wsProjects.length > 0
+          ? wsProjects[0].worktree
+          : server.projects.list()[0]?.worktree ?? ""
+        await tabs.newDraft({ server: server.key, directory }, prompt)
         if (autoSend) setPendingAutoSend(true)
       } else {
         // Navigate to an existing session by path (e.g. /session/:id)
