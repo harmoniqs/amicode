@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import {
   clampSessionPanelWidth,
   clampWorkColumnWidth,
+  floorPanelColumnWidth,
   REVIEW_PANE_WIDTH_MIN,
   REVIEW_PANE_WIDTH_MIN_SPLIT,
   SESSION_PANEL_WIDTH_MIN,
@@ -77,5 +78,20 @@ describe("work column width (amicode#105 — the column is bounded, the CHAT is 
     expect(sessionChatTakesRemainder({ newDesign: true, columnVisible: true })).toBe(true)
     expect(sessionChatTakesRemainder({ newDesign: true, columnVisible: false })).toBe(false)
     expect(sessionChatTakesRemainder({ newDesign: false, columnVisible: true })).toBe(false)
+  })
+
+  test("floorPanelColumnWidth lifts a stored width below the work column minimum", () => {
+    // Regression: DEFAULT_PANEL_COLUMN_WIDTH was 320 while WORK_COLUMN_WIDTH_MIN
+    // was 330. The work column container used clampWorkColumnWidth (which floors
+    // at 330) but the side panel's <aside> used the raw stored width (320),
+    // leaving a 10px transparent gap that merged with the 8px panelRow padding
+    // for 18px of right-side gap vs only 8px on the left.
+    expect(floorPanelColumnWidth(320)).toBe(WORK_COLUMN_WIDTH_MIN)
+    expect(floorPanelColumnWidth(100)).toBe(WORK_COLUMN_WIDTH_MIN)
+  })
+
+  test("floorPanelColumnWidth passes through widths at or above the minimum", () => {
+    expect(floorPanelColumnWidth(WORK_COLUMN_WIDTH_MIN)).toBe(WORK_COLUMN_WIDTH_MIN)
+    expect(floorPanelColumnWidth(500)).toBe(500)
   })
 })

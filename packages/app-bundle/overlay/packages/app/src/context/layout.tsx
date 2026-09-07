@@ -32,7 +32,10 @@ const DEFAULT_FILE_TREE_WIDTH = 200
 // amicode#105: single-pane Work Column — it no longer hosts the review
 // panel's two-pane split, so it doesn't need the old 400px. Resize handle
 // retained; persisted widths still override this default.
-const DEFAULT_PANEL_COLUMN_WIDTH = 320
+// Must be >= WORK_COLUMN_WIDTH_MIN (330) so the default never triggers the
+// floor in clampWorkColumnWidth, which would make the container wider than
+// the side panel's <aside> and create an asymmetric right-side gap.
+const DEFAULT_PANEL_COLUMN_WIDTH = 330
 const DEFAULT_SESSION_WIDTH = 600
 const DEFAULT_TERMINAL_HEIGHT = 280
 const DEFAULT_REVIEW_PANEL_OPENED = false

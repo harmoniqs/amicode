@@ -37,6 +37,15 @@ export function clampWorkColumnWidth(input: { width: number; available: number |
   return Math.min(Math.max(input.width, WORK_COLUMN_WIDTH_MIN), workColumnWidthMax(input.available))
 }
 
+/** Floor for the side panel's own width — ensures the `<aside>` never renders
+ * narrower than its work column container (which uses `clampWorkColumnWidth`).
+ * Without this, a stored width below the column floor creates a transparent gap
+ * between the panel's right edge and the column boundary, inflating the
+ * perceived right-side padding. */
+export function floorPanelColumnWidth(width: number): number {
+  return Math.max(width, WORK_COLUMN_WIDTH_MIN)
+}
+
 /** In v2 with the work column visible, the chat is the flex remainder (no
  * fixed pixel width). Classic layout keeps the historical fixed chat width. */
 export function sessionChatTakesRemainder(input: { newDesign: boolean; columnVisible: boolean }): boolean {
