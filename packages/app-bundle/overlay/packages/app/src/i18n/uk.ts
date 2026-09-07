@@ -71,7 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Перемкнути на наступного агента",
   "command.agent.cycle.reverse": "Перемкнути агента в зворотному напрямку",
   "command.agent.cycle.reverse.description": "Перемкнути на попереднього агента",
-  "agent.picker.implied": "неявний",
+  "agent.picker.default": "за замовчуванням",
   "posture.indicator.label": "Поза",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

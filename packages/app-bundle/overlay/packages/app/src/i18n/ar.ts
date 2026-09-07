@@ -65,7 +65,7 @@ export const dict = {
   "command.agent.cycle.description": "التبديل إلى الوكيل التالي",
   "command.agent.cycle.reverse": "تغيير الوكيل للخلف",
   "command.agent.cycle.reverse.description": "التبديل إلى الوكيل السابق",
-  "agent.picker.implied": "ضمني",
+  "agent.picker.default": "افتراضي",
   "posture.indicator.label": "الوضعية",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

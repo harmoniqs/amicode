@@ -93,7 +93,7 @@ export const dict = {
   "command.agent.cycle.description": "切换到下一个智能体",
   "command.agent.cycle.reverse": "反向切换智能体",
   "command.agent.cycle.reverse.description": "切换到上一个智能体",
-  "agent.picker.implied": "隐式",
+  "agent.picker.default": "默认",
   "posture.indicator.label": "姿态",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

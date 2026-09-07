@@ -61,7 +61,7 @@ export const dict = {
   "command.agent.cycle.description": "다음 에이전트로 전환",
   "command.agent.cycle.reverse": "에이전트 역순환",
   "command.agent.cycle.reverse.description": "이전 에이전트로 전환",
-  "agent.picker.implied": "암시됨",
+  "agent.picker.default": "기본",
   "posture.indicator.label": "포스처",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

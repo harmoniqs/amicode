@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { hasAgentChoice, hasCustomAgent, resolveAgent, orderByPickerConfig, impliedAgent, isImpliedAgent } from "./local-agent"
+import { hasAgentChoice, hasCustomAgent, resolveAgent, orderByPickerConfig, markedAgent, isDefaultAgent } from "./local-agent"
 
 describe("hasCustomAgent", () => {
   test("detects explicitly custom agents", () => {
@@ -46,13 +46,18 @@ describe("resolveAgent", () => {
     const renamed = [{ name: "plan" }, { name: "develop" }, { name: "research" }, { name: "build" }]
     expect(resolveAgent(renamed, "autodev")?.name).toBe("develop")
     expect(resolveAgent(renamed, "autoresearch")?.name).toBe("research")
-    // build stays valid — it exits the picker, not the vocabulary
+    // build stays valid — it re-enters the picker as a named tile (#868 rev 3), not a rename
     expect(resolveAgent(renamed, "build")?.name).toBe("build")
   })
 })
 
-describe("orderByPickerConfig (#858 — the fixed order plan → develop → research, #305 semantics)", () => {
+describe("orderByPickerConfig (#868 rev 3 — the fixed order plan → build → develop → research, #305 semantics)", () => {
   const agents = [{ name: "research" }, { name: "build" }, { name: "plan" }, { name: "develop" }, { name: "custom" }]
+
+  test("the shipped agent_order is the four-name mode order (#868 rev 3)", () => {
+    const out = orderByPickerConfig(agents, { agent_order: ["plan", "build", "develop", "research"] })
+    expect(out.map((a) => a.name)).toEqual(["plan", "build", "develop", "research", "custom"])
+  })
 
   test("agent_order is the PRIMARY sort key — listed agents in declared order, unlisted after", () => {
     const out = orderByPickerConfig(agents, { agent_order: ["plan", "develop", "research"] })
@@ -100,17 +105,17 @@ describe("orderByPickerConfig (#858 — the fixed order plan → develop → res
   })
 })
 
-describe("the implied posture marker (#858 — the default posture is reachable and marked implied)", () => {
-  test("build — the underlying default agent — is the implied posture", () => {
-    expect(isImpliedAgent("build")).toBe(true)
-    expect(isImpliedAgent("plan")).toBe(false)
-    expect(isImpliedAgent("develop")).toBe(false)
-    expect(isImpliedAgent("research")).toBe(false)
-    expect(isImpliedAgent("custom")).toBe(false)
+describe("the default posture marker (#868 rev 3 — build is a named tile AND the default posture, marked default)", () => {
+  test("build — the default posture — is marked default; the campaign modes are not", () => {
+    expect(isDefaultAgent("build")).toBe(true)
+    expect(isDefaultAgent("plan")).toBe(false)
+    expect(isDefaultAgent("develop")).toBe(false)
+    expect(isDefaultAgent("research")).toBe(false)
+    expect(isDefaultAgent("custom")).toBe(false)
   })
 
-  test("impliedAgent returns the marked option shape; other agents pass through unmarked", () => {
-    expect(impliedAgent("build", "implizit")).toEqual({ name: "build", implied: true })
-    expect(impliedAgent("plan", "implizit")).toEqual({ name: "plan", implied: false })
+  test("markedAgent returns the marked option shape; other agents pass through unmarked", () => {
+    expect(markedAgent("build", "Standard")).toEqual({ name: "build", default: true })
+    expect(markedAgent("plan", "Standard")).toEqual({ name: "plan", default: false })
   })
 })

@@ -71,7 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "Skift til næste agent",
   "command.agent.cycle.reverse": "Skift agent baglæns",
   "command.agent.cycle.reverse.description": "Skift til forrige agent",
-  "agent.picker.implied": "implicit",
+  "agent.picker.default": "standard",
   "posture.indicator.label": "Postur",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

@@ -26,9 +26,10 @@ export function resolveAgent<T extends { name: string }>(items: T[], name?: stri
   return items.find((item) => item.name === wanted) ?? items.find((item) => item.name === "build") ?? items[0]
 }
 
-/** Picker ordering (#858 — the fixed order plan → develop → research, fork
- *  PR #305's `agent_order` semantics honored APP-SIDE per the overlay
- *  architecture): `agent_order` is the PRIMARY sort key — listed agents in
+/** Picker ordering (#868 rev 3 — the fixed order plan → build → develop →
+ *  research, fork PR #305's `agent_order` semantics honored APP-SIDE per the
+ *  overlay architecture): `agent_order` is the PRIMARY sort key — listed
+ *  agents in
  *  declared order, unlisted agents after every listed one; the
  *  `default_agent` pin is the secondary key among the unlisted, then
  *  alphabetical (exactly #305's sortBy precedence). No config, and the list
@@ -49,21 +50,22 @@ export function orderByPickerConfig<T extends { name: string }>(
   )
 }
 
-/** The implied posture (#858): the underlying default agent — stock `build`
- *  — is the implied auto. It stays reachable (selection, Tab-cycle, old
- *  sessions) but is not one of the three named modes, so the picker marks it
- *  instead of giving it a fourth named tile. */
-export function isImpliedAgent(name: string): boolean {
+/** The default posture (#868 rev 3): stock `build` is a NAMED, selectable
+ *  tile AND the default posture. It renders under its own name marked
+ *  default — not implied-absent (#858's original D1, amended by real usage:
+ *  plain work — authoring, one-off fixes — is distinct from develop's
+ *  campaign machinery). */
+export function isDefaultAgent(name: string): boolean {
   return name === "build"
 }
 
 export interface AgentPickerOption {
   name: string
-  implied: boolean
+  default: boolean
 }
 
-/** Map a picker agent name to its option shape: the implied posture carries
+/** Map a picker agent name to its option shape: the default posture carries
  *  the marker (the label renders the i18n'd suffix). */
-export function impliedAgent(name: string, _impliedLabel?: string): AgentPickerOption {
-  return { name, implied: isImpliedAgent(name) }
+export function markedAgent(name: string, _defaultLabel?: string): AgentPickerOption {
+  return { name, default: isDefaultAgent(name) }
 }

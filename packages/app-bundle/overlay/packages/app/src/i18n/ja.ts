@@ -65,7 +65,7 @@ export const dict = {
   "command.agent.cycle.description": "次のエージェントに切り替え",
   "command.agent.cycle.reverse": "エージェントを逆順に切り替え",
   "command.agent.cycle.reverse.description": "前のエージェントに切り替え",
-  "agent.picker.implied": "暗黙",
+  "agent.picker.default": "デフォルト",
   "posture.indicator.label": "ポスチャ",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

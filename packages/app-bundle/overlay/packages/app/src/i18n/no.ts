@@ -70,7 +70,7 @@ export const dict = {
   "command.agent.cycle.description": "Bytt til neste agent",
   "command.agent.cycle.reverse": "Bytt agent bakover",
   "command.agent.cycle.reverse.description": "Bytt til forrige agent",
-  "agent.picker.implied": "implisitt",
+  "agent.picker.default": "standard",
   "posture.indicator.label": "Postur",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

@@ -67,8 +67,9 @@ export const { use: useLocal, provider: LocalProvider } = createSimpleContext({
     const settings = useSettings()
 
     const id = createMemo(() => params.id || undefined)
-    // #858 — the fixed picker order plan → develop → research: the config's
-    // `agent_order` (fork PR #305's field, written by the extension) is the
+    // #868 rev 3 — the fixed picker order plan → build → develop → research:
+    // the config's `agent_order` (fork PR #305's field, written by the
+    // extension) is the
     // PRIMARY sort key, honored APP-SIDE per the overlay architecture — an
     // engine build without the #305 sort still renders the product order.
     // The SDK config type may predate the field; read it defensively, never

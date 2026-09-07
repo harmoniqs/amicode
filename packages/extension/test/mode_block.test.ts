@@ -774,7 +774,7 @@ describe("the read-resolve alias — old-id sessions bind the renamed posture (#
     expect(block!).toContain("resolved=fallback");
   });
 
-  it("`build` is not aliased — an explicit build session stays copilot-silent (it exits the picker, not the vocabulary)", async () => {
+  it("`build` is not aliased — an explicit build session stays copilot-silent (never renamed; a named picker tile again, #868 rev 3)", async () => {
     const reg = stagedRegistry({ modes: [{ mode: "develop" }, { mode: "research" }] });
     const { client } = fakeClient({ agent: "build" });
     expect(await buildModeBlock(deps(reg, client))).toBeNull();

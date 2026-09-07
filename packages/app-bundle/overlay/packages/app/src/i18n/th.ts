@@ -71,7 +71,7 @@ export const dict = {
   "command.agent.cycle.description": "สลับไปยังเอเจนต์ถัดไป",
   "command.agent.cycle.reverse": "เปลี่ยนเอเจนต์ย้อนกลับ",
   "command.agent.cycle.reverse.description": "สลับไปยังเอเจนต์ก่อนหน้า",
-  "agent.picker.implied": "โดยนัย",
+  "agent.picker.default": "ค่าเริ่มต้น",
   "posture.indicator.label": "ท่าทาง",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

@@ -69,7 +69,7 @@ export const dict = {
   "command.agent.cycle.description": "Zum nächsten Agenten wechseln",
   "command.agent.cycle.reverse": "Agent rückwärts wechseln",
   "command.agent.cycle.reverse.description": "Zum vorherigen Agenten wechseln",
-  "agent.picker.implied": "implizit",
+  "agent.picker.default": "Standard",
   "posture.indicator.label": "Postur",
   "posture.mode.plan": "plan",
   "posture.mode.develop": "develop",

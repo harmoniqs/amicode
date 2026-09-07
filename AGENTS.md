@@ -94,10 +94,11 @@ macOS note: the vendored binary is unsigned — if Gatekeeper blocks it:
   `packages/schema/launcher/amico-validate <file>`.
 - **New sessions open on opencode's `plan` agent** (plan-first posture for all
   users): `buildOpencodeConfigContent` injects `default_agent: "plan"` and
-  `agent_order: ["plan", "develop", "research"]` — the three-mode surface
-  (spec-20260907-011500 D1, #858: autodev → develop, autoresearch → research;
-  old ids read-resolve for one release cycle; stock `build` is the implied
-  auto — a valid explicit id, out of the named set). The pulse-designer agent
+  `agent_order: ["plan", "build", "develop", "research"]` — the four-mode
+  surface (spec-20260907-011500 D1 rev 3, #858/#868: autodev → develop,
+  autoresearch → research; old ids read-resolve for one release cycle;
+  `build` is a named, selectable tile AND the default posture — marked
+  default in the picker, a valid explicit id). The pulse-designer agent
   shell is retired (#389); the interview content lives in the compiled
   AGENTS.md score section, visible to every agent.
 - Never commit to `main`; branch + PR.
