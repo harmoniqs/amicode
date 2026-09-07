@@ -50,6 +50,14 @@ export type AmicodeHandler = (ctx: AmicodeRequestCtx) => AmicodeHandlerResult | 
 export interface FleetPlane {
   getMode(): UpstreamMode;
   hub: HubProxy;
+  /** #392 (D3): the write pipeline — non-GET data-plane requests resolve
+   *  through the write-failure contract (delivered | failed | ambiguous),
+   *  never through the raw proxy. */
+  writes?: { handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<boolean> };
+  /** #392 (D6): invoked when the hub proxy reports no upstream (the
+   *  tunnel getter yielded nothing) — feeds the posture detector, so a
+   *  tunnel-down window counts toward the named hub-down condition. */
+  onNoUpstream?: () => void;
 }
 
 interface RouteEntry {
@@ -238,7 +246,19 @@ export class AmicodeServiceServer {
       // engine's.
       const mode = this.routingMode;
       if (mode === "fleet" && this.fleetPlane) {
-        if (this.fleetPlane.hub.handle(req, res)) return;
+        // #392 (D3): writes resolve through the write-failure contract —
+        // every outcome enumerated, never silently ambiguous. Reads
+        // (GET/HEAD — SSE included) stream through the proxy.
+        const method = req.method ?? "GET";
+        if (this.fleetPlane.writes && method !== "GET" && method !== "HEAD") {
+          if (await this.fleetPlane.writes.handle(req, res)) return;
+        } else {
+          if (this.fleetPlane.hub.handle(req, res)) return;
+          // no upstream bound: this IS a data-plane no-response — feed the
+          // posture detector so a tunnel-down window reaches the named
+          // hub-down condition.
+          this.fleetPlane.onNoUpstream?.();
+        }
         send({ status: 503, body: JSON.stringify({ ok: false, error: "hub upstream not available" }) });
         return;
       }

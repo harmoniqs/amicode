@@ -19,6 +19,7 @@
 import * as http from "node:http";
 import { HubCredentialRead } from "./hub_credential";
 import { hubUpstreamAuthHeader } from "./hub_credential";
+import type { DataPlaneOutcome } from "./fleet_posture";
 
 export interface HubProxyOptions {
   /** The hub origin (the fleet tunnel's far end), read per request;
@@ -27,6 +28,17 @@ export interface HubProxyOptions {
   /** The hub mint's NAMED read — re-read per request so a mid-session
    *  write/clear of the credential store is honored without a reboot. */
   credential(): HubCredentialRead;
+  /** #392 (D6): the CLIENT-ENFORCED timeout on receiving the upstream's
+   *  response headers — the detector observes outcomes, it does not await
+   *  a wedged tunnel. Once headers arrive the body streams freely (SSE
+   *  rides past this bound). Default 10s. */
+  timeoutMs?: number;
+  /** #392 (D6): the posture detector's diet — one outcome per proxied
+   *  request, fed exactly once (headers arrived, or the attempt died). */
+  onOutcome?: (o: DataPlaneOutcome) => void;
+  /** #392 (D7): the tunnel generation stamp, read per response so a
+   *  mid-session rejoin changes what the client sees on the next stream. */
+  responseStamp?: () => Record<string, string> | undefined;
 }
 
 /** Hop-by-hop headers a proxy must not forward verbatim (RFC 7230 §6.1) —
@@ -70,8 +82,29 @@ export class HubProxy {
       const headers: Record<string, string | string[] | undefined> = { ...req.headers };
       for (const h of DROPPED_HEADERS) delete headers[h];
       headers["authorization"] = hubUpstreamAuthHeader(cred.credential.token);
+      // D6: the client-enforced headers timeout — the client always
+      // resolves or times out; the body (an SSE stream included) is
+      // unbounded once headers arrive.
+      const timeoutMs = this.opts.timeoutMs ?? 10_000;
+      const started = Date.now();
+      let counted = false;
+      const timeout = setTimeout(() => {
+        if (counted) return;
+        counted = true;
+        // the client-enforced timeout IS the outcome — record it, then tear
+        // the attempt down (the detector observes outcomes, it does not
+        // await a wedged tunnel)
+        this.opts.onOutcome?.({ kind: "no-response", detail: `client-enforced timeout (${timeoutMs}ms)` });
+        upstream.destroy(new Error(`client-enforced data-plane timeout (${timeoutMs}ms)`));
+      }, timeoutMs);
       const upstream = http.request(target, { method: req.method, headers }, (up) => {
-        res.writeHead(up.statusCode ?? 502, up.headers);
+        if (!counted) {
+          counted = true;
+          clearTimeout(timeout);
+          this.opts.onOutcome?.({ kind: "responded", latencyMs: Date.now() - started });
+        }
+        const stamp = this.opts.responseStamp?.() ?? undefined;
+        res.writeHead(up.statusCode ?? 502, { ...up.headers, ...(stamp ?? {}) });
         up.pipe(res);
         up.on("error", () => {
           try {
@@ -82,6 +115,14 @@ export class HubProxy {
         });
       });
       upstream.on("error", (err) => {
+        if (!counted) {
+          counted = true;
+          clearTimeout(timeout);
+          this.opts.onOutcome?.({
+            kind: "no-response",
+            detail: err instanceof Error ? err.message : String(err),
+          });
+        }
         try {
           if (!res.headersSent) {
             res.writeHead(502, { "content-type": "application/json" });
