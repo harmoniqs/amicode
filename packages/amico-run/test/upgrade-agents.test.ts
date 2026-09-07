@@ -23,7 +23,7 @@ function stageAgentsWorld(): DoctorWorld {
   mkdirSync(join(w.repoAmicode, "scripts"), { recursive: true });
   copyFileSync(REAL_SCRIPT, join(w.repoAmicode, "scripts", "deploy-agents.mjs"));
   // stage stale: tamper one GLOBAL deployed card (per-card digest drift)
-  writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
+  writeFileSync(join(w.config, "agents", "develop.md"), "---\nmode: develop\n---\n# TAMPERED\n");
   return w;
 }
 
@@ -84,8 +84,8 @@ describe("upgrade agents — stale deployment", () => {
     expect(lastReceipt(w).outcome).toBe("upgraded");
 
     // the tampered card was actually repaired from source
-    const repaired = readFileSync(join(w.config, "agents", "autodev.md"), "utf8");
-    const source = readFileSync(join(w.repoAmicode, "packages", "extension", "agents", "autodev.md"), "utf8");
+    const repaired = readFileSync(join(w.config, "agents", "develop.md"), "utf8");
+    const source = readFileSync(join(w.repoAmicode, "packages", "extension", "agents", "develop.md"), "utf8");
     expect(repaired).toBe(source);
     cleanup();
   });
@@ -141,13 +141,13 @@ describe("upgrade agents — mode-bundle convergence (#804)", () => {
     copyFileSync(REAL_SCRIPT, join(w.repoAmicode, "scripts", "deploy-agents.mjs"));
     // stage stale: tamper the GLOBAL deployed bundle pack (component drift —
     // the doctor names the component; the card digests alone stay clean)
-    writeFileSync(join(w.config, "modes", "autodev", "pack.toml"), "# TAMPERED PACK\n");
+    writeFileSync(join(w.config, "modes", "develop", "pack.toml"), "# TAMPERED PACK\n");
 
     const pre = await surfaceInventory(ctxForWorld(w));
     const preGlobal = pre.surfaces.find((r) => r.surface === "agent-cards-global")!;
     expect(preGlobal.verdict).toBe("stale");
     const named = (preGlobal.components ?? []).find(
-      (c) => c.mode === "autodev" && c.component === "pack.toml",
+      (c) => c.mode === "develop" && c.component === "pack.toml",
     );
     expect(named, "the offending component is named in the pre-flight record").toBeDefined();
 
@@ -156,8 +156,8 @@ describe("upgrade agents — mode-bundle convergence (#804)", () => {
     expect((r.json as Record<string, unknown>).outcome).toBe("upgraded");
     expect((r.json as Record<string, unknown>).verification).toBe(true);
     // the tampered component was repaired from the registry source
-    expect(readFileSync(join(w.config, "modes", "autodev", "pack.toml"), "utf8")).toBe(
-      readFileSync(join(w.repoAmicode, "packages", "extension", "modes", "autodev", "pack.toml"), "utf8"),
+    expect(readFileSync(join(w.config, "modes", "develop", "pack.toml"), "utf8")).toBe(
+      readFileSync(join(w.repoAmicode, "packages", "extension", "modes", "develop", "pack.toml"), "utf8"),
     );
     // an independent doctor re-run agrees: both records current
     const independent = await surfaceInventory(ctxForWorld(w));
@@ -195,14 +195,14 @@ describe("upgrade agents — pre-flight gates + aborts", () => {
 
   test("deploy-agents.mjs absent from the checkout → aborted-environment, nothing deployed", async () => {
     const w = buildDoctorWorld();
-    writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
-    const tampered = readFileSync(join(w.config, "agents", "autodev.md"), "utf8");
+    writeFileSync(join(w.config, "agents", "develop.md"), "---\nmode: develop\n---\n# TAMPERED\n");
+    const tampered = readFileSync(join(w.config, "agents", "develop.md"), "utf8");
     const r = await upgradeVerb(verbArgs(w, ["--root-receipts", receiptsDir(w)]));
     expect(r.code).toBe(1);
     const receipt = r.json as Record<string, unknown>;
     expect(receipt.outcome).toBe("aborted-environment");
     // nothing was deployed
-    expect(readFileSync(join(w.config, "agents", "autodev.md"), "utf8")).toBe(tampered);
+    expect(readFileSync(join(w.config, "agents", "develop.md"), "utf8")).toBe(tampered);
     cleanup();
   });
 });
@@ -231,7 +231,7 @@ describe("upgrade agents — role-card convergence (#806)", () => {
     for (const role of ROLE_CARD_NAMES) {
       writeFileSync(join(w.config, "agents", `${role}.md`), oldArtifact(role));
       writeFileSync(join(w.staging, ".opencode", "agents", `${role}.md`), oldArtifact(role));
-      const bundle = role === "implementer" ? "autodev" : "autoresearch";
+      const bundle = role === "implementer" ? "develop" : "research";
       writeFileSync(join(w.config, "modes", bundle, "roles", `${role}.md`), oldArtifact(role));
       writeFileSync(join(w.staging, ".opencode", "modes", bundle, "roles", `${role}.md`), oldArtifact(role));
     }
@@ -299,7 +299,7 @@ test("doctor record names agent-cards-global / agent-cards-staging alias the age
   const cleanup = () => cleanupTracked();
   try {
     // stage drift so the aliased run has something to do
-    writeFileSync(join(w.config, "agents", "autodev.md"), "---\nmode: autodev\n---\n# TAMPERED\n");
+    writeFileSync(join(w.config, "agents", "develop.md"), "---\nmode: develop\n---\n# TAMPERED\n");
     for (const alias of ["agent-cards-global", "agent-cards-staging"]) {
       const argv = [...verbArgs(w), "--root-receipts", receiptsDir(w)];
       argv[0] = alias; // the panel sends the doctor record name as the surface

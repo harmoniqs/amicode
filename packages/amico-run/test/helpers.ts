@@ -198,7 +198,7 @@ function writeModeRegistryFixture(
     );
   };
   bundle(
-    "autodev",
+    "develop",
     ["implementer"],
     [
       'closing_artifact = "landed-delta record"',
@@ -233,13 +233,13 @@ function writeModeRegistryFixture(
       "",
       "[[handoffs]]",
       'kind = "hypothesis_seed"',
-      'target = "autoresearch"',
+      'target = "research"',
       "",
     ].join("\n"),
     "issue",
   );
   bundle(
-    "autoresearch",
+    "research",
     ["hypothesizer", "experimenter", "analyzer"],
     [
       'closing_artifact = "experiment note + ledger delta"',
@@ -276,7 +276,7 @@ function writeModeRegistryFixture(
       "",
       "[[handoffs]]",
       'kind = "issue_seed"',
-      'target = "autodev"',
+      'target = "develop"',
       "",
     ].join("\n"),
     "hypothesis",
@@ -331,7 +331,7 @@ export function buildDoctorWorld(opts: DoctorWorldOpts = {}): DoctorWorld {
 
   // ── agent cards: source (amicode repo) + both deployments + receipt ──
   const agentsSrc = join(repoAmicode, "packages", "extension", "agents");
-  const CARDS = ["analyzer.md", "autodev.md", "autoresearch.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
+  const CARDS = ["analyzer.md", "develop.md", "research.md", "experimenter.md", "hypothesizer.md", "implementer.md", "librarian.md"];
   for (const c of CARDS) {
     mkdirSync(agentsSrc, { recursive: true });
     writeFileSync(join(agentsSrc, c), `---\nmode: ${c.replace(".md", "")}\n---\n# ${c}\n`);
@@ -518,7 +518,7 @@ export function advanceRegistryOnRemote(bare: string, newTag: string, newRevisio
       join(clone, "packages", "extension", "package.json"),
       JSON.stringify({ name: "amicode", version: base }, null, 2) + "\n",
     );
-    const pack = join(clone, "packages", "extension", "modes", "autodev", "pack.toml");
+    const pack = join(clone, "packages", "extension", "modes", "develop", "pack.toml");
     writeFileSync(pack, readFileSync(pack, "utf8").replace("never delete tests to force green.", "never delete tests to force green. Bumped registry content."));
     const index = join(clone, "packages", "extension", "modes", "release-index.toml");
     writeFileSync(
