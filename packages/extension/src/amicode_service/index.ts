@@ -37,6 +37,9 @@ import { EngineProxy } from "./engine_proxy";
 import { HubProxy } from "./hub_proxy";
 import { HubCredentialRead, mintRegistry, readHubCredential } from "./hub_credential";
 import { buildMergedProjection, type UpstreamMode } from "./merged_projection";
+import { FleetPostureDetector, type FleetPostureTuning } from "./fleet_posture";
+import { handleFleetWrite, type FleetWriteDeps } from "./fleet_writes";
+import { inspectTunnelConfigFile, TUNNEL_GENERATION_HEADER } from "./fleet_tunnel";
 import { stageFleetDataPlane, type FleetStagingReceipt } from "./fleet_staging";
 import { createProject, listProjects } from "./project";
 import {
@@ -250,13 +253,23 @@ export interface FleetRouteDeps {
   receipt: FleetStagingReceipt;
   /** Whether the engine mint is armed (for the mint registry). */
   engineArmed: boolean;
+  /** #392 (D6): the posture detector — the status route reads its live
+   *  snapshot (mid-session parity: posture changes are visible through the
+   *  SAME contract, not just at boot) and the merged projection feeds it
+   *  the hub side's outcomes + parity stamp. */
+  monitor?: FleetPostureDetector;
+  /** #392 (D7): the installed tunnel config's path — read per request so
+   *  a rejoin is visible mid-session. */
+  tunnelConfigPath?: string;
 }
 
 /** GET /amicode/fleet/status — the plane's honesty surface: the current
- *  routing mode, the three named mints (D5), the hub credential's NAMED
- *  outcome, and the staging receipt. GET /amicode/fleet/sessions — the
- *  MERGED projection (D2): both stores, provenance-tagged, currency derived
- *  over what is actually fetched. */
+ *  routing mode, the D6 posture (a steady state with its named entry
+ *  condition — mid-session live, never boot-frozen), the D7 tunnel stamp,
+ *  the three named mints (D5), the hub credential's NAMED outcome, and the
+ *  staging receipt. GET /amicode/fleet/sessions — the MERGED projection
+ *  (D2): both stores, provenance-tagged, currency derived over what is
+ *  actually fetched. */
 export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRouteDeps): AmicodeServiceServer {
   server.add("GET", "/amicode/fleet/status", () => {
     const mode = deps.getMode();
@@ -265,6 +278,8 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
       body: JSON.stringify({
         ok: true,
         mode,
+        ...(deps.monitor ? { posture: deps.monitor.snapshot() } : {}),
+        ...(deps.tunnelConfigPath !== undefined ? { tunnel: inspectTunnelConfigFile(deps.tunnelConfigPath) } : {}),
         mints: mintRegistry({ mode, engineArmed: deps.engineArmed, hubCredential }),
         hub_credential: hubCredential,
         staging: deps.receipt,
@@ -273,10 +288,24 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
   });
 
   server.add("GET", "/amicode/fleet/sessions", async () => {
+    const started = Date.now();
     const projection = await buildMergedProjection({
       local: { getUrl: deps.engine.getUrl, password: deps.engine.password },
       hub: { getUrl: deps.hub.getUrl, credential: deps.readCredential() },
     });
+    if (deps.monitor) {
+      // the projection IS a data-plane request: its hub side feeds the
+      // posture detector's outcome stream (transport-level absences only —
+      // a missing credential or a 401 is D5's honesty surface, not D6's
+      // degradation) and re-asserts D7's hub build parity.
+      const hubRecord = projection.sources.hub;
+      if (hubRecord.present) {
+        deps.monitor.record({ kind: "responded", latencyMs: Date.now() - started });
+        deps.monitor.noteHubVersion(hubRecord.version ?? null);
+      } else if (hubRecord.reason === "no-upstream" || hubRecord.reason === "fetch-failed") {
+        deps.monitor.record({ kind: "no-response", detail: hubRecord.reason });
+      }
+    }
     return { body: JSON.stringify(projection) };
   });
 
@@ -314,6 +343,19 @@ export function createAmicodeService(
       /** The data-driven routing mode; default "fleet" (a staged plane with
        *  no getter runs fleet). */
       getMode?: () => UpstreamMode;
+      /** #392 (D6): the client-enforced data-plane timeout for proxied
+       *  reads (headers bound; SSE bodies ride past it). */
+      dataPlaneTimeoutMs?: number;
+      /** #392 (D3/D6): the write pipeline's timeout + retry budget. */
+      writeTimeoutMs?: number;
+      writeMaxRetries?: number;
+      /** #392 (D6): posture tuning overrides (the named defaults
+       *  otherwise). */
+      posture?: Partial<FleetPostureTuning>;
+      /** #392 (D7): the installed tunnel config (the stamped alias + the
+       *  generation marker) — read per request; proxied responses (SSE
+       *  included) carry its generation stamp. */
+      tunnelConfigPath?: string;
     };
   } = {},
 ): AmicodeServiceServer {
@@ -337,10 +379,48 @@ export function createAmicodeService(
     });
     if (staging.staged) {
       const readCredential = (): HubCredentialRead => readHubCredential();
-      const getMode = opts.fleet.getMode ?? ((): UpstreamMode => "fleet");
+      // #392 (D6): the posture detector — the outcome stream's consumer.
+      // Every data-plane outcome (proxy, write pipeline, projection) feeds
+      // it; the client-enforced timeouts live with the transport.
+      const monitor = new FleetPostureDetector({ tuning: opts.fleet.posture });
+      const tunnelConfigPath = opts.fleet.tunnelConfigPath;
+      // #392 (D7): the tunnel generation stamp, read PER RESPONSE so a
+      // mid-session rejoin changes what the client sees next.
+      const tunnelStampHeaders = tunnelConfigPath
+        ? (): Record<string, string> | undefined => {
+            const ins = inspectTunnelConfigFile(tunnelConfigPath);
+            return ins.stamped && ins.generation !== null ? { [TUNNEL_GENERATION_HEADER]: String(ins.generation) } : undefined;
+          }
+        : undefined;
+      const rawGetMode = opts.fleet.getMode ?? ((): UpstreamMode => "fleet");
+      // D6: the hub-down posture IS the base standalone posture — the
+      // effective mode falls back to the local engine (a session created in
+      // a hub-down window is a LOCAL session, D3), and recovery re-enters
+      // fleet via the D2 transition rule (refetch-before-first-render —
+      // the posture snapshot's refetch_epoch is the client's key).
+      const getMode = (): UpstreamMode => {
+        if (rawGetMode() !== "fleet") return rawGetMode();
+        return monitor.snapshot().state === "standalone" ? "engine" : "fleet";
+      };
+      const writeDeps: FleetWriteDeps = {
+        getUrl: opts.fleet.hub.getUrl,
+        credential: readCredential,
+        timeoutMs: opts.fleet.writeTimeoutMs ?? opts.fleet.dataPlaneTimeoutMs,
+        maxRetries: opts.fleet.writeMaxRetries,
+        onOutcome: (o) => monitor.record(o),
+        ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
+      };
       server.attachFleetPlane({
         getMode,
-        hub: new HubProxy({ getUrl: opts.fleet.hub.getUrl, credential: readCredential }),
+        hub: new HubProxy({
+          getUrl: opts.fleet.hub.getUrl,
+          credential: readCredential,
+          ...(opts.fleet.dataPlaneTimeoutMs !== undefined ? { timeoutMs: opts.fleet.dataPlaneTimeoutMs } : {}),
+          onOutcome: (o) => monitor.record(o),
+          ...(tunnelStampHeaders ? { responseStamp: tunnelStampHeaders } : {}),
+        }),
+        writes: { handle: (req, res) => handleFleetWrite(writeDeps, req, res) },
+        onNoUpstream: () => monitor.record({ kind: "no-response", detail: "no-upstream" }),
       });
       registerFleetRoutes(server, {
         getMode,
@@ -352,6 +432,8 @@ export function createAmicodeService(
         hub: opts.fleet.hub,
         receipt: staging.receipt,
         engineArmed: opts.engine !== undefined,
+        monitor,
+        ...(tunnelConfigPath !== undefined ? { tunnelConfigPath } : {}),
       });
     }
   }
