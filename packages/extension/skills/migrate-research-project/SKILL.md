@@ -264,6 +264,48 @@ After execution, show the researcher:
    - "Your weekly report template is at `reports/weekly/template.md`"
    - "Add this folder to your VS Code workspace to get project-aware skills"
 
+### Phase 6 — Environment binding (optional)
+
+After verification, check the environment registry (`~/.amico/environments.toml`).
+If it has registered environments, ask the researcher whether to bind this
+project to one.
+
+Read the registry and present a choice via the `question` tool:
+
+- One option per registered environment (label = environment name,
+  description = slug and path)
+- "Create new" — spawn a `create-research-environment` session
+- "Skip" — no environment binding
+
+**If the user selects a registered environment:** write the `[environment]`
+section directly to `research-project.toml` using string append (matching the
+migrate skill's existing direct-write pattern — no CLI call):
+
+```toml
+
+[environment]
+slug = "<selected-slug>"
+```
+
+Append this to the end of the file. This preserves all existing content
+(comments, formatting) from the manifest written in Phase 4.
+
+Then commit: `git add research-project.toml && git commit -m "bind to environment <slug>"`
+
+**If the user selects "Create new":** use the `amicode_session` tool to spawn
+a new session tab with:
+```
+/create-research-environment --bind-project "<project-dir>"
+```
+Tell the user: "I've opened a new tab to create the environment — head over
+there and I'll bind it to this project when it's done."
+
+**If the user selects "Skip":** no action needed. The project can be bound
+later via Command Palette ("Amicode: Bind to Environment") or `amico env bind`.
+
+If the registry is empty or missing, skip this phase silently — there are no
+environments to bind to.
+
 ## Edge cases
 
 **Already a Research Project** (`research-project.toml` exists):
