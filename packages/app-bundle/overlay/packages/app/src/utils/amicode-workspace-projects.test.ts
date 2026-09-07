@@ -73,6 +73,79 @@ describe("prompt-project-selector — no false default (#673)", () => {
   })
 })
 
+// ── #872: draft directory defaults to workspace folder ──────────────────
+// Two code paths create drafts — tabs.tsx draftDirectory() and app.tsx
+// AmicodeNavigateBridge. Both must prefer workspaceProjects() over
+// server.projects.list() so the sidebar's orphan guard can match the path.
+
+describe("draft directory — tabs.tsx draftDirectory (#872)", () => {
+  const tabsSrc = readFileSync(
+    resolve(__dirname, "..", "context", "tabs.tsx"),
+    "utf8",
+  )
+
+  test("draftDirectory checks workspaceProjects before server.projects", () => {
+    // The draftDirectory function must reference workspaceProjects
+    const draftFn = tabsSrc.slice(tabsSrc.indexOf("const draftDirectory"))
+    const fnEnd = draftFn.indexOf("\n    const fallback")
+    const fnBody = draftFn.slice(0, fnEnd)
+    expect(fnBody).toContain("workspaceProjects")
+  })
+
+  test("tabs.tsx imports workspaceProjects from the amicode module", () => {
+    expect(tabsSrc).toMatch(/import\s.*workspaceProjects.*from\s+["']@\/utils\/amicode-workspace-projects["']/)
+  })
+
+  test("draftDirectory falls back to server.projects when workspaceProjects is empty", () => {
+    // The fallback path must still exist
+    const draftFn = tabsSrc.slice(tabsSrc.indexOf("const draftDirectory"))
+    const fnEnd = draftFn.indexOf("\n    const fallback")
+    const fnBody = draftFn.slice(0, fnEnd)
+    expect(fnBody).toContain("server.projects.list()")
+  })
+})
+
+describe("draft directory — app.tsx navigate bridge (#872)", () => {
+  const appSrc = readFileSync(
+    resolve(__dirname, "..", "app.tsx"),
+    "utf8",
+  )
+
+  test("navigate bridge checks workspaceProjects before server.projects for /new-session", () => {
+    // Find the new-session branch in the navigate bridge
+    const newSessionIdx = appSrc.indexOf('url.pathname === "/new-session"')
+    const bridgeSlice = appSrc.slice(newSessionIdx, newSessionIdx + 600)
+    expect(bridgeSlice).toContain("workspaceProjects")
+  })
+
+  test("navigate bridge falls back to server.projects when workspaceProjects is empty", () => {
+    const newSessionIdx = appSrc.indexOf('url.pathname === "/new-session"')
+    const bridgeSlice = appSrc.slice(newSessionIdx, newSessionIdx + 600)
+    expect(bridgeSlice).toContain("server.projects.list()")
+  })
+})
+
+describe("explicit project selection overrides the default (#872 AC4)", () => {
+  const ctrlSrc = readFileSync(
+    resolve(__dirname, "..", "pages", "session", "composer", "session-composer-controls.ts"),
+    "utf8",
+  )
+
+  test("selectProject writes the selected worktree directly to the draft (updateDraft)", () => {
+    // The explicit-selection path must call updateDraft with { directory: worktree }
+    // so it overrides the draftDirectory() default entirely.
+    const selectFn = ctrlSrc.slice(ctrlSrc.indexOf("const selectProject"))
+    expect(selectFn).toContain("tabs.updateDraft(search.draftId, { server: ServerConnection.key(conn), directory: worktree })")
+  })
+
+  test("selectProject does not re-invoke draftDirectory", () => {
+    // The explicit-selection path must not go through draftDirectory — it writes
+    // the selected worktree directly.
+    const selectFn = ctrlSrc.slice(ctrlSrc.indexOf("const selectProject"))
+    expect(selectFn).not.toContain("draftDirectory")
+  })
+})
+
 describe("session-composer-controls — toggle deselect (#673)", () => {
   const ctrlSrc = readFileSync(
     resolve(__dirname, "..", "pages", "session", "composer", "session-composer-controls.ts"),

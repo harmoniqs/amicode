@@ -8,6 +8,7 @@ import { ServerConnection, useServer } from "./server"
 import { createEffect, getOwner, onCleanup, startTransition } from "solid-js"
 import { useLocation, useNavigate, useParams } from "@solidjs/router"
 import { usePlatform } from "./platform"
+import { workspaceProjects } from "@/utils/amicode-workspace-projects"
 import { uuid } from "@/utils/uuid"
 import { SessionTabsRemovedDetail } from "@/components/titlebar-session-events"
 import { sessionHref } from "@/utils/session-route"
@@ -60,9 +61,14 @@ export const { use: useTabs, provider: TabsProvider } = createSimpleContext({
     const platform = usePlatform()
     /** amicode(workbench): TabsProvider sits ABOVE the SDK/Sync providers, so
      *  a draft's project directory comes from the route or the server
-     *  context — never from useSDK (there is no provider above us). */
+     *  context — never from useSDK (there is no provider above us).
+     *  amicode#872: prefer the extension's workspace-projects signal over
+     *  the engine's project list — the engine's first project is the scaffold
+     *  dir, which the sidebar's orphan guard correctly rejects. */
     const draftDirectory = () => {
       if (params.dir) return base64Decode(params.dir) ?? ""
+      const wsProjects = workspaceProjects()
+      if (wsProjects.length > 0) return wsProjects[0].worktree
       return server.projects.list()[0]?.worktree ?? ""
     }
     const fallback = server.key
