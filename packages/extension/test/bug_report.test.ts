@@ -696,3 +696,113 @@ describe("composer live model selection onto bug session (amicode#277)", () => {
     expect((arm[0].body as { model: string }).model).toBe("opencode/deepseek-v4-pro");
   });
 });
+
+describe("origin session model fallback (amicode#606)", () => {
+  it("with no live selection and no configured default, the origin session's model is used", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [
+          {
+            id: "ses_origin",
+            model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+            time: { created: 1, updated: 2 },
+          },
+        ],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug_origin" } },
+      "POST /session/ses_bug_origin/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_origin/command"));
+    expect(arm).toHaveLength(1);
+    expect((arm[0].body as { model: string }).model).toBe("anthropic/claude-sonnet-4");
+  });
+
+  it("when origin session has no model field, falls through to defaultModel", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [{ id: "ses_origin_nomodel", time: { created: 1, updated: 2 } }],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug_nomod" } },
+      "POST /session/ses_bug_nomod/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => "opencode/deepseek-v4-pro" }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_nomod/command"));
+    expect((arm[0].body as { model: string }).model).toBe("opencode/deepseek-v4-pro");
+  });
+
+  it("when origin session has no model and no defaultModel, model is omitted entirely", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [{ id: "ses_origin_bare", time: { created: 1, updated: 2 } }],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug_bare" } },
+      "POST /session/ses_bug_bare/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_bare/command"));
+    expect(arm[0].body).toEqual({ command: "report-a-bug", arguments: "" });
+  });
+
+  it("liveModel still wins over origin session model", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [
+          {
+            id: "ses_origin",
+            model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+            time: { created: 1, updated: 2 },
+          },
+        ],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug_lw" } },
+      "POST /session/ses_bug_lw/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug({ providerID: "openai", modelID: "gpt-4o" });
+
+    const arm = calls.filter((c) => c.url.endsWith("/session/ses_bug_lw/command"));
+    expect((arm[0].body as { model: string }).model).toBe("openai/gpt-4o");
+  });
+
+  it("extracts the origin model from the existing session-list fetch — zero extra calls", async () => {
+    const { fetchImpl, calls } = mockFetch({
+      "GET /session": {
+        status: 200,
+        body: [
+          {
+            id: "ses_origin",
+            model: { providerID: "anthropic", modelID: "claude-sonnet-4" },
+            time: { created: 1, updated: 2 },
+          },
+        ],
+      },
+      "POST /session": { status: 200, body: { id: "ses_bug_zero" } },
+      "POST /session/ses_bug_zero/command": { status: 200, body: {} },
+    });
+    const { d } = deps({ defaultModel: () => undefined }, fetchImpl);
+
+    await new BugReportManager(d).reportBug();
+
+    // Only one GET /session call (the existing session-list fetch) — no extra
+    // GET /session/:id call to read the origin session's model.
+    const sessionGets = calls.filter(
+      (c) => c.method === "GET" && new URL(c.url).pathname === "/session",
+    );
+    expect(sessionGets).toHaveLength(1);
+  });
+});
