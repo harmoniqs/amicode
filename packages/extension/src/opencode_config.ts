@@ -17,7 +17,7 @@ import {
   type LibraryRoot,
   type LibraryRootSpec,
 } from "./scores/package_skills";
-import { resolveUserSkills, resolveWorkspaceSkills, resolveProjectSkills, mergeSkillEntries } from "./scores/user_skill_providers";
+import { resolveUserSkills, resolveWorkspaceSkills, resolveProjectSkills, resolveEnvironmentSkills, mergeSkillEntries } from "./scores/user_skill_providers";
 import { readSolverModeState } from "./solver_mode";
 import { studioPathsOrLegacy } from "@amicode/schema";
 import { opencodeConfigDir } from "./opencode_xdg";
@@ -794,7 +794,10 @@ export function prepareOpencodeProject(opts: OpencodeConfigOptions): OpencodePro
     const projectEntries = opts.workspaceFolders
       ? resolveProjectSkills(opts.workspaceFolders)
       : [];
-    skillEntries = mergeSkillEntries(projectEntries, customEntries, workspaceEntries, shippedEntries);
+    const environmentEntries = opts.workspaceFolders
+      ? resolveEnvironmentSkills(opts.workspaceFolders)
+      : [];
+    skillEntries = mergeSkillEntries(projectEntries, environmentEntries, customEntries, workspaceEntries, shippedEntries);
     const section = buildSkillIndexSection(skillEntries);
     if (section) finalContent = finalContent + "\n\n" + section;
   } catch (e) {
