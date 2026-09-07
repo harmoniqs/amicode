@@ -241,6 +241,205 @@ export function envRegister(argv: string[], opts?: EnvVerbOptions): VerbResult {
   };
 }
 
+// ── promote ─────────────────────────────────────────────────────────────────
+
+/** Type → target directory routing map. */
+const TYPE_ROUTE: Record<string, string> = {
+  insight: "insights",
+  method: "methods",
+  context: "context",
+  literature: "literature",
+  experiment: "experiments",
+  template: "templates",
+  result: "results",
+};
+
+/** Extract a simple YAML frontmatter value from a markdown file. */
+function extractFrontmatter(text: string): Record<string, string> {
+  const m = text.match(/^---\n([\s\S]*?)\n---/);
+  if (!m) return {};
+  const fm: Record<string, string> = {};
+  for (const line of m[1].split("\n")) {
+    const kv = line.match(/^(\w[\w_]*)\s*:\s*"?([^"\n]*)"?$/);
+    if (kv) fm[kv[1]] = kv[2];
+  }
+  return fm;
+}
+
+/** Add or update a key in the YAML frontmatter. */
+function stampFrontmatter(text: string, key: string, value: string): string {
+  const fmMatch = text.match(/^(---\n)([\s\S]*?)(\n---)/);
+  if (!fmMatch) {
+    // No frontmatter → add one
+    return `---\n${key}: "${value}"\n---\n${text}`;
+  }
+  const [, open, body, close] = fmMatch;
+  // Check if key exists
+  const keyRe = new RegExp(`^${key}\\s*:.*$`, "m");
+  if (keyRe.test(body)) {
+    // Replace existing
+    const updated = body.replace(keyRe, `${key}: "${value}"`);
+    return text.replace(fmMatch[0], `${open}${updated}${close}`);
+  }
+  // Append
+  return text.replace(fmMatch[0], `${open}${body}\n${key}: "${value}"${close}`);
+}
+
+export function envPromote(argv: string[]): VerbResult {
+  const fail = (error: string): VerbResult => ({
+    json: { verb: "env", subcommand: "promote", error },
+    code: 64,
+  });
+
+  const envDir = resolve(flagValue(argv, "--env") ?? "");
+  const dryRun = argv.includes("--dry-run");
+  const targetDirOverride = flagValue(argv, "--target-dir");
+
+  // Extract the file arg (first positional that isn't a flag value)
+  const fileArgs: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith("--")) {
+      if (argv[i] !== "--dry-run") i++; // skip flag value (except boolean flags)
+      continue;
+    }
+    fileArgs.push(argv[i]);
+  }
+
+  if (fileArgs.length === 0) return fail("file path is required: amico env promote <file> --env <env-path>");
+  if (!envDir) return fail("--env is required: amico env promote <file> --env <env-path>");
+
+  // Validate environment
+  const manifestPath = join(envDir, "research-environment.toml");
+  if (!existsSync(manifestPath)) return fail(`no research-environment.toml found in ${envDir}`);
+
+  let manifestText: string;
+  try {
+    manifestText = readFileSync(manifestPath, "utf8");
+  } catch {
+    return fail(`failed to read manifest in ${envDir}`);
+  }
+
+  // Extract slug from manifest (regex — no smol-toml dependency needed for simple key)
+  const slugMatch = manifestText.match(/^slug\s*=\s*"([^"]*)"/m);
+  if (!slugMatch) return fail("manifest missing slug field");
+  const envSlug = slugMatch[1];
+
+  const promoted: string[] = [];
+  const skipped: string[] = [];
+
+  for (const filePath of fileArgs) {
+    const absFile = resolve(filePath);
+    if (!existsSync(absFile)) {
+      return fail(`file not found: ${absFile}`);
+    }
+
+    let text: string;
+    try {
+      text = readFileSync(absFile, "utf8");
+    } catch (e) {
+      return fail(`failed to read ${absFile}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    const fm = extractFrontmatter(text);
+
+    // Check if already promoted to this env
+    if (fm.promoted && fm.promoted_to && fm.promoted_to.startsWith(`${envSlug}:`)) {
+      skipped.push(absFile);
+      continue;
+    }
+
+    // Determine target directory
+    const type = fm.type;
+    let targetDir: string;
+    if (targetDirOverride) {
+      targetDir = targetDirOverride;
+    } else if (type && TYPE_ROUTE[type]) {
+      targetDir = TYPE_ROUTE[type];
+    } else {
+      // Default: unrouted, goes to root of env (or error)
+      return fail(`no type in frontmatter and no --target-dir specified for ${absFile}`);
+    }
+
+    const fileName = absFile.split("/").pop() || "promoted.md";
+    const targetPath = join(envDir, targetDir, fileName);
+    const relTarget = `${envSlug}:${targetDir}/${fileName}`;
+
+    if (dryRun) {
+      promoted.push(relTarget);
+      continue;
+    }
+
+    // Create target directory if needed
+    mkdirSync(join(envDir, targetDir), { recursive: true });
+
+    // Stamp the copy with provenance
+    const now = new Date().toISOString();
+    let copyText = stampFrontmatter(text, "promoted_from_project", absFile.split("/").slice(-2, -1)[0] || "unknown");
+    copyText = stampFrontmatter(copyText, "promoted_date", now);
+
+    try {
+      writeFileSync(targetPath, copyText);
+    } catch (e) {
+      return fail(`failed to write ${targetPath}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Stamp the source to prevent re-promotion
+    let sourceText = stampFrontmatter(text, "promoted", now);
+    sourceText = stampFrontmatter(sourceText, "promoted_to", relTarget);
+    try {
+      writeFileSync(absFile, sourceText);
+    } catch {
+      // Source stamp failure is a warning, not fatal
+    }
+
+    // Stage the promoted file in git (specific file, never `git add .`)
+    try {
+      execFileSync("git", ["add", targetPath], { cwd: envDir, stdio: "ignore" });
+    } catch {
+      // git staging failure is a warning
+    }
+
+    promoted.push(relTarget);
+  }
+
+  if (dryRun) {
+    return {
+      json: {
+        verb: "env",
+        subcommand: "promote",
+        dry_run: true,
+        would_promote: promoted,
+        would_skip: skipped.length,
+      },
+      code: 0,
+    };
+  }
+
+  if (skipped.length > 0 && promoted.length === 0) {
+    return {
+      json: {
+        verb: "env",
+        subcommand: "promote",
+        skipped: true,
+        reason: "already promoted to this environment",
+      },
+      code: 0,
+    };
+  }
+
+  return {
+    json: {
+      verb: "env",
+      subcommand: "promote",
+      promoted: true,
+      files: promoted,
+      skipped: skipped.length,
+      env_slug: envSlug,
+    },
+    code: 0,
+  };
+}
+
 // ── dispatch ────────────────────────────────────────────────────────────────
 
 export function envVerb(argv: string[]): VerbResult {
@@ -248,11 +447,12 @@ export function envVerb(argv: string[]): VerbResult {
   const rest = argv.slice(1);
   if (sub === "create") return envCreate(rest);
   if (sub === "register") return envRegister(rest);
+  if (sub === "promote") return envPromote(rest);
   return {
     json: {
       verb: "env",
       error: `unknown subcommand ${sub ? `"${sub}"` : "(none)"}`,
-      usage: "amico env create <name> [--path <dir>] [--platform <p>] [--field <f>] [--author <a>]  |  amico env register <path>",
+      usage: "amico env create <name> [--path <dir>] [--platform <p>] [--field <f>] [--author <a>]  |  amico env register <path>  |  amico env promote <file> --env <path> [--dry-run] [--target-dir <dir>]",
     },
     code: 64,
   };
