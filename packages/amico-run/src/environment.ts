@@ -28,17 +28,17 @@ export interface EnvironmentRegistryEntry {
   path: string;
 }
 
-/** The prescribed directory layout for a Research Environment (PRD #880). */
+/** The prescribed directory layout for a Research Environment (PRD #880).
+ *  Environments hold shared knowledge — not project-level work. Projects are
+ *  always separate repos linked by [environment].slug. */
 export const ENV_SCAFFOLD_DIRS = [
   "insights",
   "methods",
   "context",
   "literature",
-  "experiments",
   "lib",
   "templates",
   "config",
-  "results",
 ] as const;
 
 // ── validation ──────────────────────────────────────────────────────────────

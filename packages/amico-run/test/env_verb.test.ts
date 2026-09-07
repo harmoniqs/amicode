@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 
-import { envCreate, envRegister } from "../src/env_verb.js";
+import { envCreate, envRegister, checkNestingViolation } from "../src/env_verb.js";
 import { ENV_SCAFFOLD_DIRS, renderEnvironmentToml, type EnvironmentToml } from "../src/environment.js";
 
 // ── integration: env create verb ───────────────────────────────────────────
@@ -100,6 +100,34 @@ describe("envCreate", () => {
     expect(result.code).toBe(64);
     expect((result.json as Record<string, unknown>).error).toBeDefined();
   });
+
+  it("refuses to create an environment inside a project directory", () => {
+    // Create a project directory first
+    const projectDir = join(tmpDir, "my-project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "research-project.toml"),
+      `schema_version = 1\nname = "Test"\nslug = "test"\nquestion = "?"\nstatus = "running"\ncreated = "2026-09-07"\n`,
+    );
+
+    // Try to create an environment inside it
+    const envDir = join(projectDir, "shared-env");
+    const result = envCreate(["Shared", "--path", envDir], { registryPath });
+    expect(result.code).toBe(64);
+    expect((result.json as Record<string, unknown>).error).toContain("separate repos");
+  });
+
+  it("refuses to create an environment inside another environment", () => {
+    // Create a parent environment
+    const parentDir = join(tmpDir, "parent-env");
+    envCreate(["Parent", "--path", parentDir], { registryPath });
+
+    // Try to nest another environment inside it
+    const childDir = join(parentDir, "child-env");
+    const result = envCreate(["Child", "--path", childDir], { registryPath });
+    expect(result.code).toBe(64);
+    expect((result.json as Record<string, unknown>).error).toContain("must not be nested");
+  });
 });
 
 // ── integration: env register verb ─────────────────────────────────────────
@@ -186,5 +214,56 @@ describe("envRegister", () => {
   it("exits non-zero for a nonexistent path", () => {
     const result = envRegister([join(tmpDir, "does-not-exist")], { registryPath });
     expect(result.code).toBe(64);
+  });
+});
+
+// ── nesting guard ──────────────────────────────────────────────────────────
+
+describe("checkNestingViolation", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "amico-nesting-guard-"));
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("returns ok for a standalone directory", () => {
+    const dir = join(tmpDir, "clean-env");
+    mkdirSync(dir, { recursive: true });
+    const result = checkNestingViolation(dir);
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a directory nested inside a project", () => {
+    const projectDir = join(tmpDir, "project");
+    mkdirSync(projectDir, { recursive: true });
+    writeFileSync(
+      join(projectDir, "research-project.toml"),
+      `schema_version = 1\nname = "P"\nslug = "p"\nquestion = "?"\nstatus = "running"\ncreated = "2026-09-07"\n`,
+    );
+
+    const nested = join(projectDir, "sub", "env");
+    mkdirSync(nested, { recursive: true });
+    const result = checkNestingViolation(nested);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("separate repos");
+  });
+
+  it("rejects a directory nested inside another environment", () => {
+    const parentEnv = join(tmpDir, "parent-env");
+    mkdirSync(parentEnv, { recursive: true });
+    writeFileSync(
+      join(parentEnv, "research-environment.toml"),
+      `schema_version = 1\nname = "P"\nslug = "p"\ncreated = "2026-09-07"\n`,
+    );
+
+    const nested = join(parentEnv, "child");
+    mkdirSync(nested, { recursive: true });
+    const result = checkNestingViolation(nested);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("must not be nested");
   });
 });

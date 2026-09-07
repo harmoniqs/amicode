@@ -244,17 +244,21 @@ describe("renderEnvironmentRegistry", () => {
 // ── pure logic: scaffold dirs ──────────────────────────────────────────────
 
 describe("ENV_SCAFFOLD_DIRS", () => {
-  it("contains all 9 prescribed directories", () => {
-    expect(ENV_SCAFFOLD_DIRS).toHaveLength(9);
+  it("contains all 7 prescribed directories (shared knowledge only)", () => {
+    expect(ENV_SCAFFOLD_DIRS).toHaveLength(7);
     expect(ENV_SCAFFOLD_DIRS).toContain("insights");
     expect(ENV_SCAFFOLD_DIRS).toContain("methods");
     expect(ENV_SCAFFOLD_DIRS).toContain("context");
     expect(ENV_SCAFFOLD_DIRS).toContain("literature");
-    expect(ENV_SCAFFOLD_DIRS).toContain("experiments");
     expect(ENV_SCAFFOLD_DIRS).toContain("lib");
     expect(ENV_SCAFFOLD_DIRS).toContain("templates");
     expect(ENV_SCAFFOLD_DIRS).toContain("config");
-    expect(ENV_SCAFFOLD_DIRS).toContain("results");
+  });
+
+  it("does not contain project-level directories", () => {
+    const dirs = [...ENV_SCAFFOLD_DIRS] as string[];
+    expect(dirs).not.toContain("experiments");
+    expect(dirs).not.toContain("results");
   });
 });
 

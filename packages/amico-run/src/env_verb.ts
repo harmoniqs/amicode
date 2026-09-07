@@ -3,7 +3,7 @@
 // git init, flag parsing, and the verb dispatch. Part of #881.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, dirname } from "node:path";
 import { homedir } from "node:os";
 import { parse as parseToml } from "smol-toml";
 import {
@@ -82,6 +82,45 @@ function upsertRegistryEntry(
   return { replaced };
 }
 
+// ── nesting guard ───────────────────────────────────────────────────────────
+
+/** Walk ancestors looking for a manifest file. Returns the first dir that has one, or null. */
+function findAncestorManifest(dir: string, manifest: string): string | null {
+  let current = resolve(dir);
+  // Start from the PARENT — we don't care about dir itself (it may be the env we're creating)
+  current = dirname(current);
+  while (true) {
+    if (existsSync(join(current, manifest))) return current;
+    const parent = dirname(current);
+    if (parent === current) return null; // filesystem root
+    current = parent;
+  }
+}
+
+/**
+ * Guard: environments and projects must not be nested inside each other.
+ * Multi-repo only — each is its own git repo at its own root.
+ */
+export function checkNestingViolation(
+  dir: string,
+): { ok: true } | { ok: false; error: string } {
+  const parentProject = findAncestorManifest(dir, "research-project.toml");
+  if (parentProject) {
+    return {
+      ok: false,
+      error: `cannot create environment inside project ${parentProject} — environments and projects must be separate repos`,
+    };
+  }
+  const parentEnv = findAncestorManifest(dir, "research-environment.toml");
+  if (parentEnv) {
+    return {
+      ok: false,
+      error: `cannot create environment inside environment ${parentEnv} — environments must not be nested`,
+    };
+  }
+  return { ok: true };
+}
+
 // ── create ──────────────────────────────────────────────────────────────────
 
 export function envCreate(argv: string[], opts?: EnvVerbOptions): VerbResult {
@@ -95,6 +134,10 @@ export function envCreate(argv: string[], opts?: EnvVerbOptions): VerbResult {
 
   const slug = nameToSlug(name);
   const envDir = resolve(flagValue(argv, "--path") ?? join(process.cwd(), slug));
+
+  // Nesting guard: environments must not be created inside projects or other environments
+  const nestCheck = checkNestingViolation(envDir);
+  if (!nestCheck.ok) return fail(nestCheck.error);
 
   // Idempotent: if research-environment.toml already exists, validate and return
   const tomlPath = join(envDir, "research-environment.toml");
@@ -243,15 +286,15 @@ export function envRegister(argv: string[], opts?: EnvVerbOptions): VerbResult {
 
 // ── promote ─────────────────────────────────────────────────────────────────
 
-/** Type → target directory routing map. */
+/** Type → target directory routing map.
+ *  Only environment-level directories — project-level types (experiment, result)
+ *  are not promotable since they belong to the project, not the environment. */
 const TYPE_ROUTE: Record<string, string> = {
   insight: "insights",
   method: "methods",
   context: "context",
   literature: "literature",
-  experiment: "experiments",
   template: "templates",
-  result: "results",
 };
 
 /** Extract a simple YAML frontmatter value from a markdown file. */
