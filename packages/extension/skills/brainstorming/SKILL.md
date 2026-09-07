@@ -160,6 +160,7 @@ The user's choice is sovereign: a vault spec/plan is a legitimate terminus even 
   priority: <p1|p2|p3>
   platform: <relevant platform, e.g. atoms, bosonic, transmon>
   tags: [spec, <topic tags>]
+  visibility: team   # shared research spec → team (federates via dream-promote; promote now via the promote skill). Solo/scratch → local.
   linked_plan: null
   ---
   ```

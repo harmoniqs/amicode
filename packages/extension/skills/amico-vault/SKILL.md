@@ -70,17 +70,18 @@ The vault is no longer a single directory. A user's vault set is mounted under `
 - **Two layers, documented as two layers**: the sync script's commit/push behavior is keyed on the vault's **kind** (from the toml); a mount's read-only service is a **per-machine policy** — distinct layers, and their interaction is the `ro-by-policy` state, not an error.
 - **Alias dedupe is a rendering rule**: one row per resolved storage, the ruled name displayed — never a precedence change (read precedence stays first-hit top→bottom).
 
-### The five kinds and read precedence
+### The six kinds and read precedence
 
 | Kind | Marker | Repo naming (minted) | Holds | Writable |
 |------|--------|-------------|-------|----------|
 | **personal** | `kind = "personal"` | `vault-<name>` | Own research notes, hopper, solo specs/plans, session distillates, experiments-in-progress | single-writer (you) |
 | **engagement** | `kind = "engagement"` | `vault-<engagement>` | Engagement-scoped notes; lab state (`lab.toml`, device/model-of-lab notes, calibration, per-lab catalog) once hardware deploys | engagement staff |
 | **project** | `kind = "project"` | `vault-<project>` | Proprietary-package knowledge (your private package internals, hopper, insights) | per-person grant |
+| **restricted** | `kind = "restricted"` | `vault-<name>` | Business/confidential tier — dataroom, cap table, financials, legal. **Not attached by default**: every mount carries a read grant, so attach only for the session that needs it | narrow roster, read-only |
 | **team** | `kind = "team"` | repo's own name when riding a code repo; else `vault-<team>` | Your team knowledge tier: hardware/control context, methods + patterns, strategy/specs/plans, experiments + insights, papers, people/orgs, central pulse catalog (git-lfs) | PR-gated promotion |
 | **public** | `kind = "public"` | `vault-public` (org-owned) | Best-practice usage patterns for public packages, hazard notes, platform cards, recipes | world read-only |
 
-**Read precedence: personal → engagement → project(s) → team → public.** Queries search the **union** of all mounts; on a path collision the higher-precedence mount wins (first hit). `mounts.toml` (in `~/.amico/`) overrides order and writability; absent, kind-order applies. A dir with no marker, a duplicate id, or a manifest `path` that doesn't exist is dropped from the mount set with a warning in the hook summary — never guessed at, never fatal.
+**Read precedence: personal → engagement → project(s) → restricted → team → public.** Queries search the **union** of all mounts; on a path collision the higher-precedence mount wins (first hit). `mounts.toml` (in `~/.amico/`) overrides order, kind, and writability; absent, kind-order applies. A dir with no marker, a duplicate id, or a manifest `path` that doesn't exist is dropped from the mount set with a warning in the hook summary — never guessed at, never fatal.
 
 ### Write routing (Claude is the resolver pre-Amicode)
 
@@ -91,6 +92,7 @@ Route every note-write by intent:
 | spec / plan for **shared** work | **team** (your team vault) | PR flow |
 | lab state, calibration, device params, engagement notes | **engagement** vault | direct commit |
 | proprietary-package knowledge, solver hopper items | **project** vault (e.g. `armonia-<project>`) | direct commit |
+| business-confidential (dataroom, cap table, financials, legal) | **restricted** vault (rarely attached — the session that needs it carries the grant) | direct commit (the mount is read-only by default) |
 | personal research, sessions, scratch, solo specs | **personal** vault | direct commit (auto-synced) |
 | **ambiguous** | ask the user once → default personal | — |
 
@@ -182,6 +184,7 @@ status: draft | approved | in-progress | completed | abandoned
 priority: P1 | P2 | ... | null
 platform: "{platform}" | null
 tags: [spec, ...]
+visibility: local | team | public   # shared work → team (promotable via dream-promote + the promote skill); default local
 linked_plan: "[[plan-YYYYMMDD-HHMMSS-desc]]" | null
 ```
 
@@ -194,6 +197,7 @@ session_id: "uuid"
 status: draft | approved | executing | completed | abandoned | failed
 spec: "[[spec-YYYYMMDD-HHMMSS-desc]]"
 tags: [plan, ...]
+visibility: local | team | public   # shared work → team (promotable via dream-promote + the promote skill); default local
 ```
 
 ### hypothesis

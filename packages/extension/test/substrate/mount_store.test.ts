@@ -126,8 +126,7 @@ describe("resolveMountStack — skips + rescue", () => {
 });
 
 describe("resolveMountStack — mounts.toml precedence", () => {
-  it("(f) manifest array order governs; kind/writable overridden; unlisted appended in discovery order", () => {
-    const root = mkTmp("vaults-");
+  it("(f) manifest array order governs; kind/writable overridden; unlisted appended in discovery order", () => {    const root = mkTmp("vaults-");
     mkMount(root, "alpha", { kind: "personal" }); // discovery order: alpha, beta, gamma
     mkMount(root, "beta", { kind: "team" });
     mkMount(root, "gamma", { kind: "project" });
@@ -155,6 +154,34 @@ describe("resolveMountStack — mounts.toml precedence", () => {
     expect(alpha.kind).toBe("engagement"); // kind override honored
     expect(alpha.writable).toBe(true); // engagement default rw (no writable override)
     expect(stack.mounts[2].name).toBe("beta");
+  });
+
+  it("(f′, amico-plugin#27 Case E port) the manifest can ASSIGN kind=restricted + writable=false over a deliberately-wrong marker", () => {
+    // The oracle scenario (PR #27 test_session_start.sh Case D/E): a vault whose
+    // own marker lies (`team`) but whose manifest entry says `restricted` — the
+    // manifest kind/writable win, and the restricted kind lands at its canonical
+    // rank (before team), not the unknown-kind catch-all after public.
+    const root = mkTmp("vaults-");
+    mkMount(root, "armonia-partitura", { kind: "team" }); // wrong on purpose
+    mkMount(root, "armonia-public-vault", { kind: "public" });
+    const manifest = path.join(root, "mounts.toml");
+    fs.writeFileSync(
+      manifest,
+      [
+        "[[mount]]",
+        'id = "armonia-partitura"',
+        'kind = "restricted"',
+        "writable = false",
+        "",
+      ].join("\n"),
+    );
+    const stack = resolveMountStack(root, manifest);
+    const partitura = stack.mounts.find((m) => m.name === "armonia-partitura");
+    expect(partitura).toBeDefined();
+    expect(partitura!.kind).toBe("restricted"); // manifest kind wins over the marker
+    expect(partitura!.writable).toBe(false); // manifest writable wins over the kind default
+    // restricted(3) sorts strictly before public(5) in kind-rank order
+    expect(kinds(stack).indexOf("restricted")).toBeLessThan(kinds(stack).indexOf("public"));
   });
 
   it("matches a manifest entry by path basename when it has no id", () => {
