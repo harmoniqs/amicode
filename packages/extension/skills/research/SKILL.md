@@ -44,6 +44,63 @@ block in the system prompt (injected by `stack_state.ts` when a workspace folder
 | Config | `<project>/config/` |
 | Reports | `<project>/reports/` |
 | Checkout registry | `<project>/ledger/campaigns/CHECKOUTS.md` |
+| Environment proposals | `<project>/ledger/environment-proposals/` (created on demand) |
+| Environment digest | `<project>/ledger/campaigns/env-digest-<campaign-slug>.md` |
+
+## Research Environment integration (#890)
+
+When the project is bound to a Research Environment (the `## Active Research
+Environment` block appears in the system prompt), the environment provides
+shared knowledge, code, and configuration across sibling projects.
+
+### Environment digest assembly
+
+At campaign **kickoff**, assemble an environment digest:
+
+1. Read the environment manifest (`research-environment.toml`) — note `[domain]` fields
+   and the `[paths]` section (directory names may be overridden).
+2. Scan environment directories — `insights/`, `methods/`, `context/`, `literature/`,
+   `results/`, `templates/`, `config/`, `lib/`, `experiments/` — using names from `[paths]`
+   when overridden.
+3. Filter by relevance: match the manifest `[domain]` + project `tags` + campaign objective.
+   This filtering is judgment-based, not programmatic.
+4. Write the digest to `<project>/ledger/campaigns/env-digest-<campaign-slug>.md`.
+5. Include: relevant insights, methods, sibling project summaries, results candidates,
+   context notes. Add an excluded appendix listing what was omitted and why.
+6. If the campaign ledger §1 contains a `digest_include` list, force those notes into the
+   digest regardless of filtering.
+
+**Update the digest at each loop boundary** — new environment content may have arrived.
+
+### Subagent briefs with environment paths
+
+When briefing subagents and the project is bound to an environment, include these fields:
+
+| Role | Fields in brief |
+|------|----------------|
+| **Hypothesizer** | `env_digest_path` — read the digest for cross-project context and provenance |
+| **Experimenter** | `env_digest_path`, `env_lib_path`, `env_lib_importable` (false until deferred), `env_templates_path`, `env_config_path`, `env_context_path` |
+| **Analyzer** | `env_digest_path` — read the digest; may propose environment insight proposals |
+
+All paths respect `[paths]` overrides from the environment manifest.
+
+When the project has **no environment binding**, omit these fields entirely (do not pass
+empty strings or null values).
+
+### Per-iteration staging
+
+At each loop boundary (after the analyzer returns):
+
+1. **Stage project card update** — if the project's `research-project.toml` status changed
+   or best results improved, update the card.
+2. **Stage insight proposals** — the analyzer may produce structured insight proposals
+   (YAML frontmatter with `type: insight`, `visibility: environment`). Write them to
+   `<project>/ledger/environment-proposals/`. They are candidates for `amico env promote`.
+
+### Promotion suggestion
+
+At campaign boundaries (when the campaign objective is met or the loop closes), suggest
+running `amico env promote` on any staged proposals in `ledger/environment-proposals/`.
 
 ## The campaign ledger (create at kickoff, before any work)
 
