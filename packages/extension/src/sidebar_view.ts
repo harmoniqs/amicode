@@ -1088,6 +1088,59 @@ export async function createNewProject(ctx: NewProjectContext): Promise<void> {
   ctx.launchSession(prompt);
 }
 
+// ── New environment command (#892) ────────────────────────────────────────────
+
+/** Context dependencies injected by extension.ts when registering the command. */
+export interface NewEnvironmentContext {
+  isServerReady: () => boolean;
+  launchSession: (prompt: string) => void;
+  /** Override for testing — defaults to fs.mkdirSync. */
+  mkdirSync?: (dir: string, opts?: { recursive?: boolean }) => void;
+}
+
+/**
+ * "New Environment" flow: save-dialog (user types folder name) → mkdir → workspace → session.
+ * Mirrors createNewProject but spawns a /create-research-environment session.
+ * Exported for testing; the amicode.newEnvironment command delegates here.
+ */
+export async function createNewEnvironment(ctx: NewEnvironmentContext): Promise<void> {
+  if (!ctx.isServerReady()) {
+    void vscode.window.showWarningMessage(
+      "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+    );
+    return;
+  }
+
+  const uri = await vscode.window.showSaveDialog({
+    title: "Name your new environment",
+    saveLabel: "Create",
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), "my-environment")),
+  });
+  if (!uri) return;
+
+  const dir = uri.fsPath;
+  const mkdir = ctx.mkdirSync ?? ((d: string, o?: { recursive?: boolean }) => fs.mkdirSync(d, o));
+  try {
+    mkdir(dir, { recursive: true });
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Amicode: could not create environment directory — ${(e as Error).message}`);
+    return;
+  }
+
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const alreadyInWorkspace = folders.some((f) => f.uri.fsPath === dir);
+  if (alreadyInWorkspace) {
+    void vscode.window.showWarningMessage(
+      `"${path.basename(dir)}" is already in the workspace — opening a session for it.`,
+    );
+  } else {
+    vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(dir) });
+  }
+
+  const prompt = `/create-research-environment --path "${dir}"`;
+  ctx.launchSession(prompt);
+}
+
 /**
  * Reorder a workspace folder by building the desired final order and replacing
  * all folders in a single atomic updateWorkspaceFolders call (#712).
