@@ -40,6 +40,10 @@ export interface ProjectToml {
     related_projects?: string[];
     doi?: string;
   };
+  environment?: {
+    slug: string;
+    path?: string;
+  };
 }
 
 // ── validation ──────────────────────────────────────────────────────────────
@@ -165,6 +169,13 @@ export function renderProjectToml(p: ProjectToml): string {
       lines.push(`related_projects = [${p.links.related_projects.map(q).join(", ")}]`);
     }
     if (p.links.doi) lines.push(`doi = ${q(p.links.doi)}`);
+  }
+
+  if (p.environment) {
+    lines.push("");
+    lines.push("[environment]");
+    lines.push(`slug = ${q(p.environment.slug)}`);
+    if (p.environment.path) lines.push(`path = ${q(p.environment.path)}`);
   }
 
   lines.push(""); // trailing newline
