@@ -43,6 +43,9 @@ import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
+import { scanRenderableFiles } from "./preview_file_tree";
+import { resolveEnvironment } from "./project/resolve_environment";
+import { envColorIndex } from "./sidebar_bridge";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
 import { stageModeBundles } from "@amicode/schema";
@@ -1072,6 +1075,55 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       pushWorkspaceProjects();
     }),
+  );
+
+  // ── #725: Preview file tree bridge ─────────────────────────────────────────
+  // Push a filtered file tree to the chat iframe's Preview tab. Sent on
+  // app-ready and on manual refresh (triggered by the webview via
+  // "preview-file-tree-request" → chat_bridge → command).
+  const pushPreviewFileTree = () => {
+    const projects = getWorkspaceProjects(workspaceProjectDeps);
+    const researchProject = projects.find((p) => p.type === "research");
+    if (!researchProject) return;
+
+    const files = scanRenderableFiles(researchProject.worktree);
+
+    // Resolve bound environment (if any)
+    const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    let environment: {
+      files: string[];
+      root: string;
+      name: string;
+      slug: string;
+      colorIndex: number;
+    } | undefined;
+
+    const env = resolveEnvironment(researchProject.worktree, workspaceRoots);
+    if (env) {
+      environment = {
+        files: scanRenderableFiles(env.path),
+        root: env.path,
+        name: env.name,
+        slug: env.slug,
+        colorIndex: envColorIndex(env.slug),
+      };
+    }
+
+    ChatPanel.postToAll({
+      source: "amicode",
+      kind: "preview-file-tree",
+      files,
+      projectRoot: researchProject.worktree,
+      environment,
+    });
+  };
+
+  ChatPanel.onAppReadyPersistent(pushPreviewFileTree);
+
+  // Register as a command so chat_bridge can trigger refreshes without
+  // creating a direct import cycle.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.pushPreviewFileTree", pushPreviewFileTree),
   );
 
   // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
