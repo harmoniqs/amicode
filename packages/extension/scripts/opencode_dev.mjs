@@ -110,11 +110,11 @@ export function ghResolveTagCommit(repo, tag) {
 /** Rewrite opencode.lock.json to a cut release: set tag + each platform's ACTUAL
  *  downloaded sha256 (+ ref when provided). Preserves key order and formatting.
  *  Returns { tag, ref, platforms: { <key>: <sha> } }. */
-export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloadAsset, resolveTagCommit = ghResolveTagCommit } = {}) {
+export function pinFromRelease({ root = PKG_ROOT, repo: requestedRepo, tag, ref, download = ghDownloadAsset, resolveTagCommit = ghResolveTagCommit } = {}) {
   if (!tag) throw new Error("pin: a release tag is required (e.g. pnpm opencode:pin v1.17.3-amicode.5)");
   const lockPath = join(root, "opencode.lock.json");
   const m = JSON.parse(readFileSync(lockPath, "utf8"));
-  const repo = m.repo ?? "anomalyco/opencode";
+  const repo = requestedRepo ?? m.repo ?? "anomalyco/opencode";
   const shas = {};
   for (const [key, p] of Object.entries(m.platforms ?? {})) {
     const bytes = download(repo, tag, p.asset);
@@ -122,6 +122,7 @@ export function pinFromRelease({ root = PKG_ROOT, tag, ref, download = ghDownloa
     shas[key] = p.sha256;
   }
   m.tag = tag;
+  m.repo = repo;
   // Resolve the ref from the tag unless one is given explicitly. Leaving it stale
   // is worse than absent: `source: "local"` VALIDATES ref against the clone HEAD
   // (fetch_opencode.mjs), so a ref left pointing at the PREVIOUS release tells a
@@ -180,7 +181,7 @@ function help() {
       "opencode dev loop (default vendoring is `release` — no clone/bun needed unless you change opencode):",
       "",
       "  pnpm opencode:build        rebuild the binary from ../opencode (UI ON) and re-vendor it",
-      "  pnpm opencode:pin <tag>    adopt a cut release into opencode.lock.json (download + verify + rewrite)",
+      "  pnpm opencode:pin <tag> [--repo <owner/repo>]    adopt a cut release into opencode.lock.json (download + verify + rewrite)",
       "",
       "Flow: edit ../opencode → pnpm opencode:build → reload dev host → verify.",
       "      Happy? push the opencode branch, tag a release (its workflow builds both binaries),",
@@ -197,7 +198,9 @@ function main(argv) {
     const tag = rest.find((a) => !a.startsWith("--"));
     const i = rest.indexOf("--ref");
     const ref = i >= 0 ? rest[i + 1] : undefined;
-    const r = pinFromRelease({ tag, ref });
+    const repoIndex = rest.indexOf("--repo");
+    const repo = repoIndex >= 0 ? rest[repoIndex + 1] : undefined;
+    const r = pinFromRelease({ repo, tag, ref });
     const manifest = loadManifest();
     stampBuildInfo({ source: "release", repo: manifest.repo, version: manifest.version, tag: r.tag });
     console.log(`[opencode:pin] opencode.lock.json → ${r.tag}${r.ref ? ` @ ${r.ref.slice(0, 10)}` : ""}`);

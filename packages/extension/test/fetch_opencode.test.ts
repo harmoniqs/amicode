@@ -259,6 +259,26 @@ describe("AMICODE_RELEASE_TAG override — clean-tag self-provisioning", () => {
     const m = { version: "1.17.3", platforms: { "linux-x64": { asset: "a", sha256: "b".repeat(64) } } };
     expect(releaseCoords(m)).toEqual({ repo: "anomalyco/opencode", tag: "v1.17.3", private: false });
   });
+
+  it("rejects a pinned DEV release when the release workflow requires BETA", async () => {
+    const { bytes, hash } = fixtureArchive();
+    const root = rootWith({
+      version: "1.18.10",
+      repo: "harmoniqs/opencode",
+      tag: "v1.18.10-amicode.20",
+      platforms: { "linux-x64": { asset: "opencode-linux-x64.tar.gz", sha256: hash } },
+    });
+    process.env.AMICODE_REQUIRE_CHANNEL = "beta";
+
+    await expect(
+      fetchOpencode({
+        root,
+        platform: "linux-x64",
+        download: async () => bytes,
+        ghApi: () => "OPENCODE_CHANNEL=dev\nBadge: DEV",
+      }),
+    ).rejects.toThrow(/OPENCODE_CHANNEL=beta/);
+  });
 });
 
 describe("assertReleaseChannel — the promoted-release backstop", () => {

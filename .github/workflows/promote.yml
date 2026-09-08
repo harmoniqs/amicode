@@ -69,5 +69,5 @@ jobs:
           # (Actions' recursion guard), but workflow_dispatch is exempt — so dispatch
           # it explicitly. release.yml checks out the clean tag, sees a plain vX.Y.Z,
           # and its publish-marketplace job runs.
-          gh workflow run release.yml -f tag="$CLEAN"
+          gh workflow run release.yml --ref "$CLEAN" -f tag="$CLEAN"
           echo "Dispatched release.yml for $CLEAN"

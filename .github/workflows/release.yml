@@ -1,24 +1,5 @@
-# Tag-triggered VSIX release + VS Code Marketplace publish.
-#
-#   push tag v*             -> build 7 vsixes, GitHub Release with the 4 installable ones
-#   clean tag vX.Y.Z        -> ALSO publish the platform-specific vsixes to the
-#                              Marketplace (the promotion signal)
-#   pre-release vX.Y.Z-...  -> GitHub Release (prerelease) only, never Marketplace
-#
-# The `-alpha.N` suffix mirrors the vendored opencode fork's `amicode.N` and is
-# an INTERNAL channel that must never reach end users. Promotion = bump the
-# extension manifest to the next x.y.z and cut a clean `vX.Y.Z` tag; that clean
-# tag is what unlocks the Marketplace publish job.
-#
-# A clean tag ALSO provisions its own fork binary: it cuts the next
-# `v<base>-amicode.N` tag in harmoniqs/opencode, dispatches the fork's
-# amicode-release workflow with `channel: beta` (repository_dispatch +
-# REPO_ACCESS_TOKEN — the rebuild_docs.yml pattern), waits for the release,
-# and vendors it. The committed opencode.lock.json cannot know a tag that did
-# not exist when it was written, so the fresh release's own SHA256SUMS.txt is
-# the hash authority and the release notes are the channel authority — a
-# dev-channel binary can never ride a promotion. The lock bump follows on main.
 name: release
+
 on:
   push:
     tags:
@@ -28,21 +9,15 @@ on:
       tag:
         description: "Existing tag to package and release"
         required: true
-      fork_ref:
-        description: "Fork branch/tag to cut the vendored binary from (clean tags only; default local/amicode)"
-        required: false
 
-concurrency: ${{ github.workflow }}-${{ github.ref }}
+concurrency: ${{ github.workflow }}-${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
 
 jobs:
-  vsix:
+  release:
     runs-on: ubuntu-latest
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
-      publishable: ${{ steps.meta.outputs.publishable }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -50,10 +25,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
-      # Resolve the effective tag once and decide whether it may reach the
-      # Marketplace: ONLY clean vX.Y.Z tags do. vX.Y.Z-alpha/-beta/-rc stay on
-      # the GitHub-Release-only internal channel.
-      - name: Resolve tag + publish gate
+      - name: Resolve tag and publish gate
         id: meta
         run: |
           TAG="${{ inputs.tag || github.ref_name }}"
@@ -61,222 +33,72 @@ jobs:
           PUBLISHABLE=false
           echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' && PUBLISHABLE=true
           { echo "tag=$TAG"; echo "base=$BASE"; echo "publishable=$PUBLISHABLE"; } >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG  base=$BASE  publishable=$PUBLISHABLE"
-      # Version guard: the tag's base (v0.0.3 or v0.0.3-alpha.1 -> 0.0.3) MUST equal the
-      # extension manifest version, so the installed extension's shown version matches the
-      # release tag. Prevents the confusing "tag says alpha.3 but the extension says 0.0.2".
-      - name: Version guard — tag base must equal the extension manifest version
+      - name: Version guard
         run: |
-          BASE="${{ steps.meta.outputs.base }}"
           MANIFEST="$(node -p "require('./packages/extension/package.json').version")"
-          echo "tag-base=$BASE  manifest=$MANIFEST"
-          [ "$BASE" = "$MANIFEST" ] || { echo "FAIL: tag base '$BASE' != extension manifest '$MANIFEST' — bump packages/extension/package.json to match the tag (or retag)."; exit 1; }
+          [ "${{ steps.meta.outputs.base }}" = "$MANIFEST" ] \
+            || { echo "::error::tag base and extension manifest version differ."; exit 1; }
       - run: pnpm install --frozen-lockfile
-      # Cross-repo provision (clean tags ONLY — alphas keep the committed lock):
-      # cut the next -amicode.N tag on the fork, dispatch its release workflow
-      # with channel=beta, wait for the release, and hand the tag to the
-      # vendoring steps below. Idempotent on re-run (reuses the existing tag).
-      - name: Provision fork binary at the promoted channel (clean tags only)
-        id: fork
-        if: ${{ steps.meta.outputs.publishable == 'true' }}
-        env:
-          # Fine-grained PAT, repository access = harmoniqs/opencode ONLY,
-          # permissions: Actions (read/write) + Contents (read/write). Deploy
-          # keys/tokens CANNOT do this (git+packages only, no REST API). If the
-          # org enforces SAML SSO, authorize the PAT for it — scope-correct
-          # tokens still 403 otherwise (the 2026-08-17 fetch incident).
-          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
-          FORK_REPO: harmoniqs/opencode
+      - name: Verify the immutable release pin
         run: |
-          set -euo pipefail
-          BASE="${{ steps.meta.outputs.base }}"
-          FORK_REF="${{ inputs.fork_ref || 'local/amicode' }}"
-          SHA="$(gh api "repos/$FORK_REPO/branches/$FORK_REF" --jq .commit.sha)"
-          # Next -amicode.N for this base (only fork tags count; upstream tags don't match)
-          N=$(gh api "repos/$FORK_REPO/tags?per_page=100" --paginate --jq '.[].name' \
-                | grep -o -- '-amicode\.[0-9]*$' | grep -o '[0-9]*$' | sort -n | tail -1)
-          N=$(( ${N:-0} + 1 ))
-          FORK_TAG="v${BASE}-amicode.${N}"
-          if ! gh api "repos/$FORK_REPO/git/ref/tags/$FORK_TAG" >/dev/null 2>&1; then
-            gh api -X POST "repos/$FORK_REPO/git/refs" -f ref="refs/tags/$FORK_TAG" -f sha="$SHA" >/dev/null
-            echo "created fork tag $FORK_TAG @ ${SHA:0:10} (ref $FORK_REF)"
-          fi
-          gh api -X POST "repos/$FORK_REPO/dispatches" \
-            -f event_type=amicode-release \
-            -f "client_payload[tag]=$FORK_TAG" \
-            -f "client_payload[channel]=beta" >/dev/null
-          echo "dispatched amicode-release for $FORK_TAG (channel=beta, $FORK_REF @ ${SHA:0:10})"
-          # Poll for the release: not a draft, all three binaries present (~build + release).
-          for i in $(seq 1 60); do
-            sleep 20
-            GOT=$(gh release view "$FORK_TAG" -R "$FORK_REPO" --json isDraft,assets \
-                    --jq '[.isDraft == false, ([.assets[].name] | contains(["opencode-linux-x64.tar.gz", "opencode-linux-arm64.tar.gz", "opencode-darwin-arm64.zip"]))] | all' 2>/dev/null || true)
-            [ "$GOT" = "true" ] && break
-            [ "$i" = "60" ] && { echo "FAIL: fork release $FORK_TAG did not appear within 20 min"; exit 1; }
-          done
-          # Backstop: the release notes must record the beta build (the fetch
-          # script's channel assertion re-checks the body against the binaries).
-          gh release view "$FORK_TAG" -R "$FORK_REPO" --json body --jq .body | grep -q "Badge: BETA" \
-            || { echo "FAIL: $FORK_TAG does not declare Badge: BETA — not a beta-channel build"; exit 1; }
-          echo "fork_tag=$FORK_TAG" >> "$GITHUB_OUTPUT"
-      - run: pnpm --filter amicode run package # amico-run + build + exemplars + fetch:opencode (linux-x64) + vsce
+          node - <<'NODE'
+          const lock = require('./packages/extension/opencode.lock.json')
+          if (!lock.repo || !lock.tag || !lock.ref) throw new Error('release tag must pin a fork repo, tag, and commit')
+          NODE
+      - run: pnpm --filter amicode run package
         env:
-          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }} # private-fork fetch (opencode binary only — skills now ship in-repo)
-          AMICODE_RELEASE_TAG: ${{ steps.fork.outputs.tag }} # clean tag → vendor the freshly provisioned release
-          AMICODE_REQUIRE_CHANNEL: ${{ steps.meta.outputs.publishable == 'true' && 'beta' || '' }}
-      # Also vendor darwin-arm64 + linux-arm64, so the universal .vsix installs on
-      # mac and in arm64 devcontainers too (the package chain above only fetches
-      # the ubuntu runner's linux-x64 binary).
-      - run: |
+          GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
+      - name: Vendor every binary from the committed release pin
+        run: |
           for P in darwin-arm64 linux-arm64; do
             node packages/extension/scripts/fetch_opencode.mjs --platform "$P" --release
           done
         env:
           GH_TOKEN: ${{ secrets.OPENCODE_FETCH_TOKEN }}
-          AMICODE_RELEASE_TAG: ${{ steps.fork.outputs.tag }}
-          AMICODE_REQUIRE_CHANNEL: ${{ steps.meta.outputs.publishable == 'true' && 'beta' || '' }}
-      - name: Gate check — every vendored binary ships the amicode UI ON
+      - name: Gate check every vendored binary
         run: |
-          set -eu
           for P in linux-x64 linux-arm64 darwin-arm64; do
-            cat "packages/extension/vendor/opencode/$P/.source"
             bash packages/extension/scripts/assert_ui_gate.sh "packages/extension/vendor/opencode/$P/opencode"
           done
-      # Seven vsixes, all reusing the single build + already-vendored binaries
-      # (no rebuild, no re-fetch):
-      #   amicode.vsix              universal (all binaries)  -> GitHub Release direct-install
-      #   amicode-linux-x64.vsix    lean (linux x64 binary)   -> Marketplace  [also: WSL]
-      #   amicode-linux-arm64.vsix  lean (linux arm64 binary) -> Marketplace  [also: arm64 devcontainers]
-      #   amicode-darwin-arm64.vsix lean (mac binary only)    -> Marketplace
-      #   amicode-win32-x64.vsix    cover (NO binary)         -> Marketplace only
-      #   amicode-win32-arm64.vsix  cover (NO binary)         -> Marketplace only
-      #   amicode-darwin-x64.vsix   cover (NO binary)         -> Marketplace only
-      # Per-target vsixes are trimmed to one binary by moving every OTHER platform
-      # dir aside for that single `vsce package` call, then restoring them. Cover
-      # packages (see below) are trimmed to none and are NOT release assets —
-      # there is nothing to direct-install, they only fill the platform matrix.
-      - name: Package universal vsix (all binaries)
-        run: pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
-      - run: AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
-      - name: Package platform-specific vsixes (reuses vendored binaries)
+      - name: Package universal and platform VSIX files
         run: |
-          set -eu
+          set -euo pipefail
           V=packages/extension/vendor/opencode
           PLATFORMS="linux-x64 linux-arm64 darwin-arm64"
+          pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o packages/extension/amicode.vsix
+          AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
           for T in $PLATFORMS; do
-            for O in $PLATFORMS; do
-              [ "$O" = "$T" ] || mv "$V/$O" "$RUNNER_TEMP/$O"
-            done
-            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "amicode-$T.vsix"
-            for O in $PLATFORMS; do
-              [ "$O" = "$T" ] || mv "$RUNNER_TEMP/$O" "$V/$O"
-            done
+            for O in $PLATFORMS; do [ "$O" = "$T" ] || mv "$V/$O" "$RUNNER_TEMP/$O"; done
+            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "packages/extension/amicode-$T.vsix"
+            for O in $PLATFORMS; do [ "$O" = "$T" ] || mv "$RUNNER_TEMP/$O" "$V/$O"; done
           done
-      # Cover packages for the targets we have NO binary for. A missing target is
-      # not neutral on the Marketplace: VS Code resolves such a client to the
-      # newest *universal* version on the listing and installs it silently. Ours
-      # is 0.0.2 (the last release before the platform split), so every Windows
-      # and Intel-Mac install has been landing on a stale build — the report that
-      # started this was "the Marketplace says 0.1.x doesn't exist, latest is
-      # 0.0.2". These carry NO vendored binary (a few MB each): they exist to
-      # occupy the platform matrix so those clients resolve to the CURRENT version
-      # and hit unsupportedHostAdvice() with somewhere to go ("open it in WSL").
-      # Windows is served by the linux-x64 package inside WSL, never by win32-*.
-      - name: Package cover vsixes for unsupported targets (no binary)
-        run: |
-          set -eu
-          V=packages/extension/vendor/opencode
-          for P in linux-x64 linux-arm64 darwin-arm64; do mv "$V/$P" "$RUNNER_TEMP/cover-$P"; done
+          for P in $PLATFORMS; do mv "$V/$P" "$RUNNER_TEMP/cover-$P"; done
           for T in win32-x64 win32-arm64 darwin-x64; do
-            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "amicode-$T.vsix"
+            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "packages/extension/amicode-$T.vsix"
           done
-          for P in linux-x64 linux-arm64 darwin-arm64; do mv "$RUNNER_TEMP/cover-$P" "$V/$P"; done
-          # Fail closed: a cover package that smuggled a binary in is a ~100MB
-          # install we just told the Marketplace to hand Windows users.
-          for T in win32-x64 win32-arm64 darwin-x64; do
-            ! unzip -l "packages/extension/amicode-$T.vsix" | grep -q "vendor/opencode" \
-              || { echo "FAIL: amicode-$T.vsix contains a vendored binary"; exit 1; }
-          done
-      - name: Create GitHub release (the four installable vsixes)
+          for P in $PLATFORMS; do mv "$RUNNER_TEMP/cover-$P" "$V/$P"; done
+      - name: Create or refresh GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          TAG="${{ steps.meta.outputs.tag }}"
-          # Pre-release tags (v…-alpha / -beta / -rc) must not become the repo's "latest".
-          PRERELEASE=""
-          case "$TAG" in *-alpha*|*-beta*|*-rc*) PRERELEASE=--prerelease ;; esac
-          gh release create "$TAG" --title "amicode $TAG" --generate-notes $PRERELEASE \
-            packages/extension/amicode.vsix \
-            packages/extension/amicode-linux-x64.vsix \
-            packages/extension/amicode-linux-arm64.vsix \
-            packages/extension/amicode-darwin-arm64.vsix
-      # Hand every Marketplace-bound vsix to the publish job. Re-running that job
-      # (e.g. after an expired PAT) reuses these instead of rebuilding.
-      - uses: actions/upload-artifact@v7
-        with:
-          name: vsix-packages
-          path: |
-            packages/extension/amicode-linux-x64.vsix
-            packages/extension/amicode-linux-arm64.vsix
-            packages/extension/amicode-darwin-arm64.vsix
-            packages/extension/amicode-win32-x64.vsix
-            packages/extension/amicode-win32-arm64.vsix
-            packages/extension/amicode-darwin-x64.vsix
-          if-no-files-found: error
-
-  publish-marketplace:
-    needs: vsix
-    if: ${{ needs.vsix.outputs.publishable == 'true' }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read # download-artifact from this run
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: vsix-packages
-          path: dist
-      # Publish all six platform vsixes in ONE call — vsce makes them a single
-      # Marketplace version with six platform entries, and a version must cover
-      # every target it will ever serve: you cannot add a target to an already
-      # published version later. That rule is why linux-arm64 has to ride in the
-      # SAME call as the rest: left out, arm64 Linux clients (devcontainers on
-      # Apple Silicon) would resolve down to the stale 0.0.2 universal exactly the
-      # way Windows and Intel Mac did. vsce reads the token from $VSCE_PAT.
-      #
-      # The universal fat vsix is deliberately NOT published: it bundles only
-      # linux+mac binaries, so as a Marketplace fallback it would hand Windows
-      # (and other-platform) users a ~100MB install with no runnable binary. It
-      # stays a GitHub-Release direct-install asset. That fallback role is now the
-      # cover packages' job instead, at a few MB and with an actionable message.
-      # Publish each platform individually so a partial-publish recovery
-      # (re-run after an outage) skips "already exists" platforms instead
-      # of bailing on the first one and leaving the rest unserved.
+          ASSETS=(packages/extension/amicode.vsix packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" --clobber "${ASSETS[@]}"
+          else
+            PRERELEASE=""
+            case "$TAG" in *-alpha*|*-beta*|*-rc*) PRERELEASE=--prerelease ;; esac
+            gh release create "$TAG" --title "amicode $TAG" --generate-notes $PRERELEASE "${ASSETS[@]}"
+          fi
       - name: Publish to VS Code Marketplace
+        if: ${{ steps.meta.outputs.publishable == 'true' }}
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
         run: |
-          VSIXES=(
-            dist/amicode-linux-x64.vsix
-            dist/amicode-linux-arm64.vsix
-            dist/amicode-darwin-arm64.vsix
-            dist/amicode-win32-x64.vsix
-            dist/amicode-win32-arm64.vsix
-            dist/amicode-darwin-x64.vsix
-          )
           FAILED=0
-          for V in "${VSIXES[@]}"; do
-            echo "--- Publishing $V ---"
-            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && {
-              echo "$OUTPUT"
-              echo "  ✓ published"
-              continue
-            }
+          for V in packages/extension/amicode-linux-x64.vsix packages/extension/amicode-linux-arm64.vsix packages/extension/amicode-darwin-arm64.vsix packages/extension/amicode-win32-x64.vsix packages/extension/amicode-win32-arm64.vsix packages/extension/amicode-darwin-x64.vsix; do
+            OUTPUT=$(npx --yes @vscode/vsce publish --packagePath "$V" 2>&1) && { echo "$OUTPUT"; continue; }
             echo "$OUTPUT"
-            if echo "$OUTPUT" | grep -q "already exists"; then
-              echo "  (already published, skipping)"
-            else
-              echo "::error::Failed to publish $V"
-              FAILED=1
-            fi
+            echo "$OUTPUT" | grep -q "already exists" || FAILED=1
           done
-          [ "$FAILED" -eq 0 ] || exit 1
+          [ "$FAILED" -eq 0 ]

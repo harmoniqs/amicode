@@ -1,0 +1,95 @@
+name: prepare-release-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release-preparation branch to pin"
+        required: true
+      fork_ref:
+        description: "Fork branch or tag to build"
+        required: false
+        default: "local/amicode"
+
+permissions:
+  contents: write
+
+concurrency: prepare-release-candidate-${{ inputs.ref }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    env:
+      FORK_REPO: harmoniqs/opencode
+      FORK_REF: ${{ inputs.fork_ref }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with: { node-version: 20, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Derive candidate version
+        id: version
+        run: |
+          EXTENSION_VERSION="$(node -p "require('./packages/extension/package.json').version")"
+          ENGINE_VERSION="$(node -p "require('./packages/extension/opencode.lock.json').version")"
+          echo "$EXTENSION_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::extension version must be a clean semver"; exit 1; }
+          echo "$ENGINE_VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' \
+            || { echo "::error::opencode lock version must be a clean semver"; exit 1; }
+          { echo "extension=$EXTENSION_VERSION"; echo "engine=$ENGINE_VERSION"; } >> "$GITHUB_OUTPUT"
+      - name: Preflight fork credential
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+        run: |
+          gh api "repos/$FORK_REPO" --jq .full_name >/dev/null \
+            || { echo "::error::REPO_ACCESS_TOKEN cannot read $FORK_REPO. Rotate the fine-grained PAT, grant Contents and Actions read/write, and authorize it for SSO."; exit 1; }
+          gh api "repos/$FORK_REPO/branches/$FORK_REF" --jq .commit.sha >/dev/null \
+            || { echo "::error::REPO_ACCESS_TOKEN cannot read fork ref '$FORK_REF'."; exit 1; }
+      - name: Build and verify BETA fork release
+        id: fork
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+          ENGINE_VERSION: ${{ steps.version.outputs.engine }}
+        run: |
+          set -euo pipefail
+          SHA="$(gh api "repos/$FORK_REPO/branches/$FORK_REF" --jq .commit.sha)"
+          N="$(gh api "repos/$FORK_REPO/tags?per_page=100" --paginate --jq '.[].name' | grep -o -- '-amicode\.[0-9]*$' | grep -o '[0-9]*$' | sort -n | tail -1)"
+          FORK_TAG="v${ENGINE_VERSION}-amicode.$(( ${N:-0} + 1 ))"
+          if ! gh api "repos/$FORK_REPO/git/ref/tags/$FORK_TAG" >/dev/null 2>&1; then
+            gh api -X POST "repos/$FORK_REPO/git/refs" -f ref="refs/tags/$FORK_TAG" -f sha="$SHA" >/dev/null
+          fi
+          gh api -X POST "repos/$FORK_REPO/dispatches" \
+            -f event_type=amicode-release \
+            -f "client_payload[tag]=$FORK_TAG" \
+            -f "client_payload[channel]=beta" >/dev/null
+          for i in $(seq 1 60); do
+            sleep 20
+            READY="$(gh release view "$FORK_TAG" -R "$FORK_REPO" --json isDraft,assets --jq '[.isDraft == false, ([.assets[].name] | contains(["opencode-linux-x64.tar.gz", "opencode-linux-arm64.tar.gz", "opencode-darwin-arm64.zip"]))] | all' 2>/dev/null || true)"
+            [ "$READY" = true ] && break
+            [ "$i" = 60 ] && { echo "::error::Fork release $FORK_TAG did not complete within 20 minutes."; exit 1; }
+          done
+          gh release view "$FORK_TAG" -R "$FORK_REPO" --json body --jq .body | grep -q 'OPENCODE_CHANNEL=beta' \
+            || { echo "::error::$FORK_TAG was not built with OPENCODE_CHANNEL=beta."; exit 1; }
+          gh release view "$FORK_TAG" -R "$FORK_REPO" --json body --jq .body | grep -q 'Badge: BETA' \
+            || { echo "::error::$FORK_TAG does not declare Badge: BETA."; exit 1; }
+          { echo "tag=$FORK_TAG"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+      - name: Pin the verified candidate into this branch
+        env:
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+          FORK_TAG: ${{ steps.fork.outputs.tag }}
+          FORK_SHA: ${{ steps.fork.outputs.sha }}
+        run: |
+          pnpm --filter amicode opencode:pin "$FORK_TAG" --repo "$FORK_REPO" --ref "$FORK_SHA"
+          if git diff --quiet; then
+            echo "Candidate branch already pins $FORK_TAG."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/extension/opencode.lock.json
+          git commit -m "chore(release): pin BETA fork candidate $FORK_TAG"
+          git push origin HEAD:${{ inputs.ref }}

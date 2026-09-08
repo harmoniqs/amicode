@@ -64,6 +64,31 @@ describe("pinFromRelease", () => {
     expect(() => pinFromRelease({ root, download: () => Buffer.from("x") })).toThrow(/tag is required/);
     expect(() => pinFromRelease({ root, tag: "v1", ref: "nope", download: () => Buffer.from("x") })).toThrow(/40-hex/);
   });
+
+  it("pins an explicit fork repository when the committed lock defaults to upstream", () => {
+    const manifest = { ...RELEASE_LOCK };
+    delete (manifest as { repo?: string }).repo;
+    const root = rootWith(manifest);
+    const seen: string[] = [];
+    const download = (repo: string, tag: string, asset: string) => {
+      seen.push(`${repo}@${tag}/${asset}`);
+      return Buffer.from(asset);
+    };
+
+    pinFromRelease({
+      root,
+      repo: "harmoniqs/opencode",
+      tag: "v0.3.4-amicode.23",
+      ref: "ef".repeat(20),
+      download,
+    });
+
+    expect(seen).toEqual([
+      "harmoniqs/opencode@v0.3.4-amicode.23/opencode-darwin-arm64.zip",
+      "harmoniqs/opencode@v0.3.4-amicode.23/opencode-linux-x64.tar.gz",
+    ]);
+    expect(loadManifest(root).repo).toBe("harmoniqs/opencode");
+  });
 });
 
 describe("build provenance (.buildinfo)", () => {
