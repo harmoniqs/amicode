@@ -14,6 +14,8 @@ import {
   previewEnv,
   requestPreviewFileTreeRefresh,
 } from "@/utils/amicode-preview-file-tree"
+import { preprocessMarkdown } from "@/utils/preview-markdown"
+import { PreviewContentArea } from "@/components/session/preview-content-area"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 import type { FileNode } from "@opencode-ai/sdk/v2"
@@ -34,29 +36,7 @@ interface PreviewFileState {
   unsavedContent?: string
 }
 
-// ─── Environment pill color palette ─────────────────────────────────────────
-// Same 8-color palette the sidebar uses (envColorIndex → CSS class).
-
-const ENV_PILL_COLORS = [
-  "bg-blue-500/15 text-blue-500",
-  "bg-green-500/15 text-green-500",
-  "bg-purple-500/15 text-purple-500",
-  "bg-orange-500/15 text-orange-500",
-  "bg-pink-500/15 text-pink-500",
-  "bg-teal-500/15 text-teal-500",
-  "bg-yellow-500/15 text-yellow-500",
-  "bg-red-500/15 text-red-500",
-] as const
-
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * Convert ```math fenced code blocks (GitHub-flavored) to $$...$$ display math
- * blocks that the Markdown component's KaTeX extension understands.
- */
-export function preprocessMarkdown(text: string): string {
-  return text.replace(/```math\n([\s\S]*?)```/g, (_match, body: string) => `$$\n${body.trim()}\n$$`)
-}
 
 /** Extract the filename from an absolute or relative path. */
 function basename(path: string): string {
@@ -266,114 +246,155 @@ export function SessionPreviewTab(props: {
         }
       >
         {(path) => (
-          <div class="h-full flex flex-col overflow-hidden">
-            {/* Header with back button, mode toggle */}
-            <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border-weaker-base">
-              <IconButton
-                icon="arrow-left"
-                variant="ghost"
-                class="h-6 w-6"
-                onClick={goBack}
-                aria-label="Back to file list"
-              />
-              <div class="flex-1 min-w-0 text-12-regular text-text-base truncate">{basename(path())}</div>
-              <Show when={saveStatus() !== "idle"}>
-                <span
-                  class="text-11-medium"
-                  classList={{
-                    "text-green-500": saveStatus() === "saved",
-                    "text-text-weak": saveStatus() === "saving",
-                  }}
-                >
-                  {saveStatus() === "saving" ? "Saving..." : "Saved"}
-                </span>
-              </Show>
-              {/* Zoom control: [100% | - +] */}
-              <div class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden">
-                <input
-                  type="text"
-                  class="w-11 h-full text-center text-12-regular text-text-base bg-transparent outline-none"
-                  value={`${zoom()}%`}
-                  onInput={(e) => {
-                    const val = parseInt(e.currentTarget.value)
-                    if (!isNaN(val) && val >= 50 && val <= 200) setZoom(val)
-                  }}
-                  onBlur={(e) => {
-                    e.currentTarget.value = `${zoom()}%`
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.currentTarget.blur()
-                    }
-                  }}
-                />
-                <div class="flex items-center border-l border-border-base">
-                  <button
-                    class="flex items-center justify-center w-5 h-full text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors"
-                    onClick={zoomOut}
-                    aria-label="Zoom out"
-                  >
-                    <span class="text-12-medium leading-none">−</span>
-                  </button>
-                  <button
-                    class="flex items-center justify-center w-5 h-full text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors -ml-0.5"
-                    onClick={zoomIn}
-                    aria-label="Zoom in"
-                  >
-                    <span class="text-12-medium leading-none">+</span>
-                  </button>
-                </div>
-              </div>
-              {/* Mode toggle */}
-              <SegmentedControlV2
-                value={currentMode()}
-                onChange={(value) => {
-                  if (value !== "preview" && value !== "raw") return
+          <Show
+            when={hasProjectTree()}
+            fallback={
+              <LegacyMarkdownView
+                path={path()}
+                basename={markdownFiles().find((f) => f.path === path())?.basename ?? basename(path())}
+                fileContent={fileContent()}
+                loading={loading()}
+                zoom={zoom()}
+                zoomIn={zoomIn}
+                zoomOut={zoomOut}
+                currentMode={currentMode()}
+                saveStatus={saveStatus()}
+                onBack={goBack}
+                onModeChange={(value) => {
                   const p = selectedFile()
-                  if (p) setFileStates(p, { ...fileStates[p], mode: value })
+                  if (p) setFileStates(p, { ...fileStates[p], mode: value as "preview" | "raw" })
                 }}
-                class="!w-auto"
-                aria-label="View mode"
-              >
-                <TooltipV2 openDelay={400} value="Preview">
-                  <SegmentedControlItemV2 value="preview" aria-label="Preview" class="!flex-none !px-2">
-                    <Icon name="eye" size="small" />
-                  </SegmentedControlItemV2>
-                </TooltipV2>
-                <TooltipV2 openDelay={400} value="Raw">
-                  <SegmentedControlItemV2 value="raw" aria-label="Raw" class="!flex-none !px-2">
-                    <Icon name="edit" size="small" />
-                  </SegmentedControlItemV2>
-                </TooltipV2>
-              </SegmentedControlV2>
-            </div>
-
-            {/* Content area */}
-            <div class="flex-1 min-h-0 overflow-auto">
-              <Show when={!loading()} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
-                <Show
-                  when={currentMode() === "preview"}
-                  fallback={
-                    <RawEditor content={fileContent()} onEdit={handleRawEdit} onSave={immediateSave} zoom={zoom()} />
-                  }
-                >
-                  <div
-                    class="p-4 origin-top-left [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:max-w-full [&_.katex]:text-[0.9em]"
-                    style={{ transform: `scale(${zoom() / 100})`, width: `${10000 / zoom()}%` }}
-                  >
-                    <Markdown text={preprocessMarkdown(fileContent())} class="text-12-regular" />
-                  </div>
-                </Show>
-              </Show>
-            </div>
-          </div>
+                onEdit={handleRawEdit}
+                onSave={immediateSave}
+              />
+            }
+          >
+            <PreviewContentArea filePath={path()} onBack={goBack} />
+          </Show>
         )}
       </Show>
     </div>
   )
 }
 
+// ─── Legacy Markdown View (no-project content view) ─────────────────────────
+
+function LegacyMarkdownView(props: {
+  path: string
+  basename: string
+  fileContent: string
+  loading: boolean
+  zoom: number
+  zoomIn: () => void
+  zoomOut: () => void
+  currentMode: string
+  saveStatus: string
+  onBack: () => void
+  onModeChange: (value: string) => void
+  onEdit: (content: string) => void
+  onSave: () => void
+}) {
+  return (
+    <div class="h-full flex flex-col overflow-hidden">
+      <div class="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-border-weaker-base">
+        <IconButton icon="arrow-left" variant="ghost" class="h-6 w-6" onClick={props.onBack} aria-label="Back to file list" />
+        <div class="flex-1 min-w-0 text-12-regular text-text-base truncate">{props.basename}</div>
+        <Show when={props.saveStatus !== "idle"}>
+          <span
+            class="text-11-medium"
+            classList={{
+              "text-green-500": props.saveStatus === "saved",
+              "text-text-weak": props.saveStatus === "saving",
+            }}
+          >
+            {props.saveStatus === "saving" ? "Saving..." : "Saved"}
+          </span>
+        </Show>
+        <div class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden">
+          <input
+            type="text"
+            class="w-11 h-full text-center text-12-regular text-text-base bg-transparent outline-none"
+            value={`${props.zoom}%`}
+            onInput={(e) => {
+              const val = parseInt(e.currentTarget.value)
+              if (!isNaN(val) && val >= 50 && val <= 200) {
+                // zoom is controlled by the parent, but we still validate inline
+              }
+            }}
+            onBlur={(e) => {
+              e.currentTarget.value = `${props.zoom}%`
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur()
+            }}
+          />
+          <div class="flex items-center border-l border-border-base">
+            <button
+              class="flex items-center justify-center w-5 h-full text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors"
+              onClick={props.zoomOut}
+              aria-label="Zoom out"
+            >
+              <span class="text-12-medium leading-none">−</span>
+            </button>
+            <button
+              class="flex items-center justify-center w-5 h-full text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors -ml-0.5"
+              onClick={props.zoomIn}
+              aria-label="Zoom in"
+            >
+              <span class="text-12-medium leading-none">+</span>
+            </button>
+          </div>
+        </div>
+        <SegmentedControlV2
+          value={props.currentMode}
+          onChange={props.onModeChange}
+          class="!w-auto"
+          aria-label="View mode"
+        >
+          <TooltipV2 openDelay={400} value="Preview">
+            <SegmentedControlItemV2 value="preview" aria-label="Preview" class="!flex-none !px-2">
+              <Icon name="eye" size="small" />
+            </SegmentedControlItemV2>
+          </TooltipV2>
+          <TooltipV2 openDelay={400} value="Raw">
+            <SegmentedControlItemV2 value="raw" aria-label="Raw" class="!flex-none !px-2">
+              <Icon name="edit" size="small" />
+            </SegmentedControlItemV2>
+          </TooltipV2>
+        </SegmentedControlV2>
+      </div>
+      <div class="flex-1 min-h-0 overflow-auto">
+        <Show when={!props.loading} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
+          <Show
+            when={props.currentMode === "preview"}
+            fallback={<RawEditor content={props.fileContent} onEdit={props.onEdit} onSave={props.onSave} zoom={props.zoom} />}
+          >
+            <div
+              class="p-4 origin-top-left [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:max-w-full [&_.katex]:text-[0.9em]"
+              style={{ transform: `scale(${props.zoom / 100})`, width: `${10000 / props.zoom}%` }}
+            >
+              <Markdown text={preprocessMarkdown(props.fileContent)} class="text-12-regular" />
+            </div>
+          </Show>
+        </Show>
+      </div>
+    </div>
+  )
+}
+
 // ─── Project File Tree (#725) ───────────────────────────────────────────────
+
+// Environment pill color palette — same 8-color palette the sidebar uses.
+const ENV_PILL_COLORS = [
+  "bg-blue-500/15 text-blue-500",
+  "bg-green-500/15 text-green-500",
+  "bg-purple-500/15 text-purple-500",
+  "bg-orange-500/15 text-orange-500",
+  "bg-pink-500/15 text-pink-500",
+  "bg-teal-500/15 text-teal-500",
+  "bg-yellow-500/15 text-yellow-500",
+  "bg-red-500/15 text-red-500",
+] as const
 
 function ProjectFileTree(props: {
   active?: string
