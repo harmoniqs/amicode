@@ -35,6 +35,10 @@ The unit of work organization — a directory registered with amicode where file
 
 _Avoid_: Workspace, folder (as a concept name), repo, Study (rejected alternative — researchers think in "projects")
 
+**Research Environment**:
+A shared substrate for related Research Projects — a git-backed directory identified by `research-environment.toml`, carrying shared skills, insights, methods, and configuration. Bound to a Research Project via the project's `[environment].slug` field. Multiple Projects may share one Environment; an Environment has no lifecycle of its own (no phase or status). Surfaced in the Sidebar as a first-class accordion section above Research Projects, with entries color-coded by an 8-color palette derived from the slug hash. Created via `amico env create`.
+_Avoid_: workspace, shared folder, template
+
 **Session**:
 One agent conversation, bound to exactly one Project at creation and never re-parented. Sessions are children of a Project — surfaced nested under their Project, never as a global flat list.
 _Avoid_: Chat (as a concept name), conversation
