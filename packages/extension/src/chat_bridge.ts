@@ -550,6 +550,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
               }
             }
           }
+          // Prune old backups — keep only the 3 most recent (#563)
+          const MAX_BACKUPS = 3;
+          const allBackups = fs.readdirSync(dbDir)
+            .filter(f => f.startsWith(".backup-") && fs.statSync(path.join(dbDir, f)).isDirectory())
+            .sort((a, b) => fs.statSync(path.join(dbDir, b)).mtimeMs - fs.statSync(path.join(dbDir, a)).mtimeMs);
+          for (const old of allBackups.slice(MAX_BACKUPS)) {
+            fs.rmSync(path.join(dbDir, old), { recursive: true, force: true });
+          }
         } catch {
           // DB backup is best-effort
         }
