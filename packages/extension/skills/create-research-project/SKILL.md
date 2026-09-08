@@ -94,30 +94,26 @@ skip this stage silently and move to Execution.
 Choice question with options (in this order):
 - One option per registered environment (label = environment name,
   description = slug and path)
-- "Create new" — spawn a `create-research-environment` session
+- "Create new" — create a new environment inline (see below)
 - "Skip" — no environment binding
 
 **If the user selects a registered environment:** record the slug to pass to
 `amico env bind` after project creation.
 
-**If the user selects "Create new":** after the project is created, use the
-`amicode_session` tool to spawn a new session tab with the `command` parameter
-set to invoke the skill directly:
+**If the user selects "Create new":** run the environment creation interview
+**inline in this chat** — do NOT spawn a new session. Walk through the
+`create-research-environment` skill's 6 stages right here:
 
-```
-amicode_session(
-  command: "create-research-environment",
-  prompt: "--bind-project \"<project-dir>\""
-)
-```
+1. Ask for the environment name (default: infer from the project's domain)
+2. System/domain (optional)
+3. Research field (optional)
+4. Description (optional)
+5. Tags (optional)
+6. GitHub remote (optional)
 
-The `command` parameter uses the engine's command API to invoke the
-`create-research-environment` skill reliably — it does not depend on the child
-LLM parsing a `/skill-name` prefix from the prompt text. The `prompt` becomes
-the skill's arguments (the child session will parse `--bind-project` from it).
-
-Tell the user: "I've opened a new tab to create the environment — head over
-there and I'll bind it to this project when it's done."
+Then run `amico env create "<name>" --path "<dir>" [flags]` where `<dir>` is a
+sibling directory to the project (default: `../<slug>` next to the project
+dir). After creation, record the slug for binding in the post-execution step.
 
 **If the user selects "Skip":** proceed to Execution with no binding.
 

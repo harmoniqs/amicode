@@ -274,7 +274,7 @@ Read the registry and present a choice via the `question` tool:
 
 - One option per registered environment (label = environment name,
   description = slug and path)
-- "Create new" — spawn a `create-research-environment` session
+- "Create new" — create a new environment inline (see below)
 - "Skip" — no environment binding
 
 **If the user selects a registered environment:** write the `[environment]`
@@ -292,23 +292,21 @@ Append this to the end of the file. This preserves all existing content
 
 Then commit: `git add research-project.toml && git commit -m "bind to environment <slug>"`
 
-**If the user selects "Create new":** use the `amicode_session` tool to spawn
-a new session tab with the `command` parameter set to invoke the skill directly:
+**If the user selects "Create new":** run the environment creation interview
+**inline in this chat** — do NOT spawn a new session. Walk through the
+`create-research-environment` skill's 6 stages right here:
 
-```
-amicode_session(
-  command: "create-research-environment",
-  prompt: "--bind-project \"<project-dir>\""
-)
-```
+1. Ask for the environment name (default: infer from the project's domain)
+2. System/domain (optional)
+3. Research field (optional)
+4. Description (optional)
+5. Tags (optional)
+6. GitHub remote (optional)
 
-The `command` parameter uses the engine's command API to invoke the
-`create-research-environment` skill reliably — it does not depend on the child
-LLM parsing a `/skill-name` prefix from the prompt text. The `prompt` becomes
-the skill's arguments (the child session will parse `--bind-project` from it).
-
-Tell the user: "I've opened a new tab to create the environment — head over
-there and I'll bind it to this project when it's done."
+Then run `amico env create "<name>" --path "<dir>" [flags]` where `<dir>` is a
+sibling directory to the project (default: `../<slug>` next to the project
+dir). After creation, bind the project by appending the `[environment]` section
+to `research-project.toml` (same as above) and commit.
 
 **If the user selects "Skip":** no action needed. The project can be bound
 later via Command Palette ("Amicode: Bind to Environment") or `amico env bind`.
