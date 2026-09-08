@@ -11,7 +11,7 @@ import * as vscode from "vscode";
 import * as path from "node:path";
 import * as fs from "node:fs";
 import * as os from "node:os";
-import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry } from "./sidebar_bridge";
+import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMessage, type FileOpRequest, type FileOpResult, type TreeEntry, type TreeRoot } from "./sidebar_bridge";
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
@@ -293,6 +293,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private fsPendingProjectTypeChange = false;
   private workspaceSub?: vscode.Disposable;
   private gitSubs: vscode.Disposable[] = [];
+  /** Watchers for resolved (non-workspace) environment directories (#903). */
+  private resolvedEnvWatchers: vscode.FileSystemWatcher[] = [];
+  private resolvedEnvDebounceTimer?: ReturnType<typeof setTimeout>;
   private treeService: SidebarTreeService;
   private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
 
@@ -363,6 +366,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // Schedule a git-status push so colors survive the DOM wipe
           // that renderRoots() causes in the webview.
           queueMicrotask(() => this.pushGitStatus());
+          // Refresh watchers for resolved (non-workspace) environments (#903)
+          this.refreshResolvedEnvWatchers(roots);
           return roots;
         },
         getChildren: async (p) => {
@@ -405,15 +410,20 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     // Refresh when workspace folders change.
     this.workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
       invalidateEnvironmentCache();
-      this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
+      const roots = this.treeService.getRoots();
+      this.postDown({ kind: "roots", roots });
+      this.refreshResolvedEnvWatchers(roots);
       this.pushGitStatus();
     });
 
     webviewView.onDidDispose(() => {
       clearTimeout(this.fsDebounceTimer);
+      clearTimeout(this.resolvedEnvDebounceTimer);
       this.fsPendingFolders.clear();
       this.fsPendingProjectTypeChange = false;
       this.watcher?.dispose();
+      for (const w of this.resolvedEnvWatchers) w.dispose();
+      this.resolvedEnvWatchers = [];
       this.workspaceSub?.dispose();
       for (const sub of this.gitSubs) sub.dispose();
       this.gitSubs = [];
@@ -511,7 +521,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // webview's fs-changed handler already performs.
           if (this.fsPendingProjectTypeChange) {
             invalidateEnvironmentCache();
-            this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
+            const roots = this.treeService.getRoots();
+            this.postDown({ kind: "roots", roots });
+            this.refreshResolvedEnvWatchers(roots);
             queueMicrotask(() => this.pushGitStatus());
             this.fsPendingProjectTypeChange = false;
           }
@@ -585,6 +597,63 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       }
     } catch {
       // Graceful fallback — sidebar works without git colors
+    }
+  }
+
+  /**
+   * Create file watchers for resolved (non-workspace) environment directories
+   * so that filesystem changes inside them produce fs-changed messages and
+   * invalidate the webview's children cache (#903).
+   *
+   * The main setupWatcher only covers workspace folders (createFileSystemWatcher
+   * with a bare glob is workspace-scoped, and the onFsEvent handler explicitly
+   * checks getWorkspaceFolder). Resolved environments are auto-surfaced from
+   * the registry and are NOT workspace folders, so changes inside them are
+   * invisible without these per-path watchers.
+   *
+   * Uses RelativePattern(Uri.file(envPath), "**\/*") which works for non-
+   * workspace paths on macOS (FSEvents) and Windows. On Linux the watcher is
+   * best-effort per the VS Code API contract.
+   */
+  private refreshResolvedEnvWatchers(roots: TreeRoot[]): void {
+    const newPaths = new Set(
+      roots.filter((r) => r.source === "resolved").map((r) => r.path),
+    );
+
+    // Fast path: no change in the set of resolved paths → nothing to do.
+    const currentPaths = new Set(this.resolvedEnvWatchers.map((w) => (w as any).__envPath as string));
+    if (newPaths.size === currentPaths.size && [...newPaths].every((p) => currentPaths.has(p))) {
+      return;
+    }
+
+    // Dispose old watchers
+    for (const w of this.resolvedEnvWatchers) w.dispose();
+    this.resolvedEnvWatchers = [];
+
+    for (const envPath of newPaths) {
+      try {
+        const pattern = new vscode.RelativePattern(vscode.Uri.file(envPath), "**/*");
+        const watcher = vscode.workspace.createFileSystemWatcher(pattern);
+        // Tag the watcher so the fast-path check above can compare sets
+        (watcher as any).__envPath = envPath;
+
+        const handler = () => {
+          // Debounce to avoid flooding, same as the main watcher
+          clearTimeout(this.resolvedEnvDebounceTimer);
+          this.resolvedEnvDebounceTimer = setTimeout(() => {
+            this.postDown({ kind: "fs-changed", folder: envPath });
+          }, 300);
+        };
+
+        watcher.onDidCreate(handler);
+        watcher.onDidChange(handler);
+        watcher.onDidDelete(handler);
+        this.resolvedEnvWatchers.push(watcher);
+      } catch {
+        // Watcher creation failed (e.g., OS-level watch limits) — graceful
+        // degradation: Fix 1 (no-cache-empty) still allows re-requests on
+        // expand toggles and webview recreation.
+      }
     }
   }
 
@@ -1056,7 +1125,10 @@ async function readDirectoryEntries(dir: string): Promise<RawDirEntry[]> {
       name,
       type: type === vscode.FileType.Directory ? "directory" as const : "file" as const,
     }));
-  } catch {
+  } catch (err) {
+    // Log so transient failures are visible — a swallowed empty [] here is
+    // the entry point for the cache-poison bug (#903).
+    console.warn(`[sidebar] readDirectoryEntries failed for ${dir}:`, err);
     return [];
   }
 }
