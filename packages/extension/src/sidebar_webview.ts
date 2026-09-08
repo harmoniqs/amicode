@@ -1207,8 +1207,19 @@ function createIconEl(icon: string): HTMLElement {
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Environment pill (#884) — shown after the label when the project is bound to an environment
-    if (root.environment) {
+    // Environment root rendering (#895) — left accent border + bound project count
+    if (root.projectType === "environment" && root.environment) {
+      row.classList.add(`env-root-border-${root.environment.colorIndex}`);
+      if (root.boundProjectCount && root.boundProjectCount > 0) {
+        const countEl = document.createElement("span");
+        countEl.className = "env-project-count";
+        countEl.textContent = root.boundProjectCount === 1 ? "1 project" : `${root.boundProjectCount} projects`;
+        row.appendChild(countEl);
+      }
+    }
+
+    // Environment pill (#884) — shown after the label when a non-environment project is bound to an environment
+    if (root.projectType !== "environment" && root.environment) {
       const pill = document.createElement("span");
       pill.className = `env-pill env-pill-${root.environment.colorIndex}`;
       pill.textContent = root.environment.name;

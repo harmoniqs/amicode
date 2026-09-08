@@ -818,6 +818,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .env-pill-5 { color: #e06c75; border: 1px solid rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); }
     .env-pill-6 { color: #d19a66; border: 1px solid rgba(209,154,102,0.3); background: rgba(209,154,102,0.08); }
     .env-pill-7 { color: #abb2bf; border: 1px solid rgba(171,178,191,0.3); background: rgba(171,178,191,0.08); }
+    /* ── Environment root left accent border (#895) ────────────── */
+    .env-root-border-0 { border-left: 2px solid #61afef; }
+    .env-root-border-1 { border-left: 2px solid #c678dd; }
+    .env-root-border-2 { border-left: 2px solid #98c379; }
+    .env-root-border-3 { border-left: 2px solid #e5c07b; }
+    .env-root-border-4 { border-left: 2px solid #56b6c2; }
+    .env-root-border-5 { border-left: 2px solid #e06c75; }
+    .env-root-border-6 { border-left: 2px solid #d19a66; }
+    .env-root-border-7 { border-left: 2px solid #abb2bf; }
+    .env-project-count {
+      margin-left: 6px;
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground, rgba(204,204,204,0.5));
+      white-space: nowrap;
+    }
     /* ── Drag and drop ─────────────────────────────────────────── */
     .tree-node.drop-target {
       background: var(--vscode-list-dropBackground, rgba(83, 89, 93, 0.5));
