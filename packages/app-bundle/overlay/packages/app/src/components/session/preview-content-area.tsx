@@ -1,9 +1,9 @@
 // preview-content-area.tsx — Content area for the Preview tab (#726).
 // Routes files to type-appropriate renderers based on renderer kind.
-// PDF and CodeMirror are slots until slices 3 and 4 land.
 
 import { createEffect, createMemo, createSignal, Match, on, onCleanup, Show, Switch } from "solid-js"
 import { Markdown } from "@opencode-ai/session-ui/markdown"
+import { PlainEditor } from "@opencode-ai/session-ui/v2/plain-editor"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { TooltipV2 } from "@opencode-ai/ui/v2/tooltip-v2"
@@ -16,6 +16,7 @@ import {
   isReadOnly,
   type RendererKind,
 } from "@/utils/renderer-dispatch"
+import { PDFViewer } from "@/components/pdf-viewer"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
 
@@ -38,6 +39,7 @@ export function PreviewContentArea(props: {
   const readOnly = createMemo(() => isReadOnly(ext()))
 
   const [content, setContent] = createSignal<string>("")
+  const [isBinary, setIsBinary] = createSignal(false)
   const [loading, setLoading] = createSignal(false)
   const [error, setError] = createSignal(false)
   const [mode, setMode] = createSignal<ContentMode>("preview")
@@ -55,6 +57,7 @@ export function PreviewContentArea(props: {
         if (!path) return
         setLoading(true)
         setError(false)
+        setIsBinary(false)
 
         sdk()
           .client.file.read({ path })
@@ -62,9 +65,11 @@ export function PreviewContentArea(props: {
             const data = result.data
             if (data && data.type === "text") {
               setContent(data.content)
+              setIsBinary(false)
             } else if (data && data.type === "binary") {
-              // Binary files (images) — store the base64 data
+              // Binary files (images, PDFs) — store the base64 data
               setContent(data.content)
+              setIsBinary(true)
             } else {
               setContent("")
             }
@@ -224,7 +229,7 @@ export function PreviewContentArea(props: {
       <div class="flex-1 min-h-0 overflow-auto">
         <Show when={!loading()} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
           <Show when={!error()} fallback={<ErrorState />}>
-            <Switch fallback={<EditorSlot content={content()} readOnly={readOnly()} onEdit={handleEdit} onSave={handleImmediateSave} />}>
+            <Switch fallback={<PlainEditor content={content()} language={ext().replace(/^\./, "")} readOnly={readOnly()} onChange={handleEdit} onSave={handleImmediateSave} />}>
               <Match when={kind() === "markdown" && mode() === "preview"}>
                 <div
                   class="p-4 origin-top-left [&_.katex-display]:overflow-x-auto [&_.katex-display]:overflow-y-hidden [&_.katex-display]:max-w-full [&_.katex]:text-[0.9em]"
@@ -234,10 +239,10 @@ export function PreviewContentArea(props: {
                 </div>
               </Match>
               <Match when={kind() === "markdown" && mode() === "editor"}>
-                <EditorSlot content={content()} readOnly={false} onEdit={handleEdit} onSave={handleImmediateSave} />
+                <PlainEditor content={content()} language="md" readOnly={false} onChange={handleEdit} onSave={handleImmediateSave} />
               </Match>
               <Match when={kind() === "pdf"}>
-                <PDFSlot zoom={zoom()} />
+                <PDFViewer data={content()} isBase64={isBinary()} zoom={zoom()} />
               </Match>
               <Match when={kind() === "image"}>
                 <div
@@ -260,56 +265,7 @@ export function PreviewContentArea(props: {
   )
 }
 
-// ─── Slot components (replaced by real implementations in later slices) ─────
-
-/** PDF viewer placeholder — replaced by pdfjs-dist in slice 3 (#727). */
-function PDFSlot(props: { zoom: number }) {
-  return (
-    <div class="h-full flex items-center justify-center text-12-regular text-text-weak p-4">
-      <div class="text-center">
-        <Icon name="file" size="large" class="mx-auto mb-2 text-text-faint" />
-        <p>PDF viewer</p>
-        <p class="text-11-regular text-text-faint mt-1">Coming in slice 3</p>
-      </div>
-    </div>
-  )
-}
-
-/** Editor placeholder — replaced by CodeMirror 6 PlainEditor in slice 4 (#728). */
-function EditorSlot(props: {
-  content: string
-  readOnly: boolean
-  onEdit: (content: string) => void
-  onSave: () => void
-}) {
-  return (
-    <textarea
-      value={props.content}
-      readOnly={props.readOnly}
-      class="w-full h-full p-4 resize-none bg-transparent text-text-base font-mono outline-none border-none selection:bg-blue-500/30 text-12-regular"
-      style={{ "tab-size": "2" }}
-      onInput={(e) => {
-        if (!props.readOnly) props.onEdit(e.currentTarget.value)
-      }}
-      ref={(el) => {
-        el.addEventListener("keydown", (e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-            e.preventDefault()
-            e.stopPropagation()
-            props.onSave()
-            return
-          }
-          if (e.metaKey || e.ctrlKey) {
-            e.stopPropagation()
-          }
-        })
-      }}
-      spellcheck={false}
-    />
-  )
-}
-
-/** Error state when a file fails to load. */
+// ─── Error state ────────────────────────────────────────────────────────────
 function ErrorState() {
   return (
     <div class="h-full flex items-center justify-center text-12-regular text-text-weak p-4">
