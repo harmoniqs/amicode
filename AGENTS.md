@@ -148,8 +148,8 @@ pnpm --filter @amicode/app-bundle sync:apply   # fix: copy fork → overlay + up
 
 ## Releasing & publishing (amicode → Marketplace)
 
-Two channels. **`vX.Y.Z-alpha.N`** is internal — the `alpha.N` mirrors the vendored fork's
-`amicode.N`; it cuts a GitHub *prerelease* for direct install and never reaches end users.
+Two channels. **`vX.Y.Z-alpha.N`** is internal: it cuts a GitHub *prerelease* for direct install
+and never reaches end users.
 **`vX.Y.Z`** (clean, no suffix) is the only tag that publishes to the VS Code Marketplace.
 
 Version knobs that must agree: the **extension manifest** (`packages/extension/package.json`
@@ -158,13 +158,14 @@ release.yml's version guard (a gate, not a bump; edit the manifest by hand when 
 The **vendored fork** version is a separate knob, bumped via `opencode:pin` (above).
 
 **`.github/workflows/release.yml`** — trigger: push any `v*` tag (or `workflow_dispatch` with
-`tag`). Builds **seven** vsixes from one build + the vendored binaries (no rebuild/re-fetch).
+`tag`). Rebuilds the tag's committed release pin into **seven** vsixes. It never resolves a fork
+branch or provisions a new binary, so an alpha and its promoted release carry the same payload.
 Four are installable — `amicode.vsix` (universal, all binaries), `amicode-linux-x64.vsix`,
 `amicode-linux-arm64.vsix`, `amicode-darwin-arm64.vsix` — and are the GitHub Release assets.
 Three are **cover packages** carrying NO binary — `win32-x64`, `win32-arm64`, `darwin-x64` —
-published to the Marketplace and nowhere else. The `publish-marketplace` job runs **only for a
-clean `vX.Y.Z` tag** and `vsce publish`es all six platform-targeted vsixes in ONE call (one
-Marketplace version, six platform entries).
+published to the Marketplace and nowhere else. A clean `vX.Y.Z` tag publishes all six
+platform-targeted VSIX files from the same packaging job; no Actions-artifact handoff sits between
+the build and Marketplace publish.
 
 **`linux-arm64` is a real target, not a cover** — it carries a binary and serves arm64
 devcontainers (VS Code Remote-Containers on Apple Silicon, the common case). The extension runs
@@ -191,31 +192,29 @@ Needs the **`VSCE_PAT`** repo secret (an Azure DevOps PAT: org = all accessible,
 Marketplace → Manage, <=1yr expiry, so rotate). Open VSX is deferred — issue #176 (needs
 `OVSX_TOKEN`).
 
+**`.github/workflows/prepare-release-candidate.yml`** — run this on the release-preparation branch
+before cutting an alpha. It preflights the fine-grained `REPO_ACCESS_TOKEN`, builds and verifies a
+BETA fork release, then records its tag, commit, and hashes in `opencode.lock.json` on that branch.
+The alpha tag is cut only after that pin lands.
+
 **`.github/workflows/promote.yml`** — the deliberate "this alpha is good enough" act.
 `workflow_dispatch`, input `alpha_tag` (e.g. `v0.0.3-alpha.5`). Validates it (real pre-release
 tag, its clean `vX.Y.Z` not yet taken, every check run green on that commit), cuts the clean tag
 at the alpha's exact SHA, and dispatches release.yml. It does **not** touch the manifest; if the
 base was already promoted it fails and tells you to bump + start a fresh alpha cycle.
 
-**Clean tags provision their own fork binary.** A promoted release cannot vendor the binary the
-committed lock pins: that was built earlier — historically on the `dev` channel (the fork
-workflow's default), which renders the DEV titlebar badge in customer builds. Instead, release.yml
-(for clean tags only) cuts the next `v<base>-amicode.N` tag on the fork at `local/amicode`'s head
-(overridable via the `fork_ref` input), `repository_dispatch`es the fork's `amicode-release`
-workflow with `channel: beta`, polls for the release, and vendors it — the fresh release's own
-`SHA256SUMS.txt` is the hash authority and its release notes must declare `Badge: BETA` (the fetch
-script re-asserts the channel; fail-closed). The vendored fork version is a separate knob from the
-extension manifest. Requires the **`REPO_ACCESS_TOKEN`** secret in this repo — a **fine-grained
-PAT** scoped to `harmoniqs/opencode` ONLY, permissions Actions + Contents (read/write). Deploy
-keys/tokens cannot do this (no REST API access). If the org enforces SAML SSO, authorize the PAT
-for it. Same mechanism `PiccoloMultidocs.jl` uses to drive `docs.harmoniqs.co`. After the release,
-bump `opencode.lock.json` on main via `pnpm --filter amicode opencode:pin <fork tag>` so local dev
-and alpha builds get the same binary.
+**Candidate preparation provisions the fork binary.** The candidate workflow creates the next
+fork tag from `local/amicode`, dispatches its BETA-channel build, and records the verified result
+in the release-preparation branch before alpha. It requires **`REPO_ACCESS_TOKEN`** — a
+fine-grained PAT scoped only to `harmoniqs/opencode`, with Actions and Contents read/write and SSO
+authorization where required. Stable promotion has no cross-repository authority: it rebuilds only
+from the alpha tag's committed pin. Retrying a release rebuilds the same tag and safely refreshes
+its GitHub Release assets before retrying Marketplace targets.
 
-Typical cycle: bump manifest -> push `v0.0.3-alpha.1..N` (internal prereleases) -> when one
-passes, **promote** it -> clean `v0.0.3` -> Marketplace. The first promotion of a base needs no
-bump (alphas never hit the Marketplace, so the version is still free); re-promoting an
-already-published base does.
+Typical cycle: bump manifest -> prepare BETA fork candidate and commit its pin -> push
+`v0.0.3-alpha.1..N` (internal prereleases) -> when one passes, **promote** it -> clean `v0.0.3`
+-> Marketplace. The first promotion of a base needs no bump (alphas never hit the Marketplace, so
+the version is still free); re-promoting an already-published base does.
 
 ## Known sharp edges
 

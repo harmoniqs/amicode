@@ -245,6 +245,7 @@ async function fetchFromRelease({ root, manifest, key, download, ghApi: api = gh
   const channel = process.env.AMICODE_REQUIRE_CHANNEL || (override ? "beta" : null);
   const provenance = `release ${coords.repo}@${coords.tag}` + (channel ? ` channel=${channel}` : "");
   let want = manifest.platforms[key].sha256;
+  if (channel) await assertReleaseChannel(coords, channel, api);
   if (override) {
     want = shaFromSums(
       (
@@ -254,7 +255,6 @@ async function fetchFromRelease({ root, manifest, key, download, ghApi: api = gh
       ).toString("utf8"),
       asset,
     );
-    await assertReleaseChannel(coords, channel, api);
   }
 
   if (existsSync(bin) && existsSync(stamp) && readFileSync(stamp, "utf8").trim() === want) {
