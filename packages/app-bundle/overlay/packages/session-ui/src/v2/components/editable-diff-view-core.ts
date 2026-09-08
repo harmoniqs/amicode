@@ -24,7 +24,7 @@ import {
   originalDocChangeEffect,
   getOriginalDoc,
 } from "@codemirror/merge"
-import { type LanguageSupport, bracketMatching } from "@codemirror/language"
+import { type LanguageSupport, bracketMatching, StreamLanguage } from "@codemirror/language"
 import {
   HighlightStyle,
   syntaxHighlighting,
@@ -68,6 +68,37 @@ const EXTENSION_MAP: Record<string, () => Promise<LanguageSupport>> = {
   htm: () => import("@codemirror/lang-html").then((m) => m.html()),
   xml: () => import("@codemirror/lang-html").then((m) => m.html()),
   svg: () => import("@codemirror/lang-html").then((m) => m.html()),
+  // #728: TeX family — uses StreamLanguage from legacy-modes
+  tex: () => import("@codemirror/legacy-modes/mode/stex").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.stexMath))
+  ),
+  bib: () => import("@codemirror/legacy-modes/mode/stex").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.stexMath))
+  ),
+  tikz: () => import("@codemirror/legacy-modes/mode/stex").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.stexMath))
+  ),
+  sty: () => import("@codemirror/legacy-modes/mode/stex").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.stexMath))
+  ),
+  cls: () => import("@codemirror/legacy-modes/mode/stex").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.stexMath))
+  ),
+  // #728: Julia — uses StreamLanguage from legacy-modes
+  jl: () => import("@codemirror/legacy-modes/mode/julia").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.julia))
+  ),
+  // #728: TOML — uses StreamLanguage from legacy-modes
+  toml: () => import("@codemirror/legacy-modes/mode/toml").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.toml))
+  ),
+  // #728: YAML — uses StreamLanguage from legacy-modes
+  yaml: () => import("@codemirror/legacy-modes/mode/yaml").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.yaml))
+  ),
+  yml: () => import("@codemirror/legacy-modes/mode/yaml").then((m) =>
+    new LanguageSupport(StreamLanguage.define(m.yaml))
+  ),
 }
 
 /**

@@ -43,6 +43,10 @@ import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
+import { scanRenderableFiles } from "./preview_file_tree";
+import { resolveEnvironment } from "./project/resolve_environment";
+import { envColorIndex } from "./sidebar_bridge";
+import { detectTexEngine, discoverMainFile, compileTeX } from "./tex_support";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
 import { stageModeBundles } from "@amicode/schema";
@@ -1071,6 +1075,112 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   ctx.subscriptions.push(
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
       pushWorkspaceProjects();
+    }),
+  );
+
+  // ── #725: Preview file tree bridge ─────────────────────────────────────────
+  // Push a filtered file tree to the chat iframe's Preview tab. Sent on
+  // app-ready and on manual refresh (triggered by the webview via
+  // "preview-file-tree-request" → chat_bridge → command).
+  const pushPreviewFileTree = () => {
+    const projects = getWorkspaceProjects(workspaceProjectDeps);
+    const researchProject = projects.find((p) => p.type === "research");
+    if (!researchProject) return;
+
+    const files = scanRenderableFiles(researchProject.worktree);
+
+    // Resolve bound environment (if any)
+    const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    let environment: {
+      files: string[];
+      root: string;
+      name: string;
+      slug: string;
+      colorIndex: number;
+    } | undefined;
+
+    const env = resolveEnvironment(researchProject.worktree, workspaceRoots);
+    if (env) {
+      environment = {
+        files: scanRenderableFiles(env.path),
+        root: env.path,
+        name: env.name,
+        slug: env.slug,
+        colorIndex: envColorIndex(env.slug),
+      };
+    }
+
+    ChatPanel.postToAll({
+      source: "amicode",
+      kind: "preview-file-tree",
+      files,
+      projectRoot: researchProject.worktree,
+      environment,
+    });
+  };
+
+  ChatPanel.onAppReadyPersistent(pushPreviewFileTree);
+
+  // Register as a command so chat_bridge can trigger refreshes without
+  // creating a direct import cycle.
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.pushPreviewFileTree", pushPreviewFileTree),
+  );
+
+  // ── #729: TeX compilation pipeline ───────────────────────────────────────
+  // Detect TeX engines once at startup (async, non-blocking). Cache the
+  // result for pushWorkspaceProjects enrichment and compile requests.
+  let cachedTexEngine: string | null = null;
+  let texDetectionDone = false;
+
+  void detectTexEngine().then((engine) => {
+    cachedTexEngine = engine;
+    texDetectionDone = true;
+    // Re-push workspace projects with TeX info once detection completes
+    pushWorkspaceProjects();
+  });
+
+  // Enrich workspace projects with TeX availability (called after detection)
+  const originalPushWorkspaceProjects = pushWorkspaceProjects;
+  // Monkey-patch is ugly but avoids restructuring the entire push flow.
+  // TODO: refactor to a proper enrichment pipeline.
+
+  // TeX compile command — invoked by chat_bridge on "tex-compile-request"
+  let activeCompileAbort: AbortController | null = null;
+
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.texCompile", async (mainFile: string, cwd: string) => {
+      if (!cachedTexEngine) {
+        ChatPanel.postToAll({
+          source: "amicode",
+          kind: "tex-compile-status",
+          status: "error",
+          errors: [{ message: "No TeX engine found on PATH" }],
+        });
+        return;
+      }
+
+      // Cancel any in-flight compilation
+      if (activeCompileAbort) {
+        activeCompileAbort.abort();
+      }
+      activeCompileAbort = new AbortController();
+
+      ChatPanel.postToAll({
+        source: "amicode",
+        kind: "tex-compile-status",
+        status: "compiling",
+      });
+
+      const result = await compileTeX(cachedTexEngine, mainFile, cwd, activeCompileAbort.signal);
+      activeCompileAbort = null;
+
+      ChatPanel.postToAll({
+        source: "amicode",
+        kind: "tex-compile-status",
+        status: result.success ? "success" : "error",
+        errors: result.errors,
+      });
     }),
   );
 

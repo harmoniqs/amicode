@@ -19,6 +19,12 @@ export interface WorkspaceProjectEntry {
   status?: string;
   /** Environment name for bound research projects (#886). Absent for unbound or dev. */
   environment?: string;
+  /** TeX availability for this project (#729). */
+  tex?: {
+    available: boolean;
+    engine: string;
+    mainFile?: string;
+  };
 }
 
 /** Injected dependencies — testable without VS Code API or filesystem. */

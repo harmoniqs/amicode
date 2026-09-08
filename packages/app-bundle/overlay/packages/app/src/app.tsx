@@ -2,6 +2,7 @@ import "@/index.css"
 import * as Sentry from "@sentry/solid"
 import { requestComputeConnect } from "@/components/amicode-defaults-capsule"
 import { adoptWorkspaceProjects, workspaceProjects } from "@/utils/amicode-workspace-projects"
+import { adoptPreviewFileTree } from "@/utils/amicode-preview-file-tree"
 import { I18nProvider } from "@opencode-ai/ui/context"
 import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
@@ -444,6 +445,16 @@ function AmicodeThemeBridge() {
     // amicode#663: workspace-projects push from the extension host.
     if (d.kind === "workspace-projects") {
       adoptWorkspaceProjects((d as { projects?: unknown[] }).projects as Parameters<typeof adoptWorkspaceProjects>[0])
+      return
+    }
+    // amicode#725: preview file tree push from the extension host.
+    if (d.kind === "preview-file-tree") {
+      const msg = d as { files?: string[]; projectRoot?: string; environment?: unknown }
+      adoptPreviewFileTree(
+        (msg.files ?? []) as string[],
+        (msg.projectRoot ?? "") as string,
+        msg.environment as Parameters<typeof adoptPreviewFileTree>[2],
+      )
       return
     }
     if (d.kind !== "theme") return

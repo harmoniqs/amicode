@@ -1169,6 +1169,27 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #725: Preview file tree refresh request. The webview asks the extension to
+  // re-scan the project directory and push an updated file list. The actual
+  // scan + push is handled by pushPreviewFileTree() wired in extension.ts;
+  // we just need to trigger it here.
+  if (msg.kind === "preview-file-tree-request") {
+    // The push function is registered as a command so we can invoke it from
+    // the bridge without a direct import cycle.
+    void vscode.commands.executeCommand("amicode.pushPreviewFileTree");
+    return true;
+  }
+
+  // #729: TeX compilation request. The webview sends the main file and cwd;
+  // the extension runs the compilation via the registered command.
+  if (msg.kind === "tex-compile-request") {
+    const { mainFile, cwd } = msg as { mainFile?: string; cwd?: string };
+    if (mainFile && cwd) {
+      void vscode.commands.executeCommand("amicode.texCompile", mainFile, cwd);
+    }
+    return true;
+  }
+
   return false;
 }
 
