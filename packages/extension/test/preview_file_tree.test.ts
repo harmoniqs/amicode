@@ -10,7 +10,9 @@ import { tmpdir } from "node:os";
 import {
   RENDERABLE_EXTENSIONS,
   scanRenderableFiles,
+  pickPreviewProject,
 } from "../src/preview_file_tree";
+import type { WorkspaceProjectEntry } from "../src/workspace_projects";
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -178,5 +180,35 @@ describe("scanRenderableFiles", () => {
     expect(result).toContain("photo.PNG");
     expect(result).toContain("photo.Jpg");
     expect(result).toContain("paper.TEX");
+  });
+});
+
+// ── pickPreviewProject ──────────────────────────────────────────────────────
+
+describe("pickPreviewProject", () => {
+  const research: WorkspaceProjectEntry = { name: "My Research", worktree: "/projects/research", type: "research" };
+  const dev: WorkspaceProjectEntry = { name: "amicode", worktree: "/projects/amicode", type: "dev" };
+  const dev2: WorkspaceProjectEntry = { name: "other-dev", worktree: "/projects/other", type: "dev" };
+
+  it("prefers a research project when one exists", () => {
+    expect(pickPreviewProject([dev, research])).toBe(research);
+  });
+
+  it("prefers the first research project when multiple exist", () => {
+    const research2: WorkspaceProjectEntry = { name: "Second", worktree: "/projects/r2", type: "research" };
+    expect(pickPreviewProject([research2, dev, research])).toBe(research2);
+  });
+
+  it("falls back to the first dev project when no research project exists", () => {
+    expect(pickPreviewProject([dev, dev2])).toBe(dev);
+  });
+
+  it("returns undefined when the project list is empty", () => {
+    expect(pickPreviewProject([])).toBeUndefined();
+  });
+
+  it("returns the only project regardless of type", () => {
+    expect(pickPreviewProject([dev])).toBe(dev);
+    expect(pickPreviewProject([research])).toBe(research);
   });
 });

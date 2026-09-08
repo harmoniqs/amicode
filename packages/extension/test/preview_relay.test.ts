@@ -1,4 +1,5 @@
-// preview_relay.test.ts — TDD test for the webview relay allowlist (#725/#729).
+// preview_relay.test.ts — TDD test for the webview relay allowlist (#725/#729)
+// and the project selection broadening (#725).
 //
 // The VS Code webview relay in chat_panel.ts has explicit allowlists for which
 // bridge message kinds are forwarded between the extension and the iframe.
@@ -9,6 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const src = readFileSync(join(__dirname, "../src/chat_panel.ts"), "utf-8");
+const extSrc = readFileSync(join(__dirname, "../src/extension.ts"), "utf-8");
 
 describe("webview relay allowlists include preview file tree messages (#725)", () => {
   it("forwards preview-file-tree from extension to iframe (both renderers)", () => {
@@ -50,5 +52,19 @@ describe("relay allowlist structural completeness", () => {
       expect(block).toContain('"preview-file-tree"');
       expect(block).toContain('"tex-compile-status"');
     }
+  });
+});
+
+describe("pushPreviewFileTree uses pickPreviewProject (dev project support)", () => {
+  it("imports pickPreviewProject from preview_file_tree", () => {
+    expect(extSrc).toContain("pickPreviewProject");
+  });
+
+  it("does NOT hard-filter to research projects only", () => {
+    // The old code: projects.find((p) => p.type === "research")
+    // Should NOT have the research-only filter as the sole project selector
+    // (pickPreviewProject handles the priority internally)
+    const researchOnlyPattern = /projects\.find\(\s*\(p\)\s*=>\s*p\.type\s*===\s*"research"\s*\)/;
+    expect(extSrc).not.toMatch(researchOnlyPattern);
   });
 });

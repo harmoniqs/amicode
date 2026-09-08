@@ -14,6 +14,8 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, extname, relative } from "node:path";
 
+import type { WorkspaceProjectEntry } from "./workspace_projects";
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 /** File extensions the Preview tab can render. Used to filter the file tree. */
@@ -97,4 +99,19 @@ export function scanRenderableFiles(rootDir: string): string[] {
 
   walk(rootDir, 0);
   return results;
+}
+
+// ── Project selection ───────────────────────────────────────────────────────
+
+/**
+ * Pick the best project for the Preview tab's file tree.
+ *
+ * Priority: first research project, then first dev project. Returns undefined
+ * when the project list is empty. Environment resolution only applies to
+ * research projects — dev projects never have a bound environment.
+ */
+export function pickPreviewProject(
+  projects: readonly WorkspaceProjectEntry[],
+): WorkspaceProjectEntry | undefined {
+  return projects.find((p) => p.type === "research") ?? projects[0];
 }

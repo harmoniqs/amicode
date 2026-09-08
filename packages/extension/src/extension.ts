@@ -43,7 +43,7 @@ import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
 import { detectProjectType } from "./project/detect";
-import { scanRenderableFiles } from "./preview_file_tree";
+import { scanRenderableFiles, pickPreviewProject } from "./preview_file_tree";
 import { resolveEnvironment } from "./project/resolve_environment";
 import { envColorIndex } from "./sidebar_bridge";
 import { detectTexEngine, discoverMainFile, compileTeX } from "./tex_support";
@@ -1084,12 +1084,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // "preview-file-tree-request" → chat_bridge → command).
   const pushPreviewFileTree = () => {
     const projects = getWorkspaceProjects(workspaceProjectDeps);
-    const researchProject = projects.find((p) => p.type === "research");
-    if (!researchProject) return;
+    const project = pickPreviewProject(projects);
+    if (!project) return;
 
-    const files = scanRenderableFiles(researchProject.worktree);
+    const files = scanRenderableFiles(project.worktree);
 
-    // Resolve bound environment (if any)
+    // Resolve bound environment (research projects only — dev projects
+    // never have a bound environment).
     const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     let environment: {
       files: string[];
@@ -1099,22 +1100,24 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       colorIndex: number;
     } | undefined;
 
-    const env = resolveEnvironment(researchProject.worktree, workspaceRoots);
-    if (env) {
-      environment = {
-        files: scanRenderableFiles(env.path),
-        root: env.path,
-        name: env.name,
-        slug: env.slug,
-        colorIndex: envColorIndex(env.slug),
-      };
+    if (project.type === "research") {
+      const env = resolveEnvironment(project.worktree, workspaceRoots);
+      if (env) {
+        environment = {
+          files: scanRenderableFiles(env.path),
+          root: env.path,
+          name: env.name,
+          slug: env.slug,
+          colorIndex: envColorIndex(env.slug),
+        };
+      }
     }
 
     ChatPanel.postToAll({
       source: "amicode",
       kind: "preview-file-tree",
       files,
-      projectRoot: researchProject.worktree,
+      projectRoot: project.worktree,
       environment,
     });
   };
