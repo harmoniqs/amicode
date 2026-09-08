@@ -384,42 +384,66 @@ function createIconEl(icon: string): HTMLElement {
       // Right-click on empty section body → show section-level menu
       const sectionBody = target.closest(".section-body") as HTMLElement | null;
       if (sectionBody) {
-        e.preventDefault();
-        dismissMenu();
-
-        const menu = document.createElement("div");
-        menu.className = "context-menu";
-        menu.style.left = `${e.clientX}px`;
-        menu.style.top = `${e.clientY}px`;
-
-        const addItem = document.createElement("div");
-        addItem.className = "context-menu-item";
-        addItem.textContent = "Add Existing Project";
-        addItem.addEventListener("click", () => {
+        const sectionKey = sectionBody.parentElement?.dataset?.sectionKey;
+        // Only research, dev, and environments sections get context menus
+        if (sectionKey === "research" || sectionKey === "dev" || sectionKey === "environments") {
+          e.preventDefault();
           dismissMenu();
-          vscode.postMessage({ kind: "add-existing" });
-        });
-        menu.appendChild(addItem);
 
-        const newItem = document.createElement("div");
-        newItem.className = "context-menu-item";
-        newItem.textContent = "New Project";
-        newItem.addEventListener("click", () => {
-          dismissMenu();
-          vscode.postMessage({ kind: "new-project" });
-        });
-        menu.appendChild(newItem);
+          const menu = document.createElement("div");
+          menu.className = "context-menu";
+          menu.style.left = `${e.clientX}px`;
+          menu.style.top = `${e.clientY}px`;
 
-        document.body.appendChild(menu);
-        activeMenu = menu;
+          if (sectionKey === "environments") {
+            const addItem = document.createElement("div");
+            addItem.className = "context-menu-item";
+            addItem.textContent = "Add Existing Environment";
+            addItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "add-existing-environment" });
+            });
+            menu.appendChild(addItem);
 
-        // Clamp to viewport bounds
-        const rect = menu.getBoundingClientRect();
-        if (rect.right > window.innerWidth) {
-          menu.style.left = `${window.innerWidth - rect.width - 4}px`;
-        }
-        if (rect.bottom > window.innerHeight) {
-          menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+            const newItem = document.createElement("div");
+            newItem.className = "context-menu-item";
+            newItem.textContent = "New Environment";
+            newItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "new-environment" });
+            });
+            menu.appendChild(newItem);
+          } else {
+            const addItem = document.createElement("div");
+            addItem.className = "context-menu-item";
+            addItem.textContent = "Add Existing Project";
+            addItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "add-existing" });
+            });
+            menu.appendChild(addItem);
+
+            const newItem = document.createElement("div");
+            newItem.className = "context-menu-item";
+            newItem.textContent = "New Project";
+            newItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "new-project" });
+            });
+            menu.appendChild(newItem);
+          }
+
+          document.body.appendChild(menu);
+          activeMenu = menu;
+
+          // Clamp to viewport bounds
+          const rect = menu.getBoundingClientRect();
+          if (rect.right > window.innerWidth) {
+            menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+          }
+          if (rect.bottom > window.innerHeight) {
+            menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+          }
         }
       }
       return;
@@ -955,11 +979,19 @@ function createIconEl(icon: string): HTMLElement {
     const addBtn = document.createElement("button");
     addBtn.className = "section-add-btn";
     addBtn.textContent = "+";
-    addBtn.title = "Add existing project";
-    addBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      vscode.postMessage({ kind: "add-existing" });
-    });
+    if (sectionKey === "environments") {
+      addBtn.title = "Add existing environment";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ kind: "new-environment" });
+      });
+    } else {
+      addBtn.title = "Add existing project";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ kind: "add-existing" });
+      });
+    }
 
     header.appendChild(chevron);
     header.appendChild(titleEl);
@@ -1854,7 +1886,9 @@ function createIconEl(icon: string): HTMLElement {
           incoming.every((r: TreeRoot, i: number) =>
             r.path === currentRoots[i].path &&
             r.name === currentRoots[i].name &&
-            r.projectType === currentRoots[i].projectType
+            r.projectType === currentRoots[i].projectType &&
+            r.source === currentRoots[i].source &&
+            r.boundProjectCount === currentRoots[i].boundProjectCount
           );
         if (!same) {
           renderRoots(incoming);

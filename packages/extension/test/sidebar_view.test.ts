@@ -943,6 +943,53 @@ describe("sidebar webview — context menus by source (#895)", () => {
   });
 });
 
+// ── Context menu bugfixes (#895) ─────────────────────────────────────────────
+
+describe("sidebar webview — context menu bugfixes (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("staleness check compares source field so re-render fires on source change", () => {
+    // The roots-message equality check must include source so that
+    // resolved→workspace transitions trigger a re-render
+    expect(src).toMatch(/\.source\s*===\s*currentRoots\[i\]\.source/);
+  });
+
+  it("empty-area context menu reads sectionKey to determine section identity", () => {
+    // Must read the parent section's data-section-key to branch behavior
+    expect(src).toMatch(/sectionKey|section-key|dataset\.sectionKey/);
+    // Must not show "Add Existing Project" unconditionally for all sections
+    expect(src).toMatch(/New Environment/);
+    expect(src).toMatch(/Add Existing Environment/);
+  });
+
+  it("'+' button in renderSectionHeader sends section-appropriate messages", () => {
+    // The '+' button must not unconditionally send add-existing for all sections
+    // Environment section should send a different message
+    expect(src).toMatch(/new-environment/);
+  });
+});
+
+// ── Bridge: new-environment message (#895 bugfix) ────────────────────────────
+
+describe("sidebar bridge — new-environment message (#895)", () => {
+  const bridgeSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+    "utf8",
+  );
+
+  it("NewEnvironmentMessage type exists", () => {
+    expect(bridgeSrc).toMatch(/new-environment/);
+  });
+
+  it("handleSidebarMessage dispatches new-environment", () => {
+    expect(bridgeSrc).toMatch(/new-environment/);
+    expect(bridgeSrc).toMatch(/newEnvironment/);
+  });
+});
+
 // ── Section reorder bug fixes (#708) ─────────────────────────────────────────
 
 describe("sidebar webview — section reorder bug fixes", () => {

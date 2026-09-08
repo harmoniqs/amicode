@@ -356,6 +356,8 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         openChat: () => vscode.commands.executeCommand("amicode.openChat"),
         newProject: () => vscode.commands.executeCommand("amicode.newProject"),
         addExisting: () => addExistingProject(),
+        newEnvironment: () => vscode.commands.executeCommand("amicode.newEnvironment"),
+        addExistingEnvironment: () => addExistingEnvironment(),
         getRoots: () => {
           const roots = this.treeService.getRoots();
           // Schedule a git-status push so colors survive the DOM wipe
@@ -1229,6 +1231,31 @@ async function addExistingProject(): Promise<void> {
     0,
     ...uris.map((uri) => ({ uri })),
   );
+}
+
+/** Open a folder picker, validate research-environment.toml, and add to workspace (#895). */
+async function addExistingEnvironment(): Promise<void> {
+  const uris = await vscode.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    canSelectMany: false,
+    openLabel: "Add Environment",
+    title: "Select an environment folder (must contain research-environment.toml)",
+  });
+  if (!uris || uris.length === 0) return;
+
+  const { existsSync } = require("node:fs") as typeof import("node:fs");
+  const { join } = require("node:path") as typeof import("node:path");
+  const envDir = uris[0].fsPath;
+  if (!existsSync(join(envDir, "research-environment.toml"))) {
+    void vscode.window.showWarningMessage(
+      "The selected folder does not contain a research-environment.toml manifest.",
+    );
+    return;
+  }
+
+  const existing = vscode.workspace.workspaceFolders ?? [];
+  vscode.workspace.updateWorkspaceFolders(existing.length, 0, { uri: uris[0] });
 }
 
 // ── Git status annotation ────────────────────────────────────────────────────
