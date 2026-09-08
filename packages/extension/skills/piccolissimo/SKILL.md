@@ -1,6 +1,6 @@
 ---
 name: piccolissimo
-description: Piccolissimo.jl usage — the entitled fast-path tier for smooth-pulse problems. Spline-faithful integrators for Piccolo problems, adjoint robustness objectives, Gauss–Newton solver configuration, Magnus algorithm selection, and warm-start idioms. Use when authoring a solve.jl in a Piccolissimo-enabled environment.
+description: Piccolissimo.jl usage — the entitled fast-path tier for smooth-pulse problems. Spline-faithful integrators for Piccolo problems, matrix-free density routing, full-channel (ECO) objectives, adjoint robustness objectives, Gauss–Newton solver configuration, Magnus algorithm selection, and warm-start idioms. Use when authoring a solve.jl in a Piccolissimo-enabled environment.
 surface: entitled
 entitlement: issimo
 ---
@@ -58,6 +58,52 @@ On ket and multiket trajectories the constructor additionally accepts
 and `use_ket_sensitivity` (ket-level sensitivity propagation). Some combinations
 error at construction rather than silently falling back — if a requested algorithm
 does not support the sensitivity mode you asked for, you will know immediately.
+
+## Matrix-free density routing
+
+`DensityTrajectory` and `MultiDensityTrajectory` spline cells route through the
+**matrix-free** backend — two-sided Lindbladian Duhamel sweeps, no dense Jacobian
+assembled. Measured on the density state-transfer family: the routed solve reached
+J = 0.66 in 35 s where the dense fallback spent 148 s reaching J = 152 (**4.2×
+faster at far lower J**); routed MultiDensity J 302.62 → 0.20. Open-system
+(Lindbladian) problems are therefore first-class — do NOT assume density means
+"slow".
+
+- **Assert the routing, never assume it.** The problem knows whether it carries the
+  matrix-free kernels and carries zero dense knot blocks — assert both on the
+  constructed problem. A mis-routed cell silently pays the dense path.
+- **Pulse-type coverage**: cubic, linear, and smooth spline cells route
+  (zero-order convenience constructors are linear-spline-class cells under the
+  hood — assert, don't assume); bang-bang constructs and routes too.
+- **The bang-bang plateau is family-inherent**: piecewise-constant density
+  problems plateau far above the routed-cell J-ratio at ANY budget. That is
+  expressivity, not a routing defect — don't burn budget fighting it.
+
+## Open-system cells: two known upstream bugs (verify at authoring time)
+
+1. **The `LinearDissipator` rate field is inert on the density rollout path**
+   (Piccolo #337). The supported route is **√γ-prescaling** — put the rates on the
+   operators, pre-scaled — and *assert the planted dissipation as REALIZED* (e.g.
+   an analytic decay check $P_1(T) \approx e^{-\Gamma_1 T}$), because the naive
+   constructor silently produces a unitary rollout.
+2. **The `DensityTrajectory` conversion discards the `CubicSplinePulse` endpoint
+   pins** (Piccolo #338) — MultiKet and MultiDensity pin them; density didn't.
+   Restore the hardware-readiness pins (zero value AND zero derivative at both
+   endpoints) via stock `EqualityConstraints` on the problem, or the solved pulse
+   loses its clean turn-on/off silently.
+
+## Full-channel optimization (ECO)
+
+`ChannelProcessInfidelityObjective` optimizes the **realized channel** of a cycle
+on the `MultiDensity` substrate — the K-basis dual-basis process fidelity
+$F_{\text{pro}} = \frac{1}{d^2}\sum_k \langle \mathcal{U}(\tau_k), \Lambda(\rho_k)\rangle_{HS}$.
+Two authoring facts: it requires the matrix-free routing above, and the gradient
+oracle is rollout-FD (AD through the Duhamel cells is not dual-admissible). Two
+hard traps: the objective is wrapped in the $|1-F_{\text{pro}}|$ envelope (the bare
+form free-falls on infeasible iterates), and $F_{\text{pro}} \ne F_{\text{avg}}$ —
+they differ by $(1-F_{\text{pro}})/(d+1)$; never compare one against a
+Pedersen-average bar. Team members: the full dual-basis math and the six measured
+traps live in the internal `objectives` skill.
 
 ## Robustness objectives
 
@@ -130,7 +176,9 @@ Magnus algorithms when stiffness, long gates, or large-$\|H\|$ regimes actually
 demand them (e.g. `MagnusGL4Alg(n_steps ≈ 50)` for a deep Rydberg blockade, where
 the default under-resolves and optimizer fidelity diverges from a fine re-rollout).
 For simple bilinear single-qubit gates the plain path usually converges faster
-than the Magnus variants.
+than the Magnus variants — measured, MagnusGL4 matched the standard path on the
+transmon X gate only with added complexity, and a bare low-drive run lost two
+nines. Reserve Magnus for the regimes that need it.
 
 For manual substep sizing of the fixed-step cells, two exported diagnostics do
 the arithmetic for you: `suggest_n_sub(H_drift, H_drives, bracket, coeff!, Ψ0, Δt;
@@ -161,3 +209,27 @@ solve!(qcp; max_iter = 60)
   knot data when you have it.
 - `load_pulse` returns only the pulse object; bundle metadata (fidelity, gate
   name) with `JLD2.jldsave(...; pulse = ..., fidelity = ...)` at save time.
+
+**State warm-starts beat control-only**: seed the knot STATES on the Lie geodesic
+$\exp(s_k \log U_{goal})$ with arbitrary controls via
+`set_state_guess!(qcp, states; respect_initial = true)` — knot-1 is checked
+loudly, du/s_du re-derived, free-phase θ transferred. Measured (10-seed paired):
+better rollout fidelity on 9/10 seeds at **2.5–26× fewer inner-solve HVPs** vs
+cold. Two hard rules from the same measurements:
+
+- **Never cap the penalty (ρ_max ≲ 1e3) under an infeasible seed** — feasibility
+  starves at the seed's violation level; `adaptive_ρ` + a cap is the measured
+  worst case. The default ladder is the safe recipe (see the `altissimo` skill
+  for the full ρ-schedule doctrine).
+- **Gate on rollout truth only** — the stored-terminal infidelity is gameable
+  through infeasible states (measured: stored-E ≈ 1e-3 while rollout-E = 0.667).
+
+## Honesty rails
+
+- **The smoke-budget attractor**: a fidelity plateau measured at a tiny smoke
+  budget is a BUDGET artifact, not physics. Near-1 is routine at real budgets
+  for these model families — never conclude a fidelity ceiling without
+  real-budget evidence.
+- **Real-problem surface**: performance and fidelity claims validate on real
+  platform problems at real budgets; standardized contrived fixtures are for
+  mechanism isolation only.
