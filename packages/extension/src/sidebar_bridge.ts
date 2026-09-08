@@ -103,6 +103,8 @@ export type SidebarDownMessage =
 export type OpenChatMessage = { kind: "open-chat" };
 export type NewProjectMessage = { kind: "new-project" };
 export type AddExistingMessage = { kind: "add-existing" };
+export type NewEnvironmentMessage = { kind: "new-environment" };
+export type AddExistingEnvironmentMessage = { kind: "add-existing-environment" };
 export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
@@ -126,6 +128,8 @@ export type SidebarUpMessage =
   | OpenChatMessage
   | NewProjectMessage
   | AddExistingMessage
+  | NewEnvironmentMessage
+  | AddExistingEnvironmentMessage
   | GetRootsMessage
   | GetChildrenMessage
   | OpenFileMessage
@@ -167,6 +171,8 @@ export interface SidebarMessageHandlers {
   openChat: () => void;
   newProject: () => void;
   addExisting: () => void;
+  newEnvironment: () => void;
+  addExistingEnvironment: () => void;
   getRoots: () => TreeRoot[];
   getChildren: (path: string) => Promise<TreeEntry[]>;
   openFile: (path: string) => void;
@@ -200,6 +206,12 @@ export function handleSidebarMessage(
       break;
     case "add-existing":
       handlers.addExisting();
+      break;
+    case "new-environment":
+      handlers.newEnvironment();
+      break;
+    case "add-existing-environment":
+      handlers.addExistingEnvironment();
       break;
     case "get-roots": {
       const roots = handlers.getRoots();
