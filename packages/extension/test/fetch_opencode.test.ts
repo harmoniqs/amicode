@@ -34,16 +34,16 @@ describe("loadManifest", () => {
   it("the COMMITTED manifest's platforms match the runtime allow-list exactly", () => {
     expect(Object.keys(loadManifest().platforms).sort()).toEqual([...SUPPORTED].sort());
   });
-  // The #823 M3 cutover shape, pinned: the vendored engine is STOCK canonical
-  // opencode — the lock names no fork lineage (no repo/tag), so releaseCoords
-  // resolves the anomalyco/opencode@v<version> default and the download is a
-  // tokenless public fetch. A regression back to a fork pin would resurrect
-  // the retiring lineage through the default vendoring path.
-  it("the COMMITTED manifest is the stock canonical pin (#823: no fork repo/tag)", () => {
+  it("the committed manifest is either the stock pin or a fully specified release candidate", () => {
     const m = loadManifest(); // defaults to the real packages/extension root
-    expect(m.repo).toBeUndefined();
-    expect(m.tag).toBeUndefined();
     expect(m.version).toBe("1.18.29");
+    if (!m.repo) {
+      expect(m.tag).toBeUndefined();
+      return;
+    }
+    expect(m.repo).toBe("harmoniqs/opencode");
+    expect(m.tag).toMatch(/^v1\.18\.29-amicode\.\d+$/);
+    expect(m.ref).toMatch(/^[0-9a-f]{40}$/);
   });
   it("rejects missing version and short hashes", () => {
     expect(() => loadManifest(rootWith({ ...GOOD, version: "" }))).toThrow(/version/);

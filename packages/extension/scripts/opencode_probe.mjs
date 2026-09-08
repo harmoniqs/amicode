@@ -52,8 +52,14 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
   );
 
   const port = await freePort();
+  const password = "amicode-probe-password";
+  const headers = { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` };
   let log = "";
-  const child = spawn(bin, ["serve", "--port", String(port)], { cwd: proj, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(bin, ["serve", "--port", String(port)], {
+    cwd: proj,
+    env: { ...process.env, OPENCODE_SERVER_PASSWORD: password },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const onData = (d) => {
     log += d;
   };
@@ -78,7 +84,7 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
     let up = false;
     while (Date.now() < deadline && !up) {
       try {
-        const r = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(500) });
+        const r = await fetch(`http://127.0.0.1:${port}/`, { headers, signal: AbortSignal.timeout(500) });
         if (r.status < 500) up = true;
       } catch {
         /* not up yet */
@@ -92,7 +98,7 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
       eventCtype,
       eventOk = false;
     try {
-      const ev = await fetch(`http://127.0.0.1:${port}/event`, { signal: AbortSignal.timeout(10000) });
+      const ev = await fetch(`http://127.0.0.1:${port}/event`, { headers, signal: AbortSignal.timeout(10000) });
       eventStatus = ev.status;
       eventCtype = ev.headers.get("content-type") ?? "";
       eventOk = ev.status === 200 && eventCtype.includes("text/event-stream");
@@ -105,7 +111,7 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
     // still resolving providers right after the port opens (→ a false "creds
     // unverifiable"); give it up to half the budget, capped at 15s.
     const signalTimeoutMs = Math.min(15000, Math.max(4000, Math.floor(timeoutMs / 2)));
-    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`, { timeoutMs: signalTimeoutMs });
+    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`, { headers, timeoutMs: signalTimeoutMs });
 
     return { up: true, eventOk, eventStatus, eventCtype, signal, log };
   } finally {
