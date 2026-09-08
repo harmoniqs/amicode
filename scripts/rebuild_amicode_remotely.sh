@@ -18,6 +18,17 @@ if ls "$DBDIR"/opencode*.db 1>/dev/null 2>&1; then
     [ -f "$f" ] && cp -p "$f" "$BACKUP/"
   done
   echo "==> Session DBs backed up to $BACKUP"
+  # Prune old backups — keep only the 3 most recent
+  MAX_BACKUPS=3
+  BACKUP_COUNT=$(find "$DBDIR" -maxdepth 1 -name '.backup-*' -type d | wc -l | tr -d ' ')
+  if [ "$BACKUP_COUNT" -gt "$MAX_BACKUPS" ]; then
+    find "$DBDIR" -maxdepth 1 -name '.backup-*' -type d -exec stat -f '%m %N' {} \; \
+      | sort -rn | tail -n +"$((MAX_BACKUPS + 1))" | awk '{print $2}' \
+      | while read -r old; do
+          rm -rf "$old"
+          echo "==> Pruned old backup: $(basename "$old")"
+        done
+  fi
 else
   echo "==> No session DBs found to back up (first install?)"
 fi
