@@ -22,6 +22,7 @@ describe("release workflow payload integrity", () => {
     expect(release).not.toContain("AMICODE_RELEASE_TAG");
     expect(release).not.toContain("actions/upload-artifact");
     expect(release).not.toContain("publish-marketplace:");
+    expect(release).not.toContain("-o packages/extension/amicode");
     expect(release).toContain("Publish to VS Code Marketplace");
 
     expect(promote).toContain('gh workflow run release.yml --ref "$CLEAN" -f tag="$CLEAN"');
