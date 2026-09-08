@@ -1,6 +1,8 @@
-// Sidebar environment pill — color palette utility + TreeService wiring.
+// Sidebar environment pill — color palette utility + TreeService wiring + webview rendering.
 // Part of #884 (sub-issue of #880 Research Environments).
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "fs";
+import { resolve } from "path";
 import { hashCode, envColorIndex, truncateWithEllipsis } from "../src/sidebar_bridge";
 import { SidebarTreeService } from "../src/sidebar_tree_service";
 
@@ -130,5 +132,34 @@ describe("SidebarTreeService environment pill data (#884)", () => {
     const roots = service.getRoots();
     expect(roots).toHaveLength(1);
     expect(roots[0].environment).toBeUndefined();
+  });
+});
+
+// ── Webview rendering (source-level checks) ──────────────────────────────────
+
+describe("sidebar environment pill rendering (#884)", () => {
+  const webviewSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+  const viewSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_view.ts"),
+    "utf8",
+  );
+
+  it("sidebar_view.ts CSS includes env-pill styling", () => {
+    expect(viewSrc).toContain("env-pill");
+  });
+
+  it("sidebar_webview.ts TreeRoot interface includes the environment field", () => {
+    // The webview's local TreeRoot must declare the environment property
+    // so the rendering code can read it from the host-pushed data.
+    expect(webviewSrc).toMatch(/interface TreeRoot[\s\S]*?environment\?/);
+  });
+
+  it("sidebar_webview.ts renderRootNode reads root.environment to create a pill", () => {
+    // The rendering function must check root.environment and create a pill element
+    expect(webviewSrc).toMatch(/root\.environment/);
+    expect(webviewSrc).toContain("env-pill");
   });
 });

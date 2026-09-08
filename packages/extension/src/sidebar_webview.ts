@@ -13,6 +13,13 @@ interface TreeRoot {
   name: string;
   projectType: "research" | "dev";
   metadata?: { phase?: string; lastActive?: string };
+  /** Resolved environment info, present when a research project is bound to an environment. */
+  environment?: {
+    name: string;
+    slug: string;
+    path: string;
+    colorIndex: number;
+  };
 }
 
 interface TreeEntry {
@@ -20,6 +27,8 @@ interface TreeEntry {
   type: "file" | "directory";
   path: string;
   gitStatus?: string;
+  entryKind?: "environment-root";
+  environmentSlug?: string;
 }
 
 // ── Icon theme data (embedded by the host in window.__iconTheme) ─────────────
@@ -1174,6 +1183,15 @@ function createIconEl(icon: string): HTMLElement {
     row.appendChild(chevronEl);
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
+
+    // Environment pill (#884) — shown after the label when the project is bound to an environment
+    if (root.environment) {
+      const pill = document.createElement("span");
+      pill.className = `env-pill env-pill-${root.environment.colorIndex}`;
+      pill.textContent = root.environment.name;
+      pill.title = `Environment: ${root.environment.slug} (${root.environment.path})`;
+      row.appendChild(pill);
+    }
 
     container.appendChild(row);
 
