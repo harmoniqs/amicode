@@ -24,7 +24,7 @@ import {
   originalDocChangeEffect,
   getOriginalDoc,
 } from "@codemirror/merge"
-import { type LanguageSupport, bracketMatching, StreamLanguage } from "@codemirror/language"
+import { LanguageSupport, bracketMatching, StreamLanguage } from "@codemirror/language"
 import {
   HighlightStyle,
   syntaxHighlighting,

@@ -197,7 +197,7 @@ export function PreviewContentArea(props: {
         {/* Build button (TeX, when available — wired by slice 5) */}
         <Show when={toolbar().build}>
           <TooltipV2 openDelay={400} value="Build TeX">
-            <IconButton icon="play" variant="ghost" class="h-6 w-6" aria-label="Build TeX" />
+            <IconButton icon="activity" variant="ghost" class="h-6 w-6" aria-label="Build TeX" />
           </TooltipV2>
         </Show>
 
@@ -270,7 +270,7 @@ function ErrorState() {
   return (
     <div class="h-full flex items-center justify-center text-12-regular text-text-weak p-4">
       <div class="text-center">
-        <Icon name="alert-circle" size="large" class="mx-auto mb-2 text-text-faint" />
+        <Icon name="circle-x" size="large" class="mx-auto mb-2 text-text-faint" />
         <p>Could not load file</p>
         <p class="text-11-regular text-text-faint mt-1">The file may have been deleted or moved</p>
       </div>

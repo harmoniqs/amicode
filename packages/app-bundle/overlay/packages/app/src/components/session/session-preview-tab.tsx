@@ -347,7 +347,10 @@ function LegacyMarkdownView(props: {
         </div>
         <SegmentedControlV2
           value={props.currentMode}
-          onChange={props.onModeChange}
+          onChange={(value) => {
+            if (value !== "preview" && value !== "raw") return
+            props.onModeChange(value)
+          }}
           class="!w-auto"
           aria-label="View mode"
         >
@@ -423,7 +426,7 @@ function ProjectFileTree(props: {
       {/* Search/filter input */}
       <div class="shrink-0 px-2 py-1.5 border-b border-border-weaker-base">
         <div class="flex items-center gap-1.5 px-2 h-7 rounded-md border border-border-base bg-background-base">
-          <Icon name="search" size="small" class="text-text-faint shrink-0" />
+          <Icon name="magnifying-glass" size="small" class="text-text-faint shrink-0" />
           <input
             type="text"
             placeholder="Filter files..."
@@ -437,7 +440,7 @@ function ProjectFileTree(props: {
               onClick={() => setFilter("")}
               aria-label="Clear filter"
             >
-              <Icon name="x" size="small" />
+              <Icon name="close-small" size="small" />
             </button>
           </Show>
         </div>
@@ -447,7 +450,7 @@ function ProjectFileTree(props: {
       <div class="shrink-0 flex items-center justify-end px-2 py-1">
         <TooltipV2 openDelay={400} value="Refresh file tree">
           <IconButton
-            icon="refresh-cw"
+            icon="arrow-undo-down"
             variant="ghost"
             class="h-5 w-5"
             onClick={() => requestPreviewFileTreeRefresh()}

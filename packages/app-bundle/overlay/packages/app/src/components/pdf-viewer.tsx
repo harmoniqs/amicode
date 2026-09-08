@@ -38,6 +38,7 @@ export function PDFViewer(props: {
 
   let containerRef: HTMLDivElement | undefined
   let scrollTop = 0
+  let activeLoadingTask: pdfjsLib.PDFDocumentLoadingTask | null = null
 
   // Track scroll position for preservation across reloads
   const saveScroll = () => {
@@ -62,12 +63,12 @@ export function PDFViewer(props: {
         try {
           saveScroll()
 
-          // Clean up previous document
-          const prevDoc = pdfDoc()
-          if (prevDoc) {
-            prevDoc.destroy()
-            setPdfDoc(null)
+          // Clean up previous loading task
+          if (activeLoadingTask) {
+            activeLoadingTask.destroy()
+            activeLoadingTask = null
           }
+          setPdfDoc(null)
 
           // Load PDF from base64 or URL
           let loadingTask: pdfjsLib.PDFDocumentLoadingTask
@@ -79,8 +80,9 @@ export function PDFViewer(props: {
             }
             loadingTask = pdfjsLib.getDocument({ data: bytes })
           } else {
-            loadingTask = pdfjsLib.getDocument(data)
+            loadingTask = pdfjsLib.getDocument({ url: data })
           }
+          activeLoadingTask = loadingTask
 
           const doc = await loadingTask.promise
           setPdfDoc(doc)
@@ -105,8 +107,10 @@ export function PDFViewer(props: {
   )
 
   onCleanup(() => {
-    const doc = pdfDoc()
-    if (doc) doc.destroy()
+    if (activeLoadingTask) {
+      activeLoadingTask.destroy()
+      activeLoadingTask = null
+    }
   })
 
   // ── Render ──────────────────────────────────────────────────────────────
@@ -119,7 +123,7 @@ export function PDFViewer(props: {
       <Show when={error()}>
         <div class="h-full flex items-center justify-center text-12-regular text-text-weak p-4">
           <div class="text-center">
-            <Icon name="alert-circle" size="large" class="mx-auto mb-2 text-text-faint" />
+            <Icon name="circle-x" size="large" class="mx-auto mb-2 text-text-faint" />
             <p>Could not load PDF</p>
           </div>
         </div>
@@ -173,7 +177,7 @@ function PDFPage(props: {
           const ctx = canvasRef.getContext("2d")
           if (!ctx) return
 
-          await page.render({ canvasContext: ctx, viewport }).promise
+          await page.render({ canvasContext: ctx, canvas: canvasRef, viewport }).promise
         } catch {
           setPageError(true)
         }
