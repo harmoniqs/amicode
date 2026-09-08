@@ -1180,6 +1180,16 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // #729: TeX compilation request. The webview sends the main file and cwd;
+  // the extension runs the compilation via the registered command.
+  if (msg.kind === "tex-compile-request") {
+    const { mainFile, cwd } = msg as { mainFile?: string; cwd?: string };
+    if (mainFile && cwd) {
+      void vscode.commands.executeCommand("amicode.texCompile", mainFile, cwd);
+    }
+    return true;
+  }
+
   return false;
 }
 

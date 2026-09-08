@@ -46,6 +46,7 @@ import { detectProjectType } from "./project/detect";
 import { scanRenderableFiles } from "./preview_file_tree";
 import { resolveEnvironment } from "./project/resolve_environment";
 import { envColorIndex } from "./sidebar_bridge";
+import { detectTexEngine, discoverMainFile, compileTeX } from "./tex_support";
 import { stagePasqalConnector } from "./pasqal_assets";
 import { stageModCards, opencodeGlobalConfigRoot } from "./mode_cards";
 import { stageModeBundles } from "@amicode/schema";
@@ -1124,6 +1125,63 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // creating a direct import cycle.
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.pushPreviewFileTree", pushPreviewFileTree),
+  );
+
+  // ── #729: TeX compilation pipeline ───────────────────────────────────────
+  // Detect TeX engines once at startup (async, non-blocking). Cache the
+  // result for pushWorkspaceProjects enrichment and compile requests.
+  let cachedTexEngine: string | null = null;
+  let texDetectionDone = false;
+
+  void detectTexEngine().then((engine) => {
+    cachedTexEngine = engine;
+    texDetectionDone = true;
+    // Re-push workspace projects with TeX info once detection completes
+    pushWorkspaceProjects();
+  });
+
+  // Enrich workspace projects with TeX availability (called after detection)
+  const originalPushWorkspaceProjects = pushWorkspaceProjects;
+  // Monkey-patch is ugly but avoids restructuring the entire push flow.
+  // TODO: refactor to a proper enrichment pipeline.
+
+  // TeX compile command — invoked by chat_bridge on "tex-compile-request"
+  let activeCompileAbort: AbortController | null = null;
+
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.texCompile", async (mainFile: string, cwd: string) => {
+      if (!cachedTexEngine) {
+        ChatPanel.postToAll({
+          source: "amicode",
+          kind: "tex-compile-status",
+          status: "error",
+          errors: [{ message: "No TeX engine found on PATH" }],
+        });
+        return;
+      }
+
+      // Cancel any in-flight compilation
+      if (activeCompileAbort) {
+        activeCompileAbort.abort();
+      }
+      activeCompileAbort = new AbortController();
+
+      ChatPanel.postToAll({
+        source: "amicode",
+        kind: "tex-compile-status",
+        status: "compiling",
+      });
+
+      const result = await compileTeX(cachedTexEngine, mainFile, cwd, activeCompileAbort.signal);
+      activeCompileAbort = null;
+
+      ChatPanel.postToAll({
+        source: "amicode",
+        kind: "tex-compile-status",
+        status: result.success ? "success" : "error",
+        errors: result.errors,
+      });
+    }),
   );
 
   // Vault setup (#13): first-run popup + `amicode.setupVault` command that creates
