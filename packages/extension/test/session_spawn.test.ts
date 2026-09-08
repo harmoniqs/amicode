@@ -29,6 +29,7 @@ describe("parseSpawnArgs", () => {
       title: null,
       agent: null,
       model: null,
+      command: null,
       mode: "fresh",
       force: false,
     });
@@ -89,6 +90,25 @@ describe("parseSpawnArgs", () => {
   it("trims title and agent, nulling empties", () => {
     const r = parseSpawnArgs({ prompt: "x", title: "  CZ sweep  ", agent: "  " });
     expect(r.ok && r.args.title === "CZ sweep" && r.args.agent === null).toBe(true);
+  });
+
+  it("defaults command to null when omitted", () => {
+    const r = parseSpawnArgs({ prompt: "x" });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.command).toBeNull();
+  });
+
+  it("parses a non-empty command string and trims it", () => {
+    const r = parseSpawnArgs({ prompt: "--bind-project /tmp/p", command: "  create-research-environment  " });
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.args.command).toBe("create-research-environment");
+  });
+
+  it("nulls empty/whitespace-only command", () => {
+    const empty = parseSpawnArgs({ prompt: "x", command: "" });
+    const ws = parseSpawnArgs({ prompt: "x", command: "   " });
+    expect(empty.ok && empty.args.command).toBeNull();
+    expect(ws.ok && ws.args.command).toBeNull();
   });
 
   it("resolves the old director ids through the read-resolve alias (spec-20260907-011500 D1, #858)", () => {

@@ -101,10 +101,21 @@ Choice question with options (in this order):
 `amico env bind` after project creation.
 
 **If the user selects "Create new":** after the project is created, use the
-`amicode_session` tool to spawn a new session tab with:
+`amicode_session` tool to spawn a new session tab with the `command` parameter
+set to invoke the skill directly:
+
 ```
-/create-research-environment --bind-project "<project-dir>"
+amicode_session(
+  command: "create-research-environment",
+  prompt: "--bind-project \"<project-dir>\""
+)
 ```
+
+The `command` parameter uses the engine's command API to invoke the
+`create-research-environment` skill reliably — it does not depend on the child
+LLM parsing a `/skill-name` prefix from the prompt text. The `prompt` becomes
+the skill's arguments (the child session will parse `--bind-project` from it).
+
 Tell the user: "I've opened a new tab to create the environment — head over
 there and I'll bind it to this project when it's done."
 

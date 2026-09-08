@@ -293,10 +293,20 @@ Append this to the end of the file. This preserves all existing content
 Then commit: `git add research-project.toml && git commit -m "bind to environment <slug>"`
 
 **If the user selects "Create new":** use the `amicode_session` tool to spawn
-a new session tab with:
+a new session tab with the `command` parameter set to invoke the skill directly:
+
 ```
-/create-research-environment --bind-project "<project-dir>"
+amicode_session(
+  command: "create-research-environment",
+  prompt: "--bind-project \"<project-dir>\""
+)
 ```
+
+The `command` parameter uses the engine's command API to invoke the
+`create-research-environment` skill reliably — it does not depend on the child
+LLM parsing a `/skill-name` prefix from the prompt text. The `prompt` becomes
+the skill's arguments (the child session will parse `--bind-project` from it).
+
 Tell the user: "I've opened a new tab to create the environment — head over
 there and I'll bind it to this project when it's done."
 

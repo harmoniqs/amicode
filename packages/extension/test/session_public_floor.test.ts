@@ -65,7 +65,7 @@ function emptyEntitlementConfig(): string {
   return dir;
 }
 
-type EngineVerb = "get" | "create" | "update" | "fork" | "promptAsync";
+type EngineVerb = "get" | "create" | "update" | "fork" | "promptAsync" | "command";
 type EngineCall = { verb: EngineVerb; body: Record<string, unknown> };
 
 /** Mock engine client — session_spawn_double_create.test.ts's double,
@@ -94,6 +94,10 @@ function makeMockEngine(parent?: { metadata?: unknown }) {
       },
       promptAsync: async (o: { body?: Record<string, unknown> }) => {
         calls.push({ verb: "promptAsync", body: o?.body ?? {} });
+        return {};
+      },
+      command: async (o: { body?: Record<string, unknown> }) => {
+        calls.push({ verb: "command", body: o?.body ?? {} });
         return {};
       },
     },
@@ -137,6 +141,7 @@ describe("the no-entitlement spawn fixture (ADR-0004 decision 1, amicode#826)", 
       "model",
       "mode",
       "force",
+      "command",
     ]);
   });
 
@@ -216,6 +221,42 @@ describe("the no-entitlement spawn fixture (ADR-0004 decision 1, amicode#826)", 
     expect(by("update")[0]!.body.metadata).toEqual({ spawned_by: "ses_parent", spawned_depth: 1 });
     expect(by("promptAsync")).toHaveLength(1);
     expect(result).toMatch(/forked from this session's history/);
+  });
+
+  it("the command parameter dispatches via the engine's command API instead of promptAsync", async () => {
+    const { engine, by } = makeMockEngine();
+    const pack = await pluginPack(engine);
+    const result = await pack.tool["amicode_session"].execute(
+      { prompt: "--bind-project /tmp/my-project", command: "create-research-environment" },
+      { sessionID: "ses_parent", directory: "/w" },
+    );
+    expect(result).toMatch(/Spawned 1 fresh sessions/);
+    expect(by("create")).toHaveLength(1);
+    // command API was called, not promptAsync
+    expect(by("command")).toHaveLength(1);
+    expect(by("promptAsync")).toHaveLength(0);
+    const cmd = by("command")[0]!;
+    expect(cmd.body.command).toBe("create-research-environment");
+    expect(cmd.body.arguments).toBe("--bind-project /tmp/my-project");
+  });
+
+  it("the CORE twin command dispatch is identical to the plugin twin's", async () => {
+    const { engine, by } = makeMockEngine();
+    const def = CORE.AMICODE_TOOLS["amicode_session"]!;
+    const ctx: AmicodeToolContext = {
+      engineClient: engine,
+      sessionID: "ses_parent",
+      directory: "/w",
+      carrier: "plugin",
+    };
+    const result = await def.execute(
+      { prompt: "--bind /tmp/p", command: "create-research-environment" },
+      ctx,
+    );
+    expect(by("command")).toHaveLength(1);
+    expect(by("promptAsync")).toHaveLength(0);
+    expect(by("command")[0]!.body.command).toBe("create-research-environment");
+    expect(result).toMatch(/Spawned 1/);
   });
 
   it("the CORE twin (the one implementation both transports project) spawns identically under the empty config", async () => {
