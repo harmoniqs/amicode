@@ -73,26 +73,25 @@ export class SidebarTreeService {
 
       if (projectType === "environment") {
         // Collect environment workspace folders (#895)
+        // Always overwrite: workspace source wins dedup over resolved (#895 bugfix)
         if (this.deps.readEnvironmentToml) {
           try {
             const envManifest = this.deps.readEnvironmentToml(dir);
             if (envManifest) {
               const slug = envManifest.slug;
-              if (!envBySlug.has(slug)) {
-                envBySlug.set(slug, {
-                  path: dir,
+              envBySlug.set(slug, {
+                path: dir,
+                name: envManifest.name,
+                projectType: "environment",
+                source: "workspace",
+                boundProjectCount: 0,
+                environment: {
                   name: envManifest.name,
-                  projectType: "environment",
-                  source: "workspace",
-                  boundProjectCount: 0,
-                  environment: {
-                    name: envManifest.name,
-                    slug,
-                    path: dir,
-                    colorIndex: envColorIndex(slug),
-                  },
-                });
-              }
+                  slug,
+                  path: dir,
+                  colorIndex: envColorIndex(slug),
+                },
+              });
             }
           } catch {
             // Manifest read failure → skip this environment

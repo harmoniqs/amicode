@@ -207,7 +207,7 @@ describe("SidebarTreeService environment discovery (#895)", () => {
     expect(envRoots[0].environment?.slug).toBe("spin-qubit");
   });
 
-  it("two workspace folders with same slug — first in order wins", () => {
+  it("two workspace folders with same slug — last in order wins (both workspace-sourced)", () => {
     const service = makeDiscoveryService({
       folders: [
         { path: "/env/first", name: "first" },
@@ -223,7 +223,8 @@ describe("SidebarTreeService environment discovery (#895)", () => {
     const roots = service.getRoots();
     const envRoots = roots.filter((r) => r.projectType === "environment");
     expect(envRoots.length).toBe(1);
-    expect(envRoots[0].path).toBe("/env/first");
+    expect(envRoots[0].path).toBe("/env/second");
+    expect(envRoots[0].source).toBe("workspace");
   });
 
   it("boundProjectCount is 0 when no projects bind to the environment", () => {
@@ -269,5 +270,35 @@ describe("SidebarTreeService environment discovery (#895)", () => {
     expect(roots[0].projectType).toBe("environment");
     expect(roots[1].projectType).toBe("research");
     expect(roots[2].projectType).toBe("dev");
+  });
+
+  it("workspace source wins dedup even when project appears before environment in folder order", () => {
+    // This is the root cause of the "Remove from Workspace" bug:
+    // if a research project is iterated before the environment workspace folder,
+    // the project resolution adds the environment with source "resolved" first,
+    // and the workspace folder must overwrite it.
+    const service = makeDiscoveryService({
+      folders: [
+        // Project comes FIRST — its resolution will try to add the env as "resolved"
+        { path: "/proj/a", name: "a" },
+        // Environment workspace folder comes SECOND — must still win the dedup
+        { path: "/env/shared", name: "shared" },
+      ],
+      projectTypes: {
+        "/proj/a": "research",
+        "/env/shared": "environment",
+      },
+      toml: { "/proj/a": { name: "Project A" } },
+      envToml: { "/env/shared": { name: "Shared Env", slug: "shared" } },
+      envResolution: {
+        "/proj/a": { path: "/env/shared", slug: "shared", name: "Shared Env" },
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots).toHaveLength(1);
+    expect(envRoots[0].source).toBe("workspace");
+    expect(envRoots[0].path).toBe("/env/shared");
   });
 });
