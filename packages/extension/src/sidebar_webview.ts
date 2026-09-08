@@ -473,7 +473,13 @@ function createIconEl(icon: string): HTMLElement {
 
       if (isRoot) {
         items.push({ separator: true });
-        items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+        // Environment roots with source "resolved" get "Add to Workspace" (#895)
+        const rootData = currentRoots.find((r) => r.path === nodePath);
+        if (rootData?.projectType === "environment" && rootData?.source === "resolved") {
+          items.push({ label: "Add to Workspace", op: "add-to-workspace" });
+        } else {
+          items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+        }
       }
     }
 

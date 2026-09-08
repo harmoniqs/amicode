@@ -917,6 +917,32 @@ describe("sidebar webview — empty states (#895)", () => {
   });
 });
 
+// ── Context menus adapted by source (#895) ───────────────────────────────────
+
+describe("sidebar webview — context menus by source (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("context menu shows 'Add to Workspace' for resolved environment roots", () => {
+    expect(src).toMatch(/Add to Workspace/);
+  });
+
+  it("context menu checks root source to decide add vs remove", () => {
+    // Must read source from the root data to decide which menu item to show
+    expect(src).toMatch(/source.*resolved|resolved.*source/);
+  });
+
+  it("add-to-workspace file op is handled in sidebar_bridge", () => {
+    const bridgeSrc = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+      "utf8",
+    );
+    expect(bridgeSrc).toMatch(/add-to-workspace/);
+  });
+});
+
 // ── Section reorder bug fixes (#708) ─────────────────────────────────────────
 
 describe("sidebar webview — section reorder bug fixes", () => {

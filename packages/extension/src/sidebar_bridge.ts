@@ -61,7 +61,7 @@ export interface TreeEntry {
 // ── File operation types ─────────────────────────────────────────────────────
 
 export interface FileOpRequest {
-  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session" | "move" | "restore";
+  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "add-to-workspace" | "new-session" | "move" | "restore";
   path: string;
   newName?: string;
   name?: string;

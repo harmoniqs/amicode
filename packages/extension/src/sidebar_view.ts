@@ -1498,6 +1498,13 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         }
         return { ok: true };
       }
+      case "add-to-workspace": {
+        // Add an auto-surfaced environment to the workspace (#895)
+        const existingFolders = vscode.workspace.workspaceFolders ?? [];
+        const uri = vscode.Uri.file(req.path);
+        vscode.workspace.updateWorkspaceFolders(existingFolders.length, 0, { uri });
+        return { ok: true };
+      }
       case "new-session": {
         // Posts to the session creation flow — the project path is carried
         void vscode.commands.executeCommand("amicode.newChat");
