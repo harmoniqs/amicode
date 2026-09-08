@@ -894,6 +894,29 @@ describe("SidebarViewProvider — environments section order (#895)", () => {
   });
 });
 
+// ── Empty states for all sections (#895) ─────────────────────────────────────
+
+describe("sidebar webview — empty states (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("all four section keys are always in the available array", () => {
+    // The available array must always include all four keys, regardless of content
+    // No conditional push: the sections must render unconditionally
+    expect(src).toMatch(/available.*environments.*research.*dev.*fleet/s);
+  });
+
+  it("renderRoots renders sections even when their root array is empty", () => {
+    // The rendering loop must NOT guard on array length for environments, research, or dev
+    // Empty sections get a placeholder instead of being skipped
+    expect(src).toMatch(/No environments yet/);
+    expect(src).toMatch(/No projects yet/);
+    expect(src).toMatch(/No dev projects open/);
+  });
+});
+
 // ── Section reorder bug fixes (#708) ─────────────────────────────────────────
 
 describe("sidebar webview — section reorder bug fixes", () => {

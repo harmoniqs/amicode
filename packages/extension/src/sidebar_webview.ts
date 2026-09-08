@@ -991,33 +991,50 @@ function createIconEl(icon: string): HTMLElement {
     const research = roots.filter((r) => r.projectType === "research");
     const dev = roots.filter((r) => r.projectType === "dev");
 
-    // Determine which section keys have content right now
-    const available: string[] = [];
-    if (environments.length > 0) available.push("environments");
-    if (research.length > 0) available.push("research");
-    if (dev.length > 0) available.push("dev");
-    available.push("fleet"); // Fleet always has content (Coming soon placeholder)
+    // All section keys are always available — empty sections render with a placeholder (#895)
+    const available: string[] = ["environments", "research", "dev", "fleet"];
 
     // Resolve rendering order using persisted section order
     const renderOrder = resolveSectionOrder(currentSectionOrder, available);
 
     for (const key of renderOrder) {
-      if (key === "environments" && environments.length > 0) {
+      if (key === "environments") {
         const { section, body } = renderSectionHeader("Research Environments", "environments");
-        for (const root of environments) {
-          body.appendChild(renderRootNode(root, 0));
+        if (environments.length > 0) {
+          for (const root of environments) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No environments yet";
+          body.appendChild(placeholder);
         }
         treeRoot.appendChild(section);
-      } else if (key === "research" && research.length > 0) {
+      } else if (key === "research") {
         const { section, body } = renderSectionHeader("Research Projects", "research");
-        for (const root of research) {
-          body.appendChild(renderRootNode(root, 0));
+        if (research.length > 0) {
+          for (const root of research) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No projects yet";
+          body.appendChild(placeholder);
         }
         treeRoot.appendChild(section);
-      } else if (key === "dev" && dev.length > 0) {
+      } else if (key === "dev") {
         const { section, body } = renderSectionHeader("Development Projects", "dev");
-        for (const root of dev) {
-          body.appendChild(renderRootNode(root, 0));
+        if (dev.length > 0) {
+          for (const root of dev) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No dev projects open";
+          body.appendChild(placeholder);
         }
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
