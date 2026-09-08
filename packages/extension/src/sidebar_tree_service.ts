@@ -22,6 +22,8 @@ export interface TreeServiceDeps {
   readToml: (dir: string) => { name?: string; status?: string };
   /** Resolve the research environment for a project directory. */
   resolveEnvironment?: (projectPath: string, workspaceRoots: string[]) => { path: string; slug: string; name: string; schemaVersion: number } | null;
+  /** Read environment manifest fields (name, slug) from a directory. Returns null on failure. */
+  readEnvironmentToml?: (dir: string) => { name: string; slug: string } | null;
   /** Read immediate children of a directory. */
   readDirectory?: (dir: string) => Promise<RawDirEntry[]>;
   /** Get exclude pattern strings from files.exclude. */
@@ -47,7 +49,10 @@ export class SidebarTreeService {
 
   /**
    * Scan workspace folders and return structured roots.
-   * Research Projects are grouped before Dev Projects.
+   * Environment roots first, then Research Projects, then Dev Projects.
+   * Environments come from two sources: workspace folders with
+   * research-environment.toml, and environments resolved from project bindings.
+   * Deduped by slug — workspace-folder path wins over resolved path (#895).
    */
   getRoots(): TreeRoot[] {
     const workspaceFolders = this.deps.getWorkspaceFolders?.() ?? [];
@@ -55,14 +60,46 @@ export class SidebarTreeService {
 
     const research: TreeRoot[] = [];
     const dev: TreeRoot[] = [];
+    /** Environment roots keyed by slug for dedup. */
+    const envBySlug = new Map<string, TreeRoot>();
+    /** Track which slugs each research project resolves to, for boundProjectCount. */
+    const projectEnvSlugs: string[] = [];
     this.rootEnvironments.clear();
 
+    // ── Pass 1: workspace folders ──────────────────────────────────────────
     for (const folder of workspaceFolders) {
       const dir = folder.uri.fsPath;
       const projectType = this.deps.detectProjectType(dir);
 
-      // Environment folders are not shown as sidebar roots (AC-49)
-      if (projectType === "environment") continue;
+      if (projectType === "environment") {
+        // Collect environment workspace folders (#895)
+        if (this.deps.readEnvironmentToml) {
+          try {
+            const envManifest = this.deps.readEnvironmentToml(dir);
+            if (envManifest) {
+              const slug = envManifest.slug;
+              if (!envBySlug.has(slug)) {
+                envBySlug.set(slug, {
+                  path: dir,
+                  name: envManifest.name,
+                  projectType: "environment",
+                  source: "workspace",
+                  boundProjectCount: 0,
+                  environment: {
+                    name: envManifest.name,
+                    slug,
+                    path: dir,
+                    colorIndex: envColorIndex(slug),
+                  },
+                });
+              }
+            }
+          } catch {
+            // Manifest read failure → skip this environment
+          }
+        }
+        continue; // Environments are never in research/dev lists
+      }
 
       if (projectType === "research") {
         const toml = this.deps.readToml(dir);
@@ -84,6 +121,24 @@ export class SidebarTreeService {
                 colorIndex: envColorIndex(env.slug),
               };
               this.rootEnvironments.set(dir, { name: env.name, slug: env.slug, path: env.path });
+              projectEnvSlugs.push(env.slug);
+
+              // Auto-surface resolved environments that aren't already in the map (#895)
+              if (!envBySlug.has(env.slug)) {
+                envBySlug.set(env.slug, {
+                  path: env.path,
+                  name: env.name,
+                  projectType: "environment",
+                  source: "resolved",
+                  boundProjectCount: 0,
+                  environment: {
+                    name: env.name,
+                    slug: env.slug,
+                    path: env.path,
+                    colorIndex: envColorIndex(env.slug),
+                  },
+                });
+              }
             }
           } catch {
             // Resolution failure → no pill, not a crash
@@ -99,8 +154,17 @@ export class SidebarTreeService {
       }
     }
 
-    // Research first, then dev
-    return [...research, ...dev];
+    // ── Pass 2: compute boundProjectCount for each environment ─────────────
+    for (const envRoot of envBySlug.values()) {
+      const slug = envRoot.environment?.slug;
+      if (slug) {
+        envRoot.boundProjectCount = projectEnvSlugs.filter((s) => s === slug).length;
+      }
+    }
+
+    // Environments first, then research, then dev
+    const environments = [...envBySlug.values()];
+    return [...environments, ...research, ...dev];
   }
 
   /**

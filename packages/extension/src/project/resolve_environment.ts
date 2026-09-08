@@ -46,7 +46,8 @@ export function invalidateEnvironmentCache(): void {
 
 // ── Manifest reading ────────────────────────────────────────────────────────
 
-function readEnvManifest(dir: string): ResolvedEnvironment | null {
+/** Read the environment manifest from a directory. Exported for sidebar discovery (#895). */
+export function readEnvManifest(dir: string): ResolvedEnvironment | null {
   const manifestPath = join(dir, ENV_MANIFEST);
   if (!existsSync(manifestPath)) return null;
 

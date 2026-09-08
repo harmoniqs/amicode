@@ -41,6 +41,10 @@ export interface TreeRoot {
     path: string;       // absolute path, for tooltip
     colorIndex: number; // 0-7, from hashCode(slug) % 8
   };
+  /** Number of open research projects bound to this environment (#895). */
+  boundProjectCount?: number;
+  /** How this environment root was discovered (#895). */
+  source?: "workspace" | "resolved";
 }
 
 export interface TreeEntry {

@@ -86,13 +86,15 @@ describe("SidebarTreeService environment pill data (#884)", () => {
   it("attaches environment info to research project roots", () => {
     const service = makeService();
     const roots = service.getRoots();
-    expect(roots).toHaveLength(1);
-    expect(roots[0].environment).toBeDefined();
-    expect(roots[0].environment!.slug).toBe("transmon-oc");
-    expect(roots[0].environment!.name).toBe("Transmon OC");
-    expect(roots[0].environment!.path).toBe("/env/transmon-oc");
-    expect(roots[0].environment!.colorIndex).toBeGreaterThanOrEqual(0);
-    expect(roots[0].environment!.colorIndex).toBeLessThanOrEqual(7);
+    // 1 auto-surfaced environment root + 1 research project root
+    const researchRoots = roots.filter((r) => r.projectType === "research");
+    expect(researchRoots).toHaveLength(1);
+    expect(researchRoots[0].environment).toBeDefined();
+    expect(researchRoots[0].environment!.slug).toBe("transmon-oc");
+    expect(researchRoots[0].environment!.name).toBe("Transmon OC");
+    expect(researchRoots[0].environment!.path).toBe("/env/transmon-oc");
+    expect(researchRoots[0].environment!.colorIndex).toBeGreaterThanOrEqual(0);
+    expect(researchRoots[0].environment!.colorIndex).toBeLessThanOrEqual(7);
   });
 
   it("no environment → no environment field on root (AC-10)", () => {
@@ -100,8 +102,9 @@ describe("SidebarTreeService environment pill data (#884)", () => {
       resolveEnvironment: () => null,
     });
     const roots = service.getRoots();
-    expect(roots).toHaveLength(1);
-    expect(roots[0].environment).toBeUndefined();
+    const researchRoots = roots.filter((r) => r.projectType === "research");
+    expect(researchRoots).toHaveLength(1);
+    expect(researchRoots[0].environment).toBeUndefined();
   });
 
   it("resolveEnvironment not provided → no environment field", () => {
