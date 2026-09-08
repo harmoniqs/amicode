@@ -1895,7 +1895,17 @@ function createIconEl(icon: string): HTMLElement {
       }
 
       case "children": {
-        childrenCache[msg.path] = msg.entries ?? [];
+        // Only cache non-empty results. An empty [] from a transient
+        // readDirectory failure is truthy and would permanently suppress
+        // re-requests (every guard uses !childrenCache[path], and ![] is
+        // false). Leaving the key absent (undefined) lets future renders
+        // and expand toggles re-request children. (#903)
+        const childEntries = msg.entries ?? [];
+        if (childEntries.length > 0) {
+          childrenCache[msg.path] = childEntries;
+        } else {
+          delete childrenCache[msg.path];
+        }
         // Find the container for this path and render children
         const container = treeRoot?.querySelector(`[data-path="${CSS.escape(msg.path)}"] > .children`);
         if (container) {
@@ -1904,7 +1914,7 @@ function createIconEl(icon: string): HTMLElement {
           // focused input, firing blur synchronously — suppress cancel.
           const hasInlineEdit = activeInlineEdit?.tempRow && activeInlineEdit.path === msg.path;
           if (hasInlineEdit) inlineEditRerendering = true;
-          renderChildren(container as HTMLElement, msg.entries ?? [], depth);
+          renderChildren(container as HTMLElement, childEntries, depth);
           inlineEditRerendering = false;
           // Re-insert the inline edit temp row after children are rendered
           if (hasInlineEdit && activeInlineEdit?.tempRow) {
