@@ -1761,6 +1761,65 @@ function createIconEl(icon: string): HTMLElement {
         requestAnimationFrame(doScroll);
       }
     }
+
+    // ── Environment cascade (#895) ─────────────────────────────────────────
+    // After highlighting the project, highlight the project's bound environment
+    // in the environments section. Same mode behavior: reset = expand+scroll,
+    // expand = expand+scroll, none = border only.
+    const activeRoot = activePath ? currentRoots.find((r) => r.path === activePath) : null;
+    const boundEnvSlug = activeRoot?.environment?.slug;
+
+    // Clear all environment root highlights first
+    const envRoots = currentRoots.filter((r) => r.projectType === "environment");
+    for (const envRoot of envRoots) {
+      const envEl = treeRoot?.querySelector(`[data-path="${envRoot.path}"][data-type="directory"]`) as HTMLElement | null;
+      if (!envEl) continue;
+      const envRow = envEl.querySelector(".tree-node") as HTMLElement | null;
+      if (!envRow) continue;
+
+      if (boundEnvSlug && envRoot.environment?.slug === boundEnvSlug) {
+        // Highlight the bound environment with its palette color
+        const colorIdx = envRoot.environment.colorIndex;
+        envRow.classList.add(`env-root-border-${colorIdx}`);
+        envRow.style.background = "var(--vscode-list-activeSelectionBackground)";
+
+        // Expand and scroll for "reset" and "expand" modes
+        if (mode === "expand" || mode === "reset") {
+          // Auto-expand the environments section if collapsed
+          if (!sectionExpanded["environments"]) {
+            sectionExpanded["environments"] = true;
+            saveSectionState();
+            const envSection = getAllSections().find((s) => s.dataset.sectionKey === "environments");
+            if (envSection) {
+              const chevron = envSection.querySelector(".section-chevron") as HTMLElement | null;
+              if (chevron) chevron.classList.add("expanded");
+              const body = envSection.querySelector(".section-body") as HTMLElement | null;
+              if (body) toggleSectionBody(body, true, envSection);
+            }
+          }
+          // Expand the environment root if collapsed
+          if (!expanded[envRoot.path]) {
+            expanded[envRoot.path] = true;
+            saveExpandedState();
+            const chevronSpan = envRow.querySelector(".chevron") as HTMLElement | null;
+            if (chevronSpan) chevronSpan.classList.add("expanded");
+            const childrenEl = envEl.querySelector(".children") as HTMLElement | null;
+            if (childrenEl) {
+              childrenEl.style.display = "block";
+              if (!childrenCache[envRoot.path]) {
+                vscode.postMessage({ kind: "get-children", path: envRoot.path });
+              }
+            }
+          }
+        }
+      } else {
+        // Clear highlight on non-active environment roots
+        // Remove any env-root-border-N classes
+        for (let i = 0; i < 8; i++) envRow.classList.remove(`env-root-border-${i}`);
+        envRow.style.borderLeft = "";
+        envRow.style.background = "";
+      }
+    }
   }
 
   // ── Host → Webview messages ────────────────────────────────────────────────
