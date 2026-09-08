@@ -217,11 +217,17 @@ describe("amicode service — golden-fixture parity with the fork", () => {
     // recorded parity contract.
     expect(meta.fork.tag).toBe("v1.18.10-amicode.21");
     expect(meta.entries.length).toBeGreaterThan(0);
-    // And the vendored pin must never regress to the fork lineage: the stock
-    // shape (no repo/tag — the fetch path's anomalyco/opencode default).
+    // A normal mainline build uses the stock shape (no repo/tag — the fetch
+    // path's anomalyco/opencode default). A release candidate may instead pin
+    // one fully specified fork release before its alpha is cut.
     const lock = JSON.parse(readFileSync(fileURLToPath(new URL("../opencode.lock.json", import.meta.url)), "utf8"));
-    expect(lock.repo).toBeUndefined();
-    expect(lock.tag).toBeUndefined();
+    if (!lock.repo) {
+      expect(lock.tag).toBeUndefined();
+      return;
+    }
+    expect(lock.repo).toBe("harmoniqs/opencode");
+    expect(lock.tag).toMatch(/^v1\.18\.29-amicode\.\d+$/);
+    expect(lock.ref).toMatch(/^[0-9a-f]{40}$/);
   });
 
   for (const [i, entry] of meta.entries.entries()) {
