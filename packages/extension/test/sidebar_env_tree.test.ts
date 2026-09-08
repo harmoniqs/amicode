@@ -1,8 +1,9 @@
-// Sidebar nested environment tree — TreeService getChildren appends env row.
-// Part of #885 (sub-issue of #880 Research Environments).
+// Sidebar environment tree — TreeService getChildren appends env row + getRoots environment discovery.
+// Part of #885 (sub-issue of #880 Research Environments) and #895 (environment accordion section).
 import { describe, it, expect } from "vitest";
 import { SidebarTreeService } from "../src/sidebar_tree_service";
 import type { RawDirEntry } from "../src/sidebar_tree_service";
+import { envColorIndex } from "../src/sidebar_bridge";
 
 describe("SidebarTreeService nested environment tree (#885)", () => {
   function makeService(env: { name: string; slug: string; path: string } | null = {
@@ -68,5 +69,205 @@ describe("SidebarTreeService nested environment tree (#885)", () => {
 
     // Environment is last
     expect(children[children.length - 1].entryKind).toBe("environment-root");
+  });
+});
+
+// ── Environment discovery (#895) ─────────────────────────────────────────────
+
+describe("SidebarTreeService environment discovery (#895)", () => {
+  /** Helper: build a service with configurable workspace folders and project types. */
+  function makeDiscoveryService(opts: {
+    folders: Array<{ path: string; name: string }>;
+    projectTypes: Record<string, "research" | "dev" | "environment">;
+    toml?: Record<string, { name?: string; status?: string }>;
+    envResolution?: Record<string, { path: string; slug: string; name: string } | null>;
+    /** Read the environment TOML for environment-type folders. */
+    envToml?: Record<string, { name?: string; slug?: string }>;
+  }) {
+    return new SidebarTreeService({
+      detectProjectType: (dir: string) => opts.projectTypes[dir] ?? "dev",
+      readToml: (dir: string) => opts.toml?.[dir] ?? {},
+      resolveEnvironment: (projectPath: string) => {
+        const env = opts.envResolution?.[projectPath];
+        return env ? { ...env, schemaVersion: 1 } : null;
+      },
+      readDirectory: async (): Promise<RawDirEntry[]> => [],
+      getWorkspaceFolders: () =>
+        opts.folders.map((f) => ({ uri: { fsPath: f.path }, name: f.name })),
+      readEnvironmentToml: (dir: string) => {
+        const t = opts.envToml?.[dir];
+        return t ? { name: t.name ?? dir, slug: t.slug ?? "unknown" } : null;
+      },
+    });
+  }
+
+  it("workspace environment folders appear as environment roots with source 'workspace'", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/env/spin-qubit", name: "spin-qubit" },
+        { path: "/proj/my-project", name: "my-project" },
+      ],
+      projectTypes: { "/env/spin-qubit": "environment", "/proj/my-project": "research" },
+      toml: { "/proj/my-project": { name: "My Project" } },
+      envToml: { "/env/spin-qubit": { name: "Spin Qubit Env", slug: "spin-qubit" } },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    expect(envRoots[0].name).toBe("Spin Qubit Env");
+    expect(envRoots[0].path).toBe("/env/spin-qubit");
+    expect(envRoots[0].source).toBe("workspace");
+  });
+
+  it("auto-surfaces environments resolved from project bindings with source 'resolved'", () => {
+    const service = makeDiscoveryService({
+      folders: [{ path: "/proj/my-project", name: "my-project" }],
+      projectTypes: { "/proj/my-project": "research" },
+      toml: { "/proj/my-project": { name: "My Project" } },
+      envResolution: {
+        "/proj/my-project": { path: "/other/transmon-oc", slug: "transmon-oc", name: "Transmon OC" },
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    expect(envRoots[0].name).toBe("Transmon OC");
+    expect(envRoots[0].path).toBe("/other/transmon-oc");
+    expect(envRoots[0].source).toBe("resolved");
+  });
+
+  it("deduplicates environments by slug — workspace path wins", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/env/transmon-oc", name: "transmon-oc" },
+        { path: "/proj/my-project", name: "my-project" },
+      ],
+      projectTypes: { "/env/transmon-oc": "environment", "/proj/my-project": "research" },
+      toml: { "/proj/my-project": { name: "My Project" } },
+      envToml: { "/env/transmon-oc": { name: "Transmon OC", slug: "transmon-oc" } },
+      envResolution: {
+        "/proj/my-project": { path: "/resolved/transmon-oc", slug: "transmon-oc", name: "Transmon OC Resolved" },
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    // Workspace path wins over resolved path
+    expect(envRoots[0].path).toBe("/env/transmon-oc");
+    expect(envRoots[0].source).toBe("workspace");
+  });
+
+  it("computes boundProjectCount from open projects bound to the same slug", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/env/shared", name: "shared" },
+        { path: "/proj/a", name: "a" },
+        { path: "/proj/b", name: "b" },
+        { path: "/proj/c", name: "c" },
+      ],
+      projectTypes: {
+        "/env/shared": "environment",
+        "/proj/a": "research",
+        "/proj/b": "research",
+        "/proj/c": "research",
+      },
+      toml: {
+        "/proj/a": { name: "Project A" },
+        "/proj/b": { name: "Project B" },
+        "/proj/c": { name: "Project C" },
+      },
+      envToml: { "/env/shared": { name: "Shared Env", slug: "shared" } },
+      envResolution: {
+        "/proj/a": { path: "/env/shared", slug: "shared", name: "Shared Env" },
+        "/proj/b": { path: "/env/shared", slug: "shared", name: "Shared Env" },
+        // Project C is NOT bound to this environment
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    expect(envRoots[0].boundProjectCount).toBe(2);
+  });
+
+  it("environment roots have colorIndex from slug hash", () => {
+    const service = makeDiscoveryService({
+      folders: [{ path: "/env/spin-qubit", name: "spin-qubit" }],
+      projectTypes: { "/env/spin-qubit": "environment" },
+      envToml: { "/env/spin-qubit": { name: "Spin Qubit", slug: "spin-qubit" } },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    expect(envRoots[0].environment?.colorIndex).toBe(envColorIndex("spin-qubit"));
+    expect(envRoots[0].environment?.slug).toBe("spin-qubit");
+  });
+
+  it("two workspace folders with same slug — first in order wins", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/env/first", name: "first" },
+        { path: "/env/second", name: "second" },
+      ],
+      projectTypes: { "/env/first": "environment", "/env/second": "environment" },
+      envToml: {
+        "/env/first": { name: "First Env", slug: "same-slug" },
+        "/env/second": { name: "Second Env", slug: "same-slug" },
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    expect(envRoots.length).toBe(1);
+    expect(envRoots[0].path).toBe("/env/first");
+  });
+
+  it("boundProjectCount is 0 when no projects bind to the environment", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/env/lonely", name: "lonely" },
+        { path: "/proj/a", name: "a" },
+      ],
+      projectTypes: { "/env/lonely": "environment", "/proj/a": "research" },
+      toml: { "/proj/a": { name: "Project A" } },
+      envToml: { "/env/lonely": { name: "Lonely Env", slug: "lonely" } },
+      // Project A resolves to a different environment
+      envResolution: {
+        "/proj/a": { path: "/other/env", slug: "other-slug", name: "Other Env" },
+      },
+    });
+
+    const roots = service.getRoots();
+    const envRoots = roots.filter((r) => r.projectType === "environment");
+    // lonely env + auto-surfaced other-slug env
+    const lonelyEnv = envRoots.find((r) => r.path === "/env/lonely");
+    expect(lonelyEnv?.boundProjectCount).toBe(0);
+  });
+
+  it("returns environment roots before research and dev roots", () => {
+    const service = makeDiscoveryService({
+      folders: [
+        { path: "/proj/research", name: "research" },
+        { path: "/env/my-env", name: "my-env" },
+        { path: "/proj/dev", name: "dev" },
+      ],
+      projectTypes: {
+        "/proj/research": "research",
+        "/env/my-env": "environment",
+        "/proj/dev": "dev",
+      },
+      toml: { "/proj/research": { name: "Research Project" } },
+      envToml: { "/env/my-env": { name: "My Env", slug: "my-env" } },
+    });
+
+    const roots = service.getRoots();
+    // Environments first, then research, then dev
+    expect(roots[0].projectType).toBe("environment");
+    expect(roots[1].projectType).toBe("research");
+    expect(roots[2].projectType).toBe("dev");
   });
 });

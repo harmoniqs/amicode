@@ -86,13 +86,15 @@ describe("SidebarTreeService environment pill data (#884)", () => {
   it("attaches environment info to research project roots", () => {
     const service = makeService();
     const roots = service.getRoots();
-    expect(roots).toHaveLength(1);
-    expect(roots[0].environment).toBeDefined();
-    expect(roots[0].environment!.slug).toBe("transmon-oc");
-    expect(roots[0].environment!.name).toBe("Transmon OC");
-    expect(roots[0].environment!.path).toBe("/env/transmon-oc");
-    expect(roots[0].environment!.colorIndex).toBeGreaterThanOrEqual(0);
-    expect(roots[0].environment!.colorIndex).toBeLessThanOrEqual(7);
+    // 1 auto-surfaced environment root + 1 research project root
+    const researchRoots = roots.filter((r) => r.projectType === "research");
+    expect(researchRoots).toHaveLength(1);
+    expect(researchRoots[0].environment).toBeDefined();
+    expect(researchRoots[0].environment!.slug).toBe("transmon-oc");
+    expect(researchRoots[0].environment!.name).toBe("Transmon OC");
+    expect(researchRoots[0].environment!.path).toBe("/env/transmon-oc");
+    expect(researchRoots[0].environment!.colorIndex).toBeGreaterThanOrEqual(0);
+    expect(researchRoots[0].environment!.colorIndex).toBeLessThanOrEqual(7);
   });
 
   it("no environment → no environment field on root (AC-10)", () => {
@@ -100,8 +102,9 @@ describe("SidebarTreeService environment pill data (#884)", () => {
       resolveEnvironment: () => null,
     });
     const roots = service.getRoots();
-    expect(roots).toHaveLength(1);
-    expect(roots[0].environment).toBeUndefined();
+    const researchRoots = roots.filter((r) => r.projectType === "research");
+    expect(researchRoots).toHaveLength(1);
+    expect(researchRoots[0].environment).toBeUndefined();
   });
 
   it("resolveEnvironment not provided → no environment field", () => {
@@ -161,5 +164,40 @@ describe("sidebar environment pill rendering (#884)", () => {
     // The rendering function must check root.environment and create a pill element
     expect(webviewSrc).toMatch(/root\.environment/);
     expect(webviewSrc).toContain("env-pill");
+  });
+});
+
+// ── Environment root rendering (#895) ────────────────────────────────────────
+
+describe("sidebar environment root rendering (#895)", () => {
+  const webviewSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+  const viewSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_view.ts"),
+    "utf8",
+  );
+
+  it("renderRootNode adds a left accent border for environment roots", () => {
+    // Must apply a CSS class or inline style for the environment border color
+    expect(webviewSrc).toMatch(/env-root-border/);
+  });
+
+  it("CSS includes env-root-border classes for the 8-color palette", () => {
+    expect(viewSrc).toMatch(/env-root-border-0/);
+    expect(viewSrc).toMatch(/env-root-border-7/);
+  });
+
+  it("renderRootNode shows boundProjectCount as a muted label", () => {
+    // Must read boundProjectCount and render a count label
+    expect(webviewSrc).toMatch(/boundProjectCount/);
+    expect(webviewSrc).toMatch(/project/); // "N projects" text
+  });
+
+  it("renderRootNode does not render an env-pill on environment roots", () => {
+    // The pill check must be gated: only for research project roots, not environment roots
+    // Environment roots should NOT get a pill (they get a border instead)
+    expect(webviewSrc).toMatch(/projectType\s*!==?\s*["']environment["']/);
   });
 });

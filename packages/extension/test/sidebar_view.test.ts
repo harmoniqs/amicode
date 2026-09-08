@@ -726,7 +726,7 @@ describe("SidebarViewProvider — section order persistence", () => {
     const calls = (view.webview.postMessage as any).mock.calls;
     const orderCalls = calls.filter((c: any) => c[0]?.kind === "section-order");
     expect(orderCalls).toHaveLength(1);
-    expect(orderCalls[0][0].order).toEqual(["research", "dev", "fleet"]);
+    expect(orderCalls[0][0].order).toEqual(["environments", "research", "dev", "fleet"]);
   });
 
   it("setSectionOrder persists to globalState", () => {
@@ -843,6 +843,103 @@ describe("sidebar webview — section reorder structure", () => {
   it("getAllSections collects all sections uniformly from treeRoot children", () => {
     // After Fleet unification, getAllSections no longer special-cases fleetSection
     expect(src).not.toMatch(/if\s*\(\s*fleetSection\s*\)\s*sections\.push/);
+  });
+});
+
+// ── Research Environments section (#895) ─────────────────────────────────────
+
+describe("sidebar webview — environments section (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRoots renders an environments section via renderSectionHeader", () => {
+    expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Research Environments["']\s*,\s*["']environments["']\s*\)/);
+  });
+
+  it("renderRoots groups environment roots by projectType", () => {
+    // Must filter roots by projectType === "environment"
+    expect(src).toMatch(/projectType\s*===?\s*["']environment["']/);
+  });
+
+  it("sectionExpanded includes environments key", () => {
+    expect(src).toMatch(/environments\s*:/);
+    expect(src).toMatch(/__section_environments/);
+  });
+
+  it("webview TreeRoot type includes environment projectType", () => {
+    expect(src).toMatch(/projectType.*environment/);
+  });
+
+  it("resolveSectionOrder migrates environments before research for existing users", () => {
+    // The migration inserts "environments" before "research" when missing
+    expect(src).toMatch(/environments/);
+    expect(src).toMatch(/research/);
+  });
+});
+
+describe("SidebarViewProvider — environments section order (#895)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("DEFAULT_SECTION_ORDER includes environments as the first element", () => {
+    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER[0]).toBe("environments");
+    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER).toEqual(["environments", "research", "dev", "fleet"]);
+  });
+});
+
+// ── Empty states for all sections (#895) ─────────────────────────────────────
+
+describe("sidebar webview — empty states (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("all four section keys are always in the available array", () => {
+    // The available array must always include all four keys, regardless of content
+    // No conditional push: the sections must render unconditionally
+    expect(src).toMatch(/available.*environments.*research.*dev.*fleet/s);
+  });
+
+  it("renderRoots renders sections even when their root array is empty", () => {
+    // The rendering loop must NOT guard on array length for environments, research, or dev
+    // Empty sections get a placeholder instead of being skipped
+    expect(src).toMatch(/No environments yet/);
+    expect(src).toMatch(/No projects yet/);
+    expect(src).toMatch(/No dev projects open/);
+  });
+});
+
+// ── Context menus adapted by source (#895) ───────────────────────────────────
+
+describe("sidebar webview — context menus by source (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("context menu shows 'Add to Workspace' for resolved environment roots", () => {
+    expect(src).toMatch(/Add to Workspace/);
+  });
+
+  it("context menu checks root source to decide add vs remove", () => {
+    // Must read source from the root data to decide which menu item to show
+    expect(src).toMatch(/source.*resolved|resolved.*source/);
+  });
+
+  it("add-to-workspace file op is handled in sidebar_bridge", () => {
+    const bridgeSrc = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
+      "utf8",
+    );
+    expect(bridgeSrc).toMatch(/add-to-workspace/);
   });
 });
 

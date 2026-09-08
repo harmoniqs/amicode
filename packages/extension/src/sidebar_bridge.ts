@@ -41,6 +41,10 @@ export interface TreeRoot {
     path: string;       // absolute path, for tooltip
     colorIndex: number; // 0-7, from hashCode(slug) % 8
   };
+  /** Number of open research projects bound to this environment (#895). */
+  boundProjectCount?: number;
+  /** How this environment root was discovered (#895). */
+  source?: "workspace" | "resolved";
 }
 
 export interface TreeEntry {
@@ -57,7 +61,7 @@ export interface TreeEntry {
 // ── File operation types ─────────────────────────────────────────────────────
 
 export interface FileOpRequest {
-  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "new-session" | "move" | "restore";
+  op: "rename" | "delete" | "new-file" | "new-folder" | "copy-path" | "copy-relative-path" | "reveal-in-os" | "open-in-terminal" | "open-to-side" | "remove-from-workspace" | "add-to-workspace" | "new-session" | "move" | "restore";
   path: string;
   newName?: string;
   name?: string;

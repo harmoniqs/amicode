@@ -11,7 +11,7 @@ declare function acquireVsCodeApi(): {
 interface TreeRoot {
   path: string;
   name: string;
-  projectType: "research" | "dev";
+  projectType: "research" | "dev" | "environment";
   metadata?: { phase?: string; lastActive?: string };
   /** Resolved environment info, present when a research project is bound to an environment. */
   environment?: {
@@ -20,6 +20,10 @@ interface TreeRoot {
     path: string;
     colorIndex: number;
   };
+  /** Number of open research projects bound to this environment (#895). */
+  boundProjectCount?: number;
+  /** How this environment root was discovered (#895). */
+  source?: "workspace" | "resolved";
 }
 
 interface TreeEntry {
@@ -149,10 +153,19 @@ function createIconEl(icon: string): HTMLElement {
   // scrolls regardless.
   let lastScrolledPath: string | null = null;
 
-  /** Resolve rendering order: saved keys filtered to available, new keys appended. */
+  /** Resolve rendering order: saved keys filtered to available, new keys appended.
+   *  Migration (#895): if saved order has "research" but not "environments",
+   *  insert "environments" before "research" (not at end). Idempotent. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
+    // Migration: insert "environments" before "research" for existing users
+    let migrated = savedOrder;
+    if (savedOrder.includes("research") && !savedOrder.includes("environments")) {
+      const idx = savedOrder.indexOf("research");
+      migrated = [...savedOrder.slice(0, idx), "environments", ...savedOrder.slice(idx)];
+    }
+
     const availableSet = new Set(available);
-    const ordered = savedOrder.filter((key) => availableSet.has(key));
+    const ordered = migrated.filter((key) => availableSet.has(key));
     const orderedSet = new Set(ordered);
     for (const key of available) {
       if (!orderedSet.has(key)) ordered.push(key);
@@ -460,7 +473,13 @@ function createIconEl(icon: string): HTMLElement {
 
       if (isRoot) {
         items.push({ separator: true });
-        items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+        // Environment roots with source "resolved" get "Add to Workspace" (#895)
+        const rootData = currentRoots.find((r) => r.path === nodePath);
+        if (rootData?.projectType === "environment" && rootData?.source === "resolved") {
+          items.push({ label: "Add to Workspace", op: "add-to-workspace" });
+        } else {
+          items.push({ label: "Remove from Workspace", op: "remove-from-workspace" });
+        }
       }
     }
 
@@ -842,13 +861,15 @@ function createIconEl(icon: string): HTMLElement {
   // Restore section expanded state (separate from tree node expanded state)
   const sectionExpanded: Record<string, boolean> = savedState?.expanded
     ? {
+        environments: savedState.expanded["__section_environments"] !== false,
         research: savedState.expanded["__section_research"] !== false,
         dev: savedState.expanded["__section_dev"] !== false,
         fleet: savedState.expanded["__section_fleet"] !== false,
       }
-    : { research: true, dev: true, fleet: false };
+    : { environments: true, research: true, dev: true, fleet: false };
 
   function saveSectionState(): void {
+    expanded["__section_environments"] = sectionExpanded.environments;
     expanded["__section_research"] = sectionExpanded.research;
     expanded["__section_dev"] = sectionExpanded.dev;
     expanded["__section_fleet"] = sectionExpanded.fleet;
@@ -972,29 +993,54 @@ function createIconEl(icon: string): HTMLElement {
     treeRoot.innerHTML = "";
 
     // Group roots by project type
+    const environments = roots.filter((r) => r.projectType === "environment");
     const research = roots.filter((r) => r.projectType === "research");
     const dev = roots.filter((r) => r.projectType === "dev");
 
-    // Determine which section keys have content right now
-    const available: string[] = [];
-    if (research.length > 0) available.push("research");
-    if (dev.length > 0) available.push("dev");
-    available.push("fleet"); // Fleet always has content (Coming soon placeholder)
+    // All section keys are always available — empty sections render with a placeholder (#895)
+    const available: string[] = ["environments", "research", "dev", "fleet"];
 
     // Resolve rendering order using persisted section order
     const renderOrder = resolveSectionOrder(currentSectionOrder, available);
 
     for (const key of renderOrder) {
-      if (key === "research" && research.length > 0) {
-        const { section, body } = renderSectionHeader("Research Projects", "research");
-        for (const root of research) {
-          body.appendChild(renderRootNode(root, 0));
+      if (key === "environments") {
+        const { section, body } = renderSectionHeader("Research Environments", "environments");
+        if (environments.length > 0) {
+          for (const root of environments) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No environments yet";
+          body.appendChild(placeholder);
         }
         treeRoot.appendChild(section);
-      } else if (key === "dev" && dev.length > 0) {
+      } else if (key === "research") {
+        const { section, body } = renderSectionHeader("Research Projects", "research");
+        if (research.length > 0) {
+          for (const root of research) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No projects yet";
+          body.appendChild(placeholder);
+        }
+        treeRoot.appendChild(section);
+      } else if (key === "dev") {
         const { section, body } = renderSectionHeader("Development Projects", "dev");
-        for (const root of dev) {
-          body.appendChild(renderRootNode(root, 0));
+        if (dev.length > 0) {
+          for (const root of dev) {
+            body.appendChild(renderRootNode(root, 0));
+          }
+        } else {
+          const placeholder = document.createElement("div");
+          placeholder.className = "fleet-placeholder-text";
+          placeholder.textContent = "No dev projects open";
+          body.appendChild(placeholder);
         }
         treeRoot.appendChild(section);
       } else if (key === "fleet") {
@@ -1184,8 +1230,19 @@ function createIconEl(icon: string): HTMLElement {
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Environment pill (#884) — shown after the label when the project is bound to an environment
-    if (root.environment) {
+    // Environment root rendering (#895) — left accent border + bound project count
+    if (root.projectType === "environment" && root.environment) {
+      row.classList.add(`env-root-border-${root.environment.colorIndex}`);
+      if (root.boundProjectCount && root.boundProjectCount > 0) {
+        const countEl = document.createElement("span");
+        countEl.className = "env-project-count";
+        countEl.textContent = root.boundProjectCount === 1 ? "1 project" : `${root.boundProjectCount} projects`;
+        row.appendChild(countEl);
+      }
+    }
+
+    // Environment pill (#884) — shown after the label when a non-environment project is bound to an environment
+    if (root.projectType !== "environment" && root.environment) {
       const pill = document.createElement("span");
       pill.className = `env-pill env-pill-${root.environment.colorIndex}`;
       pill.textContent = root.environment.name;
@@ -1708,6 +1765,65 @@ function createIconEl(icon: string): HTMLElement {
         setTimeout(doScroll, SECTION_ANIM_MS + 50);
       } else {
         requestAnimationFrame(doScroll);
+      }
+    }
+
+    // ── Environment cascade (#895) ─────────────────────────────────────────
+    // After highlighting the project, highlight the project's bound environment
+    // in the environments section. Same mode behavior: reset = expand+scroll,
+    // expand = expand+scroll, none = border only.
+    const activeRoot = activePath ? currentRoots.find((r) => r.path === activePath) : null;
+    const boundEnvSlug = activeRoot?.environment?.slug;
+
+    // Clear all environment root highlights first
+    const envRoots = currentRoots.filter((r) => r.projectType === "environment");
+    for (const envRoot of envRoots) {
+      const envEl = treeRoot?.querySelector(`[data-path="${envRoot.path}"][data-type="directory"]`) as HTMLElement | null;
+      if (!envEl) continue;
+      const envRow = envEl.querySelector(".tree-node") as HTMLElement | null;
+      if (!envRow) continue;
+
+      if (boundEnvSlug && envRoot.environment?.slug === boundEnvSlug) {
+        // Highlight the bound environment with its palette color
+        const colorIdx = envRoot.environment.colorIndex;
+        envRow.classList.add(`env-root-border-${colorIdx}`);
+        envRow.style.background = "var(--vscode-list-activeSelectionBackground)";
+
+        // Expand and scroll for "reset" and "expand" modes
+        if (mode === "expand" || mode === "reset") {
+          // Auto-expand the environments section if collapsed
+          if (!sectionExpanded["environments"]) {
+            sectionExpanded["environments"] = true;
+            saveSectionState();
+            const envSection = getAllSections().find((s) => s.dataset.sectionKey === "environments");
+            if (envSection) {
+              const chevron = envSection.querySelector(".section-chevron") as HTMLElement | null;
+              if (chevron) chevron.classList.add("expanded");
+              const body = envSection.querySelector(".section-body") as HTMLElement | null;
+              if (body) toggleSectionBody(body, true, envSection);
+            }
+          }
+          // Expand the environment root if collapsed
+          if (!expanded[envRoot.path]) {
+            expanded[envRoot.path] = true;
+            saveExpandedState();
+            const chevronSpan = envRow.querySelector(".chevron") as HTMLElement | null;
+            if (chevronSpan) chevronSpan.classList.add("expanded");
+            const childrenEl = envEl.querySelector(".children") as HTMLElement | null;
+            if (childrenEl) {
+              childrenEl.style.display = "block";
+              if (!childrenCache[envRoot.path]) {
+                vscode.postMessage({ kind: "get-children", path: envRoot.path });
+              }
+            }
+          }
+        }
+      } else {
+        // Clear highlight on non-active environment roots
+        // Remove any env-root-border-N classes
+        for (let i = 0; i < 8; i++) envRow.classList.remove(`env-root-border-${i}`);
+        envRow.style.borderLeft = "";
+        envRow.style.background = "";
       }
     }
   }
