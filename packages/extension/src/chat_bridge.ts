@@ -524,9 +524,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
 
     void (async () => {
       const { exec } = await import("child_process");
-      const run = (cmd: string, cwd: string): Promise<{ ok: boolean; error?: string }> =>
+      // OPENCODE_CHANNEL=dev is load-bearing: without it the Vite define
+      // compiles to "prod", hiding every amicode UI surface at runtime.
+      // The extension host's process.env has no channel set, so we inject it.
+      const buildEnv = { ...process.env, OPENCODE_CHANNEL: "dev" };
+      const run = (cmd: string, cwd: string, env?: NodeJS.ProcessEnv): Promise<{ ok: boolean; error?: string }> =>
         new Promise((resolve) => {
-          exec(cmd, { cwd, timeout: 180_000 }, (err, _stdout, stderr) => {
+          exec(cmd, { cwd, timeout: 180_000, env: env ?? process.env }, (err, _stdout, stderr) => {
             if (err) resolve({ ok: false, error: stderr?.trim() || err.message });
             else resolve({ ok: true });
           });
@@ -594,8 +598,9 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Build opencode ──
+        // Pass buildEnv so OPENCODE_CHANNEL=dev is set — see note at `run()`.
         const ocBuildDir = path.join(opencodePath, "packages", "opencode");
-        const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir);
+        const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir, buildEnv);
         if (!buildOc.ok) {
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
@@ -620,6 +625,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
             state: "failed", error: `amicode build failed: ${buildAc.error?.slice(0, 150)}`,
+          });
+          return;
+        }
+
+        // ── Build app bundle from the fork tree ──
+        // The binary and the app must come from the same source (#822).
+        const buildApp = await run(
+          `pnpm --filter amicode run build:app -- --work "${opencodePath}"`,
+          amicodePath,
+        );
+        if (!buildApp.ok) {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "failed", error: `app bundle build failed: ${buildApp.error?.slice(0, 150)}`,
           });
           return;
         }
@@ -665,6 +684,18 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             console.log("[amicode/bridge] copied", builtFiles.length, "files to installed extension dist");
           } catch (copyErr) {
             console.warn("[amicode/bridge] extension dist copy failed:", copyErr);
+          }
+          // Copy the app bundle dist (#822: shelf serves from dist/app/)
+          try {
+            const builtAppDir = path.join(builtDist, "app");
+            if (fs.existsSync(builtAppDir)) {
+              const installedAppDir = path.join(installedDist, "app");
+              fs.rmSync(installedAppDir, { recursive: true, force: true });
+              fs.cpSync(builtAppDir, installedAppDir, { recursive: true });
+              console.log("[amicode/bridge] copied app bundle dist to", installedAppDir);
+            }
+          } catch (appCopyErr) {
+            console.warn("[amicode/bridge] app bundle dist copy failed:", appCopyErr);
           }
           // Sync content directories that resolve via __dirname or
           // ctx.extensionPath at runtime. Without this, local changes to
@@ -730,6 +761,9 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
         void vscode.workspace.getConfiguration("amicode").update(
           "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
+        );
+        void vscode.workspace.getConfiguration("amicode").update(
+          "appBundleDir", path.join(extensionDir, "dist", "app"), vscode.ConfigurationTarget.Global,
         );
 
         // ── Auto-reload ──
