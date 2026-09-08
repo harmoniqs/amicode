@@ -173,6 +173,7 @@ export interface EngineClientShape {
     update: (o: unknown) => Promise<unknown>;
     fork: (o: unknown) => Promise<unknown>;
     promptAsync: (o: unknown) => Promise<unknown>;
+    command: (o: unknown) => Promise<unknown>;
   };
 }
 
@@ -1948,7 +1949,10 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         "history instead of a blank start. A session that was itself spawned cannot spawn again " +
         "past depth " + SPAWN_MAX_DEPTH + " unless force=true. Do NOT use this for subagent-style " +
         "work the user need not steer (use the Task tool) — sessions are for parallel or " +
-        "branching work the USER should see and interact with.",
+        "branching work the USER should see and interact with. When chaining into a specific " +
+        "skill (e.g. spawning create-research-environment from a migrate session), pass " +
+        "`command` — it uses the engine's command API to invoke the skill directly instead of " +
+        "relying on the child LLM to parse a `/skill-name` prefix from a text prompt.",
       args: {
         prompt: {
           type: "string",
@@ -1979,6 +1983,15 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           type: ["boolean", "null"],
           description: "Overrule the spawn-depth cap. Null = false.",
         },
+        command: {
+          type: ["string", "null"],
+          description:
+            "A registered skill/command name to invoke in the child session (e.g. " +
+            "'create-research-environment'). When set, the engine's command API dispatches the " +
+            "skill directly instead of sending `prompt` as a plain text message — far more " +
+            "reliable for skill-to-skill chaining. The `prompt` text becomes the command's " +
+            "`arguments`. Null = send prompt as a regular user message (default).",
+        },
       },
       async execute(
         a: {
@@ -1989,6 +2002,7 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
           model?: string | null;
           mode?: string | null;
           force?: boolean | null;
+          command?: string | null;
         },
         ctx: AmicodeToolContext,
       ) {
@@ -2092,15 +2106,33 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
               id = created?.id;
             }
             if (!id) throw new Error(`session ${args.mode === "fork" ? "fork" : "create"} returned no id`);
-            await engineClient.session.promptAsync({
-              path: { id },
-              query: { directory: ctx.directory },
-              body: {
-                parts: [{ type: "text", text: args.prompt }],
-                ...(model ? { model } : {}),
-                ...(args.agent ? { agent: args.agent } : {}),
-              },
-            });
+            // Dispatch: when a command is named, use the engine's dedicated
+            // command API (POST /session/{id}/command) — it invokes the
+            // registered skill directly instead of relying on the child LLM to
+            // parse a `/skill-name` prefix from a plain text message. The
+            // prompt text becomes the command's `arguments` field.
+            if (args.command) {
+              const modelStr = model ? `${model.providerID}/${model.modelID}` : undefined;
+              await engineClient.session.command({
+                path: { sessionID: id },
+                body: {
+                  command: args.command,
+                  arguments: args.prompt,
+                  ...(modelStr ? { model: modelStr } : {}),
+                  ...(args.agent ? { agent: args.agent } : {}),
+                },
+              });
+            } else {
+              await engineClient.session.promptAsync({
+                path: { id },
+                query: { directory: ctx.directory },
+                body: {
+                  parts: [{ type: "text", text: args.prompt }],
+                  ...(model ? { model } : {}),
+                  ...(args.agent ? { agent: args.agent } : {}),
+                },
+              });
+            }
             children.push({ id, title });
           }
         } catch (err) {

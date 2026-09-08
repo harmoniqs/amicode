@@ -777,6 +777,131 @@ function extractTomlString(text: string, key: string): string | undefined {
   return m?.[1];
 }
 
+// ── Active Research Environment injection (#883) ─────────────────────────────
+
+/** Read the resolved environment path from AMICODE_RESOLVED_ENVIRONMENT (set
+ *  by the extension at server-spool), scan the directory, and return a context
+ *  block. Returns null if no environment is resolved. */
+function buildResearchEnvironmentSection(): string | null {
+  const envDir = process.env.AMICODE_RESOLVED_ENVIRONMENT;
+  if (!envDir || !envDir.trim()) return null;
+
+  const tomlPath = path.join(envDir, "research-environment.toml");
+  if (!fs.existsSync(tomlPath)) return null;
+
+  let tomlText: string;
+  try {
+    tomlText = fs.readFileSync(tomlPath, "utf8");
+  } catch {
+    return null;
+  }
+
+  const name = extractTomlString(tomlText, "name");
+  if (!name) return null; // Malformed or missing name → skip
+
+  const slug = extractTomlString(tomlText, "slug") ?? "";
+  const description = extractTomlString(tomlText, "description") ?? "";
+
+  const lines: string[] = [
+    "## Active Research Environment",
+    "",
+    `**${name}**${slug ? ` (\`${slug}\`)` : ""}`,
+  ];
+  if (description) lines.push(description);
+  lines.push(`**Path:** \`${envDir}\``);
+  lines.push("");
+
+  // Scan directories: list present dirs with file counts, detect language in lib/
+  const dirSummaries: string[] = [];
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(envDir);
+  } catch {
+    return lines.join("\n");
+  }
+
+  // Discover all content directories (exclude hidden, .git, manifest file)
+  const skipNames = new Set([".git", ".gitignore", "research-environment.toml"]);
+  const contentDirs = entries.filter((e) => {
+    if (skipNames.has(e) || e.startsWith(".")) return false;
+    try {
+      return fs.statSync(path.join(envDir, e)).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+
+  for (const dir of contentDirs.sort()) {
+    const dirPath = path.join(envDir, dir);
+    let fileCount: number;
+    try {
+      const children = fs.readdirSync(dirPath);
+      fileCount = children.filter((c) => {
+        try {
+          return fs.statSync(path.join(dirPath, c)).isFile();
+        } catch {
+          return false;
+        }
+      }).length;
+    } catch {
+      continue;
+    }
+    if (fileCount === 0 && dir !== "skills") continue; // AC-28: absent/empty dirs omitted
+
+    if (dir === "lib") {
+      // Language detection from lib/ contents
+      const lang = detectLibLanguage(dirPath);
+      dirSummaries.push(`- \`${dir}/\` — lib${lang ? ` (${lang})` : ""}`);
+    } else if (dir === "skills") {
+      // List skill subdirs
+      const skillDirs = listSubdirs(dirPath);
+      if (skillDirs.length > 0) {
+        dirSummaries.push(`- \`${dir}/\` — **Skills:** ${skillDirs.join(", ")}`);
+      }
+    } else if (fileCount >= 500) {
+      dirSummaries.push(`- \`${dir}/\` — ${dir} (~500+)`);
+    } else {
+      dirSummaries.push(`- \`${dir}/\` — ${dir} (${fileCount})`);
+    }
+  }
+
+  if (dirSummaries.length > 0) {
+    lines.push("**Directories:**");
+    lines.push(...dirSummaries);
+  }
+
+  return lines.join("\n");
+}
+
+/** Detect the primary language from a lib/ directory's contents. */
+function detectLibLanguage(libDir: string): string | null {
+  try {
+    const entries = fs.readdirSync(libDir);
+    if (entries.includes("Project.toml") || entries.includes("Manifest.toml")) return "Julia";
+    if (entries.includes("pyproject.toml") || entries.includes("setup.py") || entries.includes("setup.cfg")) return "Python";
+    if (entries.includes("package.json")) return "Node";
+    if (entries.includes("Cargo.toml")) return "Rust";
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/** List immediate subdirectories of a directory. */
+function listSubdirs(dir: string): string[] {
+  try {
+    return fs.readdirSync(dir).filter((e) => {
+      try {
+        return fs.statSync(path.join(dir, e)).isDirectory();
+      } catch {
+        return false;
+      }
+    }).sort();
+  } catch {
+    return [];
+  }
+}
+
 /** Read the current stack state (solver mode, routing, active problem, live
  *  runs, fleet, and the personal-vault user-memory sections) and compose a
  *  markdown block to inject into the agent's system prompt. Returns null
@@ -805,6 +930,11 @@ export function buildStackStateBlock(): string | null {
   // is bound to a workspace folder with research-project.toml.
   const project = buildActiveProjectSection();
   if (project) parts.push(project);
+
+  // Active Research Environment (#883): inject environment metadata when
+  // the extension resolved an environment for this session.
+  const env = buildResearchEnvironmentSection();
+  if (env) parts.push(env);
 
   // User-memory sections (live reads from the personal vault — splice order
   // parity with the retired boot-time file splice: about → recent → demos →

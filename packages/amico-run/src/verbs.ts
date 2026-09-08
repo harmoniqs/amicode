@@ -26,6 +26,7 @@ import { planVerb } from "./plan_verb.js";
 import { handoffVerb } from "./handoff_verb.js";
 import { campaignVerb } from "./campaign_verb.js";
 import { projectVerb } from "./project_verb.js";
+import { envVerb } from "./env_verb.js";
 import { sessionsVerb } from "./sessions_verb.js";
 import { sotaVerb } from "./sota_verb.js";
 export interface VerbResult {
@@ -263,6 +264,17 @@ const sota: Verb = {
   run: sotaVerb,
 };
 
+// env — the research-environment entity: create (scaffold + git init +
+// registry) and register (add an existing environment to the local registry).
+// Part of #881 (sub-issue of #880 Research Environments).
+const env: Verb = {
+  name: "env",
+  summary: "create a scaffolded research environment / register an existing one in the local registry",
+  generalizes: "the amicode research-environment entity lifecycle (PRD #880)",
+  slice: "research environments (#881)",
+  run: envVerb,
+};
+
 export const SPINE_VERBS: Verb[] = [
   catalog,
   vault,
@@ -277,6 +289,7 @@ export const SPINE_VERBS: Verb[] = [
   papers,
   campaign,
   project,
+  env,
   sessions,
   sota,
 ];

@@ -1200,6 +1200,188 @@ describe("sidebar — reorderWorkspaceFolder end-to-end", () => {
   });
 });
 
+// ── Environment bridge messages (#892) ───────────────────────────────────────
+
+describe("sidebar bridge — environment messages", () => {
+  let handleSidebarMessage: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_bridge");
+    handleSidebarMessage = mod.handleSidebarMessage;
+  });
+
+  function makeHandlers(overrides: Record<string, any> = {}) {
+    return {
+      openChat: vi.fn(),
+      newProject: vi.fn(),
+      addExisting: vi.fn(),
+      getRoots: vi.fn(),
+      getChildren: vi.fn().mockResolvedValue([]),
+      openFile: vi.fn(),
+      fileOp: vi.fn().mockResolvedValue({ ok: true }),
+      postMessage: vi.fn(),
+      setSectionOrder: vi.fn(),
+      reorderRoot: vi.fn(),
+      bindToEnvironment: vi.fn(),
+      promoteToEnvironment: vi.fn(),
+      ...overrides,
+    };
+  }
+
+  it("bind-to-environment calls bindToEnvironment handler with projectPath", () => {
+    const handlers = makeHandlers();
+    handleSidebarMessage(
+      { kind: "bind-to-environment", projectPath: "/projects/quantum-sim" },
+      handlers,
+    );
+    expect(handlers.bindToEnvironment).toHaveBeenCalledWith("/projects/quantum-sim");
+  });
+
+  it("promote-to-environment calls promoteToEnvironment handler with filePath", () => {
+    const handlers = makeHandlers();
+    handleSidebarMessage(
+      { kind: "promote-to-environment", filePath: "/projects/quantum-sim/insights/finding.md" },
+      handlers,
+    );
+    expect(handlers.promoteToEnvironment).toHaveBeenCalledWith("/projects/quantum-sim/insights/finding.md");
+  });
+});
+
+// ── createNewEnvironment command (#892) ──────────────────────────────────────
+
+describe("createNewEnvironment", () => {
+  let createNewEnvironment: any;
+  let vscodeMock: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    // Get the vscode mock the sidebar_view module will use
+    vscodeMock = await import("vscode");
+    const mod = await import("../src/sidebar_view");
+    createNewEnvironment = mod.createNewEnvironment;
+  });
+
+  it("does nothing when server is not ready", async () => {
+    const ctx = {
+      isServerReady: () => false,
+      launchSession: vi.fn(),
+    };
+    await createNewEnvironment(ctx);
+    expect(ctx.launchSession).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when user cancels the save dialog", async () => {
+    // Default mock returns undefined (cancel)
+    const ctx = {
+      isServerReady: () => true,
+      launchSession: vi.fn(),
+    };
+    await createNewEnvironment(ctx);
+    expect(ctx.launchSession).not.toHaveBeenCalled();
+  });
+
+  it("creates directory and launches session with /create-research-environment prompt", async () => {
+    const dir = "/tmp/test-env";
+    const origDialog = vscodeMock.window.showSaveDialog;
+    vscodeMock.window.showSaveDialog = () => Promise.resolve(vscodeMock.Uri.file(dir));
+
+    const mkdirSync = vi.fn();
+    const launchSession = vi.fn();
+
+    try {
+      await createNewEnvironment({
+        isServerReady: () => true,
+        launchSession,
+        mkdirSync,
+      });
+    } finally {
+      vscodeMock.window.showSaveDialog = origDialog;
+    }
+
+    expect(mkdirSync).toHaveBeenCalledWith(dir, { recursive: true });
+    expect(launchSession).toHaveBeenCalledWith(`/create-research-environment --path "${dir}"`);
+  });
+
+  it("shows error message when mkdir fails", async () => {
+    const origDialog = vscodeMock.window.showSaveDialog;
+    vscodeMock.window.showSaveDialog = () => Promise.resolve(vscodeMock.Uri.file("/tmp/fail-dir"));
+    const origShowError = vscodeMock.window.showErrorMessage;
+    const showErrorSpy = vi.fn();
+    vscodeMock.window.showErrorMessage = showErrorSpy;
+
+    const mkdirSync = vi.fn().mockImplementation(() => { throw new Error("EACCES"); });
+    const launchSession = vi.fn();
+
+    try {
+      await createNewEnvironment({
+        isServerReady: () => true,
+        launchSession,
+        mkdirSync,
+      });
+    } finally {
+      vscodeMock.window.showSaveDialog = origDialog;
+      vscodeMock.window.showErrorMessage = origShowError;
+    }
+
+    expect(launchSession).not.toHaveBeenCalled();
+    expect(showErrorSpy).toHaveBeenCalled();
+  });
+});
+
+// ── VS Code command registrations (#892) ─────────────────────────────────────
+
+describe("VS Code command declarations", () => {
+  it("package.json declares amicode.newEnvironment command", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(__dirname, "..", "package.json"), "utf8"),
+    );
+    const commands = (pkg.contributes?.commands ?? []) as Array<{ command: string }>;
+    expect(commands.some(c => c.command === "amicode.newEnvironment")).toBe(true);
+  });
+
+  it("package.json declares amicode.bindToEnvironment command", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(__dirname, "..", "package.json"), "utf8"),
+    );
+    const commands = (pkg.contributes?.commands ?? []) as Array<{ command: string }>;
+    expect(commands.some(c => c.command === "amicode.bindToEnvironment")).toBe(true);
+  });
+
+  it("package.json declares amicode.promoteToEnvironment command", () => {
+    const pkg = JSON.parse(
+      readFileSync(resolve(__dirname, "..", "package.json"), "utf8"),
+    );
+    const commands = (pkg.contributes?.commands ?? []) as Array<{ command: string }>;
+    expect(commands.some(c => c.command === "amicode.promoteToEnvironment")).toBe(true);
+  });
+
+  it("extension.ts registers amicode.newEnvironment command handler", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "extension.ts"),
+      "utf8",
+    );
+    expect(src).toContain('"amicode.newEnvironment"');
+    expect(src).toContain("createNewEnvironment");
+  });
+
+  it("extension.ts registers amicode.bindToEnvironment command handler", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "extension.ts"),
+      "utf8",
+    );
+    expect(src).toContain('"amicode.bindToEnvironment"');
+  });
+
+  it("extension.ts registers amicode.promoteToEnvironment command handler", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "extension.ts"),
+      "utf8",
+    );
+    expect(src).toContain('"amicode.promoteToEnvironment"');
+  });
+});
+
 // ── Section labels and text (#673 polish) ────────────────────────────────────
 
 describe("sidebar webview — section labels", () => {

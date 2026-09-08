@@ -44,6 +44,7 @@ export type SpawnArgs = {
   title: string | null;
   agent: string | null;
   model: { providerID: string; modelID: string } | null;
+  command: string | null;
   mode: SpawnMode;
   force: boolean;
 };
@@ -54,6 +55,7 @@ export function parseSpawnArgs(a: {
   title?: string | null;
   agent?: string | null;
   model?: string | null;
+  command?: string | null;
   mode?: string | null;
   force?: boolean | null;
 }): { ok: true; args: SpawnArgs } | { ok: false; error: string } {
@@ -72,6 +74,7 @@ export function parseSpawnArgs(a: {
   }
   const agent = typeof a.agent === "string" && a.agent.trim() !== "" ? a.agent.trim() : null;
   const title = typeof a.title === "string" && a.title.trim() !== "" ? a.title.trim() : null;
+  const command = typeof a.command === "string" && a.command.trim() !== "" ? a.command.trim() : null;
   // the read-resolve alias (spec-20260907-011500 D1, #858): an old director
   // id on the amico_session agent param binds the renamed card. READ-RESOLVE,
   // never migrate-on-write; `build` and every non-aliased id pass through.
@@ -83,6 +86,7 @@ export function parseSpawnArgs(a: {
       title,
       agent: agent === null ? null : resolveModeIdSpawn(agent),
       model,
+      command,
       mode,
       force: a.force === true,
     },
@@ -156,6 +160,7 @@ export function spawnGateKey(sessionID: string, directory: string, args: SpawnAr
     args.title,
     args.agent,
     args.model ? `${args.model.providerID}/${args.model.modelID}` : null,
+    args.command,
     args.mode,
     args.force,
   ]);

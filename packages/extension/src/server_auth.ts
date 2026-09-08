@@ -245,6 +245,12 @@ export function buildServerSpawnEnv(opts: {
    *  Default: the host env (the spawn inherits it underneath anyway). Tests
    *  pass a controlled env so key-set assertions stay machine-independent. */
   env?: NodeJS.ProcessEnv;
+  /** Workspace folder paths (colon-separated) for the plugin's project/env
+   *  section builders. Undefined = omitted (plugin's sections degrade to absent). */
+  workspaceFolders?: string;
+  /** Absolute path to the resolved research environment for the plugin's
+   *  context section (#883). Undefined = no environment bound. */
+  resolvedEnvironment?: string;
 }): Record<string, string> {
   const envSource = opts.env ?? process.env;
   const env: Record<string, string> = {
@@ -268,6 +274,10 @@ export function buildServerSpawnEnv(opts: {
     // Gated git credential helper (issue #399). {} unless the GitHub App
     // connection file exists AND the launcher dir resolved.
     ...buildGitCredentialHelperEnv(opts.amicoRunBinDir, envSource),
+    // Workspace folders and resolved environment for the plugin's context
+    // section builders (#670, #883). Absent = the sections degrade to absent.
+    ...(opts.workspaceFolders ? { AMICODE_WORKSPACE_FOLDERS: opts.workspaceFolders } : {}),
+    ...(opts.resolvedEnvironment ? { AMICODE_RESOLVED_ENVIRONMENT: opts.resolvedEnvironment } : {}),
   };
   for (const key of SANDBOX_ENV_PASSTHROUGH) {
     const value = envSource[key];

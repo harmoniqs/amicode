@@ -7,7 +7,7 @@ import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } fr
 import { resolveSelectedLaunch, HARNESS_REGISTRY } from "./harness";
 import { ChatPanel } from "./chat_panel";
 import { DeckPanel } from "./deck_panel";
-import { SidebarViewProvider, createNewProject } from "./sidebar_view";
+import { SidebarViewProvider, createNewProject, createNewEnvironment } from "./sidebar_view";
 import { StatusBarManager } from "./status_bar";
 import {
   prepareOpencodeProject,
@@ -1827,6 +1827,52 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         },
       }),
     ),
+    // New Environment: Command Palette → save dialog → mkdir → workspace → session
+    // with /create-research-environment auto-sent. Mirrors amicode.newProject. (#892)
+    vscode.commands.registerCommand("amicode.newEnvironment", () =>
+      createNewEnvironment({
+        isServerReady: () => !!opencodeReadyUrl,
+        launchSession: (prompt: string) => {
+          const readyUrl = opencodeReadyUrl;
+          if (!readyUrl) return;
+          const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+          const encodedPrompt = encodeURIComponent(prompt);
+          const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+          const envelope = { source: "amicode", kind: "navigate", path: navPath };
+          const send = () => void panel.postMessage(envelope);
+          send();
+          ChatPanel.onAppReady(send);
+        },
+      }),
+    ),
+    // Bind to Environment: Command Palette → quick-pick from registry → amico env bind. (#892)
+    vscode.commands.registerCommand("amicode.bindToEnvironment", async () => {
+      const readyUrl = opencodeReadyUrl;
+      if (!readyUrl) {
+        vscode.window.showWarningMessage(
+          "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+        );
+        return;
+      }
+      const panel = ChatPanel.openOrReveal(ctx, frameUrl() ?? readyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      const encodedPrompt = encodeURIComponent("/amico env bind");
+      const navPath = `/new-session?prompt=${encodedPrompt}&autoSend=1`;
+      const envelope = { source: "amicode", kind: "navigate", path: navPath };
+      const send = () => void panel.postMessage(envelope);
+      send();
+      ChatPanel.onAppReady(send);
+    }),
+    // Promote to Environment: Command Palette → active file → amico env promote in terminal. (#892)
+    vscode.commands.registerCommand("amicode.promoteToEnvironment", async () => {
+      const activeFile = vscode.window.activeTextEditor?.document.uri.fsPath;
+      if (!activeFile) {
+        void vscode.window.showWarningMessage("Amicode: no active file to promote.");
+        return;
+      }
+      const terminal = vscode.window.createTerminal("Amicode: promote");
+      terminal.show();
+      terminal.sendText(`amico env promote "${activeFile}"`);
+    }),
     // Chat Deck: MANY panes inside ONE editor tab — tab strips, drag-to-split,
     // merge-back, sashes (dist/deck_shell.js). Same ready/creds gates as the
     // other chat entries. The deck shares the one server with every ChatPanel.

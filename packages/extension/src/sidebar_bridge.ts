@@ -6,11 +6,41 @@
 
 // ── Data types ───────────────────────────────────────────────────────────────
 
+// ── Color palette utility (#884) ─────────────────────────────────────────────
+
+/** Deterministic hash code for a string (Java-style hashCode). */
+export function hashCode(s: string): number {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    hash = (Math.imul(31, hash) + s.charCodeAt(i)) | 0;
+  }
+  return hash;
+}
+
+/** Map an environment slug to a palette index (0-7). */
+export function envColorIndex(slug: string): number {
+  return ((hashCode(slug) % 8) + 8) % 8; // ensure non-negative
+}
+
+/** Truncate a string to maxLen characters with ellipsis. */
+export function truncateWithEllipsis(s: string, maxLen: number): string {
+  return s.length > maxLen ? s.slice(0, maxLen) + "\u2026" : s;
+}
+
+// ── Tree data types ──────────────────────────────────────────────────────────
+
 export interface TreeRoot {
   path: string;
   name: string;
-  projectType: "research" | "dev";
+  projectType: "research" | "dev" | "environment";
   metadata?: { phase?: string; lastActive?: string };
+  /** Resolved environment info, present when a research project is bound to an environment. */
+  environment?: {
+    name: string;       // display name from manifest
+    slug: string;       // for tooltip and dedup
+    path: string;       // absolute path, for tooltip
+    colorIndex: number; // 0-7, from hashCode(slug) % 8
+  };
 }
 
 export interface TreeEntry {
@@ -18,6 +48,10 @@ export interface TreeEntry {
   type: "file" | "directory";
   path: string;
   gitStatus?: "modified" | "added" | "deleted" | "untracked" | "ignored" | "conflict";
+  /** Discriminant for the environment root row (#885). */
+  entryKind?: "environment-root";
+  /** Environment slug for coloring the environment root row (#885). */
+  environmentSlug?: string;
 }
 
 // ── File operation types ─────────────────────────────────────────────────────
@@ -72,6 +106,18 @@ export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
 export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; targetPath: string; position: "before" | "after" };
 
+// ── Environment action messages (#887) ───────────────────────────────────────
+
+export interface BindToEnvironmentMessage {
+  kind: "bind-to-environment";
+  projectPath: string;
+}
+
+export interface PromoteToEnvironmentMessage {
+  kind: "promote-to-environment";
+  filePath: string;
+}
+
 export type SidebarUpMessage =
   | OpenChatMessage
   | NewProjectMessage
@@ -81,7 +127,9 @@ export type SidebarUpMessage =
   | OpenFileMessage
   | FileOpMessage
   | SetSectionOrderMessage
-  | ReorderRootMessage;
+  | ReorderRootMessage
+  | BindToEnvironmentMessage
+  | PromoteToEnvironmentMessage;
 
 // ── Combined union (for the bridge type) ─────────────────────────────────────
 
@@ -124,6 +172,10 @@ export interface SidebarMessageHandlers {
   reorderRoot: (sourcePath: string, targetPath: string, position: "before" | "after") => void;
   /** Notify the chat panel that a file was moved/renamed so Files Changed updates. */
   notifyFileMove?: (oldPath: string, newPath: string, op: string) => void;
+  /** Bind a research project to an environment (#892). */
+  bindToEnvironment?: (projectPath: string) => void;
+  /** Promote a file to the resolved environment (#892). */
+  promoteToEnvironment?: (filePath: string) => void;
 }
 
 /**
@@ -168,6 +220,12 @@ export function handleSidebarMessage(
       break;
     case "reorder-root":
       handlers.reorderRoot(msg.sourcePath, msg.targetPath, msg.position);
+      break;
+    case "bind-to-environment":
+      handlers.bindToEnvironment?.(msg.projectPath);
+      break;
+    case "promote-to-environment":
+      handlers.promoteToEnvironment?.(msg.filePath);
       break;
     case "file-op": {
       const { kind: _k, ...req } = msg;

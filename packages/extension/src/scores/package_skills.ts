@@ -27,7 +27,7 @@ import {
 // Content is read on demand by the agent — never baked into the prompt or the
 // .vsix. Errors mirror the entitlements philosophy: skip + warn, never throw.
 export interface SkillIndexEntry {
-  source: "library" | "package" | "custom" | "workspace" | "project"; // platform | co-located | user-added | workspace .opencode/skills/ | research project skills/
+  source: "library" | "package" | "custom" | "workspace" | "project" | "environment"; // platform | co-located | user-added | workspace .opencode/skills/ | research project skills/ | research environment skills/
   package?: string; // absent for library entries (spec §3)
   name: string;
   description: string;
@@ -434,6 +434,7 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
   if (entries.length === 0) return ""; // no section at all (spec §3)
   const platform = entries.filter((e) => e.source === "library");
   const project = entries.filter((e) => e.source === "project");
+  const environment = entries.filter((e) => e.source === "environment");
   const custom = entries.filter((e) => e.source === "custom");
   const workspace = entries.filter((e) => e.source === "workspace");
   const pkg = entries.filter((e) => e.source === "package");
@@ -452,6 +453,10 @@ export function buildSkillIndexSection(entries: SkillIndexEntry[]): string {
     ),
     ...project.map((e) => {
       const label = (e as any).overridesShipped ? "(project, overrides platform)" : "(project)";
+      return `- **${e.name}** ${label} — ${e.description}`;
+    }),
+    ...environment.map((e) => {
+      const label = (e as any).overridesShipped ? "(environment, overrides platform)" : "(environment)";
       return `- **${e.name}** ${label} — ${e.description}`;
     }),
     ...custom.map((e) => {

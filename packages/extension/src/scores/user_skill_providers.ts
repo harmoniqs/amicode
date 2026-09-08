@@ -101,18 +101,34 @@ export function resolveProjectSkills(workspaceFolders: string[]): SkillIndexEntr
   return out;
 }
 
+/** Resolve environment skills from workspace folders with research-environment.toml (#888).
+ *  For each folder with `research-environment.toml`, scan its `skills/` directory.
+ *  Non-environment directories are skipped. */
+export function resolveEnvironmentSkills(workspaceFolders: string[]): SkillIndexEntry[] {
+  const out: SkillIndexEntry[] = [];
+  for (const folder of workspaceFolders) {
+    if (detectProjectType(folder) !== "environment") continue;
+    const skillsDir = path.join(folder, "skills");
+    if (!fs.existsSync(skillsDir)) continue;
+    out.push(...scanSkillDirectory(skillsDir, "environment" as SkillIndexEntry["source"]));
+  }
+  return out;
+}
+
 /** A merged entry may carry an `overridesShipped` flag when a custom/workspace
  *  skill shadows a platform (library/package) skill of the same name. */
 export interface MergedSkillEntry extends SkillIndexEntry {
   overridesShipped?: boolean;
 }
 
-/** Merge skill entries with shadow semantics: project > custom > workspace > shipped.
+/** Merge skill entries with shadow semantics:
+ *  project > environment > custom > workspace > shipped.
  *  First match by name wins (resolution order). If a higher-priority entry
  *  shadows a shipped skill, the winner carries `overridesShipped: true` so the
  *  Skill Index can label it appropriately. */
 export function mergeSkillEntries(
   project: SkillIndexEntry[],
+  environment: SkillIndexEntry[],
   custom: SkillIndexEntry[],
   workspace: SkillIndexEntry[],
   shipped: SkillIndexEntry[],
@@ -129,14 +145,22 @@ export function mergeSkillEntries(
     if (overrides) console.warn(`amicode: project skill "${e.name}" shadows shipped skill`);
     out.push(overrides ? { ...e, overridesShipped: true } : e);
   }
-  // Custom second
+  // Environment second (#888)
+  for (const e of environment) {
+    if (seen.has(e.name)) continue;
+    seen.add(e.name);
+    const overrides = shippedNames.has(e.name);
+    if (overrides) console.warn(`amicode: environment skill "${e.name}" shadows shipped skill`);
+    out.push(overrides ? { ...e, overridesShipped: true } : e);
+  }
+  // Custom third
   for (const e of custom) {
     if (seen.has(e.name)) continue;
     seen.add(e.name);
     const overrides = shippedNames.has(e.name);
     out.push(overrides ? { ...e, overridesShipped: true } : e);
   }
-  // Workspace third
+  // Workspace fourth
   for (const e of workspace) {
     if (seen.has(e.name)) continue;
     seen.add(e.name);

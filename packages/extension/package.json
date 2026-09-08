@@ -187,6 +187,19 @@
       {
         "command": "amicode.cycleAgent",
         "title": "Amicode: Cycle Agent"
+      },
+      {
+        "command": "amicode.newEnvironment",
+        "title": "Amicode: New Environment",
+        "icon": "$(folder-library)"
+      },
+      {
+        "command": "amicode.bindToEnvironment",
+        "title": "Amicode: Bind to Environment"
+      },
+      {
+        "command": "amicode.promoteToEnvironment",
+        "title": "Amicode: Promote to Environment"
       }
     ],
     "keybindings": [

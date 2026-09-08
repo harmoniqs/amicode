@@ -83,6 +83,44 @@ Choice question with options:
 
 Record as `--domain` (`quantum-control` or `general`).
 
+### Stage 8: environment binding (optional)
+
+Ask: "Bind this project to a research environment?"
+
+Read the environment registry (`~/.amico/environments.toml`) and list
+registered environments as choice options. If the registry is empty or missing,
+skip this stage silently and move to Execution.
+
+Choice question with options (in this order):
+- One option per registered environment (label = environment name,
+  description = slug and path)
+- "Create new" — spawn a `create-research-environment` session
+- "Skip" — no environment binding
+
+**If the user selects a registered environment:** record the slug to pass to
+`amico env bind` after project creation.
+
+**If the user selects "Create new":** after the project is created, use the
+`amicode_session` tool to spawn a new session tab with the `command` parameter
+set to invoke the skill directly:
+
+```
+amicode_session(
+  command: "create-research-environment",
+  prompt: "--bind-project \"<project-dir>\""
+)
+```
+
+The `command` parameter uses the engine's command API to invoke the
+`create-research-environment` skill reliably — it does not depend on the child
+LLM parsing a `/skill-name` prefix from the prompt text. The `prompt` becomes
+the skill's arguments (the child session will parse `--bind-project` from it).
+
+Tell the user: "I've opened a new tab to create the environment — head over
+there and I'll bind it to this project when it's done."
+
+**If the user selects "Skip":** proceed to Execution with no binding.
+
 ## Execution
 
 After the interview, build the CLI command and run it:
@@ -108,9 +146,12 @@ tell the user the project already has a manifest and offer to open it.
 
 1. Confirm success: "Project scaffolded — `research-project.toml` written,
    directories created, git initialized."
-2. The sidebar's filesystem watcher will automatically re-detect the project
+2. **Environment binding (if Stage 8 selected one):** run
+   `amico env bind "<slug>" --path "<dir>"` to write the `[environment]`
+   section into the freshly created `research-project.toml`.
+3. The sidebar's filesystem watcher will automatically re-detect the project
    as "research" type once the toml appears.
-3. Offer the user a choice via `question`:
+4. Offer the user a choice via `question`:
    - "Design a pulse" — invoke the `design-a-pulse` skill
    - "Set up an experiment" — open the experiment scripts directory
    - "Just explore" — no further action

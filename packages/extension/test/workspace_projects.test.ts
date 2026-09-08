@@ -117,4 +117,83 @@ describe("getWorkspaceProjects (#663)", () => {
     expect(result[0].name).toBe("bad-toml");
     expect(result[0].type).toBe("research");
   });
+
+  // ── environment filtering (#882) ──────────────────────────────────────
+
+  it("excludes environment folders from workspace projects (AC-49)", () => {
+    const typeMap: Record<string, "research" | "dev" | "environment"> = {
+      "/research": "research",
+      "/env": "environment",
+      "/dev": "dev",
+    };
+    const result = getWorkspaceProjects(
+      deps(
+        [
+          { name: "research", path: "/research" },
+          { name: "env", path: "/env" },
+          { name: "dev", path: "/dev" },
+        ],
+        { detectProjectType: (dir) => typeMap[dir] ?? "dev" },
+      ),
+    );
+    expect(result).toHaveLength(2);
+    expect(result.map((p) => p.type)).toEqual(["research", "dev"]);
+    expect(result.find((p) => p.type === "environment" as string)).toBeUndefined();
+  });
+
+  it("environment-only workspace returns empty array (AC-50)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "env", path: "/env" }],
+        { detectProjectType: () => "environment" },
+      ),
+    );
+    expect(result).toEqual([]);
+  });
+
+  // ── environment subtitle (#886) ──────────────────────────────────────
+
+  it("research project with environment gets subtitle (AC-19)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "fast-cz", path: "/fast-cz" }],
+        {
+          detectProjectType: () => "research",
+          readToml: () => ({ name: "Fast CZ Gate", status: "running" }),
+          resolveEnvironment: () => ({ name: "Transmon OC" }),
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBe("Transmon OC");
+  });
+
+  it("research project without environment has no subtitle (AC-20)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "solo-proj", path: "/solo" }],
+        {
+          detectProjectType: () => "research",
+          readToml: () => ({ name: "Solo" }),
+          resolveEnvironment: () => null,
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBeUndefined();
+  });
+
+  it("dev projects never get environment subtitle (AC-20)", () => {
+    const result = getWorkspaceProjects(
+      deps(
+        [{ name: "dev", path: "/dev" }],
+        {
+          detectProjectType: () => "dev",
+          resolveEnvironment: () => ({ name: "Should not appear" }),
+        },
+      ),
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].environment).toBeUndefined();
+  });
 });

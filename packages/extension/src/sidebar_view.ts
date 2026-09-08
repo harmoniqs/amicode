@@ -15,6 +15,7 @@ import { handleSidebarMessage, type SidebarMessageHandlers, type SidebarDownMess
 import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
+import { invalidateEnvironmentCache, resolveEnvironment } from "./project/resolve_environment";
 
 // ── Icon theme resolution ────────────────────────────────────────────────────
 
@@ -304,6 +305,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     this.treeService = new SidebarTreeService({
       detectProjectType,
       readToml: (dir) => readResearchToml(dir),
+      resolveEnvironment: (projectPath, workspaceRoots) => resolveEnvironment(projectPath, workspaceRoots),
       readDirectory: (dir) => readDirectoryEntries(dir),
       getExcludePatterns: () => getExcludePatterns(),
       getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
@@ -490,7 +492,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       if (folder) {
         this.fsPendingFolders.add(folder.uri.fsPath);
         // Track whether this event might change a project's type classification
-        if (path.basename(uri.fsPath) === "research-project.toml") {
+        if (path.basename(uri.fsPath) === "research-project.toml" || path.basename(uri.fsPath) === "research-environment.toml") {
           this.fsPendingProjectTypeChange = true;
         }
         clearTimeout(this.fsDebounceTimer);
@@ -501,6 +503,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // file changes only need the children cache invalidation that the
           // webview's fs-changed handler already performs.
           if (this.fsPendingProjectTypeChange) {
+            invalidateEnvironmentCache();
             this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
             queueMicrotask(() => this.pushGitStatus());
             this.fsPendingProjectTypeChange = false;
@@ -788,6 +791,29 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .git-untracked { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
     .git-ignored { color: var(--vscode-gitDecoration-ignoredResourceForeground, #8c8c8c); opacity: 0.6; }
     .git-conflict { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
+    /* ── Environment pill (#884) ───────────────────────────────── */
+    .env-pill {
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.3px;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      margin-left: 6px;
+      flex-shrink: 0;
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      opacity: 0.85;
+    }
+    .env-pill-0 { color: #61afef; border: 1px solid rgba(97,175,239,0.3); background: rgba(97,175,239,0.08); }
+    .env-pill-1 { color: #c678dd; border: 1px solid rgba(198,120,221,0.3); background: rgba(198,120,221,0.08); }
+    .env-pill-2 { color: #98c379; border: 1px solid rgba(152,195,121,0.3); background: rgba(152,195,121,0.08); }
+    .env-pill-3 { color: #e5c07b; border: 1px solid rgba(229,192,123,0.3); background: rgba(229,192,123,0.08); }
+    .env-pill-4 { color: #56b6c2; border: 1px solid rgba(86,182,194,0.3); background: rgba(86,182,194,0.08); }
+    .env-pill-5 { color: #e06c75; border: 1px solid rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); }
+    .env-pill-6 { color: #d19a66; border: 1px solid rgba(209,154,102,0.3); background: rgba(209,154,102,0.08); }
+    .env-pill-7 { color: #abb2bf; border: 1px solid rgba(171,178,191,0.3); background: rgba(171,178,191,0.08); }
     /* ── Drag and drop ─────────────────────────────────────────── */
     .tree-node.drop-target {
       background: var(--vscode-list-dropBackground, rgba(83, 89, 93, 0.5));
@@ -1082,6 +1108,59 @@ export async function createNewProject(ctx: NewProjectContext): Promise<void> {
   }
 
   const prompt = `/create-research-project --path "${dir}"`;
+  ctx.launchSession(prompt);
+}
+
+// ── New environment command (#892) ────────────────────────────────────────────
+
+/** Context dependencies injected by extension.ts when registering the command. */
+export interface NewEnvironmentContext {
+  isServerReady: () => boolean;
+  launchSession: (prompt: string) => void;
+  /** Override for testing — defaults to fs.mkdirSync. */
+  mkdirSync?: (dir: string, opts?: { recursive?: boolean }) => void;
+}
+
+/**
+ * "New Environment" flow: save-dialog (user types folder name) → mkdir → workspace → session.
+ * Mirrors createNewProject but spawns a /create-research-environment session.
+ * Exported for testing; the amicode.newEnvironment command delegates here.
+ */
+export async function createNewEnvironment(ctx: NewEnvironmentContext): Promise<void> {
+  if (!ctx.isServerReady()) {
+    void vscode.window.showWarningMessage(
+      "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
+    );
+    return;
+  }
+
+  const uri = await vscode.window.showSaveDialog({
+    title: "Name your new environment",
+    saveLabel: "Create",
+    defaultUri: vscode.Uri.file(path.join(os.homedir(), "my-environment")),
+  });
+  if (!uri) return;
+
+  const dir = uri.fsPath;
+  const mkdir = ctx.mkdirSync ?? ((d: string, o?: { recursive?: boolean }) => fs.mkdirSync(d, o));
+  try {
+    mkdir(dir, { recursive: true });
+  } catch (e) {
+    void vscode.window.showErrorMessage(`Amicode: could not create environment directory — ${(e as Error).message}`);
+    return;
+  }
+
+  const folders = vscode.workspace.workspaceFolders ?? [];
+  const alreadyInWorkspace = folders.some((f) => f.uri.fsPath === dir);
+  if (alreadyInWorkspace) {
+    void vscode.window.showWarningMessage(
+      `"${path.basename(dir)}" is already in the workspace — opening a session for it.`,
+    );
+  } else {
+    vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(dir) });
+  }
+
+  const prompt = `/create-research-environment --path "${dir}"`;
   ctx.launchSession(prompt);
 }
 

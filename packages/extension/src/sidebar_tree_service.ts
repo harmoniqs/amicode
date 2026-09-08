@@ -6,6 +6,7 @@
 // (Node runtime) and the results are posted to the webview via bridge messages.
 
 import type { TreeRoot, TreeEntry } from "./sidebar_bridge";
+import { envColorIndex } from "./sidebar_bridge";
 
 // ── Dependencies (injected for testability) ──────────────────────────────────
 
@@ -15,10 +16,12 @@ export interface RawDirEntry {
 }
 
 export interface TreeServiceDeps {
-  /** Classify a directory as research or dev. */
-  detectProjectType: (dir: string) => "research" | "dev";
+  /** Classify a directory as research, dev, or environment. */
+  detectProjectType: (dir: string) => "research" | "dev" | "environment";
   /** Read research-project.toml fields (name, status). Returns {} on failure. */
   readToml: (dir: string) => { name?: string; status?: string };
+  /** Resolve the research environment for a project directory. */
+  resolveEnvironment?: (projectPath: string, workspaceRoots: string[]) => { path: string; slug: string; name: string; schemaVersion: number } | null;
   /** Read immediate children of a directory. */
   readDirectory?: (dir: string) => Promise<RawDirEntry[]>;
   /** Get exclude pattern strings from files.exclude. */
@@ -35,6 +38,8 @@ export interface TreeServiceDeps {
  */
 export class SidebarTreeService {
   private deps: TreeServiceDeps;
+  /** Map root path → resolved environment info from the last getRoots() call (#885). */
+  private rootEnvironments = new Map<string, { name: string; slug: string; path: string }>();
 
   constructor(deps: TreeServiceDeps) {
     this.deps = deps;
@@ -46,22 +51,45 @@ export class SidebarTreeService {
    */
   getRoots(): TreeRoot[] {
     const workspaceFolders = this.deps.getWorkspaceFolders?.() ?? [];
+    const workspaceRoots = workspaceFolders.map((f) => f.uri.fsPath);
 
     const research: TreeRoot[] = [];
     const dev: TreeRoot[] = [];
+    this.rootEnvironments.clear();
 
     for (const folder of workspaceFolders) {
       const dir = folder.uri.fsPath;
       const projectType = this.deps.detectProjectType(dir);
 
+      // Environment folders are not shown as sidebar roots (AC-49)
+      if (projectType === "environment") continue;
+
       if (projectType === "research") {
         const toml = this.deps.readToml(dir);
-        research.push({
+        const root: TreeRoot = {
           path: dir,
           name: toml.name ?? folder.name,
           projectType: "research",
           metadata: toml.status ? { phase: toml.status } : undefined,
-        });
+        };
+        // Resolve environment for this project (#884)
+        if (this.deps.resolveEnvironment) {
+          try {
+            const env = this.deps.resolveEnvironment(dir, workspaceRoots);
+            if (env) {
+              root.environment = {
+                name: env.name,
+                slug: env.slug,
+                path: env.path,
+                colorIndex: envColorIndex(env.slug),
+              };
+              this.rootEnvironments.set(dir, { name: env.name, slug: env.slug, path: env.path });
+            }
+          } catch {
+            // Resolution failure → no pill, not a crash
+          }
+        }
+        research.push(root);
       } else {
         dev.push({
           path: dir,
@@ -101,10 +129,25 @@ export class SidebarTreeService {
       return a.name.localeCompare(b.name);
     });
 
-    return filtered.map((entry) => ({
+    const entries: TreeEntry[] = filtered.map((entry) => ({
       name: entry.name,
       type: entry.type,
       path: `${dirPath}/${entry.name}`,
     }));
+
+    // If this is a project root with a bound environment, append the
+    // environment as the last child (#885)
+    const envInfo = this.rootEnvironments.get(dirPath);
+    if (envInfo) {
+      entries.push({
+        name: envInfo.name,
+        type: "directory",
+        path: envInfo.path,
+        entryKind: "environment-root",
+        environmentSlug: envInfo.slug,
+      });
+    }
+
+    return entries;
   }
 }
