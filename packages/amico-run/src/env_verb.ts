@@ -550,7 +550,7 @@ export function envBind(argv: string[], opts?: EnvVerbOptions): VerbResult {
         slug,
         ...(envPath ? { path: envPath } : {}),
       };
-      writeFileSync(tomlPath, renderProjectToml(projectData as ProjectToml));
+      writeFileSync(tomlPath, renderProjectToml(projectData as unknown as ProjectToml));
     } catch (e) {
       return fail(`failed to write ${tomlPath}: ${e instanceof Error ? e.message : String(e)}`);
     }
