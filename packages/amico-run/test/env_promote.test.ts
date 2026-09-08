@@ -33,6 +33,8 @@ describe("envPromote", () => {
     };
     writeFileSync(join(dir, "research-environment.toml"), renderEnvironmentToml(manifest));
     execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: dir, stdio: "ignore" });
+    execFileSync("git", ["config", "user.name", "test"], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
     execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore" });
     return dir;
