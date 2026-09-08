@@ -404,6 +404,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
 
     // Refresh when workspace folders change.
     this.workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      invalidateEnvironmentCache();
       this.postDown({ kind: "roots", roots: this.treeService.getRoots() });
       this.pushGitStatus();
     });

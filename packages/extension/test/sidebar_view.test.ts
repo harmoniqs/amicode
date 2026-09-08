@@ -943,38 +943,53 @@ describe("sidebar webview — context menus by source (#895)", () => {
   });
 });
 
-// ── Context menu bugfixes (#895) ─────────────────────────────────────────────
+// ── Context menu bugfixes v2 (#895) ──────────────────────────────────────────
 
-describe("sidebar webview — context menu bugfixes (#895)", () => {
+describe("sidebar webview — context menu bugfixes v2 (#895)", () => {
   const src = readFileSync(
     resolve(__dirname, "..", "src", "sidebar_webview.ts"),
     "utf8",
   );
 
   it("staleness check compares source field so re-render fires on source change", () => {
-    // The roots-message equality check must include source so that
-    // resolved→workspace transitions trigger a re-render
     expect(src).toMatch(/\.source\s*===\s*currentRoots\[i\]\.source/);
   });
 
   it("empty-area context menu reads sectionKey to determine section identity", () => {
-    // Must read the parent section's data-section-key to branch behavior
     expect(src).toMatch(/sectionKey|section-key|dataset\.sectionKey/);
-    // Must not show "Add Existing Project" unconditionally for all sections
     expect(src).toMatch(/New Environment/);
     expect(src).toMatch(/Add Existing Environment/);
   });
 
-  it("'+' button in renderSectionHeader sends section-appropriate messages", () => {
-    // The '+' button must not unconditionally send add-existing for all sections
-    // Environment section should send a different message
-    expect(src).toMatch(/new-environment/);
+  it("'+' button on environments section sends add-existing-environment (not new-environment)", () => {
+    // The '+' button for environments should open a folder picker, not create a new one.
+    // Find the addBtn block inside renderSectionHeader by matching the title assignment
+    // and the postMessage call within it.
+    const match = src.match(/addBtn\.title\s*=\s*["']Add existing environment["'][\s\S]*?postMessage\(\{[^}]*kind:\s*["']([^"']+)["']/);
+    expect(match).not.toBeNull();
+    expect(match![1]).toBe("add-existing-environment");
+  });
+});
+
+describe("sidebar view — invalidateEnvironmentCache on workspace folder change (#895)", () => {
+  const viewSrc = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_view.ts"),
+    "utf8",
+  );
+
+  it("onDidChangeWorkspaceFolders handler body calls invalidateEnvironmentCache", () => {
+    // The workspace folder change handler (between onDidChangeWorkspaceFolders and its closing })
+    // must call invalidateEnvironmentCache before getRoots so source is fresh after add-to-workspace.
+    // Extract the handler body and check it contains the call.
+    const match = viewSrc.match(/onDidChangeWorkspaceFolders\(\(\)\s*=>\s*\{([\s\S]*?)\}\)/);
+    expect(match).not.toBeNull();
+    expect(match![1]).toContain("invalidateEnvironmentCache");
   });
 });
 
 // ── Bridge: new-environment message (#895 bugfix) ────────────────────────────
 
-describe("sidebar bridge — new-environment message (#895)", () => {
+describe("sidebar bridge — environment messages (#895)", () => {
   const bridgeSrc = readFileSync(
     resolve(__dirname, "..", "src", "sidebar_bridge.ts"),
     "utf8",
@@ -984,9 +999,13 @@ describe("sidebar bridge — new-environment message (#895)", () => {
     expect(bridgeSrc).toMatch(/new-environment/);
   });
 
-  it("handleSidebarMessage dispatches new-environment", () => {
-    expect(bridgeSrc).toMatch(/new-environment/);
+  it("AddExistingEnvironmentMessage type exists", () => {
+    expect(bridgeSrc).toMatch(/add-existing-environment/);
+  });
+
+  it("handleSidebarMessage dispatches both environment messages", () => {
     expect(bridgeSrc).toMatch(/newEnvironment/);
+    expect(bridgeSrc).toMatch(/addExistingEnvironment/);
   });
 });
 

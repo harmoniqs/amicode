@@ -983,7 +983,7 @@ function createIconEl(icon: string): HTMLElement {
       addBtn.title = "Add existing environment";
       addBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        vscode.postMessage({ kind: "new-environment" });
+        vscode.postMessage({ kind: "add-existing-environment" });
       });
     } else {
       addBtn.title = "Add existing project";
