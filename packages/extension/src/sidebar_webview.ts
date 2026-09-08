@@ -11,7 +11,7 @@ declare function acquireVsCodeApi(): {
 interface TreeRoot {
   path: string;
   name: string;
-  projectType: "research" | "dev";
+  projectType: "research" | "dev" | "environment";
   metadata?: { phase?: string; lastActive?: string };
   /** Resolved environment info, present when a research project is bound to an environment. */
   environment?: {
@@ -20,6 +20,10 @@ interface TreeRoot {
     path: string;
     colorIndex: number;
   };
+  /** Number of open research projects bound to this environment (#895). */
+  boundProjectCount?: number;
+  /** How this environment root was discovered (#895). */
+  source?: "workspace" | "resolved";
 }
 
 interface TreeEntry {
@@ -149,10 +153,19 @@ function createIconEl(icon: string): HTMLElement {
   // scrolls regardless.
   let lastScrolledPath: string | null = null;
 
-  /** Resolve rendering order: saved keys filtered to available, new keys appended. */
+  /** Resolve rendering order: saved keys filtered to available, new keys appended.
+   *  Migration (#895): if saved order has "research" but not "environments",
+   *  insert "environments" before "research" (not at end). Idempotent. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
+    // Migration: insert "environments" before "research" for existing users
+    let migrated = savedOrder;
+    if (savedOrder.includes("research") && !savedOrder.includes("environments")) {
+      const idx = savedOrder.indexOf("research");
+      migrated = [...savedOrder.slice(0, idx), "environments", ...savedOrder.slice(idx)];
+    }
+
     const availableSet = new Set(available);
-    const ordered = savedOrder.filter((key) => availableSet.has(key));
+    const ordered = migrated.filter((key) => availableSet.has(key));
     const orderedSet = new Set(ordered);
     for (const key of available) {
       if (!orderedSet.has(key)) ordered.push(key);
@@ -842,13 +855,15 @@ function createIconEl(icon: string): HTMLElement {
   // Restore section expanded state (separate from tree node expanded state)
   const sectionExpanded: Record<string, boolean> = savedState?.expanded
     ? {
+        environments: savedState.expanded["__section_environments"] !== false,
         research: savedState.expanded["__section_research"] !== false,
         dev: savedState.expanded["__section_dev"] !== false,
         fleet: savedState.expanded["__section_fleet"] !== false,
       }
-    : { research: true, dev: true, fleet: false };
+    : { environments: true, research: true, dev: true, fleet: false };
 
   function saveSectionState(): void {
+    expanded["__section_environments"] = sectionExpanded.environments;
     expanded["__section_research"] = sectionExpanded.research;
     expanded["__section_dev"] = sectionExpanded.dev;
     expanded["__section_fleet"] = sectionExpanded.fleet;
@@ -972,11 +987,13 @@ function createIconEl(icon: string): HTMLElement {
     treeRoot.innerHTML = "";
 
     // Group roots by project type
+    const environments = roots.filter((r) => r.projectType === "environment");
     const research = roots.filter((r) => r.projectType === "research");
     const dev = roots.filter((r) => r.projectType === "dev");
 
     // Determine which section keys have content right now
     const available: string[] = [];
+    if (environments.length > 0) available.push("environments");
     if (research.length > 0) available.push("research");
     if (dev.length > 0) available.push("dev");
     available.push("fleet"); // Fleet always has content (Coming soon placeholder)
@@ -985,7 +1002,13 @@ function createIconEl(icon: string): HTMLElement {
     const renderOrder = resolveSectionOrder(currentSectionOrder, available);
 
     for (const key of renderOrder) {
-      if (key === "research" && research.length > 0) {
+      if (key === "environments" && environments.length > 0) {
+        const { section, body } = renderSectionHeader("Research Environments", "environments");
+        for (const root of environments) {
+          body.appendChild(renderRootNode(root, 0));
+        }
+        treeRoot.appendChild(section);
+      } else if (key === "research" && research.length > 0) {
         const { section, body } = renderSectionHeader("Research Projects", "research");
         for (const root of research) {
           body.appendChild(renderRootNode(root, 0));

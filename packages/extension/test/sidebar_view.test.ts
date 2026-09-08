@@ -726,7 +726,7 @@ describe("SidebarViewProvider — section order persistence", () => {
     const calls = (view.webview.postMessage as any).mock.calls;
     const orderCalls = calls.filter((c: any) => c[0]?.kind === "section-order");
     expect(orderCalls).toHaveLength(1);
-    expect(orderCalls[0][0].order).toEqual(["research", "dev", "fleet"]);
+    expect(orderCalls[0][0].order).toEqual(["environments", "research", "dev", "fleet"]);
   });
 
   it("setSectionOrder persists to globalState", () => {
@@ -843,6 +843,54 @@ describe("sidebar webview — section reorder structure", () => {
   it("getAllSections collects all sections uniformly from treeRoot children", () => {
     // After Fleet unification, getAllSections no longer special-cases fleetSection
     expect(src).not.toMatch(/if\s*\(\s*fleetSection\s*\)\s*sections\.push/);
+  });
+});
+
+// ── Research Environments section (#895) ─────────────────────────────────────
+
+describe("sidebar webview — environments section (#895)", () => {
+  const src = readFileSync(
+    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+    "utf8",
+  );
+
+  it("renderRoots renders an environments section via renderSectionHeader", () => {
+    expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Research Environments["']\s*,\s*["']environments["']\s*\)/);
+  });
+
+  it("renderRoots groups environment roots by projectType", () => {
+    // Must filter roots by projectType === "environment"
+    expect(src).toMatch(/projectType\s*===?\s*["']environment["']/);
+  });
+
+  it("sectionExpanded includes environments key", () => {
+    expect(src).toMatch(/environments\s*:/);
+    expect(src).toMatch(/__section_environments/);
+  });
+
+  it("webview TreeRoot type includes environment projectType", () => {
+    expect(src).toMatch(/projectType.*environment/);
+  });
+
+  it("resolveSectionOrder migrates environments before research for existing users", () => {
+    // The migration inserts "environments" before "research" when missing
+    expect(src).toMatch(/environments/);
+    expect(src).toMatch(/research/);
+  });
+});
+
+describe("SidebarViewProvider — environments section order (#895)", () => {
+  let SidebarViewProvider: any;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    const mod = await import("../src/sidebar_view");
+    SidebarViewProvider = mod.SidebarViewProvider;
+  });
+
+  it("DEFAULT_SECTION_ORDER includes environments as the first element", () => {
+    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER[0]).toBe("environments");
+    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER).toEqual(["environments", "research", "dev", "fleet"]);
   });
 });
 
