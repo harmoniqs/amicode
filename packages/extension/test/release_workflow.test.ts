@@ -15,6 +15,8 @@ describe("release workflow payload integrity", () => {
     expect(candidate).toContain("REPO_ACCESS_TOKEN");
     expect(candidate).toContain("Preflight fork credential");
     expect(candidate).toContain("OPENCODE_CHANNEL=beta");
+    expect(candidate).toContain('"client_payload[ref]=$SHA"');
+    expect(candidate).not.toContain('"repos/$FORK_REPO/git/refs"');
 
     expect(release).not.toContain("REPO_ACCESS_TOKEN");
     expect(release).not.toContain("AMICODE_RELEASE_TAG");
