@@ -59,16 +59,14 @@ jobs:
           SHA="$(gh api "repos/$FORK_REPO/branches/$FORK_REF" --jq .commit.sha)"
           N="$(gh api "repos/$FORK_REPO/tags?per_page=100" --paginate --jq '.[].name' | grep -o -- '-amicode\.[0-9]*$' | grep -o '[0-9]*$' | sort -n | tail -1)"
           FORK_TAG="v${ENGINE_VERSION}-amicode.$(( ${N:-0} + 1 ))"
-          if ! gh api "repos/$FORK_REPO/git/ref/tags/$FORK_TAG" >/dev/null 2>&1; then
-            gh api -X POST "repos/$FORK_REPO/git/refs" -f ref="refs/tags/$FORK_TAG" -f sha="$SHA" >/dev/null
-          fi
           gh api -X POST "repos/$FORK_REPO/dispatches" \
             -f event_type=amicode-release \
             -f "client_payload[tag]=$FORK_TAG" \
+            -f "client_payload[ref]=$SHA" \
             -f "client_payload[channel]=beta" >/dev/null
           for i in $(seq 1 60); do
             sleep 20
-            READY="$(gh release view "$FORK_TAG" -R "$FORK_REPO" --json isDraft,assets --jq '[.isDraft == false, ([.assets[].name] | contains(["opencode-linux-x64.tar.gz", "opencode-linux-arm64.tar.gz", "opencode-darwin-arm64.zip"]))] | all' 2>/dev/null || true)"
+            READY="$(gh release view "$FORK_TAG" -R "$FORK_REPO" --json isDraft,assets,body --jq '[.isDraft == false, ([.assets[].name] | contains(["opencode-linux-x64.tar.gz", "opencode-linux-arm64.tar.gz", "opencode-darwin-arm64.zip"])), (.body | contains("OPENCODE_CHANNEL=beta")), (.body | contains("Badge: BETA"))] | all' 2>/dev/null || true)"
             [ "$READY" = true ] && break
             [ "$i" = 60 ] && { echo "::error::Fork release $FORK_TAG did not complete within 20 minutes."; exit 1; }
           done
