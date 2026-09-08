@@ -40,8 +40,6 @@ export interface TreeServiceDeps {
  */
 export class SidebarTreeService {
   private deps: TreeServiceDeps;
-  /** Map root path → resolved environment info from the last getRoots() call (#885). */
-  private rootEnvironments = new Map<string, { name: string; slug: string; path: string }>();
 
   constructor(deps: TreeServiceDeps) {
     this.deps = deps;
@@ -64,7 +62,6 @@ export class SidebarTreeService {
     const envBySlug = new Map<string, TreeRoot>();
     /** Track which slugs each research project resolves to, for boundProjectCount. */
     const projectEnvSlugs: string[] = [];
-    this.rootEnvironments.clear();
 
     // ── Pass 1: workspace folders ──────────────────────────────────────────
     for (const folder of workspaceFolders) {
@@ -119,7 +116,6 @@ export class SidebarTreeService {
                 path: env.path,
                 colorIndex: envColorIndex(env.slug),
               };
-              this.rootEnvironments.set(dir, { name: env.name, slug: env.slug, path: env.path });
               projectEnvSlugs.push(env.slug);
 
               // Auto-surface resolved environments that aren't already in the map (#895)
@@ -197,19 +193,6 @@ export class SidebarTreeService {
       type: entry.type,
       path: `${dirPath}/${entry.name}`,
     }));
-
-    // If this is a project root with a bound environment, append the
-    // environment as the last child (#885)
-    const envInfo = this.rootEnvironments.get(dirPath);
-    if (envInfo) {
-      entries.push({
-        name: envInfo.name,
-        type: "directory",
-        path: envInfo.path,
-        entryKind: "environment-root",
-        environmentSlug: envInfo.slug,
-      });
-    }
 
     return entries;
   }

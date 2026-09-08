@@ -31,8 +31,6 @@ interface TreeEntry {
   type: "file" | "directory";
   path: string;
   gitStatus?: string;
-  entryKind?: "environment-root";
-  environmentSlug?: string;
 }
 
 // ── Icon theme data (embedded by the host in window.__iconTheme) ─────────────
