@@ -1488,6 +1488,9 @@ function createIconEl(icon: string): HTMLElement {
     projectsEl.className = "env-bound-projects";
     container.appendChild(projectsEl);
 
+    // Toggle class so CSS can conditionally add the gap between files and projects
+    if (expanded[env.path]) container.classList.add("env-files-visible");
+
     // Render env filesystem children if already expanded
     if (expanded[env.path]) {
       populateEnvGroupChildren(childrenEl, env);
@@ -1503,6 +1506,7 @@ function createIconEl(icon: string): HTMLElement {
       saveExpandedState();
       chevronEl.classList.toggle("expanded", expanded[env.path]);
       row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
+      container.classList.toggle("env-files-visible", expanded[env.path]);
       // Clipboard icon is static — no icon swap on expand/collapse (#914)
       // Only toggle .children (env files) — .env-bound-projects stays visible
       childrenEl.style.display = expanded[env.path] ? "block" : "none";

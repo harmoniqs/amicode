@@ -894,7 +894,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .git-conflict { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
     /* ── Environment color coding removed (#915) — nesting is the signal ── */
     /* envColorIndex and colorIndex left in data model; CSS classes removed. */
-    .env-bound-projects {
+    .env-files-visible > .env-bound-projects {
       margin-top: 4px;
     }
     /* ── Drag and drop ─────────────────────────────────────────── */
