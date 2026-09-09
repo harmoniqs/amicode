@@ -872,6 +872,11 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .tree-node img.icon {
       display: block;
     }
+    /* ── Keyboard focus (#917) ─────────────────────────────────── */
+    .tree-node:focus-visible {
+      outline: 1px solid var(--vscode-focusBorder, #007fd4);
+      outline-offset: -1px;
+    }
     .tree-node .label {
       flex: 1;
       overflow: hidden;

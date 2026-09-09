@@ -1410,6 +1410,38 @@ function createIconEl(icon: string): HTMLElement {
     }
   });
 
+  // ── Keyboard navigation for root-level items (#917) ──────────────────────
+  // Arrow keys navigate between root-level tree nodes (env groups + unbound
+  // projects) in each section. Enter/Space toggles expand/collapse.
+  // Roving tabindex: focused item gets tabindex=0, others get -1.
+
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("tree-node")) return;
+    if (!target.hasAttribute("tabindex")) return;
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      // Collect all navigable root-level items in the same section body
+      const sectionBody = target.closest(".section-body");
+      if (!sectionBody) return;
+      const items = Array.from(
+        sectionBody.querySelectorAll(":scope > [data-path] > .tree-node[tabindex]"),
+      ) as HTMLElement[];
+      const idx = items.indexOf(target);
+      if (idx < 0) return;
+      const next = e.key === "ArrowDown" ? idx + 1 : idx - 1;
+      if (next >= 0 && next < items.length) {
+        target.setAttribute("tabindex", "-1");
+        items[next].setAttribute("tabindex", "0");
+        items[next].focus();
+      }
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      target.click();
+    }
+  });
+
 
   // ── Environment group node (#911) ────────────────────────────────────────
   // Renders an environment as an expandable group header inside the Research
@@ -1428,6 +1460,8 @@ function createIconEl(icon: string): HTMLElement {
     const row = document.createElement("div");
     row.className = "tree-node env-group-header";
     row.style.paddingLeft = "8px";
+    row.setAttribute("tabindex", "-1");
+    row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
 
     // Chevron (expand/collapse indicator)
     const chevronEl = document.createElement("span");
@@ -1468,6 +1502,7 @@ function createIconEl(icon: string): HTMLElement {
       expanded[env.path] = !expanded[env.path];
       saveExpandedState();
       chevronEl.classList.toggle("expanded", expanded[env.path]);
+      row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
       // Clipboard icon is static — no icon swap on expand/collapse (#914)
       childrenEl.style.display = expanded[env.path] ? "block" : "none";
 
@@ -1519,6 +1554,10 @@ function createIconEl(icon: string): HTMLElement {
     const row = document.createElement("div");
     row.className = "tree-node";
     row.style.paddingLeft = `${8 + depth * 16}px`;
+    // Root-level items (depth 0) participate in keyboard navigation (#917)
+    if (depth === 0) {
+      row.setAttribute("tabindex", "-1");
+    }
 
     // Chevron (expand/collapse indicator)
     const chevronEl = document.createElement("span");
