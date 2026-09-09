@@ -36,7 +36,7 @@ The unit of work organization — a directory registered with amicode where file
 _Avoid_: Workspace, folder (as a concept name), repo, Study (rejected alternative — researchers think in "projects")
 
 **Research Environment**:
-A shared substrate for related Research Projects — a git-backed directory identified by `research-environment.toml`, carrying shared skills, insights, methods, and configuration. Bound to a Research Project via the project's `[environment].slug` field. Multiple Projects may share one Environment; an Environment has no lifecycle of its own (no phase or status). Surfaced in the Sidebar as a first-class accordion section above Research Projects, with entries color-coded by an 8-color palette derived from the slug hash. Created via `amico env create`.
+A shared substrate for related Research Projects — a git-backed directory identified by `research-environment.toml`, carrying shared skills, insights, methods, and configuration. Bound to a Research Project via the project's `[environment].slug` field. Multiple Projects may share one Environment; an Environment has no lifecycle of its own (no phase or status). Surfaced in the Sidebar as an expandable group header inside the Research Projects section — environment files appear first, bound projects nest below a separator. Identified by a clipboard icon. Created via `amico env create`.
 _Avoid_: workspace, shared folder, template
 
 **Session**:
@@ -135,7 +135,7 @@ A sandboxed ES-module card rendered in an iframe within Home. Authored by the ag
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Sidebar**:
-The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Destinations open in the editor area.
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project/environment), a session-aware project tree where Research Environments are expandable groups containing their bound Research Projects (unbound projects appear at the top level), Dev Projects as plain expandable folders, and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Destinations open in the editor area.
 _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
 
 ### Orthogonal axes
