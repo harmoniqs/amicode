@@ -172,7 +172,7 @@ describe("sidebar environment rendering — color coding removed (#915)", () => 
     expect(viewSrc).not.toMatch(/env-root-border-\d/);
   });
 
-  it("projects separator exists in sidebar_view.ts CSS (#915)", () => {
-    expect(viewSrc).toMatch(/env-projects-separator/);
+  it("no env-projects-separator CSS in sidebar_view.ts", () => {
+    expect(viewSrc).not.toMatch(/\.env-projects-separator\b/);
   });
 });

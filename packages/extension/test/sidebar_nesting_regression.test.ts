@@ -82,8 +82,8 @@ describe("regression: no color coding artifacts (#911)", () => {
     expect(viewSrc).not.toMatch(/\.env-project-count\b/);
   });
 
-  it("env-projects-separator CSS exists", () => {
-    expect(viewSrc).toMatch(/\.env-projects-separator/);
+  it("no env-projects-separator CSS (separator removed)", () => {
+    expect(viewSrc).not.toMatch(/\.env-projects-separator/);
   });
 });
 

@@ -1530,18 +1530,9 @@ function createIconEl(icon: string): HTMLElement {
       vscode.postMessage({ kind: "get-children", path: env.path });
     }
 
-    // "Projects" separator + bound project root nodes (#915)
-    if (projects.length > 0) {
-      const separator = document.createElement("div");
-      separator.className = "env-projects-separator";
-      separator.setAttribute("role", "separator");
-      separator.setAttribute("aria-orientation", "horizontal");
-      separator.textContent = "Projects";
-      childrenEl.appendChild(separator);
-
-      for (const project of projects) {
-        childrenEl.appendChild(renderRootNode(project, 1));
-      }
+    // Bound project root nodes (rendered at depth 1 = indented under the env group)
+    for (const project of projects) {
+      childrenEl.appendChild(renderRootNode(project, 1));
     }
   }
 
@@ -2227,16 +2218,10 @@ function createIconEl(icon: string): HTMLElement {
             container.insertBefore(activeInlineEdit.tempRow, container.firstChild);
             activeInlineEdit.input.focus();
           }
-          // If this path is an env group, re-append separator + bound project nodes
-          // after the filesystem children (#911, #915). renderChildren wiped them.
+          // If this path is an env group, re-append bound project nodes
+          // after the filesystem children (#911). renderChildren wiped them.
           const boundProjects = currentEnvGroupProjects.get(msg.path);
           if (boundProjects && boundProjects.length > 0) {
-            const separator = document.createElement("div");
-            separator.className = "env-projects-separator";
-            separator.setAttribute("role", "separator");
-            separator.setAttribute("aria-orientation", "horizontal");
-            separator.textContent = "Projects";
-            container.appendChild(separator);
             for (const project of boundProjects) {
               container.appendChild(renderRootNode(project, 1));
             }
