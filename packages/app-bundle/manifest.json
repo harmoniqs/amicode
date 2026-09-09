@@ -6,10 +6,10 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T18:25:12.356Z",
+  "extracted_at": "2026-09-09T18:44:23.739Z",
   "per_package": {
     "packages/app": {
-      "A": 140,
+      "A": 142,
       "M": 152,
       "D": 0
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 599,
+    "overlay_total": 601,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -805,6 +805,8 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "A",
     "packages/app/src/components/session/index.ts": "M",
     "packages/app/src/components/session/panel-menu.tsx": "A",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "A",
+    "packages/app/src/components/session/preview-file-view.tsx": "A",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "A",
     "packages/app/src/components/session/session-context-tab.tsx": "M",
     "packages/app/src/components/session/session-header.tsx": "M",
@@ -1406,6 +1408,8 @@
     "packages/app/src/components/session/context-warning-banner.tsx": "f5fab4d7a9536238b70d64488fc30d44f6a4948fdcffd910a9666f4b6c296019",
     "packages/app/src/components/session/index.ts": "21473290d4a1a3d0670fd878372ddf21ff22d4a0b30d1aef6c81ea906c1488b4",
     "packages/app/src/components/session/panel-menu.tsx": "42f323046b7375ae158023a51506038eb15f2e1545c407f45acd47446a8ef3e0",
+    "packages/app/src/components/session/pdf-canvas-view.tsx": "02032c64833583c9b0b62ed0ec7dc9770e7fa368b4659db45730118686ca6a27",
+    "packages/app/src/components/session/preview-file-view.tsx": "6e1949ed11bb3ea65023021aeec86875f2853bb84948d2147436c6f8be395da4",
     "packages/app/src/components/session/session-chats-dropdown.test.ts": "2003d2a15781337ea6bff2c68e730cc5b6df38697f15d927ab26913936444db7",
     "packages/app/src/components/session/session-context-tab.tsx": "227243b178b517f067d9ae0ae0eec3c559beeb6681828158b0600a17e98e7f81",
     "packages/app/src/components/session/session-header.tsx": "a46591ed1097d0fdcff61fb0c5529396955e8857cbef748747c51e472d5564c5",
