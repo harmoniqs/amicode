@@ -33,6 +33,7 @@ import { ExternalLink } from "@/components/external-link"
 import { useServerSDK } from "@/context/server-sdk"
 import { useServerSync } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
+import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
@@ -384,6 +385,7 @@ function ProviderConnection(props: {
   const dialog = useDialog()
   const serverSync = useServerSync()
   const serverSDK = useServerSDK()
+  const platform = usePlatform()
   const params = useParams()
   const language = useLanguage()
   const settings = useSettings()
@@ -1033,6 +1035,14 @@ function ProviderConnection(props: {
   }
 
   function OAuthAutoView() {
+    const browser = () => {
+      const selected = method()
+      return (
+        props.provider === "openai" &&
+        selected?.type === "oauth" &&
+        (selected.id === "chatgpt-browser" || selected.label.toLowerCase().endsWith("(browser)"))
+      )
+    }
     const code = createMemo(() => {
       const instructions = store.authorization?.instructions
       if (instructions?.includes(":")) {
@@ -1042,6 +1052,7 @@ function ProviderConnection(props: {
     })
 
     onMount(() => {
+      if (browser()) platform.openExternal(store.authorization!.url)
       const poll = async () => {
         const authorization = store.authorization
         if (!authorization || !alive.value) return
@@ -1077,20 +1088,37 @@ function ProviderConnection(props: {
 
     return (
       <div class="flex flex-col gap-6">
-        <div class="text-14-regular text-text-base">
-          {language.t("provider.connect.oauth.auto.visit.prefix")}
-          <ExternalLink href={store.authorization!.url}>
-            {language.t("provider.connect.oauth.auto.visit.link")}
-          </ExternalLink>
-          {language.t("provider.connect.oauth.auto.visit.suffix", { provider: provider().name })}
-        </div>
-        <TextField
-          label={language.t("provider.connect.oauth.auto.confirmationCode")}
-          class="font-mono"
-          value={code()}
-          readOnly
-          copyable
-        />
+        <Show
+          when={browser()}
+          fallback={
+            <div class="text-14-regular text-text-base">
+              {language.t("provider.connect.oauth.auto.visit.prefix")}
+              <ExternalLink href={store.authorization!.url}>
+                {language.t("provider.connect.oauth.auto.visit.link")}
+              </ExternalLink>
+              {language.t("provider.connect.oauth.auto.visit.suffix", { provider: provider().name })}
+            </div>
+          }
+        >
+          <div class="flex flex-col gap-2 text-14-regular text-text-base">
+            <div>{store.authorization!.instructions}</div>
+            <div>
+              {language.t("provider.connect.oauth.auto.visit.prefix")}
+              <ExternalLink href={store.authorization!.url}>
+                {language.t("provider.connect.oauth.auto.visit.link")}
+              </ExternalLink>
+            </div>
+          </div>
+        </Show>
+        <Show when={!browser()}>
+          <TextField
+            label={language.t("provider.connect.oauth.auto.confirmationCode")}
+            class="font-mono"
+            value={code()}
+            readOnly
+            copyable
+          />
+        </Show>
         <div class="text-14-regular text-text-base flex items-center gap-4">
           <Spinner />
           <span>{language.t("provider.connect.status.waiting")}</span>
