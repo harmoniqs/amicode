@@ -6,11 +6,11 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T18:52:48.263Z",
+  "extracted_at": "2026-09-09T19:01:09.840Z",
   "per_package": {
     "packages/app": {
       "A": 142,
-      "M": 152,
+      "M": 153,
       "D": 0
     },
     "packages/core": {
@@ -29,7 +29,7 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 21,
+      "A": 25,
       "M": 29,
       "D": 0
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 606,
+    "overlay_total": 611,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -346,6 +346,7 @@
   "classification": {
     "packages/app/CONTEXT.md": "A",
     "packages/app/index.html": "M",
+    "packages/app/package.json": "M",
     "packages/app/playwright.config.ts": "M",
     "packages/core/schema.json": "M",
     "packages/session-ui/bunfig.toml": "A",
@@ -577,6 +578,7 @@
     "packages/session-ui/src/components/line-comment-styles.ts": "M",
     "packages/session-ui/src/components/markdown-file-refs.test.ts": "A",
     "packages/session-ui/src/components/markdown-file-refs.ts": "A",
+    "packages/session-ui/src/components/markdown-shiki.worker.ts": "A",
     "packages/session-ui/src/components/markdown-stream.test.ts": "M",
     "packages/session-ui/src/components/markdown-stream.ts": "M",
     "packages/session-ui/src/components/markdown.css": "M",
@@ -882,8 +884,11 @@
     "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "A",
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "A",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "A",
+    "packages/session-ui/src/v2/components/editor-core.ts": "A",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "A",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "A",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "A",
+    "packages/session-ui/src/v2/components/preview-nav-state.ts": "A",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "M",
     "packages/session-ui/src/v2/components/session-review-v2.css": "M",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "M",
@@ -954,6 +959,7 @@
   "files": {
     "packages/app/CONTEXT.md": "7dc4bf176a32ee578a54593a58a6b97907ffc5a9baf7ae7c16a8fa920d8e6e86",
     "packages/app/index.html": "fa38026be3b7e7ec38958a558d7b4d059140b2aff998c3ac862601543702584d",
+    "packages/app/package.json": "3c9bf3d487052d4834b7fd3ce93fcf6b7fc358de92b8be4b0e84fc424a971f74",
     "packages/app/playwright.config.ts": "b7dae0b39248b4ddf7cba829af96ac7fe3cc919add9711ecb5292d9bd52e1805",
     "packages/core/schema.json": "79ef4e2f0dd8103ac7a4b6ff3ddb0fd10764655f1dc678c1c401dfc43be9a1aa",
     "packages/session-ui/bunfig.toml": "82585987c8258caf58d07c6aaf4e49b7338e4da16f97c785af398aace9e6e722",
@@ -1185,6 +1191,7 @@
     "packages/session-ui/src/components/line-comment-styles.ts": "2077836c13bd3c3f1c39c67722119e448a2dfa123377f94bfd3676634e955d00",
     "packages/session-ui/src/components/markdown-file-refs.test.ts": "e2b1bed33629d3ab53c521f33266814088ea4122b6e64d6ab294eacc4cf15070",
     "packages/session-ui/src/components/markdown-file-refs.ts": "b75bddeb565dc0163635fab8f84bdd26723742f9f82d06b6fd5991777b311032",
+    "packages/session-ui/src/components/markdown-shiki.worker.ts": "0f438e40aee871d3da81488e21f42c0fefcd9af4a0eec9c599cd969566c2610e",
     "packages/session-ui/src/components/markdown-stream.test.ts": "b73b1a15ffa2cfea5358b2d6313ce17d26a5a11302b0e3b7d823cde0c98cbc83",
     "packages/session-ui/src/components/markdown-stream.ts": "50e38abd5d4ff919564655799678be10463dec58502fc5487c1c97a9a8db5399",
     "packages/session-ui/src/components/markdown.css": "24e7c19218620386647656a5d27e116cdeca911f1916c5d5b8609edca11ff165",
@@ -1490,8 +1497,11 @@
     "packages/session-ui/src/v2/components/diff-gutter-extension.ts": "aed07587c0c9a5f110f9ea91aa42679d6f9f66b2ec4de9043d6e2233a375acb8",
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "f465e41349b820805bb9a2395886cc6bb2612bb40cbe6f1157823a2441ae75f3",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "4c0ee2525b94b04b1e708a5cacab6d3eed29ca30644321986e429b2f912b730b",
+    "packages/session-ui/src/v2/components/editor-core.ts": "bae3cebbaa1138885f28da94f32781a12c6f3e0ef2990776b15be18d8aead10e",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
     "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "d859721bf3ea4e3bdbf24985e95198697307a78f8cb1644dc9fba5ddf3a189fc",
+    "packages/session-ui/src/v2/components/preview-nav-state.ts": "ccaeb94d1ab39271f5dcd49c935c8fc7b54d4ffbd66e1352e4d797c9205553fc",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "fc06f46ed3c92c8066744da1f6ac97db7d8b7d2aeec5ef776d743dd93b317936",
     "packages/session-ui/src/v2/components/session-review-v2.css": "bb306f226fda8f8ba6cf0ae706843ba9f2b48f3a3446433515e8a8dd1f9dc626",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "4151286efb6e0e148246ee3eebae24a2e5d4eac2603fd5ea8546d0839a694161",
