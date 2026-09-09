@@ -146,10 +146,28 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
     if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
-    // Markdown (spec cards, vault notes) opens as a rendered preview tab;
-    // anything else (run artifacts, .jld2, …) in the default editor.
-    const command = /\.(md|markdown)$/i.test(fsPath) ? "markdown.showPreview" : "vscode.open";
-    void vscode.commands.executeCommand(command, vscode.Uri.file(fsPath));
+    // Route to the Preview companion tab (#935) — the session page's
+    // preview-file listener (from #934) sets previewFile, opens the side
+    // panel, and switches to the Preview tab.
+    io.postToWebview({
+      source: "amicode",
+      kind: "preview-file",
+      path: fsPath,
+    });
+    return true;
+  }
+
+  // Open-file with an absolute path — native VS Code editor tab (#934).
+  // Used by the Preview tab's PDF placeholder ("Open in editor") and any
+  // future in-app file action that needs to open in a native tab rather
+  // than the companion preview. Same guards as the file:// URL handler.
+  if (
+    msg.kind === "open-file" &&
+    typeof (msg as { path?: unknown }).path === "string"
+  ) {
+    const fsPath = (msg as unknown as { path: string }).path;
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
+    void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
     return true;
   }
 

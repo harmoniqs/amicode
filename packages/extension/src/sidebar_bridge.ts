@@ -104,6 +104,7 @@ export type AddExistingEnvironmentMessage = { kind: "add-existing-environment" }
 export type GetRootsMessage = { kind: "get-roots" };
 export type GetChildrenMessage = { kind: "get-children"; path: string };
 export type OpenFileMessage = { kind: "open-file"; path: string };
+export type OpenFileEditorMessage = { kind: "open-file-editor"; path: string };
 export type FileOpMessage = { kind: "file-op" } & FileOpRequest;
 export type SetSectionOrderMessage = { kind: "set-section-order"; order: string[] };
 export type ReorderRootMessage = { kind: "reorder-root"; sourcePath: string; targetPath: string; position: "before" | "after" };
@@ -129,6 +130,7 @@ export type SidebarUpMessage =
   | GetRootsMessage
   | GetChildrenMessage
   | OpenFileMessage
+  | OpenFileEditorMessage
   | FileOpMessage
   | SetSectionOrderMessage
   | ReorderRootMessage
@@ -172,6 +174,8 @@ export interface SidebarMessageHandlers {
   getRoots: () => TreeRoot[];
   getChildren: (path: string) => Promise<TreeEntry[]>;
   openFile: (path: string) => void;
+  /** Open a file in a native VS Code editor tab (double-click, #932). */
+  openFileEditor?: (path: string) => void;
   fileOp: (req: FileOpRequest) => Promise<FileOpResult>;
   postMessage: (msg: SidebarDownMessage) => void;
   setSectionOrder: (order: string[]) => void;
@@ -226,6 +230,9 @@ export function handleSidebarMessage(
       });
     case "open-file":
       handlers.openFile(msg.path);
+      break;
+    case "open-file-editor":
+      handlers.openFileEditor?.(msg.path);
       break;
     case "set-section-order":
       handlers.setSectionOrder(msg.order);

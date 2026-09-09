@@ -333,6 +333,12 @@ export function SessionSidePanel(props: {
   })
   const treeWidth = createMemo(() => (fileOpen() ? `${fileTreeWidth()}px` : "0px"))
 
+  // ── Preview companion state ──────────────────────────────────────────────
+  // The file to show in the Preview tab. Null = empty state ("Select a file
+  // from the sidebar"). Managed in the layout context's ephemeral store so
+  // the bridge message handler can set it from outside the side panel.
+  const previewFile = createMemo(() => view().previewFile.get())
+
   const diffs = createMemo(() => props.diffs().filter(renderDiff))
   const diffFiles = createMemo(() => diffs().map((d) => d.file))
   const kinds = createMemo(() => {
@@ -815,7 +821,7 @@ export function SessionSidePanel(props: {
                           <Show when={activeTab() === SESSION_PREVIEW_TAB}>
                             <Tabs.Content value={SESSION_PREVIEW_TAB} class="flex flex-col h-full overflow-hidden contain-strict">
                               <div class="relative flex-1 min-h-0 overflow-hidden">
-                                <SessionPreviewTab diffs={diffs} touchedFiles={props.touchedFiles} />
+                                <SessionPreviewTab previewFile={previewFile} />
                               </div>
                             </Tabs.Content>
                           </Show>
@@ -1108,7 +1114,7 @@ export function SessionSidePanel(props: {
                         <Show when={activeTab() === SESSION_PREVIEW_TAB}>
                            <Tabs.Content value={SESSION_PREVIEW_TAB} class="flex flex-col h-full overflow-hidden contain-strict">
                              <div class="relative flex-1 min-h-0 overflow-hidden">
-                               <SessionPreviewTab diffs={diffs} touchedFiles={props.touchedFiles} />
+                               <SessionPreviewTab previewFile={previewFile} />
                              </div>
                            </Tabs.Content>
                         </Show>

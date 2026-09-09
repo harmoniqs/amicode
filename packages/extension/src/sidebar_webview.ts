@@ -1429,11 +1429,31 @@ function createIconEl(icon: string): HTMLElement {
     setupDragSource(row, entry.path);
     setupFileDropTarget(row);
 
+    // ── Single/double-click split (#932) ──────────────────────────────────
+    // Single-click → open-file (Preview companion, via extension host)
+    // Double-click → open-file-editor (native VS Code editor tab)
+    // A 250ms debounce distinguishes the two: on click, start a timer. If a
+    // second click arrives before the timer fires, cancel and send the
+    // double-click message. Otherwise the timer fires the single-click.
+    let clickTimer: ReturnType<typeof setTimeout> | null = null;
+
     row.addEventListener("click", () => {
       // Ghost entries (deleted from disk) can't be opened — read from DOM so
       // the guard reflects applyGitStatus updates (not a stale closure value)
       if (row.dataset.gitStatus === "deleted") return;
-      vscode.postMessage({ kind: "open-file", path: entry.path });
+
+      if (clickTimer !== null) {
+        // Second click within debounce window → double-click
+        clearTimeout(clickTimer);
+        clickTimer = null;
+        vscode.postMessage({ kind: "open-file-editor", path: entry.path });
+      } else {
+        // First click → start debounce timer for single-click
+        clickTimer = setTimeout(() => {
+          clickTimer = null;
+          vscode.postMessage({ kind: "open-file", path: entry.path });
+        }, 250);
+      }
     });
 
     return row;

@@ -45,30 +45,32 @@ describe("amicode bridge — open-external", () => {
   });
 });
 
-describe("amicode bridge — open-file", () => {
-  it("opens markdown files as a rendered preview tab", async () => {
+describe("amicode bridge — open-file routes to preview-file (#935)", () => {
+  it("routes markdown files to preview-file instead of markdown.showPreview", async () => {
     const host = io();
     const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.md`);
     fs.writeFileSync(target, "# note\n");
-    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
-    const before = executed.length;
     const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
     await flush();
-    expect(executed.slice(before)).toEqual(["markdown.showPreview"]);
+    // Should post preview-file to the webview, not execute a VS Code command
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeDefined();
+    expect(previewMsg!.path).toBe(target);
+    expect(previewMsg!.source).toBe("amicode");
     fs.rmSync(target, { force: true });
   });
 
-  it("opens non-markdown files in the default editor", async () => {
+  it("routes non-markdown files to preview-file as well", async () => {
     const host = io();
     const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.toml`);
     fs.writeFileSync(target, "fidelity = 0.9982\n");
-    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
-    const before = executed.length;
     const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
     await flush();
-    expect(executed.slice(before)).toEqual(["vscode.open"]);
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeDefined();
+    expect(previewMsg!.path).toBe(target);
     fs.rmSync(target, { force: true });
   });
 
@@ -85,7 +87,64 @@ describe("amicode bridge — open-file", () => {
       handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: "file:///definitely/not/here-xyz.md" }, host),
     ).toBe(true);
     await flush();
+    // No VS Code commands should have been executed
     expect(executed).toHaveLength(before);
+    // No preview-file message should have been posted
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeUndefined();
+  });
+});
+
+describe("amicode bridge — open-file with path (native editor, #934)", () => {
+  it("opens absolute path via vscode.open, not preview-file", async () => {
+    const host = io();
+    // Create a temp file so existsSync passes
+    const tmp = os.tmpdir();
+    const testFile = path.join(tmp, `amicode-test-${Date.now()}.pdf`);
+    fs.writeFileSync(testFile, "dummy");
+    try {
+      const consumed = handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "open-file", path: testFile },
+        host,
+      );
+      expect(consumed).toBe(true);
+      await flush();
+      const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+      expect(executed[executed.length - 1]).toBe("vscode.open");
+      // Should NOT post a preview-file message
+      const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+      expect(previewMsg).toBeUndefined();
+    } finally {
+      fs.unlinkSync(testFile);
+    }
+  });
+
+  it("rejects non-absolute paths and missing files", () => {
+    const host = io();
+    // Relative path — should be consumed but not opened
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-file", path: "relative/file.pdf" },
+      host,
+    )).toBe(true);
+    // Missing file
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-file", path: "/definitely/not/here.pdf" },
+      host,
+    )).toBe(true);
+  });
+});
+
+describe("chat panel relay — preview-file in iframe allowlist (#934)", () => {
+  it("the outer relay script forwards preview-file to the iframe", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "..", "src", "chat_panel.ts"),
+      "utf8",
+    );
+    // The relay allowlist (Lane 2) must include preview-file
+    // There are two relay instances (primary + adopted panel) — both must have it
+    const matches = src.match(/d\.kind === "preview-file"/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
   });
 });
 

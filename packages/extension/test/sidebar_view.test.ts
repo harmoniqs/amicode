@@ -355,7 +355,7 @@ describe("sidebar bridge — project tree scanning", () => {
     });
   });
 
-  it("open-file triggers the openFile handler", () => {
+   it("open-file triggers the openFile handler", () => {
     const openFile = vi.fn();
     handleSidebarMessage(
       { kind: "open-file", path: "/projects/quantum-sim/solve.jl" },
@@ -363,6 +363,26 @@ describe("sidebar bridge — project tree scanning", () => {
     );
 
     expect(openFile).toHaveBeenCalledWith("/projects/quantum-sim/solve.jl");
+  });
+
+  it("open-file-editor triggers the openFileEditor handler (#932)", () => {
+    const openFileEditor = vi.fn();
+    handleSidebarMessage(
+      { kind: "open-file-editor", path: "/projects/quantum-sim/solve.jl" },
+      { openChat: vi.fn(), newProject: vi.fn(), getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(), openFileEditor, postMessage: vi.fn() },
+    );
+
+    expect(openFileEditor).toHaveBeenCalledWith("/projects/quantum-sim/solve.jl");
+  });
+
+  it("open-file-editor is a no-op when handler not provided (#932)", () => {
+    // Should not throw when openFileEditor is undefined (optional handler)
+    expect(() => {
+      handleSidebarMessage(
+        { kind: "open-file-editor", path: "/projects/quantum-sim/solve.jl" },
+        { openChat: vi.fn(), newProject: vi.fn(), getRoots: vi.fn(), getChildren: vi.fn(), openFile: vi.fn(), postMessage: vi.fn() },
+      );
+    }).not.toThrow();
   });
 });
 
@@ -3216,11 +3236,12 @@ describe("ghost entry click behavior", () => {
       "utf8",
     );
     // The click handler in renderFileNode should check gitStatus before posting open-file
-    // Find the click handler block near "open-file"
+    // Since #932 the open-file post is inside a setTimeout callback, so the
+    // lookback window needs to span the entire debounce block.
     const openFileIdx = src.indexOf('"open-file"');
     expect(openFileIdx).toBeGreaterThan(-1);
     // There should be a gitStatus guard before the open-file post
-    const blockBefore = src.slice(Math.max(0, openFileIdx - 200), openFileIdx);
+    const blockBefore = src.slice(Math.max(0, openFileIdx - 600), openFileIdx);
     expect(blockBefore).toContain("gitStatus");
   });
 
@@ -3231,10 +3252,89 @@ describe("ghost entry click behavior", () => {
     );
     // Find the click handler near "open-file"
     const openFileIdx = src.indexOf('"open-file"');
-    const blockBefore = src.slice(Math.max(0, openFileIdx - 300), openFileIdx);
+    const blockBefore = src.slice(Math.max(0, openFileIdx - 600), openFileIdx);
     // Must read from row.dataset.gitStatus (DOM), not entry.gitStatus (closure)
     expect(blockBefore).toContain("row.dataset.gitStatus");
     expect(blockBefore).not.toContain("entry.gitStatus");
+  });
+});
+
+// ── Single/double-click split (#932) ─────────────────────────────────────────
+
+describe("sidebar file click — single/double-click split (#932)", () => {
+  it("webview source contains the debounce timer for click splitting", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The click handler should use a timer-based debounce
+    expect(src).toContain("clickTimer");
+    expect(src).toContain("setTimeout");
+    expect(src).toContain("clearTimeout");
+  });
+
+  it("single-click sends open-file (preview), double-click sends open-file-editor", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Both message kinds must be present
+    expect(src).toContain('"open-file"');
+    expect(src).toContain('"open-file-editor"');
+  });
+
+  it("debounce delay is 250ms", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // Find the setTimeout call near the click handler and verify delay
+    expect(src).toMatch(/setTimeout\([\s\S]*?,\s*250\)/);
+  });
+
+  it("ghost entries are still blocked before the debounce fires", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_webview.ts"),
+      "utf8",
+    );
+    // The gitStatus === "deleted" guard should appear before the clickTimer check
+    const clickTimerIdx = src.indexOf("clickTimer");
+    const deletedGuardIdx = src.lastIndexOf('"deleted"', clickTimerIdx);
+    expect(deletedGuardIdx).toBeGreaterThan(-1);
+    expect(deletedGuardIdx).toBeLessThan(clickTimerIdx);
+  });
+});
+
+// ── openFile → preview-file bridge routing (#934) ────────────────────────────
+
+describe("sidebar openFile routes to preview-file bridge message (#934)", () => {
+  it("openFile handler posts preview-file to the chat panel, not showTextDocument", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the openFile handler
+    const openFileIdx = src.indexOf("openFile:");
+    expect(openFileIdx).toBeGreaterThan(-1);
+    // The handler should reference preview-file message kind
+    const handlerBlock = src.slice(openFileIdx, openFileIdx + 400);
+    expect(handlerBlock).toContain("preview-file");
+    expect(handlerBlock).toContain("ChatPanel");
+  });
+
+  it("openFileEditor handler uses vscode.open (works for binary files) — not showTextDocument (#934)", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the openFileEditor handler
+    const editorIdx = src.indexOf("openFileEditor:");
+    expect(editorIdx).toBeGreaterThan(-1);
+    const handlerBlock = src.slice(editorIdx, editorIdx + 200);
+    // Must use vscode.open (handles images, PDFs, text — any file type)
+    expect(handlerBlock).toContain("vscode.open");
+    // Must NOT use showTextDocument (breaks on binary files)
+    expect(handlerBlock).not.toContain("showTextDocument");
   });
 });
 
