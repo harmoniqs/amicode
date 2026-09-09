@@ -23,6 +23,7 @@
     "./v2/*": "./src/v2/components/*.tsx",
     "./v2/editor-core": "./src/v2/components/editor-core.ts",
     "./v2/markdown-utils": "./src/v2/components/markdown-utils.ts",
+    "./v2/preview-editor": "./src/v2/components/preview-editor.tsx",
     "./v2/preview-nav-state": "./src/v2/components/preview-nav-state.ts",
     "./v2/prompt-input": "./src/v2/components/prompt-input/index.tsx",
     "./v2/prompt-input/interaction": "./src/v2/components/prompt-input/interaction.ts",

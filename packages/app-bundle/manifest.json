@@ -6,7 +6,7 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T18:48:31.556Z",
+  "extracted_at": "2026-09-09T18:52:48.263Z",
   "per_package": {
     "packages/app": {
       "A": 142,
@@ -958,7 +958,7 @@
     "packages/core/schema.json": "79ef4e2f0dd8103ac7a4b6ff3ddb0fd10764655f1dc678c1c401dfc43be9a1aa",
     "packages/session-ui/bunfig.toml": "82585987c8258caf58d07c6aaf4e49b7338e4da16f97c785af398aace9e6e722",
     "packages/session-ui/happydom.ts": "d81d6b14e988f058fa502c841df34b55307c57fc94a26fb4f8a5deb6aa0d4834",
-    "packages/session-ui/package.json": "264ac0feb56252ba3479db20dc57749e67fc2a13bce4dd23e22ea1757147f02f",
+    "packages/session-ui/package.json": "c5838c61cc5726509e8da4d1708283590070df88601d26ae400e62e71e6fd0c6",
     "packages/ui/package.json": "b1d168d0371e9094faae1107fc6c00be197f09bc69daa2247a3890d607f4b629",
     "packages/app/public/amico.svg": "a14b9d543d895bcdf0758f7b9ef5908ee0acaac794446494af059b159247db8f",
     "packages/app/public/oc-theme-preload.js": "27227e802b3494e7c545da903e679efdb30ccc754cd4eb5cdf08005a40d560b6",
