@@ -45,30 +45,32 @@ describe("amicode bridge — open-external", () => {
   });
 });
 
-describe("amicode bridge — open-file", () => {
-  it("opens markdown files as a rendered preview tab", async () => {
+describe("amicode bridge — open-file routes to preview-file (#935)", () => {
+  it("routes markdown files to preview-file instead of markdown.showPreview", async () => {
     const host = io();
     const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.md`);
     fs.writeFileSync(target, "# note\n");
-    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
-    const before = executed.length;
     const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
     await flush();
-    expect(executed.slice(before)).toEqual(["markdown.showPreview"]);
+    // Should post preview-file to the webview, not execute a VS Code command
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeDefined();
+    expect(previewMsg!.path).toBe(target);
+    expect(previewMsg!.source).toBe("amicode");
     fs.rmSync(target, { force: true });
   });
 
-  it("opens non-markdown files in the default editor", async () => {
+  it("routes non-markdown files to preview-file as well", async () => {
     const host = io();
     const target = path.join(os.tmpdir(), `amicode open file ${Date.now()}.toml`);
     fs.writeFileSync(target, "fidelity = 0.9982\n");
-    const executed = (vscode.commands as unknown as { executed: string[] }).executed;
-    const before = executed.length;
     const url = "file://" + target.split("/").map(encodeURIComponent).join("/");
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url }, host)).toBe(true);
     await flush();
-    expect(executed.slice(before)).toEqual(["vscode.open"]);
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeDefined();
+    expect(previewMsg!.path).toBe(target);
     fs.rmSync(target, { force: true });
   });
 
@@ -85,7 +87,11 @@ describe("amicode bridge — open-file", () => {
       handleAmicodeBridgeMessage({ source: "amicode", kind: "open-file", url: "file:///definitely/not/here-xyz.md" }, host),
     ).toBe(true);
     await flush();
+    // No VS Code commands should have been executed
     expect(executed).toHaveLength(before);
+    // No preview-file message should have been posted
+    const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+    expect(previewMsg).toBeUndefined();
   });
 });
 

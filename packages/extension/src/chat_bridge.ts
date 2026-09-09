@@ -146,10 +146,14 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
     if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
-    // Markdown (spec cards, vault notes) opens as a rendered preview tab;
-    // anything else (run artifacts, .jld2, …) in the default editor.
-    const command = /\.(md|markdown)$/i.test(fsPath) ? "markdown.showPreview" : "vscode.open";
-    void vscode.commands.executeCommand(command, vscode.Uri.file(fsPath));
+    // Route to the Preview companion tab (#935) — the session page's
+    // preview-file listener (from #934) sets previewFile, opens the side
+    // panel, and switches to the Preview tab.
+    io.postToWebview({
+      source: "amicode",
+      kind: "preview-file",
+      path: fsPath,
+    });
     return true;
   }
 
