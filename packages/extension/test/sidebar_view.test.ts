@@ -3322,7 +3322,7 @@ describe("sidebar openFile routes to preview-file bridge message (#934)", () => 
     expect(handlerBlock).toContain("ChatPanel");
   });
 
-  it("openFileEditor handler still uses showTextDocument for native editor tabs", () => {
+  it("openFileEditor handler uses vscode.open (works for binary files) — not showTextDocument (#934)", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_view.ts"),
       "utf8",
@@ -3331,7 +3331,10 @@ describe("sidebar openFile routes to preview-file bridge message (#934)", () => 
     const editorIdx = src.indexOf("openFileEditor:");
     expect(editorIdx).toBeGreaterThan(-1);
     const handlerBlock = src.slice(editorIdx, editorIdx + 200);
-    expect(handlerBlock).toContain("showTextDocument");
+    // Must use vscode.open (handles images, PDFs, text — any file type)
+    expect(handlerBlock).toContain("vscode.open");
+    // Must NOT use showTextDocument (breaks on binary files)
+    expect(handlerBlock).not.toContain("showTextDocument");
   });
 });
 
