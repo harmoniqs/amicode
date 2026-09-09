@@ -650,4 +650,43 @@ describe("amicode bridge — dev-tools-update path validation", () => {
     expect(reply.opencodeValid).toBe(false);
     expect(reply.amicodeValid).toBe(false);
   });
+
+  // #941: committing a path must never build or reload on its own — only
+  // the explicit "Rebuild Locally"/"Rebuild from Main" buttons (a separate
+  // dev-tools-rebuild message) may do that. Before this fix, blurring EITHER
+  // path field re-sent both current paths, and a valid non-empty amicodePath
+  // eagerly kicked off a real `bun run build` + an unconfirmed window reload.
+  it("committing a valid amicode path only validates — no build, no reload, no devAssetRoot write (#941)", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-update",
+      enabled: true,
+      opencodePath: path.join(tmpRoot, "opencode"),
+      amicodePath: fakeAmicodeRepo,
+    }, host);
+    await flush();
+    // Exactly one status reply — a synchronous validation, not an interim
+    // "building" message followed by a later "done" message.
+    const statusMessages = host.posted.filter((m: any) => m.kind === "dev-tools-status");
+    expect(statusMessages).toHaveLength(1);
+    const reply = statusMessages[0] as any;
+    expect(reply.amicodeValid).toBe(true);
+    expect(reply.building).toBeFalsy();
+    expect(reply.reloadNeeded).toBeFalsy();
+    expect(ws.configUpdates.some(([key]) => key === "devAssetRoot")).toBe(false);
+  });
+
+  it("clearing the amicode path still clears any devAssetRoot override (not a build, just removing one)", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-update",
+      enabled: true,
+      opencodePath: "",
+      amicodePath: "",
+    }, host);
+    await flush();
+    expect(ws.configUpdates).toContainEqual(["devAssetRoot", ""]);
+  });
 });

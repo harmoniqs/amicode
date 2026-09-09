@@ -323,8 +323,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Developer Tools settings: validate paths, write VS Code settings, restart
-  // server / prompt reload as appropriate. The app posts on blur and on toggle.
+  // Developer Tools settings: validate paths, swap the opencode binary +
+  // restart its server as appropriate. The app posts on blur and on toggle.
+  // Committing the amicode path is validate-only — no build, no reload; see
+  // the note at that branch below (#941).
   if (msg.kind === "dev-tools-update") {
     const enabled = (msg as { enabled?: unknown }).enabled === true;
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
@@ -463,55 +465,21 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       reply.serverRestarted = true;
     }
 
-    if (reply.amicodeValid && amicodePath) {
-      // Run a full extension build in the amicode repo root, then set devAssetRoot
-      // to the built extension directory and prompt a reload with deep-link to
-      // the developer tools section for continuity.
-      const extensionDir = path.join(amicodePath, "packages", "extension");
-
-      // Notify the app that a build is in progress
-      io.postToWebview({ ...reply, building: true });
-
-      // Build + reload is async; fire-and-forget from the sync handler.
-      void (async () => {
-      const { exec } = await import("child_process");
-        const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-          exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
-            if (err) {
-              resolve({ ok: false, error: stderr?.trim() || err.message });
-            } else {
-              resolve({ ok: true });
-            }
-          });
-        });
-
-        if (!buildResult.ok) {
-          reply.amicodeValid = false;
-          reply.amicodeError = `Build failed: ${buildResult.error?.slice(0, 200) ?? "unknown error"}`;
-          io.postToWebview(reply);
-          return;
-        }
-
-        void vscode.workspace.getConfiguration("amicode").update(
-          "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
-        );
-        reply.reloadNeeded = true;
-        io.postToWebview(reply);
-
-        // Auto-reload after a short delay so the webview can persist state.
-        setTimeout(() => {
-          void vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }, 500);
-      })();
-    } else if (reply.amicodeValid && !amicodePath) {
+    // Committing the amicode path only validates it (above) — it never
+    // builds or reloads on its own (#941). Blurring a path field used to
+    // eagerly run a real `bun run build` and auto-reload the window with no
+    // confirmation, and since the app always resends BOTH current paths on
+    // any field's blur, even an unrelated edit to the opencode field would
+    // retrigger it. Building is now exclusively an explicit action — the
+    // "Rebuild Locally" / "Rebuild from Main" buttons (dev-tools-rebuild,
+    // below), which are self-sufficient and don't depend on anything set
+    // here. Clearing the path to empty still clears any devAssetRoot
+    // override, since that's just removing a setting, not building one.
+    if (reply.amicodeValid && !amicodePath) {
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
     }
 
-    // For the async build case, the reply is posted from within the IIFE.
-    // For all other cases, post the reply here.
-    if (!(reply.amicodeValid && amicodePath)) {
-      io.postToWebview(reply);
-    }
+    io.postToWebview(reply);
     return true;
   }
 
