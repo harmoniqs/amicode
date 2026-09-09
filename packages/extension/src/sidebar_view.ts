@@ -357,7 +357,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => {
       const handlers: SidebarMessageHandlers = {
         openChat: () => vscode.commands.executeCommand("amicode.openChat"),
-        newProject: () => vscode.commands.executeCommand("amicode.newProject"),
+        newProject: (environmentSlug?: string) => vscode.commands.executeCommand("amicode.newProject", environmentSlug),
         addExisting: () => addExistingProject(),
         newEnvironment: () => vscode.commands.executeCommand("amicode.newEnvironment"),
         addExistingEnvironment: () => addExistingEnvironment(),
@@ -1162,8 +1162,10 @@ export interface NewProjectContext {
 /**
  * "New Project" flow: save-dialog (user types folder name) → mkdir → workspace → session.
  * Exported for testing; the amicode.newProject command delegates here.
+ * @param environmentSlug — when provided, appends `--environment <slug>` to the session prompt
+ *   so the skill auto-binds the new project's `[environment].slug` (#916).
  */
-export async function createNewProject(ctx: NewProjectContext): Promise<void> {
+export async function createNewProject(ctx: NewProjectContext, environmentSlug?: string): Promise<void> {
   if (!ctx.isServerReady()) {
     void vscode.window.showWarningMessage(
       "Amicode: opencode server isn't ready yet. Check the 'Amicode — opencode' output channel.",
@@ -1197,7 +1199,10 @@ export async function createNewProject(ctx: NewProjectContext): Promise<void> {
     vscode.workspace.updateWorkspaceFolders(folders.length, 0, { uri: vscode.Uri.file(dir) });
   }
 
-  const prompt = `/create-research-project --path "${dir}"`;
+  let prompt = `/create-research-project --path "${dir}"`;
+  if (environmentSlug) {
+    prompt += ` --environment "${environmentSlug}"`;
+  }
   ctx.launchSession(prompt);
 }
 

@@ -433,6 +433,89 @@ function createIconEl(icon: string): HTMLElement {
       return;
     }
 
+    // ── Environment group header context menu (#916) ─────────────────────
+    const envGroupHeader = target.closest(".env-group-header") as HTMLElement | null;
+    if (envGroupHeader) {
+      const envContainer = envGroupHeader.closest("[data-env-group='true']") as HTMLElement | null;
+      if (envContainer) {
+        e.preventDefault();
+        dismissMenu();
+
+        const envPath = envContainer.dataset.path ?? "";
+        const envSlug = envContainer.dataset.envSlug ?? "";
+        const envSource = envContainer.dataset.envSource ?? "";
+
+        const menu = document.createElement("div");
+        menu.className = "context-menu";
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+
+        // "New Project in this Environment"
+        const newInEnv = document.createElement("div");
+        newInEnv.className = "context-menu-item";
+        newInEnv.textContent = "New Project in this Environment";
+        newInEnv.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "new-project", environmentSlug: envSlug });
+        });
+        menu.appendChild(newInEnv);
+
+        // Separator
+        const sep = document.createElement("div");
+        sep.className = "context-menu-separator";
+        menu.appendChild(sep);
+
+        // Add to Workspace / Remove from Workspace (mutually exclusive)
+        if (envSource === "resolved") {
+          const addWs = document.createElement("div");
+          addWs.className = "context-menu-item";
+          addWs.textContent = "Add to Workspace";
+          addWs.addEventListener("click", () => {
+            dismissMenu();
+            vscode.postMessage({ kind: "file-op", op: "add-to-workspace", path: envPath });
+          });
+          menu.appendChild(addWs);
+        } else {
+          const removeWs = document.createElement("div");
+          removeWs.className = "context-menu-item";
+          removeWs.textContent = "Remove from Workspace";
+          removeWs.addEventListener("click", () => {
+            dismissMenu();
+            vscode.postMessage({ kind: "file-op", op: "remove-from-workspace", path: envPath });
+          });
+          menu.appendChild(removeWs);
+        }
+
+        // Separator
+        const sep2 = document.createElement("div");
+        sep2.className = "context-menu-separator";
+        menu.appendChild(sep2);
+
+        // Reveal in Finder
+        const reveal = document.createElement("div");
+        reveal.className = "context-menu-item";
+        reveal.textContent = "Reveal in Finder";
+        reveal.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "file-op", op: "reveal-in-os", path: envPath });
+        });
+        menu.appendChild(reveal);
+
+        document.body.appendChild(menu);
+        activeMenu = menu;
+
+        // Clamp to viewport bounds
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+          menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+          menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+        }
+        return;
+      }
+    }
+
     // Handle right-clicks on tree nodes
     const treeNode = target.closest(".tree-node") as HTMLElement | null;
     if (!treeNode) {
@@ -450,23 +533,44 @@ function createIconEl(icon: string): HTMLElement {
           menu.style.left = `${e.clientX}px`;
           menu.style.top = `${e.clientY}px`;
 
-          const addItem = document.createElement("div");
-          addItem.className = "context-menu-item";
-          addItem.textContent = "Add Existing Project";
-          addItem.addEventListener("click", () => {
-            dismissMenu();
-            vscode.postMessage({ kind: "add-existing" });
-          });
-          menu.appendChild(addItem);
+          if (sectionKey === "research") {
+            // Research section: 4-item menu (#916)
+            const items = [
+              { label: "New Project", msg: { kind: "new-project" } },
+              { label: "New Environment", msg: { kind: "new-environment" } },
+              { label: "Add Existing Project", msg: { kind: "add-existing" } },
+              { label: "Add Existing Environment", msg: { kind: "add-existing-environment" } },
+            ];
+            for (const item of items) {
+              const el = document.createElement("div");
+              el.className = "context-menu-item";
+              el.textContent = item.label;
+              el.addEventListener("click", () => {
+                dismissMenu();
+                vscode.postMessage(item.msg);
+              });
+              menu.appendChild(el);
+            }
+          } else {
+            // Dev section: 2-item menu
+            const addItem = document.createElement("div");
+            addItem.className = "context-menu-item";
+            addItem.textContent = "Add Existing Project";
+            addItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "add-existing" });
+            });
+            menu.appendChild(addItem);
 
-          const newItem = document.createElement("div");
-          newItem.className = "context-menu-item";
-          newItem.textContent = "New Project";
-          newItem.addEventListener("click", () => {
-            dismissMenu();
-            vscode.postMessage({ kind: "new-project" });
-          });
-          menu.appendChild(newItem);
+            const newItem = document.createElement("div");
+            newItem.className = "context-menu-item";
+            newItem.textContent = "New Project";
+            newItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "new-project" });
+            });
+            menu.appendChild(newItem);
+          }
 
           document.body.appendChild(menu);
           activeMenu = menu;
@@ -1012,11 +1116,54 @@ function createIconEl(icon: string): HTMLElement {
     const addBtn = document.createElement("button");
     addBtn.className = "section-add-btn";
     addBtn.textContent = "+";
-    addBtn.title = "Add existing project";
-    addBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      vscode.postMessage({ kind: "add-existing" });
-    });
+    if (sectionKey === "research") {
+      // Research section: dropdown with 4 items (#916)
+      addBtn.title = "Add project or environment";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        dismissMenu();
+        const dropdown = document.createElement("div");
+        dropdown.className = "context-menu section-add-dropdown";
+        const rect = addBtn.getBoundingClientRect();
+        dropdown.style.left = `${rect.left}px`;
+        dropdown.style.top = `${rect.bottom + 2}px`;
+
+        const items = [
+          { label: "New Project", msg: { kind: "new-project" } },
+          { label: "New Environment", msg: { kind: "new-environment" } },
+          { label: "Add Existing Project", msg: { kind: "add-existing" } },
+          { label: "Add Existing Environment", msg: { kind: "add-existing-environment" } },
+        ];
+        for (const item of items) {
+          const el = document.createElement("div");
+          el.className = "context-menu-item";
+          el.textContent = item.label;
+          el.addEventListener("click", () => {
+            dismissMenu();
+            vscode.postMessage(item.msg);
+          });
+          dropdown.appendChild(el);
+        }
+
+        document.body.appendChild(dropdown);
+        activeMenu = dropdown;
+
+        // Clamp to viewport bounds
+        const menuRect = dropdown.getBoundingClientRect();
+        if (menuRect.right > window.innerWidth) {
+          dropdown.style.left = `${window.innerWidth - menuRect.width - 4}px`;
+        }
+        if (menuRect.bottom > window.innerHeight) {
+          dropdown.style.top = `${window.innerHeight - menuRect.height - 4}px`;
+        }
+      });
+    } else {
+      addBtn.title = "Add existing project";
+      addBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vscode.postMessage({ kind: "add-existing" });
+      });
+    }
 
     header.appendChild(chevron);
     header.appendChild(titleEl);
@@ -1275,6 +1422,8 @@ function createIconEl(icon: string): HTMLElement {
     container.dataset.path = env.path;
     container.dataset.type = "directory";
     container.dataset.envGroup = "true";
+    container.dataset.envSlug = env.environment?.slug ?? "";
+    container.dataset.envSource = env.source ?? "";
 
     const row = document.createElement("div");
     row.className = "tree-node env-group-header";

@@ -97,7 +97,7 @@ export type SidebarDownMessage =
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
 export type OpenChatMessage = { kind: "open-chat" };
-export type NewProjectMessage = { kind: "new-project" };
+export type NewProjectMessage = { kind: "new-project"; environmentSlug?: string };
 export type AddExistingMessage = { kind: "add-existing" };
 export type NewEnvironmentMessage = { kind: "new-environment" };
 export type AddExistingEnvironmentMessage = { kind: "add-existing-environment" };
@@ -234,7 +234,7 @@ export function resolveSectionOrder(savedOrder: string[], available: string[]): 
 
 export interface SidebarMessageHandlers {
   openChat: () => void;
-  newProject: () => void;
+  newProject: (environmentSlug?: string) => void;
   addExisting: () => void;
   newEnvironment: () => void;
   addExistingEnvironment: () => void;
@@ -269,7 +269,7 @@ export function handleSidebarMessage(
       handlers.openChat();
       break;
     case "new-project":
-      handlers.newProject();
+      handlers.newProject(msg.environmentSlug);
       break;
     case "add-existing":
       handlers.addExisting();
