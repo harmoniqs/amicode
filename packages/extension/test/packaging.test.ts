@@ -53,6 +53,7 @@ const REQUIRED = [
   "extension/scripts/pasqal-connector/requirements.txt",
   "extension/THIRD_PARTY_LICENSES.md", // MIT notice for the vendored opencode binary — must ship (license compliance)
   "extension/readme.md", // marketplace detail-page body (vsce lowercases README.md) — a dropped README = blank listing page
+  "extension/dist/app/index.html", // app shelf entry document — a missing bundle leaves installed users at the setup placeholder
 
   "extension/templates/solve_template.jl",
   "extension/templates/solve_template_hp.jl", // HP-mode vetted template (Piccolissimo) — mode-selected at prep time
