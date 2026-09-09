@@ -1109,61 +1109,8 @@ function createIconEl(icon: string): HTMLElement {
     titleEl.className = "section-title";
     titleEl.textContent = title;
 
-    const addBtn = document.createElement("button");
-    addBtn.className = "section-add-btn";
-    addBtn.textContent = "+";
-    if (sectionKey === "research") {
-      // Research section: dropdown with 4 items (#916)
-      addBtn.title = "Add project or environment";
-      addBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        dismissMenu();
-        const dropdown = document.createElement("div");
-        dropdown.className = "context-menu section-add-dropdown";
-        const rect = addBtn.getBoundingClientRect();
-        dropdown.style.left = `${rect.left}px`;
-        dropdown.style.top = `${rect.bottom + 2}px`;
-
-        const items = [
-          { label: "New Project", msg: { kind: "new-project" } },
-          { label: "New Environment", msg: { kind: "new-environment" } },
-          { label: "Add Existing Project", msg: { kind: "add-existing" } },
-          { label: "Add Existing Environment", msg: { kind: "add-existing-environment" } },
-        ];
-        for (const item of items) {
-          const el = document.createElement("div");
-          el.className = "context-menu-item";
-          el.textContent = item.label;
-          el.addEventListener("click", () => {
-            dismissMenu();
-            vscode.postMessage(item.msg);
-          });
-          dropdown.appendChild(el);
-        }
-
-        document.body.appendChild(dropdown);
-        activeMenu = dropdown;
-
-        // Clamp to viewport bounds
-        const menuRect = dropdown.getBoundingClientRect();
-        if (menuRect.right > window.innerWidth) {
-          dropdown.style.left = `${window.innerWidth - menuRect.width - 4}px`;
-        }
-        if (menuRect.bottom > window.innerHeight) {
-          dropdown.style.top = `${window.innerHeight - menuRect.height - 4}px`;
-        }
-      });
-    } else {
-      addBtn.title = "Add existing project";
-      addBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        vscode.postMessage({ kind: "add-existing" });
-      });
-    }
-
     header.appendChild(chevron);
     header.appendChild(titleEl);
-    header.appendChild(addBtn);
 
     const body = document.createElement("div");
     body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";

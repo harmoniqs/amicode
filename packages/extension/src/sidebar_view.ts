@@ -996,30 +996,6 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .tree-section-label .section-title {
       flex: 1;
     }
-    .tree-section-label .section-add-btn {
-      width: 20px;
-      height: 20px;
-      border: none;
-      background: transparent;
-      color: var(--vscode-descriptionForeground);
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 300;
-      line-height: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 4px;
-      flex-shrink: 0;
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-    .tree-section-label:hover .section-add-btn {
-      opacity: 1;
-    }
-    .section-add-btn:hover {
-      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
-    }
     .fleet-placeholder-text {
       padding: 8px 12px 8px 32px;
       font-size: 12px;

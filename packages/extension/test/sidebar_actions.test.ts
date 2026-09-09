@@ -13,13 +13,15 @@ const bridgeSrc = readFileSync(
   "utf8",
 );
 
-describe("sidebar + dropdown (#916)", () => {
-  it("research section + button creates a dropdown menu (not a direct action)", () => {
-    // The + button for the research section should create a dropdown
-    expect(webviewSrc).toMatch(/add-dropdown|section-add-dropdown/);
+describe("sidebar + dropdown removed — actions in context menus (#916)", () => {
+  it("no section-add-dropdown (section + buttons removed)", () => {
+    // The per-section + button and its dropdown were removed — all actions
+    // live in the header bar and empty-area / env-group context menus.
+    expect(webviewSrc).not.toContain("section-add-dropdown");
+    expect(webviewSrc).not.toContain("section-add-btn");
   });
 
-  it("dropdown contains New Project, New Environment, Add Existing Project, Add Existing Environment", () => {
+  it("context menus still contain New Project, New Environment, Add Existing Project, Add Existing Environment", () => {
     expect(webviewSrc).toMatch(/New Project/);
     expect(webviewSrc).toMatch(/New Environment/);
     expect(webviewSrc).toMatch(/Add Existing Project/);

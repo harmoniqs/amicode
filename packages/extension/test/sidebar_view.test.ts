@@ -979,12 +979,10 @@ describe("sidebar webview — context menu bugfixes v2 (#895)", () => {
     expect(src).toMatch(/Add Existing Project/);
   });
 
-  it("'+' button on section header sends add-existing (no separate environments section)", () => {
-    // After #911, there is no separate environments section — the '+' button
-    // always sends "add-existing" for project additions.
-    const match = src.match(/addBtn\.title\s*=\s*["']Add existing project["'][\s\S]*?postMessage\(\{[^}]*kind:\s*["']([^"']+)["']/);
-    expect(match).not.toBeNull();
-    expect(match![1]).toBe("add-existing");
+  it("section headers have no + button (actions live in header bar and context menus)", () => {
+    // Section + buttons removed — duplicated by the header "+ New Project"
+    // dropdown and the empty-area / env-group context menus.
+    expect(src).not.toContain("section-add-btn");
   });
 });
 
@@ -1588,21 +1586,20 @@ describe("sidebar webview — section labels", () => {
     expect(src).toContain('"Development Projects"');
   });
 
-  it("sections are collapsible with chevrons and a + button for add-existing", () => {
+  it("sections are collapsible with chevrons (no + button — actions in header/context menus)", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
     // Section headers have chevrons
     expect(src).toContain("section-chevron");
-    // Section headers have a + button that posts add-existing
-    expect(src).toContain("section-add-btn");
-    expect(src).toContain("add-existing");
+    // No per-section + button — duplicated by header bar and context menus
+    expect(src).not.toContain("section-add-btn");
     // Sections track expanded/collapsed state
     expect(src).toContain("sectionExpanded");
   });
 
-  it("section header CSS has collapsible styling with + button that appears on hover", () => {
+  it("section header CSS has collapsible styling (no + button CSS)", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
@@ -1611,9 +1608,8 @@ describe("sidebar webview — section labels", () => {
     const html = view.webview.html;
     // Section label is a flex row with cursor: pointer
     expect(html).toMatch(/\.tree-section-label\s*\{[^}]*cursor:\s*pointer/);
-    // + button is hidden by default, shown on hover
-    expect(html).toMatch(/\.section-add-btn[^{]*\{[^}]*opacity:\s*0/);
-    expect(html).toMatch(/\.tree-section-label:hover\s+\.section-add-btn[^{]*\{[^}]*opacity:\s*1/);
+    // No + button CSS
+    expect(html).not.toContain("section-add-btn");
   });
 
   it("sections use pixel-positioned layout with border-top separators", () => {
@@ -1753,14 +1749,14 @@ describe("sidebar — add existing project", () => {
     handleSidebarMessage = bridgeMod.handleSidebarMessage;
   });
 
-  it("section + button posts add-existing message to host", () => {
+  it("no section + button — add-existing available via context menus and header", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // The + button in each section header posts add-existing
+    // add-existing still exists (context menus, header bar) but not via section button
     expect(src).toContain('kind: "add-existing"');
-    expect(src).toContain("section-add-btn");
+    expect(src).not.toContain("section-add-btn");
   });
 
   it("header contains an existing-project button", () => {
