@@ -6,11 +6,11 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T06:15:22.806Z",
+  "extracted_at": "2026-09-09T14:45:18.842Z",
   "per_package": {
     "packages/app": {
       "A": 140,
-      "M": 151,
+      "M": 152,
       "D": 0
     },
     "packages/core": {
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 598,
+    "overlay_total": 599,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -413,6 +413,7 @@
     "packages/app/src/components/dialog-release-notes.tsx": "M",
     "packages/app/src/components/dialog-select-directory-v2.css": "M",
     "packages/app/src/components/dialog-select-file.tsx": "M",
+    "packages/app/src/components/external-link.tsx": "M",
     "packages/app/src/components/help-button.tsx": "M",
     "packages/app/src/components/pane-bridge.tsx": "A",
     "packages/app/src/components/posture-indicator-view.tsx": "A",
@@ -1006,13 +1007,14 @@
     "packages/app/src/components/connection-banner.tsx": "c793966e1f9d6f307af697032b235c2ff65afaa04f6cc232e40ce45e5745ded4",
     "packages/app/src/components/dialog-command-palette-v2.css": "85984957adaf15efcc0828310f3a0b438cedaaba776a9fec2eddb3ad83487fa2",
     "packages/app/src/components/dialog-command-palette-v2.tsx": "e12da3e5e9e503089dd9139b20e04f6b566cf74fa445f23a2e193f5883f7c5f3",
-    "packages/app/src/components/dialog-connect-provider.tsx": "bdcb33a4aca41578ef52e566223016626ba62dfb6ed31f572958abf92a30ade3",
+    "packages/app/src/components/dialog-connect-provider.tsx": "d566c31e52a430b581a91325ddc8dc22944775e13fe71577c0690470100420e0",
     "packages/app/src/components/dialog-edit-project-v2.tsx": "f34aaed28604facd9d8a46a4934e2b331421d5f60902a2b160ddcec11af03bd9",
     "packages/app/src/components/dialog-edit-project.tsx": "5371da3de3a643d4347629af55c0adc2476bffe7b2f061535a92fd67e756e562",
     "packages/app/src/components/dialog-new-project.tsx": "102fc33e8eeaf3c76ddd1b953b7b97995d30c02a3579f8b7036e47448a1582a8",
     "packages/app/src/components/dialog-release-notes.tsx": "0ea5b049786787643a7f6b54d4ccf84c4f8ffa4e8272426c0d32f60d445b6890",
     "packages/app/src/components/dialog-select-directory-v2.css": "2e2f18abdca77f9fe85da157c40f288f3b1641ca92845208749e16455fd58637",
     "packages/app/src/components/dialog-select-file.tsx": "e6278ee35dd27d203e00ad73f70c709c44a6c06f81ffbd931edfaa0c986b9e03",
+    "packages/app/src/components/external-link.tsx": "7130044026ad3ec417de4ba7389cc6059de46f21b370047046269c772aa7a4bb",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
     "packages/app/src/components/posture-indicator-view.tsx": "1bd7903838926b21609c08460ff06683c6e0f378ae968e8b497de041d0f09bdd",

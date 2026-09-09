@@ -4,6 +4,16 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const VSIX = join(__dirname, "..", "amicode.vsix");
+const APP_BUNDLE_DIALOG = join(__dirname, "..", "..", "app-bundle", "overlay", "packages", "app", "src", "components", "dialog-connect-provider.tsx");
+const APP_BUNDLE_EXTERNAL_LINK = join(__dirname, "..", "..", "app-bundle", "overlay", "packages", "app", "src", "components", "external-link.tsx");
+
+describe("app-bundle OpenAI browser OAuth", () => {
+  it("uses the host external-link bridge for automatic and manual browser authorization", () => {
+    expect(readFileSync(APP_BUNDLE_DIALOG, "utf8")).toContain('selected.id === "chatgpt-browser"');
+    expect(readFileSync(APP_BUNDLE_DIALOG, "utf8")).toContain("platform.openExternal(store.authorization!.url)");
+    expect(readFileSync(APP_BUNDLE_EXTERNAL_LINK, "utf8")).toContain("platform.openExternal(local.href)");
+  });
+});
 
 // #807 — the public workflow skill set (spec-20260905-063000 D2, the ADR-0011
 // amendment's content-kind split: workflow-level public, package-proprietary
@@ -133,6 +143,13 @@ describe.skipIf(!existsSync(VSIX) && !REQUIRE_VSIX)("packaged VSIX contains runt
     const listing = execFileSync("unzip", ["-Z1", VSIX], { encoding: "utf8" });
     for (const p of REQUIRED) expect(listing, `missing ${p}`).toContain(p);
     expect(/extension\/vendor\/opencode\/.+\/opencode/.test(listing), "missing vendored opencode").toBe(true);
+  });
+  it("contains the OpenAI browser OAuth bridge in the built app", () => {
+    const listing = execFileSync("unzip", ["-Z1", VSIX], { encoding: "utf8" });
+    const asset = listing.split("\n").find((path) => /extension\/dist\/app\/assets\/dialog-connect-provider-.+\.js$/.test(path));
+    expect(asset, "missing built provider-connect asset").toBeDefined();
+    const source = execFileSync("unzip", ["-p", VSIX, asset!], { encoding: "utf8" });
+    expect(source).toContain("chatgpt-browser");
   });
   // The in-repo public skill library (packages/extension/skills/) is the ONLY
   // library root a Marketplace user has — if it's dropped, a published
