@@ -897,6 +897,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .env-files-visible > .env-bound-projects {
       margin-top: 4px;
     }
+    [data-env-group] + [data-env-group],
+    [data-path][data-type="directory"]:not([data-env-group]) + [data-env-group] {
+      margin-top: 4px;
+    }
     /* ── Drag and drop ─────────────────────────────────────────── */
     .tree-node.drop-target {
       background: var(--vscode-list-dropBackground, rgba(83, 89, 93, 0.5));
