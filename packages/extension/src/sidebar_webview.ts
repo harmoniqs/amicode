@@ -549,15 +549,6 @@ function createIconEl(icon: string): HTMLElement {
             }
           } else {
             // Dev section: 2-item menu
-            const addItem = document.createElement("div");
-            addItem.className = "context-menu-item";
-            addItem.textContent = "Add Existing Project";
-            addItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "add-existing" });
-            });
-            menu.appendChild(addItem);
-
             const newItem = document.createElement("div");
             newItem.className = "context-menu-item";
             newItem.textContent = "New Project";
@@ -566,6 +557,15 @@ function createIconEl(icon: string): HTMLElement {
               vscode.postMessage({ kind: "new-project" });
             });
             menu.appendChild(newItem);
+
+            const addItem = document.createElement("div");
+            addItem.className = "context-menu-item";
+            addItem.textContent = "Add Existing Project";
+            addItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "add-existing" });
+            });
+            menu.appendChild(addItem);
           }
 
           document.body.appendChild(menu);
