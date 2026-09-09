@@ -746,7 +746,7 @@ describe("SidebarViewProvider — section order persistence", () => {
     const calls = (view.webview.postMessage as any).mock.calls;
     const orderCalls = calls.filter((c: any) => c[0]?.kind === "section-order");
     expect(orderCalls).toHaveLength(1);
-    expect(orderCalls[0][0].order).toEqual(["environments", "research", "dev", "fleet"]);
+    expect(orderCalls[0][0].order).toEqual(["research", "dev", "fleet"]);
   });
 
   it("setSectionOrder persists to globalState", () => {
@@ -866,40 +866,42 @@ describe("sidebar webview — section reorder structure", () => {
   });
 });
 
-// ── Research Environments section (#895) ─────────────────────────────────────
+// ── Environments nested in research section (#911) ───────────────────────────
 
-describe("sidebar webview — environments section (#895)", () => {
+describe("sidebar webview — environments nested in research (#911)", () => {
   const src = readFileSync(
     resolve(__dirname, "..", "src", "sidebar_webview.ts"),
     "utf8",
   );
 
-  it("renderRoots renders an environments section via renderSectionHeader", () => {
-    expect(src).toMatch(/renderSectionHeader\s*\(\s*["']Research Environments["']\s*,\s*["']environments["']\s*\)/);
+  it("renderRoots does NOT render a separate environments section", () => {
+    expect(src).not.toMatch(/renderSectionHeader\s*\(\s*["']Research Environments["']\s*,\s*["']environments["']\s*\)/);
   });
 
-  it("renderRoots groups environment roots by projectType", () => {
-    // Must filter roots by projectType === "environment"
+  it("renderRoots uses groupRootsForResearchSection to group roots", () => {
+    expect(src).toContain("groupRootsForResearchSection");
+  });
+
+  it("renderRoots renders environment groups via renderEnvGroupNode", () => {
+    expect(src).toContain("renderEnvGroupNode");
+  });
+
+  it("renderRoots groups environment roots by projectType for nesting", () => {
+    // Must still filter/handle projectType === "environment"
     expect(src).toMatch(/projectType\s*===?\s*["']environment["']/);
-  });
-
-  it("sectionExpanded includes environments key", () => {
-    expect(src).toMatch(/environments\s*:/);
-    expect(src).toMatch(/__section_environments/);
   });
 
   it("webview TreeRoot type includes environment projectType", () => {
     expect(src).toMatch(/projectType.*environment/);
   });
 
-  it("resolveSectionOrder migrates environments before research for existing users", () => {
-    // The migration inserts "environments" before "research" when missing
+  it("resolveSectionOrder strips environments from saved order (#911 migration)", () => {
     expect(src).toMatch(/environments/);
-    expect(src).toMatch(/research/);
+    expect(src).toMatch(/filter/);
   });
 });
 
-describe("SidebarViewProvider — environments section order (#895)", () => {
+describe("SidebarViewProvider — section order (#911)", () => {
   let SidebarViewProvider: any;
 
   beforeEach(async () => {
@@ -908,30 +910,25 @@ describe("SidebarViewProvider — environments section order (#895)", () => {
     SidebarViewProvider = mod.SidebarViewProvider;
   });
 
-  it("DEFAULT_SECTION_ORDER includes environments as the first element", () => {
-    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER[0]).toBe("environments");
-    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER).toEqual(["environments", "research", "dev", "fleet"]);
+  it("DEFAULT_SECTION_ORDER is research, dev, fleet (no environments)", () => {
+    expect(SidebarViewProvider.DEFAULT_SECTION_ORDER).toEqual(["research", "dev", "fleet"]);
   });
 });
 
-// ── Empty states for all sections (#895) ─────────────────────────────────────
+// ── Empty states for sections (#911) ─────────────────────────────────────────
 
-describe("sidebar webview — empty states (#895)", () => {
+describe("sidebar webview — empty states (#911)", () => {
   const src = readFileSync(
     resolve(__dirname, "..", "src", "sidebar_webview.ts"),
     "utf8",
   );
 
-  it("all four section keys are always in the available array", () => {
-    // The available array must always include all four keys, regardless of content
-    // No conditional push: the sections must render unconditionally
-    expect(src).toMatch(/available.*environments.*research.*dev.*fleet/s);
+  it("available array includes research, dev, fleet (no environments)", () => {
+    // Three section keys — environments section removed (#911)
+    expect(src).toMatch(/available.*\["research",\s*"dev",\s*"fleet"\]/);
   });
 
-  it("renderRoots renders sections even when their root array is empty", () => {
-    // The rendering loop must NOT guard on array length for environments, research, or dev
-    // Empty sections get a placeholder instead of being skipped
-    expect(src).toMatch(/No environments yet/);
+  it("renderRoots renders placeholder for empty research and dev sections", () => {
     expect(src).toMatch(/No projects yet/);
     expect(src).toMatch(/No dev projects open/);
   });
@@ -977,17 +974,15 @@ describe("sidebar webview — context menu bugfixes v2 (#895)", () => {
 
   it("empty-area context menu reads sectionKey to determine section identity", () => {
     expect(src).toMatch(/sectionKey|section-key|dataset\.sectionKey/);
-    expect(src).toMatch(/New Environment/);
-    expect(src).toMatch(/Add Existing Environment/);
+    // After #911, environments section removed — context menu shows project actions only
+    expect(src).toMatch(/New Project/);
+    expect(src).toMatch(/Add Existing Project/);
   });
 
-  it("'+' button on environments section sends add-existing-environment (not new-environment)", () => {
-    // The '+' button for environments should open a folder picker, not create a new one.
-    // Find the addBtn block inside renderSectionHeader by matching the title assignment
-    // and the postMessage call within it.
-    const match = src.match(/addBtn\.title\s*=\s*["']Add existing environment["'][\s\S]*?postMessage\(\{[^}]*kind:\s*["']([^"']+)["']/);
-    expect(match).not.toBeNull();
-    expect(match![1]).toBe("add-existing-environment");
+  it("section headers have no + button (actions live in header bar and context menus)", () => {
+    // Section + buttons removed — duplicated by the header "+ New Project"
+    // dropdown and the empty-area / env-group context menus.
+    expect(src).not.toContain("section-add-btn");
   });
 });
 
@@ -1591,21 +1586,20 @@ describe("sidebar webview — section labels", () => {
     expect(src).toContain('"Development Projects"');
   });
 
-  it("sections are collapsible with chevrons and a + button for add-existing", () => {
+  it("sections are collapsible with chevrons (no + button — actions in header/context menus)", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
     // Section headers have chevrons
     expect(src).toContain("section-chevron");
-    // Section headers have a + button that posts add-existing
-    expect(src).toContain("section-add-btn");
-    expect(src).toContain("add-existing");
+    // No per-section + button — duplicated by header bar and context menus
+    expect(src).not.toContain("section-add-btn");
     // Sections track expanded/collapsed state
     expect(src).toContain("sectionExpanded");
   });
 
-  it("section header CSS has collapsible styling with + button that appears on hover", () => {
+  it("section header CSS has collapsible styling (no + button CSS)", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
 
@@ -1614,9 +1608,8 @@ describe("sidebar webview — section labels", () => {
     const html = view.webview.html;
     // Section label is a flex row with cursor: pointer
     expect(html).toMatch(/\.tree-section-label\s*\{[^}]*cursor:\s*pointer/);
-    // + button is hidden by default, shown on hover
-    expect(html).toMatch(/\.section-add-btn[^{]*\{[^}]*opacity:\s*0/);
-    expect(html).toMatch(/\.tree-section-label:hover\s+\.section-add-btn[^{]*\{[^}]*opacity:\s*1/);
+    // No + button CSS
+    expect(html).not.toContain("section-add-btn");
   });
 
   it("sections use pixel-positioned layout with border-top separators", () => {
@@ -1756,14 +1749,14 @@ describe("sidebar — add existing project", () => {
     handleSidebarMessage = bridgeMod.handleSidebarMessage;
   });
 
-  it("section + button posts add-existing message to host", () => {
+  it("no section + button — add-existing available via context menus and header", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_webview.ts"),
       "utf8",
     );
-    // The + button in each section header posts add-existing
+    // add-existing still exists (context menus, header bar) but not via section button
     expect(src).toContain('kind: "add-existing"');
-    expect(src).toContain("section-add-btn");
+    expect(src).not.toContain("section-add-btn");
   });
 
   it("header contains an existing-project button", () => {

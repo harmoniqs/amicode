@@ -97,7 +97,7 @@ export type SidebarDownMessage =
 // ── Webview → Host (up) ──────────────────────────────────────────────────────
 
 export type OpenChatMessage = { kind: "open-chat" };
-export type NewProjectMessage = { kind: "new-project" };
+export type NewProjectMessage = { kind: "new-project"; environmentSlug?: string };
 export type AddExistingMessage = { kind: "add-existing" };
 export type NewEnvironmentMessage = { kind: "new-environment" };
 export type AddExistingEnvironmentMessage = { kind: "add-existing-environment" };
@@ -141,6 +141,73 @@ export type SidebarUpMessage =
 
 export type SidebarMessage = SidebarUpMessage | SidebarDownMessage;
 
+// ── Research section grouping (#911) ─────────────────────────────────────────
+
+export interface EnvGroup {
+  env: TreeRoot;
+  projects: TreeRoot[];
+}
+
+export interface GroupedResearchRoots {
+  envGroups: EnvGroup[];
+  unboundProjects: TreeRoot[];
+}
+
+/**
+ * Group flat roots into environment-keyed groups for the Research Projects section (#911).
+ *
+ * - Environments become group headers; research projects with a matching
+ *   `environment.slug` nest underneath their environment.
+ * - Research projects whose slug has no matching environment root (orphaned
+ *   binding) or no slug at all land in `unboundProjects`.
+ * - Dev roots are ignored (they render in a separate section).
+ * - Both `envGroups` and `unboundProjects` are sorted alphabetically by name.
+ * - Projects within each group are also sorted alphabetically by name.
+ */
+export function groupRootsForResearchSection(roots: TreeRoot[]): GroupedResearchRoots {
+  // Build a map of environment slug → env root
+  const envBySlug = new Map<string, TreeRoot>();
+  for (const root of roots) {
+    if (root.projectType === "environment" && root.environment?.slug) {
+      envBySlug.set(root.environment.slug, root);
+    }
+  }
+
+  // Build a map of env slug → bound project list
+  const projectsByEnvSlug = new Map<string, TreeRoot[]>();
+  for (const slug of envBySlug.keys()) {
+    projectsByEnvSlug.set(slug, []);
+  }
+
+  const unboundProjects: TreeRoot[] = [];
+
+  for (const root of roots) {
+    if (root.projectType !== "research") continue;
+
+    const slug = root.environment?.slug;
+    if (slug && envBySlug.has(slug)) {
+      projectsByEnvSlug.get(slug)!.push(root);
+    } else {
+      unboundProjects.push(root);
+    }
+  }
+
+  // Sort projects within each group alphabetically by name
+  for (const projects of projectsByEnvSlug.values()) {
+    projects.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // Build sorted env groups
+  const envGroups: EnvGroup[] = Array.from(envBySlug.entries())
+    .map(([slug, env]) => ({ env, projects: projectsByEnvSlug.get(slug) ?? [] }))
+    .sort((a, b) => a.env.name.localeCompare(b.env.name));
+
+  // Sort unbound projects alphabetically
+  unboundProjects.sort((a, b) => a.name.localeCompare(b.name));
+
+  return { envGroups, unboundProjects };
+}
+
 // ── Section order resolution ─────────────────────────────────────────────────
 
 /**
@@ -167,7 +234,7 @@ export function resolveSectionOrder(savedOrder: string[], available: string[]): 
 
 export interface SidebarMessageHandlers {
   openChat: () => void;
-  newProject: () => void;
+  newProject: (environmentSlug?: string) => void;
   addExisting: () => void;
   newEnvironment: () => void;
   addExistingEnvironment: () => void;
@@ -202,7 +269,7 @@ export function handleSidebarMessage(
       handlers.openChat();
       break;
     case "new-project":
-      handlers.newProject();
+      handlers.newProject(msg.environmentSlug);
       break;
     case "add-existing":
       handlers.addExisting();

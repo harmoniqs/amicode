@@ -2,6 +2,9 @@
 // Runs inside the webview iframe (platform: browser, format: iife).
 // Acquires the VS Code API and wires button clicks + tree rendering to bridge.
 
+import { groupRootsForResearchSection } from "./sidebar_bridge";
+import type { EnvGroup } from "./sidebar_bridge";
+
 declare function acquireVsCodeApi(): {
   postMessage(msg: unknown): void;
   getState(): unknown;
@@ -74,6 +77,60 @@ function createFolderIconEl(expanded: boolean): HTMLElement | null {
   const icon = expanded ? iconTheme.folderExpanded : iconTheme.folder;
   if (!icon) return null;
   return createIconEl(icon);
+}
+
+/** Create a 16×16 inline SVG flask icon for research project rows (#914). */
+function createFlaskIconEl(): HTMLElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  const p1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p1.setAttribute("d", "M6 2H10M6.5 2V6L3 13H13L9.5 6V2");
+  p1.setAttribute("stroke", "currentColor");
+  p1.setAttribute("stroke-width", "1.2");
+  p1.setAttribute("stroke-linejoin", "round");
+  const p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p2.setAttribute("d", "M4.5 10.5H11.5");
+  p2.setAttribute("stroke", "currentColor");
+  p2.setAttribute("stroke-width", "1.2");
+  svg.appendChild(p1);
+  svg.appendChild(p2);
+  return svg as unknown as HTMLElement;
+}
+
+/** Create a 16×16 inline SVG clipboard icon for environment group headers (#914). */
+function createClipboardIconEl(): HTMLElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  // Board body (rounded rectangle)
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", "3");
+  rect.setAttribute("y", "3");
+  rect.setAttribute("width", "10");
+  rect.setAttribute("height", "12");
+  rect.setAttribute("rx", "1.5");
+  rect.setAttribute("stroke", "currentColor");
+  rect.setAttribute("stroke-width", "1.2");
+  // Clamp (tab at the top center overlapping the rectangle)
+  const clamp = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  clamp.setAttribute("x", "5.5");
+  clamp.setAttribute("y", "1");
+  clamp.setAttribute("width", "5");
+  clamp.setAttribute("height", "3.5");
+  clamp.setAttribute("rx", "1");
+  clamp.setAttribute("stroke", "currentColor");
+  clamp.setAttribute("stroke-width", "1.2");
+  clamp.setAttribute("fill", "var(--vscode-sideBar-background, #1e1e1e)");
+  svg.appendChild(rect);
+  svg.appendChild(clamp);
+  return svg as unknown as HTMLElement;
 }
 
 /** Build a DOM element for a theme icon (img for SVG mode, span for font mode). */
@@ -152,15 +209,11 @@ function createIconEl(icon: string): HTMLElement {
   let lastScrolledPath: string | null = null;
 
   /** Resolve rendering order: saved keys filtered to available, new keys appended.
-   *  Migration (#895): if saved order has "research" but not "environments",
-   *  insert "environments" before "research" (not at end). Idempotent. */
+   *  Migration (#911): strip "environments" from any saved order — that section no
+   *  longer exists; environments are nested inside "research" now. */
   function resolveSectionOrder(savedOrder: string[], available: string[]): string[] {
-    // Migration: insert "environments" before "research" for existing users
-    let migrated = savedOrder;
-    if (savedOrder.includes("research") && !savedOrder.includes("environments")) {
-      const idx = savedOrder.indexOf("research");
-      migrated = [...savedOrder.slice(0, idx), "environments", ...savedOrder.slice(idx)];
-    }
+    // Migration: remove "environments" from saved order (#911 — section removed)
+    const migrated = savedOrder.filter((key) => key !== "environments");
 
     const availableSet = new Set(available);
     const ordered = migrated.filter((key) => availableSet.has(key));
@@ -376,6 +429,89 @@ function createIconEl(icon: string): HTMLElement {
       return;
     }
 
+    // ── Environment group header context menu (#916) ─────────────────────
+    const envGroupHeader = target.closest(".env-group-header") as HTMLElement | null;
+    if (envGroupHeader) {
+      const envContainer = envGroupHeader.closest("[data-env-group='true']") as HTMLElement | null;
+      if (envContainer) {
+        e.preventDefault();
+        dismissMenu();
+
+        const envPath = envContainer.dataset.path ?? "";
+        const envSlug = envContainer.dataset.envSlug ?? "";
+        const envSource = envContainer.dataset.envSource ?? "";
+
+        const menu = document.createElement("div");
+        menu.className = "context-menu";
+        menu.style.left = `${e.clientX}px`;
+        menu.style.top = `${e.clientY}px`;
+
+        // "New Project in this Environment"
+        const newInEnv = document.createElement("div");
+        newInEnv.className = "context-menu-item";
+        newInEnv.textContent = "New Project in this Environment";
+        newInEnv.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "new-project", environmentSlug: envSlug });
+        });
+        menu.appendChild(newInEnv);
+
+        // Separator
+        const sep = document.createElement("div");
+        sep.className = "context-menu-separator";
+        menu.appendChild(sep);
+
+        // Add to Workspace / Remove from Workspace (mutually exclusive)
+        if (envSource === "resolved") {
+          const addWs = document.createElement("div");
+          addWs.className = "context-menu-item";
+          addWs.textContent = "Add to Workspace";
+          addWs.addEventListener("click", () => {
+            dismissMenu();
+            vscode.postMessage({ kind: "file-op", op: "add-to-workspace", path: envPath });
+          });
+          menu.appendChild(addWs);
+        } else {
+          const removeWs = document.createElement("div");
+          removeWs.className = "context-menu-item";
+          removeWs.textContent = "Remove from Workspace";
+          removeWs.addEventListener("click", () => {
+            dismissMenu();
+            vscode.postMessage({ kind: "file-op", op: "remove-from-workspace", path: envPath });
+          });
+          menu.appendChild(removeWs);
+        }
+
+        // Separator
+        const sep2 = document.createElement("div");
+        sep2.className = "context-menu-separator";
+        menu.appendChild(sep2);
+
+        // Reveal in Finder
+        const reveal = document.createElement("div");
+        reveal.className = "context-menu-item";
+        reveal.textContent = "Reveal in Finder";
+        reveal.addEventListener("click", () => {
+          dismissMenu();
+          vscode.postMessage({ kind: "file-op", op: "reveal-in-os", path: envPath });
+        });
+        menu.appendChild(reveal);
+
+        document.body.appendChild(menu);
+        activeMenu = menu;
+
+        // Clamp to viewport bounds
+        const rect = menu.getBoundingClientRect();
+        if (rect.right > window.innerWidth) {
+          menu.style.left = `${window.innerWidth - rect.width - 4}px`;
+        }
+        if (rect.bottom > window.innerHeight) {
+          menu.style.top = `${window.innerHeight - rect.height - 4}px`;
+        }
+        return;
+      }
+    }
+
     // Handle right-clicks on tree nodes
     const treeNode = target.closest(".tree-node") as HTMLElement | null;
     if (!treeNode) {
@@ -383,8 +519,8 @@ function createIconEl(icon: string): HTMLElement {
       const sectionBody = target.closest(".section-body") as HTMLElement | null;
       if (sectionBody) {
         const sectionKey = sectionBody.parentElement?.dataset?.sectionKey;
-        // Only research, dev, and environments sections get context menus
-        if (sectionKey === "research" || sectionKey === "dev" || sectionKey === "environments") {
+        // Only research and dev sections get empty-area context menus
+        if (sectionKey === "research" || sectionKey === "dev") {
           e.preventDefault();
           dismissMenu();
 
@@ -393,34 +529,26 @@ function createIconEl(icon: string): HTMLElement {
           menu.style.left = `${e.clientX}px`;
           menu.style.top = `${e.clientY}px`;
 
-          if (sectionKey === "environments") {
-            const addItem = document.createElement("div");
-            addItem.className = "context-menu-item";
-            addItem.textContent = "Add Existing Environment";
-            addItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "add-existing-environment" });
-            });
-            menu.appendChild(addItem);
-
-            const newItem = document.createElement("div");
-            newItem.className = "context-menu-item";
-            newItem.textContent = "New Environment";
-            newItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "new-environment" });
-            });
-            menu.appendChild(newItem);
+          if (sectionKey === "research") {
+            // Research section: 4-item menu (#916)
+            const items = [
+              { label: "New Project", msg: { kind: "new-project" } },
+              { label: "New Environment", msg: { kind: "new-environment" } },
+              { label: "Add Existing Project", msg: { kind: "add-existing" } },
+              { label: "Add Existing Environment", msg: { kind: "add-existing-environment" } },
+            ];
+            for (const item of items) {
+              const el = document.createElement("div");
+              el.className = "context-menu-item";
+              el.textContent = item.label;
+              el.addEventListener("click", () => {
+                dismissMenu();
+                vscode.postMessage(item.msg);
+              });
+              menu.appendChild(el);
+            }
           } else {
-            const addItem = document.createElement("div");
-            addItem.className = "context-menu-item";
-            addItem.textContent = "Add Existing Project";
-            addItem.addEventListener("click", () => {
-              dismissMenu();
-              vscode.postMessage({ kind: "add-existing" });
-            });
-            menu.appendChild(addItem);
-
+            // Dev section: 2-item menu
             const newItem = document.createElement("div");
             newItem.className = "context-menu-item";
             newItem.textContent = "New Project";
@@ -429,6 +557,15 @@ function createIconEl(icon: string): HTMLElement {
               vscode.postMessage({ kind: "new-project" });
             });
             menu.appendChild(newItem);
+
+            const addItem = document.createElement("div");
+            addItem.className = "context-menu-item";
+            addItem.textContent = "Add Existing Project";
+            addItem.addEventListener("click", () => {
+              dismissMenu();
+              vscode.postMessage({ kind: "add-existing" });
+            });
+            menu.appendChild(addItem);
           }
 
           document.body.appendChild(menu);
@@ -883,15 +1020,13 @@ function createIconEl(icon: string): HTMLElement {
   // Restore section expanded state (separate from tree node expanded state)
   const sectionExpanded: Record<string, boolean> = savedState?.expanded
     ? {
-        environments: savedState.expanded["__section_environments"] !== false,
         research: savedState.expanded["__section_research"] !== false,
         dev: savedState.expanded["__section_dev"] !== false,
         fleet: savedState.expanded["__section_fleet"] !== false,
       }
-    : { environments: true, research: true, dev: true, fleet: false };
+    : { research: true, dev: true, fleet: false };
 
   function saveSectionState(): void {
-    expanded["__section_environments"] = sectionExpanded.environments;
     expanded["__section_research"] = sectionExpanded.research;
     expanded["__section_dev"] = sectionExpanded.dev;
     expanded["__section_fleet"] = sectionExpanded.fleet;
@@ -974,26 +1109,8 @@ function createIconEl(icon: string): HTMLElement {
     titleEl.className = "section-title";
     titleEl.textContent = title;
 
-    const addBtn = document.createElement("button");
-    addBtn.className = "section-add-btn";
-    addBtn.textContent = "+";
-    if (sectionKey === "environments") {
-      addBtn.title = "Add existing environment";
-      addBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        vscode.postMessage({ kind: "add-existing-environment" });
-      });
-    } else {
-      addBtn.title = "Add existing project";
-      addBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        vscode.postMessage({ kind: "add-existing" });
-      });
-    }
-
     header.appendChild(chevron);
     header.appendChild(titleEl);
-    header.appendChild(addBtn);
 
     const body = document.createElement("div");
     body.className = sectionExpanded[sectionKey] ? "section-body expanded" : "section-body";
@@ -1022,35 +1139,30 @@ function createIconEl(icon: string): HTMLElement {
     currentRoots = roots;
     treeRoot.innerHTML = "";
 
-    // Group roots by project type
-    const environments = roots.filter((r) => r.projectType === "environment");
-    const research = roots.filter((r) => r.projectType === "research");
+    // Group roots by project type — dev is its own section;
+    // environments + research are merged in the "research" section (#911).
     const dev = roots.filter((r) => r.projectType === "dev");
 
-    // All section keys are always available — empty sections render with a placeholder (#895)
-    const available: string[] = ["environments", "research", "dev", "fleet"];
+    // Group environments and their bound projects for nesting (#911)
+    const { envGroups, unboundProjects } = groupRootsForResearchSection(roots);
+
+    // Three section keys — "environments" section removed (#911)
+    const available: string[] = ["research", "dev", "fleet"];
 
     // Resolve rendering order using persisted section order
     const renderOrder = resolveSectionOrder(currentSectionOrder, available);
 
     for (const key of renderOrder) {
-      if (key === "environments") {
-        const { section, body } = renderSectionHeader("Research Environments", "environments");
-        if (environments.length > 0) {
-          for (const root of environments) {
-            body.appendChild(renderRootNode(root, 0));
-          }
-        } else {
-          const placeholder = document.createElement("div");
-          placeholder.className = "fleet-placeholder-text";
-          placeholder.textContent = "No environments yet";
-          body.appendChild(placeholder);
-        }
-        treeRoot.appendChild(section);
-      } else if (key === "research") {
+      if (key === "research") {
         const { section, body } = renderSectionHeader("Research Projects", "research");
-        if (research.length > 0) {
-          for (const root of research) {
+        const hasContent = envGroups.length > 0 || unboundProjects.length > 0;
+        if (hasContent) {
+          // Environment groups first (already sorted alphabetically)
+          for (const group of envGroups) {
+            body.appendChild(renderEnvGroupNode(group));
+          }
+          // Unbound projects below (already sorted alphabetically)
+          for (const root of unboundProjects) {
             body.appendChild(renderRootNode(root, 0));
           }
         } else {
@@ -1234,6 +1346,143 @@ function createIconEl(icon: string): HTMLElement {
     }
   });
 
+  // ── Keyboard navigation for root-level items (#917) ──────────────────────
+  // Arrow keys navigate between root-level tree nodes (env groups + unbound
+  // projects) in each section. Enter/Space toggles expand/collapse.
+  // Roving tabindex: focused item gets tabindex=0, others get -1.
+
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("tree-node")) return;
+    if (!target.hasAttribute("tabindex")) return;
+
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      // Collect all navigable root-level items in the same section body
+      const sectionBody = target.closest(".section-body");
+      if (!sectionBody) return;
+      const items = Array.from(
+        sectionBody.querySelectorAll(":scope > [data-path] > .tree-node[tabindex]"),
+      ) as HTMLElement[];
+      const idx = items.indexOf(target);
+      if (idx < 0) return;
+      const next = e.key === "ArrowDown" ? idx + 1 : idx - 1;
+      if (next >= 0 && next < items.length) {
+        target.setAttribute("tabindex", "-1");
+        items[next].setAttribute("tabindex", "0");
+        items[next].focus();
+      }
+    } else if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      target.click();
+    }
+  });
+
+
+  // ── Environment group node (#911) ────────────────────────────────────────
+  // Renders an environment as an expandable group header inside the Research
+  // Projects section. When expanded, shows the environment's own filesystem
+  // children (directories/files) followed by bound project root nodes.
+
+  function renderEnvGroupNode(group: EnvGroup): HTMLElement {
+    const { env, projects } = group;
+    const container = document.createElement("div");
+    container.dataset.path = env.path;
+    container.dataset.type = "directory";
+    container.dataset.envGroup = "true";
+    container.dataset.envSlug = env.environment?.slug ?? "";
+    container.dataset.envSource = env.source ?? "";
+
+    const row = document.createElement("div");
+    row.className = "tree-node env-group-header";
+    row.style.paddingLeft = "8px";
+    row.setAttribute("tabindex", "-1");
+    row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
+
+    // Chevron (expand/collapse indicator)
+    const chevronEl = document.createElement("span");
+    chevronEl.className = expanded[env.path] ? "chevron expanded" : "chevron";
+    chevronEl.textContent = "\u203A"; // ›
+
+    // Custom clipboard icon for environment groups (#914)
+    const iconEl = createClipboardIconEl();
+
+    const label = document.createElement("span");
+    label.className = "label";
+    label.textContent = env.name;
+
+    row.appendChild(chevronEl);
+    if (iconEl) row.appendChild(iconEl);
+    row.appendChild(label);
+
+    container.appendChild(row);
+
+    // Drag-and-drop: env groups participate as roots
+    row.draggable = true;
+    setupDragSource(row, env.path);
+    setupRootReorderDropTarget(row, env);
+    setupDirectoryDropTarget(row, env.path);
+
+    // ── Two-container layout ─────────────────────────────────────────────
+    // .children: env's own filesystem entries — collapsible via chevron
+    // .env-bound-projects: bound project nodes — always visible
+    const childrenEl = document.createElement("div");
+    childrenEl.className = "children";
+    childrenEl.style.display = expanded[env.path] ? "block" : "none";
+    container.appendChild(childrenEl);
+
+    const projectsEl = document.createElement("div");
+    projectsEl.className = "env-bound-projects";
+    container.appendChild(projectsEl);
+
+    // Toggle class so CSS can conditionally add the gap between files and projects
+    if (expanded[env.path]) container.classList.add("env-files-visible");
+
+    // Render env filesystem children if already expanded
+    if (expanded[env.path]) {
+      populateEnvGroupChildren(childrenEl, env);
+    }
+
+    // Bound projects are always rendered (always visible)
+    for (const project of projects) {
+      projectsEl.appendChild(renderRootNode(project, 1));
+    }
+
+    row.addEventListener("click", () => {
+      expanded[env.path] = !expanded[env.path];
+      saveExpandedState();
+      chevronEl.classList.toggle("expanded", expanded[env.path]);
+      row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
+      container.classList.toggle("env-files-visible", expanded[env.path]);
+      // Clipboard icon is static — no icon swap on expand/collapse (#914)
+      // Only toggle .children (env files) — .env-bound-projects stays visible
+      childrenEl.style.display = expanded[env.path] ? "block" : "none";
+
+      if (expanded[env.path]) {
+        populateEnvGroupChildren(childrenEl, env);
+      }
+    });
+
+    // Request children on initial render if expanded
+    if (expanded[env.path] && !childrenCache[env.path]) {
+      vscode.postMessage({ kind: "get-children", path: env.path });
+    }
+
+    return container;
+  }
+
+  /** Populate an environment group's filesystem children container. */
+  function populateEnvGroupChildren(childrenEl: HTMLElement, env: TreeRoot): void {
+    childrenEl.innerHTML = "";
+
+    // Environment's own filesystem children (cached)
+    if (childrenCache[env.path]) {
+      renderChildren(childrenEl, childrenCache[env.path], 1);
+    } else {
+      vscode.postMessage({ kind: "get-children", path: env.path });
+    }
+  }
+
 
   function renderRootNode(root: TreeRoot, depth: number): HTMLElement {
     const container = document.createElement("div");
@@ -1243,14 +1492,20 @@ function createIconEl(icon: string): HTMLElement {
     const row = document.createElement("div");
     row.className = "tree-node";
     row.style.paddingLeft = `${8 + depth * 16}px`;
+    // Root-level items (depth 0) participate in keyboard navigation (#917)
+    if (depth === 0) {
+      row.setAttribute("tabindex", "-1");
+    }
 
     // Chevron (expand/collapse indicator)
     const chevronEl = document.createElement("span");
     chevronEl.className = expanded[root.path] ? "chevron expanded" : "chevron";
     chevronEl.textContent = "\u203A"; // ›
 
-    // Folder icon (omitted if theme has none — label sits next to chevron)
-    const iconEl = createFolderIconEl(!!expanded[root.path]);
+    // Icon: custom SVG for research (flask), default folder for dev (#914)
+    const iconEl = root.projectType === "research"
+      ? createFlaskIconEl()
+      : createFolderIconEl(!!expanded[root.path]);
 
     const label = document.createElement("span");
     label.className = "label";
@@ -1260,25 +1515,9 @@ function createIconEl(icon: string): HTMLElement {
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Environment root rendering (#895) — left accent border + bound project count
-    if (root.projectType === "environment" && root.environment) {
-      row.classList.add(`env-root-border-${root.environment.colorIndex}`);
-      if (root.boundProjectCount && root.boundProjectCount > 0) {
-        const countEl = document.createElement("span");
-        countEl.className = "env-project-count";
-        countEl.textContent = root.boundProjectCount === 1 ? "1 project" : `${root.boundProjectCount} projects`;
-        row.appendChild(countEl);
-      }
-    }
-
-    // Environment pill (#884) — shown after the label when a non-environment project is bound to an environment
-    if (root.projectType !== "environment" && root.environment) {
-      const pill = document.createElement("span");
-      pill.className = `env-pill env-pill-${root.environment.colorIndex}`;
-      pill.textContent = root.environment.name;
-      pill.title = `Environment: ${root.environment.slug} (${root.environment.path})`;
-      row.appendChild(pill);
-    }
+    // Color coding removed (#915) — nesting communicates the relationship directly.
+    // envColorIndex and colorIndex are left in the data model (tree service still
+    // computes them) but no longer rendered.
 
     container.appendChild(row);
 
@@ -1305,14 +1544,19 @@ function createIconEl(icon: string): HTMLElement {
       expanded[root.path] = !expanded[root.path];
       saveExpandedState();
       chevronEl.classList.toggle("expanded", expanded[root.path]);
-      if (iconEl) {
+      // Only swap folder icons for dev projects — research (flask) icons are static (#914)
+      if (iconEl && root.projectType !== "research") {
         const newIcon = createFolderIconEl(expanded[root.path]);
         if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
       }
       childrenEl.style.display = expanded[root.path] ? "block" : "none";
 
-      if (expanded[root.path] && !childrenCache[root.path]) {
-        vscode.postMessage({ kind: "get-children", path: root.path });
+      if (expanded[root.path]) {
+        if (childrenCache[root.path]) {
+          renderChildren(childrenEl, childrenCache[root.path], depth + 1);
+        } else {
+          vscode.postMessage({ kind: "get-children", path: root.path });
+        }
       }
     });
 
@@ -1391,8 +1635,12 @@ function createIconEl(icon: string): HTMLElement {
       }
       childrenEl.style.display = expanded[entry.path] ? "block" : "none";
 
-      if (expanded[entry.path] && !childrenCache[entry.path]) {
-        vscode.postMessage({ kind: "get-children", path: entry.path });
+      if (expanded[entry.path]) {
+        if (childrenCache[entry.path]) {
+          renderChildren(childrenEl, childrenCache[entry.path], depth + 1);
+        } else {
+          vscode.postMessage({ kind: "get-children", path: entry.path });
+        }
       }
     });
 
@@ -1729,10 +1977,14 @@ function createIconEl(icon: string): HTMLElement {
             saveExpandedState();
             const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
             if (chevronSpan) chevronSpan.classList.add("expanded");
-            const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-            if (iconSpan) {
-              const newIcon = createFolderIconEl(true);
-              if (newIcon) iconSpan.replaceWith(newIcon);
+            // Only swap icon for dev projects — custom SVGs (flask, clipboard) are static (#914)
+            const activeRoot = currentRoots.find((r) => r.path === nodePath);
+            if (activeRoot?.projectType !== "research" && activeRoot?.projectType !== "environment") {
+              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+              if (iconSpan) {
+                const newIcon = createFolderIconEl(true);
+                if (newIcon) iconSpan.replaceWith(newIcon);
+              }
             }
             const childrenEl = el.querySelector(".children") as HTMLElement | null;
             if (childrenEl) {
@@ -1757,10 +2009,14 @@ function createIconEl(icon: string): HTMLElement {
           saveExpandedState();
           const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
           if (chevronSpan) chevronSpan.classList.remove("expanded");
-          const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-          if (iconSpan) {
-            const newIcon = createFolderIconEl(false);
-            if (newIcon) iconSpan.replaceWith(newIcon);
+          // Only swap icon for dev projects — custom SVGs are static (#914)
+          const collapseRoot = currentRoots.find((r) => r.path === nodePath);
+          if (collapseRoot?.projectType !== "research" && collapseRoot?.projectType !== "environment") {
+            const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+            if (iconSpan) {
+              const newIcon = createFolderIconEl(false);
+              if (newIcon) iconSpan.replaceWith(newIcon);
+            }
           }
           const childrenEl = el.querySelector(".children") as HTMLElement | null;
           if (childrenEl) childrenEl.style.display = "none";
@@ -1818,64 +2074,9 @@ function createIconEl(icon: string): HTMLElement {
       }
     }
 
-    // ── Environment cascade (#895) ─────────────────────────────────────────
-    // After highlighting the project, highlight the project's bound environment
-    // in the environments section. Same mode behavior: reset = expand+scroll,
-    // expand = expand+scroll, none = border only.
-    const activeRoot = activePath ? currentRoots.find((r) => r.path === activePath) : null;
-    const boundEnvSlug = activeRoot?.environment?.slug;
-
-    // Clear all environment root highlights first
-    const envRoots = currentRoots.filter((r) => r.projectType === "environment");
-    for (const envRoot of envRoots) {
-      const envEl = treeRoot?.querySelector(`[data-path="${envRoot.path}"][data-type="directory"]`) as HTMLElement | null;
-      if (!envEl) continue;
-      const envRow = envEl.querySelector(".tree-node") as HTMLElement | null;
-      if (!envRow) continue;
-
-      if (boundEnvSlug && envRoot.environment?.slug === boundEnvSlug) {
-        // Highlight the bound environment with its palette color
-        const colorIdx = envRoot.environment.colorIndex;
-        envRow.classList.add(`env-root-border-${colorIdx}`);
-        envRow.style.background = "var(--vscode-list-activeSelectionBackground)";
-
-        // Expand and scroll for "reset" and "expand" modes
-        if (mode === "expand" || mode === "reset") {
-          // Auto-expand the environments section if collapsed
-          if (!sectionExpanded["environments"]) {
-            sectionExpanded["environments"] = true;
-            saveSectionState();
-            const envSection = getAllSections().find((s) => s.dataset.sectionKey === "environments");
-            if (envSection) {
-              const chevron = envSection.querySelector(".section-chevron") as HTMLElement | null;
-              if (chevron) chevron.classList.add("expanded");
-              const body = envSection.querySelector(".section-body") as HTMLElement | null;
-              if (body) toggleSectionBody(body, true, envSection);
-            }
-          }
-          // Expand the environment root if collapsed
-          if (!expanded[envRoot.path]) {
-            expanded[envRoot.path] = true;
-            saveExpandedState();
-            const chevronSpan = envRow.querySelector(".chevron") as HTMLElement | null;
-            if (chevronSpan) chevronSpan.classList.add("expanded");
-            const childrenEl = envEl.querySelector(".children") as HTMLElement | null;
-            if (childrenEl) {
-              childrenEl.style.display = "block";
-              if (!childrenCache[envRoot.path]) {
-                vscode.postMessage({ kind: "get-children", path: envRoot.path });
-              }
-            }
-          }
-        }
-      } else {
-        // Clear highlight on non-active environment roots
-        // Remove any env-root-border-N classes
-        for (let i = 0; i < 8; i++) envRow.classList.remove(`env-root-border-${i}`);
-        envRow.style.borderLeft = "";
-        envRow.style.background = "";
-      }
-    }
+    // Environment cascade removed — bound projects are always visible in their
+    // own .env-bound-projects container, so no env group expansion needed on
+    // session switch. The project row receives the highlight directly.
   }
 
   // ── Host → Webview messages ────────────────────────────────────────────────
@@ -1905,8 +2106,7 @@ function createIconEl(icon: string): HTMLElement {
             r.path === currentRoots[i].path &&
             r.name === currentRoots[i].name &&
             r.projectType === currentRoots[i].projectType &&
-            r.source === currentRoots[i].source &&
-            r.boundProjectCount === currentRoots[i].boundProjectCount
+            r.source === currentRoots[i].source
           );
         if (!same) {
           renderRoots(incoming);

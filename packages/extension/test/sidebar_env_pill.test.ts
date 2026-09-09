@@ -138,9 +138,9 @@ describe("SidebarTreeService environment pill data (#884)", () => {
   });
 });
 
-// ── Webview rendering (source-level checks) ──────────────────────────────────
+// ── Webview rendering — color coding removed (#915) ──────────────────────────
 
-describe("sidebar environment pill rendering (#884)", () => {
+describe("sidebar environment rendering — color coding removed (#915)", () => {
   const webviewSrc = readFileSync(
     resolve(__dirname, "..", "src", "sidebar_webview.ts"),
     "utf8",
@@ -149,55 +149,30 @@ describe("sidebar environment pill rendering (#884)", () => {
     resolve(__dirname, "..", "src", "sidebar_view.ts"),
     "utf8",
   );
-
-  it("sidebar_view.ts CSS includes env-pill styling", () => {
-    expect(viewSrc).toContain("env-pill");
-  });
 
   it("sidebar_webview.ts TreeRoot interface includes the environment field", () => {
     // The webview's local TreeRoot must declare the environment property
-    // so the rendering code can read it from the host-pushed data.
+    // (still needed for slug-based grouping, even though color is removed)
     expect(webviewSrc).toMatch(/interface TreeRoot[\s\S]*?environment\?/);
   });
 
-  it("sidebar_webview.ts renderRootNode reads root.environment to create a pill", () => {
-    // The rendering function must check root.environment and create a pill element
-    expect(webviewSrc).toMatch(/root\.environment/);
-    expect(webviewSrc).toContain("env-pill");
-  });
-});
-
-// ── Environment root rendering (#895) ────────────────────────────────────────
-
-describe("sidebar environment root rendering (#895)", () => {
-  const webviewSrc = readFileSync(
-    resolve(__dirname, "..", "src", "sidebar_webview.ts"),
-    "utf8",
-  );
-  const viewSrc = readFileSync(
-    resolve(__dirname, "..", "src", "sidebar_view.ts"),
-    "utf8",
-  );
-
-  it("renderRootNode adds a left accent border for environment roots", () => {
-    // Must apply a CSS class or inline style for the environment border color
-    expect(webviewSrc).toMatch(/env-root-border/);
+  it("no env-pill rendering in sidebar_webview.ts (#915)", () => {
+    expect(webviewSrc).not.toMatch(/env-pill-\$/);
   });
 
-  it("CSS includes env-root-border classes for the 8-color palette", () => {
-    expect(viewSrc).toMatch(/env-root-border-0/);
-    expect(viewSrc).toMatch(/env-root-border-7/);
+  it("no env-pill CSS in sidebar_view.ts (#915)", () => {
+    expect(viewSrc).not.toMatch(/\.env-pill\b/);
   });
 
-  it("renderRootNode shows boundProjectCount as a muted label", () => {
-    // Must read boundProjectCount and render a count label
-    expect(webviewSrc).toMatch(/boundProjectCount/);
-    expect(webviewSrc).toMatch(/project/); // "N projects" text
+  it("no env-root-border rendering in sidebar_webview.ts (#915)", () => {
+    expect(webviewSrc).not.toMatch(/classList\.add.*env-root-border/);
   });
 
-  it("renderRootNode does not render an env-pill on environment roots", () => {
-    // The pill check must be gated: only for research project roots, not environment roots
-    // Environment roots should NOT get a pill (they get a border instead)
-    expect(webviewSrc).toMatch(/projectType\s*!==?\s*["']environment["']/);
+  it("no env-root-border CSS in sidebar_view.ts (#915)", () => {
+    expect(viewSrc).not.toMatch(/env-root-border-\d/);
+  });
+
+  it("no env-projects-separator CSS in sidebar_view.ts", () => {
+    expect(viewSrc).not.toMatch(/\.env-projects-separator\b/);
   });
 });
