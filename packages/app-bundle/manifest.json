@@ -6,7 +6,7 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T18:44:23.739Z",
+  "extracted_at": "2026-09-09T18:48:31.556Z",
   "per_package": {
     "packages/app": {
       "A": 142,
@@ -29,8 +29,8 @@
       "D": 0
     },
     "packages/session-ui": {
-      "A": 17,
-      "M": 28,
+      "A": 21,
+      "M": 29,
       "D": 0
     },
     "packages/ui": {
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 601,
+    "overlay_total": 606,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -590,12 +590,16 @@
     "packages/session-ui/src/components/message-part.css": "M",
     "packages/session-ui/src/components/message-part.test.ts": "M",
     "packages/session-ui/src/components/message-part.tsx": "M",
+    "packages/session-ui/src/components/session-diff.ts": "A",
     "packages/session-ui/src/components/session-retry.tsx": "M",
     "packages/session-ui/src/components/session-review.css": "M",
+    "packages/session-ui/src/components/session-review.tsx": "M",
     "packages/session-ui/src/components/session-turn.css": "M",
     "packages/session-ui/src/components/session-turn.tsx": "M",
     "packages/session-ui/src/components/tool-error-card.tsx": "M",
     "packages/session-ui/src/components/tool-status-title.tsx": "M",
+    "packages/session-ui/src/pierre/media.ts": "A",
+    "packages/session-ui/src/pierre/selection-bridge.ts": "A",
     "packages/session-ui/src/util/clipboard.ts": "A",
     "packages/ui/src/amicode/amico-presence.css": "A",
     "packages/ui/src/amicode/amico-presence.stories.tsx": "A",
@@ -879,6 +883,7 @@
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "A",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "A",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "A",
+    "packages/session-ui/src/v2/components/markdown-utils.ts": "A",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "M",
     "packages/session-ui/src/v2/components/session-review-v2.css": "M",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "M",
@@ -1193,12 +1198,16 @@
     "packages/session-ui/src/components/message-part.css": "ae592deb33739738f6a7fc6a3460b7146803bdd05cbbf46f1cfd2c5cec421392",
     "packages/session-ui/src/components/message-part.test.ts": "7c66430837fa3d2607657e57e35720ae68dc5e84662e12826713a938301eeb7b",
     "packages/session-ui/src/components/message-part.tsx": "e94f064b10030622250c8e9bd0c869796cc6dda20fbcb643736c8b4802b1b2b7",
+    "packages/session-ui/src/components/session-diff.ts": "97f1ca7f80cb316c3fd2b228a8f8d4db3a6b78d155216148e0a3198c500ac6d7",
     "packages/session-ui/src/components/session-retry.tsx": "2cb1513d73275a269894f601e8c1d29bc790b14927134fe36177f2b371888721",
     "packages/session-ui/src/components/session-review.css": "ec8c5b359dd4b7ff80d7fad8906359678adade9ce62c9d74aedc000b646db341",
+    "packages/session-ui/src/components/session-review.tsx": "d2015c9f7419279f08e84523439a0b73e83bd5d06587ad56b85ea53b66ecaee4",
     "packages/session-ui/src/components/session-turn.css": "792915f3373134eadf3cd51e1d4bfa88ec347e6b037b6caf60b639ec5e74fbd8",
     "packages/session-ui/src/components/session-turn.tsx": "9cbc0d7a35f42e32dad53ace7b3c7d92623fa2d3108edb49e0b7bc868f5c1966",
     "packages/session-ui/src/components/tool-error-card.tsx": "e27b89836b7c709120ac15fbffd2200038944058ea3506e61e5897ffb3537503",
     "packages/session-ui/src/components/tool-status-title.tsx": "ae4561b58f55985d2294a352802e723b18943ac9a6551d97f1c4a6cc95368c8a",
+    "packages/session-ui/src/pierre/media.ts": "a4b1b3f622b623fde123b8a8009f9f55a01ed1da34b3425e94b39c884cbfa3ee",
+    "packages/session-ui/src/pierre/selection-bridge.ts": "3517bdfc4ce387f9ebfe88a56c93040829e2c1ecbc3f9dfa990eebaa0c995b5e",
     "packages/session-ui/src/util/clipboard.ts": "c37ba53914714ed04135e5a254e8ea90186f097d7470fa0873a83de82f3fef2d",
     "packages/ui/src/amicode/amico-presence.css": "b3f345b607e318dcfbefcdc677fe21cc7d387b9946b0f9d625b0a842fe7e31b9",
     "packages/ui/src/amicode/amico-presence.stories.tsx": "6012506c946a18460f8a6105c5860a050e47e7708818b0408b516370f50b7094",
@@ -1482,6 +1491,7 @@
     "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "f465e41349b820805bb9a2395886cc6bb2612bb40cbe6f1157823a2441ae75f3",
     "packages/session-ui/src/v2/components/editable-diff-view.tsx": "4c0ee2525b94b04b1e708a5cacab6d3eed29ca30644321986e429b2f912b730b",
     "packages/session-ui/src/v2/components/file-name-picker.test.tsx": "1ce9741e315b549165d390c74b5885a43580aa70e24de987f9ba8388cd521b41",
+    "packages/session-ui/src/v2/components/markdown-utils.ts": "3bc47cfed5b99ab23f857d5324be3189f3a7e800d991103d72ef1c2f970b910b",
     "packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx": "fc06f46ed3c92c8066744da1f6ac97db7d8b7d2aeec5ef776d743dd93b317936",
     "packages/session-ui/src/v2/components/session-review-v2.css": "bb306f226fda8f8ba6cf0ae706843ba9f2b48f3a3446433515e8a8dd1f9dc626",
     "packages/session-ui/src/v2/components/session-review-v2.tsx": "4151286efb6e0e148246ee3eebae24a2e5d4eac2603fd5ea8546d0839a694161",
