@@ -1346,9 +1346,18 @@ function createIconEl(icon: string): HTMLElement {
       vscode.postMessage({ kind: "get-children", path: env.path });
     }
 
-    // Bound project root nodes (rendered at depth 1 = indented under the env group)
-    for (const project of projects) {
-      childrenEl.appendChild(renderRootNode(project, 1));
+    // "Projects" separator + bound project root nodes (#915)
+    if (projects.length > 0) {
+      const separator = document.createElement("div");
+      separator.className = "env-projects-separator";
+      separator.setAttribute("role", "separator");
+      separator.setAttribute("aria-orientation", "horizontal");
+      separator.textContent = "Projects";
+      childrenEl.appendChild(separator);
+
+      for (const project of projects) {
+        childrenEl.appendChild(renderRootNode(project, 1));
+      }
     }
   }
 
@@ -1380,25 +1389,9 @@ function createIconEl(icon: string): HTMLElement {
     if (iconEl) row.appendChild(iconEl);
     row.appendChild(label);
 
-    // Environment root rendering (#895) — left accent border + bound project count
-    if (root.projectType === "environment" && root.environment) {
-      row.classList.add(`env-root-border-${root.environment.colorIndex}`);
-      if (root.boundProjectCount && root.boundProjectCount > 0) {
-        const countEl = document.createElement("span");
-        countEl.className = "env-project-count";
-        countEl.textContent = root.boundProjectCount === 1 ? "1 project" : `${root.boundProjectCount} projects`;
-        row.appendChild(countEl);
-      }
-    }
-
-    // Environment pill (#884) — shown after the label when a non-environment project is bound to an environment
-    if (root.projectType !== "environment" && root.environment) {
-      const pill = document.createElement("span");
-      pill.className = `env-pill env-pill-${root.environment.colorIndex}`;
-      pill.textContent = root.environment.name;
-      pill.title = `Environment: ${root.environment.slug} (${root.environment.path})`;
-      row.appendChild(pill);
-    }
+    // Color coding removed (#915) — nesting communicates the relationship directly.
+    // envColorIndex and colorIndex are left in the data model (tree service still
+    // computes them) but no longer rendered.
 
     container.appendChild(row);
 
@@ -2011,8 +2004,7 @@ function createIconEl(icon: string): HTMLElement {
             r.path === currentRoots[i].path &&
             r.name === currentRoots[i].name &&
             r.projectType === currentRoots[i].projectType &&
-            r.source === currentRoots[i].source &&
-            r.boundProjectCount === currentRoots[i].boundProjectCount
+            r.source === currentRoots[i].source
           );
         if (!same) {
           renderRoots(incoming);
@@ -2047,10 +2039,16 @@ function createIconEl(icon: string): HTMLElement {
             container.insertBefore(activeInlineEdit.tempRow, container.firstChild);
             activeInlineEdit.input.focus();
           }
-          // If this path is an env group, re-append bound project nodes
-          // after the filesystem children (#911). renderChildren wiped them.
+          // If this path is an env group, re-append separator + bound project nodes
+          // after the filesystem children (#911, #915). renderChildren wiped them.
           const boundProjects = currentEnvGroupProjects.get(msg.path);
           if (boundProjects && boundProjects.length > 0) {
+            const separator = document.createElement("div");
+            separator.className = "env-projects-separator";
+            separator.setAttribute("role", "separator");
+            separator.setAttribute("aria-orientation", "horizontal");
+            separator.textContent = "Projects";
+            container.appendChild(separator);
             for (const project of boundProjects) {
               container.appendChild(renderRootNode(project, 1));
             }

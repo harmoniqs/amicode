@@ -887,43 +887,19 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
     .git-untracked { color: var(--vscode-gitDecoration-untrackedResourceForeground, #73c991); }
     .git-ignored { color: var(--vscode-gitDecoration-ignoredResourceForeground, #8c8c8c); opacity: 0.6; }
     .git-conflict { color: var(--vscode-gitDecoration-conflictingResourceForeground, #e4676b); }
-    /* ── Environment pill (#884) ───────────────────────────────── */
-    .env-pill {
+    /* ── Environment color coding removed (#915) — nesting is the signal ── */
+    /* envColorIndex and colorIndex left in data model; CSS classes removed. */
+    /* ── Environment projects separator (#915) ─────────────────── */
+    .env-projects-separator {
+      padding: 4px 8px 2px 24px;
       font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.3px;
-      padding: 1px 6px;
-      border-radius: 9999px;
-      margin-left: 6px;
-      flex-shrink: 0;
-      max-width: 120px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      opacity: 0.85;
-    }
-    .env-pill-0 { color: #61afef; border: 1px solid rgba(97,175,239,0.3); background: rgba(97,175,239,0.08); }
-    .env-pill-1 { color: #c678dd; border: 1px solid rgba(198,120,221,0.3); background: rgba(198,120,221,0.08); }
-    .env-pill-2 { color: #98c379; border: 1px solid rgba(152,195,121,0.3); background: rgba(152,195,121,0.08); }
-    .env-pill-3 { color: #e5c07b; border: 1px solid rgba(229,192,123,0.3); background: rgba(229,192,123,0.08); }
-    .env-pill-4 { color: #56b6c2; border: 1px solid rgba(86,182,194,0.3); background: rgba(86,182,194,0.08); }
-    .env-pill-5 { color: #e06c75; border: 1px solid rgba(224,108,117,0.3); background: rgba(224,108,117,0.08); }
-    .env-pill-6 { color: #d19a66; border: 1px solid rgba(209,154,102,0.3); background: rgba(209,154,102,0.08); }
-    .env-pill-7 { color: #abb2bf; border: 1px solid rgba(171,178,191,0.3); background: rgba(171,178,191,0.08); }
-    /* ── Environment root left accent border (#895) ────────────── */
-    .env-root-border-0 { border-left: 2px solid #61afef; }
-    .env-root-border-1 { border-left: 2px solid #c678dd; }
-    .env-root-border-2 { border-left: 2px solid #98c379; }
-    .env-root-border-3 { border-left: 2px solid #e5c07b; }
-    .env-root-border-4 { border-left: 2px solid #56b6c2; }
-    .env-root-border-5 { border-left: 2px solid #e06c75; }
-    .env-root-border-6 { border-left: 2px solid #d19a66; }
-    .env-root-border-7 { border-left: 2px solid #abb2bf; }
-    .env-project-count {
-      margin-left: 6px;
-      font-size: 11px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
       color: var(--vscode-descriptionForeground, rgba(204,204,204,0.5));
-      white-space: nowrap;
+      opacity: 0.7;
+      user-select: none;
+      border-top: 1px solid var(--vscode-editorGroup-border, rgba(255,255,255,0.06));
+      margin-top: 2px;
     }
     /* ── Drag and drop ─────────────────────────────────────────── */
     .tree-node.drop-target {
