@@ -65,16 +65,16 @@ jobs:
           set -euo pipefail
           V=packages/extension/vendor/opencode
           PLATFORMS="linux-x64 linux-arm64 darwin-arm64"
-          pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o packages/extension/amicode.vsix
+          pnpm --filter amicode exec vsce package --no-dependencies --allow-missing-repository -o amicode.vsix
           AMICODE_REQUIRE_VSIX=1 pnpm --filter amicode exec vitest run test/packaging.test.ts
           for T in $PLATFORMS; do
             for O in $PLATFORMS; do [ "$O" = "$T" ] || mv "$V/$O" "$RUNNER_TEMP/$O"; done
-            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "packages/extension/amicode-$T.vsix"
+            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "amicode-$T.vsix"
             for O in $PLATFORMS; do [ "$O" = "$T" ] || mv "$RUNNER_TEMP/$O" "$V/$O"; done
           done
           for P in $PLATFORMS; do mv "$V/$P" "$RUNNER_TEMP/cover-$P"; done
           for T in win32-x64 win32-arm64 darwin-x64; do
-            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "packages/extension/amicode-$T.vsix"
+            pnpm --filter amicode exec vsce package --target "$T" --no-dependencies --allow-missing-repository -o "amicode-$T.vsix"
           done
           for P in $PLATFORMS; do mv "$RUNNER_TEMP/cover-$P" "$V/$P"; done
       - name: Create or refresh GitHub Release
