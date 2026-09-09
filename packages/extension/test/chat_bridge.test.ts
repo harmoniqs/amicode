@@ -95,6 +95,20 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   });
 });
 
+describe("chat panel relay — preview-file in iframe allowlist (#934)", () => {
+  it("the outer relay script forwards preview-file to the iframe", () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, "..", "src", "chat_panel.ts"),
+      "utf8",
+    );
+    // The relay allowlist (Lane 2) must include preview-file
+    // There are two relay instances (primary + adopted panel) — both must have it
+    const matches = src.match(/d\.kind === "preview-file"/g);
+    expect(matches).not.toBeNull();
+    expect(matches!.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
 describe("amicode bridge — clipboard", () => {
   it("clipboard-request answers with the OS clipboard text and echoes the pane tab", async () => {
     const host = io();
