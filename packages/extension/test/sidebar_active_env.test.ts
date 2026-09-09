@@ -1,7 +1,6 @@
-// sidebar_active_env.test.ts — Environment cascade in applyActiveProject (#911).
-// Source-level structural checks for the environment auto-expand behavior.
-// Updated for #911: environments are nested inside the research section,
-// not in a separate "environments" section.
+// sidebar_active_env.test.ts — Active project behavior with nested environments.
+// Updated: bound projects are always visible (two-container layout), so
+// applyActiveProject does NOT expand the parent env group on session switch.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "fs";
 import { resolve } from "path";
@@ -11,22 +10,21 @@ const src = readFileSync(
   "utf8",
 );
 
-describe("sidebar active environment highlighting (#911)", () => {
-  it("applyActiveProject looks up the active project's bound environment", () => {
-    // Must find the environment from the active root's environment field
-    expect(src).toMatch(/activeRoot.*environment/s);
-    expect(src).toMatch(/environment.*slug/);
+describe("sidebar active project — no env auto-expand", () => {
+  it("applyActiveProject does not expand the parent environment group", () => {
+    // Bound projects are always visible in .env-bound-projects, so the
+    // cascade that expanded the env group is removed.
+    expect(src).not.toMatch(/expanded\[envRoot\.path\]\s*=\s*true/);
+    expect(src).not.toMatch(/boundEnvSlug/);
   });
 
-  it("applyActiveProject auto-expands the parent environment group if collapsed", () => {
-    // Must expand the env group node (not a separate section) when the
-    // active project is bound to that environment (#911)
-    expect(src).toMatch(/boundEnvSlug/);
-    expect(src).toMatch(/expanded\[envRoot\.path\]/);
+  it("applyActiveProject does not reference the deleted environments section", () => {
+    expect(src).not.toMatch(/sectionExpanded\[["']environments["']\]/);
   });
 
-  it("environment cascade handles missing environment gracefully", () => {
-    // Must check whether the active root has a bound environment before cascading
-    expect(src).toMatch(/activeRoot.*environment/s);
+  it("applyActiveProject still highlights the active project row", () => {
+    // The highlight logic for the project itself is unchanged
+    expect(src).toMatch(/activeEl/);
+    expect(src).toMatch(/borderLeft/);
   });
 });

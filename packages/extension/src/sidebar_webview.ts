@@ -163,10 +163,6 @@ function createIconEl(icon: string): HTMLElement {
   const savedState = vscode.getState() as { expanded?: Record<string, boolean>; sectionOrder?: string[] } | undefined;
   const expanded: Record<string, boolean> = savedState?.expanded ?? {};
 
-  // Track the current environment groups so the children handler can re-append
-  // bound project nodes after rendering filesystem children for an env group (#911).
-  let currentEnvGroupProjects: Map<string, TreeRoot[]> = new Map();
-
   function saveExpandedState(): void {
     vscode.setState({ expanded, sectionOrder: currentSectionOrder });
   }
@@ -1203,13 +1199,6 @@ function createIconEl(icon: string): HTMLElement {
     // Group environments and their bound projects for nesting (#911)
     const { envGroups, unboundProjects } = groupRootsForResearchSection(roots);
 
-    // Update the env group project map so the children handler can re-append
-    // bound project nodes after rendering filesystem children for an env group.
-    currentEnvGroupProjects = new Map();
-    for (const group of envGroups) {
-      currentEnvGroupProjects.set(group.env.path, group.projects);
-    }
-
     // Three section keys — "environments" section removed (#911)
     const available: string[] = ["research", "dev", "fleet"];
 
@@ -1487,15 +1476,26 @@ function createIconEl(icon: string): HTMLElement {
     setupRootReorderDropTarget(row, env);
     setupDirectoryDropTarget(row, env.path);
 
-    // Children container — holds env's own files + bound project nodes
+    // ── Two-container layout ─────────────────────────────────────────────
+    // .children: env's own filesystem entries — collapsible via chevron
+    // .env-bound-projects: bound project nodes — always visible
     const childrenEl = document.createElement("div");
     childrenEl.className = "children";
     childrenEl.style.display = expanded[env.path] ? "block" : "none";
     container.appendChild(childrenEl);
 
-    // Render children if already expanded
+    const projectsEl = document.createElement("div");
+    projectsEl.className = "env-bound-projects";
+    container.appendChild(projectsEl);
+
+    // Render env filesystem children if already expanded
     if (expanded[env.path]) {
-      populateEnvGroupChildren(childrenEl, env, projects);
+      populateEnvGroupChildren(childrenEl, env);
+    }
+
+    // Bound projects are always rendered (always visible)
+    for (const project of projects) {
+      projectsEl.appendChild(renderRootNode(project, 1));
     }
 
     row.addEventListener("click", () => {
@@ -1504,10 +1504,11 @@ function createIconEl(icon: string): HTMLElement {
       chevronEl.classList.toggle("expanded", expanded[env.path]);
       row.setAttribute("aria-expanded", expanded[env.path] ? "true" : "false");
       // Clipboard icon is static — no icon swap on expand/collapse (#914)
+      // Only toggle .children (env files) — .env-bound-projects stays visible
       childrenEl.style.display = expanded[env.path] ? "block" : "none";
 
       if (expanded[env.path]) {
-        populateEnvGroupChildren(childrenEl, env, projects);
+        populateEnvGroupChildren(childrenEl, env);
       }
     });
 
@@ -1519,20 +1520,15 @@ function createIconEl(icon: string): HTMLElement {
     return container;
   }
 
-  /** Populate an environment group's children container: env files first, then bound projects. */
-  function populateEnvGroupChildren(childrenEl: HTMLElement, env: TreeRoot, projects: TreeRoot[]): void {
+  /** Populate an environment group's filesystem children container. */
+  function populateEnvGroupChildren(childrenEl: HTMLElement, env: TreeRoot): void {
     childrenEl.innerHTML = "";
 
     // Environment's own filesystem children (cached)
     if (childrenCache[env.path]) {
       renderChildren(childrenEl, childrenCache[env.path], 1);
-    } else if (!childrenCache[env.path]) {
+    } else {
       vscode.postMessage({ kind: "get-children", path: env.path });
-    }
-
-    // Bound project root nodes (rendered at depth 1 = indented under the env group)
-    for (const project of projects) {
-      childrenEl.appendChild(renderRootNode(project, 1));
     }
   }
 
@@ -2119,41 +2115,9 @@ function createIconEl(icon: string): HTMLElement {
       }
     }
 
-    // ── Environment cascade (#911 — environments nested in research) ──────
-    // When the active project is bound to an environment, auto-expand the
-    // parent environment group so the project is visible. The environment
-    // group lives inside the "research" section now (not a separate section).
-    const activeRoot = activePath ? currentRoots.find((r) => r.path === activePath) : null;
-    const boundEnvSlug = activeRoot?.environment?.slug;
-
-    if (boundEnvSlug && (mode === "expand" || mode === "reset")) {
-      // Find the environment root matching this slug
-      const envRoot = currentRoots.find(
-        (r) => r.projectType === "environment" && r.environment?.slug === boundEnvSlug,
-      );
-      if (envRoot) {
-        const envEl = treeRoot?.querySelector(
-          `[data-path="${envRoot.path}"][data-type="directory"]`,
-        ) as HTMLElement | null;
-        if (envEl) {
-          // Auto-expand the env group if collapsed
-          if (!expanded[envRoot.path]) {
-            expanded[envRoot.path] = true;
-            saveExpandedState();
-            const chevronSpan = envEl.querySelector(":scope > .tree-node .chevron") as HTMLElement | null;
-            if (chevronSpan) chevronSpan.classList.add("expanded");
-            // Clipboard icon is static — no swap needed (#914)
-            const childrenEl = envEl.querySelector(":scope > .children") as HTMLElement | null;
-            if (childrenEl) {
-              childrenEl.style.display = "block";
-              if (!childrenCache[envRoot.path]) {
-                vscode.postMessage({ kind: "get-children", path: envRoot.path });
-              }
-            }
-          }
-        }
-      }
-    }
+    // Environment cascade removed — bound projects are always visible in their
+    // own .env-bound-projects container, so no env group expansion needed on
+    // session switch. The project row receives the highlight directly.
   }
 
   // ── Host → Webview messages ────────────────────────────────────────────────
@@ -2217,14 +2181,6 @@ function createIconEl(icon: string): HTMLElement {
           if (hasInlineEdit && activeInlineEdit?.tempRow) {
             container.insertBefore(activeInlineEdit.tempRow, container.firstChild);
             activeInlineEdit.input.focus();
-          }
-          // If this path is an env group, re-append bound project nodes
-          // after the filesystem children (#911). renderChildren wiped them.
-          const boundProjects = currentEnvGroupProjects.get(msg.path);
-          if (boundProjects && boundProjects.length > 0) {
-            for (const project of boundProjects) {
-              container.appendChild(renderRootNode(project, 1));
-            }
           }
         }
         break;

@@ -13,18 +13,15 @@ const viewSrc = readFileSync(
   "utf8",
 );
 
-describe("sidebar auto-expand parent environment (#917)", () => {
-  it("applyActiveProject finds the bound environment root by slug", () => {
-    expect(webviewSrc).toMatch(/boundEnvSlug/);
-    expect(webviewSrc).toMatch(/envRoot.*projectType.*environment|environment.*projectType.*envRoot/s);
+describe("sidebar — no env auto-expand on session switch (#917)", () => {
+  it("applyActiveProject does not auto-expand the parent environment group", () => {
+    // Bound projects are always visible in .env-bound-projects, so no
+    // env expansion is needed on session switch
+    expect(webviewSrc).not.toMatch(/boundEnvSlug/);
+    expect(webviewSrc).not.toMatch(/expanded\[envRoot\.path\]/);
   });
 
-  it("auto-expand checks mode before expanding (none skips)", () => {
-    expect(webviewSrc).toMatch(/mode.*expand.*reset.*boundEnvSlug|boundEnvSlug.*mode.*expand.*reset/s);
-  });
-
-  it("auto-expand does not reference the deleted environments section", () => {
-    // Must NOT reference sectionExpanded["environments"] or dataset.sectionKey === "environments"
+  it("no references to deleted environments section", () => {
     expect(webviewSrc).not.toMatch(/sectionExpanded\[["']environments["']\]/);
     expect(webviewSrc).not.toMatch(/sectionKey\s*===\s*["']environments["']/);
   });
