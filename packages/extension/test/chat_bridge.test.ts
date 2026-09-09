@@ -536,3 +536,118 @@ describe("amicode bridge — project-selected (#663)", () => {
     expect(selected).toEqual([]);
   });
 });
+
+// ============================================================================
+// dev-tools-update: path validation, tilde expansion (#940)
+// ============================================================================
+
+describe("amicode bridge — dev-tools-update path validation", () => {
+  let tmpRoot: string;
+  let fakeAmicodeRepo: string;
+
+  beforeEach(() => {
+    // Create a temporary directory tree that mimics valid repo layouts:
+    //   <tmpRoot>/opencode/dist/opencode/bin/opencode   (executable binary)
+    //   <tmpRoot>/amicode/packages/extension/            (directory)
+    tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-test-"));
+    const binDir = path.join(tmpRoot, "opencode", "dist", "opencode", "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const fakeBinary = path.join(binDir, "opencode");
+    fs.writeFileSync(fakeBinary, "#!/bin/sh\n");
+    fs.chmodSync(fakeBinary, 0o755);
+
+    const extDir = path.join(tmpRoot, "amicode", "packages", "extension");
+    fs.mkdirSync(extDir, { recursive: true });
+    fakeAmicodeRepo = path.join(tmpRoot, "amicode");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it("validates absolute paths correctly (baseline)", async () => {
+    const host = io();
+    const fakeOpencodeRepo = path.join(tmpRoot, "opencode");
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-update",
+      enabled: true,
+      opencodePath: fakeOpencodeRepo,
+      amicodePath: fakeAmicodeRepo,
+    }, host);
+    await flush();
+    const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
+    expect(reply).toBeDefined();
+    expect(reply.opencodeValid).toBe(true);
+    expect(reply.amicodeValid).toBe(true);
+  });
+
+  it("expands ~ in opencodePath before validation", async () => {
+    // tmpRoot lives under os.tmpdir(), which is NOT under the home directory
+    // on macOS/Linux CI — so we symlink a home-relative alias into it and
+    // exercise the real tilde-expansion path the way a user's default
+    // "~/harmoniqs/opencode" setting would.
+    const home = os.homedir();
+    const symlink = path.join(home, `.devtools-test-oc-${Date.now()}`);
+    fs.symlinkSync(path.join(tmpRoot, "opencode"), symlink);
+    try {
+      const tildePath = "~/" + path.basename(symlink);
+      const host = io();
+      handleAmicodeBridgeMessage({
+        source: "amicode",
+        kind: "dev-tools-update",
+        enabled: true,
+        opencodePath: tildePath,
+        amicodePath: fakeAmicodeRepo,
+      }, host);
+      await flush();
+      const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
+      expect(reply).toBeDefined();
+      expect(reply.opencodeValid).toBe(true);
+      expect(reply.opencodeError).toBeUndefined();
+    } finally {
+      fs.rmSync(symlink, { force: true });
+    }
+  });
+
+  it("expands ~ in amicodePath before validation", async () => {
+    const home = os.homedir();
+    const symlink = path.join(home, `.devtools-test-am-${Date.now()}`);
+    fs.symlinkSync(fakeAmicodeRepo, symlink);
+    const fakeOpencodeRepo = path.join(tmpRoot, "opencode");
+    try {
+      const tildePath = "~/" + path.basename(symlink);
+      const host = io();
+      handleAmicodeBridgeMessage({
+        source: "amicode",
+        kind: "dev-tools-update",
+        enabled: true,
+        opencodePath: fakeOpencodeRepo,
+        amicodePath: tildePath,
+      }, host);
+      await flush();
+      const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
+      expect(reply).toBeDefined();
+      expect(reply.amicodeValid).toBe(true);
+      expect(reply.amicodeError).toBeUndefined();
+    } finally {
+      fs.rmSync(symlink, { force: true });
+    }
+  });
+
+  it("reports error for invalid paths (not a false positive)", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-update",
+      enabled: true,
+      opencodePath: "/definitely/not/a/real/repo",
+      amicodePath: "/also/not/real",
+    }, host);
+    await flush();
+    const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
+    expect(reply).toBeDefined();
+    expect(reply.opencodeValid).toBe(false);
+    expect(reply.amicodeValid).toBe(false);
+  });
+});

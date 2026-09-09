@@ -328,10 +328,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
   if (msg.kind === "dev-tools-update") {
     const enabled = (msg as { enabled?: unknown }).enabled === true;
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
-      ? (msg as unknown as { opencodePath: string }).opencodePath.trim()
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
       : "";
     const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
-      ? (msg as unknown as { amicodePath: string }).amicodePath.trim()
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
       : "";
 
     const reply: {
