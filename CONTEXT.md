@@ -135,8 +135,12 @@ A sandboxed ES-module card rendered in an iframe within Home. Authored by the ag
 _Avoid_: Card (ambiguous — the UI has many cards), tile (as the concept name — tile is a size class)
 
 **Sidebar**:
-The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Destinations open in the editor area.
+The webview in the VS Code activity bar container, showing project navigation and system status. Contains action buttons (open chat, create project), a session-aware unified project tree (Research Projects with lifecycle metadata expanding into file trees; Dev Projects as plain expandable folders), and a collapsible fleet section (deferred). The sidebar is navigation chrome — it follows the active session's project binding but never drives session switching. Single-clicking a file opens it in Preview (the companion file viewer in the side panel); double-clicking opens a native VS Code editor tab.
 _Avoid_: Explorer (VS Code's native file explorer is separate), Panel (the in-app dismissible drawer is a different concept)
+
+**Preview**:
+The companion file viewer in the side panel — a reactive surface driven by file selection in the Sidebar or Chat. Shows the selected file (markdown rendered with a toggle to edit; text/code files in a CodeMirror editor; images and PDFs inline). Has no internal file navigation of its own — the Sidebar is the file tree, Preview is the content. Opens and activates automatically when a file is selected. When no file is selected, shows a placeholder. Single-click viewing, not a persistent editor — for committed editing, double-click the Sidebar entry to open a native VS Code tab.
+_Avoid_: File browser, Finder (those imply internal navigation), editor (Preview is a companion viewer, not a primary editor)
 
 ### Orthogonal axes
 
