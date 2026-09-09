@@ -689,4 +689,40 @@ describe("amicode bridge — dev-tools-update path validation", () => {
     await flush();
     expect(ws.configUpdates).toContainEqual(["devAssetRoot", ""]);
   });
+
+  // #943: a real fork build never lands at the unsuffixed path the
+  // beforeEach fixture above uses — it always produces a platform-suffixed
+  // dist directory (dist/opencode-<platform>-<arch>/bin/opencode). Before
+  // the shared findForkedOpencodeBinary() helper, dev-tools-update's
+  // candidate list never checked that layout, so a genuinely valid repo
+  // path was reported "Binary not found at this path" — identically to an
+  // actual typo. Correcting a bad path to a real one just re-ran the same
+  // broken check and got the same wrong answer, which looked like nothing
+  // had updated.
+  it("validates a real fork build's platform-suffixed layout (#943)", async () => {
+    const realRoot = fs.mkdtempSync(path.join(os.tmpdir(), "devtools-real-build-"));
+    const platformKey = `${process.platform}-${process.arch}`;
+    const binDir = path.join(realRoot, "packages", "opencode", "dist", `opencode-${platformKey}`, "bin");
+    fs.mkdirSync(binDir, { recursive: true });
+    const realBinary = path.join(binDir, "opencode");
+    fs.writeFileSync(realBinary, "#!/bin/sh\n");
+    fs.chmodSync(realBinary, 0o755);
+    try {
+      const host = io();
+      handleAmicodeBridgeMessage({
+        source: "amicode",
+        kind: "dev-tools-update",
+        enabled: true,
+        opencodePath: realRoot,
+        amicodePath: fakeAmicodeRepo,
+      }, host);
+      await flush();
+      const reply = host.posted.find((m: any) => m.kind === "dev-tools-status") as any;
+      expect(reply).toBeDefined();
+      expect(reply.opencodeValid).toBe(true);
+      expect(reply.opencodeError).toBeUndefined();
+    } finally {
+      fs.rmSync(realRoot, { recursive: true, force: true });
+    }
+  });
 });

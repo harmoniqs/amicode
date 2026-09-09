@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
+import { findForkedOpencodeBinary } from "./opencode_binary";
 import {
   readSkillProviders,
   addSkillProvider,
@@ -392,32 +393,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     // Validate opencode path: resolve the binary from the repo root
     let resolvedBinary = "";
     if (opencodePath) {
-      // The dev binary lives at <root>/packages/opencode/dist/opencode/bin/opencode
-      // or <root>/cmd/opencode (Go), or the user may point directly at a binary.
-      const candidates = [
-        path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
-        path.join(opencodePath, "dist", "opencode", "bin", "opencode"),
-        opencodePath, // direct binary path
-      ];
-      for (const candidate of candidates) {
-        try {
-          const stat = fs.statSync(candidate);
-          if (stat.isFile()) {
-            // Check executable bit (unix)
-            try {
-              fs.accessSync(candidate, fs.constants.X_OK);
-              resolvedBinary = candidate;
-              break;
-            } catch {
-              reply.opencodeValid = false;
-              reply.opencodeError = "Binary exists but is not executable";
-            }
-          }
-        } catch {
-          // not found, try next
-        }
-      }
-      if (!resolvedBinary && reply.opencodeValid) {
+      const resolution = findForkedOpencodeBinary(opencodePath);
+      if (resolution.found) {
+        resolvedBinary = resolution.path;
+      } else if (resolution.reason === "not-executable") {
+        reply.opencodeValid = false;
+        reply.opencodeError = "Binary exists but is not executable";
+      } else {
         reply.opencodeValid = false;
         reply.opencodeError = "Binary not found at this path";
       }
@@ -630,15 +612,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Resolve and codesign the built binary ──
-        const candidates = [
-          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-arm64`, "bin", "opencode"),
-          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-x64`, "bin", "opencode"),
-          path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
-        ];
-        let resolvedBinary = "";
-        for (const c of candidates) {
-          try { if (fs.statSync(c).isFile()) { resolvedBinary = c; break; } } catch { /* next */ }
-        }
+        const resolution = findForkedOpencodeBinary(opencodePath);
+        const resolvedBinary = resolution.found ? resolution.path : "";
         if (resolvedBinary) {
           await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
         }
