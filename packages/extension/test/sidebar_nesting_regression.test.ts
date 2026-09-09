@@ -112,3 +112,82 @@ describe("regression: bridge environmentSlug (#911)", () => {
       .toMatch(/environmentSlug/);
   });
 });
+
+describe("regression: expand-after-renderRoots renders from cache (#940)", () => {
+  // Bug: renderRoots wipes the DOM and creates a new empty childrenEl.
+  // The click handler only sent get-children when the cache was EMPTY, but
+  // if the cache existed it just toggled display:block on the empty div —
+  // leaving an expanded folder with no children. The env group handler was
+  // immune because populateEnvGroupChildren always renders from cache.
+  //
+  // Fix: click handlers in renderRootNode and renderDirectoryNode must
+  // render from cache when expanding (same pattern as env group handler).
+
+  // Extract the renderRootNode function body (between "function renderRootNode"
+  // and the next top-level "function " declaration).
+  function extractFnBody(src: string, fnName: string): string {
+    const start = src.indexOf(`function ${fnName}`);
+    if (start === -1) return "";
+    // Walk forward counting braces to find the function's closing brace
+    let depth = 0;
+    let foundOpen = false;
+    for (let i = start; i < src.length; i++) {
+      if (src[i] === "{") { depth++; foundOpen = true; }
+      if (src[i] === "}") { depth--; }
+      if (foundOpen && depth === 0) {
+        return src.slice(start, i + 1);
+      }
+    }
+    return src.slice(start);
+  }
+
+  // Extract the click handler body from a function body string.
+  // The click handler is inside: row.addEventListener("click", () => { ... });
+  function extractClickHandler(fnBody: string): string {
+    const marker = 'addEventListener("click"';
+    const idx = fnBody.indexOf(marker);
+    if (idx === -1) return "";
+    // Find the opening brace of the arrow function
+    const arrowStart = fnBody.indexOf("{", idx + marker.length);
+    if (arrowStart === -1) return "";
+    let depth = 0;
+    for (let i = arrowStart; i < fnBody.length; i++) {
+      if (fnBody[i] === "{") depth++;
+      if (fnBody[i] === "}") depth--;
+      if (depth === 0) return fnBody.slice(arrowStart, i + 1);
+    }
+    return "";
+  }
+
+  it("renderRootNode click handler renders from cache on expand", () => {
+    const fnBody = extractFnBody(webviewSrc, "renderRootNode");
+    expect(fnBody).toBeTruthy();
+    const clickHandler = extractClickHandler(fnBody);
+    expect(clickHandler).toBeTruthy();
+
+    // The click handler must call renderChildren when cache exists —
+    // not just toggle display and skip when cache is populated.
+    expect(clickHandler).toContain("renderChildren");
+  });
+
+  it("renderDirectoryNode click handler renders from cache on expand", () => {
+    const fnBody = extractFnBody(webviewSrc, "renderDirectoryNode");
+    expect(fnBody).toBeTruthy();
+    const clickHandler = extractClickHandler(fnBody);
+    expect(clickHandler).toBeTruthy();
+
+    // Same fix: must render from cache, not just request on miss.
+    expect(clickHandler).toContain("renderChildren");
+  });
+
+  it("env group click handler already renders from cache (populateEnvGroupChildren)", () => {
+    // Baseline: the env group handler was never affected by this bug.
+    const fnBody = extractFnBody(webviewSrc, "renderEnvGroupNode");
+    expect(fnBody).toBeTruthy();
+    const clickHandler = extractClickHandler(fnBody);
+    expect(clickHandler).toBeTruthy();
+
+    // populateEnvGroupChildren internally calls renderChildren from cache.
+    expect(clickHandler).toContain("populateEnvGroupChildren");
+  });
+});

@@ -1604,8 +1604,12 @@ function createIconEl(icon: string): HTMLElement {
       }
       childrenEl.style.display = expanded[root.path] ? "block" : "none";
 
-      if (expanded[root.path] && !childrenCache[root.path]) {
-        vscode.postMessage({ kind: "get-children", path: root.path });
+      if (expanded[root.path]) {
+        if (childrenCache[root.path]) {
+          renderChildren(childrenEl, childrenCache[root.path], depth + 1);
+        } else {
+          vscode.postMessage({ kind: "get-children", path: root.path });
+        }
       }
     });
 
@@ -1684,8 +1688,12 @@ function createIconEl(icon: string): HTMLElement {
       }
       childrenEl.style.display = expanded[entry.path] ? "block" : "none";
 
-      if (expanded[entry.path] && !childrenCache[entry.path]) {
-        vscode.postMessage({ kind: "get-children", path: entry.path });
+      if (expanded[entry.path]) {
+        if (childrenCache[entry.path]) {
+          renderChildren(childrenEl, childrenCache[entry.path], depth + 1);
+        } else {
+          vscode.postMessage({ kind: "get-children", path: entry.path });
+        }
       }
     });
 
