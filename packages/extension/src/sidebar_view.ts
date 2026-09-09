@@ -378,6 +378,10 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           const uri = vscode.Uri.file(p);
           void vscode.window.showTextDocument(uri);
         },
+        openFileEditor: (p) => {
+          const uri = vscode.Uri.file(p);
+          void vscode.window.showTextDocument(uri);
+        },
         fileOp: (req) => executeFileOp(req),
         postMessage: (m) => {
           void webviewView.webview.postMessage(m);
