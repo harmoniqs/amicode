@@ -8,28 +8,32 @@ import { describe, expect, test } from "vitest"
  */
 
 // ---------------------------------------------------------------------------
-// preprocessMarkdown — extracted from session-preview-tab.tsx
+// preprocessMarkdown — canonical version from markdown-utils.ts
+// Uses newlines + trim: $$\n<trimmed body>\n$$
+// After overlay sync, replace this with:
+//   import { preprocessMarkdown } from "../../app-bundle/overlay/packages/session-ui/src/v2/components/markdown-utils"
 // ---------------------------------------------------------------------------
 
 /**
  * Convert fenced ```math blocks to $$...$$ display math for KaTeX.
+ * Canonical implementation: wraps with newlines and trims whitespace.
  */
 function preprocessMarkdown(md: string): string {
-  return md.replace(/```math\n([\s\S]*?)```/g, (_, p1) => `$$${p1}$$`)
+  return md.replace(/```math\n([\s\S]*?)```/g, (_match, body: string) => `$$\n${body.trim()}\n$$`)
 }
 
 describe("preprocessMarkdown", () => {
   test("converts fenced math blocks to display math", () => {
     const input = "text\n```math\nx^2 + y^2 = z^2\n```\nmore text"
     const result = preprocessMarkdown(input)
-    expect(result).toBe("text\n$$x^2 + y^2 = z^2\n$$\nmore text")
+    expect(result).toBe("text\n$$\nx^2 + y^2 = z^2\n$$\nmore text")
   })
 
   test("handles multiple math blocks", () => {
     const input = "```math\na\n```\nmiddle\n```math\nb\n```"
     const result = preprocessMarkdown(input)
-    expect(result).toContain("$$a\n$$")
-    expect(result).toContain("$$b\n$$")
+    expect(result).toContain("$$\na\n$$")
+    expect(result).toContain("$$\nb\n$$")
     expect(result).not.toContain("```math")
   })
 
