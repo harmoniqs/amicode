@@ -322,6 +322,8 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
     const [ephemeral, setEphemeral] = createStore({
       reviewPanelSource: "other" as ReviewPanelSource,
       sessionTabPreview: {} as Record<string, string | undefined>,
+      /** Per-session preview file path (companion viewer). Null = empty state. */
+      sessionPreviewFile: {} as Record<string, string | null>,
     })
 
     const MAX_SESSION_KEYS = 50
@@ -893,6 +895,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
               } else {
                 setStore("sessionView", session, "todoCollapsed", collapsed)
               }
+            },
+          },
+          /** Preview companion — the file to show in the Preview tab. */
+          previewFile: {
+            get: createMemo(() => ephemeral.sessionPreviewFile[key()] ?? null),
+            set(path: string | null) {
+              setEphemeral("sessionPreviewFile", key(), path)
             },
           },
           terminal: {

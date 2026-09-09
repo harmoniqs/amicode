@@ -33,12 +33,8 @@ import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
 import { EditableDiffView } from "./editable-diff-view"
 import type { DiffEditorHandle } from "./editable-diff-view-core"
 import { Markdown } from "../../components/markdown"
+import { preprocessMarkdown } from "./markdown-utils"
 import "./session-review-v2.css"
-
-// Shared utility: convert fenced ```math blocks to $$...$$ for KaTeX
-function preprocessMarkdown(md: string): string {
-  return md.replace(/```math\n([\s\S]*?)```/g, (_, p1) => `$$${p1}$$`)
-}
 
 type ReviewDiff = (SnapshotFileDiff & { file: string }) | FileDiffInfo | VcsFileDiff
 
@@ -253,6 +249,78 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
   const isEditable = () => !isPreviewMd() && !isDeleted()
   const isReadOnly = () => !isEditable()
 
+  // ─── Zoom state (preview mode only) ────────────────────────────────────
+  const [zoom, setZoom] = createSignal(100)
+  const zoomIn = () => setZoom((z) => Math.min(z + 10, 500))
+  const zoomOut = () => setZoom((z) => Math.max(z - 10, 50))
+  const onZoomChange = (value: number) => setZoom(Math.round(Math.min(Math.max(value, 50), 500)))
+
+  // ─── Auto-hide zoom pill on idle ──────────────────────────────────────
+  // Pill starts visible (initial reveal), then fades after 2s of no mouse
+  // activity. Mouse movement/enter on the preview area resets the timer.
+  // Hovering over the pill itself pauses the timer.
+  const [showZoomPill, setShowZoomPill] = createSignal(true)
+  let zoomIdleTimer: ReturnType<typeof setTimeout> | undefined
+  let pillHovered = false
+
+  const startZoomIdleTimer = () => {
+    if (zoomIdleTimer) clearTimeout(zoomIdleTimer)
+    zoomIdleTimer = setTimeout(() => {
+      if (!pillHovered) setShowZoomPill(false)
+    }, 2000)
+  }
+
+  const handlePreviewMouseEnter = () => {
+    setShowZoomPill(true)
+    startZoomIdleTimer()
+  }
+  const handlePreviewMouseMove = () => {
+    if (!showZoomPill()) setShowZoomPill(true)
+    startZoomIdleTimer()
+  }
+  const handlePreviewMouseLeave = () => {
+    if (zoomIdleTimer) clearTimeout(zoomIdleTimer)
+    if (!pillHovered) setShowZoomPill(false)
+  }
+  const handlePillMouseEnter = () => {
+    pillHovered = true
+    if (zoomIdleTimer) clearTimeout(zoomIdleTimer)
+  }
+  const handlePillMouseLeave = () => {
+    pillHovered = false
+    startZoomIdleTimer()
+  }
+
+  // Start the initial auto-hide timer
+  startZoomIdleTimer()
+
+  // ─── Pinch / wheel zoom ──────────────────────────────────────────────
+  // Trackpad pinch fires as WheelEvent with ctrlKey: true in Chromium.
+  // Shift+scroll is the mouse-wheel equivalent. Both trigger continuous
+  // zoom. Must use addEventListener with passive: false to preventDefault.
+  let previewWrapperRef: HTMLDivElement | undefined
+
+  const handleWheelZoom = (e: WheelEvent) => {
+    if (!e.ctrlKey && !e.shiftKey) return   // normal scroll — pass through
+    e.preventDefault()
+    const delta = e.deltaY || e.deltaX
+    if (delta === 0) return
+    const oldZoom = zoom()
+    const factor = Math.exp(-delta * 0.003)
+    const next = Math.round(Math.min(Math.max(oldZoom * factor, 50), 500))
+    if (next === oldZoom) return
+    onZoomChange(next)
+    setShowZoomPill(true)
+    startZoomIdleTimer()
+  }
+
+  createEffect(() => {
+    const el = previewWrapperRef
+    if (!el) return
+    el.addEventListener("wheel", handleWheelZoom, { passive: false })
+    onCleanup(() => el.removeEventListener("wheel", handleWheelZoom))
+  })
+
   /** Write a file to disk via the SDK-based writeFile prop. */
   const saveFile = (path: string, content: string) => {
     if (!props.writeFile) return
@@ -376,14 +444,151 @@ export function SessionReviewFilePreviewV2(props: SessionReviewFilePreviewV2Prop
         {/* Branch 1: Markdown preview mode for .md files */}
         <Show when={isPreviewMd()}>
           <div
-            data-slot="session-review-v2-markdown-preview"
-            style={{
-              padding: "16px",
-              overflow: "auto",
-              height: "100%",
-            }}
+            ref={previewWrapperRef}
+            style={{ position: "relative", height: "100%" }}
+            onMouseEnter={handlePreviewMouseEnter}
+            onMouseMove={handlePreviewMouseMove}
+            onMouseLeave={handlePreviewMouseLeave}
           >
-            <Markdown text={preprocessMarkdown(text(view(), "additions"))} />
+            {/* Floating zoom overlay — top-right of content area */}
+            <div
+              onMouseEnter={handlePillMouseEnter}
+              onMouseLeave={handlePillMouseLeave}
+              style={{
+                position: "absolute",
+                top: "8px",
+                right: "14px",
+                "z-index": "20",
+                display: "flex",
+                "align-items": "center",
+                height: "28px",
+                "border-radius": "6px",
+                border: "1px solid var(--border-base)",
+                "box-shadow": "0 1px 3px rgba(0,0,0,0.08)",
+                background: "color-mix(in srgb, var(--background-base) 80%, transparent)",
+                "backdrop-filter": "blur(4px)",
+                overflow: "hidden",
+                "font-size": "12px",
+                opacity: showZoomPill() ? "1" : "0",
+                "pointer-events": showZoomPill() ? "auto" : "none",
+                transition: "opacity 200ms ease",
+              }}
+            >
+              {/* Editable zoom percentage input */}
+              <input
+                type="text"
+                value={`${zoom()}%`}
+                style={{
+                  width: "44px",
+                  height: "100%",
+                  "text-align": "center",
+                  "font-size": "12px",
+                  color: "var(--text-base)",
+                  background: "transparent",
+                  border: "none",
+                  outline: "none",
+                }}
+                onFocus={(e) => {
+                  e.currentTarget.value = `${zoom()}`
+                  e.currentTarget.select()
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur()
+                  else if (e.key === "Escape") {
+                    e.currentTarget.value = `${zoom()}`
+                    e.currentTarget.blur()
+                  }
+                }}
+                onBlur={(e) => {
+                  const val = parseInt(e.currentTarget.value)
+                  if (!isNaN(val)) onZoomChange(val)
+                  e.currentTarget.value = `${zoom()}%`
+                }}
+              />
+              {/* Reset to 100% */}
+              <button
+                type="button"
+                style={{
+                  display: "flex",
+                  "align-items": "center",
+                  "justify-content": "center",
+                  width: "24px",
+                  height: "100%",
+                  "border-left": "1px solid var(--border-base)",
+                  background: "none",
+                  "border-top": "none",
+                  "border-bottom": "none",
+                  "border-right": "none",
+                  cursor: "pointer",
+                  color: "var(--text-weak)",
+                  padding: "0",
+                }}
+                onClick={() => onZoomChange(100)}
+                aria-label="Reset zoom"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              </button>
+              {/* Vertical +/- stepper */}
+              <div style={{ display: "flex", "flex-direction": "column", "border-left": "1px solid var(--border-base)" }}>
+                <button
+                  type="button"
+                  style={{
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                    width: "20px",
+                    height: "14px",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    color: "var(--text-weak)",
+                    "font-size": "10px",
+                    "font-weight": "500",
+                    "line-height": "1",
+                    padding: "0",
+                  }}
+                  onClick={zoomIn}
+                  aria-label="Zoom in"
+                >+</button>
+                <button
+                  type="button"
+                  style={{
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                    width: "20px",
+                    height: "14px",
+                    background: "none",
+                    border: "none",
+                    "border-top": "1px solid var(--border-base)",
+                    cursor: "pointer",
+                    color: "var(--text-weak)",
+                    "font-size": "10px",
+                    "font-weight": "500",
+                    "line-height": "1",
+                    padding: "0",
+                  }}
+                  onClick={zoomOut}
+                  aria-label="Zoom out"
+                >−</button>
+              </div>
+            </div>
+            <div
+              data-slot="session-review-v2-markdown-preview"
+              style={{
+                padding: "16px",
+                overflow: "auto",
+                height: "100%",
+                "transform-origin": "top left",
+                transform: `scale(${zoom() / 100})`,
+                width: `${10000 / zoom()}%`,
+              }}
+            >
+              <Markdown text={preprocessMarkdown(text(view(), "additions"))} />
+            </div>
           </div>
         </Show>
 

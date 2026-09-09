@@ -157,6 +157,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Open-file with an absolute path — native VS Code editor tab (#934).
+  // Used by the Preview tab's PDF placeholder ("Open in editor") and any
+  // future in-app file action that needs to open in a native tab rather
+  // than the companion preview. Same guards as the file:// URL handler.
+  if (
+    msg.kind === "open-file" &&
+    typeof (msg as { path?: unknown }).path === "string"
+  ) {
+    const fsPath = (msg as unknown as { path: string }).path;
+    if (!path.isAbsolute(fsPath) || fsPath.length > 4096 || !fs.existsSync(fsPath)) return true;
+    void vscode.commands.executeCommand("vscode.open", vscode.Uri.file(fsPath));
+    return true;
+  }
+
   // Paste bridge: navigator.clipboard is unavailable to the framed app (the
   // webview parent has no clipboard-read to delegate), so the app asks US —
   // the extension host reads the OS clipboard and replies. Visibility gate:

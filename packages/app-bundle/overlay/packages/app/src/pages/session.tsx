@@ -68,7 +68,7 @@ import {
   createSessionComposerRegionController,
   SessionComposerRegion,
 } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, createSizing, shouldShowFileTree } from "@/pages/session/helpers"
+import { createOpenReviewFile, createSessionTabs, createSizing, shouldShowFileTree, SESSION_PREVIEW_TAB } from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/timeline/message-timeline"
 import { createTimelineModel } from "@/pages/session/timeline/model"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
@@ -727,6 +727,22 @@ export default function Page() {
   }
   window.addEventListener("message", onFileOpNotify)
   onCleanup(() => window.removeEventListener("message", onFileOpNotify))
+
+  // #934: preview-file — the sidebar (or chat bridge, #935) tells us to show
+  // a file in the Preview companion tab. Opens the side panel, switches to
+  // the Preview tab, and sets the previewFile signal in the layout context.
+  const onPreviewFile = (e: MessageEvent) => {
+    const d = e.data as { source?: string; kind?: string; path?: string } | undefined
+    if (d?.source !== "amicode" || d?.kind !== "preview-file" || !d.path) return
+    batch(() => {
+      view().previewFile.set(d.path!)
+      void tabs().open(SESSION_PREVIEW_TAB)
+      tabs().setActive(SESSION_PREVIEW_TAB)
+      if (!view().reviewPanel.opened()) view().reviewPanel.open()
+    })
+  }
+  window.addEventListener("message", onPreviewFile)
+  onCleanup(() => window.removeEventListener("message", onPreviewFile))
 
   // #844: fs-diff-invalidate — the FileWatcherBridge detected a change to a
   // file we're watching. Update externalFileStatus for deletions and bump

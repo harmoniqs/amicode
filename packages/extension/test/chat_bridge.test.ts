@@ -95,6 +95,45 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   });
 });
 
+describe("amicode bridge — open-file with path (native editor, #934)", () => {
+  it("opens absolute path via vscode.open, not preview-file", async () => {
+    const host = io();
+    // Create a temp file so existsSync passes
+    const tmp = os.tmpdir();
+    const testFile = path.join(tmp, `amicode-test-${Date.now()}.pdf`);
+    fs.writeFileSync(testFile, "dummy");
+    try {
+      const consumed = handleAmicodeBridgeMessage(
+        { source: "amicode", kind: "open-file", path: testFile },
+        host,
+      );
+      expect(consumed).toBe(true);
+      await flush();
+      const executed = (vscode.commands as unknown as { executed: string[] }).executed;
+      expect(executed[executed.length - 1]).toBe("vscode.open");
+      // Should NOT post a preview-file message
+      const previewMsg = host.posted.find((m: any) => m.kind === "preview-file");
+      expect(previewMsg).toBeUndefined();
+    } finally {
+      fs.unlinkSync(testFile);
+    }
+  });
+
+  it("rejects non-absolute paths and missing files", () => {
+    const host = io();
+    // Relative path — should be consumed but not opened
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-file", path: "relative/file.pdf" },
+      host,
+    )).toBe(true);
+    // Missing file
+    expect(handleAmicodeBridgeMessage(
+      { source: "amicode", kind: "open-file", path: "/definitely/not/here.pdf" },
+      host,
+    )).toBe(true);
+  });
+});
+
 describe("chat panel relay — preview-file in iframe allowlist (#934)", () => {
   it("the outer relay script forwards preview-file to the iframe", () => {
     const src = fs.readFileSync(
