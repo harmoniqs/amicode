@@ -25,6 +25,7 @@ jobs:
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v7
         with: { node-version: 20, cache: pnpm }
+      - uses: oven-sh/setup-bun@v2
       - name: Resolve tag and publish gate
         id: meta
         run: |
