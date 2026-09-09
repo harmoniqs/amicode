@@ -1055,7 +1055,7 @@
     "packages/app/src/components/windows-app-menu.tsx": "460669a129e9be61ab2d5f51fe6ecad73579a395295d5f724f235b988cdc667e",
     "packages/app/src/components/workbench-panel.tsx": "d16f477044098842a214a2e16f9be719e7688a04bcb575889ca544988f23c690",
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
-    "packages/app/src/context/directory-sync.ts": "0d9e6aa3cff6c6654c98928f59c4e2fcced04f42b167184eea77be04c00371ee",
+    "packages/app/src/context/directory-sync.ts": "a3921044097f3fbcfb20eaec500f24344f12a43e137417c86f15d39dcc6e4b2b",
     "packages/app/src/context/language.tsx": "cb545e04c128bf981b2b72ac407f9220cf9e80337fe8c87482ffe85407e0cf9a",
     "packages/app/src/context/layout-tabs.test.ts": "4d9fdbe963306f164b2f48eac3b6a28c5a703c1758bf14b2cc4796720d8fa72c",
     "packages/app/src/context/layout-tabs.ts": "741506ce165f68cdb0b8f2931a2dad3e26c05880f9286c3daf04ec979bac21c5",

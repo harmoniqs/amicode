@@ -22,6 +22,8 @@ const sessionFields = new Set([
   "part_text_accum_delta",
 ])
 
+const emptyDiffVersion: State["diff_version"] = {}
+
 export const createDirSyncContext = (
   directory: string,
   serverSync: ReturnType<typeof createServerSyncContextInner>,
@@ -33,6 +35,8 @@ export const createDirSyncContext = (
   const data = new Proxy({} as State, {
     get(_, property: keyof State) {
       if (property === "session_working") return serverSync.session.data.session_working.bind(serverSync.session.data)
+      // Older app bundles may not have initialized this newer shared-session field yet.
+      if (property === "diff_version") return serverSync.session.data.diff_version ?? emptyDiffVersion
       if (sessionFields.has(property)) return serverSync.session.data[property as keyof typeof serverSync.session.data]
       return current()[0][property]
     },
