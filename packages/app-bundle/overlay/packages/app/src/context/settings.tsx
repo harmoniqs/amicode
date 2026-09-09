@@ -52,6 +52,7 @@ export interface Settings {
   storage: {
     databasePath: string
     configDir: string
+    recapWindowDays: number
   }
   developer: {
     enabled: boolean
@@ -219,6 +220,7 @@ const defaultSettings: Settings = {
   storage: {
     databasePath: "",
     configDir: "",
+    recapWindowDays: 7,
   },
   developer: {
     enabled: false,
@@ -587,6 +589,10 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         configDir: withFallback(() => store.storage?.configDir, defaultSettings.storage.configDir),
         setConfigDir(value: string) {
           setStore("storage", "configDir", value)
+        },
+        recapWindowDays: withFallback(() => store.storage?.recapWindowDays, defaultSettings.storage.recapWindowDays),
+        setRecapWindowDays(value: number) {
+          setStore("storage", "recapWindowDays", value)
         },
       },
       developer: {

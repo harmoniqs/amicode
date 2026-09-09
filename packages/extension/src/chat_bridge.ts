@@ -987,6 +987,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       kind: "data-storage-defaults",
       databasePath: shorten(defaultDbPath),
       configDir: shorten(defaultConfigDir),
+      recapWindowDays: 7,
       tab: msg.tab,
     });
     return true;
@@ -999,6 +1000,9 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     const configDir = typeof (msg as { configDir?: unknown }).configDir === "string"
       ? (msg as unknown as { configDir: string }).configDir.trim().replace(/^~/, os.homedir())
       : "";
+    const recapWindowDays = typeof (msg as { recapWindowDays?: unknown }).recapWindowDays === "number"
+      ? (msg as unknown as { recapWindowDays: number }).recapWindowDays
+      : 7;
 
     const reply: {
       source: "amicode"; kind: "data-storage-status"; tab?: string;
@@ -1062,6 +1066,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     if (reply.configValid) {
       void vscode.workspace.getConfiguration("amicode").update(
         "configDir", configDir, vscode.ConfigurationTarget.Global,
+      );
+    }
+    // Recap window: always valid (clamped to >= 1 on the client side)
+    if (recapWindowDays >= 1) {
+      void vscode.workspace.getConfiguration("amicode").update(
+        "sessionRecapWindowDays", recapWindowDays, vscode.ConfigurationTarget.Global,
       );
     }
 

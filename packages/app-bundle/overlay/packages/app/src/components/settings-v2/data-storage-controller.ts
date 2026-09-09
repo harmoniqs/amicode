@@ -13,6 +13,7 @@ export interface DataStorageStatus {
 export interface DataStorageDefaults {
   databasePath: string
   configDir: string
+  recapWindowDays: number
 }
 
 export function createDataStorageController() {
@@ -43,6 +44,7 @@ export function createDataStorageController() {
       setDefaults({
         databasePath: typeof d.databasePath === "string" ? d.databasePath : "",
         configDir: typeof d.configDir === "string" ? d.configDir : "",
+        recapWindowDays: typeof d.recapWindowDays === "number" ? d.recapWindowDays : 7,
       })
     }
 
@@ -74,6 +76,7 @@ export function createDataStorageController() {
         kind: "data-storage-update",
         databasePath: settings.storage.databasePath(),
         configDir: settings.storage.configDir(),
+        recapWindowDays: settings.storage.recapWindowDays(),
       },
       "*",
     )
@@ -88,9 +91,14 @@ export function createDataStorageController() {
     setConfigDir: (value: string) => {
       settings.storage.setConfigDir(value)
     },
+    recapWindowDays: settings.storage.recapWindowDays,
+    setRecapWindowDays: (value: number) => {
+      settings.storage.setRecapWindowDays(value)
+    },
     /** Trigger validation + apply on blur */
     commitDatabasePath: () => sendUpdate(),
     commitConfigDir: () => sendUpdate(),
+    commitRecapWindowDays: () => sendUpdate(),
     status,
     defaults,
     pending,
