@@ -299,7 +299,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
   private treeService: SidebarTreeService;
   private globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> };
 
-  static readonly DEFAULT_SECTION_ORDER = ["environments", "research", "dev", "fleet"];
+  static readonly DEFAULT_SECTION_ORDER = ["research", "dev", "fleet"];
   private static readonly SECTION_ORDER_KEY = "amicode.sectionOrder";
 
   constructor(extensionUri: vscode.Uri, globalState?: { get(key: string, fallback?: unknown): unknown; update(key: string, value: unknown): Thenable<void> }) {
