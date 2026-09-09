@@ -79,6 +79,60 @@ function createFolderIconEl(expanded: boolean): HTMLElement | null {
   return createIconEl(icon);
 }
 
+/** Create a 16×16 inline SVG flask icon for research project rows (#914). */
+function createFlaskIconEl(): HTMLElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  const p1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p1.setAttribute("d", "M6 2H10M6.5 2V6L3 13H13L9.5 6V2");
+  p1.setAttribute("stroke", "currentColor");
+  p1.setAttribute("stroke-width", "1.2");
+  p1.setAttribute("stroke-linejoin", "round");
+  const p2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  p2.setAttribute("d", "M4.5 10.5H11.5");
+  p2.setAttribute("stroke", "currentColor");
+  p2.setAttribute("stroke-width", "1.2");
+  svg.appendChild(p1);
+  svg.appendChild(p2);
+  return svg as unknown as HTMLElement;
+}
+
+/** Create a 16×16 inline SVG clipboard icon for environment group headers (#914). */
+function createClipboardIconEl(): HTMLElement {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("width", "16");
+  svg.setAttribute("height", "16");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("fill", "none");
+  // Board body (rounded rectangle)
+  const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  rect.setAttribute("x", "3");
+  rect.setAttribute("y", "3");
+  rect.setAttribute("width", "10");
+  rect.setAttribute("height", "12");
+  rect.setAttribute("rx", "1.5");
+  rect.setAttribute("stroke", "currentColor");
+  rect.setAttribute("stroke-width", "1.2");
+  // Clamp (tab at the top center overlapping the rectangle)
+  const clamp = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+  clamp.setAttribute("x", "5.5");
+  clamp.setAttribute("y", "1");
+  clamp.setAttribute("width", "5");
+  clamp.setAttribute("height", "3.5");
+  clamp.setAttribute("rx", "1");
+  clamp.setAttribute("stroke", "currentColor");
+  clamp.setAttribute("stroke-width", "1.2");
+  clamp.setAttribute("fill", "var(--vscode-sideBar-background, #1e1e1e)");
+  svg.appendChild(rect);
+  svg.appendChild(clamp);
+  return svg as unknown as HTMLElement;
+}
+
 /** Build a DOM element for a theme icon (img for SVG mode, span for font mode). */
 function createIconEl(icon: string): HTMLElement {
   if (iconTheme.mode === "svg" && icon) {
@@ -1231,8 +1285,8 @@ function createIconEl(icon: string): HTMLElement {
     chevronEl.className = expanded[env.path] ? "chevron expanded" : "chevron";
     chevronEl.textContent = "\u203A"; // ›
 
-    // Folder icon
-    const iconEl = createFolderIconEl(!!expanded[env.path]);
+    // Custom clipboard icon for environment groups (#914)
+    const iconEl = createClipboardIconEl();
 
     const label = document.createElement("span");
     label.className = "label";
@@ -1265,10 +1319,7 @@ function createIconEl(icon: string): HTMLElement {
       expanded[env.path] = !expanded[env.path];
       saveExpandedState();
       chevronEl.classList.toggle("expanded", expanded[env.path]);
-      if (iconEl) {
-        const newIcon = createFolderIconEl(expanded[env.path]);
-        if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
-      }
+      // Clipboard icon is static — no icon swap on expand/collapse (#914)
       childrenEl.style.display = expanded[env.path] ? "block" : "none";
 
       if (expanded[env.path]) {
@@ -1316,8 +1367,10 @@ function createIconEl(icon: string): HTMLElement {
     chevronEl.className = expanded[root.path] ? "chevron expanded" : "chevron";
     chevronEl.textContent = "\u203A"; // ›
 
-    // Folder icon (omitted if theme has none — label sits next to chevron)
-    const iconEl = createFolderIconEl(!!expanded[root.path]);
+    // Icon: custom SVG for research (flask), default folder for dev (#914)
+    const iconEl = root.projectType === "research"
+      ? createFlaskIconEl()
+      : createFolderIconEl(!!expanded[root.path]);
 
     const label = document.createElement("span");
     label.className = "label";
@@ -1372,7 +1425,8 @@ function createIconEl(icon: string): HTMLElement {
       expanded[root.path] = !expanded[root.path];
       saveExpandedState();
       chevronEl.classList.toggle("expanded", expanded[root.path]);
-      if (iconEl) {
+      // Only swap folder icons for dev projects — research (flask) icons are static (#914)
+      if (iconEl && root.projectType !== "research") {
         const newIcon = createFolderIconEl(expanded[root.path]);
         if (newIcon) row.replaceChild(newIcon, row.querySelector(".icon")!);
       }
@@ -1796,10 +1850,14 @@ function createIconEl(icon: string): HTMLElement {
             saveExpandedState();
             const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
             if (chevronSpan) chevronSpan.classList.add("expanded");
-            const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-            if (iconSpan) {
-              const newIcon = createFolderIconEl(true);
-              if (newIcon) iconSpan.replaceWith(newIcon);
+            // Only swap icon for dev projects — custom SVGs (flask, clipboard) are static (#914)
+            const activeRoot = currentRoots.find((r) => r.path === nodePath);
+            if (activeRoot?.projectType !== "research" && activeRoot?.projectType !== "environment") {
+              const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+              if (iconSpan) {
+                const newIcon = createFolderIconEl(true);
+                if (newIcon) iconSpan.replaceWith(newIcon);
+              }
             }
             const childrenEl = el.querySelector(".children") as HTMLElement | null;
             if (childrenEl) {
@@ -1824,10 +1882,14 @@ function createIconEl(icon: string): HTMLElement {
           saveExpandedState();
           const chevronSpan = row.querySelector(".chevron") as HTMLElement | null;
           if (chevronSpan) chevronSpan.classList.remove("expanded");
-          const iconSpan = row.querySelector(".icon") as HTMLElement | null;
-          if (iconSpan) {
-            const newIcon = createFolderIconEl(false);
-            if (newIcon) iconSpan.replaceWith(newIcon);
+          // Only swap icon for dev projects — custom SVGs are static (#914)
+          const collapseRoot = currentRoots.find((r) => r.path === nodePath);
+          if (collapseRoot?.projectType !== "research" && collapseRoot?.projectType !== "environment") {
+            const iconSpan = row.querySelector(".icon") as HTMLElement | null;
+            if (iconSpan) {
+              const newIcon = createFolderIconEl(false);
+              if (newIcon) iconSpan.replaceWith(newIcon);
+            }
           }
           const childrenEl = el.querySelector(".children") as HTMLElement | null;
           if (childrenEl) childrenEl.style.display = "none";
@@ -1908,11 +1970,7 @@ function createIconEl(icon: string): HTMLElement {
             saveExpandedState();
             const chevronSpan = envEl.querySelector(":scope > .tree-node .chevron") as HTMLElement | null;
             if (chevronSpan) chevronSpan.classList.add("expanded");
-            const iconSpan = envEl.querySelector(":scope > .tree-node .icon") as HTMLElement | null;
-            if (iconSpan) {
-              const newIcon = createFolderIconEl(true);
-              if (newIcon) iconSpan.replaceWith(newIcon);
-            }
+            // Clipboard icon is static — no swap needed (#914)
             const childrenEl = envEl.querySelector(":scope > .children") as HTMLElement | null;
             if (childrenEl) {
               childrenEl.style.display = "block";
