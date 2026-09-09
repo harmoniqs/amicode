@@ -375,8 +375,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           return annotateGitStatus(entries, p);
         },
         openFile: (p) => {
-          const uri = vscode.Uri.file(p);
-          void vscode.window.showTextDocument(uri);
+          // Route to the Preview companion tab via the chat panel (#934).
+          // The chat webview listens for preview-file and sets previewFile
+          // in the layout context, auto-opening the side panel.
+          const panel = ChatPanel.peek();
+          if (panel) {
+            void panel.postMessage({
+              source: "amicode",
+              kind: "preview-file",
+              path: p,
+            });
+          } else {
+            // Fallback: if chat panel isn't open, open in native editor
+            const uri = vscode.Uri.file(p);
+            void vscode.window.showTextDocument(uri);
+          }
         },
         openFileEditor: (p) => {
           const uri = vscode.Uri.file(p);

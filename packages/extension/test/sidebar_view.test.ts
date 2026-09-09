@@ -3305,6 +3305,36 @@ describe("sidebar file click — single/double-click split (#932)", () => {
   });
 });
 
+// ── openFile → preview-file bridge routing (#934) ────────────────────────────
+
+describe("sidebar openFile routes to preview-file bridge message (#934)", () => {
+  it("openFile handler posts preview-file to the chat panel, not showTextDocument", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the openFile handler
+    const openFileIdx = src.indexOf("openFile:");
+    expect(openFileIdx).toBeGreaterThan(-1);
+    // The handler should reference preview-file message kind
+    const handlerBlock = src.slice(openFileIdx, openFileIdx + 400);
+    expect(handlerBlock).toContain("preview-file");
+    expect(handlerBlock).toContain("ChatPanel");
+  });
+
+  it("openFileEditor handler still uses showTextDocument for native editor tabs", () => {
+    const src = readFileSync(
+      resolve(__dirname, "..", "src", "sidebar_view.ts"),
+      "utf8",
+    );
+    // Find the openFileEditor handler
+    const editorIdx = src.indexOf("openFileEditor:");
+    expect(editorIdx).toBeGreaterThan(-1);
+    const handlerBlock = src.slice(editorIdx, editorIdx + 200);
+    expect(handlerBlock).toContain("showTextDocument");
+  });
+});
+
 // ── Root-reorder drop handler: non-root files must pass through ──────────────
 
 describe("root-reorder drop handler propagation", () => {
