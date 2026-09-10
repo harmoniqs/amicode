@@ -367,6 +367,17 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
   return server;
 }
 
+/** #955: the auth mode's env carrier — the runner passes
+ *  AMICODE_SERVICE_AUTH through (the fork-hub cutover's open-boundary
+ *  posture on the tunnel/LAN). Only the exact value "open" arms it; anything
+ *  else (absent included) is the credential default — fail closed. The
+ *  caller's explicit opts.authMode wins over the env. */
+function authModeFromEnv(): "open" | "credential" | undefined {
+  const raw = process.env.AMICODE_SERVICE_AUTH;
+  if (raw === undefined) return undefined;
+  return raw.trim().toLowerCase() === "open" ? "open" : "credential";
+}
+
 /** The service with every ported slice mounted. The extension wiring slice
  *  boots this at activation; the contract tests boot it in-process.
  *
@@ -374,6 +385,11 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
  *  byte-identical: `shelf` mounts the app-bundle static server (the built
  *  dist this origin serves the framed app from), `engine` arms engine-token
  *  auth acceptance + the reverse proxy to the spawned opencode server.
+ *
+ *  #955 adds `authMode` — "open" (or the AMICODE_SERVICE_AUTH=open env the
+ *  runner passes through) matches the fork hub's deployed anonymous posture
+ *  on the tunnel/LAN boundary; the default "credential" is zero behavior
+ *  change for every existing caller.
  *
  *  #391 adds `fleet` — the local-shell data plane's staging input. Passing
  *  it arms NOTHING by itself: the entitlement-staged gate
@@ -385,6 +401,11 @@ export function registerFleetRoutes(server: AmicodeServiceServer, deps: FleetRou
 export function createAmicodeService(
   opts: {
     password?: string;
+    /** #955: "open" = the anonymous tunnel/LAN posture (authorized() accepts
+     *  every request; present mints keep working); "credential" (the
+     *  default) = the per-boot-mint posture. Resolved opts → env
+     *  (AMICODE_SERVICE_AUTH) → "credential". */
+    authMode?: "open" | "credential";
     shelf?: { distRoot?: string };
     engine?: { password?: string; getUrl?: () => string | undefined };
     /** S3 (#860): the model-routing settings surface's inputs — the shipped
@@ -425,6 +446,9 @@ export function createAmicodeService(
     // binds (the engine token is valid on /amicode/* from boot, not just
     // once the upstream is reachable).
     enginePassword: opts.engine?.password,
+    // #955: the caller's explicit mode wins; the env (the runner's
+    // passthrough) is the fallback; the credential default is last.
+    authMode: opts.authMode ?? authModeFromEnv(),
   });
   if (opts.shelf !== undefined) server.attachAppShelf(new AppShelf(opts.shelf));
   if (opts.engine?.getUrl !== undefined) server.attachEngineProxy(new EngineProxy({ getUrl: opts.engine.getUrl }));

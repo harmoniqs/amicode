@@ -182,7 +182,15 @@ export async function startAmicodeService(
     } else {
       url = await service.start();
     }
-    const authNote = opts.engine !== undefined ? "per-boot Basic + engine token" : "per-boot Basic";
+    // #955: the auth mode is a NAMED posture in the log — "open" is the
+    // fork hub's deployed tunnel/LAN boundary (anonymous by design, the SSH
+    // mesh is the security boundary); the default phrasing is unchanged.
+    const authNote =
+      service.authMode === "open"
+        ? "open-boundary (the tunnel/LAN posture)"
+        : opts.engine !== undefined
+          ? "per-boot Basic + engine token"
+          : "per-boot Basic";
     const engineNote = opts.engine !== undefined ? "; engine proxy armed (late-bound upstream)" : "";
     const shelfNote = opts.appDistRoot !== undefined ? "; app shelf mounted" : "";
     // #398: the ACTIVATION outcome is logged either way — a not-armed
