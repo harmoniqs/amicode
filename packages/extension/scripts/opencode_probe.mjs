@@ -53,7 +53,15 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
 
   const port = await freePort();
   let log = "";
-  const child = spawn(bin, ["serve", "--port", String(port)], { cwd: proj, stdio: ["ignore", "pipe", "pipe"] });
+  // serve always requires basic auth (#785): arm a per-boot password the same
+  // way the extension does, and probe with the matching Basic credential.
+  const password = `probe-${Math.random().toString(36).slice(2)}`;
+  const authHeaders = { Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` };
+  const child = spawn(bin, ["serve", "--port", String(port)], {
+    cwd: proj,
+    env: { ...process.env, OPENCODE_SERVER_PASSWORD: password },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   const onData = (d) => {
     log += d;
   };
@@ -92,7 +100,7 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
       eventCtype,
       eventOk = false;
     try {
-      const ev = await fetch(`http://127.0.0.1:${port}/event`, { signal: AbortSignal.timeout(10000) });
+      const ev = await fetch(`http://127.0.0.1:${port}/event`, { signal: AbortSignal.timeout(10000), headers: authHeaders });
       eventStatus = ev.status;
       eventCtype = ev.headers.get("content-type") ?? "";
       eventOk = ev.status === 200 && eventCtype.includes("text/event-stream");
@@ -105,7 +113,7 @@ export async function bootOpencodeAndProbe({ bin = vendoredOpencodeBin(), timeou
     // still resolving providers right after the port opens (→ a false "creds
     // unverifiable"); give it up to half the budget, capped at 15s.
     const signalTimeoutMs = Math.min(15000, Math.max(4000, Math.floor(timeoutMs / 2)));
-    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`, { timeoutMs: signalTimeoutMs });
+    const signal = await fetchProviderSignal(`http://127.0.0.1:${port}`, { timeoutMs: signalTimeoutMs, headers: authHeaders });
 
     return { up: true, eventOk, eventStatus, eventCtype, signal, log };
   } finally {
