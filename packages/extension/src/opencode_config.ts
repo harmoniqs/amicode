@@ -486,16 +486,10 @@ export function buildOpencodeConfigContent(
     // session opens on opencode's `plan` agent. The named modes are
     // plan → build → develop → research (spec-20260907-011500 D1 rev 3,
     // #868: autodev → develop, autoresearch → research; `build` is a named,
-    // selectable tile AND the default posture — marked default in the picker,
-    // not implied-absent). `agent_order` (fork PR #305's config field) is the
-    // fixed display
-    // order: PRIMARY sort key in the app-side picker sort (unlisted agents
-    // follow, default_agent pin secondary, alphabetical last). Like
-    // everything in this blob, it deep-merges OVER the user's global config —
-    // an explicit per-message `agent` (the e2e tests, the distiller's --agent)
-    // is unaffected.
-    default_agent: "plan",
-    agent_order: ["plan", "build", "develop", "research"],
+     // selectable tile AND the default posture — marked default in the picker,
+     // not implied-absent). The app keeps its own display ordering: do not send
+     // `agent_order` here because older pinned engines reject unknown config keys.
+     default_agent: "plan",
     ...(modelPin ? { model: modelPin } : {}),
     instructions: [agentsPath],
     // #700 A3: the amicode_* tool plugin is RETIRED — the tools come from the

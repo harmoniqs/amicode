@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 import { findForkedOpencodeBinary } from "./opencode_binary";
+import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
   addSkillProvider,
@@ -324,17 +325,37 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Connect Provider dialog → "Harmoniqs AI" branded entry: the app's
-  // generic picker never renders the generic key-entry flow for Harmoniqs —
-  // it hands off here instead, because Harmoniqs is a branded preset (fixed
-  // base URL/model, key routed straight to the auth store) the generic flow
-  // cannot express without duplicating onboarding_panel.ts's logic. Ack
-  // immediately so the dialog can close; the handoff panel it opens
-  // (amicode.connectHarmoniqsProvider, registered in onboarding_panel.ts)
-  // runs independently — see openOnboardingPanel's `bootstrap: false`.
+  // Connect Provider dialog → Harmoniqs AI: keep the user inside the model
+  // picker modal while the extension host validates and stores the secret.
   if (msg.kind === "connect-harmoniqs-provider") {
-    io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: msg.tab });
-    void vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const apiKey = (msg as { apiKey?: unknown }).apiKey;
+    if (typeof apiKey !== "string" || apiKey.length === 0 || apiKey.length > 500) {
+      io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: "Enter a valid API key" });
+      return true;
+    }
+    void testConnection({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey })
+      .then(async (result) => {
+        if (!result.ok) {
+          io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: result.error });
+          return;
+        }
+        writeOnboardingConfig({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey });
+        // The running server cached its config/provider list before this
+        // write landed (Config.invalidate() only fires from its own
+        // /config/update endpoint) — restart it so Provider.list() picks up
+        // the new credentials, same as the Developer Tools / data-storage
+        // config writes below. Await it (CodeRabbit #971): restartServer's
+        // handler is async, so posting success before it resolves let the
+        // webview re-query Manage Models while the server was still stale.
+        // A restart failure is the registered command's own concern (it logs
+        // there) — the credentials write already succeeded, so it doesn't
+        // turn into a connect failure here.
+        try {
+          await vscode.commands.executeCommand("amicode.restartServer");
+        } catch { /* restart errors are handled by the registered command itself */ }
+        io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: true });
+      })
+      .catch((error) => io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: error instanceof Error ? error.message : "Could not connect Harmoniqs AI" }));
     return true;
   }
 
