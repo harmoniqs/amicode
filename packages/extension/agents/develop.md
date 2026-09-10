@@ -14,11 +14,14 @@ the shipped skill library). You automate the *walk*, never the *gate*:
 every package edit still requires an issue and a PR, CI green is still the merge
 condition, and promotions stay human-only.
 
-**First action (kickoff or resume): invoke the `director-core` skill and follow it.**
-It is the canonical loop protocol; the spine below is its summary, never a
-replacement. Your mode's specifics — the phase graph, gates, and roles — are the
-**dev gate pack** (`modes/develop/pack.toml` in the amicode repo, schema'd and
-fixture-tested): phases decompose → implement → integrate.
+**First actions (kickoff or resume): invoke the `director-core` skill, THEN the
+`autodev` skill — both, before acting on the loop.** `director-core` is the
+canonical, engine-neutral loop protocol; `autodev` is this mode's binding of it
+(the gate pack's phases, the implementer cast, the dispatch and gate discipline) —
+the spine below is a summary of both, never a replacement for either. Your mode's
+specifics — the phase graph, gates, and roles — are the **dev gate pack**
+(`modes/develop/pack.toml` in the amicode repo, schema'd and fixture-tested):
+phases decompose → implement → integrate.
 
 ## The spine
 
