@@ -27,7 +27,6 @@ import { preprocessMarkdown } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { RENDERABLE_EXTENSIONS } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
-import type { PreviewFileState } from "@opencode-ai/session-ui/v2/preview-nav-state"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import { PdfCanvasView } from "./pdf-canvas-view"
 
@@ -69,19 +68,20 @@ const IMAGE_WRAPPER_PADDING = 32
 
 export function PreviewFileView(props: {
   filePath: string
-  fileState: PreviewFileState
-  onModeChange: (mode: "preview" | "edit") => void
-  onUnsavedContent: (content: string | null) => void
-  onSave: (path: string, content: string) => void
+  onDirtyChange: (dirty: boolean) => void
+  onSaveComplete?: () => void
+  saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
   zoom: () => number
-  zoomIn: () => void
+  zoomIn: (maximum: number) => void
   zoomOut: () => void
-  onZoomChange?: (zoom: number) => void
+  onZoomChange?: (zoom: number, maximum: number) => void
 }) {
   const sdk = useSDK()
   const serverSDK = useServerSDK()
   const [fileContent, setFileContent] = createSignal("")
+  const [mode, setMode] = createSignal<"preview" | "edit">("preview")
+  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(true)
   const [fileType, setFileType] = createSignal<FileType>(null)
 
@@ -171,12 +171,14 @@ export function PreviewFileView(props: {
     props.onSaveStatusChange?.(saveStatus())
   })
 
-  const saveFile = async (filePath: string, content: string) => {
+  const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
     setSaveStatus("saving")
     try {
       await serverSDK().client.file.write({ path: filePath, content })
       setSaveStatus("saved")
-      props.onUnsavedContent(null)
+      setUnsavedContent(null)
+      props.onDirtyChange(false)
+      if (closeAfterSave) props.onSaveComplete?.()
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
     } catch {
@@ -185,15 +187,26 @@ export function PreviewFileView(props: {
   }
 
   const handleEdit = (content: string) => {
-    props.onUnsavedContent(content)
+    setUnsavedContent(content)
+    props.onDirtyChange(true)
     setFileContent(content)
   }
 
   const handleImmediateSave = () => {
-    if (props.fileState.unsavedContent !== null) {
-      saveFile(props.filePath, props.fileState.unsavedContent)
-    }
+    const content = unsavedContent()
+    if (content !== null) void saveFile(props.filePath, content)
   }
+
+  createEffect(
+    on(
+      () => props.saveRequest?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        const content = unsavedContent()
+        if (content !== null) void saveFile(props.filePath, content, true)
+      },
+    ),
+  )
 
   onCleanup(() => {
     if (savedTimer) clearTimeout(savedTimer)
@@ -206,7 +219,7 @@ export function PreviewFileView(props: {
   // Zoom is disabled in edit mode — pill disappears entirely
   const isEditing = () => {
     const cat = category()
-    if (cat === "markdown") return props.fileState.mode === "edit"
+    if (cat === "markdown") return mode() === "edit"
     if (cat === "image" || cat === "pdf") return false
     return true // text/code files are always in edit mode
   }
@@ -253,21 +266,38 @@ export function PreviewFileView(props: {
     const cat = category()
     return cat === "image" || cat === "pdf" ? 100 : 50
   }
+  const zoomCeiling = () => {
+    const cat = category()
+    return cat === "image" || cat === "pdf" ? 1000 : 500
+  }
 
   const handleZoomOut = () => {
     if (props.zoom() <= zoomFloor()) return
     const before = props.zoom()
+    adjustScrollForZoom(before, Math.max(before - 10, zoomFloor()))
     props.zoomOut()
-    adjustScrollForZoom(before, props.zoom())
   }
 
-  // ─── Scroll-centered zoom ────────────────────────────────────────────
-  // After a zoom change, adjust scroll so the viewport center stays fixed.
-  // Uses rAF to let the DOM update first: image CSS reflows synchronously,
-  // PDF canvas dimensions settle as a microtask (getPage().then()), and
-  // rAF fires after both — so scrollWidth/scrollHeight are correct.
+  // ─── Focus-preserving zoom ───────────────────────────────────────────
+  // After a zoom change, adjust scroll so the focus point stays fixed.
+  // Toolbar and typed zoom use the viewport center; wheel zoom uses its
+  // pointer location. A single rAF coalesces a gesture instead of letting
+  // stale scroll positions from earlier wheel events overwrite the latest.
 
   let scrollRef: HTMLDivElement | undefined
+  let zoomFrame: number | undefined
+  let pendingZoom:
+    | {
+        oldZoom: number
+        newZoom: number
+        focusX: number
+        focusY: number
+        contentX: number
+        contentY: number
+        element: HTMLDivElement
+        host: HTMLElement | null
+      }
+    | undefined
 
   // ─── Track scroll container width for image sizing ───────────────────
   // Observe scrollRef (the scroll container) to get its content width.
@@ -293,17 +323,41 @@ export function PreviewFileView(props: {
   // At 200% it's twice that, etc. Deterministic sizing — the inline-flex
   // wrapper sizes correctly around it, so justify-center never pushes
   // content into unreachable negative scroll territory.
-  const imageWidth = () => Math.max(0, (containerWidth() - IMAGE_WRAPPER_PADDING) * props.zoom() / 100)
+  const imageWidth = () => Math.max(0, ((containerWidth() - IMAGE_WRAPPER_PADDING) * props.zoom()) / 100)
 
-  const adjustScrollForZoom = (oldZoom: number, newZoom: number) => {
+  const adjustScrollForZoom = (oldZoom: number, newZoom: number, focus?: { x: number; y: number }) => {
     const el = scrollRef
     if (!el || oldZoom === newZoom || oldZoom === 0) return
-    const ratio = newZoom / oldZoom
-    const centerX = el.scrollLeft + el.clientWidth / 2
-    const centerY = el.scrollTop + el.clientHeight / 2
-    requestAnimationFrame(() => {
-      el.scrollLeft = centerX * ratio - el.clientWidth / 2
-      el.scrollTop = centerY * ratio - el.clientHeight / 2
+    const focusX = Math.min(Math.max(focus?.x ?? el.clientWidth / 2, 0), el.clientWidth)
+    const focusY = Math.min(Math.max(focus?.y ?? el.clientHeight / 2, 0), el.clientHeight)
+
+    if (pendingZoom) {
+      pendingZoom.newZoom = newZoom
+      pendingZoom.focusX = focusX
+      pendingZoom.focusY = focusY
+    } else {
+      pendingZoom = {
+        oldZoom,
+        newZoom,
+        focusX,
+        focusY,
+        contentX: el.scrollLeft + focusX,
+        contentY: el.scrollTop + focusY,
+        element: el,
+        host: el.closest<HTMLElement>("[data-preview-host]"),
+      }
+    }
+
+    if (zoomFrame) return
+    zoomFrame = requestAnimationFrame(() => {
+      zoomFrame = undefined
+      const pending = pendingZoom
+      pendingZoom = undefined
+      if (!pending) return
+      const ratio = pending.newZoom / pending.oldZoom
+      const element = pending.host?.querySelector<HTMLDivElement>("[data-preview-scroll]") ?? pending.element
+      element.scrollLeft = pending.contentX * ratio - pending.focusX
+      element.scrollTop = pending.contentY * ratio - pending.focusY
     })
   }
 
@@ -314,19 +368,23 @@ export function PreviewFileView(props: {
   // — Solid's onWheel is passive by default and can't preventDefault.
 
   const handleWheelZoom = (e: WheelEvent) => {
-    if (!e.ctrlKey && !e.shiftKey) return   // normal scroll — pass through
+    if (!e.ctrlKey && !e.shiftKey) return // normal scroll — pass through
     e.preventDefault()
     if (!props.onZoomChange) return
-    const delta = e.deltaY || e.deltaX      // shift+scroll may swap axes
+    const delta = e.deltaY || e.deltaX // shift+scroll may swap axes
     if (delta === 0) return
     const oldZoom = props.zoom()
     const factor = Math.exp(-delta * 0.003)
-    const next = Math.round(
-      Math.min(Math.max(oldZoom * factor, zoomFloor()), 500),
-    )
+    const next = Math.round(Math.min(Math.max(oldZoom * factor, zoomFloor()), zoomCeiling()))
     if (next === oldZoom) return
-    props.onZoomChange(next)
-    adjustScrollForZoom(oldZoom, next)
+    const scroll = scrollRef
+    if (!scroll) return
+    const bounds = scroll.getBoundingClientRect()
+    adjustScrollForZoom(oldZoom, next, {
+      x: e.clientX - bounds.left,
+      y: e.clientY - bounds.top,
+    })
+    props.onZoomChange(next, zoomCeiling())
     setShowControls(true)
     startIdleTimer()
   }
@@ -347,24 +405,59 @@ export function PreviewFileView(props: {
     >
       {/* Floating controls — top-right overlay */}
       <div
+        data-preview-controls
         onMouseEnter={handleControlsMouseEnter}
         onMouseLeave={handleControlsMouseLeave}
         style={{
           position: "absolute",
-          top: "8px",
-          right: "14px",
           "z-index": "20",
           display: "flex",
-          gap: "6px",
           "align-items": "center",
           opacity: showControls() ? "1" : "0",
           "pointer-events": showControls() ? "auto" : "none",
           transition: "opacity 200ms ease",
         }}
       >
+        <Show when={showModeToggle()}>
+          <div
+            class="rounded-md border border-border-base shadow-sm overflow-hidden"
+            style={{
+              background: "color-mix(in srgb, var(--background-base) 80%, transparent)",
+              "backdrop-filter": "blur(4px)",
+            }}
+          >
+            <SegmentedControlV2
+              value={mode()}
+              onChange={(value) => {
+                if (value === "preview" || value === "edit") {
+                  setMode(value)
+                }
+              }}
+              class="!w-auto"
+              aria-label="View mode"
+            >
+              <TooltipV2 openDelay={400} value="Preview">
+                <SegmentedControlItemV2 value="preview" aria-label="Preview" class="!flex-none !px-2">
+                  <Icon name="eye" size="small" />
+                </SegmentedControlItemV2>
+              </TooltipV2>
+              <TooltipV2 openDelay={400} value="Edit">
+                <SegmentedControlItemV2 value="edit" aria-label="Edit" class="!flex-none !px-2">
+                  <Icon name="edit" size="small" />
+                </SegmentedControlItemV2>
+              </TooltipV2>
+            </SegmentedControlV2>
+          </div>
+        </Show>
         <Show when={!isEditing()}>
           {/* Zoom controls: [editable %] [reset] [+ over -] */}
-          <div class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden shadow-sm" style={{ background: "color-mix(in srgb, var(--background-base) 80%, transparent)", "backdrop-filter": "blur(4px)" }}>
+          <div
+            class="shrink-0 flex items-center h-7 rounded-md border border-border-base overflow-hidden shadow-sm"
+            style={{
+              background: "color-mix(in srgb, var(--background-base) 80%, transparent)",
+              "backdrop-filter": "blur(4px)",
+            }}
+          >
             {/* Editable zoom percentage input */}
             <input
               type="text"
@@ -385,10 +478,10 @@ export function PreviewFileView(props: {
               onBlur={(e) => {
                 const val = parseInt(e.currentTarget.value)
                 if (!isNaN(val) && props.onZoomChange) {
-                  const clamped = Math.min(Math.max(val, zoomFloor()), 500)
+                  const clamped = Math.min(Math.max(val, zoomFloor()), zoomCeiling())
                   const before = props.zoom()
-                  props.onZoomChange(clamped)
                   adjustScrollForZoom(before, clamped)
+                  props.onZoomChange(clamped, zoomCeiling())
                 }
                 e.currentTarget.value = `${props.zoom()}%`
               }}
@@ -398,12 +491,21 @@ export function PreviewFileView(props: {
               class="flex items-center justify-center w-6 h-full border-l border-border-base text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors"
               onClick={() => {
                 const before = props.zoom()
-                props.onZoomChange?.(100)
                 adjustScrollForZoom(before, 100)
+                props.onZoomChange?.(100, zoomCeiling())
               }}
               aria-label="Reset zoom"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
                 <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
                 <path d="M3 3v5h5" />
               </svg>
@@ -414,8 +516,8 @@ export function PreviewFileView(props: {
                 class="flex items-center justify-center w-5 h-3.5 text-text-weak hover:text-text-base hover:bg-background-stronger transition-colors"
                 onClick={() => {
                   const before = props.zoom()
-                  props.zoomIn()
-                  adjustScrollForZoom(before, props.zoom())
+                  adjustScrollForZoom(before, Math.min(before + 10, zoomCeiling()))
+                  props.zoomIn(zoomCeiling())
                 }}
                 aria-label="Zoom in"
               >
@@ -431,35 +533,10 @@ export function PreviewFileView(props: {
             </div>
           </div>
         </Show>
-        <Show when={showModeToggle()}>
-          <div class="rounded-md border border-border-base shadow-sm overflow-hidden" style={{ background: "color-mix(in srgb, var(--background-base) 80%, transparent)", "backdrop-filter": "blur(4px)" }}>
-            <SegmentedControlV2
-              value={props.fileState.mode}
-              onChange={(value) => {
-                if (value === "preview" || value === "edit") {
-                  props.onModeChange(value)
-                }
-              }}
-              class="!w-auto"
-              aria-label="View mode"
-            >
-              <TooltipV2 openDelay={400} value="Preview">
-                <SegmentedControlItemV2 value="preview" aria-label="Preview" class="!flex-none !px-2">
-                  <Icon name="eye" size="small" />
-                </SegmentedControlItemV2>
-              </TooltipV2>
-              <TooltipV2 openDelay={400} value="Edit">
-                <SegmentedControlItemV2 value="edit" aria-label="Edit" class="!flex-none !px-2">
-                  <Icon name="edit" size="small" />
-                </SegmentedControlItemV2>
-              </TooltipV2>
-            </SegmentedControlV2>
-          </div>
-        </Show>
       </div>
 
       {/* Content */}
-      <div ref={scrollRef} class="h-full overflow-auto">
+      <div ref={scrollRef} data-preview-scroll class="h-full overflow-auto">
         <Show when={!loading()} fallback={<div class="p-4 text-12-regular text-text-weak">Loading...</div>}>
           <Switch>
             <Match when={fileType() === "error"}>
@@ -503,7 +580,7 @@ export function PreviewFileView(props: {
             {/* Text-based rendering by category */}
             <Match when={category() === "markdown"}>
               <Show
-                when={props.fileState.mode === "preview"}
+                when={mode() === "preview"}
                 fallback={
                   <PreviewEditor
                     content={fileContent()}

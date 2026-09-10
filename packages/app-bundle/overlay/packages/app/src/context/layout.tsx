@@ -21,6 +21,12 @@ import { createSessionKeyReader, ensureSessionKey, pruneSessionKeys } from "./la
 import { requireServerKey } from "@/utils/session-route"
 import { type DraftTab, useTabs } from "./tabs"
 import { closeSessionTab, openSessionTab, previewSessionTab, type SessionTabs } from "./layout-tabs"
+import {
+  DEFAULT_SIDE_PANEL_TAB_ORDER,
+  normalizeSidePanelTabOrder,
+  reorderSidePanelTabs,
+  type SidePanelTabID,
+} from "./layout-side-panel-tabs"
 
 export { createSessionKeyReader, ensureSessionKey, pruneSessionKeys }
 
@@ -228,6 +234,14 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         }
       })()
 
+      const sidePanelTabs = value.sidePanelTabs
+      const migratedSidePanelTabs = (() => {
+        const order = isRecord(sidePanelTabs) ? sidePanelTabs.order : undefined
+        const normalized = normalizeSidePanelTabOrder(order)
+        if (Array.isArray(order) && same(order, normalized)) return sidePanelTabs
+        return { ...(isRecord(sidePanelTabs) ? sidePanelTabs : {}), order: normalized }
+      })()
+
       const sessionTabs = migrateLegacySessionStateKeys(value.sessionTabs)
       const sessionView = migrateLegacySessionStateKeys(value.sessionView)
       const migratedSessionTabs = (() => {
@@ -258,6 +272,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         migratedSidebar === sidebar &&
         migratedReview === review &&
         migratedFileTree === fileTree &&
+        migratedSidePanelTabs === sidePanelTabs &&
         migratedSessionTabs === value.sessionTabs &&
         sessionView === value.sessionView
       ) {
@@ -269,6 +284,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         sidebar: migratedSidebar,
         review: migratedReview,
         fileTree: migratedFileTree,
+        sidePanelTabs: migratedSidePanelTabs,
         sessionTabs: migratedSessionTabs,
         sessionView,
       }
@@ -302,6 +318,9 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         panelColumn: {
           width: DEFAULT_PANEL_COLUMN_WIDTH,
+        },
+        sidePanelTabs: {
+          order: [...DEFAULT_SIDE_PANEL_TAB_ORDER],
         },
         session: {
           width: DEFAULT_SESSION_WIDTH,
@@ -722,6 +741,13 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         width: createMemo(() => store.panelColumn?.width ?? DEFAULT_PANEL_COLUMN_WIDTH),
         resize(width: number) {
           setStore("panelColumn", { width })
+        },
+      },
+      sidePanelTabs: {
+        order: createMemo(() => normalizeSidePanelTabOrder(store.sidePanelTabs?.order)),
+        move(tab: SidePanelTabID, toIndex: number) {
+          const order = reorderSidePanelTabs(store.sidePanelTabs?.order ?? DEFAULT_SIDE_PANEL_TAB_ORDER, tab, toIndex)
+          setStore("sidePanelTabs", { order })
         },
       },
       fileTree: {

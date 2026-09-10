@@ -50,10 +50,10 @@
   /* Brand yellow, from harmoniqs-ai/app/globals.css (--brand-yellow). The
      website is the reference; an earlier pass read a different repo and landed
      on #fff676, which was never the site's colour. */
-  --accent: #FFE614;         /* brand hue — chip / CTA / fill, both schemes */
-  --accent-hover: #F0D600;   /* --brand-yellow-hover */
-  --accent-ink: #000000;     /* text/icon ON a yellow fill — always ink */
-  --accent-edge-ink: #000000;/* --brand-yellow-border: every yellow fill takes an ink edge */
+  --accent: #ffe614; /* brand hue — chip / CTA / fill, both schemes */
+  --accent-hover: #f0d600; /* --brand-yellow-hover */
+  --accent-ink: #000000; /* text/icon ON a yellow fill — always ink */
+  --accent-edge-ink: #000000; /* --brand-yellow-border: every yellow fill takes an ink edge */
 
   /* ── radius ──
      The site sets ONE radius for everything — buttons, cards, chips, inputs,
@@ -65,11 +65,16 @@
   --radius-md: 4px;
   --radius-lg: 4px;
   --radius-xl: 4px;
-  --radius-full: 999px;   /* dots and round pills only */
+  --radius-full: 999px; /* dots and round pills only */
 
   /* ── spacing (4px grid) ── */
-  --space-1: 4px;  --space-2: 8px;  --space-3: 12px; --space-4: 16px;
-  --space-5: 20px; --space-6: 24px; --space-8: 32px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
 
   /* ── type ──
      Faces mirror harmoniqs.ai: DM Sans carries display AND body (the site
@@ -80,15 +85,19 @@
   --font-mono: "JuliaMono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --font-julia: "JuliaMono", monospace;
 
-  --font-size-2xs: 10px; --font-size-xs: 11px; --font-size-sm: 12px; --font-size-md: 13px;
-  --font-size-x-small: var(--font-size-xs);   /* fix dangling ref */
-  --font-weight-emphasis: 600; --font-weight-strong: 650;
+  --font-size-2xs: 10px;
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-x-small: var(--font-size-xs); /* fix dangling ref */
+  --font-weight-emphasis: 600;
+  --font-weight-strong: 650;
 
   /* Content sitting on a FIXED dark scrim (media overlays, poster art) does not
      flip with the scheme — the ground under it is always dark. Mirrors the
      site's --fg-on-dark. Cream rather than pure white keeps it in the family. */
-  --fg-on-dark: #EFEDCD;
-  --fg-on-dark-muted: #C9C7A6;
+  --fg-on-dark: #efedcd;
+  --fg-on-dark-muted: #c9c7a6;
 
   --border-width: 1px;
 
@@ -98,22 +107,300 @@
   --elev-float: 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
+#review-panel [data-component="tabs"].preview-tab-strip [data-slot="tabs-list"] {
+  height: var(--space-8);
+  gap: var(--space-1);
+}
+
+#review-panel [data-component="tabs"].preview-tab-strip [data-slot="tabs-trigger-wrapper"] {
+  height: var(--space-6);
+}
+
+#review-panel [data-preview-tab] {
+  transition:
+    transform 0.16s ease,
+    opacity 0.16s ease;
+}
+
+#review-panel [data-preview-tab][data-preview-reorder="source"] {
+  transform: translateX(var(--preview-drag-offset));
+  transition: none;
+}
+
+#review-panel [data-preview-tab][data-preview-reorder="source-remote"] {
+  opacity: 0;
+}
+
+#review-panel [data-preview-tab][data-preview-reorder="right"] {
+  transform: translateX(var(--preview-drag-width));
+}
+
+#review-panel [data-preview-tab][data-preview-reorder="left"] {
+  transform: translateX(calc(-1 * var(--preview-drag-width)));
+}
+
+html[data-preview-tab-dragging],
+html[data-preview-tab-dragging] * {
+  cursor: default !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #review-panel [data-preview-tab] {
+    transition: none;
+  }
+}
+
+body[data-new-layout]
+  #review-panel
+  [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-list"] {
+  height: var(--space-8);
+  gap: var(--space-1);
+}
+
+body[data-new-layout]
+  #review-panel
+  [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-trigger-wrapper"] {
+  height: var(--space-6);
+}
+body[data-new-layout]
+  #review-panel
+  [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-list"]::after {
+  border-bottom: 0;
+}
+body[data-new-layout]
+  #review-panel
+  [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-list"] {
+  border-bottom: 0;
+}
+
+/* Preview follows VS Code's editor-group hierarchy: each pane keeps its
+   selected file, while only the keyboard-target pane gives that tab full emphasis. */
+body[data-new-layout]
+  #review-panel
+  .preview-pane-leaf:not([data-focused])
+  > [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-trigger-wrapper"]:has([data-selected]) {
+  background-color: var(--v2-background-bg-layer-01);
+  color: var(--v2-text-text-muted);
+}
+body[data-new-layout]
+  #review-panel
+  .preview-pane-leaf:not([data-focused])
+  > [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"]
+  [data-slot="tabs-trigger"][data-selected] {
+  color: var(--v2-text-text-muted);
+}
+
+/* Preview's pane tree is structural. The scrollable parent exposes a canvas
+   that can outgrow the Work Column; no position is read, stored, or restored. */
+#review-panel {
+  --preview-pane-min-size: 150px;
+}
+#review-panel .preview-workspace-canvas {
+  display: flex;
+  height: 100%;
+  min-width: 100%;
+  min-height: 100%;
+}
+#review-panel .preview-pane-split {
+  display: flex;
+  flex: 1 1 auto;
+  height: 100%;
+  min-width: var(--preview-pane-min-size);
+  min-height: var(--preview-pane-min-size);
+}
+#review-panel .preview-pane-split[data-direction="horizontal"] {
+  flex-direction: row;
+  min-width: calc(var(--preview-pane-min-size) * 2);
+}
+#review-panel .preview-pane-split[data-direction="vertical"] {
+  flex-direction: column;
+  min-height: calc(var(--preview-pane-min-size) * 2);
+}
+#review-panel .preview-pane-branch {
+  display: flex;
+  min-width: var(--preview-branch-min-width);
+  min-height: var(--preview-branch-min-height);
+}
+#review-panel .preview-pane-divider {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 var(--border-width);
+  background: var(--v2-border-border-muted);
+  transition: background-color 0.16s ease;
+}
+#review-panel .preview-pane-divider::before {
+  content: "";
+  position: absolute;
+}
+#review-panel .preview-pane-divider[data-direction="horizontal"]::before {
+  inset: 0 calc(var(--space-1) * -1);
+}
+#review-panel .preview-pane-divider[data-direction="vertical"]::before {
+  inset: calc(var(--space-1) * -1) 0;
+}
+#review-panel .preview-pane-divider[data-direction="horizontal"] {
+  cursor: col-resize;
+}
+#review-panel .preview-pane-divider[data-direction="vertical"] {
+  cursor: row-resize;
+}
+#review-panel .preview-pane-divider:hover {
+  background: var(--accent);
+}
+#review-panel .preview-pane-divider:focus-visible {
+  background: var(--v2-border-border-focus);
+  outline: none;
+}
+#review-panel .preview-pane-divider[data-resizing] {
+  background: var(--accent);
+}
+#review-panel .preview-pane-leaf {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: var(--preview-pane-min-size);
+  min-height: var(--preview-pane-min-size);
+  overflow: hidden;
+  border-radius: 0;
+  background: var(--v2-background-bg-base);
+  isolation: isolate;
+}
+#review-panel .preview-pane-leaf[data-preview-edge-top][data-preview-edge-left] {
+  border-top-left-radius: var(--radius-md);
+}
+#review-panel .preview-pane-leaf[data-preview-edge-top][data-preview-edge-right] {
+  border-top-right-radius: var(--radius-md);
+}
+#review-panel .preview-pane-leaf[data-preview-edge-bottom][data-preview-edge-left] {
+  border-bottom-left-radius: var(--radius-md);
+}
+#review-panel .preview-pane-leaf[data-preview-edge-bottom][data-preview-edge-right] {
+  border-bottom-right-radius: var(--radius-md);
+}
+#review-panel .preview-pane-leaf > [data-component="tabs"].preview-tab-strip {
+  flex: 0 0 auto;
+  height: auto;
+}
+#review-panel [data-preview-controls] {
+  top: var(--space-2);
+  right: var(--space-3);
+  gap: var(--space-2);
+}
+#review-panel .preview-pane-leaf [data-preview-controls] {
+  top: var(--space-1);
+  right: var(--space-5);
+  gap: var(--space-1);
+  max-width: calc(100% - var(--space-6));
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+#review-panel .preview-pane-content {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+#review-panel .preview-pane-content > .preview-pane-renderer-mount {
+  display: contents;
+}
+#review-panel .preview-pane-renderer-mount > [data-preview-host] {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+#review-panel .preview-pane-renderer-mount > [data-preview-host] > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* A retained host remains attached for editor state, but the inactive one must
+   not participate in the leaf's flex layout. The Portal wrapper is layout-
+   transparent so the host's hidden state works in every embedded webview. */
+#review-panel .preview-pane-renderer-mount > [data-preview-host].hidden {
+  display: none;
+}
+#review-panel .preview-pane-drop-preview {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  border: var(--border-width) solid var(--accent-edge);
+  border-radius: inherit;
+  background: var(--accent-fill-soft);
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="left"],
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="right"] {
+  top: 0;
+  bottom: 0;
+  width: 50%;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="left"] {
+  left: 0;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="right"] {
+  right: 0;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="top"],
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="bottom"] {
+  right: 0;
+  left: 0;
+  height: 50%;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="top"] {
+  top: 0;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="bottom"] {
+  bottom: 0;
+}
+[data-preview-tab-drag-proxy] {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  max-width: min-content;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid var(--v2-border-border-base);
+  border-radius: var(--radius-md);
+  background: var(--v2-background-bg-layer-01);
+  box-shadow: var(--elev-float);
+  opacity: 0.92;
+  pointer-events: none;
+  transform: translate3d(calc(var(--preview-drag-x) + var(--space-2)), calc(var(--preview-drag-y) + var(--space-2)), 0);
+  transition: opacity 0.16s ease;
+}
+[data-preview-tab-drag-proxy][data-leaving] {
+  opacity: 0;
+}
+#review-panel .preview-pane-drop-preview[data-preview-drop-preview="center"] {
+  inset: 0;
+}
+
 /* ── session status dots ──
    Four states: green (done, unread), grey (done, seen), yellow (running),
    red (error). Colour is never the only signal: each dot carries
    role="img" + aria-label. */
 :root,
 [data-color-scheme="light"] {
-  --status-idle: #a1a1aa;        /* grey — done and seen */
-  --status-running: #ca8a04;     /* yellow-600 — working */
-  --status-done: #16a34a;        /* green-600 — done, unread */
-  --status-error: #dc2626;       /* red-600 */
+  --status-idle: #a1a1aa; /* grey — done and seen */
+  --status-running: #ca8a04; /* yellow-600 — working */
+  --status-done: #16a34a; /* green-600 — done, unread */
+  --status-error: #dc2626; /* red-600 */
 }
 [data-color-scheme="dark"] {
-  --status-idle: #71717a;        /* grey */
-  --status-running: #eab308;     /* yellow-500 */
-  --status-done: #4ade80;        /* green-400 */
-  --status-error: #ef4444;       /* red-500 */
+  --status-idle: #71717a; /* grey */
+  --status-running: #eab308; /* yellow-500 */
+  --status-done: #4ade80; /* green-400 */
+  --status-error: #ef4444; /* red-500 */
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
@@ -151,28 +438,27 @@
 }
 
 /* ── prompt bubble ground — per-scheme REALISATION ──
-   The user's words, both schemes (Aaron 2026-09-05): on LIGHT the site's
-   solid yellow chip — --accent fill, --accent-ink, the ink border (--accent-
-   edge-ink; yellow can't define itself on the near-white ground). On DARK
-   the chip inverts into a dark box with the FULL-strength yellow border —
-   the loud yellow outline is the user's signature, one step louder than the
-   assistant fragments' --accent-edge (45%) hairline — under base ink. */
+   On LIGHT the user's words are the INVERSE of the ground — the website's
+   ink bubble, verbatim (the site is light-only, so the inverse grammar is a
+   light-mode truth). On DARK any light bubble read harsh at chat scale:
+   Kate walked the inverse down 100%→85%→70% luminance (7b1ff4e, 1ef7c41)
+   and it still glared — dark wants LOW contrast, not an inverse. The dark
+   bubble is therefore the theme's own quiet elevation: layer-02 on the
+   ground (≈1.5:1, a whisper of lift — stock #2e2e2e on #161616) under full
+   base ink (≈12:1, unchanged readability). */
 :root,
 [data-color-scheme="light"] {
-  --prompt-bubble-bg: var(--accent);
-  --prompt-bubble-ink: var(--accent-ink);
-  --prompt-bubble-edge: var(--accent-edge-ink);
+  --prompt-bubble-bg: var(--v2-background-bg-inverse);
+  --prompt-bubble-ink: var(--v2-text-text-inverse);
 }
 [data-color-scheme="dark"] {
-  --prompt-bubble-bg: var(--v2-background-bg-layer-01);
+  --prompt-bubble-bg: var(--v2-background-bg-layer-02);
   --prompt-bubble-ink: var(--v2-text-text-base);
-  --prompt-bubble-edge: var(--accent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
-    --prompt-bubble-bg: var(--v2-background-bg-layer-01);
+    --prompt-bubble-bg: var(--v2-background-bg-layer-02);
     --prompt-bubble-ink: var(--v2-text-text-base);
-    --prompt-bubble-edge: var(--accent);
   }
 }
 
@@ -233,14 +519,9 @@
 /* ── prose fragment cards ── every fragment Amico relays is its OWN bordered
    card, a message within the chat (Kate 2026-08-25; supersedes the
    one-container-per-reply segment). Each chunk of a streamed reply arrives
-    as its own card with its own entrance; history splits identically so the
-    cards persist. Chips/receipts keep their borderless chip grammar. The
-    hairline is the theme's default border, the radius the brand 4px.
-
-    (A 2026-09-05 pass seated a dark ground + yellow edge on these cards in
-    dark mode; reverted the same day at Aaron's call — the dark-box-yellow-
-    border treatment belongs to the USER's prompt bubble only. The assistant
-    fragments stay on the theme hairline in both schemes.) */
+   as its own card with its own entrance; history splits identically so the
+   cards persist. Chips/receipts keep their borderless chip grammar. The
+   hairline is the theme's default border, the radius the brand 4px. */
 [data-slot="text-part-body"]:has([data-prose-fragment]) {
   display: flex;
   flex-direction: column;
@@ -264,12 +545,6 @@
    theme scope and the virtualizer relayouts under the captured rect. The
    --motion-exit-* tokens above stay as the documented grammar should a real
    FLIP-based exit ever be built. */
-
-/* The sticky prompt bubble's lock-in hand-off (one past prompt taking the top
-   slot) is a WAAPI merge pass in message-timeline.tsx, not CSS: the chip
-   element must persist across hand-offs — a keyed remount + CSS entrance
-   strobed under smooth scrolling (Aaron 2026-09-04, reverted same day). */
-
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-enter-rise: 0px;
@@ -290,7 +565,12 @@
 }
 
 /* ── motion: quick, quiet, consistent (honors reduced-motion) ── */
-button, [role="button"], a, input, textarea, [data-slot="card"] {
+button,
+[role="button"],
+a,
+input,
+textarea,
+[data-slot="card"] {
   transition:
     background-color 0.16s ease,
     border-color 0.16s ease,
@@ -299,7 +579,9 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
     transform 0.16s ease;
 }
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+  *,
+  *::before,
+  *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
@@ -329,9 +611,13 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
      visibly thicker than the sides. The site differentiates with borders, not
      bevels, so the composer takes the border alone. */
   box-shadow: none !important;
-  transition: border-color 0.16s ease, box-shadow 0.16s ease;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease;
 }
-[data-component="session-new-composer"] { min-height: 88px !important; }
+[data-component="session-new-composer"] {
+  min-height: 88px !important;
+}
 [data-component="session-new-composer"]:focus-within,
 [data-component="session-composer"]:focus-within,
 [data-component="prompt-input-v2"]:focus-within {
@@ -352,10 +638,17 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
   color: var(--accent-ink) !important;
   border: var(--border-width) solid var(--accent-edge-ink) !important;
   box-shadow: none !important;
-  transition: transform 0.16s ease, filter 0.16s ease;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease;
 }
-[data-action="prompt-submit"] svg { color: var(--accent-ink) !important; }
-[data-action="prompt-submit"]:hover { filter: brightness(1.06); transform: translateY(-1px); }
+[data-action="prompt-submit"] svg {
+  color: var(--accent-ink) !important;
+}
+[data-action="prompt-submit"]:hover {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
 [data-action="prompt-submit"]:disabled {
   background: transparent !important;
   border-color: var(--v2-text-text-base) !important;
@@ -364,8 +657,13 @@ button, [role="button"], a, input, textarea, [data-slot="card"] {
      draws at full strength */
   opacity: 1 !important;
 }
-[data-action="prompt-submit"]:disabled svg { color: var(--v2-text-text-base) !important; }
-[data-action="prompt-submit"]:disabled:hover { filter: none; transform: none; }
+[data-action="prompt-submit"]:disabled svg {
+  color: var(--v2-text-text-base) !important;
+}
+[data-action="prompt-submit"]:disabled:hover {
+  filter: none;
+  transform: none;
+}
 
 /* accent tag (badge-v2 `variant="accent"`): the shared primitive paints
    --v2-text-text-contrast over bg-accent, which on dark is LIGHT text on
@@ -383,8 +681,9 @@ span[data-component="tag"][data-variant="accent"] {
 
 /* the rail: controls use the control corner */
 [data-component="sidebar-rail"] button,
-[data-component="chat-first-rail"] button { border-radius: var(--radius-md); }
-
+[data-component="chat-first-rail"] button {
+  border-radius: var(--radius-md);
+}
 
 /* solver-switch banner (opencode#78 follow-up) — narrates the server restart a
    solver switch triggers. Progress reads NEUTRAL (yellow may never be a
@@ -407,7 +706,10 @@ span[data-component="tag"][data-variant="accent"] {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-emphasis);
   box-shadow: var(--elev-float);
-  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
 }
 [data-component="amicode-solver-switch"][data-phase="ready"] {
   background: var(--accent);
@@ -430,8 +732,13 @@ span[data-component="tag"][data-variant="accent"] {
 }
 /* the global prefers-reduced-motion reset above collapses this duration. */
 @keyframes amc-solver-switch-pulse {
-  0%, 100% { opacity: 0.35; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 /* ── Onboarding walkthrough spotlight (session-tour.tsx) ───────────────────
@@ -467,8 +774,11 @@ span[data-component="tag"][data-variant="accent"] {
   border: 1px solid var(--accent);
   border-radius: var(--radius-md);
   /* Eases between elements rather than teleporting. */
-  transition: top 0.22s cubic-bezier(0.2, 0, 0, 1), left 0.22s cubic-bezier(0.2, 0, 0, 1),
-    width 0.22s cubic-bezier(0.2, 0, 0, 1), height 0.22s cubic-bezier(0.2, 0, 0, 1);
+  transition:
+    top 0.22s cubic-bezier(0.2, 0, 0, 1),
+    left 0.22s cubic-bezier(0.2, 0, 0, 1),
+    width 0.22s cubic-bezier(0.2, 0, 0, 1),
+    height 0.22s cubic-bezier(0.2, 0, 0, 1);
   /* Fades in once as the highlight lands. Keyed on the stop, so it plays per
      stop and not on the measure tick. */
   animation: amc-tour-arrive 0.25s ease-out both;
