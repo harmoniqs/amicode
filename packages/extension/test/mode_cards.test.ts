@@ -237,6 +237,41 @@ describe("mode cards — frontmatter (boot-check fields)", () => {
   }
 });
 
+// ── #989: first-actions skill pairing ────────────────────────────────────────
+// Each mode card must wire the director into BOTH the shared spine AND its
+// own mode-protocol skill at kickoff/resume, in that order. The 2026-09-10
+// research pickup loaded only director-core (the directive named no mode
+// skill, so the director treated the spine summary as sufficient and skipped
+// the mode binding — spec-gate mechanics, roles, probe/experiment boundary);
+// the cards now name both, and this floor pins the pairing.
+const MODE_SKILL: Record<CardName, string> = {
+  // the dev mode's protocol skill (its id keeps the pre-rename mode name)
+  "develop.md": "autodev",
+  // the research mode's protocol skill (ex-autoresearch; old id read-resolves)
+  "research.md": "research",
+};
+
+describe("mode cards — first-actions skill pairing (#989)", () => {
+  for (const name of CARDS) {
+    it(`${name}: first-action directive loads director-core AND its mode skill`, () => {
+      const text = cardText(name);
+      // the directive lives in the preamble, before the delimited spine
+      const preamble = text.slice(0, text.indexOf(SPINE_START));
+      const coreAt = preamble.indexOf("`director-core`");
+      const modeAt = preamble.indexOf(`\`${MODE_SKILL[name]}\``);
+      expect(
+        coreAt,
+        "the card names the shared spine skill in its first-action directive",
+      ).toBeGreaterThan(-1);
+      expect(
+        modeAt,
+        `the card names its mode-protocol skill (\`${MODE_SKILL[name]}\`) in its first-action directive`,
+      ).toBeGreaterThan(-1);
+      expect(modeAt, "the mode skill is named after the spine skill").toBeGreaterThan(coreAt);
+    });
+  }
+});
+
 describe("mode cards — blocklist (open-protocol vocabulary)", () => {
   for (const name of CARDS) {
     it(`${name}: zero blocklisted proprietary strings`, () => {
