@@ -14,7 +14,7 @@
 //    dist, and an engine that never becomes healthy each fail with a NAMED
 //    reason (never a silent half-boot) and tear the spawned child down.
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,6 +139,161 @@ describe.skipIf(!engineAvailable || !distAvailable)(
     }, 60_000);
   },
 );
+
+describe.skipIf(!engineAvailable || !distAvailable)(
+  "amicode service runner, UNARMED posture (live: vendored engine + built dist)",
+  () => {
+    const boots: AmicodeServiceRunnerBoot[] = [];
+    afterAll(async () => {
+      for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+    });
+
+    it("boots the unarmed pair and an anonymous proxied GET answers 200 (the hub posture pair)", async () => {
+      const dbPath = join(mkdtempSync(join(tmpdir(), "amicode-runner-unarmed-")), "unarmed-test.db");
+      // The hub posture is a PAIR: unarmed engine (#955) + open service auth
+      // (AMICODE_SERVICE_AUTH=open, #959's env carrier — the runner passes
+      // authMode resolution through to createAmicodeService independently).
+      const prevAuth = process.env.AMICODE_SERVICE_AUTH;
+      process.env.AMICODE_SERVICE_AUTH = "open";
+      let boot: AmicodeServiceRunnerBoot;
+      try {
+        boot = await bootAmicodeServiceRunner({
+          engineBin: ENGINE_BIN,
+          appDistRoot: APP_DIST,
+          engineEnv: { OPENCODE_DB: dbPath },
+          engineUnarmed: true,
+          healthTimeoutMs: 30_000,
+          servicePort: 0,
+          enginePort: 0,
+          log: () => undefined,
+        });
+      } finally {
+        if (prevAuth === undefined) delete process.env.AMICODE_SERVICE_AUTH;
+        else process.env.AMICODE_SERVICE_AUTH = prevAuth;
+      }
+      boots.push(boot);
+
+      // No engine credential exists in this posture.
+      expect(boot.enginePassword).toBeUndefined();
+
+      // The app-proxy forwards the request VERBATIM (no header injection), so
+      // the anonymous GET reaches the UNARMED engine — the fork hub's
+      // deployed "canonical serves anonymous 200" posture (2026-08-07).
+      const session = await fetch(`${boot.url}/session`);
+      expect(session.status).toBe(200);
+      expect(session.headers.get("content-type") ?? "").toContain("application/json");
+    }, 60_000);
+  },
+);
+
+describe("amicode service runner spawn posture (headless, fake engine — no vendored engine needed)", () => {
+  const boots: AmicodeServiceRunnerBoot[] = [];
+  afterAll(async () => {
+    for (const b of boots.splice(0)) await b.shutdown().catch(() => undefined);
+  });
+
+  /** A stand-in engine binary (the shebang-node fake-engine idiom): answers
+   *  the health probe with 200 and — when FAKE_ENGINE_DUMP is set in its env
+   *  (rides the runner's engineEnv passthrough) — records whether
+   *  OPENCODE_SERVER_PASSWORD was present at spawn. argv: [node, script,
+   *  "serve", "--port", <port>]. */
+  function writeFakeEngine(dir: string): string {
+    const bin = join(dir, "fake-engine");
+    writeFileSync(
+      bin,
+      `#!/usr/bin/env node
+const { createServer } = require("node:http");
+const { writeFileSync } = require("node:fs");
+const port = Number(process.argv[4] ?? 0);
+if (process.env.FAKE_ENGINE_DUMP)
+  writeFileSync(process.env.FAKE_ENGINE_DUMP, JSON.stringify({ armed: "OPENCODE_SERVER_PASSWORD" in process.env }));
+createServer((_req, res) => {
+  res.writeHead(200, { "content-type": "text/plain" });
+  res.end("fake engine up");
+}).listen(port, "127.0.0.1");
+`,
+    );
+    chmodSync(bin, 0o755);
+    return bin;
+  }
+
+  function writeStubShelf(dir: string): string {
+    writeFileSync(join(dir, "index.html"), "<!doctype html><title>stub shelf</title>");
+    return dir;
+  }
+
+  it("UNARMED spawn: the child env carries NO OPENCODE_SERVER_PASSWORD, the service gets enginePassword: undefined, and the boot line names the posture", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-unarmed-headless-"));
+    const dump = join(dir, "env-dump.json");
+    const lines: string[] = [];
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-unarmed-shelf-"))),
+      engineUnarmed: true,
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: (l) => lines.push(l),
+    });
+    boots.push(boot);
+
+    // The spawn env, as seen BY THE CHILD (not inferred): the key is absent.
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { armed: boolean };
+    expect(dumped.armed).toBe(false);
+
+    // The service wiring: no engine mint handed over.
+    expect(boot.enginePassword).toBeUndefined();
+
+    // The posture is named on the boot line, per the hub ops contract.
+    expect(lines.join("\n")).toContain("UNARMED (the hub's anonymous boundary posture)");
+
+    // The service itself still boots and answers with its OWN mint (its
+    // authMode resolves independently — credential default here, since the
+    // hub's AMICODE_SERVICE_AUTH=open is the ops layer's env decision).
+    const doc = await fetch(`${boot.url}/`, { headers: { Authorization: boot.authHeader } });
+    expect(doc.status).toBe(200);
+  }, 30_000);
+
+  it("engineUnarmed wins over an explicit enginePassword — the posture is never silently half-armed", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-unarmed-wins-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-unarmed-wins-shelf-"))),
+      engineUnarmed: true,
+      enginePassword: "explicit-but-ignored",
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { armed: boolean };
+    expect(dumped.armed).toBe(false);
+    expect(boot.enginePassword).toBeUndefined();
+  }, 30_000);
+
+  it("the DEFAULT (armed) path is unchanged: the child env DOES carry OPENCODE_SERVER_PASSWORD and the mint is surfaced", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "amicode-runner-armed-headless-"));
+    const dump = join(dir, "env-dump.json");
+    const boot = await bootAmicodeServiceRunner({
+      engineBin: writeFakeEngine(dir),
+      appDistRoot: writeStubShelf(mkdtempSync(join(tmpdir(), "amicode-runner-armed-shelf-"))),
+      engineEnv: { FAKE_ENGINE_DUMP: dump },
+      healthTimeoutMs: 10_000,
+      servicePort: 0,
+      enginePort: 0,
+      log: () => undefined,
+    });
+    boots.push(boot);
+    const dumped = JSON.parse(readFileSync(dump, "utf8")) as { armed: boolean };
+    expect(dumped.armed).toBe(true);
+    expect(typeof boot.enginePassword).toBe("string");
+    expect((boot.enginePassword ?? "").length).toBeGreaterThan(0);
+  }, 30_000);
+});
 
 describe("amicode service runner (fail-loud, headless — no engine needed)", () => {
   it("a missing engine binary fails with the named reason BEFORE spawning anything", async () => {

@@ -23,6 +23,11 @@
 //                        deployment sets it: the ops layer owns the
 //                        credential so the frontdoor's ?auth_token= carrier
 //                        shares the engine's auth.
+//   AMICODE_ENGINE_UNARMED  "=1" spawns the engine WITHOUT any credential —
+//                        the hub's anonymous boundary posture (#955; the
+//                        fork's "canonical serves anonymous 200"). The pair
+//                        with AMICODE_SERVICE_AUTH=open is the hub posture.
+//                        Wins over AMICODE_ENGINE_PASSWORD.
 //   OPENCODE_DB          the canonical pin — passed through to the spawned
 //                        engine untouched (the hub's session store).
 //
@@ -76,6 +81,7 @@ async function main(): Promise<never> {
     enginePort: envInt("AMICODE_ENGINE_PORT") ?? 4094,
     engineCwd: (process.env.AMICODE_ENGINE_CWD ?? "").trim() || undefined,
     enginePassword: (process.env.AMICODE_ENGINE_PASSWORD ?? "").trim() || undefined,
+    engineUnarmed: (process.env.AMICODE_ENGINE_UNARMED ?? "").trim() === "1",
     engineEnv: (process.env.OPENCODE_DB ?? "").trim() ? { OPENCODE_DB: process.env.OPENCODE_DB } : undefined,
     log: (line) => console.log(line),
   });

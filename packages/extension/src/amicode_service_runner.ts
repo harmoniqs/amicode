@@ -1,8 +1,9 @@
 // ============================================================================
 // amicode_service_runner — the PRODUCTION SERVICE RUNNER (#955, the hub
 // cutover spec spec-20260910-080000): ONE long-lived headless process that
-// spawns the vendored opencode engine (password-armed) and serves the amicode
-// service alongside it — the permanent orchestration the #822 boot probe only
+// spawns the vendored opencode engine (password-armed by default; UNARMED in
+// the hub posture, see engineUnarmed) and serves the amicode service alongside
+// it — the permanent orchestration the #822 boot probe only
 // rehearses and the extension host only provides inside VS Code. The hub has
 // no extension host; this is what runs there instead.
 //
@@ -85,6 +86,18 @@ export interface AmicodeServiceRunnerOptions {
    *  carrier and any co-launched consumers share the engine's auth — the
    *  fork's own respawn convention (a session's spawns REUSE the value). */
   enginePassword?: string;
+  /** #955 (the hub cutover's unarmed posture): spawn the engine WITHOUT
+   *  OPENCODE_SERVER_PASSWORD — the anonymous engine the fork hub deploys
+   *  (the 2026-08-07 incident record: "canonical serves anonymous 200"; the
+   *  SSH mesh is the security boundary). The service's app-proxy forwards
+   *  client requests verbatim (no header rewriting), so an armed engine
+   *  would 401 the fleet panel's anonymous calls. Expected ALONGSIDE
+   *  AMICODE_SERVICE_AUTH=open — the service's authMode resolves
+   *  independently (its own env passthrough in createAmicodeService); the
+   *  pair is the hub posture. Wins over enginePassword when both are given.
+   *  Default: armed (the per-boot mint convention) — zero change for every
+   *  existing caller. */
+  engineUnarmed?: boolean;
   /** Engine health-wait budget. Default 30_000 (the ServerManager budget). */
   healthTimeoutMs?: number;
   /** Log sink (the structural-interface convention — vscode-free). */
@@ -96,9 +109,10 @@ export interface AmicodeServiceRunnerBoot {
   url: string;
   /** The service's per-boot Basic header (accepts the engine token too). */
   authHeader: string;
-  /** The engine credential the runner minted for this boot (needed by
-   *  harnesses that assert the proxy surfaces with the engine token). */
-  enginePassword: string;
+  /** The engine credential the runner armed the spawn with — undefined in
+   *  the unarmed posture (#955). Needed by harnesses that assert the proxy
+   *  surfaces with the engine token. */
+  enginePassword: string | undefined;
   /** The engine's origin (the proxy's upstream). */
   engineUrl: string;
   /** The spawned engine child (exposed for tests + exit supervision). */
@@ -130,12 +144,17 @@ function freePort(): Promise<number> {
 }
 
 /** The ServerManager health-probe idiom: WITH the armed credential, else a
- *  healthy password-armed boot 401s an anonymous GET and reads as a timeout. */
-async function waitForHealth(baseUrl: string, timeoutMs: number, authorization: string): Promise<boolean> {
+ *  healthy password-armed boot 401s an anonymous GET and reads as a timeout.
+ *  `authorization` undefined = the unarmed posture's anonymous probe (#955):
+ *  no credential exists, and the unarmed engine answers anonymous GETs. */
+async function waitForHealth(baseUrl: string, timeoutMs: number, authorization: string | undefined): Promise<boolean> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     try {
-      const r = await fetch(`${baseUrl}/`, { headers: { Authorization: authorization }, signal: AbortSignal.timeout(500) });
+      const r = await fetch(`${baseUrl}/`, {
+        headers: authorization === undefined ? {} : { Authorization: authorization },
+        signal: AbortSignal.timeout(500),
+      });
       if (r.status < 500) return true;
     } catch {
       /* not up yet */
@@ -161,8 +180,13 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
     throw new AmicodeServiceRunnerError(`no built app dist at ${opts.appDistRoot} (missing index.html) — run \`pnpm --filter amicode run build:app\` or set AMICODE_APP_DIST`);
 
   // ── the engine: spawn + health wait (the ServerManager/probe idiom) ──────
-  const password = opts.enginePassword ?? mintServerPassword();
-  const authHeader = serverAuthHeader(password);
+  // #955: engineUnarmed is the hub's anonymous boundary posture — no
+  // OPENCODE_SERVER_PASSWORD in the child env, no credential minted, the
+  // service gets enginePassword: undefined (its authMode still resolves
+  // independently via AMICODE_SERVICE_AUTH). The armed default is untouched.
+  const unarmed = opts.engineUnarmed === true;
+  const password = unarmed ? undefined : (opts.enginePassword ?? mintServerPassword());
+  const authHeader = password === undefined ? undefined : serverAuthHeader(password);
   const enginePort = opts.enginePort ?? 4094;
   const port = enginePort > 0 ? enginePort : await freePort();
   const engineUrl = `http://127.0.0.1:${port}`;
@@ -176,10 +200,19 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   );
 
   const dbPin = opts.engineEnv?.OPENCODE_DB;
-  log(`[service-runner] spawning engine ${opts.engineBin} serve --port=${port} (cwd=${cwd}${dbPin ? `, OPENCODE_DB=${dbPin}` : ", OPENCODE_DB=(host env)"})`);
+  log(
+    `[service-runner] spawning engine ${opts.engineBin} serve --port=${port} (cwd=${cwd}${dbPin ? `, OPENCODE_DB=${dbPin}` : ", OPENCODE_DB=(host env)"})${unarmed ? " UNARMED (the hub's anonymous boundary posture)" : ""}`,
+  );
   const engine: ChildProcess = spawn(opts.engineBin, ["serve", "--port", String(port)], {
     cwd,
-    env: { ...process.env, OPENCODE_SERVER_PASSWORD: password, ...opts.engineEnv },
+    env: {
+      ...process.env,
+      // Unarmed = the key is ABSENT, never empty — the fork's route auth only
+      // engages when the var is set, so an empty value would be a dishonest
+      // half-posture.
+      ...(unarmed ? {} : { OPENCODE_SERVER_PASSWORD: password }),
+      ...opts.engineEnv,
+    },
     stdio: ["ignore", "pipe", "pipe"],
   });
   let engineLog = "";
@@ -222,7 +255,7 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   // No fleetActivation is ever passed here (H3): the hub runs the byte-
   // identical unarmed base service; arming is an extension-host decision.
   const service = createAmicodeService({
-    engine: { password, getUrl: () => engineUrl },
+    engine: { password: unarmed ? undefined : password, getUrl: () => engineUrl },
     shelf: { distRoot: opts.appDistRoot },
   });
   const servicePort = opts.servicePort ?? 4095;
