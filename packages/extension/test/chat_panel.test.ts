@@ -119,6 +119,46 @@ describe("ChatPanel — the amicode_bug_report boot param (amicode#250 AC5)", ()
   });
 });
 
+describe("ChatPanel — Explorer icon theme bridge", () => {
+  let restore: (() => void) | undefined;
+  let created: CapturedPanel[] = [];
+  afterEach(() => {
+    for (const p of created) p.dispose();
+    restore?.();
+    restore = undefined;
+    created = [];
+  });
+
+  it("relays the explicit icon-theme request up and the opaque reply down in both chat render paths", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const html = created[0].webview.html;
+
+    expect(html).toContain("explorer-icon-theme-request");
+    expect(html).toContain("explorer-icon-theme");
+  });
+
+  it("pushes a replacement icon theme when the Explorer or color theme changes", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+    const messages: unknown[] = [];
+    const webview = created[0] as unknown as { webview: { postMessage: (message: unknown) => Promise<boolean> } };
+    webview.webview.postMessage = (message) => { messages.push(message); return Promise.resolve(true); };
+
+    (vscode.workspace as unknown as { _fireConfigurationChange(section: string): void })._fireConfigurationChange("workbench.iconTheme");
+    expect(messages).toContainEqual(expect.objectContaining({ kind: "explorer-icon-theme" }));
+
+    messages.length = 0;
+    (vscode.window as unknown as { _fireActiveColorTheme(kind: number): void })._fireActiveColorTheme(vscode.ColorThemeKind.Light);
+    expect(messages).toContainEqual({ source: "amicode", kind: "theme", colorScheme: "light" });
+    expect(messages).toContainEqual(expect.objectContaining({ kind: "explorer-icon-theme" }));
+  });
+});
+
 describe("ChatPanel — onboarding greeting auto-send (#449)", () => {
   let restore: (() => void) | undefined;
   let created: CapturedPanel[] = [];

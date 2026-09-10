@@ -98,6 +98,24 @@
   --elev-float: 0 8px 24px rgb(0 0 0 / 0.35);
 }
 
+#review-panel [data-component="tabs"].preview-tab-strip [data-slot="tabs-list"] {
+  height: var(--space-8);
+  gap: var(--space-1);
+}
+
+#review-panel [data-component="tabs"].preview-tab-strip [data-slot="tabs-trigger-wrapper"] {
+  height: var(--space-6);
+}
+
+body[data-new-layout] #review-panel [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"] [data-slot="tabs-list"] {
+  height: var(--space-8);
+  gap: var(--space-1);
+}
+
+body[data-new-layout] #review-panel [data-component="tabs"].preview-tab-strip[data-variant="normal"][data-orientation="horizontal"] [data-slot="tabs-trigger-wrapper"] {
+  height: var(--space-6);
+}
+
 /* ── session status dots ──
    Four states: green (done, unread), grey (done, seen), yellow (running),
    red (error). Colour is never the only signal: each dot carries

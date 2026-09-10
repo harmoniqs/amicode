@@ -4,6 +4,7 @@ import { handleAmicodeBridgeMessage } from "./chat_bridge";
 import { registerInspectorPoster } from "./inspector_bridge";
 import { tabIconPath, themeKindToScheme } from "./chat_panel";
 import { getBugReport } from "./bug_report";
+import { resolveExplorerIconTheme } from "./explorer_icon_theme";
 
 // ============================================================================
 // DeckPanel — the Chat Deck: MANY chat panes inside ONE editor tab. The heavy
@@ -32,12 +33,21 @@ export class DeckPanel {
     // Theme fan-out: extension → shell → EVERY pane's iframe (the shell owns
     // the per-pane relay; boot scheme rides the bootstrap config).
     vscode.window.onDidChangeActiveColorTheme(
-      (t) =>
+      (t) => {
         void this.panel.webview.postMessage({
           source: "amicode",
           kind: "theme",
           colorScheme: themeKindToScheme(t.kind),
-        }),
+        });
+        this.postExplorerIconTheme();
+      },
+      null,
+      this.disposables,
+    );
+    vscode.workspace.onDidChangeConfiguration(
+      (event) => {
+        if (event.affectsConfiguration("workbench.iconTheme")) this.postExplorerIconTheme();
+      },
       null,
       this.disposables,
     );
@@ -56,12 +66,21 @@ export class DeckPanel {
           // amicode_bug_report boot param, so no dock lives here; wired for
           // uniformity (the manager drops unknown ids anyway).
           bugReport: getBugReport()?.sink,
+          explorerIconTheme: resolveExplorerIconTheme,
         });
         if (!handled) console.log("[amicode/deck] webview msg:", msg);
       },
       null,
       this.disposables,
     );
+  }
+
+  private postExplorerIconTheme(): void {
+    void this.panel.webview.postMessage({
+      source: "amicode",
+      kind: "explorer-icon-theme",
+      theme: resolveExplorerIconTheme(),
+    });
   }
 
   static openOrReveal(

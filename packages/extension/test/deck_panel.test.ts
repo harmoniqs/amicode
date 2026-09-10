@@ -2,6 +2,8 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as vscode from "vscode";
 import { DeckPanel } from "../src/deck_panel";
 import { mintServerPassword, serverAuthToken } from "../src/server_auth";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 // ============================================================================
 // DeckPanel host seam: the bootstrap config (origin, boot credential, scheme)
@@ -67,5 +69,13 @@ describe("DeckPanel — host seam", () => {
     DeckPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
     expect(created).toHaveLength(1);
     expect(created[0].revealCount).toBe(1);
+  });
+
+  it("routes Explorer icon-theme requests to one pane and broadcasts live replacements", () => {
+    const shell = readFileSync(resolve(__dirname, "..", "src", "deck", "shell.ts"), "utf8");
+
+    expect(shell).toContain('d.kind === "explorer-icon-theme-request"');
+    expect(shell).toContain('d.kind === "explorer-icon-theme"');
+    expect(shell).toContain("for (const f of frameByTab.values())");
   });
 });

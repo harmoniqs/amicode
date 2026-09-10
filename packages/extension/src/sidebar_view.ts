@@ -18,6 +18,8 @@ import { detectProjectType } from "./project/detect";
 import { invalidateEnvironmentCache, readEnvManifest, resolveEnvironment } from "./project/resolve_environment";
 import { resolvePreviewVisibleChildrenDirectory } from "./preview_visible_children";
 
+export { buildExplorerIconTheme } from "./explorer_icon_theme";
+
 // ── Icon theme resolution ────────────────────────────────────────────────────
 
 /** Data structure passed to the webview for icon rendering. */
