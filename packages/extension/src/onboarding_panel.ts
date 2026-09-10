@@ -140,7 +140,7 @@ function defaultConfigPath(): string {
 
 /** #602: drop the always-write Bedrock placeholder entry planted by ≤#589, if
  *  present. Exact-match on the planted constant — real keys (including entries
- *  written via the retired internal env override) are never healed. */
+ *  planted via the retired internal env override) are never healed. */
 function healPlantedBedrockEntry(existing: Record<string, unknown>): void {
   const existingProvider = existing.provider as Record<string, unknown> | undefined;
   if (!existingProvider) return;
@@ -149,6 +149,65 @@ function healPlantedBedrockEntry(existing: Record<string, unknown>): void {
     | undefined;
   if (bedrock?.options?.apiKey === BEDROCK_PLANTED_PLACEHOLDER) {
     delete existingProvider["amazon-bedrock"];
+  }
+}
+
+/** Heals a provider.harmoniqs entry written by an older extension version
+ *  whose model shape predates a protocol-safety field this one relies on
+ *  (e.g. limit.output, added to fix every real chat turn 400ing — an
+ *  extension update alone never rewrites an already-written opencode.json,
+ *  and the generic Connect Provider re-auth flow for an EXISTING catalog
+ *  entry only ever touches the API key, never the model shape, so a stale
+ *  entry from an older version stays broken forever without this).
+ *
+ *  Unconditional and idempotent: tool_call/limit are protocol-level facts
+ *  about this specific gateway, not user preferences (the preset's base
+ *  URL and model list are documented as NOT user-editable for the same
+ *  reason) -- always reconcile them to the current constants regardless of
+ *  what's currently written. Runs on every write (called alongside
+ *  healPlantedBedrockEntry, same pattern) AND standalone on extension
+ *  activation via reconcileHarmoniqsProviderConfig, since a user who never
+ *  triggers another onboarding write otherwise never gets healed. Returns
+ *  whether it changed anything, so callers can skip a needless write. */
+function healStaleHarmoniqsModelShape(existing: Record<string, unknown>): boolean {
+  const provider = existing.provider as Record<string, unknown> | undefined;
+  const harmoniqs = provider?.[HARMONIQS_PROVIDER_ID] as { models?: Record<string, unknown> } | undefined;
+  const models = harmoniqs?.models;
+  if (!models) return false;
+
+  let changed = false;
+  for (const modelId of Object.keys(models)) {
+    const model = models[modelId] as Record<string, unknown>;
+    if (model.tool_call !== false) {
+      model.tool_call = false;
+      changed = true;
+    }
+    const limit = model.limit as { output?: unknown } | undefined;
+    if (!limit || limit.output !== HARMONIQS_MAX_OUTPUT_TOKENS) {
+      model.limit = { output: HARMONIQS_MAX_OUTPUT_TOKENS };
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** Standalone entry point for extension activation (extension.ts) -- heals
+ *  a stale provider.harmoniqs entry with NO user interaction required, so
+ *  upgrading the extension alone is enough to fix a previously-broken
+ *  connection. No-ops cheaply (one file read, no write) when there's
+ *  nothing to fix: no config file, no provider.harmoniqs entry, or an
+ *  already-correct one. Never touches auth.json -- this is a non-secret
+ *  config repair only. */
+export function reconcileHarmoniqsProviderConfig(configPath: string = defaultConfigPath()): void {
+  let existing: Record<string, unknown>;
+  try {
+    if (!fs.existsSync(configPath)) return;
+    existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    return; // Unparseable config is not this function's problem to fix.
+  }
+  if (healStaleHarmoniqsModelShape(existing)) {
+    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + "\n");
   }
 }
 
@@ -171,6 +230,7 @@ export function writeOnboardingConfig(
     // If parsing fails, start fresh
   }
   healPlantedBedrockEntry(existing);
+  healStaleHarmoniqsModelShape(existing);
 
    // #602: the always-written Bedrock entry (an unauthenticated placeholder that
    // masked real credentials) is retired — bedrock is written only when selected.
