@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice } from "../src/opencode_binary";
+import { resolveOpencodeBinary, OpencodeMissingError, unsupportedHostAdvice, findForkedOpencodeBinary } from "../src/opencode_binary";
 
 const platformKey = `${process.platform}-${process.arch}`;
 
@@ -51,5 +51,73 @@ describe("unsupportedHostAdvice", () => {
     const advice = unsupportedHostAdvice("freebsd", "x64");
     expect(advice).toContain("freebsd-x64");
     expect(advice).toContain("linux-x64");
+  });
+});
+
+// #943: dev-tools-update's opencode-path validation and dev-tools-rebuild's
+// post-build codesign step each carried their OWN candidate list for finding
+// a fork checkout's built binary — dev-tools-update's never checked the
+// platform-suffixed dist directory real builds actually produce (so a
+// genuinely valid repo path was indistinguishable from a typo), and
+// dev-tools-rebuild's own list was darwin-only, missing both Linux targets.
+// One shared, SUPPORTED-driven helper for both.
+function makeExecutable(path: string): void {
+  mkdirSync(join(path, ".."), { recursive: true });
+  writeFileSync(path, "#!/bin/sh\n");
+  chmodSync(path, 0o755);
+}
+
+describe("findForkedOpencodeBinary", () => {
+  it("finds a real build's platform-suffixed binary", () => {
+    const root = mkdtempSync(join(tmpdir(), "forkbin-"));
+    const bin = join(root, "packages", "opencode", "dist", `opencode-${platformKey}`, "bin", "opencode");
+    makeExecutable(bin);
+    expect(findForkedOpencodeBinary(root)).toEqual({ found: true, path: bin });
+  });
+
+  it("falls back to the legacy unsuffixed layout when no platform-suffixed dir exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "forkbin-legacy-"));
+    const bin = join(root, "packages", "opencode", "dist", "opencode", "bin", "opencode");
+    makeExecutable(bin);
+    expect(findForkedOpencodeBinary(root)).toEqual({ found: true, path: bin });
+  });
+
+  it("reports not-found when nothing resolves", () => {
+    const root = mkdtempSync(join(tmpdir(), "forkbin-empty-"));
+    expect(findForkedOpencodeBinary(root)).toEqual({ found: false, reason: "not-found" });
+  });
+
+  it("reports not-executable distinctly from not-found", () => {
+    const root = mkdtempSync(join(tmpdir(), "forkbin-noexec-"));
+    const bin = join(root, "packages", "opencode", "dist", `opencode-${platformKey}`, "bin", "opencode");
+    mkdirSync(join(bin, ".."), { recursive: true });
+    writeFileSync(bin, "#!/bin/sh\n");
+    chmodSync(bin, 0o644); // not executable
+    expect(findForkedOpencodeBinary(root)).toEqual({ found: false, reason: "not-executable", path: bin });
+  });
+
+  it("an earlier non-executable candidate does not shadow a later valid one (regression)", () => {
+    // Before this helper existed, dev-tools-update's inline loop mutated a
+    // shared reply object across iterations and never reset opencodeValid
+    // back to true once a later candidate succeeded — so a genuinely valid
+    // binary could still be reported invalid if an earlier candidate merely
+    // existed without the executable bit set.
+    const root = mkdtempSync(join(tmpdir(), "forkbin-order-"));
+    const badFirst = join(root, "packages", "opencode", "dist", "opencode-darwin-arm64", "bin", "opencode");
+    mkdirSync(join(badFirst, ".."), { recursive: true });
+    writeFileSync(badFirst, "#!/bin/sh\n");
+    chmodSync(badFirst, 0o644); // exists, but not executable — should not win
+    const goodSecond = join(root, "packages", "opencode", "dist", "opencode-linux-arm64", "bin", "opencode");
+    makeExecutable(goodSecond);
+    expect(findForkedOpencodeBinary(root)).toEqual({ found: true, path: goodSecond });
+  });
+
+  it("treats the input itself as a direct binary path when it isn't a repo root", () => {
+    // The Developer Tools field lets a user point straight at a binary
+    // instead of a repo root — preserved from the original candidate list.
+    const root = mkdtempSync(join(tmpdir(), "forkbin-direct-"));
+    const bin = join(root, "opencode");
+    makeExecutable(bin);
+    expect(findForkedOpencodeBinary(bin)).toEqual({ found: true, path: bin });
   });
 });

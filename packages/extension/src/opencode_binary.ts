@@ -1,4 +1,4 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { join } from "node:path";
 
 export class OpencodeMissingError extends Error {}
@@ -51,4 +51,55 @@ export function resolveOpencodeBinary(extensionRoot: string, configValue: string
     );
   }
   return { path: vendored, source: "vendored" };
+}
+
+export type ForkBinaryResolution =
+  | { found: true; path: string }
+  | { found: false; reason: "not-found" }
+  | { found: false; reason: "not-executable"; path: string };
+
+/**
+ * Resolve the built opencode binary from a FORK CHECKOUT's dist output —
+ * distinct from resolveOpencodeBinary() above, which resolves the VENDORED
+ * binary shipped with the extension itself.
+ *
+ * Used by the Developer Tools dev-tools-update (path validation) and
+ * dev-tools-rebuild (post-build codesign) handlers, which used to each
+ * carry their own, independently-drifting candidate list (#943):
+ * dev-tools-update never checked the platform-suffixed dist directory a
+ * real build actually produces, so a genuinely valid repo path was
+ * indistinguishable from a typo; dev-tools-rebuild's own list only covered
+ * darwin, missing both Linux targets. Both now share this one list,
+ * sourced from SUPPORTED.
+ *
+ * Checks every supported platform's suffixed directory (not just the
+ * current host's — the repo root being validated need not have been built
+ * on this machine) before falling back to the legacy unsuffixed layout an
+ * older build script once produced, and finally treats the input itself as
+ * a direct binary path in case the user pointed straight at one instead of
+ * a repo root.
+ */
+export function findForkedOpencodeBinary(repoRoot: string): ForkBinaryResolution {
+  const candidates = [
+    ...SUPPORTED.map((key) => join(repoRoot, "packages", "opencode", "dist", `opencode-${key}`, "bin", "opencode")),
+    join(repoRoot, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
+    join(repoRoot, "dist", "opencode", "bin", "opencode"),
+    repoRoot, // direct binary path — the field also accepts pointing straight at a binary
+  ];
+
+  let notExecutable: string | undefined;
+  for (const candidate of candidates) {
+    try {
+      if (!statSync(candidate).isFile()) continue;
+    } catch {
+      continue;
+    }
+    try {
+      accessSync(candidate, constants.X_OK);
+      return { found: true, path: candidate };
+    } catch {
+      notExecutable ??= candidate;
+    }
+  }
+  return notExecutable ? { found: false, reason: "not-executable", path: notExecutable } : { found: false, reason: "not-found" };
 }

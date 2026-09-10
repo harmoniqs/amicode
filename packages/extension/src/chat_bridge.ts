@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
+import { findForkedOpencodeBinary } from "./opencode_binary";
 import {
   readSkillProviders,
   addSkillProvider,
@@ -323,15 +324,17 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Developer Tools settings: validate paths, write VS Code settings, restart
-  // server / prompt reload as appropriate. The app posts on blur and on toggle.
+  // Developer Tools settings: validate paths, swap the opencode binary +
+  // restart its server as appropriate. The app posts on blur and on toggle.
+  // Committing the amicode path is validate-only — no build, no reload; see
+  // the note at that branch below (#941).
   if (msg.kind === "dev-tools-update") {
     const enabled = (msg as { enabled?: unknown }).enabled === true;
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
-      ? (msg as unknown as { opencodePath: string }).opencodePath.trim()
+      ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
       : "";
     const amicodePath = typeof (msg as { amicodePath?: unknown }).amicodePath === "string"
-      ? (msg as unknown as { amicodePath: string }).amicodePath.trim()
+      ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
       : "";
 
     const reply: {
@@ -390,32 +393,13 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     // Validate opencode path: resolve the binary from the repo root
     let resolvedBinary = "";
     if (opencodePath) {
-      // The dev binary lives at <root>/packages/opencode/dist/opencode/bin/opencode
-      // or <root>/cmd/opencode (Go), or the user may point directly at a binary.
-      const candidates = [
-        path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
-        path.join(opencodePath, "dist", "opencode", "bin", "opencode"),
-        opencodePath, // direct binary path
-      ];
-      for (const candidate of candidates) {
-        try {
-          const stat = fs.statSync(candidate);
-          if (stat.isFile()) {
-            // Check executable bit (unix)
-            try {
-              fs.accessSync(candidate, fs.constants.X_OK);
-              resolvedBinary = candidate;
-              break;
-            } catch {
-              reply.opencodeValid = false;
-              reply.opencodeError = "Binary exists but is not executable";
-            }
-          }
-        } catch {
-          // not found, try next
-        }
-      }
-      if (!resolvedBinary && reply.opencodeValid) {
+      const resolution = findForkedOpencodeBinary(opencodePath);
+      if (resolution.found) {
+        resolvedBinary = resolution.path;
+      } else if (resolution.reason === "not-executable") {
+        reply.opencodeValid = false;
+        reply.opencodeError = "Binary exists but is not executable";
+      } else {
         reply.opencodeValid = false;
         reply.opencodeError = "Binary not found at this path";
       }
@@ -463,55 +447,21 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       reply.serverRestarted = true;
     }
 
-    if (reply.amicodeValid && amicodePath) {
-      // Run a full extension build in the amicode repo root, then set devAssetRoot
-      // to the built extension directory and prompt a reload with deep-link to
-      // the developer tools section for continuity.
-      const extensionDir = path.join(amicodePath, "packages", "extension");
-
-      // Notify the app that a build is in progress
-      io.postToWebview({ ...reply, building: true });
-
-      // Build + reload is async; fire-and-forget from the sync handler.
-      void (async () => {
-      const { exec } = await import("child_process");
-        const buildResult = await new Promise<{ ok: boolean; error?: string }>((resolve) => {
-          exec("bun run build", { cwd: amicodePath, timeout: 120_000 }, (err, _stdout, stderr) => {
-            if (err) {
-              resolve({ ok: false, error: stderr?.trim() || err.message });
-            } else {
-              resolve({ ok: true });
-            }
-          });
-        });
-
-        if (!buildResult.ok) {
-          reply.amicodeValid = false;
-          reply.amicodeError = `Build failed: ${buildResult.error?.slice(0, 200) ?? "unknown error"}`;
-          io.postToWebview(reply);
-          return;
-        }
-
-        void vscode.workspace.getConfiguration("amicode").update(
-          "devAssetRoot", extensionDir, vscode.ConfigurationTarget.Global,
-        );
-        reply.reloadNeeded = true;
-        io.postToWebview(reply);
-
-        // Auto-reload after a short delay so the webview can persist state.
-        setTimeout(() => {
-          void vscode.commands.executeCommand("workbench.action.reloadWindow");
-        }, 500);
-      })();
-    } else if (reply.amicodeValid && !amicodePath) {
+    // Committing the amicode path only validates it (above) — it never
+    // builds or reloads on its own (#941). Blurring a path field used to
+    // eagerly run a real `bun run build` and auto-reload the window with no
+    // confirmation, and since the app always resends BOTH current paths on
+    // any field's blur, even an unrelated edit to the opencode field would
+    // retrigger it. Building is now exclusively an explicit action — the
+    // "Rebuild Locally" / "Rebuild from Main" buttons (dev-tools-rebuild,
+    // below), which are self-sufficient and don't depend on anything set
+    // here. Clearing the path to empty still clears any devAssetRoot
+    // override, since that's just removing a setting, not building one.
+    if (reply.amicodeValid && !amicodePath) {
       void vscode.workspace.getConfiguration("amicode").update("devAssetRoot", "", vscode.ConfigurationTarget.Global);
     }
 
-    // For the async build case, the reply is posted from within the IIFE.
-    // For all other cases, post the reply here.
-    if (!(reply.amicodeValid && amicodePath)) {
-      io.postToWebview(reply);
-    }
+    io.postToWebview(reply);
     return true;
   }
 
@@ -662,15 +612,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Resolve and codesign the built binary ──
-        const candidates = [
-          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-arm64`, "bin", "opencode"),
-          path.join(opencodePath, "packages", "opencode", "dist", `opencode-darwin-x64`, "bin", "opencode"),
-          path.join(opencodePath, "packages", "opencode", "dist", "opencode", "bin", "opencode"),
-        ];
-        let resolvedBinary = "";
-        for (const c of candidates) {
-          try { if (fs.statSync(c).isFile()) { resolvedBinary = c; break; } } catch { /* next */ }
-        }
+        const resolution = findForkedOpencodeBinary(opencodePath);
+        const resolvedBinary = resolution.found ? resolution.path : "";
         if (resolvedBinary) {
           await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
         }
