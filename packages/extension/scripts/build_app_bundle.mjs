@@ -21,6 +21,9 @@
 // when the tree is missing a #964 known-fixed hunk. Every deploy stamps
 // dist-app/deploy.json {commit, branch, dirty, override_reason, built_at,
 // deployed_by} so the served dist always traces to a recorded commit.
+// EXCEPTION: under CI (the vsix-gate's packaging lane, a merge-ref build that
+// is not a deploy) the stale/dirty checks are advisory and recorded in the
+// manifest; the known-fixes check stays enforcing everywhere.
 //
 // FAILS LOUDLY, never a silent skip: a packaging step that no-ops is the
 // "silently no-op'd fetch" trap the vsix-gate exists to catch. The RUNTIME half
@@ -76,9 +79,24 @@ const gitOut = (cmdArgs, note) => {
 // override (AMICODE_DEPLOY_OVERRIDE) MUST carry a non-empty reason and is
 // recorded in the deploy manifest. Also the #964 known-fixes check at deploy
 // time: a tree missing a recorded fix refuses with the named-remedy shape.
+//
+// CI EXCEPTION (honest, never silent): the vsix-gate's packaging lane runs
+// build:app from the PR MERGE REF — legitimately ahead of origin/main and
+// shallow-cloned (ancestry probes can't decide). That is a packaging build,
+// not a deploy: under CI the stale/dirty checks run ADVISORY (printed, and
+// recorded as the manifest's override_reason) while the #964 known-fixes
+// check stays ENFORCING — a merge ref containing main carries main's fixes,
+// so a regression there still refuses. Locally, CI is not set: the guard is
+// always a hard refusal, overridable only via a recorded AMICODE_DEPLOY_OVERRIDE.
 const preflight = () => {
+  const ciPackaging = process.env.CI === "true" || process.env.CI === "1";
   console.log("[build:app] pre-flight (#992): fetch origin, compare HEAD to origin/main, check the tree");
-  run("git", ["fetch", "origin"], REPO_ROOT, "git fetch origin");
+  if (gitOut(["rev-parse", "--is-shallow-repository"], "shallow check") === "true") {
+    console.log("[build:app] shallow clone — unshallowing so the origin/main ancestry probes are honest");
+    run("git", ["fetch", "--unshallow", "origin"], REPO_ROOT, "git fetch --unshallow origin");
+  } else {
+    run("git", ["fetch", "origin"], REPO_ROOT, "git fetch origin");
+  }
   const headSha = gitOut(["rev-parse", "HEAD"], "rev-parse HEAD");
   const originSha = gitOut(["rev-parse", "origin/main"], "rev-parse origin/main");
   const headIsAncestor =
@@ -95,6 +113,12 @@ const preflight = () => {
   });
   for (const line of decision.recorded ?? []) console.log(`[build:app] ${line}`);
   if (!decision.ok) {
+    if (ciPackaging) {
+      const advisoryReason = `ci-packaging (merge ref ${headSha.slice(0, 12)}, branch ${gitOut(["rev-parse", "--abbrev-ref", "HEAD"], "branch name")}): ${decision.reasons.join(" | ")}`;
+      console.log("[build:app] CI packaging build — stale/dirty guard is ADVISORY here (not a deploy); recorded in the manifest:");
+      for (const r of decision.reasons) console.log(`[build:app]   ADVISORY: ${r}`);
+      return { headSha, dirty: dirtyEntries.length > 0, overrideReason: advisoryReason };
+    }
     console.error("[build:app] pre-flight FAILED — refusing to build/stage a deploy from this tree:");
     for (const r of decision.reasons) console.error(`[build:app]   ${r}`);
     process.exit(1);
