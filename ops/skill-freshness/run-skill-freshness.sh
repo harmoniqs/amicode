@@ -2,7 +2,8 @@
 # run-skill-freshness.sh — the nightly skill-freshness cadence (amicode#587).
 #
 # Runs the skill-content drift lint (packages/extension/scripts/
-# skill_drift_lint.mts, amicode#586) over THREE skill surfaces on the mini:
+# skill_drift_lint.mts, amicode#586) over THREE skill surfaces on the cadence
+# host (the Amicode server; the mini hosted the cadence before amicode#991):
 #
 #   public    the repo's shipped library  packages/extension/skills          structural-only
 #   internal  the armonissima vault library  ~/.amico/vaults/armonissima/skills  full
@@ -48,7 +49,10 @@
 #
 # Written for macOS /bin/bash (3.2): no associative arrays, no namerefs.
 set -uo pipefail
-export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# Cross-platform (amicode#991): the user's ~/.local/bin comes first so the
+# cadence host (Linux server: node >= 22.18 + gh live there) resolves the
+# real toolchain; the platform paths behind it keep macOS (Homebrew) intact.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 
 SELF_NAME="run-skill-freshness"
 

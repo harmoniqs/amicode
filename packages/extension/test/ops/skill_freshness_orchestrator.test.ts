@@ -165,4 +165,17 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
     expect(stagingReport.aggregate.unverifiable).toBeGreaterThan(0);
     expect(fs.existsSync(env.SKILL_FRESHNESS_RECEIPTS)).toBe(false);
   });
+
+  it("PATH is cross-platform: $HOME/.local/bin precedes the platform paths (amicode#991)", () => {
+    // The server (cadence host) keeps node >= 22.18 + gh in ~/.local/bin; without
+    // that prefix the hardcoded macOS PATH resolves system node v12 and the lint
+    // dies on its .mts extension — silently corrupting every surface's report.
+    const src = fs.readFileSync(OPS_SCRIPT, "utf8");
+    const m = src.match(/^export PATH="(.+)"$/m);
+    expect(m).not.toBeNull();
+    const entries = m![1].split(":");
+    expect(entries[0]).toBe("$HOME/.local/bin");
+    expect(entries.indexOf("/opt/homebrew/bin")).toBeGreaterThan(0); // macOS intact behind it
+    expect(entries).toContain("/usr/bin");
+  });
 });
