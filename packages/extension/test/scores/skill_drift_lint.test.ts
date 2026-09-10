@@ -346,6 +346,81 @@ describe("checkClaims", () => {
     }
   });
 
+  it("reexport-chain false positive (#1002): a symbol defined in OriginPkg and reexported by ChainPkg VERIFIES when the claim's scope is ChainPkg", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "chain_origin_widget", packages: ["ChainPkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/OriginPkg\.jl/);
+    expect(r.evidence).toMatch(/chain/i); // the evidence names the followed chain
+  });
+
+  it("reexport-chain false positive (#1002): the reversed seam — a definer that `using`s the scope package resolves too (the Strumento/Intonato inversion)", () => {
+    // the live shape: the reexport DIRECTION flipped between package releases
+    // (Intonato reexports Strumento now, not vice versa) — the chain walk is
+    // undirected within the discovered set, so the claim still verifies
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-rev-"));
+    try {
+      fs.mkdirSync(path.join(base, "ScopePkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "ScopePkg.jl", "src", "ScopePkg.jl"), "module ScopePkg\nend\n");
+      fs.mkdirSync(path.join(base, "DefinerPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "DefinerPkg.jl", "src", "DefinerPkg.jl"),
+        ["module DefinerPkg", "using ScopePkg", "export made_in_definer", "made_in_definer() = 1", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "made_in_definer", packages: ["ScopePkg"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/DefinerPkg\.jl/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reexport-chain false positive (#1002): the chain is transitive within the discovered set and cycles terminate", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-cycle-"));
+    try {
+      // A -> B -> C, and C -> A (the cycle): a walk without a visited set
+      // would loop forever; a claim scoped to A must still find C's symbol
+      fs.mkdirSync(path.join(base, "Alpha.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "Alpha.jl", "src", "Alpha.jl"), "module Alpha\nusing Beta\nend\n");
+      fs.mkdirSync(path.join(base, "Beta.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "Beta.jl", "src", "Beta.jl"), "module Beta\nusing Gamma\nend\n");
+      fs.mkdirSync(path.join(base, "Gamma.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "Gamma.jl", "src", "Gamma.jl"),
+        ["module Gamma", "using Alpha", "export deep_symbol", "deep_symbol() = 3", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "deep_symbol", packages: ["Alpha"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/Gamma\.jl/);
+      // an undiscovered using (Delta) adds nothing and never degrades the verdict
+      fs.mkdirSync(path.join(base, "Alpha.jl", "src", "nested"), { recursive: true });
+      fs.appendFileSync(path.join(base, "Alpha.jl", "src", "nested", "extra.jl"), "using Delta\n");
+      const [absent] = checkClaims([{ kind: "symbol", text: "nowhere_symbol", packages: ["Alpha"], line: 1, source: "julia-fence" }], [base]);
+      expect(absent.verdict).toBe("DRIFTED");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reexport-chain false positive (#1002): the closure is bounded — a symbol in an UNRELATED discovered package still DRIFTS", () => {
+    // the chain opens the using/reexport family, not the whole package set
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-bounded-"));
+    try {
+      fs.mkdirSync(path.join(base, "InPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "InPkg.jl", "src", "InPkg.jl"), "module InPkg\nusing OutPkg\nend\n");
+      fs.mkdirSync(path.join(base, "OutPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "OutPkg.jl", "src", "OutPkg.jl"), "module OutPkg\nend\n");
+      fs.mkdirSync(path.join(base, "UnrelatedPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "UnrelatedPkg.jl", "src", "UnrelatedPkg.jl"),
+        ["module UnrelatedPkg", "export stranger_symbol", "stranger_symbol() = 0", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "stranger_symbol", packages: ["InPkg"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("DRIFTED");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("path claims: UNVERIFIABLE with no roots and no skill dir", () => {
     const [r] = checkClaims([{ kind: "path", text: "src/whatever.jl", packages: [], line: 1, source: "backtick" }], []);
     expect(r.verdict).toBe("UNVERIFIABLE");
@@ -744,6 +819,28 @@ describe("real fleet regressions (amicode#1002 lint false positives)", () => {
     for (const r of results) {
       expect(r.verdict).toBe("VERIFIED");
       expect(r.evidence).toMatch(/Strumento\.jl\/ext\//);
+    }
+  });
+
+  it("the live hardware-loop regression: all ten fence claims VERIFY against the real fleet packages when scoped to Strumento", () => {
+    const root = realPackagesRoot();
+    const skill = path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills", "hardware-loop", "SKILL.md");
+    if (!root || !fs.existsSync(skill)) return; // CI — mount-gated skip
+    const ten = [
+      "MockSoc", "StrumentoBackend", "QickChannelMap", "QickGenChannel", "StrumentoExperiment",
+      "MeasurementModel", "PulseTuningProblem", "Intonato", "QuantumSystem", "PiPulseReference",
+    ];
+    const claims = extractClaims(fs.readFileSync(skill, "utf8"));
+    // the fence scope is Strumento now (comment-stripped) — pin that first
+    const mockSoc = claims.find((c) => c.text === "MockSoc")!;
+    expect(mockSoc.packages).toEqual(["Strumento"]);
+    const results = checkClaims(claims.filter((c) => c.kind === "symbol" && ten.includes(c.text)), [root]);
+    const verifiedTexts = new Set(results.filter((r) => r.verdict === "VERIFIED").map((r) => r.claim.text));
+    for (const text of ten) {
+      expect(verifiedTexts, `${text} must VERIFY (was a #1002 false positive)`).toContain(text);
+    }
+    for (const r of results) {
+      expect(r.verdict, `${r.claim.text}: ${r.evidence}`).toBe("VERIFIED");
     }
   });
 });

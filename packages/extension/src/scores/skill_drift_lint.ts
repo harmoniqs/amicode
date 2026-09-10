@@ -392,6 +392,10 @@ interface PackageCheckout {
 interface PackageScan {
   juliaFiles: string[]; // absolute, sorted
   exports: Set<string>; // names appearing in `export …` lines
+  /** Module names this package `using`/`import`/`@reexport using`s (#1002) —
+   *  the reexport-chain edges, harvested comment-stripped from the same
+   *  scanned files. */
+  usings: Set<string>;
 }
 
 /** Discover `<Pkg>.jl` directories under the roots (sorted, root order). */
@@ -433,6 +437,7 @@ function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): Pac
   ];
   const files = juliaFiles.length > 0 ? juliaFiles : collectJuliaFiles(pkg.dir);
   const exports = new Set<string>();
+  const usings = new Set<string>();
   for (const f of files) {
     const raw = fs.readFileSync(f, "utf8");
     // Per-line so export lists can carry trailing comments (never names) and
@@ -443,18 +448,30 @@ function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): Pac
     const lines = raw.split(/\r?\n/);
     for (let li = 0; li < lines.length; li++) {
       const m = /^\s*export\s+(.*)$/.exec(lines[li]);
-      if (!m) continue;
-      let stmt = m[1].replace(/\s*#.*$/, "").trim();
-      while (stmt.endsWith(",") && li + 1 < lines.length) {
-        stmt += " " + lines[++li].replace(/\s*#.*$/, "").trim();
+      if (m) {
+        let stmt = m[1].replace(/\s*#.*$/, "").trim();
+        while (stmt.endsWith(",") && li + 1 < lines.length) {
+          stmt += " " + lines[++li].replace(/\s*#.*$/, "").trim();
+        }
+        for (const name of stmt.split(/[\s,]+/)) {
+          const n = name.trim();
+          if (n !== "") exports.add(n);
+        }
       }
-      for (const name of stmt.split(/[\s,]+/)) {
-        const n = name.trim();
-        if (n !== "") exports.add(n);
+      // #1002 reexport-chain edges: module names from using/import/@reexport
+      // statements, comment-stripped (a trailing comment is never an edge —
+      // same rule as the fence scope extractor).
+      const u = /^\s*(?:@reexport\s+)?(?:using|import)\s+(.+)$/.exec(stripJuliaComment(lines[li]));
+      if (u) {
+        const head = u[1].split(":")[0]; // `using A: x, y` → A; `using A, B` → A, B
+        for (const part of head.split(",")) {
+          const mod = /^[.\s]*([A-Za-z_][A-Za-z0-9_]*)/.exec(part);
+          if (mod) usings.add(mod[1]); // `import A.B` → A (first segment)
+        }
       }
     }
   }
-  const scan = { juliaFiles: files, exports };
+  const scan = { juliaFiles: files, exports, usings };
   cache.set(pkg.dir, scan);
   return scan;
 }
@@ -504,6 +521,46 @@ function findInSource(scan: PackageScan, pkg: PackageCheckout, symbol: string): 
   return null;
 }
 
+/** The using/reexport family of `start` within the discovered package set
+ *  (#1002). The walk treats `using`/`import`/`@reexport` edges as UNDIRECTED:
+ *  the reexport direction flips between package releases (the live case is the
+ *  Strumento/Intonato seam inversion — Intonato reexports Strumento now, and
+ *  the hardware-loop skill still cites `using Strumento`), and a scoped claim
+ *  asserts API-family membership, not an edge's direction. A using of an
+ *  undiscovered package adds nothing and never degrades a verdict; the
+ *  visited set terminates cycles. BFS order, `start` first — deterministic. */
+function packageFamily(
+  start: string,
+  byName: Map<string, PackageCheckout>,
+  cache: Map<string, PackageScan>,
+): string[] {
+  const visited = new Set<string>([start]);
+  const order: string[] = [start];
+  const queue: string[] = [start];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const neighbors = new Set<string>();
+    if (byName.has(cur)) {
+      for (const u of scanPackage(byName.get(cur)!, cache).usings) {
+        if (byName.has(u)) neighbors.add(u); // out-edge: cur usings u
+      }
+    }
+    for (const [name, pkg] of byName) {
+      if (name !== cur && scanPackage(pkg, cache).usings.has(cur)) {
+        neighbors.add(name); // in-edge: someone usings cur (the flipped seam)
+      }
+    }
+    for (const n of [...neighbors].sort()) {
+      if (!visited.has(n)) {
+        visited.add(n);
+        order.push(n);
+        queue.push(n);
+      }
+    }
+  }
+  return order;
+}
+
 /** Resolve extracted claims against package checkouts (+ optional search
  *  roots). Pure with respect to the filesystem state: no network, no clock. */
 export function checkClaims(
@@ -517,10 +574,19 @@ export function checkClaims(
   const searchRoots: string[] = [];
   if (opts.skillDir) searchRoots.push(opts.skillDir);
   if (opts.searchRoots) searchRoots.push(...opts.searchRoots);
+  const familyCache = new Map<string, string[]>();
+  const family = (name: string): string[] => {
+    let f = familyCache.get(name);
+    if (!f) {
+      f = packageFamily(name, byName, cache);
+      familyCache.set(name, f);
+    }
+    return f;
+  };
 
   return claims.map((claim) => {
     if (claim.kind === "path") return checkPathClaim(claim, packageRoots, packages, searchRoots, opts);
-    return checkSymbolClaim(claim, packages, byName, cache);
+    return checkSymbolClaim(claim, packages, byName, cache, family);
   });
 }
 
@@ -529,6 +595,7 @@ function checkSymbolClaim(
   packages: PackageCheckout[],
   byName: Map<string, PackageCheckout>,
   cache: Map<string, PackageScan>,
+  family: (name: string) => string[],
 ): ClaimResult {
   // a qualified claim ("Piccolo.solve!") asserts the RIGHT-hand symbol in the
   // LEFT-hand package — the lookup name never includes the module prefix
@@ -570,6 +637,29 @@ function checkSymbolClaim(
         verdict: "VERIFIED",
         evidence: `'${claim.text}' found in ${pkg.name}.jl/${hit.file}:${hit.line} (source scan)`,
       };
+    }
+    // #1002: not in the scoped package directly — resolve through the
+    // using/@reexport chain within the discovered set (never degrades: a
+    // miss here falls through to the DRIFTED verdict below)
+    for (const otherName of family(name)) {
+      if (otherName === name) continue;
+      const other = byName.get(otherName)!;
+      const otherScan = scanPackage(other, cache);
+      if (otherScan.exports.has(symbol)) {
+        return {
+          claim,
+          verdict: "VERIFIED",
+          evidence: `'${claim.text}' is exported by ${other.name}.jl (via using/reexport chain from ${pkg.name}.jl)`,
+        };
+      }
+      const otherHit = findInSource(otherScan, other, symbol);
+      if (otherHit) {
+        return {
+          claim,
+          verdict: "VERIFIED",
+          evidence: `'${claim.text}' found in ${other.name}.jl/${otherHit.file}:${otherHit.line} (source scan via using/reexport chain from ${pkg.name}.jl)`,
+        };
+      }
     }
   }
   const scopeLabel =
