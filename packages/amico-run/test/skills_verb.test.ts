@@ -117,3 +117,73 @@ describe("amico skills check --roots", () => {
     expect(rootsOf(json)[0]).toMatchObject({ scanned: 1, valid: 1, invalid: 0 });
   });
 });
+
+describe("amico skills check — the default fleet surfaces (no --roots)", () => {
+  // Hermetic discipline (the profile verb's): the no-arg defaults read the REAL
+  // fleet surfaces — the repo checkout, the armonissima vault mount, the server
+  // staging tree — so every test here points all three env seams at fixture
+  // paths under the temp root.
+  let repo: string;
+  let vault: string;
+  let staging: string;
+  beforeEach(() => {
+    repo = join(root, "repo");
+    vault = join(root, "vault");
+    staging = join(root, "staging");
+    process.env.AMICO_SKILLS_REPO = repo;
+    process.env.AMICO_SKILLS_VAULT = vault;
+    process.env.AMICO_SKILLS_STAGING = staging;
+  });
+  afterEach(() => {
+    delete process.env.AMICO_SKILLS_REPO;
+    delete process.env.AMICO_SKILLS_VAULT;
+    delete process.env.AMICO_SKILLS_STAGING;
+  });
+
+  it("validates the three default roots — repo library, armonissima vault, server staging — with per-root labels", () => {
+    for (const [base, name] of [[repo, "r1"], [vault, "v1"], [staging, "s1"]] as const) {
+      mkdirSync(join(base, name), { recursive: true });
+      writeFileSync(join(base, name, "SKILL.md"), `---\nname: ${name}\ndescription: x\n---\n`);
+    }
+    const { code, json } = check(["check"]);
+    expect(code).toBe(0);
+    const roots = rootsOf(json);
+    expect(roots.map((r) => r.label)).toEqual(["public", "internal", "staging"]);
+    expect(roots[0]).toMatchObject({ root: repo, status: "ok", scanned: 1, valid: 1 });
+    expect(roots[1]).toMatchObject({ root: vault, status: "ok", scanned: 1 });
+    expect(roots[2]).toMatchObject({ root: staging, status: "ok", scanned: 1 });
+    expect(json).toMatchObject({ ok: true, scanned: 3, valid: 3, invalid: 0 });
+  });
+
+  it("absent roots are reported as skipped, never a crash — and a clean present root still exits 0 (honest degradation)", () => {
+    mkdirSync(join(repo, "r1"), { recursive: true });
+    writeFileSync(join(repo, "r1", "SKILL.md"), "---\nname: r1\ndescription: x\n---\n");
+    // vault + staging dirs stay absent
+    const { code, json } = check(["check"]);
+    expect(code).toBe(0);
+    const roots = rootsOf(json);
+    expect(roots[0]).toMatchObject({ root: repo, status: "ok", scanned: 1 });
+    expect(roots[1]).toMatchObject({ status: "skipped" });
+    expect((roots[1].reason as string)).toContain("absent");
+    expect(roots[2]).toMatchObject({ status: "skipped" });
+  });
+
+  it("a repeated name ACROSS roots is not an error — that is the typed revision-selection case, not a defect", () => {
+    for (const base of [repo, vault]) {
+      mkdirSync(join(base, "atoms"), { recursive: true });
+      writeFileSync(join(base, "atoms", "SKILL.md"), "---\nname: atoms\ndescription: x\nsurface: public\n---\n");
+    }
+    const { code, json } = check(["check", "--roots", repo, vault]);
+    expect(code).toBe(0);
+    expect(json).toMatchObject({ ok: true, scanned: 2, valid: 2, invalid: 0 });
+  });
+
+  it("an invalid skill in ANY default root fails the exit code (1), the report names the root", () => {
+    mkdirSync(join(repo, "bad"), { recursive: true });
+    writeFileSync(join(repo, "bad", "SKILL.md"), "---\nname: mismatch\ndescription: x\n---\n");
+    const { code, json } = check(["check"]);
+    expect(code).toBe(1);
+    const pub = rootsOf(json).find((r) => r.label === "public");
+    expect(pub).toMatchObject({ status: "ok", scanned: 1, invalid: 1 });
+  });
+});
