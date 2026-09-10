@@ -670,6 +670,80 @@
   }
 }
 
+/* The docket (Aaron 2026-09-04) — the collapsed row's evidence tokens: files
+   with ±, search patterns with repeat counts, touched dirs. Inline after the
+   verb label, clipped by the row's own ellipsis; tokens never shrink (a
+   clipped tail reads better than squeezed tokens). */
+[data-slot="context-tool-group-docket"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-size-sm);
+}
+
+[data-slot="docket-token"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--v2-text-text-muted);
+}
+
+[data-slot="docket-token"] .docket-file-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+[data-slot="docket-token-name"] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.92em;
+  color: var(--v2-text-text-base);
+}
+
+[data-slot="docket-token"][data-kind="dir"] [data-slot="docket-token-name"],
+[data-slot="docket-token"][data-kind="pattern"] [data-slot="docket-token-name"] {
+  color: var(--v2-text-text-muted);
+}
+
+[data-slot="docket-token"][data-kind="more"] {
+  color: var(--v2-text-text-faint);
+  font-size: 0.92em;
+}
+
+[data-slot="docket-diff"] {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+
+[data-slot="docket-diff"][data-sign="add"] {
+  color: var(--v2-state-fg-success);
+}
+
+[data-slot="docket-diff"][data-sign="del"] {
+  color: var(--v2-state-fg-danger);
+}
+
+[data-slot="docket-count"] {
+  color: var(--v2-text-text-faint);
+  font-size: 0.85em;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-slot="docket-failed"] {
+  color: var(--v2-state-fg-danger);
+}
+
 [data-component="context-tool-group-list"] {
   padding-top: 0;
   padding-right: 0;

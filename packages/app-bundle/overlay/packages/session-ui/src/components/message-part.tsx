@@ -696,6 +696,7 @@ import {
 } from "./message-part-groups"
 import { parseDiffSentinel } from "@opencode-ai/ui/amicode-receipt"
 import { editRowDiff, editRowFilePath, editRowLabel } from "@opencode-ai/ui/amicode-edit-row"
+import { contextDocket, editDocket, shellDocket, type DocketToken } from "@opencode-ai/ui/amicode-docket"
 import {
   collapseReceiptRuns,
   receiptRunKey,
@@ -1146,6 +1147,63 @@ function contextToolSummary(parts: ToolPart[]) {
   return { read, search, list }
 }
 
+/* The docket (Aaron 2026-09-04): collapsed group rows carry their evidence —
+   file tokens with ±, search patterns with repeat counts, touched dirs —
+   bounded to the pure helpers' max with a `+N more` tail. Tokens render in
+   the row itself; the dropdown below still carries the full per-part detail. */
+function GroupDocket(props: { tokens: DocketToken[]; more: number }) {
+  return (
+    <span data-slot="context-tool-group-docket">
+      <For each={props.tokens}>
+        {(token) => {
+          if (token.kind === "file") {
+            return (
+              <span
+                data-slot="docket-token"
+                data-kind="file"
+                title={token.dir ? `${token.dir}/${token.name}` : token.name}
+              >
+                <FileIcon node={{ path: token.name, type: "file" }} class="docket-file-icon" />
+                <span data-slot="docket-token-name">{token.name}</span>
+                <Show when={token.additions}>
+                  <span data-slot="docket-diff" data-sign="add">
+                    +{token.additions}
+                  </span>
+                </Show>
+                <Show when={token.deletions}>
+                  <span data-slot="docket-diff" data-sign="del">
+                    −{token.deletions}
+                  </span>
+                </Show>
+              </span>
+            )
+          }
+          if (token.kind === "pattern") {
+            return (
+              <span data-slot="docket-token" data-kind="pattern">
+                <span data-slot="docket-token-name">{token.text}</span>
+                <Show when={token.count > 1}>
+                  <span data-slot="docket-count">×{token.count}</span>
+                </Show>
+              </span>
+            )
+          }
+          return (
+            <span data-slot="docket-token" data-kind="dir" title={token.text}>
+              <span data-slot="docket-token-name">{token.text}</span>
+            </span>
+          )
+        }}
+      </For>
+      <Show when={props.more > 0}>
+        <span data-slot="docket-token" data-kind="more">
+          +{props.more}
+        </span>
+      </Show>
+    </span>
+  )
+}
+
 function ExaOutput(props: { output?: string }) {
   const links = createMemo(() => urls(props.output))
 
@@ -1350,6 +1408,7 @@ export function ContextToolGroup(props: {
       !!props.busy || props.parts.some((part) => part.state.status === "pending" || part.state.status === "running"),
   )
   const summary = createMemo(() => contextToolSummary(props.parts))
+  const docket = createMemo(() => contextDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     if (props.open === undefined) setLocalOpen(value)
     props.onOpenChange?.(value)
@@ -1386,29 +1445,36 @@ export function ContextToolGroup(props: {
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              <AnimatedCountList
-                items={[
-                  {
-                    key: "read",
-                    count: summary().read,
-                    one: i18n.t("ui.messagePart.context.read.one"),
-                    other: i18n.t("ui.messagePart.context.read.other"),
-                  },
-                  {
-                    key: "search",
-                    count: summary().search,
-                    one: i18n.t("ui.messagePart.context.search.one"),
-                    other: i18n.t("ui.messagePart.context.search.other"),
-                  },
-                  {
-                    key: "list",
-                    count: summary().list,
-                    one: i18n.t("ui.messagePart.context.list.one"),
-                    other: i18n.t("ui.messagePart.context.list.other"),
-                  },
-                ]}
-                fallback=""
-              />
+              <Show
+                when={docket().tokens.length > 0 || docket().more > 0}
+                fallback={
+                  <AnimatedCountList
+                    items={[
+                      {
+                        key: "read",
+                        count: summary().read,
+                        one: i18n.t("ui.messagePart.context.read.one"),
+                        other: i18n.t("ui.messagePart.context.read.other"),
+                      },
+                      {
+                        key: "search",
+                        count: summary().search,
+                        one: i18n.t("ui.messagePart.context.search.one"),
+                        other: i18n.t("ui.messagePart.context.search.other"),
+                      },
+                      {
+                        key: "list",
+                        count: summary().list,
+                        one: i18n.t("ui.messagePart.context.list.one"),
+                        other: i18n.t("ui.messagePart.context.list.other"),
+                      },
+                    ]}
+                    fallback=""
+                  />
+                }
+              >
+                <GroupDocket tokens={docket().tokens} more={docket().more} />
+              </Show>
             </span>
           </span>
           <Collapsible.Arrow />
@@ -1466,6 +1532,7 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
       !!props.busy || props.parts.some((part) => part.state.status === "pending" || part.state.status === "running"),
   )
   const count = createMemo(() => props.parts.length)
+  const tally = createMemo(() => shellDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     setOpen(value)
     props.onSizeChange?.()
@@ -1501,7 +1568,13 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              {count()} {count() === 1 ? "command" : "commands"}
+              {tally().commands} {tally().commands === 1 ? "command" : "commands"}
+              <Show when={tally().failed > 0}>
+                {" "}
+                <span data-slot="docket-failed">
+                  · {tally().failed} {tally().failed === 1 ? "failed" : "failed"}
+                </span>
+              </Show>
             </span>
           </span>
           <Collapsible.Arrow />
@@ -1575,6 +1648,9 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
       .map((part) => editRowDiff(part))
       .filter((diff): diff is { additions: number; deletions: number } => !!diff),
   )
+  // The docket: per-file tokens with their own ±, bounded — the row carries
+  // its evidence, the aggregate pill stays only as the zero-file fallback.
+  const docket = createMemo(() => editDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     setOpen(value)
     props.onSizeChange?.()
@@ -1605,15 +1681,25 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              {count()} {count() === 1 ? "change" : "changes"}
-              <Show when={fileCount() > 0}>
-                {" "}
-                in {fileCount()} {fileCount() === 1 ? "file" : "files"}
+              <Show
+                when={docket().tokens.length > 0 || docket().more > 0}
+                fallback={
+                  <>
+                    {count()} {count() === 1 ? "change" : "changes"}
+                    <Show when={fileCount() > 0}>
+                      {" "}
+                      in {fileCount()} {fileCount() === 1 ? "file" : "files"}
+                    </Show>
+                    <Show when={diffs().length > 0}>
+                      {" "}
+                      <DiffChanges changes={diffs()} />
+                    </Show>
+                  </>
+                }
+              >
+                <GroupDocket tokens={docket().tokens} more={docket().more} />
               </Show>
             </span>
-            <Show when={diffs().length > 0}>
-              <DiffChanges changes={diffs()} />
-            </Show>
           </span>
           <Collapsible.Arrow />
         </div>
