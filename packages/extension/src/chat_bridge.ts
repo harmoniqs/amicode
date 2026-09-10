@@ -88,6 +88,7 @@ export interface BridgeIo {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
+  previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -118,6 +119,24 @@ export function extractReportBugModel(
  *  consumed (hosts log the rest). */
 export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean {
   if (!isAmicode(msg)) return false;
+
+  if (msg.kind === "preview-visible-children-request") {
+    const requestId = (msg as { requestId?: unknown }).requestId;
+    const root = (msg as { root?: unknown }).root;
+    const relativeDirectory = (msg as { relativeDirectory?: unknown }).relativeDirectory;
+    if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 200) return true;
+    if (typeof root !== "string" || root.length === 0 || root.length > 4096) return true;
+    if (typeof relativeDirectory !== "string" || relativeDirectory.length > 4096) return true;
+    if (!io.previewVisibleChildren) {
+      io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, error: "Preview navigation is unavailable" });
+      return true;
+    }
+    void io.previewVisibleChildren(root, relativeDirectory).then(
+      (entries) => io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, entries }),
+      () => io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, error: "Could not load files" }),
+    );
+    return true;
+  }
 
   // target=_blank/window.open are dead inside the framed app — open https
   // links via the editor (system browser). https-only; scheme is
