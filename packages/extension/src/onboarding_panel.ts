@@ -36,6 +36,13 @@ import { ChatPanel } from "./chat_panel";
 export const HARMONIQS_PROVIDER_ID = "harmoniqs";
 export const HARMONIQS_MODEL_ID = "harmoniqs-auto";
 export const HARMONIQS_BASE_URL = "https://app.harmoniqs.ai/v1";
+// Mirrors MIN_OUTPUT_TOKENS in app-harmoniqs-ai/src/worker/routes/chat-completions.ts.
+// The gateway rejects any request below this with a generic 400
+// invalid_request (parseRequest's invalid_max_tokens check falls through to
+// requestError's default branch, same as every other validation failure) --
+// there is no dedicated "max_tokens too low" error code to detect and retry
+// around, so the test request itself must already satisfy the floor.
+export const HARMONIQS_MIN_OUTPUT_TOKENS = 16;
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -462,11 +469,34 @@ function buildTestRequest(
     };
   }
 
+  // Harmoniqs AI has its own branch, not folded into the generic
+  // OpenAI-compatible case below: its gateway enforces a minimum
+  // max_tokens (HARMONIQS_MIN_OUTPUT_TOKENS) that the other providers in
+  // that branch don't have, and reusing their max_tokens: 1 probe here
+  // guaranteed every real test connection would fail with a generic
+  // "invalid_request" -- reproduced against production before this fix.
+  if (config.provider === HARMONIQS_PROVIDER_ID) {
+    return {
+      url: endpoint,
+      options: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model.replace(/^[^/]+\//, ""),
+          max_tokens: HARMONIQS_MIN_OUTPUT_TOKENS,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      },
+    };
+  }
+
   if (
     config.provider === "openai" ||
     config.provider === "openrouter" ||
-    config.provider === "vercel" ||
-    config.provider === HARMONIQS_PROVIDER_ID
+    config.provider === "vercel"
   ) {
     return {
       url: endpoint,

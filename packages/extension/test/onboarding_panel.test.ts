@@ -17,6 +17,7 @@ import {
   HARMONIQS_PROVIDER_ID,
   HARMONIQS_MODEL_ID,
   HARMONIQS_BASE_URL,
+  HARMONIQS_MIN_OUTPUT_TOKENS,
   type OnboardingConfig,
   writeOnboardingConfig,
   writeAuthApiKey,
@@ -587,6 +588,13 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const body = JSON.parse(options.body);
       expect(body.model).toBe(HARMONIQS_MODEL_ID);
       expect(body.tools).toBeUndefined();
+      // Regression: the test probe must satisfy the gateway's own minimum —
+      // a lower value (the generic openai/openrouter/vercel probe used 1)
+      // guaranteed every real connection test failed with a generic 400
+      // "Invalid chat completion request", reproduced live against
+      // production before this fix (see HARMONIQS_MIN_OUTPUT_TOKENS's
+      // comment for the exact backend constant it mirrors).
+      expect(body.max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
     });
 
     // Same OpenAI-Chat-Completions-compatible request shape, but with a SECOND,
@@ -610,6 +618,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const body = JSON.parse(options.body);
       expect(body.model).toBe("harmoniqs-fast");
       expect(body.tools).toBeUndefined();
+      expect(body.max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
     });
 
     it("401 invalid_api_key — reports an invalid-key message", async () => {
@@ -650,6 +659,30 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const result = await testConnection(config, fetchMock);
       expect(result.ok).toBe(false);
       expect(result.error?.toLowerCase()).toContain("rate limit");
+    });
+
+    // Reproduces the exact live-production failure this fix addresses: before
+    // it, EVERY Harmoniqs test connection sent max_tokens below the gateway's
+    // floor, so it always hit this exact response shape and message,
+    // regardless of whether the key/entitlement were valid.
+    it("400 invalid_max_tokens (below the gateway's floor) — surfaces the real backend message, not a generic failure", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: () =>
+          Promise.resolve({
+            error: { message: "Invalid chat completion request", type: "invalid_request_error", code: "invalid_request" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Invalid chat completion request");
+      // The real fix is that this response should never occur in practice
+      // anymore -- assert the outgoing request itself already satisfies the
+      // floor, so this failure mode requires a backend-side change to recur.
+      const [, options] = fetchMock.mock.calls[0];
+      expect(JSON.parse(options.body).max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
     });
 
     it("400 unsupported_feature — reports it as a model/config error with the backend's message", async () => {
