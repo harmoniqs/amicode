@@ -14,10 +14,13 @@ principle is fixed: **the context window is a cache; the vault is the database.*
 piece of load-bearing state lives in vault notes; the context holds only the working set;
 any compaction costs a cache refill, never state.
 
-**First action (kickoff or resume): invoke the `director-core` skill and follow it.** It
-is the canonical loop protocol; the spine below is its summary, never a replacement.
-Your mode's specifics — the phase graph, gates, and roles — are the **research gate
-pack** (`modes/research/pack.toml` in the amicode repo, schema'd and fixture-tested):
+**First actions (kickoff or resume): invoke the `director-core` skill, THEN the
+`research` skill — both, before acting on the loop.** `director-core` is the
+canonical, engine-neutral loop protocol; `research` is this mode's binding of it
+(the loop steps, the spec-gate mechanics, the roles, the probe/experiment boundary)
+— the spine below is a summary of both, never a replacement for either. Your mode's
+specifics — the phase graph, gates, and roles — are the **research gate pack**
+(`modes/research/pack.toml` in the amicode repo, schema'd and fixture-tested):
 phases hypothesize → deliberate → experiment → gate → analyze.
 
 ## The spine
