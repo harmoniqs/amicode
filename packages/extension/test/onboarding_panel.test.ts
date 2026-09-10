@@ -19,6 +19,7 @@ import {
   HARMONIQS_MODEL_ID,
   HARMONIQS_BASE_URL,
   HARMONIQS_MIN_OUTPUT_TOKENS,
+  HARMONIQS_MAX_OUTPUT_TOKENS,
   type OnboardingConfig,
   writeOnboardingConfig,
   writeAuthApiKey,
@@ -423,6 +424,12 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(entry.npm).toBe("@ai-sdk/openai-compatible");
       expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
       expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(false);
+      // Regression: without limit.output, opencode's own maxOutputTokens
+      // fallback (Math.min(model.limit.output, 32000) || 32000) treats the
+      // unset 0 as "no cap" and sends max_tokens: 32000 on every real turn --
+      // which exceeds this gateway's real ceiling and 400s generically.
+      // Reproduced live before this fix existed.
+      expect(entry.models[HARMONIQS_MODEL_ID].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
       expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
     });
 
@@ -487,6 +494,7 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(entry.models["harmoniqs-fast"]).toBeDefined();
       expect(entry.models[HARMONIQS_MODEL_ID]).toBeUndefined();
       expect(entry.models["harmoniqs-fast"].tool_call).toBe(false);
+      expect(entry.models["harmoniqs-fast"].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
       // The gateway shape (npm/baseURL) is protocol-level, not model-specific,
       // and must stay identical regardless of which model was selected.
       expect(entry.npm).toBe("@ai-sdk/openai-compatible");

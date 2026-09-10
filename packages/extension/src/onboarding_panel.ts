@@ -43,6 +43,19 @@ export const HARMONIQS_BASE_URL = "https://app.harmoniqs.ai/v1";
 // there is no dedicated "max_tokens too low" error code to detect and retry
 // around, so the test request itself must already satisfy the floor.
 export const HARMONIQS_MIN_OUTPUT_TOKENS = 16;
+// Mirrors MAX_OUTPUT_TOKENS in the same file. This entry's models[modelId]
+// MUST declare limit.output = this value -- opencode's own default-model-cap
+// fallback (ProviderTransform.maxOutputTokens in
+// packages/opencode/src/provider/transform.ts) is `Math.min(model.limit.output,
+// 32000) || 32000`. When limit.output is left unset (0, since a provider with
+// no models.dev catalog entry merges to 0), `Math.min(0, 32000)` is 0 and
+// `0 || 32000` evaluates to the 32000 fallback, not "no real cap" -- every
+// real chat turn then sends max_tokens: 32000, which exceeds this gateway's
+// real ceiling and 400s as a generic "Invalid chat completion request"
+// (invalid_max_tokens has no dedicated message, same as the min-side bug
+// this same file already works around). Reproduced live: a plain "hello?"
+// turn failed this exact way before this constant existed.
+export const HARMONIQS_MAX_OUTPUT_TOKENS = 4096;
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -249,6 +262,10 @@ function buildProviderConfigEntry(
       models: {
         [modelId]: {
           name: knownModel?.name ?? modelId,
+          // See HARMONIQS_MAX_OUTPUT_TOKENS's comment -- without this,
+          // opencode's own maxOutputTokens fallback sends 32000 and every
+          // real turn 400s.
+          limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
           // The app-harmoniqs-ai gateway hard-rejects `tools`, `response_format`,
           // and n!=1 with a 400 (see chat-completions.ts parseRequest) for
           // EVERY model it serves — a protocol-level constraint, not a
