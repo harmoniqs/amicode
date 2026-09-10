@@ -418,11 +418,19 @@ function discoverPackages(packageRoots: string[]): PackageCheckout[] {
 }
 
 /** Read (with cache) a package's julia files + export list. The scan covers
- *  `src/` when present (the API surface), else the whole checkout. */
+ *  `src/` AND `ext/` when present (#1002: package extensions are public API
+ *  in modern Julia — `ext/`-only symbols were invisible); either absent is
+ *  fine; when neither exists the whole checkout is scanned (the fallback).
+ *  `test/` and `benchmark/` stay OUT of the scan by design — a symbol found
+ *  only there is exactly what the report should surface for human judgment
+ *  (precision over recall, the module's stated doctrine). */
 function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): PackageScan {
   const cached = cache.get(pkg.dir);
   if (cached) return cached;
-  const juliaFiles = collectJuliaFiles(path.join(pkg.dir, "src"));
+  const juliaFiles = [
+    ...collectJuliaFiles(path.join(pkg.dir, "src")),
+    ...collectJuliaFiles(path.join(pkg.dir, "ext")),
+  ];
   const files = juliaFiles.length > 0 ? juliaFiles : collectJuliaFiles(pkg.dir);
   const exports = new Set<string>();
   for (const f of files) {

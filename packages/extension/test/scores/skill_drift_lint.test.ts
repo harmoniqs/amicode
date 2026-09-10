@@ -231,6 +231,17 @@ describe("checkClaims", () => {
     expect(r.evidence).toMatch(/exported by OtherPkg\.jl/);
   });
 
+  it("ext-scan gap (#1002): a symbol defined only under a package's ext/ VERIFIES — extensions are public API", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "ExtOnlyWidget", packages: ["OtherPkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/ext\/OtherPkgMockExt\.jl/);
+  });
+
+  it("ext-scan gap (#1002): test/ stays out of the scan — a symbol defined only under test/ remains DRIFTED (signal, per the precision doctrine)", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "TestOnlyWidget", packages: ["OtherPkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("DRIFTED");
+  });
+
   it("DRIFTED for a symbol absent from its scoped package", () => {
     const [r] = checkClaims([{ kind: "symbol", text: "PhantomWidget", packages: ["FixturePkg"], line: 7, source: "julia-fence" }], [FIXTURE_PACKAGES]);
     expect(r.verdict).toBe("DRIFTED");
@@ -723,5 +734,16 @@ describe("real fleet regressions (amicode#1002 lint false positives)", () => {
     );
     expect(r.verdict).toBe("VERIFIED");
     expect(r.evidence).toMatch(/Intonato\.jl\/.*\.jl/);
+  });
+
+  it("ext-scan gap: `PiPulseReference` and `MockQickSocV2` (Strumento.jl/ext only) VERIFY", () => {
+    const root = realPackagesRoot();
+    if (!root) return; // CI / fresh installs — mount-gated skip
+    const mk = (text: string): SkillClaim => ({ kind: "symbol", text, packages: [], line: 1, source: "backtick" });
+    const results = checkClaims([mk("PiPulseReference"), mk("MockQickSocV2")], [root]);
+    for (const r of results) {
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/Strumento\.jl\/ext\//);
+    }
   });
 });
