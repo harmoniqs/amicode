@@ -474,6 +474,7 @@ function buildForm(): void {
     google: "Requires API key from aistudio.google.com (free tier available)",
     opencode: "Sign up at opencode.ai/auth — one key for curated models",
     "github-copilot": "No API key needed — you'll sign in with GitHub when prompted",
+    harmoniqs: "Harmoniqs AI's own curated model — get an hqa_... key at app.harmoniqs.ai. Chat only (no tool calling).",
     custom: "Any OpenAI-compatible endpoint (Ollama, Groq, DeepSeek, Mistral, Azure, etc.)",
   };
 

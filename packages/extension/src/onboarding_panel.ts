@@ -22,7 +22,20 @@ import {
   BEDROCK_PLANTED_PLACEHOLDER,
   type DetectedCredential,
 } from "./credential_scanner";
+import { opencodeDataDir } from "./opencode_xdg";
 import { ChatPanel } from "./chat_panel";
+
+// ─── Harmoniqs AI — branded custom-provider preset ───────────────────────────
+//
+// Harmoniqs AI (app.harmoniqs.ai) is an OpenAI-compatible gateway in front of
+// a single curated model. Unlike the other entries in PROVIDER_MODELS, its
+// provider shape (base URL, npm package, model list) is NOT user-editable —
+// the onboarding form only ever asks for the hqa_... key. See
+// app-harmoniqs-ai/src/worker/routes/chat-completions.ts and
+// inference-auth.ts for the exact backend contract this mirrors.
+export const HARMONIQS_PROVIDER_ID = "harmoniqs";
+export const HARMONIQS_MODEL_ID = "harmoniqs-auto";
+export const HARMONIQS_BASE_URL = "https://app.harmoniqs.ai/v1";
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -40,6 +53,7 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
     { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
     { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
+  [HARMONIQS_PROVIDER_ID]: [{ id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" }],
   opencode: [
     { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
     { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
@@ -80,6 +94,7 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
 /** Human-readable display names for the provider dropdown. */
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "github-copilot": "GitHub Copilot (Free)",
+  [HARMONIQS_PROVIDER_ID]: "Harmoniqs AI",
   opencode: "OpenCode",
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -161,13 +176,10 @@ export function writeOnboardingConfig(
   // Build the provider entry per opencode schema:
   //   provider.<name>.options.apiKey  (NOT provider.<name>.apiKey)
   //   provider.<name>.env = string[]  (NOT a bare string)
-  const providerConfig: Record<string, unknown> = {};
-  if (config.apiKey) {
-    providerConfig.options = { apiKey: config.apiKey };
-  }
-  if (envVarName) {
-    providerConfig.env = [envVarName];
-  }
+  // Harmoniqs AI is the one exception: its key is secret and belongs in
+  // opencode's auth store (auth.json), never in opencode.json — see
+  // buildProviderConfigEntry / writeAuthApiKey below.
+  const providerConfig: Record<string, unknown> = buildProviderConfigEntry(config, envVarName);
 
   const providerEntry: Record<string, unknown> = {
     ...(existing.provider as Record<string, unknown> ?? {}),
@@ -188,6 +200,97 @@ export function writeOnboardingConfig(
   }
 
   fs.writeFileSync(configPath, JSON.stringify(result, null, 2) + "\n");
+
+  // Harmoniqs AI's key is secret-store-only — write it into opencode's auth
+  // store (auth.json) here, never into the opencode.json written above.
+  if (config.provider === HARMONIQS_PROVIDER_ID && config.apiKey) {
+    writeAuthApiKey(HARMONIQS_PROVIDER_ID, config.apiKey);
+  }
+}
+
+/** Build the `provider.<id>` config entry for a single provider.
+ *  Harmoniqs AI is a branded preset: its base URL, npm package, and model
+ *  list are fixed (not user-editable) and its API key is deliberately
+ *  omitted here — it is written to the auth store instead (writeAuthApiKey).
+ *  Every other provider keeps the existing options.apiKey/env shape. */
+function buildProviderConfigEntry(
+  config: OnboardingConfig,
+  envVarName: string | undefined,
+): Record<string, unknown> {
+  if (config.provider === HARMONIQS_PROVIDER_ID) {
+    // Model-id-agnostic by construction: app-harmoniqs-ai is a plain
+    // OpenAI-Chat-Completions-compatible gateway (see chat-completions.ts
+    // parseRequest) — the protocol has no dependency on which model id is
+    // being served. It happens to hard-pin PUBLIC_MODEL="harmoniqs-auto"
+    // server-side TODAY, but this entry must not bake that in: derive the
+    // model key from config.model (whatever PROVIDER_MODELS[harmoniqs]
+    // currently offers), not the HARMONIQS_MODEL_ID constant, so a future
+    // second model id served through the same base URL just works without a
+    // code change here. Falls back to HARMONIQS_MODEL_ID only if config.model
+    // is missing/malformed.
+    const bareModelId = config.model?.includes("/")
+      ? config.model.slice(config.model.indexOf("/") + 1)
+      : config.model;
+    const modelId = bareModelId || HARMONIQS_MODEL_ID;
+    const knownModel = PROVIDER_MODELS[HARMONIQS_PROVIDER_ID]?.find(
+      (m) => m.id === `${HARMONIQS_PROVIDER_ID}/${modelId}`,
+    );
+    return {
+      npm: "@ai-sdk/openai-compatible",
+      name: PROVIDER_DISPLAY_NAMES[HARMONIQS_PROVIDER_ID],
+      options: { baseURL: HARMONIQS_BASE_URL },
+      models: {
+        [modelId]: {
+          name: knownModel?.name ?? modelId,
+          // The app-harmoniqs-ai gateway hard-rejects `tools`, `response_format`,
+          // and n!=1 with a 400 (see chat-completions.ts parseRequest) for
+          // EVERY model it serves — a protocol-level constraint, not a
+          // per-model one. OpenCode agents default to tool calling, so this
+          // model is declared chat-only here; the actual no-tools enforcement
+          // lives in opencode's session/llm/request.ts (isNoToolsProvider,
+          // keyed on providerID — so it already covers any model id under
+          // "harmoniqs"), since this flag alone is descriptive metadata, not
+          // a request-building gate.
+          tool_call: false,
+        },
+      },
+    };
+  }
+
+  const providerConfig: Record<string, unknown> = {};
+  if (config.apiKey) {
+    providerConfig.options = { apiKey: config.apiKey };
+  }
+  if (envVarName) {
+    providerConfig.env = [envVarName];
+  }
+  return providerConfig;
+}
+
+/** Write an API-key credential into opencode's auth store (auth.json),
+ *  merging with any existing entries. Mirrors the `Api` auth shape opencode's
+ *  own Auth service reads/writes (packages/opencode/src/auth/index.ts):
+ *  `{ type: "api", key }`. Never touches opencode.json. The file is created
+ *  (or re-chmod'd) at 0600 — owner read/write only, same as the Auth service. */
+export function writeAuthApiKey(
+  providerID: string,
+  apiKey: string,
+  authJsonPath: string = path.join(opencodeDataDir(), "auth.json"),
+): void {
+  fs.mkdirSync(path.dirname(authJsonPath), { recursive: true });
+
+  let existing: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(authJsonPath)) {
+      existing = JSON.parse(fs.readFileSync(authJsonPath, "utf8"));
+    }
+  } catch {
+    // Start fresh on a corrupt file — never crash onboarding over it.
+  }
+
+  const next = { ...existing, [providerID]: { type: "api", key: apiKey } };
+  fs.writeFileSync(authJsonPath, JSON.stringify(next, null, 2) + "\n");
+  fs.chmodSync(authJsonPath, 0o600);
 }
 
 /** Map provider id to the conventional env var name for its API key. */
@@ -218,6 +321,7 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
   opencode: "https://api.opencode.ai/v1/models",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   vercel: "https://api.vercel.ai/v1/chat/completions",
+  [HARMONIQS_PROVIDER_ID]: `${HARMONIQS_BASE_URL}/chat/completions`,
 };
 
 /** Cross-region inference profile prefixes — models with these are already resolved. */
@@ -273,6 +377,10 @@ export async function testConnection(
     const response = await fetchImpl(url, options);
 
     if (!response.ok) {
+      if (config.provider === HARMONIQS_PROVIDER_ID) {
+        const body = await safeJson(response);
+        return { ok: false, error: classifyHarmoniqsError(response.status, response.statusText, body) };
+      }
       return {
         ok: false,
         error: `${response.status} ${response.statusText ?? "Error"}`,
@@ -281,8 +389,53 @@ export async function testConnection(
     return { ok: true };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (config.provider === HARMONIQS_PROVIDER_ID) {
+      return { ok: false, error: `Network error — could not reach Harmoniqs AI (${msg})` };
+    }
     return { ok: false, error: msg };
   }
+}
+
+/** Best-effort JSON parse of a fetch Response — never throws. Used to read
+ *  app-harmoniqs-ai's `{ error: { message, type, code } }` body without risking
+ *  an unhandled rejection on a non-JSON or already-consumed response. */
+async function safeJson(response: { json?: () => Promise<unknown> }): Promise<unknown> {
+  try {
+    return await response.json?.();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Classify a Harmoniqs AI chat-completions error into a specific,
+ *  secret-safe message. Mirrors the exact codes app-harmoniqs-ai's
+ *  chat-completions route and inferenceApiKeyAuth middleware emit:
+ *    401 invalid_api_key      — bad or revoked hqa_... key
+ *    403 no_entitlement       — key has no active inference balance
+ *    429 rate_limit_exceeded  — per-key rate limit
+ *    400/404                  — model_not_found / unsupported_feature / invalid_request
+ *    5xx or provider_error    — the upstream model backend failed
+ *  Falls back to a generic "<status> <statusText>" message when the body
+ *  doesn't match the known `{error:{code,message}}` shape (e.g. a CDN error
+ *  page in front of the worker). Never echoes the API key — it isn't in the
+ *  response body to begin with. */
+function classifyHarmoniqsError(status: number, statusText: string | undefined, body: unknown): string {
+  const error = (body as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;
+  const code = typeof error?.code === "string" ? error.code : undefined;
+  const message = typeof error?.message === "string" ? error.message : undefined;
+
+  if (status === 401) return "Invalid API key — check your hqa_... key";
+  if (status === 403 && code === "no_entitlement") {
+    return "No active inference entitlement — this key has no remaining balance";
+  }
+  if (status === 429) return "Rate limit exceeded — try again in a moment";
+  if (status === 400 || status === 404) {
+    return `Model or request configuration error: ${message ?? `${status} ${statusText ?? "Error"}`}`;
+  }
+  if (status >= 500 || code === "provider_error") {
+    return "Harmoniqs AI is temporarily unavailable (upstream error) — try again shortly";
+  }
+  return `${status} ${statusText ?? "Error"}`;
 }
 
 /** Build provider-specific test request. Minimal payload — just enough to validate creds. */
@@ -309,7 +462,12 @@ function buildTestRequest(
     };
   }
 
-  if (config.provider === "openai" || config.provider === "openrouter" || config.provider === "vercel") {
+  if (
+    config.provider === "openai" ||
+    config.provider === "openrouter" ||
+    config.provider === "vercel" ||
+    config.provider === HARMONIQS_PROVIDER_ID
+  ) {
     return {
       url: endpoint,
       options: {
