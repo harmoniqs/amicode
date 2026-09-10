@@ -1040,7 +1040,7 @@
     "packages/app/src/components/posture-indicator.ts": "f546413e0e1f8296a7a444d1c07da724d67a160657888273110d06cb6789933d",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
-    "packages/app/src/components/prompt-input-v2.tsx": "9ec794b2b9dbcfbfeb9d880df0038087fe6b8df219c5c96b1971f7fc766b67d2",
+    "packages/app/src/components/prompt-input-v2.tsx": "841ecc9b38ecf8e312f6f62f1ffbca391f9d0c0ee68aedd0329ac98333edab60",
     "packages/app/src/components/prompt-input.tsx": "1bc71d585a5ada2caf6d190d702dcabbfb56642e740a08ad6aedf078809b60e5",
     "packages/app/src/components/prompt-project-selector.tsx": "0157c954b938bce2b5aca9a82f4a72338e361f4c9027e55a7fd5a14a1654d294",
     "packages/app/src/components/report-bug-button.css": "909809b6241d53c386aa4c8ea34539ba162a8998fff755834c783025bc53a5fd",
