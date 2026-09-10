@@ -179,15 +179,15 @@ describe("amicode bridge — clipboard", () => {
   });
 });
 
-describe("amicode bridge — connect-harmoniqs-provider (Connect Provider dialog handoff)", () => {
-  it("acks immediately and dispatches amicode.connectHarmoniqsProvider", async () => {
+describe("amicode bridge — connect-harmoniqs-provider", () => {
+  it("rejects a missing key without opening the onboarding panel", async () => {
     const host = io();
     expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1" }, host)).toBe(true);
     await flush();
-    const ack = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack") as any;
-    expect(ack).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: "tab-1" });
+    const result = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result") as any;
+    expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: false, error: "Enter a valid API key" });
     const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
-    expect(ran).toContain("amicode.connectHarmoniqsProvider");
+    expect(ran).not.toContain("amicode.connectHarmoniqsProvider");
   });
 });
 

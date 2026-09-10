@@ -1030,7 +1030,7 @@
     "packages/app/src/components/dialog-command-palette-v2.tsx": "e12da3e5e9e503089dd9139b20e04f6b566cf74fa445f23a2e193f5883f7c5f3",
     "packages/app/src/components/dialog-connect-provider-harmoniqs.test.ts": "7c16914afe3e77ad09691bbfa8223981eda0c2faf3616ed6db2e4e5fa9ce9fdd",
     "packages/app/src/components/dialog-connect-provider-harmoniqs.ts": "2f070abc5d0274ed1403f963ae0cb0af6e0f635f3732414d757d1b7ba06ea313",
-    "packages/app/src/components/dialog-connect-provider.tsx": "6f23cb5edda411c12606659109c3943f0cd218b9bcba29310f4ea3cda4eea98c",
+    "packages/app/src/components/dialog-connect-provider.tsx": "90efbabb4dbf68e9640080ac56bffaa687b687d2481c8abe84a574961deed9f6",
     "packages/app/src/components/dialog-edit-project-v2.tsx": "f34aaed28604facd9d8a46a4934e2b331421d5f60902a2b160ddcec11af03bd9",
     "packages/app/src/components/dialog-edit-project.tsx": "5371da3de3a643d4347629af55c0adc2476bffe7b2f061535a92fd67e756e562",
     "packages/app/src/components/dialog-new-project.tsx": "102fc33e8eeaf3c76ddd1b953b7b97995d30c02a3579f8b7036e47448a1582a8",
