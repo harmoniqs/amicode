@@ -95,6 +95,27 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   });
 });
 
+describe("amicode bridge — preview visible children", () => {
+  it("echoes the requestId with Sidebar-filtered child entries", async () => {
+    const host = io();
+    host.previewVisibleChildren = async (root, relativeDirectory) => {
+      expect(root).toBe("/workspace/project");
+      expect(relativeDirectory).toBe("notes");
+      return [{ name: "README.md", kind: "file", absolute: "/workspace/project/notes/README.md", relative: "notes/README.md" }];
+    };
+
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "preview-visible-children-request", requestId: "request-1", root: "/workspace/project", relativeDirectory: "notes" }, host)).toBe(true);
+    await flush();
+
+    expect(host.posted).toContainEqual({
+      source: "amicode",
+      kind: "preview-visible-children-result",
+      requestId: "request-1",
+      entries: [{ name: "README.md", kind: "file", absolute: "/workspace/project/notes/README.md", relative: "notes/README.md" }],
+    });
+  });
+});
+
 describe("amicode bridge — open-file with path (native editor, #934)", () => {
   it("opens absolute path via vscode.open, not preview-file", async () => {
     const host = io();

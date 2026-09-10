@@ -421,6 +421,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // the sidebar with the appropriate mode. mode controls expand/collapse
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
+  ChatPanel.onPreviewVisibleChildren((root, relativeDirectory) => sidebarProvider.previewVisibleChildren(root, relativeDirectory));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
