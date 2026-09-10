@@ -116,6 +116,30 @@ describe("amicode bridge — preview visible children", () => {
   });
 });
 
+describe("amicode bridge — Explorer icon theme", () => {
+  it("returns the host's opaque icon theme payload only for an explicit request", () => {
+    const host = io();
+    host.explorerIconTheme = () => ({
+      mode: "svg",
+      assets: { "asset-0": { mime: "image/svg+xml", data: "PHN2Zy8+" } },
+      fileExtensions: { md: { kind: "svg", asset: "asset-0" } },
+      fileNames: {},
+    });
+
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "explorer-icon-theme-request" }, host)).toBe(true);
+    expect(host.posted).toEqual([{
+      source: "amicode",
+      kind: "explorer-icon-theme",
+      theme: {
+        mode: "svg",
+        assets: { "asset-0": { mime: "image/svg+xml", data: "PHN2Zy8+" } },
+        fileExtensions: { md: { kind: "svg", asset: "asset-0" } },
+        fileNames: {},
+      },
+    }]);
+  });
+});
+
 describe("amicode bridge — open-file with path (native editor, #934)", () => {
   it("opens absolute path via vscode.open, not preview-file", async () => {
     const host = io();

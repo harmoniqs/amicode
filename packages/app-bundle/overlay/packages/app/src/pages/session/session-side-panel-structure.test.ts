@@ -21,4 +21,10 @@ describe("work column is vault-free (amicode#105)", () => {
     expect(source).not.toContain('value="vault"')
     expect(source).not.toContain("vaultOpen")
   })
+
+  test("persists and sorts only the named surface tabs", () => {
+    expect(source).toContain("layout.sidePanelTabs.order()")
+    expect(source).toContain("SortableSidePanelSurfaceTab")
+    expect(source).toContain("handleSurfaceTabDragEnd")
+  })
 })

@@ -1799,6 +1799,56 @@ describe("sidebar — add existing project", () => {
 // ── Icon theme integration (#673 — use VS Code's active icon theme) ──────────
 
 describe("sidebar — icon theme", () => {
+  it("buildExplorerIconTheme transports only opaque asset IDs for Preview icons", async () => {
+    vi.resetModules();
+    const { buildExplorerIconTheme } = await import("../src/sidebar_view");
+
+    const themeJson = {
+      fonts: [{ id: "seti", src: [{ path: "./seti.woff", format: "woff" }], size: "150%" }],
+      iconDefinitions: {
+        _default: { fontCharacter: "\\E001", fontColor: "#C5C5C5" },
+        _markdown: { fontCharacter: "\\E02A", fontColor: "#519aba" },
+        _image: { fontCharacter: "\\E02B", fontColor: "#f2c811" },
+      },
+      file: "_default",
+      fileExtensions: { md: "_markdown", png: "_image" },
+      fileNames: { "README.md": "_markdown" },
+    };
+
+    const result = buildExplorerIconTheme(
+      themeJson,
+      "/ext/theme",
+      (assetPath: string) => assetPath.endsWith("seti.woff")
+        ? { mime: "font/woff", data: "Zm9udA==" }
+        : undefined,
+    );
+
+    expect(result.mode).toBe("font");
+    expect(result.font).toEqual({ asset: "asset-0", format: "woff", size: "150%" });
+    expect(result.assets).toEqual({ "asset-0": { mime: "font/woff", data: "Zm9udA==" } });
+    expect(result.fileExtensions.md).toEqual({ kind: "font", glyph: "\\E02A", color: "#519aba" });
+    expect(result.fileExtensions.png).toEqual({ kind: "font", glyph: "\\E02B", color: "#f2c811" });
+    expect(result.fileNames["README.md"]).toEqual({ kind: "font", glyph: "\\E02A", color: "#519aba" });
+    expect(JSON.stringify(result)).not.toContain("/ext/theme");
+    expect(JSON.stringify(result)).not.toContain("vscode-webview-resource");
+  });
+
+  it("buildExplorerIconTheme never reads an asset outside the active theme directory", async () => {
+    vi.resetModules();
+    const { buildExplorerIconTheme } = await import("../src/sidebar_view");
+    const readAsset = vi.fn(() => ({ mime: "image/svg+xml" as const, data: "PHN2Zy8+" }));
+
+    const result = buildExplorerIconTheme({
+      iconDefinitions: { outside: { iconPath: "../outside.svg" } },
+      file: "outside",
+      fileExtensions: { md: "outside" },
+    }, "/ext/theme", readAsset);
+
+    expect(readAsset).not.toHaveBeenCalled();
+    expect(result.defaultFile).toBeUndefined();
+    expect(result.fileExtensions).toEqual({});
+  });
+
   it("buildIconMap produces font-mode data from a Seti-style font-based theme JSON", async () => {
     vi.resetModules();
     const { buildIconMap } = await import("../src/sidebar_view");

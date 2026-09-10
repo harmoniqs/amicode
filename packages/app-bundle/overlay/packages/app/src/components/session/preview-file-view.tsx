@@ -27,7 +27,6 @@ import { preprocessMarkdown } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { RENDERABLE_EXTENSIONS } from "@opencode-ai/session-ui/v2/markdown-utils"
 import { useSDK } from "@/context/sdk"
 import { useServerSDK } from "@/context/server-sdk"
-import type { PreviewFileState } from "@opencode-ai/session-ui/v2/preview-nav-state"
 import { PreviewEditor } from "@opencode-ai/session-ui/v2/preview-editor"
 import { PdfCanvasView } from "./pdf-canvas-view"
 
@@ -69,10 +68,9 @@ const IMAGE_WRAPPER_PADDING = 32
 
 export function PreviewFileView(props: {
   filePath: string
-  fileState: PreviewFileState
-  onModeChange: (mode: "preview" | "edit") => void
-  onUnsavedContent: (content: string | null) => void
-  onSave: (path: string, content: string) => void
+  onDirtyChange: (dirty: boolean) => void
+  onSaveComplete?: () => void
+  saveRequest?: () => number
   onSaveStatusChange?: (status: "idle" | "saving" | "saved") => void
   zoom: () => number
   zoomIn: () => void
@@ -82,6 +80,8 @@ export function PreviewFileView(props: {
   const sdk = useSDK()
   const serverSDK = useServerSDK()
   const [fileContent, setFileContent] = createSignal("")
+  const [mode, setMode] = createSignal<"preview" | "edit">("preview")
+  const [unsavedContent, setUnsavedContent] = createSignal<string | null>(null)
   const [loading, setLoading] = createSignal(true)
   const [fileType, setFileType] = createSignal<FileType>(null)
 
@@ -171,12 +171,14 @@ export function PreviewFileView(props: {
     props.onSaveStatusChange?.(saveStatus())
   })
 
-  const saveFile = async (filePath: string, content: string) => {
+  const saveFile = async (filePath: string, content: string, closeAfterSave = false) => {
     setSaveStatus("saving")
     try {
       await serverSDK().client.file.write({ path: filePath, content })
       setSaveStatus("saved")
-      props.onUnsavedContent(null)
+      setUnsavedContent(null)
+      props.onDirtyChange(false)
+      if (closeAfterSave) props.onSaveComplete?.()
       if (savedTimer) clearTimeout(savedTimer)
       savedTimer = setTimeout(() => setSaveStatus("idle"), 2000)
     } catch {
@@ -185,15 +187,26 @@ export function PreviewFileView(props: {
   }
 
   const handleEdit = (content: string) => {
-    props.onUnsavedContent(content)
+    setUnsavedContent(content)
+    props.onDirtyChange(true)
     setFileContent(content)
   }
 
   const handleImmediateSave = () => {
-    if (props.fileState.unsavedContent !== null) {
-      saveFile(props.filePath, props.fileState.unsavedContent)
-    }
+    const content = unsavedContent()
+    if (content !== null) void saveFile(props.filePath, content)
   }
+
+  createEffect(
+    on(
+      () => props.saveRequest?.() ?? 0,
+      (request) => {
+        if (request === 0) return
+        const content = unsavedContent()
+        if (content !== null) void saveFile(props.filePath, content, true)
+      },
+    ),
+  )
 
   onCleanup(() => {
     if (savedTimer) clearTimeout(savedTimer)
@@ -206,7 +219,7 @@ export function PreviewFileView(props: {
   // Zoom is disabled in edit mode — pill disappears entirely
   const isEditing = () => {
     const cat = category()
-    if (cat === "markdown") return props.fileState.mode === "edit"
+    if (cat === "markdown") return mode() === "edit"
     if (cat === "image" || cat === "pdf") return false
     return true // text/code files are always in edit mode
   }
@@ -434,10 +447,10 @@ export function PreviewFileView(props: {
         <Show when={showModeToggle()}>
           <div class="rounded-md border border-border-base shadow-sm overflow-hidden" style={{ background: "color-mix(in srgb, var(--background-base) 80%, transparent)", "backdrop-filter": "blur(4px)" }}>
             <SegmentedControlV2
-              value={props.fileState.mode}
+              value={mode()}
               onChange={(value) => {
                 if (value === "preview" || value === "edit") {
-                  props.onModeChange(value)
+                  setMode(value)
                 }
               }}
               class="!w-auto"
@@ -503,7 +516,7 @@ export function PreviewFileView(props: {
             {/* Text-based rendering by category */}
             <Match when={category() === "markdown"}>
               <Show
-                when={props.fileState.mode === "preview"}
+                when={mode() === "preview"}
                 fallback={
                   <PreviewEditor
                     content={fileContent()}

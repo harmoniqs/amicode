@@ -396,3 +396,21 @@
 [data-slot="thought-rail-dot"][data-state="done"] {
   transition: opacity 150ms ease-out;
 }
+
+/* Preview tabs mirror the V2 file tree: neutral icons until selection, with no hover recoloring. */
+.preview-tab-strip [data-slot="tabs-trigger"] .tab-fileicon-color {
+  display: none !important;
+}
+
+.preview-tab-strip [data-slot="tabs-trigger"] .tab-fileicon-mono {
+  display: block !important;
+  color: var(--v2-icon-icon-muted);
+}
+
+.preview-tab-strip [data-slot="tabs-trigger"][data-selected] .tab-fileicon-color {
+  display: block !important;
+}
+
+.preview-tab-strip [data-slot="tabs-trigger"][data-selected] .tab-fileicon-mono {
+  display: none !important;
+}

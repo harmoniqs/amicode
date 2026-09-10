@@ -74,6 +74,7 @@ import { legacySessionHref, legacySessionServer, requireServerKey, sessionHref }
 import { createSessionLineage } from "@/pages/session/session-lineage"
 import { bugDockController } from "@/pages/session/composer/bug-dock-controller"
 import { postBugReportPoke } from "@/utils/amicode-bug-report"
+import { adoptExplorerIconTheme } from "@/utils/vscode-explorer-icon-theme"
 
 import { SessionPage, SessionRouteErrorBoundary, TargetSessionRouteContent } from "@/pages/session"
 import { LegacyHome } from "@/pages/home/legacy-home"
@@ -426,7 +427,7 @@ function DraftProviders(props: ParentProps) {
 function AmicodeThemeBridge() {
   const theme = useTheme()
   const onMsg = (e: MessageEvent) => {
-    const d = e.data as { source?: string; kind?: string; colorScheme?: string } | undefined
+    const d = e.data as { source?: string; kind?: string; colorScheme?: string; theme?: unknown } | undefined
     if (d?.source !== "amicode") return
     // amicode#200 AC6: the Connect Cloud palette command deep-links into the
     // defaults capsule's compute-connect flow (consumed when home is showing).
@@ -446,11 +447,20 @@ function AmicodeThemeBridge() {
       adoptWorkspaceProjects((d as { projects?: unknown[] }).projects as Parameters<typeof adoptWorkspaceProjects>[0])
       return
     }
+    if (d.kind === "explorer-icon-theme") {
+      adoptExplorerIconTheme(d.theme)
+      return
+    }
     if (d.kind !== "theme") return
     if (d.colorScheme === "light" || d.colorScheme === "dark") theme.setColorScheme(d.colorScheme)
   }
   window.addEventListener("message", onMsg)
   onCleanup(() => window.removeEventListener("message", onMsg))
+  // Preview tabs need the current icon theme after every iframe boot; the host
+  // replies with opaque, allowlisted asset bytes rather than a file location.
+  if (window.parent !== window) {
+    window.parent.postMessage({ source: "amicode", kind: "explorer-icon-theme-request" }, "*")
+  }
   // ⌘⇧P / Ctrl+Shift+P: when embedded in the amicode webview (we have a
   // parent), the EDITOR's Command Palette wins over the app's own palette —
   // capture-phase so the in-app binding never sees it; forwarded over the

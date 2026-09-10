@@ -2,6 +2,7 @@
 // only the runtime members our node-side modules touch; types are erased at
 // compile time so they need no runtime shape.
 export const FileType = { Unknown: 0, File: 1, Directory: 2, SymbolicLink: 64 };
+const colorThemeCbs: Array<(theme: { kind: number }) => void> = [];
 export const window = {
   showInformationMessage: () => Promise.resolve(undefined),
   showErrorMessage: () => Promise.resolve(undefined),
@@ -30,7 +31,19 @@ export const window = {
     _opts,
   }),
   activeColorTheme: { kind: 2 }, // ColorThemeKind.Dark
-  onDidChangeActiveColorTheme: (_cb: unknown, _thisArg?: unknown, _subs?: unknown) => ({ dispose() {} }),
+  onDidChangeActiveColorTheme: (cb: (theme: { kind: number }) => void, _thisArg?: unknown, subs?: unknown) => {
+    colorThemeCbs.push(cb);
+    const disposable = { dispose: () => {
+      const index = colorThemeCbs.indexOf(cb);
+      if (index >= 0) colorThemeCbs.splice(index, 1);
+    } };
+    if (Array.isArray(subs)) subs.push(disposable);
+    return disposable;
+  },
+  _fireActiveColorTheme(kind: number) {
+    window.activeColorTheme.kind = kind;
+    for (const cb of colorThemeCbs) cb({ kind });
+  },
    createWebviewPanel: (_viewType: string, _title: string, _column?: unknown, _opts?: unknown) => {
     const disposeCbs: Array<() => void> = [];
     const messageCbs: Array<(msg: unknown) => void> = [];
@@ -135,6 +148,21 @@ export const workspace = {
     dispose() {},
   }),
   updateWorkspaceFolders: (_start: number, _deleteCount: number | null, ..._adds: unknown[]) => true,
+  _configurationCbs: [] as Array<(event: { affectsConfiguration(section: string): boolean }) => void>,
+  onDidChangeConfiguration: (cb: (event: { affectsConfiguration(section: string): boolean }) => void, _thisArg?: unknown, subs?: unknown) => {
+    (workspace as any)._configurationCbs.push(cb);
+    const disposable = { dispose: () => {
+      const cbs = (workspace as any)._configurationCbs as typeof workspace._configurationCbs;
+      const index = cbs.indexOf(cb);
+      if (index >= 0) cbs.splice(index, 1);
+    } };
+    if (Array.isArray(subs)) subs.push(disposable);
+    return disposable;
+  },
+  _fireConfigurationChange(section: string) {
+    const event = { affectsConfiguration: (candidate: string) => candidate === section };
+    for (const cb of (workspace as any)._configurationCbs) cb(event);
+  },
   _workspaceFoldersCbs: [] as Array<() => void>,
   onDidChangeWorkspaceFolders: (cb: () => void, _thisArg?: unknown, _subs?: unknown) => {
     (workspace as any)._workspaceFoldersCbs.push(cb);

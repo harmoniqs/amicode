@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 import { findForkedOpencodeBinary } from "./opencode_binary";
+import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import {
   readSkillProviders,
   addSkillProvider,
@@ -89,6 +90,8 @@ export interface BridgeIo {
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
   previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
+  /** Returns the currently-selected Explorer file icon theme as opaque assets. */
+  explorerIconTheme?: () => ExplorerIconTheme;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -119,6 +122,20 @@ export function extractReportBugModel(
  *  consumed (hosts log the rest). */
 export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean {
   if (!isAmicode(msg)) return false;
+
+  // The sandboxed app requests its Preview-tab icon data explicitly. The host
+  // owns the only asset reader and returns opaque IDs plus allowlisted bytes.
+  if (msg.kind === "explorer-icon-theme-request") {
+    if (io.explorerIconTheme) {
+      io.postToWebview({
+        source: "amicode",
+        kind: "explorer-icon-theme",
+        theme: io.explorerIconTheme(),
+        ...(typeof msg.tab === "string" ? { tab: msg.tab } : {}),
+      });
+    }
+    return true;
+  }
 
   if (msg.kind === "preview-visible-children-request") {
     const requestId = (msg as { requestId?: unknown }).requestId;

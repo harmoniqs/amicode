@@ -401,6 +401,13 @@ window.addEventListener("message", (e) => {
       boot.colorScheme = d.colorScheme;
       for (const f of frameByTab.values()) f.contentWindow?.postMessage({ source: "amicode", kind: "theme", colorScheme: d.colorScheme }, boot.origin);
     }
+    if (d.kind === "explorer-icon-theme") {
+      if (typeof d.tab === "string") {
+        frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
+      } else {
+        for (const f of frameByTab.values()) f.contentWindow?.postMessage(d, boot.origin);
+      }
+    }
     if (d.kind === "clipboard" && typeof d.tab === "string") {
       frameByTab.get(d.tab)?.contentWindow?.postMessage(d, boot.origin);
     }
@@ -492,7 +499,8 @@ window.addEventListener("message", (e) => {
     d.kind === "connections-auth" ||
     d.kind === "connections-choose-project" ||
     d.kind === "connections-add-custom" ||
-    d.kind === "connections-remove"
+    d.kind === "connections-remove" ||
+    d.kind === "explorer-icon-theme-request"
   ) {
     vscode.postMessage({ ...d, tab: tabId });
   }
