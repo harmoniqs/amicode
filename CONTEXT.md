@@ -126,6 +126,18 @@ _Avoid_: port forward (as a concept name), launchd tunnel
 
 ### Surfaces
 
+**Work Column**:
+The session-scoped auxiliary surface beside Chat that contains Home, Files Changed, Context, Pulse Inspector, and Preview. On desktop it may dock right, left, or bottom of Chat or move into a paired panel-only VS Code editor tab; every host presents the same logical state and features.
+_Avoid_: Side panel, sidebar, editor
+
+**Detached Work Column**:
+The panel-only VS Code editor-tab host for a Work Column record. It is fully connected to its bound Chat and session, owns the record's live lease while detached, and exposes the same features as an attached Work Column; it is never a copied view or a separate Chat.
+_Avoid_: Floating chat, copied panel, separate chat
+
+**Suspended Work Column**:
+A durable Work Column record with no live host after its source Chat and detached panel have closed. A matching Chat may recover it without losing acknowledged state.
+_Avoid_: Discarded panel, orphaned window
+
 **Home**:
 The always-present first tab in the Work Column that renders the user's widget grid — profile cards, run status, problem summaries, and custom agent-authored widgets. The single canonical surface for widgets; replaces the standalone home page. Internally powered by the widget kernel (WidgetGrid, WidgetFrame, the bridge protocol, `/amicode/widgets` + `/amicode/dashboard` endpoints).
 _Avoid_: Dashboard (as the surface name), widget panel
