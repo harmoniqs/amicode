@@ -4,6 +4,7 @@
 // job, issue #587, consumes this).
 //
 //   node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
+//                                      [--search-roots <dir>]...
 //                                      [--structural-only] [--min-skills <n>]
 //                                      [--report json|text] [--out <file>]
 //
@@ -12,6 +13,11 @@
 //   --packages <root>     package-checkout root containing <Pkg>.jl dirs;
 //                         repeatable, comma-separated ok. Absent → paths/symbols
 //                         with no other resolution are UNVERIFIABLE.
+//   --search-roots <dir>  extra search roots for path claims (#1002) — the
+//                         repos root, the amicode repo, a fork, demo repos:
+//                         cross-repo paths (`packages/Piccolo.jl`-style) resolve
+//                         against these. Variadic AND repeatable, comma-
+//                         separated ok (the --packages shape).
 //   --structural-only     structure only, zero package cross-check (the CI lane)
 //   --min-skills <n>      fail structurally when fewer than n skills were
 //                         linted (default 0 = no floor) — distinguishes
@@ -50,6 +56,7 @@ import {
 
 const EXT_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const USAGE = `usage: node scripts/skill_drift_lint.mts [--skills <dir>] [--packages <root>]...
+                                        [--search-roots <dir>]...
                                         [--structural-only] [--min-skills <n>]
                                         [--report json|text] [--out <file>]`;
 
@@ -73,6 +80,7 @@ function main(argv: string[]): number {
     structuralOnly: parsed.structuralOnly,
     requireSkillsDir: true, // defense in depth vs. the pre-validation race
     minSkills: parsed.minSkills,
+    searchRoots: parsed.searchRoots, // #1002: caller-supplied path-claim roots
   });
   const body = parsed.reportFormat === "text" ? renderTextReport(report) : JSON.stringify(report, null, 2);
   if (parsed.outFile) {

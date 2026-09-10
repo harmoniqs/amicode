@@ -622,11 +622,12 @@ describe("lintSkillsDir", () => {
 // ---------------------------------------------------------------------------
 
 describe("CLI helpers", () => {
-  it("parseLintArgs: defaults (json report, no package roots, structural checks on)", () => {
+  it("parseLintArgs: defaults (json report, no package roots, no search roots, structural checks on)", () => {
     const parsed = parseLintArgs([], { defaultSkillsDir: "/tmp/skills" });
     expect(parsed).toEqual({
       skillsDir: "/tmp/skills",
       packageRoots: [],
+      searchRoots: [],
       structuralOnly: false,
       minSkills: 0,
       reportFormat: "json",
@@ -642,11 +643,25 @@ describe("CLI helpers", () => {
     expect(parsed).toEqual({
       skillsDir: "/s",
       packageRoots: ["/a", "/b", "/c"],
+      searchRoots: [],
       structuralOnly: true,
       minSkills: 0,
       reportFormat: "text",
       outFile: "r.json",
     });
+  });
+
+  it("parseLintArgs: --search-roots (#1002) — variadic AND repeatable, the --packages shape (comma-separated ok)", () => {
+    const parsed = parseLintArgs(
+      ["--skills", "/s", "--search-roots", "/r1", "/r2", "--search-roots", "/r3,/r4", "--packages", "/p"],
+      { defaultSkillsDir: "/tmp/skills" },
+    );
+    expect(parsed).toMatchObject({ searchRoots: ["/r1", "/r2", "/r3", "/r4"], packageRoots: ["/p"] });
+    // variadic consumption stops at the next flag; a missing value is a usage error
+    expect(parseLintArgs(["--search-roots"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
+    // empty comma entries are dropped, like --packages
+    const sparse = parseLintArgs(["--search-roots", " /r1 , ,/r2 "], { defaultSkillsDir: "/s" });
+    expect(sparse).toMatchObject({ searchRoots: ["/r1", "/r2"] });
   });
 
   it("parseLintArgs: --min-skills floor (integer, default 0 = no floor; rejects missing/non-integer/negative)", () => {
@@ -726,6 +741,35 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
     expect(report.ok).toBe(false);
     expect(report.aggregate.structuralFailures).toBe(3);
     expect(r.stderr).toMatch(/structural/i);
+  });
+
+  it("--search-roots (#1002) pass through to claim resolution: a path claim outside the package roots VERIFIES only when its root is supplied", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-cli-roots-"));
+    try {
+      const root = path.join(base, "extra-root");
+      fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(root, "docs", "policy.md"), "policy\n");
+      const skillsDir = path.join(base, "skills");
+      fs.mkdirSync(path.join(skillsDir, "cites-external"), { recursive: true });
+      fs.writeFileSync(
+        path.join(skillsDir, "cites-external", "SKILL.md"),
+        "---\nname: cites-external\ndescription: cites a path under an extra root\n---\n\nThe policy lives in `docs/policy.md`.\n",
+      );
+      const claimOf = (stdout: string) =>
+        JSON.parse(stdout).skills[0].claims.find((c: { claim: { text: string } }) => c.claim.text === "docs/policy.md");
+      // without the root: the claim resolves nowhere under the skill dir or the fixture packages
+      const r1 = spawnSync(process.execPath, [CLI, "--skills", skillsDir, "--packages", FIXTURE_PACKAGES], { encoding: "utf8", cwd: EXT_ROOT });
+      expect(r1.status).toBe(0);
+      expect(claimOf(r1.stdout).verdict).toBe("DRIFTED");
+      // with --search-roots: VERIFIED, and the evidence names the search root
+      const r2 = spawnSync(process.execPath, [CLI, "--skills", skillsDir, "--packages", FIXTURE_PACKAGES, "--search-roots", root], { encoding: "utf8", cwd: EXT_ROOT });
+      expect(r2.status).toBe(0);
+      const claim = claimOf(r2.stdout);
+      expect(claim.verdict).toBe("VERIFIED");
+      expect(claim.evidence).toContain("search root");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
   });
 
   it("--min-skills floor below the linted count exits 1 with a top-level structural failure", () => {

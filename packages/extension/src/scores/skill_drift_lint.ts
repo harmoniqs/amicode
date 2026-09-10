@@ -88,6 +88,11 @@ export interface SkillsLintReport {
 }
 
 export interface LintOptions {
+  /** Extra search roots for path claims, CALLER-SUPPLIED (#1002: the CLI's
+   *  --search-roots, the orchestrator's SKILL_FRESHNESS_SEARCH_ROOTS) —
+   *  appended after the internal roots (skill dir + its parents). The module
+   *  itself holds no machine paths; roots always arrive as arguments. */
+  searchRoots?: string[];
   /** CI lane: check structure only — link refs resolve against the skill dir,
    *  no package cross-check at all (CI has no private checkouts). */
   structuralOnly?: boolean;
@@ -857,7 +862,12 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
     // every mode. Everything else is the semantic cross-check (skipped whole
     // under structuralOnly — CI has no private checkouts).
     const toCheck = structuralOnly ? linkClaims : claims;
-    const searchRoots = [skillDir, path.dirname(skillsDir), path.dirname(path.dirname(skillsDir))];
+    const searchRoots = [
+      skillDir,
+      path.dirname(skillsDir),
+      path.dirname(path.dirname(skillsDir)),
+      ...(opts.searchRoots ?? []), // #1002: caller-supplied roots (CLI --search-roots / orchestrator env)
+    ];
     const checked = checkClaims(toCheck, structuralOnly ? [] : packageRoots, { skillDir, searchRoots });
 
     for (const r of checked) {
@@ -908,6 +918,9 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
 export interface CliLintOptions {
   skillsDir: string;
   packageRoots: string[];
+  /** --search-roots (#1002): extra search roots for path claims, variadic and
+   *  repeatable — the --packages shape. */
+  searchRoots: string[];
   structuralOnly: boolean;
   /** --min-skills floor: fail structurally when fewer skills were linted. */
   minSkills: number;
@@ -921,6 +934,7 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
   const opts: CliLintOptions = {
     skillsDir: defaults.defaultSkillsDir,
     packageRoots: [],
+    searchRoots: [],
     structuralOnly: false,
     minSkills: 0,
     reportFormat: "json",
@@ -938,6 +952,20 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
       if (!v) return { error: "--packages requires at least one root path (comma-separated ok)" };
       for (const p of v.split(",")) {
         if (p.trim() !== "") opts.packageRoots.push(p.trim());
+      }
+    } else if (arg === "--search-roots") {
+      // #1002: variadic (consumes values until the next flag) AND repeatable,
+      // comma-separated ok — mirroring --packages
+      const v = value();
+      if (!v) return { error: "--search-roots requires at least one directory path" };
+      const push = (s: string) => {
+        for (const r of s.split(",")) {
+          if (r.trim() !== "") opts.searchRoots.push(r.trim());
+        }
+      };
+      push(v);
+      while (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
+        push(argv[++i]);
       }
     } else if (arg === "--structural-only") {
       opts.structuralOnly = true;
