@@ -3388,6 +3388,36 @@ describe("sidebar file click — single/double-click split (#932)", () => {
 // ── openFile → preview-file bridge routing (#934) ────────────────────────────
 
 describe("sidebar openFile routes to preview-file bridge message (#934)", () => {
+  it("reveals the most recently active Chat before sending a Sidebar file to Preview", async () => {
+    vi.resetModules();
+    const { ChatPanel } = await import("../src/chat_panel");
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const reveal = vi.fn();
+    const postMessage = vi.fn().mockResolvedValue(true);
+    const panel = { reveal, postMessage } as unknown as InstanceType<typeof ChatPanel>;
+    const primary = vi.spyOn(ChatPanel, "peek").mockReturnValue(panel);
+    const recent = vi.spyOn(ChatPanel, "peekMostRecent").mockReturnValue(panel);
+
+    try {
+      const provider = new SidebarViewProvider(makeExtensionUri());
+      const view = makeWebviewView();
+      provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+      view.webview._simulateMessage({ kind: "open-file", path: "/projects/quantum-sim/solve.jl" });
+
+      expect(recent).toHaveBeenCalledOnce();
+      expect(primary).not.toHaveBeenCalled();
+      expect(reveal).toHaveBeenCalledOnce();
+      expect(postMessage).toHaveBeenCalledWith({
+        source: "amicode",
+        kind: "preview-file",
+        path: "/projects/quantum-sim/solve.jl",
+      });
+    } finally {
+      primary.mockRestore();
+      recent.mockRestore();
+    }
+  });
+
   it("openFile handler posts preview-file to the chat panel, not showTextDocument", () => {
     const src = readFileSync(
       resolve(__dirname, "..", "src", "sidebar_view.ts"),

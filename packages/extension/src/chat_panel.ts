@@ -42,6 +42,9 @@ export function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; 
 
 export class ChatPanel {
   private static current?: ChatPanel;
+  /** The live Chat most recently selected by the researcher. This is distinct
+   *  from `current`, which keeps the original primary-panel semantics. */
+  private static mostRecent?: ChatPanel;
   /** Every live chat tab (primary included) — drives tab-title numbering. */
   private static readonly live = new Set<ChatPanel>();
   /** Callback fired whenever the number of live chat panels changes. */
@@ -188,6 +191,7 @@ export class ChatPanel {
     this.panel.onDidChangeViewState(
       (e) => {
         if (e.webviewPanel.active) {
+          ChatPanel.mostRecent = this;
           ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath, "expand");
         }
       },
@@ -293,6 +297,18 @@ export class ChatPanel {
     return ChatPanel.current;
   }
 
+  /** The Chat the researcher last used, falling back to the primary panel. */
+  static peekMostRecent(): ChatPanel | undefined {
+    if (ChatPanel.mostRecent && ChatPanel.live.has(ChatPanel.mostRecent)) return ChatPanel.mostRecent;
+    return ChatPanel.current ?? ChatPanel.live.values().next().value;
+  }
+
+  /** Reveal this Chat in its current editor group without moving it. */
+  reveal(): void {
+    this.panel.reveal(undefined, false);
+    ChatPanel.mostRecent = this;
+  }
+
   /** Broadcast a message to EVERY live chat panel (#870).
    *  Used by workspace-projects push so side-by-side panels all receive data. */
   static postToAll(msg: unknown): void {
@@ -349,7 +365,9 @@ export class ChatPanel {
       localResourceRoots: [vscode.Uri.joinPath(ctx.extensionUri, "media")],
     });
     panel.iconPath = tabIconPath(ctx);
-    return new ChatPanel(panel, title, opencodeUrl, authToken, hideProjectDir);
+    const instance = new ChatPanel(panel, title, opencodeUrl, authToken, hideProjectDir);
+    ChatPanel.mostRecent = instance;
+    return instance;
   }
 
   static openOrReveal(
@@ -360,6 +378,7 @@ export class ChatPanel {
   ): ChatPanel {
     if (ChatPanel.current) {
       ChatPanel.current.panel.reveal(vscode.ViewColumn.One);
+      ChatPanel.mostRecent = ChatPanel.current;
       return ChatPanel.current;
     }
     ChatPanel.current = ChatPanel.createPanel(ctx, vscode.ViewColumn.One, opencodeUrl, authToken, hideProjectDir);
@@ -392,6 +411,7 @@ export class ChatPanel {
     const title = "Amicode Chat";
     const instance = new ChatPanel(panel, title, opencodeUrl, authToken, hideProjectDir, true);
     ChatPanel.current = instance;
+    ChatPanel.mostRecent = instance;
     panel.title = title;
     panel.iconPath = tabIconPath(ctx);
     return instance;
@@ -670,6 +690,9 @@ export class ChatPanel {
     ChatPanel.live.delete(this);
     ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     if (ChatPanel.current === this) ChatPanel.current = undefined;
+    if (ChatPanel.mostRecent === this) {
+      ChatPanel.mostRecent = ChatPanel.current ?? ChatPanel.live.values().next().value;
+    }
   }
 
   /** Close the current singleton chat panel (if one exists). Used by redo-onboarding

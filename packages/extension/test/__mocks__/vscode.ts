@@ -63,8 +63,10 @@ export const window = {
         _simulateMessage(msg: unknown) { for (const cb of messageCbs) cb(msg); },
       },
       revealCount: 0,
-      reveal() {
+      revealCalls: [] as unknown[][],
+      reveal(...args: unknown[]) {
         this.revealCount += 1;
+        this.revealCalls.push(args);
       },
       onDidDispose(cb: () => void, _thisArg?: unknown, _subs?: unknown) {
         disposeCbs.push(cb);

@@ -10,7 +10,13 @@ import { mintServerPassword, serverAuthToken } from "../src/server_auth";
 // /new-session draft route — so tabs can be split across editor groups.
 // ============================================================================
 
-type CapturedPanel = { webview: { html: string }; revealCount: number; dispose(): void };
+type CapturedPanel = {
+  webview: { html: string };
+  revealCount: number;
+  revealCalls: unknown[][];
+  _simulateViewState(active: boolean, visible: boolean): void;
+  dispose(): void;
+};
 type CreatedArgs = { viewType: string; title: string; column: unknown };
 
 /** Wrap the mock's createWebviewPanel to capture both the panel and the
@@ -80,6 +86,23 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(created).toHaveLength(2);
     expect(created[0].revealCount).toBe(1);
     expect(created[1].revealCount).toBe(0);
+  });
+
+  it("reveals the most recently active Chat without moving editor groups", () => {
+    const cap = capturePanels();
+    restore = cap.restore;
+    created = cap.created;
+    args = cap.args;
+
+    const primary = ChatPanel.openOrReveal(fakeCtx(), BASE);
+    ChatPanel.openNew(fakeCtx(), DRAFT);
+    created[0]._simulateViewState(true, true);
+
+    expect(ChatPanel.peekMostRecent()).toBe(primary);
+    primary.reveal();
+
+    expect(created[0].revealCalls).toEqual([[undefined, false]]);
+    expect(created[1].revealCalls).toEqual([]);
   });
 
   it("openNew reveals BESIDE the active editor (split, not stacked)", () => {

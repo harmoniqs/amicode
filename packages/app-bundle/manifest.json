@@ -1131,7 +1131,7 @@
     "packages/app/src/pages/layout.tsx": "a6e6574054f6d85c0d91c1236c9db99674b8d51876643896b0c34f77a28bc85a",
     "packages/app/src/pages/new-session-landing.test.ts": "c0f47e4096e6a20fa59dac2b10f7285d3ef45e9289bf6f0ad75c1d9e4dd1117f",
     "packages/app/src/pages/new-session-landing.ts": "528d27cd5d441b521674328fb7812fb2acf77233e9e436d081c98ce611e8b268",
-    "packages/app/src/pages/new-session.tsx": "5a9c699ab5579ab4ff14e67fa8696bf4d941c6e4ea1f9150fec6ca52c9435826",
+    "packages/app/src/pages/new-session.tsx": "6025f6ce97ea928acf39578d7f1aaec59b3d6a63e75dadb830859d5b543b83f0",
     "packages/app/src/pages/session.tsx": "7179c59d355f70959164df7285f234c990e8aa3887e3ea736ccc8478d1931863",
     "packages/app/src/utils/amicode-bridge.ts": "5104a04c7822f80dc0c564619e7dd2d850ba50035dbc86ea875604ecd97df05f",
     "packages/app/src/utils/amicode-bug-report.test.ts": "b1bbf49230ff3aa6d1a43ffa9165ba5a84ca4ee18a6d49f52ee5cd887c3e6444",
