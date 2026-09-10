@@ -1280,8 +1280,18 @@
       color: var(--v2-text-text-muted);
     }
 
+    /* The answer is the user's words — it renders as the prompt bubble's
+       yellow chip (same tokens, same edge seating in design-polish.css),
+       right-aligned to the user's side of the card. */
     [data-slot="answer-text"] {
-      color: var(--v2-text-text-base);
+      width: fit-content;
+      max-width: 100%;
+      margin-left: auto;
+      background: var(--prompt-bubble-bg, var(--v2-background-bg-inverse));
+      color: var(--prompt-bubble-ink, var(--v2-text-text-inverse));
+      border: var(--border-width, 1px) solid var(--prompt-bubble-edge, transparent);
+      border-radius: var(--radius-lg);
+      padding: var(--space-1) var(--space-3);
     }
   }
 }

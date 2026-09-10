@@ -258,6 +258,12 @@
    theme scope and the virtualizer relayouts under the captured rect. The
    --motion-exit-* tokens above stay as the documented grammar should a real
    FLIP-based exit ever be built. */
+
+/* The sticky prompt bubble's lock-in hand-off (one past prompt taking the top
+   slot) is a WAAPI merge pass in message-timeline.tsx, not CSS: the chip
+   element must persist across hand-offs — a keyed remount + CSS entrance
+   strobed under smooth scrolling (Aaron 2026-09-04, reverted same day). */
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-enter-rise: 0px;
