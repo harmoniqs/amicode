@@ -1,6 +1,6 @@
 import { AmicoSpinner } from "@opencode-ai/ui/amico-spinner"
 import { ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
-import { shellRowLabel } from "@opencode-ai/ui/amicode-shell-row"
+import { shellRowDetail, shellRowLabel } from "@opencode-ai/ui/amicode-shell-row"
 import { sessionHasAmicodeParts } from "@opencode-ai/ui/amicode-rail-gate"
 import { amicoBrainRef, emitAmicoBrainHover } from "@opencode-ai/ui/amicode-brain-ref"
 import { copyTextToClipboard } from "../util/clipboard"
@@ -1488,6 +1488,15 @@ export function ContextToolGroup(props: {
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
+              // A read row targets a file — make it openable (Aaron 2026-09-05):
+              // the row's target becomes a button that opens it in the editor.
+              const filePath = createMemo(() => {
+                const part = partAccessor()
+                if (part.tool !== "read") return
+                const input = (part.state.input ?? {}) as Record<string, unknown>
+                const p = typeof input.filePath === "string" ? input.filePath : undefined
+                return p
+              })
               return (
                 <div data-slot="context-tool-group-item">
                   <div data-component="tool-trigger">
@@ -1498,8 +1507,15 @@ export function ContextToolGroup(props: {
                             <span data-slot="basic-tool-tool-title">
                               <span data-pending={running() ? "true" : "false"}>{trigger().title}</span>
                             </span>
-                            <Show when={!running() && trigger().subtitle}>
-                              <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
+                            <Show
+                              when={!running() && filePath()}
+                              fallback={
+                                <Show when={!running() && trigger().subtitle}>
+                                  <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
+                                </Show>
+                              }
+                            >
+                              <DocketRowFile path={filePath()!} name={trigger().subtitle} />
                             </Show>
                             <Show when={!running() && trigger().args?.length}>
                               <For each={trigger().args}>
@@ -1518,6 +1534,23 @@ export function ContextToolGroup(props: {
         </div>
       </Collapsible.Content>
     </Collapsible>
+  )
+}
+
+/** A file target inside an expanded dropdown: icon + name, clickable — opens
+ *  in the editor. The full path rides the tooltip; the hover is an underline,
+ *  never a color-only signal. */
+function DocketRowFile(props: { path: string; name?: string }) {
+  return (
+    <button
+      type="button"
+      data-slot="docket-row-file"
+      title={props.path}
+      onClick={() => openFileInEditor(props.path)}
+    >
+      <FileIcon node={{ path: props.path, type: "file" }} class="docket-file-icon" />
+      <span data-slot="docket-token-name">{props.name ?? props.path.split("/").pop()}</span>
+    </button>
   )
 }
 
@@ -1585,26 +1618,44 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
           <Index each={props.parts}>
             {(partAccessor) => {
               const cmd = createMemo(() => shellCommandText(partAccessor()))
+              const detail = createMemo(() => shellRowDetail(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               const errored = createMemo(() => partAccessor().state.status === "error")
               return (
-                <div data-slot="context-tool-group-item">
+                <div data-slot="context-tool-group-item" data-cmd-row>
                   <div data-component="tool-trigger">
                     <div data-slot="basic-tool-tool-trigger-content">
                       <div data-slot="basic-tool-tool-info">
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{cmd()}</span>
+                            <span
+                              data-slot="cmd-dot"
+                              data-state={running() ? "running" : errored() ? "error" : "done"}
+                              role="img"
+                              aria-label={running() ? "running" : errored() ? "failed" : "completed"}
+                            />
+                            <span data-slot="basic-tool-tool-title" class="font-mono" title={cmd()}>
+                              <span data-pending={running() ? "true" : "false"}>
+                                <span data-slot="cmd-prompt">$</span> {cmd()}
+                              </span>
                             </span>
-                            <Show when={errored()}>
+                            <Show when={detail().durationMs}>
+                              <span data-slot="cmd-duration">{formatCmdDuration(detail().durationMs!)}</span>
+                            </Show>
+                            <Show when={detail().exit !== undefined}>
+                              <span data-slot="cmd-exit">exit {detail().exit}</span>
+                            </Show>
+                            <Show when={errored() && detail().exit === undefined}>
                               <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
                                 failed
                               </span>
                             </Show>
                           </div>
+                          <Show when={detail().preview}>
+                            <div data-slot="cmd-preview">{detail().preview}</div>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -1617,6 +1668,16 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
       </Collapsible.Content>
     </Collapsible>
   )
+}
+
+/** Coarse wall duration for a command row: 0.4s / 12.3s / 1m 03s. */
+function formatCmdDuration(ms: number): string {
+  if (ms < 0) return ""
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds - minutes * 60)
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`
 }
 
 // AMICODE (spec B shape): consecutive file mutations (edit/write/patch) collapse
@@ -1709,6 +1770,7 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
           <Index each={props.parts}>
             {(partAccessor) => {
               const label = createMemo(() => editRowLabel(partAccessor()))
+              const path = createMemo(() => editRowFilePath(partAccessor()))
               const diff = createMemo(() => editRowDiff(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
@@ -1721,9 +1783,16 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
                       <div data-slot="basic-tool-tool-info">
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{label()}</span>
-                            </span>
+                            <Show
+                              when={!running() && path()}
+                              fallback={
+                                <span data-slot="basic-tool-tool-title" class="font-mono">
+                                  <span data-pending={running() ? "true" : "false"}>{label()}</span>
+                                </span>
+                              }
+                            >
+                              <DocketRowFile path={path()!} name={label()} />
+                            </Show>
                             <Show when={!running() && diff()}>{(d) => <DiffChanges changes={d()} />}</Show>
                             <Show when={errored()}>
                               <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>

@@ -744,6 +744,106 @@
   color: var(--v2-state-fg-danger);
 }
 
+/* ── expanded dropdown rows (Aaron 2026-09-05) ──
+   File targets are clickable buttons (icon + mono name, full path as the
+   tooltip, underline hover, visible focus). Shell rows carry a status dot,
+   the $ prompt, wall duration, exit code when it isn't 0, and the tool's
+   own one-line output preview. */
+[data-slot="docket-row-file"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: var(--v2-text-text-base);
+  border-radius: var(--radius-sm);
+}
+
+[data-slot="docket-row-file"]:hover [data-slot="docket-token-name"] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  color: var(--v2-text-text-strong);
+}
+
+[data-slot="docket-row-file"]:focus-visible {
+  outline: var(--border-width) solid var(--v2-border-border-focus);
+  outline-offset: 1px;
+}
+
+[data-cmd-row] [data-slot="basic-tool-tool-info-structured"] {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-cmd-row] [data-slot="basic-tool-tool-info-main"] {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+[data-slot="cmd-dot"] {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--v2-text-text-faint);
+}
+
+[data-slot="cmd-dot"][data-state="running"] {
+  background: var(--status-running);
+  animation: cmd-dot-pulse 1.2s ease-in-out infinite;
+}
+
+[data-slot="cmd-dot"][data-state="error"] {
+  background: var(--v2-state-fg-danger);
+}
+
+@keyframes cmd-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+[data-slot="cmd-prompt"] {
+  color: var(--v2-text-text-faint);
+  margin-right: 2px;
+}
+
+[data-slot="cmd-duration"],
+[data-slot="cmd-exit"] {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--v2-text-text-faint);
+}
+
+[data-slot="cmd-exit"] {
+  color: var(--v2-state-fg-danger);
+}
+
+[data-slot="cmd-preview"] {
+  margin-left: 14px; /* clears the 6px dot + 8px gap */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.92em;
+  color: var(--v2-text-text-faint);
+}
+
 [data-component="context-tool-group-list"] {
   padding-top: 0;
   padding-right: 0;

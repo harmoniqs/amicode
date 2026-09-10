@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { clampShellLabel, shellRowLabel, SHELL_ROW_MAX } from "./shell-row"
+import { clampShellLabel, shellRowDetail, shellRowLabel, SHELL_ROW_MAX } from "./shell-row"
 
 // Regression coverage for "a constant error not going away" (2026-07-29).
 //
@@ -56,5 +56,29 @@ describe("shell row label", () => {
 
   test("single-quoted prose is unwrapped too", () => {
     expect(clampShellLabel("'Install the dependencies'")).toBe("Install the dependencies")
+  })
+})
+
+describe("shellRowDetail", () => {
+  test("exit surfaces only when it isn't 0", () => {
+    expect(shellRowDetail({ state: { metadata: { exit: 0 } } }).exit).toBeUndefined()
+    expect(shellRowDetail({ state: { metadata: { exit: 64 } } }).exit).toBe(64)
+  })
+
+  test("duration comes from state.time when both ends exist", () => {
+    expect(
+      shellRowDetail({ state: { time: { start: 1000, end: 4250 }, metadata: {} } }).durationMs,
+    ).toBe(3250)
+    expect(shellRowDetail({ state: { time: { start: 1000 }, metadata: {} } }).durationMs).toBeUndefined()
+  })
+
+  test("output preview is the clamped first line", () => {
+    const detail = shellRowDetail({ state: { metadata: { output: "line one\nline two" } } })
+    expect(detail.preview).toBe("line one")
+    expect(shellRowDetail({ state: { metadata: { output: "x".repeat(SHELL_ROW_MAX + 10) } } }).preview?.endsWith("…")).toBe(true)
+  })
+
+  test("a pending part yields an empty detail", () => {
+    expect(shellRowDetail({})).toEqual({})
   })
 })
