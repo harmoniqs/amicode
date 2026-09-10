@@ -215,6 +215,43 @@ describe("amicode bridge — connect-harmoniqs-provider", () => {
     const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
     expect(ran).toContain("amicode.restartServer");
   });
+
+  it("waits for the restart to resolve before posting success (CodeRabbit #971)", async () => {
+    // amicode.restartServer's real handler is async — post success too early
+    // and Manage Models can re-query while the server is still stale. Register
+    // a deliberately slow fake handler and assert nothing is posted until it resolves.
+    let releaseRestart: () => void = () => {};
+    const cmd = vscode.commands.registerCommand("amicode.restartServer", () => new Promise<void>((resolve) => {
+      releaseRestart = resolve;
+    }));
+    try {
+      const host = io();
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1", apiKey: "hqa_test_key" }, host);
+      await flush();
+      expect(host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result")).toBeUndefined();
+      releaseRestart();
+      await flush();
+      const result = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result") as any;
+      expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: true });
+    } finally {
+      cmd.dispose();
+    }
+  });
+
+  it("still reports success if the restart command itself rejects (credentials were already written)", async () => {
+    const cmd = vscode.commands.registerCommand("amicode.restartServer", () => {
+      throw new Error("boom");
+    });
+    try {
+      const host = io();
+      handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1", apiKey: "hqa_test_key" }, host);
+      await flush();
+      const result = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result") as any;
+      expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: true });
+    } finally {
+      cmd.dispose();
+    }
+  });
 });
 
 describe("amicode bridge — commands & settings", () => {

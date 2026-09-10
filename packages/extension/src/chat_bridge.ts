@@ -334,7 +334,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       return true;
     }
     void testConnection({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey })
-      .then((result) => {
+      .then(async (result) => {
         if (!result.ok) {
           io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: result.error });
           return;
@@ -344,8 +344,15 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // write landed (Config.invalidate() only fires from its own
         // /config/update endpoint) — restart it so Provider.list() picks up
         // the new credentials, same as the Developer Tools / data-storage
-        // config writes below.
-        void vscode.commands.executeCommand("amicode.restartServer");
+        // config writes below. Await it (CodeRabbit #971): restartServer's
+        // handler is async, so posting success before it resolves let the
+        // webview re-query Manage Models while the server was still stale.
+        // A restart failure is the registered command's own concern (it logs
+        // there) — the credentials write already succeeded, so it doesn't
+        // turn into a connect failure here.
+        try {
+          await vscode.commands.executeCommand("amicode.restartServer");
+        } catch { /* restart errors are handled by the registered command itself */ }
         io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: true });
       })
       .catch((error) => io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: error instanceof Error ? error.message : "Could not connect Harmoniqs AI" }));
