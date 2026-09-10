@@ -14,8 +14,12 @@ import {
   registerOnboardingPanel,
   PROVIDER_MODELS,
   PROVIDER_DISPLAY_NAMES,
+  HARMONIQS_PROVIDER_ID,
+  HARMONIQS_MODEL_ID,
+  HARMONIQS_BASE_URL,
   type OnboardingConfig,
   writeOnboardingConfig,
+  writeAuthApiKey,
   testConnection,
   probeModels,
   onOnboardingComplete,
@@ -119,6 +123,7 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
     const keys = Object.keys(PROVIDER_MODELS);
     expect(keys).toEqual([
       "github-copilot",
+      "harmoniqs",
       "opencode",
       "anthropic",
       "openai",
@@ -371,6 +376,283 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
     expect(url).toContain("googleapis.com");
   });
 });
+
+describe("Harmoniqs AI — branded provider preset", () => {
+  it("is registered as a first-class provider with one locked model", () => {
+    expect(PROVIDER_DISPLAY_NAMES[HARMONIQS_PROVIDER_ID]).toBe("Harmoniqs AI");
+    expect(PROVIDER_MODELS[HARMONIQS_PROVIDER_ID]).toEqual([
+      { id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" },
+    ]);
+  });
+
+  describe("writeOnboardingConfig — secure credential storage", () => {
+    let tmpDir: string;
+    let prevXdgDataHome: string | undefined;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-harmoniqs-"));
+      prevXdgDataHome = process.env.XDG_DATA_HOME;
+      // writeOnboardingConfig writes the harmoniqs key via the default
+      // opencodeDataDir() path — redirect it into the tmp dir so the test
+      // never touches the real ~/.local/share/opencode/auth.json.
+      process.env.XDG_DATA_HOME = tmpDir;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      if (prevXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prevXdgDataHome;
+    });
+
+    it("writes the non-secret provider shape into opencode.json (npm, baseURL, model, tool_call:false)", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      expect(entry.npm).toBe("@ai-sdk/openai-compatible");
+      expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(false);
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
+    });
+
+    it("never writes the API key into opencode.json", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].options.apiKey).toBeUndefined();
+      const raw = fs.readFileSync(configPath, "utf8");
+      expect(raw).not.toContain("hqa_supersecretvalue123456");
+    });
+
+    it("writes the API key into opencode's auth store instead (auth.json, type: api)", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const authPath = path.join(tmpDir, "opencode", "auth.json");
+      const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(auth[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_supersecretvalue123456" });
+    });
+  });
+
+  describe("writeAuthApiKey", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-authstore-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("writes a { type: 'api', key } entry, creating parent directories", () => {
+      const authPath = path.join(tmpDir, "nested", "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_abc123" });
+    });
+
+    it("merges with existing entries instead of clobbering them", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      fs.writeFileSync(authPath, JSON.stringify({ anthropic: { type: "api", key: "sk-ant-existing" } }));
+
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written.anthropic).toEqual({ type: "api", key: "sk-ant-existing" });
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_abc123" });
+    });
+
+    it("re-writing replaces only that provider's entry", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_old", authPath);
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_new", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_new" });
+    });
+
+    it("sets file permissions to 0600 (owner read/write only)", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const mode = fs.statSync(authPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    });
+  });
+
+  describe("testConnection — secret-safe error classification (401/403/429/config/network)", () => {
+    const config: OnboardingConfig = {
+      provider: HARMONIQS_PROVIDER_ID,
+      model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+      apiKey: "hqa_supersecretvalue123456",
+    };
+
+    it("sends exactly the expected OpenAI-compatible request", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ choices: [] }) });
+      const result = await testConnection(config, fetchMock);
+
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
+      expect(options.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
+      const body = JSON.parse(options.body);
+      expect(body.model).toBe(HARMONIQS_MODEL_ID);
+      expect(body.tools).toBeUndefined();
+    });
+
+    it("401 invalid_api_key — reports an invalid-key message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () =>
+          Promise.resolve({ error: { message: "Invalid API key", type: "authentication_error", code: "invalid_api_key" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Invalid API key");
+    });
+
+    it("403 no_entitlement — distinguishes lack of entitlement from a bad key", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        json: () =>
+          Promise.resolve({
+            error: { message: "No active inference entitlement", type: "permission_error", code: "no_entitlement" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("entitlement");
+    });
+
+    it("429 rate_limit_exceeded — reports a rate-limit message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        json: () => Promise.resolve({ error: { message: "Rate limit exceeded", type: "rate_limit_error", code: "rate_limit_exceeded" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error?.toLowerCase()).toContain("rate limit");
+    });
+
+    it("400 unsupported_feature — reports it as a model/config error with the backend's message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: () =>
+          Promise.resolve({
+            error: {
+              message: "Tools, structured output, and multiple completions are not supported",
+              type: "invalid_request_error",
+              code: "unsupported_feature",
+            },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Tools, structured output");
+    });
+
+    it("404 model_not_found — reports it as a model/config error", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: () =>
+          Promise.resolve({
+            error: { message: "The requested model does not exist", type: "invalid_request_error", code: "model_not_found" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("does not exist");
+    });
+
+    it("upstream 502/provider_error — reports a distinct temporarily-unavailable message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: "Bad Gateway",
+        json: () =>
+          Promise.resolve({ error: { message: "Inference provider request failed", type: "api_error", code: "provider_error" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("temporarily unavailable");
+    });
+
+    it("network failure — distinguishes a transport error from an HTTP rejection", async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("getaddrinfo ENOTFOUND app.harmoniqs.ai"));
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Network error");
+      expect(result.error).toContain("ENOTFOUND");
+    });
+
+    it("tolerates a non-JSON error body (e.g. a CDN error page) without throwing", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: () => Promise.reject(new Error("not json")),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBeTruthy();
+    });
+
+    it("never includes the API key in any classified result", async () => {
+      const responses = [
+        { ok: false, status: 401, statusText: "Unauthorized", json: () => Promise.resolve({ error: { code: "invalid_api_key" } }) },
+        {
+          ok: false,
+          status: 403,
+          statusText: "Forbidden",
+          json: () => Promise.resolve({ error: { code: "no_entitlement" } }),
+        },
+        { ok: false, status: 429, statusText: "Too Many Requests", json: () => Promise.resolve({ error: {} }) },
+      ];
+      for (const response of responses) {
+        const fetchMock = vi.fn().mockResolvedValue(response);
+        const result = await testConnection(config, fetchMock);
+        expect(JSON.stringify(result)).not.toContain(config.apiKey);
+      }
+    });
+  });
+});
+
 
 describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", () => {
   let ctx: { subscriptions: unknown[]; extensionUri: unknown };
