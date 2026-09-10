@@ -5,7 +5,8 @@
 // freshness script's honest-degradation posture (an absent root is skipped,
 // never a crash). Read-only by construction: pure filesystem + registry.
 // Run: pnpm --filter @amicode/amico-run test skills_verb
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll } from "vitest";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -185,5 +186,56 @@ describe("amico skills check — the default fleet surfaces (no --roots)", () =>
     expect(code).toBe(1);
     const pub = rootsOf(json).find((r) => r.label === "public");
     expect(pub).toMatchObject({ status: "ok", scanned: 1, invalid: 1 });
+  });
+});
+
+// ── the router seam: SPINE_VERBS registration (usage row + MCP publication) ──────
+// The amico.test.ts pattern: build the bundle once, spawn it. Registration
+// gives BOTH for free — the usage table renders SPINE_VERBS, and mcp-serve
+// maps each verb to an amico_<name> tool — so these two assertions are the
+// whole AC.
+const BUNDLE = join(__dirname, "..", "dist", "amico.js");
+describe("the skills verb's registration (SPINE_VERBS → usage row + MCP tool)", () => {
+  beforeAll(() => {
+    execFileSync("node", [join(__dirname, "..", "esbuild.config.mjs")], { cwd: join(__dirname, "..") });
+  });
+  const run = (args: string[]): { code: number; stdout: string; stderr: string } => {
+    try {
+      return { code: 0, stdout: execFileSync("node", [BUNDLE, ...args], { encoding: "utf8" }), stderr: "" };
+    } catch (e) {
+      const err = e as { status?: number; stdout?: string; stderr?: string };
+      return { code: err.status ?? -1, stdout: err.stdout ?? "", stderr: err.stderr ?? "" };
+    }
+  };
+
+  it("appears in `amico --help`'s usage table", () => {
+    const r = run(["--help"]);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain("amico skills");
+    expect(r.stdout).toContain("SKILL.md");
+  });
+  it("is MCP-published: `amico mcp-serve --list` renders the amico_skills tool", () => {
+    const r = run(["mcp-serve", "--list"]);
+    expect(r.code).toBe(0);
+    const tools = JSON.parse(r.stdout).tools as Array<{ name: string; description: string }>;
+    const tool = tools.find((t) => t.name === "amico_skills");
+    expect(tool).toBeTruthy();
+    expect((tool?.description ?? "")).toContain("SKILL.md");
+  });
+});
+
+// ── conformance: the repo's own shipped library passes the check ─────────────────
+// The drift-lint suite's real-library pattern (skill_drift_lint.test.ts): a
+// structural pass over packages/extension/skills from a test, so a shipped
+// SKILL.md that breaks the contract fails CI here, not at load time.
+const IN_REPO_SKILLS = join(__dirname, "..", "..", "extension", "skills");
+describe.skipIf(!existsSync(IN_REPO_SKILLS))("conformance: the repo's shipped public library", () => {
+  it("every shipped SKILL.md passes `amico skills check --roots <repo library>`", () => {
+    const r = skillsVerb(["check", "--roots", IN_REPO_SKILLS]);
+    expect(r.code).toBe(0);
+    const json = r.json as Record<string, unknown>;
+    expect(json).toMatchObject({ ok: true, invalid: 0 });
+    expect(json.valid as number).toBeGreaterThan(10); // the real library, not a stub tree
+    expect(json.scanned).toBe(json.valid);
   });
 });
