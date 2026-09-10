@@ -48,12 +48,11 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
   const amicodeError = () => {
     const s = props.controller.status()
     if (!s || s.amicodeValid) return undefined
-    if (s.buildError) return s.buildError
     return s.amicodeError ?? language.t("settings.general.row.amicodePath.error.notFound")
   }
-  const building = () => props.controller.status()?.building ?? false
   const reloadNeeded = () => props.controller.status()?.reloadNeeded ?? false
   const isRebuilding = () => props.controller.rebuildState() === "rebuilding"
+  const validating = () => props.controller.pending()
 
   return (
     <SettingsListV2>
@@ -135,7 +134,12 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
             <>
               {language.t("settings.general.row.opencodePath.description")}
               <Show when={opencodeError()}>
-                <span class="settings-v2-field-error">{opencodeError()}</span>
+                <span class="settings-v2-field-error" classList={{ "settings-v2-field-stale": validating() }}>
+                  {opencodeError()}
+                </span>
+              </Show>
+              <Show when={validating()}>
+                <span class="settings-v2-field-info">Validating…</span>
               </Show>
             </>
           }
@@ -163,13 +167,10 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
           description={
             <>
               {language.t("settings.general.row.amicodePath.description")}
-              <Show when={building()}>
-                <span class="settings-v2-field-info">
-                  {language.t("settings.general.row.amicodePath.building")}
-                </span>
-              </Show>
               <Show when={amicodeError()}>
-                <span class="settings-v2-field-error">{amicodeError()}</span>
+                <span class="settings-v2-field-error" classList={{ "settings-v2-field-stale": validating() }}>
+                  {amicodeError()}
+                </span>
               </Show>
               <Show when={reloadNeeded()}>
                 <span class="settings-v2-field-warning">
