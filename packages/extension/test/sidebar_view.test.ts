@@ -71,6 +71,26 @@ describe("SidebarViewProvider", () => {
     expect(html).toContain("Add Existing");
   });
 
+  it("opens a pinned native editor when the sidebar requests open-file-editor", async () => {
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    const vscodeMock = await import("vscode");
+    const executeCommand = vi.spyOn(vscodeMock.commands, "executeCommand");
+
+    try {
+      provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+      view.webview._simulateMessage({ kind: "open-file-editor", path: "/projects/quantum-sim/solve.jl" });
+
+      expect(executeCommand).toHaveBeenLastCalledWith(
+        "vscode.open",
+        expect.objectContaining({ fsPath: "/projects/quantum-sim/solve.jl" }),
+        { preview: false },
+      );
+    } finally {
+      executeCommand.mockRestore();
+    }
+  });
+
   it("embeds icon theme data as window.__iconTheme in a nonce-guarded script", () => {
     const provider = new SidebarViewProvider(makeExtensionUri());
     const view = makeWebviewView();
@@ -2635,6 +2655,23 @@ describe("sidebar — sash resize between sections", () => {
     expect(html).toContain("ns-resize");
     expect(html).toContain("#fff676");
     expect(html).toContain("sash-dragging");
+  });
+
+  it("keeps an 8px sash drag target when the visual divider is hovered", async () => {
+    vi.resetModules();
+    const { SidebarViewProvider } = await import("../src/sidebar_view");
+    const provider = new SidebarViewProvider(makeExtensionUri());
+    const view = makeWebviewView();
+    provider.resolveWebviewView(view, {}, { isCancellationRequested: false, onCancellationRequested: () => ({ dispose() {} }) });
+    const html = view.webview.html;
+
+    expect(html).toMatch(/\.sash::before\s*\{[^}]*top:\s*-4px[^}]*height:\s*8px[^}]*cursor:\s*ns-resize/s);
+    expect(html).toMatch(/\.sash::after\s*\{[^}]*top:\s*0[^}]*height:\s*1px[^}]*pointer-events:\s*none/s);
+
+    const hoverRuleStart = html.indexOf(".sash:not(.inactive):hover::after");
+    const hoverRule = html.slice(hoverRuleStart, html.indexOf("}", hoverRuleStart));
+    expect(hoverRule).toContain("background");
+    expect(hoverRule).not.toMatch(/\b(top|height)\s*:/);
   });
 
   it("webview creates sashes between sections and handles resize via layoutSections", () => {

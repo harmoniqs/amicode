@@ -414,7 +414,7 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           // Use vscode.open — delegates to VS Code's file-type detection,
           // so images open in the built-in preview, PDFs in a PDF viewer, etc.
           // showTextDocument only works for text files (#934).
-          void vscode.commands.executeCommand("vscode.open", uri);
+          void vscode.commands.executeCommand("vscode.open", uri, { preview: false });
         },
         fileOp: (req) => executeFileOp(req),
         postMessage: (m) => {
@@ -955,23 +955,31 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       right: 0;
       z-index: 1;
     }
+    /* Keep the drag target wider than the one-pixel visual divider. */
+    .sash::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -4px;
+      height: 8px;
+      cursor: ns-resize;
+    }
     .sash::after {
       content: '';
       position: absolute;
       left: 0;
       right: 0;
-      top: -3px;
-      height: 6px;
-      cursor: ns-resize;
+      top: 0;
+      height: 1px;
+      pointer-events: none;
     }
-    .sash.inactive::after {
+    .sash.inactive::before {
       cursor: default;
       pointer-events: none;
     }
     .sash:not(.inactive):hover::after,
     .sash.active::after {
-      top: 0;
-      height: 1px;
       background: #fff676;
     }
     body.sash-dragging {
