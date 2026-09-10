@@ -115,6 +115,21 @@ const targets = [
     minify: false,
     logLevel: "info",
   },
+  // The PRODUCTION SERVICE RUNNER (#955, the hub cutover): one long-lived
+  // headless process that spawns the vendored engine and serves the amicode
+  // service — what runs on the hub where there is no extension host. Same
+  // bin/dist convention as mcp-amico.mjs (self-contained ESM, plain node).
+  {
+    entryPoints: ["src/amicode_service_runner_cli.ts"],
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    format: "esm",
+    outfile: "bin/dist/amicode-service-runner.mjs",
+    sourcemap: true,
+    minify: false,
+    logLevel: "info",
+  },
   // Sidebar webview bundle — workspace panel (#673)
   {
     entryPoints: ["src/sidebar_webview.ts"],
