@@ -294,6 +294,21 @@ describe("entitlement filtering of skills", () => {
     expect(has(errorsOf(resolve(["resolve", "--name", "composed"]).json), "no surface: tag")).toBe(true);
   });
 
+  it("the surface tag routes through the shared frontmatter parser (amicode#996) — YAML quoting + inline comments resolve", () => {
+    // Only a YAML parser reads this correctly (a line-scrape regex would keep
+    // the quote marks and the comment); the profile verb and the extension's
+    // loader now agree on what parses because both read yaml frontmatter.
+    mkdirSync(join(root, "skills", "quoted"), { recursive: true });
+    writeFileSync(
+      join(root, "skills", "quoted", "SKILL.md"),
+      '---\nname: quoted\ndescription: x\nsurface: "internal" # the ring tag\n---\n\nbody\n',
+    );
+    profile("composed", { skills: ["quoted"] });
+    const { code, json } = resolve(["resolve", "--name", "composed"]);
+    expect(code).toBe(0);
+    expect(json.skills).toEqual(["quoted"]);
+  });
+
   it("a public-ring profile may only stage public skills", () => {
     skill("develop", "internal");
     profile("composed", { surface: "public", skills: ["develop"] });
