@@ -879,6 +879,34 @@ export function MessageTimeline(props: {
   // What the bubble actually shows: override (from click) takes priority
   const activeBubble = () => bubbleOverride() ?? visiblePromptBubble()
 
+  // The bubble lock — a smooth MERGE on hand-off (Aaron 2026-09-04). The chip
+  // element persists; when the message locked at top changes (scroll hand-off,
+  // click, send), the text swap underneath is masked by a gentle opacity +
+  // translate dip via WAAPI — the new prompt glides over the old in one
+  // soft 240ms pass. No remount, no exit machinery, nothing to strobe under
+  // smooth scrolling. Honors prefers-reduced-motion.
+  let bubbleChip: HTMLButtonElement | undefined
+  let lockedBubbleId: string | undefined
+  createEffect(() => {
+    const bubble = activeBubble()
+    if (!bubble) {
+      lockedBubbleId = undefined
+      return
+    }
+    if (bubble.messageId === lockedBubbleId) return
+    lockedBubbleId = bubble.messageId
+    const el = bubbleChip
+    if (!el || typeof el.animate !== "function") return
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    el.animate(
+      [
+        { opacity: 0.45, transform: "translateY(2px)" },
+        { opacity: 1, transform: "none" },
+      ],
+      { duration: 240, easing: "cubic-bezier(0.2, 0, 0.2, 1)" },
+    )
+  })
+
   // Find the previous user message with text before a given message ID
   const findPreviousBubble = (currentMessageId: string): { text: string; messageId: string } | undefined => {
     const messages = props.userMessages
@@ -2575,7 +2603,8 @@ export function MessageTimeline(props: {
               }}
             />
             {/* amicode#271: bubble inside the header — naturally below the
-                title row + chip rail */}
+                title row + chip rail. The element PERSISTS across hand-offs;
+                the lock-in merge runs via WAAPI in the effect below. */}
             <Show when={activeBubble()}>
               {(bubble) => (
                 <div
@@ -2585,20 +2614,21 @@ export function MessageTimeline(props: {
                 >
                   <button
                     type="button"
+                    ref={(el) => (bubbleChip = el)}
                     class="ml-auto block w-fit max-w-[min(75%,56ch)] text-left cursor-pointer border-none rounded-lg px-3 py-1.5 text-[13px] leading-[18px] font-normal truncate backdrop-blur-[2px]"
                     style={{
                       // the ghost of the prompt bubble keeps the bubble's own
                       // ground, translucent — one grammar for the user's
                       // words on every surface (--prompt-bubble-*: the
-                      // inverse, seated per scheme in design-polish.css)
+                      // yellow chip, seated per scheme in design-polish.css)
                       background: "color-mix(in srgb, var(--prompt-bubble-bg) 90%, transparent)",
                       color: "var(--prompt-bubble-ink)",
+                      border: "var(--border-width) solid var(--prompt-bubble-edge, transparent)",
                       "box-shadow": "0 1px 3px color-mix(in srgb, var(--v2-background-bg-base) 40%, transparent)",
                     }}
                     onClick={scrollToBubbleMessage}
                     title={bubble().text}
                   >
-                    <span class="opacity-60 text-[11px] font-medium uppercase tracking-wider mr-2">You</span>
                     {bubble().text}
                   </button>
                 </div>
@@ -2606,7 +2636,8 @@ export function MessageTimeline(props: {
             </Show>
           </div>
         </Show>
-        {/* amicode#271: no-header fallback (new untitled sessions only) */}
+        {/* amicode#271: no-header fallback (new untitled sessions only) —
+            same persistent chip, same WAAPI merge */}
         <Show when={!showHeader() && activeBubble()}>
           {(_) => {
             const bubble = () => activeBubble()!
@@ -2618,20 +2649,21 @@ export function MessageTimeline(props: {
               >
                 <button
                   type="button"
+                  ref={(el) => (bubbleChip = el)}
                   class="ml-auto block w-fit max-w-[min(75%,56ch)] text-left cursor-pointer border-none rounded-lg px-3 py-1.5 text-[13px] leading-[18px] font-normal truncate backdrop-blur-[2px]"
                   style={{
                     // the ghost of the prompt bubble keeps the bubble's own
                     // ground, translucent — one grammar for the user's
                     // words on every surface (--prompt-bubble-*: the
-                    // inverse, seated per scheme in design-polish.css)
+                    // yellow chip, seated per scheme in design-polish.css)
                     background: "color-mix(in srgb, var(--prompt-bubble-bg) 90%, transparent)",
                     color: "var(--prompt-bubble-ink)",
+                    border: "var(--border-width) solid var(--prompt-bubble-edge, transparent)",
                     "box-shadow": "0 1px 3px color-mix(in srgb, var(--v2-background-bg-base) 40%, transparent)",
                   }}
                   onClick={scrollToBubbleMessage}
                   title={bubble().text}
                 >
-                  <span class="opacity-60 text-[11px] font-medium uppercase tracking-wider mr-2">You</span>
                   {bubble().text}
                 </button>
               </div>

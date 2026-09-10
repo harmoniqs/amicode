@@ -22,7 +22,35 @@ export interface ShellRowPartLike {
   state?: {
     input?: Record<string, unknown>
     title?: unknown
+    metadata?: Record<string, unknown>
+    time?: { start?: number; end?: number }
   }
+}
+
+export interface ShellRowDetail {
+  exit?: number
+  durationMs?: number
+  preview?: string
+}
+
+/** The row's evidence beyond the command itself (Aaron 2026-09-05): exit code
+ *  when it isn't 0, wall duration from state.time, and the tool's own output
+ *  preview (first line only — the row is a glance, not a terminal). Everything
+ *  optional; a pending part yields an empty detail. */
+export function shellRowDetail(part: ShellRowPartLike): ShellRowDetail {
+  const detail: ShellRowDetail = {}
+  const metadata = part.state?.metadata ?? {}
+  const exit = metadata.exit
+  if (typeof exit === "number" && exit !== 0) detail.exit = exit
+  const { start, end } = part.state?.time ?? {}
+  if (typeof start === "number" && typeof end === "number" && end >= start) {
+    detail.durationMs = end - start
+  }
+  const output = metadata.output
+  if (typeof output === "string" && output.trim() !== "") {
+    detail.preview = clampShellLabel(output, SHELL_ROW_MAX)
+  }
+  return detail
 }
 
 /** Trim, take the first line, drop wrapping quotes, and elide past SHELL_ROW_MAX. */

@@ -6,6 +6,12 @@
   --markdown-shell-code-border: var(--v2-border-border-muted);
   --markdown-shell-code-color: var(--v2-text-text-base);
   --markdown-shell-code-token-color: currentColor;
+  /* the slab (Aaron 2026-09-04): fenced code leaves the prose-card grammar —
+     a full-bleed raised surface with a language label. Scheme-quiet ground so
+     shiki tokens stay readable in both themes. */
+  --markdown-slab-bg: var(--v2-background-bg-layer-02);
+  --markdown-slab-border: var(--v2-border-border-muted);
+  --markdown-slab-label: var(--v2-text-text-faint);
 
   /* Reset & Base Typography */
   min-width: 0;
@@ -183,6 +189,55 @@
 
   [data-component="markdown-code"] {
     position: relative;
+  }
+
+  /* ── the slab — fenced code inside a prose fragment ──
+     Full-bleed across the fragment's 14px gutters (negative margins), the
+     fragment radius' step down (md), the quiet layer-02 ground in BOTH
+     schemes — code reads as an object on the page, not another text card.
+     The language label sits top-right (attr-driven, no component change);
+     the copy button keeps its corner. Scoped to prose fragments: tool-output
+     and skill-file code keep the inline-card treatment. */
+  [data-prose-fragment] [data-component="markdown-code"] {
+    margin: 2px -14px;
+    padding: 24px 0 4px;
+    background: var(--markdown-slab-bg);
+    border: var(--border-width) solid var(--markdown-slab-border);
+    border-radius: var(--radius-md);
+  }
+
+  [data-prose-fragment] [data-component="markdown-code"]::before {
+    content: attr(data-language);
+    position: absolute;
+    top: 6px;
+    right: 36px; /* clear of the copy button's corner */
+    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+    font-size: var(--font-size-2xs);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--markdown-slab-label);
+    pointer-events: none;
+  }
+
+  [data-prose-fragment] [data-component="markdown-code"] .shiki {
+    margin: 0;
+    padding: 8px 14px 12px;
+    background: transparent;
+    border: none;
+    border-radius: 0;
+  }
+
+  [data-prose-fragment] [data-component="markdown-code"][data-code-kind="shell"] {
+    background: var(--markdown-shell-code-background);
+    border-color: var(--markdown-shell-code-border);
+  }
+
+  /* the shell kind's own .shiki rules sit later in the file and would paint a
+     nested box inside the slab — silence them; the slab carries the ground */
+  [data-prose-fragment] [data-component="markdown-code"][data-code-kind="shell"] .shiki {
+    background: transparent;
+    border: none;
+    border-radius: 0;
   }
 
   [data-component="markdown-code"][data-code-kind="shell"] .shiki {

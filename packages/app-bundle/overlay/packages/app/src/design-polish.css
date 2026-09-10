@@ -151,27 +151,28 @@
 }
 
 /* ── prompt bubble ground — per-scheme REALISATION ──
-   On LIGHT the user's words are the INVERSE of the ground — the website's
-   ink bubble, verbatim (the site is light-only, so the inverse grammar is a
-   light-mode truth). On DARK any light bubble read harsh at chat scale:
-   Kate walked the inverse down 100%→85%→70% luminance (7b1ff4e, 1ef7c41)
-   and it still glared — dark wants LOW contrast, not an inverse. The dark
-   bubble is therefore the theme's own quiet elevation: layer-02 on the
-   ground (≈1.5:1, a whisper of lift — stock #2e2e2e on #161616) under full
-   base ink (≈12:1, unchanged readability). */
+   The user's words, both schemes (Aaron 2026-09-05): on LIGHT the site's
+   solid yellow chip — --accent fill, --accent-ink, the ink border (--accent-
+   edge-ink; yellow can't define itself on the near-white ground). On DARK
+   the chip inverts into a dark box with the FULL-strength yellow border —
+   the loud yellow outline is the user's signature, one step louder than the
+   assistant fragments' --accent-edge (45%) hairline — under base ink. */
 :root,
 [data-color-scheme="light"] {
-  --prompt-bubble-bg: var(--v2-background-bg-inverse);
-  --prompt-bubble-ink: var(--v2-text-text-inverse);
+  --prompt-bubble-bg: var(--accent);
+  --prompt-bubble-ink: var(--accent-ink);
+  --prompt-bubble-edge: var(--accent-edge-ink);
 }
 [data-color-scheme="dark"] {
-  --prompt-bubble-bg: var(--v2-background-bg-layer-02);
+  --prompt-bubble-bg: var(--v2-background-bg-layer-01);
   --prompt-bubble-ink: var(--v2-text-text-base);
+  --prompt-bubble-edge: var(--accent);
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-scheme="light"]) {
-    --prompt-bubble-bg: var(--v2-background-bg-layer-02);
+    --prompt-bubble-bg: var(--v2-background-bg-layer-01);
     --prompt-bubble-ink: var(--v2-text-text-base);
+    --prompt-bubble-edge: var(--accent);
   }
 }
 
@@ -232,9 +233,14 @@
 /* ── prose fragment cards ── every fragment Amico relays is its OWN bordered
    card, a message within the chat (Kate 2026-08-25; supersedes the
    one-container-per-reply segment). Each chunk of a streamed reply arrives
-   as its own card with its own entrance; history splits identically so the
-   cards persist. Chips/receipts keep their borderless chip grammar. The
-   hairline is the theme's default border, the radius the brand 4px. */
+    as its own card with its own entrance; history splits identically so the
+    cards persist. Chips/receipts keep their borderless chip grammar. The
+    hairline is the theme's default border, the radius the brand 4px.
+
+    (A 2026-09-05 pass seated a dark ground + yellow edge on these cards in
+    dark mode; reverted the same day at Aaron's call — the dark-box-yellow-
+    border treatment belongs to the USER's prompt bubble only. The assistant
+    fragments stay on the theme hairline in both schemes.) */
 [data-slot="text-part-body"]:has([data-prose-fragment]) {
   display: flex;
   flex-direction: column;
@@ -258,6 +264,12 @@
    theme scope and the virtualizer relayouts under the captured rect. The
    --motion-exit-* tokens above stay as the documented grammar should a real
    FLIP-based exit ever be built. */
+
+/* The sticky prompt bubble's lock-in hand-off (one past prompt taking the top
+   slot) is a WAAPI merge pass in message-timeline.tsx, not CSS: the chip
+   element must persist across hand-offs — a keyed remount + CSS entrance
+   strobed under smooth scrolling (Aaron 2026-09-04, reverted same day). */
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --motion-enter-rise: 0px;

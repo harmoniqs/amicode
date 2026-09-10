@@ -1,6 +1,6 @@
 import { AmicoSpinner } from "@opencode-ai/ui/amico-spinner"
 import { ThinkingLine, turnTokens } from "@opencode-ai/ui/amicode-thinking"
-import { shellRowLabel } from "@opencode-ai/ui/amicode-shell-row"
+import { shellRowDetail, shellRowLabel } from "@opencode-ai/ui/amicode-shell-row"
 import { sessionHasAmicodeParts } from "@opencode-ai/ui/amicode-rail-gate"
 import { amicoBrainRef, emitAmicoBrainHover } from "@opencode-ai/ui/amicode-brain-ref"
 import { copyTextToClipboard } from "../util/clipboard"
@@ -696,6 +696,7 @@ import {
 } from "./message-part-groups"
 import { parseDiffSentinel } from "@opencode-ai/ui/amicode-receipt"
 import { editRowDiff, editRowFilePath, editRowLabel } from "@opencode-ai/ui/amicode-edit-row"
+import { contextDocket, editDocket, shellDocket, type DocketToken } from "@opencode-ai/ui/amicode-docket"
 import {
   collapseReceiptRuns,
   receiptRunKey,
@@ -1146,6 +1147,63 @@ function contextToolSummary(parts: ToolPart[]) {
   return { read, search, list }
 }
 
+/* The docket (Aaron 2026-09-04): collapsed group rows carry their evidence —
+   file tokens with ±, search patterns with repeat counts, touched dirs —
+   bounded to the pure helpers' max with a `+N more` tail. Tokens render in
+   the row itself; the dropdown below still carries the full per-part detail. */
+function GroupDocket(props: { tokens: DocketToken[]; more: number }) {
+  return (
+    <span data-slot="context-tool-group-docket">
+      <For each={props.tokens}>
+        {(token) => {
+          if (token.kind === "file") {
+            return (
+              <span
+                data-slot="docket-token"
+                data-kind="file"
+                title={token.dir ? `${token.dir}/${token.name}` : token.name}
+              >
+                <FileIcon node={{ path: token.name, type: "file" }} class="docket-file-icon" />
+                <span data-slot="docket-token-name">{token.name}</span>
+                <Show when={token.additions}>
+                  <span data-slot="docket-diff" data-sign="add">
+                    +{token.additions}
+                  </span>
+                </Show>
+                <Show when={token.deletions}>
+                  <span data-slot="docket-diff" data-sign="del">
+                    −{token.deletions}
+                  </span>
+                </Show>
+              </span>
+            )
+          }
+          if (token.kind === "pattern") {
+            return (
+              <span data-slot="docket-token" data-kind="pattern">
+                <span data-slot="docket-token-name">{token.text}</span>
+                <Show when={token.count > 1}>
+                  <span data-slot="docket-count">×{token.count}</span>
+                </Show>
+              </span>
+            )
+          }
+          return (
+            <span data-slot="docket-token" data-kind="dir" title={token.text}>
+              <span data-slot="docket-token-name">{token.text}</span>
+            </span>
+          )
+        }}
+      </For>
+      <Show when={props.more > 0}>
+        <span data-slot="docket-token" data-kind="more">
+          +{props.more}
+        </span>
+      </Show>
+    </span>
+  )
+}
+
 function ExaOutput(props: { output?: string }) {
   const links = createMemo(() => urls(props.output))
 
@@ -1350,6 +1408,7 @@ export function ContextToolGroup(props: {
       !!props.busy || props.parts.some((part) => part.state.status === "pending" || part.state.status === "running"),
   )
   const summary = createMemo(() => contextToolSummary(props.parts))
+  const docket = createMemo(() => contextDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     if (props.open === undefined) setLocalOpen(value)
     props.onOpenChange?.(value)
@@ -1386,29 +1445,36 @@ export function ContextToolGroup(props: {
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              <AnimatedCountList
-                items={[
-                  {
-                    key: "read",
-                    count: summary().read,
-                    one: i18n.t("ui.messagePart.context.read.one"),
-                    other: i18n.t("ui.messagePart.context.read.other"),
-                  },
-                  {
-                    key: "search",
-                    count: summary().search,
-                    one: i18n.t("ui.messagePart.context.search.one"),
-                    other: i18n.t("ui.messagePart.context.search.other"),
-                  },
-                  {
-                    key: "list",
-                    count: summary().list,
-                    one: i18n.t("ui.messagePart.context.list.one"),
-                    other: i18n.t("ui.messagePart.context.list.other"),
-                  },
-                ]}
-                fallback=""
-              />
+              <Show
+                when={docket().tokens.length > 0 || docket().more > 0}
+                fallback={
+                  <AnimatedCountList
+                    items={[
+                      {
+                        key: "read",
+                        count: summary().read,
+                        one: i18n.t("ui.messagePart.context.read.one"),
+                        other: i18n.t("ui.messagePart.context.read.other"),
+                      },
+                      {
+                        key: "search",
+                        count: summary().search,
+                        one: i18n.t("ui.messagePart.context.search.one"),
+                        other: i18n.t("ui.messagePart.context.search.other"),
+                      },
+                      {
+                        key: "list",
+                        count: summary().list,
+                        one: i18n.t("ui.messagePart.context.list.one"),
+                        other: i18n.t("ui.messagePart.context.list.other"),
+                      },
+                    ]}
+                    fallback=""
+                  />
+                }
+              >
+                <GroupDocket tokens={docket().tokens} more={docket().more} />
+              </Show>
             </span>
           </span>
           <Collapsible.Arrow />
@@ -1422,6 +1488,15 @@ export function ContextToolGroup(props: {
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
+              // A read row targets a file — make it openable (Aaron 2026-09-05):
+              // the row's target becomes a button that opens it in the editor.
+              const filePath = createMemo(() => {
+                const part = partAccessor()
+                if (part.tool !== "read") return
+                const input = (part.state.input ?? {}) as Record<string, unknown>
+                const p = typeof input.filePath === "string" ? input.filePath : undefined
+                return p
+              })
               return (
                 <div data-slot="context-tool-group-item">
                   <div data-component="tool-trigger">
@@ -1432,8 +1507,15 @@ export function ContextToolGroup(props: {
                             <span data-slot="basic-tool-tool-title">
                               <span data-pending={running() ? "true" : "false"}>{trigger().title}</span>
                             </span>
-                            <Show when={!running() && trigger().subtitle}>
-                              <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
+                            <Show
+                              when={!running() && filePath()}
+                              fallback={
+                                <Show when={!running() && trigger().subtitle}>
+                                  <span data-slot="basic-tool-tool-subtitle">{trigger().subtitle}</span>
+                                </Show>
+                              }
+                            >
+                              <DocketRowFile path={filePath()!} name={trigger().subtitle} />
                             </Show>
                             <Show when={!running() && trigger().args?.length}>
                               <For each={trigger().args}>
@@ -1455,6 +1537,23 @@ export function ContextToolGroup(props: {
   )
 }
 
+/** A file target inside an expanded dropdown: icon + name, clickable — opens
+ *  in the editor. The full path rides the tooltip; the hover is an underline,
+ *  never a color-only signal. */
+function DocketRowFile(props: { path: string; name?: string }) {
+  return (
+    <button
+      type="button"
+      data-slot="docket-row-file"
+      title={props.path}
+      onClick={() => openFileInEditor(props.path)}
+    >
+      <FileIcon node={{ path: props.path, type: "file" }} class="docket-file-icon" />
+      <span data-slot="docket-token-name">{props.name ?? props.path.split("/").pop()}</span>
+    </button>
+  )
+}
+
 // AMICODE (spec B): consecutive bash commands collapse into one row so a long
 // run of shell calls doesn't dominate the timeline. Mirrors ContextToolGroup's
 // markup (reuses its CSS slots) with a shell label + per-command list. A lone
@@ -1466,6 +1565,7 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
       !!props.busy || props.parts.some((part) => part.state.status === "pending" || part.state.status === "running"),
   )
   const count = createMemo(() => props.parts.length)
+  const tally = createMemo(() => shellDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     setOpen(value)
     props.onSizeChange?.()
@@ -1501,7 +1601,13 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              {count()} {count() === 1 ? "command" : "commands"}
+              {tally().commands} {tally().commands === 1 ? "command" : "commands"}
+              <Show when={tally().failed > 0}>
+                {" "}
+                <span data-slot="docket-failed">
+                  · {tally().failed} {tally().failed === 1 ? "failed" : "failed"}
+                </span>
+              </Show>
             </span>
           </span>
           <Collapsible.Arrow />
@@ -1512,26 +1618,44 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
           <Index each={props.parts}>
             {(partAccessor) => {
               const cmd = createMemo(() => shellCommandText(partAccessor()))
+              const detail = createMemo(() => shellRowDetail(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
               )
               const errored = createMemo(() => partAccessor().state.status === "error")
               return (
-                <div data-slot="context-tool-group-item">
+                <div data-slot="context-tool-group-item" data-cmd-row>
                   <div data-component="tool-trigger">
                     <div data-slot="basic-tool-tool-trigger-content">
                       <div data-slot="basic-tool-tool-info">
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{cmd()}</span>
+                            <span
+                              data-slot="cmd-dot"
+                              data-state={running() ? "running" : errored() ? "error" : "done"}
+                              role="img"
+                              aria-label={running() ? "running" : errored() ? "failed" : "completed"}
+                            />
+                            <span data-slot="basic-tool-tool-title" class="font-mono" title={cmd()}>
+                              <span data-pending={running() ? "true" : "false"}>
+                                <span data-slot="cmd-prompt">$</span> {cmd()}
+                              </span>
                             </span>
-                            <Show when={errored()}>
+                            <Show when={detail().durationMs}>
+                              <span data-slot="cmd-duration">{formatCmdDuration(detail().durationMs!)}</span>
+                            </Show>
+                            <Show when={detail().exit !== undefined}>
+                              <span data-slot="cmd-exit">exit {detail().exit}</span>
+                            </Show>
+                            <Show when={errored() && detail().exit === undefined}>
                               <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
                                 failed
                               </span>
                             </Show>
                           </div>
+                          <Show when={detail().preview}>
+                            <div data-slot="cmd-preview">{detail().preview}</div>
+                          </Show>
                         </div>
                       </div>
                     </div>
@@ -1544,6 +1668,16 @@ export function ShellToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSiz
       </Collapsible.Content>
     </Collapsible>
   )
+}
+
+/** Coarse wall duration for a command row: 0.4s / 12.3s / 1m 03s. */
+function formatCmdDuration(ms: number): string {
+  if (ms < 0) return ""
+  const seconds = ms / 1000
+  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds - minutes * 60)
+  return `${minutes}m ${String(rest).padStart(2, "0")}s`
 }
 
 // AMICODE (spec B shape): consecutive file mutations (edit/write/patch) collapse
@@ -1575,6 +1709,9 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
       .map((part) => editRowDiff(part))
       .filter((diff): diff is { additions: number; deletions: number } => !!diff),
   )
+  // The docket: per-file tokens with their own ±, bounded — the row carries
+  // its evidence, the aggregate pill stays only as the zero-file fallback.
+  const docket = createMemo(() => editDocket(props.parts))
   const handleOpenChange = (value: boolean) => {
     setOpen(value)
     props.onSizeChange?.()
@@ -1605,15 +1742,25 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
               data-slot="context-tool-group-summary"
               class="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap font-normal text-text-base"
             >
-              {count()} {count() === 1 ? "change" : "changes"}
-              <Show when={fileCount() > 0}>
-                {" "}
-                in {fileCount()} {fileCount() === 1 ? "file" : "files"}
+              <Show
+                when={docket().tokens.length > 0 || docket().more > 0}
+                fallback={
+                  <>
+                    {count()} {count() === 1 ? "change" : "changes"}
+                    <Show when={fileCount() > 0}>
+                      {" "}
+                      in {fileCount()} {fileCount() === 1 ? "file" : "files"}
+                    </Show>
+                    <Show when={diffs().length > 0}>
+                      {" "}
+                      <DiffChanges changes={diffs()} />
+                    </Show>
+                  </>
+                }
+              >
+                <GroupDocket tokens={docket().tokens} more={docket().more} />
               </Show>
             </span>
-            <Show when={diffs().length > 0}>
-              <DiffChanges changes={diffs()} />
-            </Show>
           </span>
           <Collapsible.Arrow />
         </div>
@@ -1623,6 +1770,7 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
           <Index each={props.parts}>
             {(partAccessor) => {
               const label = createMemo(() => editRowLabel(partAccessor()))
+              const path = createMemo(() => editRowFilePath(partAccessor()))
               const diff = createMemo(() => editRowDiff(partAccessor()))
               const running = createMemo(
                 () => partAccessor().state.status === "pending" || partAccessor().state.status === "running",
@@ -1635,9 +1783,16 @@ export function EditToolGroup(props: { parts: ToolPart[]; busy?: boolean; onSize
                       <div data-slot="basic-tool-tool-info">
                         <div data-slot="basic-tool-tool-info-structured">
                           <div data-slot="basic-tool-tool-info-main">
-                            <span data-slot="basic-tool-tool-title" class="font-mono">
-                              <span data-pending={running() ? "true" : "false"}>{label()}</span>
-                            </span>
+                            <Show
+                              when={!running() && path()}
+                              fallback={
+                                <span data-slot="basic-tool-tool-title" class="font-mono">
+                                  <span data-pending={running() ? "true" : "false"}>{label()}</span>
+                                </span>
+                              }
+                            >
+                              <DocketRowFile path={path()!} name={label()} />
+                            </Show>
                             <Show when={!running() && diff()}>{(d) => <DiffChanges changes={d()} />}</Show>
                             <Show when={errored()}>
                               <span data-slot="basic-tool-tool-subtitle" style={{ color: "var(--v2-state-fg-danger)" }}>
