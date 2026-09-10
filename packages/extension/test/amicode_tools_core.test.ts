@@ -13,7 +13,7 @@
 // legacy-migration one-shot, and the migration guard skips when
 // $AMICODE_PROBLEMS_DIR is set (temp dir → no machine-state writes).
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -290,5 +290,39 @@ describe("the opencode plugin is a thin adapter over the core", () => {
     const viaCore = await CORE.AMICODE_TOOLS["amicode_veloce"].execute({ action: "status" }, {});
     expect(viaAdapter).toBe(viaCore);
     expect(viaAdapter).toMatch(/No active problem yet/);
+  });
+});
+
+// #995 — the plugin dir's DEPLOYMENT CONTRACT, made mechanical. Trimmed
+// deployments (the hub service bundle) ship ONLY packages/extension/
+// opencode-plugin/, so a STATIC parent-relative import is an undeployable
+// module edge: module init dies at load on those surfaces and EVERY
+// amicode_* tool vanishes (the 2026-09-10 hub regression — the widget
+// twin's static ../src import, silent because the runner captures engine
+// stderr in memory on healthy boots). The contract-legal form for
+// reaching outside the dir is a lazy `await import(...)` inside an
+// execute, fail-soft with an honest refusal (see authorWidgetLazy).
+// The sibling modules calib_chain.ts / regime_priors.ts / rehearsal.ts
+// carry the same clause as comments; this floor is the enforcement.
+describe("plugin deployment contract (#995)", () => {
+  const pluginDir = join(__dirname, "..", "opencode-plugin");
+
+  it("zero static parent-relative imports across the plugin dir", () => {
+    const files = readdirSync(pluginDir).filter((f) => f.endsWith(".ts"));
+    // guard: the scan actually scanned a populated dir
+    expect(files.length).toBeGreaterThan(5);
+    const offenders: string[] = [];
+    for (const f of files) {
+      const lines = readFileSync(join(pluginDir, f), "utf8").split("\n");
+      lines.forEach((line, i) => {
+        if (/^\s*(import|export)\b[^("]*["']\.\.\//.test(line)) {
+          offenders.push(`${f}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(
+      offenders,
+      `static parent-relative imports (use a lazy await import() inside execute instead):\n${offenders.join("\n")}`,
+    ).toEqual([]);
   });
 });

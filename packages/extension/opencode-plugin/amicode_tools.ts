@@ -167,13 +167,33 @@ import {
 // schema itself; the twin follows it by construction + pin.
 import { validateWarrantBounds, boundsRefusal } from "./warrant_bounds";
 
-// Issue #799 — the widget-authoring twin executes against the SAME service
-// helper the core table calls (src/amicode_service/widgets.ts). The plugin
-// transport is retired from the runtime config (#700 A3 — this file is the
-// behavioral reference the parity test pins), so the ../src import rides the
-// vitest graph where the parity test exercises it; the runtime MCP server
-// bundles the core's own identical call.
-import { authorWidget } from "../src/amicode_service/widgets";
+// Issue #799/#995 — the widget-authoring twin executes against the SAME
+// service helper the core table calls (src/amicode_service/widgets.ts).
+// DEPLOYMENT CONTRACT (the clause calib_chain.ts / regime_priors.ts /
+// rehearsal.ts carry too): NEVER a STATIC ../src import — trimmed
+// deployments (the hub service bundle) ship ONLY this plugin dir, and a
+// static ../src import killed module init there, taking EVERY amicode_*
+// tool off hub sessions (2026-09-10, silent: the runner captures engine
+// stderr in memory on healthy boots). The lazy form below keeps module
+// init whole everywhere; where ../src is absent, the ONE widget tool
+// degrades to an honest refusal (the engine's built-in widget tool and
+// the MCP transport carry authoring on those surfaces), and the rest of
+// the pack stays registered. The vitest graph still resolves the helper
+// where it exists (the parity test exercises the full path).
+type AuthorWidgetFn = typeof import("../src/amicode_service/widgets")["authorWidget"];
+let authorWidgetCache: AuthorWidgetFn | null | undefined;
+async function authorWidgetLazy(): Promise<AuthorWidgetFn | null> {
+  if (authorWidgetCache !== undefined) return authorWidgetCache;
+  try {
+    const mod = (await import("../src/amicode_service/widgets")) as {
+      authorWidget: AuthorWidgetFn;
+    };
+    authorWidgetCache = mod.authorWidget;
+  } catch {
+    authorWidgetCache = null; // trimmed deployment — refuse honestly, cache the miss
+  }
+  return authorWidgetCache;
+}
 
 // Load line goes to STDERR, not stdout: `opencode debug config` imports plugin
 // modules before printing the resolved config as JSON on stdout (verified on
@@ -530,6 +550,18 @@ returns an error, fix \`js\`/the fields and call it again.
         description?: string | null;
         js: string;
       }) {
+        // #995: the helper loads lazily (see the contract block above) — on
+        // trimmed deployments it is absent and THIS tool alone refuses
+        // honestly; nothing is written. The engine's built-in widget tool
+        // carries authoring on those surfaces.
+        const authorWidget = await authorWidgetLazy();
+        if (!authorWidget) {
+          return (
+            "Widget tool unavailable on this surface: the widget-authoring service helper " +
+            "does not ship with this plugin deployment, so nothing was written. Widget " +
+            "authoring is served by the engine's built-in amicode_author_widget tool here."
+          );
+        }
         // Same helper, same never-reject discipline: a bad field returns
         // {ok:false} with a precise error — refuse honestly, write nothing.
         const r = authorWidget({
