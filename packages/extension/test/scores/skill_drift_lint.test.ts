@@ -72,6 +72,26 @@ describe("extractClaims", () => {
     );
   });
 
+  it("using-context false positive (#1002): fence scope comes from the using/import statement only, never from a trailing comment (the hardware-loop shape)", () => {
+    // the live regression: `using Strumento  # reexports Intonato (Piccolo,
+    // NamedTrajectories, …)` scoped every claim in the fence to
+    // NamedTrajectories — a word inside the comment
+    const md = [
+      "```julia",
+      "using Strumento   # reexports Intonato (Piccolo, NamedTrajectories, …)",
+      "soc = MockSoc(sys)",
+      "backend = StrumentoBackend(soc)",
+      "```",
+    ].join("\n");
+    const claims = extractClaims(md);
+    expect(claims.find((c) => c.text === "MockSoc")).toMatchObject({ packages: ["Strumento"] });
+    expect(claims.find((c) => c.text === "StrumentoBackend")).toMatchObject({ packages: ["Strumento"] });
+    // no word that appears only inside the comment ever scopes a claim
+    expect(claims.filter((c) => c.packages.includes("NamedTrajectories"))).toEqual([]);
+    expect(claims.filter((c) => c.packages.includes("Piccolo"))).toEqual([]);
+    expect(claims.filter((c) => c.packages.includes("reexports"))).toEqual([]);
+  });
+
   it("extracts explicit `using Pkg: name` imports as symbol claims scoped to that package", () => {
     const md = "```julia\nusing FixturePkg: Widget, make_widget\nw = Widget(1)\n```\n";
     const claims = extractClaims(md);
@@ -194,6 +214,34 @@ describe("checkClaims", () => {
     expect(r.evidence).toMatch(/extra\.jl/);
   });
 
+  it("bang-boundary false positive (#1002): a non-exported `!`-function present in a package's src VERIFIES via the source scan, not DRIFTED", () => {
+    // the actual evidence class: `\bfoo!\b` cannot match `reset_widget!(w)` or
+    // `export foo!` — only the pathological `foo!x` — so every non-exported
+    // bang function was a false DRIFTED
+    const [r] = checkClaims([{ kind: "symbol", text: "reset_widget!", packages: ["FixturePkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/extra\.jl/);
+  });
+
+  it("bang-boundary false positive (#1002): an exported bang function still VERIFIES via the export scan", () => {
+    // `export foo!` positions were never broken (the export parse takes whole
+    // names) — pins that the boundary fix does not disturb the export lane
+    const [r] = checkClaims([{ kind: "symbol", text: "helper_fn!", packages: ["OtherPkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/exported by OtherPkg\.jl/);
+  });
+
+  it("ext-scan gap (#1002): a symbol defined only under a package's ext/ VERIFIES — extensions are public API", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "ExtOnlyWidget", packages: ["OtherPkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/ext\/OtherPkgMockExt\.jl/);
+  });
+
+  it("ext-scan gap (#1002): test/ stays out of the scan — a symbol defined only under test/ remains DRIFTED (signal, per the precision doctrine)", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "TestOnlyWidget", packages: ["OtherPkg"], line: 1, source: "backtick" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("DRIFTED");
+  });
+
   it("DRIFTED for a symbol absent from its scoped package", () => {
     const [r] = checkClaims([{ kind: "symbol", text: "PhantomWidget", packages: ["FixturePkg"], line: 7, source: "julia-fence" }], [FIXTURE_PACKAGES]);
     expect(r.verdict).toBe("DRIFTED");
@@ -293,6 +341,81 @@ describe("checkClaims", () => {
       // comment text is never a name: 'trailing' occurs only in the comment
       const [junk] = checkClaims([mk("trailing")], [base]);
       expect(junk.evidence).not.toMatch(/exported by/); // source-scan hit at most, never an export
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reexport-chain false positive (#1002): a symbol defined in OriginPkg and reexported by ChainPkg VERIFIES when the claim's scope is ChainPkg", () => {
+    const [r] = checkClaims([{ kind: "symbol", text: "chain_origin_widget", packages: ["ChainPkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/OriginPkg\.jl/);
+    expect(r.evidence).toMatch(/chain/i); // the evidence names the followed chain
+  });
+
+  it("reexport-chain false positive (#1002): the reversed seam — a definer that `using`s the scope package resolves too (the Strumento/Intonato inversion)", () => {
+    // the live shape: the reexport DIRECTION flipped between package releases
+    // (Intonato reexports Strumento now, not vice versa) — the chain walk is
+    // undirected within the discovered set, so the claim still verifies
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-rev-"));
+    try {
+      fs.mkdirSync(path.join(base, "ScopePkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "ScopePkg.jl", "src", "ScopePkg.jl"), "module ScopePkg\nend\n");
+      fs.mkdirSync(path.join(base, "DefinerPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "DefinerPkg.jl", "src", "DefinerPkg.jl"),
+        ["module DefinerPkg", "using ScopePkg", "export made_in_definer", "made_in_definer() = 1", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "made_in_definer", packages: ["ScopePkg"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/DefinerPkg\.jl/);
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reexport-chain false positive (#1002): the chain is transitive within the discovered set and cycles terminate", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-cycle-"));
+    try {
+      // A -> B -> C, and C -> A (the cycle): a walk without a visited set
+      // would loop forever; a claim scoped to A must still find C's symbol
+      fs.mkdirSync(path.join(base, "Alpha.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "Alpha.jl", "src", "Alpha.jl"), "module Alpha\nusing Beta\nend\n");
+      fs.mkdirSync(path.join(base, "Beta.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "Beta.jl", "src", "Beta.jl"), "module Beta\nusing Gamma\nend\n");
+      fs.mkdirSync(path.join(base, "Gamma.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "Gamma.jl", "src", "Gamma.jl"),
+        ["module Gamma", "using Alpha", "export deep_symbol", "deep_symbol() = 3", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "deep_symbol", packages: ["Alpha"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/Gamma\.jl/);
+      // an undiscovered using (Delta) adds nothing and never degrades the verdict
+      fs.mkdirSync(path.join(base, "Alpha.jl", "src", "nested"), { recursive: true });
+      fs.appendFileSync(path.join(base, "Alpha.jl", "src", "nested", "extra.jl"), "using Delta\n");
+      const [absent] = checkClaims([{ kind: "symbol", text: "nowhere_symbol", packages: ["Alpha"], line: 1, source: "julia-fence" }], [base]);
+      expect(absent.verdict).toBe("DRIFTED");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("reexport-chain false positive (#1002): the closure is bounded — a symbol in an UNRELATED discovered package still DRIFTS", () => {
+    // the chain opens the using/reexport family, not the whole package set
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-chain-bounded-"));
+    try {
+      fs.mkdirSync(path.join(base, "InPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "InPkg.jl", "src", "InPkg.jl"), "module InPkg\nusing OutPkg\nend\n");
+      fs.mkdirSync(path.join(base, "OutPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(path.join(base, "OutPkg.jl", "src", "OutPkg.jl"), "module OutPkg\nend\n");
+      fs.mkdirSync(path.join(base, "UnrelatedPkg.jl", "src"), { recursive: true });
+      fs.writeFileSync(
+        path.join(base, "UnrelatedPkg.jl", "src", "UnrelatedPkg.jl"),
+        ["module UnrelatedPkg", "export stranger_symbol", "stranger_symbol() = 0", "end"].join("\n"),
+      );
+      const [r] = checkClaims([{ kind: "symbol", text: "stranger_symbol", packages: ["InPkg"], line: 1, source: "julia-fence" }], [base]);
+      expect(r.verdict).toBe("DRIFTED");
     } finally {
       fs.rmSync(base, { recursive: true, force: true });
     }
@@ -499,11 +622,12 @@ describe("lintSkillsDir", () => {
 // ---------------------------------------------------------------------------
 
 describe("CLI helpers", () => {
-  it("parseLintArgs: defaults (json report, no package roots, structural checks on)", () => {
+  it("parseLintArgs: defaults (json report, no package roots, no search roots, structural checks on)", () => {
     const parsed = parseLintArgs([], { defaultSkillsDir: "/tmp/skills" });
     expect(parsed).toEqual({
       skillsDir: "/tmp/skills",
       packageRoots: [],
+      searchRoots: [],
       structuralOnly: false,
       minSkills: 0,
       reportFormat: "json",
@@ -519,11 +643,25 @@ describe("CLI helpers", () => {
     expect(parsed).toEqual({
       skillsDir: "/s",
       packageRoots: ["/a", "/b", "/c"],
+      searchRoots: [],
       structuralOnly: true,
       minSkills: 0,
       reportFormat: "text",
       outFile: "r.json",
     });
+  });
+
+  it("parseLintArgs: --search-roots (#1002) — variadic AND repeatable, the --packages shape (comma-separated ok)", () => {
+    const parsed = parseLintArgs(
+      ["--skills", "/s", "--search-roots", "/r1", "/r2", "--search-roots", "/r3,/r4", "--packages", "/p"],
+      { defaultSkillsDir: "/tmp/skills" },
+    );
+    expect(parsed).toMatchObject({ searchRoots: ["/r1", "/r2", "/r3", "/r4"], packageRoots: ["/p"] });
+    // variadic consumption stops at the next flag; a missing value is a usage error
+    expect(parseLintArgs(["--search-roots"], { defaultSkillsDir: "/s" })).toHaveProperty("error");
+    // empty comma entries are dropped, like --packages
+    const sparse = parseLintArgs(["--search-roots", " /r1 , ,/r2 "], { defaultSkillsDir: "/s" });
+    expect(sparse).toMatchObject({ searchRoots: ["/r1", "/r2"] });
   });
 
   it("parseLintArgs: --min-skills floor (integer, default 0 = no floor; rejects missing/non-integer/negative)", () => {
@@ -605,6 +743,35 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
     expect(r.stderr).toMatch(/structural/i);
   });
 
+  it("--search-roots (#1002) pass through to claim resolution: a path claim outside the package roots VERIFIES only when its root is supplied", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-cli-roots-"));
+    try {
+      const root = path.join(base, "extra-root");
+      fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+      fs.writeFileSync(path.join(root, "docs", "policy.md"), "policy\n");
+      const skillsDir = path.join(base, "skills");
+      fs.mkdirSync(path.join(skillsDir, "cites-external"), { recursive: true });
+      fs.writeFileSync(
+        path.join(skillsDir, "cites-external", "SKILL.md"),
+        "---\nname: cites-external\ndescription: cites a path under an extra root\n---\n\nThe policy lives in `docs/policy.md`.\n",
+      );
+      const claimOf = (stdout: string) =>
+        JSON.parse(stdout).skills[0].claims.find((c: { claim: { text: string } }) => c.claim.text === "docs/policy.md");
+      // without the root: the claim resolves nowhere under the skill dir or the fixture packages
+      const r1 = spawnSync(process.execPath, [CLI, "--skills", skillsDir, "--packages", FIXTURE_PACKAGES], { encoding: "utf8", cwd: EXT_ROOT });
+      expect(r1.status).toBe(0);
+      expect(claimOf(r1.stdout).verdict).toBe("DRIFTED");
+      // with --search-roots: VERIFIED, and the evidence names the search root
+      const r2 = spawnSync(process.execPath, [CLI, "--skills", skillsDir, "--packages", FIXTURE_PACKAGES, "--search-roots", root], { encoding: "utf8", cwd: EXT_ROOT });
+      expect(r2.status).toBe(0);
+      const claim = claimOf(r2.stdout);
+      expect(claim.verdict).toBe("VERIFIED");
+      expect(claim.evidence).toContain("search root");
+    } finally {
+      fs.rmSync(base, { recursive: true, force: true });
+    }
+  });
+
   it("--min-skills floor below the linted count exits 1 with a top-level structural failure", () => {
     const cleanTree = fs.mkdtempSync(path.join(os.tmpdir(), "skill-lint-cli-floor-"));
     fs.cpSync(path.join(FIXTURE_SKILLS, "clean"), path.join(cleanTree, "clean"), { recursive: true });
@@ -669,3 +836,55 @@ describe("real public library (packages/extension/skills)", () => {
 function c_verdictShape(claim: SkillClaim): boolean {
   return typeof claim.text === "string" && claim.text.length > 0 && claim.line > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Real-fleet regression evidence (amicode#1002) — the live false-positive
+// shapes the fixtures mirror, pinned against the actual fleet packages.
+// Mount-gated (the realPackagesRoot skip pattern): CI has no private checkouts.
+// ---------------------------------------------------------------------------
+
+describe("real fleet regressions (amicode#1002 lint false positives)", () => {
+  it("bang-boundary: `_wire_learnables!` (non-exported, Intonato src) VERIFIES via the source scan", () => {
+    const root = realPackagesRoot();
+    if (!root) return; // CI / fresh installs — mount-gated skip
+    const [r] = checkClaims(
+      [{ kind: "symbol", text: "_wire_learnables!", packages: ["Intonato"], line: 1, source: "julia-fence" }],
+      [root],
+    );
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/Intonato\.jl\/.*\.jl/);
+  });
+
+  it("ext-scan gap: `PiPulseReference` and `MockQickSocV2` (Strumento.jl/ext only) VERIFY", () => {
+    const root = realPackagesRoot();
+    if (!root) return; // CI / fresh installs — mount-gated skip
+    const mk = (text: string): SkillClaim => ({ kind: "symbol", text, packages: [], line: 1, source: "backtick" });
+    const results = checkClaims([mk("PiPulseReference"), mk("MockQickSocV2")], [root]);
+    for (const r of results) {
+      expect(r.verdict).toBe("VERIFIED");
+      expect(r.evidence).toMatch(/Strumento\.jl\/ext\//);
+    }
+  });
+
+  it("the live hardware-loop regression: all ten fence claims VERIFY against the real fleet packages when scoped to Strumento", () => {
+    const root = realPackagesRoot();
+    const skill = path.join(os.homedir(), ".amico", "vaults", "armonissima", "skills", "hardware-loop", "SKILL.md");
+    if (!root || !fs.existsSync(skill)) return; // CI — mount-gated skip
+    const ten = [
+      "MockSoc", "StrumentoBackend", "QickChannelMap", "QickGenChannel", "StrumentoExperiment",
+      "MeasurementModel", "PulseTuningProblem", "Intonato", "QuantumSystem", "PiPulseReference",
+    ];
+    const claims = extractClaims(fs.readFileSync(skill, "utf8"));
+    // the fence scope is Strumento now (comment-stripped) — pin that first
+    const mockSoc = claims.find((c) => c.text === "MockSoc")!;
+    expect(mockSoc.packages).toEqual(["Strumento"]);
+    const results = checkClaims(claims.filter((c) => c.kind === "symbol" && ten.includes(c.text)), [root]);
+    const verifiedTexts = new Set(results.filter((r) => r.verdict === "VERIFIED").map((r) => r.claim.text));
+    for (const text of ten) {
+      expect(verifiedTexts, `${text} must VERIFY (was a #1002 false positive)`).toContain(text);
+    }
+    for (const r of results) {
+      expect(r.verdict, `${r.claim.text}: ${r.evidence}`).toBe("VERIFIED");
+    }
+  });
+});

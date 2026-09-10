@@ -42,6 +42,15 @@
 #   SKILL_FRESHNESS_VAULT     ~/.amico/vaults/armonissima/skills
 #   SKILL_FRESHNESS_STAGING   ~/.amico/server/opencode-project-staging/opencode-project/skills
 #   SKILL_FRESHNESS_PACKAGES  ~/armonia/repos/packages       Julia checkout root
+#   SKILL_FRESHNESS_SEARCH_ROOTS  "$HOME/armonia/repos $REPO (+ the opencode fork
+#                              root $HOME/armonia/repos/opencode when present)"
+#                              extra search roots for cross-repo path claims
+#                              (amicode#1002: the repos root makes
+#                              `packages/Piccolo.jl`-style claims resolve;
+#                              space-separated; empty entries and absent dirs
+#                              are skipped honestly, never fatal) — forwarded
+#                              to the lint for the FULL-check surfaces only
+#                              (public stays structural-only)
 #   SKILL_FRESHNESS_REPORTS   ~/.amico/ops/skill-freshness/reports
 #   SKILL_FRESHNESS_RECEIPTS  ~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl
 #   SKILL_FRESHNESS_MIN_PUBLIC=20  SKILL_FRESHNESS_MIN_VAULT=50  SKILL_FRESHNESS_MIN_STAGING=45
@@ -80,6 +89,15 @@ MIN_VAULT="${SKILL_FRESHNESS_MIN_VAULT:-50}"
 MIN_STAGING="${SKILL_FRESHNESS_MIN_STAGING:-45}"
 TRACKING_REPO="${SKILL_FRESHNESS_TRACKING_REPO:-harmoniqs/armonissima}"
 ISSUE_TITLE="Skill freshness report (nightly)"
+
+# Extra search roots for cross-repo path claims (amicode#1002). Default: the
+# repos root (makes `packages/Piccolo.jl`-style claims resolve) plus the
+# amicode repo root; the opencode fork root joins when present. Absent dirs
+# are filtered at use time (honest skip, never fatal).
+SEARCH_ROOTS_RAW="${SKILL_FRESHNESS_SEARCH_ROOTS:-$HOME/armonia/repos $AMICODE_REPO}"
+if [ -z "${SKILL_FRESHNESS_SEARCH_ROOTS:-}" ] && [ -d "$HOME/armonia/repos/opencode" ]; then
+  SEARCH_ROOTS_RAW="$SEARCH_ROOTS_RAW $HOME/armonia/repos/opencode"
+fi
 
 # --- pre-flight (a broken runtime is not a skippable surface) ----------------
 if ! command -v node >/dev/null 2>&1; then
@@ -143,6 +161,20 @@ run_surface() {
       echo "$SELF_NAME: NOTE $key surface — packages root not found: $PACKAGES_DIR (claims will be UNVERIFIABLE, not drift)" >&2
     fi
     args+=(--packages "$PACKAGES_DIR")
+    # #1002: forward the extra search roots (space-separated; empty entries
+    # vanish in the word split; absent dirs are skipped honestly, never fatal).
+    local r
+    local -a sroots=()
+    for r in $SEARCH_ROOTS_RAW; do
+      if [ -d "$r" ]; then
+        sroots+=("$r")
+      else
+        echo "$SELF_NAME: SKIP search root not found: $r (claims under it stay DRIFTED, not fatal)" >&2
+      fi
+    done
+    if [ "${#sroots[@]}" -gt 0 ]; then
+      args+=(--search-roots "${sroots[@]}")
+    fi
   else
     args+=(--structural-only)
   fi

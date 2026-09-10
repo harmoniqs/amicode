@@ -36,7 +36,9 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
 
   /** Env wiring every surface at a fixture/temp path — NOTHING here points at
    *  the real vault, staging tree, receipts journal, or network. The vault
-   *  surface defaults to an absent dir (the skipped-surface honesty case). */
+   *  surface defaults to an absent dir (the skipped-surface honesty case).
+   *  #1002: the search roots default to the fixture tree too — hermetic (the
+   *  unset default would leak the host's real ~/armonia/repos into the run). */
   function fixtureEnv(dir: string, overrides: Record<string, string> = {}): Record<string, string> {
     return {
       SKILL_FRESHNESS_LINT: path.join(EXT_ROOT, "scripts", "skill_drift_lint.mts"),
@@ -44,6 +46,7 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
       SKILL_FRESHNESS_VAULT: path.join(dir, "absent-vault-skills"),
       SKILL_FRESHNESS_STAGING: FIXTURE_SKILLS,
       SKILL_FRESHNESS_PACKAGES: FIXTURE_PACKAGES,
+      SKILL_FRESHNESS_SEARCH_ROOTS: FIXTURES,
       SKILL_FRESHNESS_REPORTS: path.join(dir, "reports"),
       SKILL_FRESHNESS_RECEIPTS: path.join(dir, "receipts", "upgrade-receipts.jsonl"),
       SKILL_FRESHNESS_MIN_PUBLIC: "1",
@@ -51,6 +54,22 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
       SKILL_FRESHNESS_MIN_STAGING: "1",
       ...overrides,
     };
+  }
+
+  /** A temp skills tree whose second skill cites a path that exists only
+   *  under a caller-supplied search root — the #1002 forwarding shape. */
+  function crossRepoTree(dir: string): { tree: string; root: string } {
+    const root = path.join(dir, "search-root");
+    fs.mkdirSync(path.join(root, "docs"), { recursive: true });
+    fs.writeFileSync(path.join(root, "docs", "policy.md"), "policy\n");
+    const tree = path.join(dir, "clean-skills");
+    fs.cpSync(path.join(FIXTURE_SKILLS, "clean"), path.join(tree, "clean"), { recursive: true });
+    fs.mkdirSync(path.join(tree, "cites-cross-repo"), { recursive: true });
+    fs.writeFileSync(
+      path.join(tree, "cites-cross-repo", "SKILL.md"),
+      "---\nname: cites-cross-repo\ndescription: cites a path under a supplied search root\n---\n\nThe policy lives in `docs/policy.md`.\n",
+    );
+    return { tree, root };
   }
 
   function runDryRun(env: Record<string, string>) {
@@ -163,6 +182,49 @@ const NODE_STRIPS_TYPES = (process.features as { typescript?: string } | undefin
     const stagingReport = readReport(path.join(dir, "reports"), "staging");
     expect(stagingReport.ok).toBe(true);
     expect(stagingReport.aggregate.unverifiable).toBeGreaterThan(0);
+    expect(fs.existsSync(env.SKILL_FRESHNESS_RECEIPTS)).toBe(false);
+  });
+
+  it("SKILL_FRESHNESS_SEARCH_ROOTS (#1002): full-check surfaces forward the roots — a cross-repo path claim VERIFIES under its supplied root", () => {
+    const dir = tmpRoot();
+    const { tree, root } = crossRepoTree(dir);
+    const env = fixtureEnv(dir, {
+      SKILL_FRESHNESS_PUBLIC: tree, // isolate the search-roots behavior from the mixed tree's structural failures
+      SKILL_FRESHNESS_STAGING: tree,
+      SKILL_FRESHNESS_SEARCH_ROOTS: root,
+    });
+    const r = runDryRun(env);
+
+    expect(r.status).toBe(0); // structure is clean; drift alone never fails
+    const stagingReport = readReport(path.join(dir, "reports"), "staging");
+    const claim = stagingReport.skills
+      .flatMap((s: any) => s.claims)
+      .find((c: any) => c.claim.text === "docs/policy.md");
+    expect(claim.verdict).toBe("VERIFIED");
+    expect(claim.evidence).toContain("search root");
+    expect(r.stderr).not.toMatch(/absent-root/);
+    expect(fs.existsSync(env.SKILL_FRESHNESS_RECEIPTS)).toBe(false);
+  });
+
+  it("SKILL_FRESHNESS_SEARCH_ROOTS (#1002): absent dirs and empty entries are skipped honestly, never fatal — the claim stays DRIFTED without its root", () => {
+    const dir = tmpRoot();
+    const { tree } = crossRepoTree(dir);
+    const env = fixtureEnv(dir, {
+      SKILL_FRESHNESS_PUBLIC: tree, // isolate the search-roots behavior from the mixed tree's structural failures
+      SKILL_FRESHNESS_STAGING: tree,
+      // space-separated with empty entries (extra spaces) and an absent dir
+      SKILL_FRESHNESS_SEARCH_ROOTS: `   ${path.join(dir, "absent-root")}   ${path.join(dir, "also-absent")}  `,
+    });
+    const r = runDryRun(env);
+
+    expect(r.status).toBe(0); // skipped roots degrade honestly, never fatal
+    expect(r.stderr).toMatch(/SKIP search root not found: .*absent-root/);
+    expect(r.stderr).toMatch(/SKIP search root not found: .*also-absent/);
+    const stagingReport = readReport(path.join(dir, "reports"), "staging");
+    const claim = stagingReport.skills
+      .flatMap((s: any) => s.claims)
+      .find((c: any) => c.claim.text === "docs/policy.md");
+    expect(claim.verdict).toBe("DRIFTED"); // without its root the claim cannot resolve
     expect(fs.existsSync(env.SKILL_FRESHNESS_RECEIPTS)).toBe(false);
   });
 
