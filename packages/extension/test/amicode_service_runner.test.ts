@@ -167,12 +167,16 @@ describe("amicode service runner (fail-loud, headless — no engine needed)", ()
   it("an engine that never becomes healthy fails with the named reason AND kills the spawned child", async () => {
     // A bin that hangs forever — the health wait must time out, name the
     // reason, and tear the child down (never a silent half-boot left behind).
+    // The shelf is a stub (CI has no built dist): this test isolates the
+    // engine-health path, so it must not depend on the shelf check passing.
+    const stubShelf = mkdtempSync(join(tmpdir(), "amicode-runner-stub-shelf-"));
+    writeFileSync(join(stubShelf, "index.html"), "<!doctype html><title>stub shelf</title>");
     const fakeBin = join(mkdtempSync(join(tmpdir(), "amicode-runner-fake-engine-")), "fake-engine");
     writeFileSync(fakeBin, "#!/bin/sh\nsleep 1000\n");
     chmodSync(fakeBin, 0o755);
     const err = await bootAmicodeServiceRunner({
       engineBin: fakeBin,
-      appDistRoot: APP_DIST,
+      appDistRoot: stubShelf,
       healthTimeoutMs: 1_500,
       servicePort: 0,
       enginePort: 0,
