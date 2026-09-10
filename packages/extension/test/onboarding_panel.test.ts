@@ -22,6 +22,7 @@ import {
   HARMONIQS_MAX_OUTPUT_TOKENS,
   type OnboardingConfig,
   writeOnboardingConfig,
+  reconcileHarmoniqsProviderConfig,
   writeAuthApiKey,
   testConnection,
   probeModels,
@@ -576,6 +577,127 @@ describe("Harmoniqs AI — branded provider preset", () => {
 
       const mode = fs.statSync(authPath).mode & 0o777;
       expect(mode).toBe(0o600);
+    });
+  });
+
+  describe("reconcileHarmoniqsProviderConfig — heals a stale entry from an older extension version", () => {
+    let tmpDir: string;
+    let configPath: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harmoniqs-reconcile-"));
+      configPath = path.join(tmpDir, "opencode.json");
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("adds the missing limit.output to a pre-fix entry (the exact shape that shipped in alpha.1/alpha.2)", () => {
+      const staleConfig = {
+        $schema: "https://opencode.ai/config.json",
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Harmoniqs AI",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: {
+              [HARMONIQS_MODEL_ID]: { name: "Harmoniqs Auto", tool_call: false },
+            },
+          },
+        },
+        model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
+      // Everything else survives untouched.
+      expect(healed.provider[HARMONIQS_PROVIDER_ID].options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(healed.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
+    });
+
+    it("heals a hypothetical second model id too — not hardcoded to harmoniqs-auto", () => {
+      const staleConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: { "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: true } },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const model = healed.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"];
+      expect(model.tool_call).toBe(false);
+      expect(model.limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+    });
+
+    it("is a no-op — doesn't touch the file at all — when the entry is already correct", () => {
+      const correctConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: {
+              [HARMONIQS_MODEL_ID]: {
+                name: "Harmoniqs Auto",
+                tool_call: false,
+                limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
+              },
+            },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(correctConfig, null, 2));
+      const mtimeBefore = fs.statSync(configPath).mtimeMs;
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      expect(fs.statSync(configPath).mtimeMs).toBe(mtimeBefore);
+    });
+
+    it("no-ops cheaply when there is no config file at all", () => {
+      expect(() => reconcileHarmoniqsProviderConfig(path.join(tmpDir, "does-not-exist.json"))).not.toThrow();
+    });
+
+    it("no-ops when the config file has no provider.harmoniqs entry (nothing to heal)", () => {
+      fs.writeFileSync(configPath, JSON.stringify({ provider: { anthropic: {} } }, null, 2));
+      expect(() => reconcileHarmoniqsProviderConfig(configPath)).not.toThrow();
+      const untouched = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(untouched.provider.harmoniqs).toBeUndefined();
+    });
+
+    it("also heals via writeOnboardingConfig's own merge path (writing a DIFFERENT provider while a stale harmoniqs entry sits untouched)", () => {
+      const staleConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: { [HARMONIQS_MODEL_ID]: { name: "Harmoniqs Auto", tool_call: false } },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      writeOnboardingConfig(
+        { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-test-key-123" },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
+      expect(written.provider.anthropic).toBeDefined();
     });
   });
 
