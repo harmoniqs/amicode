@@ -340,6 +340,12 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           return;
         }
         writeOnboardingConfig({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey });
+        // The running server cached its config/provider list before this
+        // write landed (Config.invalidate() only fires from its own
+        // /config/update endpoint) — restart it so Provider.list() picks up
+        // the new credentials, same as the Developer Tools / data-storage
+        // config writes below.
+        void vscode.commands.executeCommand("amicode.restartServer");
         io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: true });
       })
       .catch((error) => io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: error instanceof Error ? error.message : "Could not connect Harmoniqs AI" }));

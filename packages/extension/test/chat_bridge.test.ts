@@ -1,9 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { handleAmicodeBridgeMessage, extractReportBugModel, resolveDbBackupDir, type BridgeIo } from "../src/chat_bridge";
+
+// connect-harmoniqs-provider's success path calls out to onboarding_panel's
+// testConnection (a real network call) and writeOnboardingConfig (real fs
+// writes) — stub both so the success-path test below exercises only the
+// bridge's own restart-on-success wiring, not the network or the disk.
+vi.mock("../src/onboarding_panel", async () => {
+  const actual = await vi.importActual<typeof import("../src/onboarding_panel")>("../src/onboarding_panel");
+  return {
+    ...actual,
+    testConnection: vi.fn(async () => ({ ok: true as const })),
+    writeOnboardingConfig: vi.fn(),
+  };
+});
 
 // ============================================================================
 // The shared iframe⇄extension bridge: strict allowlists, https-only externals,
@@ -188,6 +201,19 @@ describe("amicode bridge — connect-harmoniqs-provider", () => {
     expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: false, error: "Enter a valid API key" });
     const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
     expect(ran).not.toContain("amicode.connectHarmoniqsProvider");
+  });
+
+  it("restarts the server on success so the running Provider.list() picks up the new credentials", async () => {
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1", apiKey: "hqa_test_key" }, host)).toBe(true);
+    await flush();
+    const result = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-result") as any;
+    expect(result).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: "tab-1", ok: true });
+    // The server caches its config/provider list until Config.invalidate()
+    // fires — restarting it is what makes the new Harmoniqs credentials
+    // (and thus the model) visible to Manage Models without a manual reload.
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.restartServer");
   });
 });
 
