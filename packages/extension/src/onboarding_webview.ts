@@ -18,12 +18,18 @@ declare global {
   interface Window {
     __PROVIDERS__: Record<string, { id: string; name: string }[]>;
     __PROVIDER_NAMES__: Record<string, string>;
+    /** Set when this panel was opened via the focused single-provider connect
+     *  entry point (the generic Connect Provider dialog's branded Harmoniqs
+     *  row) — skips the welcome animation and restricts the form to this one
+     *  provider instead of the full Stage-0 picker. */
+    __FOCUS_PROVIDER__: string | null;
   }
 }
 
 const vscodeApi = acquireVsCodeApi();
 const providers = window.__PROVIDERS__;
 const providerNames = window.__PROVIDER_NAMES__ ?? {};
+const focusProvider = window.__FOCUS_PROVIDER__ ?? undefined;
 
 // ─── Animation ───────────────────────────────────────────────────────────────
 
@@ -383,7 +389,11 @@ function revealForm(): void {
 }
 
 function buildForm(): void {
-  const providerOptions = Object.keys(providers)
+  // Focused connect restricts the picker to exactly one provider — the
+  // branded row the user clicked in the app's Connect Provider dialog asked
+  // for, not the full Stage-0 lineup.
+  const providerIds = focusProvider ? [focusProvider] : Object.keys(providers);
+  const providerOptions = providerIds
     .map((p) => `<option value="${p}">${providerNames[p] ?? p}</option>`)
     .join("");
 
@@ -394,14 +404,16 @@ function buildForm(): void {
   formEl.innerHTML = `
     <div class="onboarding-form" style="max-width: 480px; margin: 0 auto; padding: 24px;
       display: flex; flex-direction: column; justify-content: center; min-height: 100vh;">
-      <h2 style="margin: 0 0 8px; font-size: 1.35em; font-weight: 650; letter-spacing: -0.01em;">Configure your model</h2>
+      <h2 style="margin: 0 0 8px; font-size: 1.35em; font-weight: 650; letter-spacing: -0.01em;">${
+        focusProvider ? `Connect ${providerNames[focusProvider] ?? focusProvider}` : "Configure your model"
+      }</h2>
       <p style="color: var(--vscode-descriptionForeground); margin-bottom: 24px;">
-        Choose a provider and enter your API key to get started.
+        ${focusProvider ? "Enter your API key to connect." : "Choose a provider and enter your API key to get started."}
       </p>
 
       <label for="provider-select" style="display:block; margin-bottom: 4px; font-size: 0.92em; font-weight: 500;">Provider</label>
       <select id="provider-select" style="${inputStyle}">
-        <option value="">Select a provider…</option>
+        ${focusProvider ? "" : `<option value="">Select a provider…</option>`}
         ${providerOptions}
       </select>
 
@@ -443,13 +455,17 @@ function buildForm(): void {
 
       <div id="status-msg" style="margin-top: 12px; min-height: 20px; font-size: 13px;"></div>
 
-      <div id="import-section" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--vscode-input-border, #3c3c3c); text-align: center;">
+      ${
+        focusProvider
+          ? ""
+          : `<div id="import-section" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--vscode-input-border, #3c3c3c); text-align: center;">
         <a id="import-link" href="#" style="font-size: 13px; color: var(--color-accent-ink, var(--vscode-textLink-foreground)); text-decoration: none;">
           Import existing credentials
         </a>
         <div id="import-status" style="display: none; margin-top: 12px;"></div>
         <div id="import-preview" style="display: none; margin-top: 16px; text-align: left;"></div>
-      </div>
+      </div>`
+      }
     </div>
   `;
 
@@ -562,6 +578,17 @@ function buildForm(): void {
     testBtn.textContent = getButtonLabel(providerSelect.value);
   });
 
+  // Focused connect — the select has exactly one option (already selected
+  // by the browser), but nothing has fired its "change" listeners yet, so
+  // the hint/API-key row/model dropdown would stay in their empty initial
+  // state. Dispatch the SAME event a manual pick would fire, then lock the
+  // control — there's nothing else to switch to.
+  if (focusProvider) {
+    providerSelect.value = focusProvider;
+    providerSelect.dispatchEvent(new Event("change"));
+    providerSelect.disabled = true;
+  }
+
   testBtn.addEventListener("click", () => {
     if (testBtn.disabled) return;
     const selected = providerSelect.value;
@@ -632,6 +659,9 @@ function buildForm(): void {
   });
 
   // ─── Import existing credentials UI ──────────────────────────────────────
+  // Not rendered when focused on a single provider (see the import-section
+  // ternary above) — nothing here to wire up.
+  if (focusProvider) return;
 
   const importLink = document.getElementById("import-link") as HTMLAnchorElement;
   const importStatus = document.getElementById("import-status") as HTMLDivElement;
@@ -995,4 +1025,11 @@ if (cancelBtn) {
   });
 }
 
-playWelcomeAnimation();
+// Focused connect skips the brand animation entirely — the user just clicked
+// a specific "Connect X" entry point elsewhere in the product; the welcome
+// beat belongs to first-run Stage-0 only.
+if (focusProvider) {
+  revealForm();
+} else {
+  playWelcomeAnimation();
+}
