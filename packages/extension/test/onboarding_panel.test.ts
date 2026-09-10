@@ -12,6 +12,7 @@ import * as vscode from "vscode";
 
 import {
   registerOnboardingPanel,
+  registerHarmoniqsConnectCommand,
   PROVIDER_MODELS,
   PROVIDER_DISPLAY_NAMES,
   HARMONIQS_PROVIDER_ID,
@@ -24,6 +25,7 @@ import {
   testConnection,
   probeModels,
   onOnboardingComplete,
+  onOnboardingCancelled,
   dismissOnboardingPanel,
   getOnboardingPanel,
   releaseOnboardingPanel,
@@ -1032,6 +1034,105 @@ describe("Webview HTML generation (AC2, AC9)", () => {
 
     expect(panel.webview.html).toContain("Content-Security-Policy");
     expect(panel.webview.html).toContain("nonce-");
+    spy.mockRestore();
+  });
+});
+
+describe("registerHarmoniqsConnectCommand — focused connect entry point (Connect Provider dialog handoff)", () => {
+  let ctx: { subscriptions: unknown[]; extensionUri: unknown };
+
+  beforeEach(() => {
+    _resetForTesting();
+    ctx = { subscriptions: [], extensionUri: vscode.Uri.file("/ext") } as never;
+    registerOnboardingPanel(ctx as never);
+    registerHarmoniqsConnectCommand(ctx as never);
+  });
+
+  it("opens the SAME onboarding webview panel type as the Stage-0 command", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      "amicode.onboarding",
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ enableScripts: true }),
+    );
+    spy.mockRestore();
+  });
+
+  it("is a singleton with amicode.onboarding.open — reveals the existing panel rather than opening a second one", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const panel = spy.mock.results[0].value as { revealCount: number };
+    expect(panel.revealCount).toBe(1);
+    spy.mockRestore();
+  });
+
+  it("injects window.__FOCUS_PROVIDER__ = 'harmoniqs', restricting the picker", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const panel = spy.mock.results[0].value as { webview: { html: string } };
+    expect(panel.webview.html).toContain("__FOCUS_PROVIDER__");
+    expect(panel.webview.html).toContain(JSON.stringify(HARMONIQS_PROVIDER_ID));
+    spy.mockRestore();
+  });
+
+  it("amicode.onboarding.open still gets a null focusProvider (Stage-0 behavior unchanged)", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as { webview: { html: string } };
+    expect(panel.webview.html).toContain("window.__FOCUS_PROVIDER__ = null");
+    spy.mockRestore();
+  });
+
+  // bootstrap:false's one behavioral difference is "no restart, no greeting,
+  // no fallback chat-open" — config-success's write path defaults to the
+  // real ~/.config/opencode path with no configPath override, and os/fs
+  // builtins aren't spyable in this vitest setup for that path, so "cancel"
+  // is the safe proxy: it hits the identical bootstrap branch with zero
+  // filesystem writes (see `cancel` in openOnboardingPanel).
+  it("bootstrap:false — cancel does NOT fall back to amicode.openChat (chat panel is already live)", async () => {
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const panel = spy.mock.results[0].value as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+      disposed?: boolean;
+    };
+
+    let cancelled = false;
+    const disposable = onOnboardingCancelled(() => {
+      cancelled = true;
+    });
+
+    panel.webview._simulateMessage({ type: "cancel" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(cancelled).toBe(true); // fireOnboardingCancelled still fires either way
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    expect(executed).not.toContain("amicode.openChat"); // the focused-connect difference
+
+    disposable.dispose();
+    spy.mockRestore();
+  });
+
+  it("bootstrap:true (Stage-0 default) — cancel DOES fall back to amicode.openChat, unchanged", async () => {
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+    };
+
+    panel.webview._simulateMessage({ type: "cancel" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    expect(executed).toContain("amicode.openChat");
+
     spy.mockRestore();
   });
 });

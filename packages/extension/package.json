@@ -71,6 +71,10 @@
         "title": "Amicode: Open Onboarding"
       },
       {
+        "command": "amicode.connectHarmoniqsProvider",
+        "title": "Amicode: Connect Harmoniqs AI Provider"
+      },
+      {
         "command": "amicode.openChat",
         "title": "Amicode: Open Chat",
         "icon": {

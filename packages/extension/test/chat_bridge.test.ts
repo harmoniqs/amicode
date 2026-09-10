@@ -179,6 +179,18 @@ describe("amicode bridge — clipboard", () => {
   });
 });
 
+describe("amicode bridge — connect-harmoniqs-provider (Connect Provider dialog handoff)", () => {
+  it("acks immediately and dispatches amicode.connectHarmoniqsProvider", async () => {
+    const host = io();
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "connect-harmoniqs-provider", tab: "tab-1" }, host)).toBe(true);
+    await flush();
+    const ack = host.posted.find((m: any) => m.kind === "connect-harmoniqs-provider-ack") as any;
+    expect(ack).toEqual({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: "tab-1" });
+    const ran = (vscode.commands as unknown as { executed: string[] }).executed ?? [];
+    expect(ran).toContain("amicode.connectHarmoniqsProvider");
+  });
+});
+
 describe("amicode bridge — commands & settings", () => {
   it("runs allowlisted commands only", async () => {
     const host = io();

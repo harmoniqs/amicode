@@ -324,6 +324,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Connect Provider dialog → "Harmoniqs AI" branded entry: the app's
+  // generic picker never renders the generic key-entry flow for Harmoniqs —
+  // it hands off here instead, because Harmoniqs is a branded preset (fixed
+  // base URL/model, key routed straight to the auth store) the generic flow
+  // cannot express without duplicating onboarding_panel.ts's logic. Ack
+  // immediately so the dialog can close; the handoff panel it opens
+  // (amicode.connectHarmoniqsProvider, registered in onboarding_panel.ts)
+  // runs independently — see openOnboardingPanel's `bootstrap: false`.
+  if (msg.kind === "connect-harmoniqs-provider") {
+    io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-ack", tab: msg.tab });
+    void vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    return true;
+  }
+
   // Developer Tools settings: validate paths, swap the opencode binary +
   // restart its server as appropriate. The app posts on blur and on toggle.
   // Committing the amicode path is validate-only — no build, no reload; see

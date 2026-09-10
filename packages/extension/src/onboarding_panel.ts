@@ -755,198 +755,271 @@ ${fontFace}
 </body></html>`;
 }
 
+/** Options for {@link openOnboardingPanel}. */
+export interface OpenOnboardingPanelOptions {
+  /** Restrict the provider picker to this one provider and skip the welcome
+   *  animation — the focused connect entry point: the generic Connect
+   *  Provider dialog's branded Harmoniqs row hands off here instead of
+   *  duplicating the connect UI. `undefined` (the Stage-0 wizard's own
+   *  `amicode.onboarding.open` command) shows the full picker, unchanged. */
+  focusProvider?: string;
+  /** Whether a successful connection runs the Stage-0 bootstrap side effects
+   *  (queue the post-onboarding greeting, restart the opencode server so a
+   *  not-yet-running server picks up the very first provider). Defaults to
+   *  true, so `amicode.onboarding.open`'s existing behavior is unchanged.
+   *  The focused-connect flow passes false: the chat panel and server are
+   *  already live when this fires, so there's no "get chat ready" splash to
+   *  show and no reason to bounce the running server. */
+  bootstrap?: boolean;
+}
+
+/** Open (or reveal) the onboarding webview panel. Extracted from the
+ *  `amicode.onboarding.open` command body so the focused single-provider
+ *  connect flow ({@link registerHarmoniqsConnectCommand}) can reuse the
+ *  exact same webview, message handling, and config-writing logic instead
+ *  of a second UI surface. */
+export function openOnboardingPanel(
+  ctx: vscode.ExtensionContext,
+  options: OpenOnboardingPanelOptions = {},
+): vscode.WebviewPanel {
+  const { focusProvider, bootstrap = true } = options;
+
+  if (currentPanel) {
+    currentPanel.reveal(vscode.ViewColumn.One);
+    return currentPanel;
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    "amicode.onboarding",
+    "Welcome to Amicode",
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(ctx.extensionUri, "dist"),
+        vscode.Uri.joinPath(ctx.extensionUri, "media"),
+      ],
+    },
+  );
+  currentPanel = panel;
+
+  // Handle messages from the webview
+  let heldCredentials: DetectedCredential[] = [];
+  const testResults = new Map<string, boolean>(); // provider -> passed
+  const validatedModels = new Map<string, string>(); // provider -> validated model ID
+  let scanAborted = false;
+
+  panel.webview.onDidReceiveMessage(
+    async (msg: { type: string; payload?: unknown }) => {
+      if (msg.type === "test-connection") {
+        const payload = msg.payload as OnboardingConfig;
+        const result = await testConnection(payload);
+        panel.webview.postMessage({ type: "test-result", payload: result });
+      } else if (msg.type === "config-success") {
+        const payload = msg.payload as OnboardingConfig;
+        writeOnboardingConfig(payload);
+        // Clear stale model pin — the old provider may no longer be connected.
+        // The server will resolve the new provider's default on its own.
+        void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
+        if (!bootstrap) {
+          // Focused connect: the chat panel + server are already live — just
+          // close the handoff panel. No restart, no greeting, no splash;
+          // those are Stage-0-only (see OpenOnboardingPanelOptions above).
+          panel.dispose();
+          fireOnboardingComplete();
+          return;
+        }
+        // Swap the panel HTML directly to the splash (same as confirm-import)
+        panel.webview.html = splashHtml(
+          panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+          panel.webview.cspSource,
+        );
+        // Signal that the next chat panel open should auto-send the onboarding greeting
+        ChatPanel.setPendingOnboardingGreeting(true);
+        fireOnboardingComplete();
+        // Restart server so it picks up the new provider config.
+        // Chat opens via the onReady-gated listener in extension.ts.
+        void vscode.commands.executeCommand("amicode.restartServer");
+      } else if (msg.type === "cancel") {
+        // User cancelled onboarding — close panel, re-open chat
+        panel.dispose();
+        fireOnboardingCancelled();
+        if (bootstrap) {
+          // Also directly open chat as fallback (in case no listener is wired).
+          // Focused connect: the chat panel this was opened alongside never
+          // went anywhere — nothing to re-open.
+          void vscode.commands.executeCommand("amicode.openChat");
+        }
+      } else if (msg.type === "scan-credentials") {
+        // Auto-import: scan for existing credentials
+        scanAborted = false;
+        heldCredentials = [];
+        panel.webview.postMessage({
+          type: "scan-status",
+          payload: { state: "searching" },
+        });
+
+        try {
+          const scanResult = await scanCredentials(defaultScanOptions());
+          if (scanAborted) return; // Panel was closed mid-scan
+          heldCredentials = scanResult.credentials;
+
+          if (heldCredentials.length === 0) {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "empty" },
+            });
+          } else {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "found", count: heldCredentials.length },
+            });
+            // Send webview-safe results (no key material)
+            panel.webview.postMessage({
+              type: "scan-results",
+              payload: { providers: webviewSafeResults(heldCredentials) },
+            });
+
+            // Run connection tests with model probing in parallel (AC12)
+            // For each provider, probe models in order to find the first accessible one
+            const testPromises = heldCredentials.map(async (cred) => {
+              const validModel = await probeModels(cred.provider, cred.key);
+              const ok = validModel !== undefined;
+              testResults.set(cred.provider, ok);
+              if (validModel) {
+                validatedModels.set(cred.provider, validModel.id);
+              }
+              if (!scanAborted) {
+                panel.webview.postMessage({
+                  type: "test-status-update",
+                  payload: {
+                    provider: cred.provider,
+                    ok,
+                    error: ok ? undefined : "No accessible model found for this provider",
+                    ...(validModel ? { model: validModel.id } : {}),
+                  },
+                });
+              }
+            });
+            // Fire all tests in parallel, don't await sequentially
+            void Promise.allSettled(testPromises);
+          }
+        } catch {
+          if (!scanAborted) {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "failed", error: "Scan failed unexpectedly" },
+            });
+          }
+        }
+      } else if (msg.type === "confirm-import") {
+        // User confirmed the import — write only explicitly selected providers that passed (#455)
+        // Opt-in: if includedProviders is missing or empty, nothing is imported except bedrock infra.
+        const payload = msg.payload as { activeProvider: string; includedProviders?: string[] };
+        const included = payload.includedProviders ? new Set(payload.includedProviders) : new Set<string>();
+        const passedCredentials = heldCredentials.filter(
+          (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
+        );
+        // Use the validated model from probing (if available) instead of the static first entry
+        const modelOverride = validatedModels.get(payload.activeProvider);
+        // Always write batch config — even with zero user providers, bedrock infra is provisioned
+        writeBatchConfig(passedCredentials, payload.activeProvider, undefined, modelOverride);
+        // If user excluded 'opencode', disconnect it from the auth store.
+        // This is the only provider that needs file-level removal (it's a
+        // built-in integration, not in the connections seam).
+        if (!included.has("opencode") && heldCredentials.some((c) => c.provider === "opencode")) {
+          disconnectProviders(["opencode"]);
+        }
+        heldCredentials = [];
+        testResults.clear();
+        validatedModels.clear();
+        // Clear stale model pin — the old provider may no longer be connected.
+        void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
+        // Swap the panel HTML directly to the splash — no webview-side
+        // DOM manipulation, so there's no flash when adopt() fires later
+        // (adopt's overlay uses the exact same SVG + CSS).
+        panel.webview.html = splashHtml(
+          panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+          panel.webview.cspSource,
+        );
+        if (!bootstrap) {
+          // Focused connect: same reasoning as config-success above — no
+          // live server/chat to bootstrap, just close.
+          panel.dispose();
+          fireOnboardingComplete();
+          return;
+        }
+        // Signal that the next chat panel open should auto-send the onboarding greeting
+        ChatPanel.setPendingOnboardingGreeting(true);
+        fireOnboardingComplete();
+        // Restart server so it picks up the new provider config.
+        // Chat opens via the onReady-gated listener in extension.ts.
+        void vscode.commands.executeCommand("amicode.restartServer");
+      } else if (msg.type === "transition-complete") {
+        // The extension signals that the chat panel is ready — dispose the
+        // splash now. This is posted by the extension host after app-ready.
+        panel.dispose();
+      }
+    },
+    null,
+    ctx.subscriptions,
+  );
+
+  // On panel close, abort scan and drop credentials (AC13, AC14)
+  panel.onDidDispose(
+    () => {
+      scanAborted = true;
+      heldCredentials = [];
+      currentPanel = undefined;
+    },
+    null,
+    ctx.subscriptions,
+  );
+
+  // Render the webview HTML
+  const uri = (...p: string[]) =>
+    panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
+  const nonce = Math.random().toString(36).slice(2);
+
+  panel.webview.html = buildWebviewHtml(panel.webview, uri, nonce, focusProvider);
+  return panel;
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
 export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.onboarding.open", () => {
-      if (currentPanel) {
-        currentPanel.reveal(vscode.ViewColumn.One);
-        return;
-      }
-
-      const panel = vscode.window.createWebviewPanel(
-        "amicode.onboarding",
-        "Welcome to Amicode",
-        vscode.ViewColumn.One,
-        {
-          enableScripts: true,
-          localResourceRoots: [
-            vscode.Uri.joinPath(ctx.extensionUri, "dist"),
-            vscode.Uri.joinPath(ctx.extensionUri, "media"),
-          ],
-        },
-      );
-      currentPanel = panel;
-
-      // Handle messages from the webview
-      let heldCredentials: DetectedCredential[] = [];
-      const testResults = new Map<string, boolean>(); // provider -> passed
-      const validatedModels = new Map<string, string>(); // provider -> validated model ID
-      let scanAborted = false;
-
-      panel.webview.onDidReceiveMessage(
-        async (msg: { type: string; payload?: unknown }) => {
-          if (msg.type === "test-connection") {
-            const payload = msg.payload as OnboardingConfig;
-            const result = await testConnection(payload);
-            panel.webview.postMessage({ type: "test-result", payload: result });
-          } else if (msg.type === "config-success") {
-            const payload = msg.payload as OnboardingConfig;
-            writeOnboardingConfig(payload);
-            // Clear stale model pin — the old provider may no longer be connected.
-            // The server will resolve the new provider's default on its own.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash (same as confirm-import)
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
-          } else if (msg.type === "cancel") {
-            // User cancelled onboarding — close panel, re-open chat
-            panel.dispose();
-            fireOnboardingCancelled();
-            // Also directly open chat as fallback (in case no listener is wired)
-            void vscode.commands.executeCommand("amicode.openChat");
-          } else if (msg.type === "scan-credentials") {
-            // Auto-import: scan for existing credentials
-            scanAborted = false;
-            heldCredentials = [];
-            panel.webview.postMessage({
-              type: "scan-status",
-              payload: { state: "searching" },
-            });
-
-            try {
-              const scanResult = await scanCredentials(defaultScanOptions());
-              if (scanAborted) return; // Panel was closed mid-scan
-              heldCredentials = scanResult.credentials;
-
-              if (heldCredentials.length === 0) {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "empty" },
-                });
-              } else {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "found", count: heldCredentials.length },
-                });
-                // Send webview-safe results (no key material)
-                panel.webview.postMessage({
-                  type: "scan-results",
-                  payload: { providers: webviewSafeResults(heldCredentials) },
-                });
-
-                // Run connection tests with model probing in parallel (AC12)
-                // For each provider, probe models in order to find the first accessible one
-                const testPromises = heldCredentials.map(async (cred) => {
-                  const validModel = await probeModels(cred.provider, cred.key);
-                  const ok = validModel !== undefined;
-                  testResults.set(cred.provider, ok);
-                  if (validModel) {
-                    validatedModels.set(cred.provider, validModel.id);
-                  }
-                  if (!scanAborted) {
-                    panel.webview.postMessage({
-                      type: "test-status-update",
-                      payload: {
-                        provider: cred.provider,
-                        ok,
-                        error: ok ? undefined : "No accessible model found for this provider",
-                        ...(validModel ? { model: validModel.id } : {}),
-                      },
-                    });
-                  }
-                });
-                // Fire all tests in parallel, don't await sequentially
-                void Promise.allSettled(testPromises);
-              }
-            } catch {
-              if (!scanAborted) {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "failed", error: "Scan failed unexpectedly" },
-                });
-              }
-            }
-          } else if (msg.type === "confirm-import") {
-            // User confirmed the import — write only explicitly selected providers that passed (#455)
-            // Opt-in: if includedProviders is missing or empty, nothing is imported except bedrock infra.
-            const payload = msg.payload as { activeProvider: string; includedProviders?: string[] };
-            const included = payload.includedProviders ? new Set(payload.includedProviders) : new Set<string>();
-            const passedCredentials = heldCredentials.filter(
-              (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
-            );
-            // Use the validated model from probing (if available) instead of the static first entry
-            const modelOverride = validatedModels.get(payload.activeProvider);
-            // Always write batch config — even with zero user providers, bedrock infra is provisioned
-            writeBatchConfig(passedCredentials, payload.activeProvider, undefined, modelOverride);
-            // If user excluded 'opencode', disconnect it from the auth store.
-            // This is the only provider that needs file-level removal (it's a
-            // built-in integration, not in the connections seam).
-            if (!included.has("opencode") && heldCredentials.some((c) => c.provider === "opencode")) {
-              disconnectProviders(["opencode"]);
-            }
-            heldCredentials = [];
-            testResults.clear();
-            validatedModels.clear();
-            // Clear stale model pin — the old provider may no longer be connected.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash — no webview-side
-            // DOM manipulation, so there's no flash when adopt() fires later
-            // (adopt's overlay uses the exact same SVG + CSS).
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
-          } else if (msg.type === "transition-complete") {
-            // The extension signals that the chat panel is ready — dispose the
-            // splash now. This is posted by the extension host after app-ready.
-            panel.dispose();
-          }
-        },
-        null,
-        ctx.subscriptions,
-      );
-
-      // On panel close, abort scan and drop credentials (AC13, AC14)
-      panel.onDidDispose(
-        () => {
-          scanAborted = true;
-          heldCredentials = [];
-          currentPanel = undefined;
-        },
-        null,
-        ctx.subscriptions,
-      );
-
-      // Render the webview HTML
-      const uri = (...p: string[]) =>
-        panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
-      const nonce = Math.random().toString(36).slice(2);
-
-      panel.webview.html = buildWebviewHtml(panel.webview, uri, nonce);
+      openOnboardingPanel(ctx);
     }),
   );
 }
 
-/** Build the webview HTML with CSP, brand CSS, animation container, and injected data. */
+/** Register the focused Harmoniqs-only connect command: the generic Connect
+ *  Provider dialog's branded "Harmoniqs AI" row hands off to this instead of
+ *  the dialog's own generic key-entry flow, because Harmoniqs is a branded
+ *  preset (fixed base URL/model, key routed to the auth store — see
+ *  writeOnboardingConfig/buildProviderConfigEntry/writeAuthApiKey above)
+ *  that the generic flow cannot express without duplicating that logic.
+ *  Reuses the exact same webview/message-handling as Stage-0 — see
+ *  openOnboardingPanel's `bootstrap: false` for the one behavioral
+ *  difference (no restart, no greeting: the chat panel and server are
+ *  already live). Call from extension.ts activate(). */
+export function registerHarmoniqsConnectCommand(ctx: vscode.ExtensionContext): void {
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.connectHarmoniqsProvider", () => {
+      openOnboardingPanel(ctx, { focusProvider: HARMONIQS_PROVIDER_ID, bootstrap: false });
+    }),
+  );
+}
+
+/** Build the webview HTML with CSP, brand CSS, animation container, and injected data.
+ *  `focusProvider`, when set, tells the webview script to skip the welcome
+ *  animation and restrict the picker to that one provider. */
 function buildWebviewHtml(
   webview: vscode.Webview,
   uri: (...p: string[]) => vscode.Uri,
   nonce: string,
+  focusProvider?: string,
 ): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
@@ -991,6 +1064,7 @@ function buildWebviewHtml(
 <script nonce="${nonce}">
 window.__PROVIDERS__ = ${JSON.stringify(PROVIDER_MODELS)};
 window.__PROVIDER_NAMES__ = ${JSON.stringify(PROVIDER_DISPLAY_NAMES)};
+window.__FOCUS_PROVIDER__ = ${JSON.stringify(focusProvider ?? null)};
 </script>
 <script nonce="${nonce}" src="${uri("dist", "onboarding_webview.js")}"></script>
 </body></html>`;
