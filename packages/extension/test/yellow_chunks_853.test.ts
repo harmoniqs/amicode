@@ -117,7 +117,8 @@ describe("yellow-chunks CSS grammar (the #349 deletion bug class)", () => {
   test("the docket slots carry the collapsed rows' evidence (fork 6dac9ce04)", () => {
     const css = messageCss()
     expect(css).toContain('[data-slot="context-tool-group-docket"]')
-    expect(css).toContain('[data-slot="docket-token"][data-kind="file"]')
+    expect(css).toContain('[data-slot="docket-token"] .docket-file-icon')
+    expect(css).toContain('[data-slot="docket-token"][data-kind="more"]')
     expect(css).toMatch(/docket-diff[^}]*data-sign="add"/s)
     expect(css).toContain('[data-slot="docket-failed"]')
   })
