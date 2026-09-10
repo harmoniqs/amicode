@@ -455,6 +455,69 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
       expect(auth[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_supersecretvalue123456" });
     });
+
+    // app-harmoniqs-ai's chat-completions route is a plain OpenAI-Chat-Completions
+    // -compatible gateway (see chat-completions.ts parseRequest) — the protocol
+    // itself has no dependency on which model id is being served; it just happens
+    // to hard-pin PUBLIC_MODEL="harmoniqs-auto" server-side TODAY. These tests use
+    // a SECOND, hypothetical model id ("harmoniqs-fast") that does not exist in
+    // PROVIDER_MODELS or on the real backend, purely to prove the config-writing
+    // wiring is model-id-agnostic rather than a single "harmoniqs-auto" string
+    // baked into buildProviderConfigEntry. This anticipates the gateway exposing
+    // additional model ids later without requiring a code change here — see the
+    // PR #951 review discussion on over-assuming a single hardcoded model id.
+    it("writes an arbitrary (future) model id into provider.harmoniqs.models, not just harmoniqs-auto", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      // The unknown model id must land under its OWN key — not silently
+      // collapsed onto HARMONIQS_MODEL_ID ("harmoniqs-auto").
+      expect(entry.models["harmoniqs-fast"]).toBeDefined();
+      expect(entry.models[HARMONIQS_MODEL_ID]).toBeUndefined();
+      expect(entry.models["harmoniqs-fast"].tool_call).toBe(false);
+      // The gateway shape (npm/baseURL) is protocol-level, not model-specific,
+      // and must stay identical regardless of which model was selected.
+      expect(entry.npm).toBe("@ai-sdk/openai-compatible");
+      expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`);
+    });
+
+    it("still resolves the known display name for the current model id", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].name).toBe("Harmoniqs Auto");
+    });
+
+    it("falls back to the bare model id as the display name for an unrecognized model", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"].name).toBe("harmoniqs-fast");
+    });
   });
 
   describe("writeAuthApiKey", () => {
@@ -523,6 +586,29 @@ describe("Harmoniqs AI — branded provider preset", () => {
       expect(options.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
       const body = JSON.parse(options.body);
       expect(body.model).toBe(HARMONIQS_MODEL_ID);
+      expect(body.tools).toBeUndefined();
+    });
+
+    // Same OpenAI-Chat-Completions-compatible request shape, but with a SECOND,
+    // hypothetical model id that isn't harmoniqs-auto and doesn't exist on the
+    // real backend today (chat-completions.ts hard-pins PUBLIC_MODEL server-side —
+    // see requestError/parseRequest). Proves testConnection's request-building is
+    // wired off config.model, not a "harmoniqs-auto" string baked into the client,
+    // so it keeps working unchanged if/when the gateway serves more model ids.
+    it("is wired off config.model, not a hardcoded model id — same request shape for a different model", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ choices: [] }) });
+      const otherModelConfig: OnboardingConfig = {
+        provider: HARMONIQS_PROVIDER_ID,
+        model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+        apiKey: config.apiKey,
+      };
+      const result = await testConnection(otherModelConfig, fetchMock);
+
+      expect(result.ok).toBe(true);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
+      const body = JSON.parse(options.body);
+      expect(body.model).toBe("harmoniqs-fast");
       expect(body.tools).toBeUndefined();
     });
 

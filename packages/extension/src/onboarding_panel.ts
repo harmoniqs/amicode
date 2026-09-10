@@ -218,19 +218,39 @@ function buildProviderConfigEntry(
   envVarName: string | undefined,
 ): Record<string, unknown> {
   if (config.provider === HARMONIQS_PROVIDER_ID) {
+    // Model-id-agnostic by construction: app-harmoniqs-ai is a plain
+    // OpenAI-Chat-Completions-compatible gateway (see chat-completions.ts
+    // parseRequest) — the protocol has no dependency on which model id is
+    // being served. It happens to hard-pin PUBLIC_MODEL="harmoniqs-auto"
+    // server-side TODAY, but this entry must not bake that in: derive the
+    // model key from config.model (whatever PROVIDER_MODELS[harmoniqs]
+    // currently offers), not the HARMONIQS_MODEL_ID constant, so a future
+    // second model id served through the same base URL just works without a
+    // code change here. Falls back to HARMONIQS_MODEL_ID only if config.model
+    // is missing/malformed.
+    const bareModelId = config.model?.includes("/")
+      ? config.model.slice(config.model.indexOf("/") + 1)
+      : config.model;
+    const modelId = bareModelId || HARMONIQS_MODEL_ID;
+    const knownModel = PROVIDER_MODELS[HARMONIQS_PROVIDER_ID]?.find(
+      (m) => m.id === `${HARMONIQS_PROVIDER_ID}/${modelId}`,
+    );
     return {
       npm: "@ai-sdk/openai-compatible",
       name: PROVIDER_DISPLAY_NAMES[HARMONIQS_PROVIDER_ID],
       options: { baseURL: HARMONIQS_BASE_URL },
       models: {
-        [HARMONIQS_MODEL_ID]: {
-          name: "Harmoniqs Auto",
+        [modelId]: {
+          name: knownModel?.name ?? modelId,
           // The app-harmoniqs-ai gateway hard-rejects `tools`, `response_format`,
-          // and n!=1 with a 400 (see chat-completions.ts parseRequest). OpenCode
-          // agents default to tool calling, so this model is declared chat-only
-          // here; the actual no-tools enforcement lives in opencode's
-          // session/llm/request.ts (isNoToolsProvider), since this flag alone
-          // is descriptive metadata, not a request-building gate.
+          // and n!=1 with a 400 (see chat-completions.ts parseRequest) for
+          // EVERY model it serves — a protocol-level constraint, not a
+          // per-model one. OpenCode agents default to tool calling, so this
+          // model is declared chat-only here; the actual no-tools enforcement
+          // lives in opencode's session/llm/request.ts (isNoToolsProvider,
+          // keyed on providerID — so it already covers any model id under
+          // "harmoniqs"), since this flag alone is descriptive metadata, not
+          // a request-building gate.
           tool_call: false,
         },
       },
