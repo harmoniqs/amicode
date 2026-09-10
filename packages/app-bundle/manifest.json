@@ -6,10 +6,10 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-09T19:01:09.840Z",
+  "extracted_at": "2026-09-10T07:01:02.938Z",
   "per_package": {
     "packages/app": {
-      "A": 142,
+      "A": 146,
       "M": 153,
       "D": 0
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 611,
+    "overlay_total": 615,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -823,6 +823,10 @@
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "A",
     "packages/app/src/components/settings-v2/data-storage.tsx": "A",
     "packages/app/src/components/settings-v2/developer-tools-controller.ts": "A",
+    "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.test.ts": "A",
+    "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.ts": "A",
+    "packages/app/src/components/settings-v2/developer-tools-request-state.test.ts": "A",
+    "packages/app/src/components/settings-v2/developer-tools-request-state.ts": "A",
     "packages/app/src/components/settings-v2/developer-tools.tsx": "A",
     "packages/app/src/components/settings-v2/dialog-settings-v2.tsx": "M",
     "packages/app/src/components/settings-v2/general.tsx": "M",
@@ -1436,6 +1440,10 @@
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "fa5d143cc101f3a3b9d5ad445edddc981e0d02783021d52dbfed6c8d8bf62498",
     "packages/app/src/components/settings-v2/data-storage.tsx": "a56b423b32c952c4379688d88d13a9f43b163a4169b9393f8c35b18a763a1180",
     "packages/app/src/components/settings-v2/developer-tools-controller.ts": "f09ed6538b683bd075acd0f7ffb3444a3a3bab606872239ea6ca40377d3d05d2",
+    "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.test.ts": "4d11815fe5acfa930bc418d0be82602f03821997300d0deef0aa2da2a743b3b0",
+    "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.ts": "561a75fa456b832d4af6f782c7ecf5269ce768fc2adc59c15a79197a2dde84c0",
+    "packages/app/src/components/settings-v2/developer-tools-request-state.test.ts": "29711b3bc17fddbb8d046e104bc78e775a9ec7c5aa0ee2e181fbcd8b2b5e2135",
+    "packages/app/src/components/settings-v2/developer-tools-request-state.ts": "e9678ed32e7c2562b18143f39a51c0a94dbf0a0884d056653c6c77e4cd07a9bd",
     "packages/app/src/components/settings-v2/developer-tools.tsx": "8e41183336f40114d795caf68a4c28a239d984f312f81d15668260ea9557d752",
     "packages/app/src/components/settings-v2/dialog-settings-v2.tsx": "a1e1fb7eea7bbad7708b97a721b54a4897c8cb6f582b71d6bb7c8ca7f44930db",
     "packages/app/src/components/settings-v2/general.tsx": "2abf6c9c7b4b9bf020ed224dbc7fff4574db47711956fc08e1b8e84e781d395a",
