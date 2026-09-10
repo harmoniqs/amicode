@@ -155,13 +155,13 @@
   }
 
   /* The prompt bubble, from the website's /amicode chat (harmoniqs-ai
-     app/components/demo/parts.jsx, `Turn`): the user's words are the INVERSE
-     of the ground — bg-deep/text-bg there. The app tokens
-     (--prompt-bubble-*, design-polish.css) realise that per scheme: the
-     site's ink bubble verbatim on light; on dark a quiet elevated layer
-     under base ink — any light bubble glared at chat scale on a dark field.
-     Fallback = raw inverse, for consumers without the app skin.
-     Padding is the site's px-4 py-2.5. */
+     app/components/demo/parts.jsx, `Turn`), now a SOLID YELLOW chip (Aaron
+     2026-09-03): --accent fill + --accent-ink in both schemes — the site's
+     black-on-yellow chip grammar. The edge is seated per scheme in
+     design-polish.css (--prompt-bubble-edge): the site's ink border on
+     light (yellow can't define itself on the near-white ground), none on
+     dark (solid yellow against the deep ground). Fallback = raw inverse,
+     for consumers without the app skin. Padding is the site's px-4 py-2.5. */
   [data-slot="user-message-text"] {
     display: inline-block;
     white-space: pre-wrap;
@@ -169,15 +169,15 @@
     overflow: hidden;
     background: var(--prompt-bubble-bg, var(--v2-background-bg-inverse));
     color: var(--prompt-bubble-ink, var(--v2-text-text-inverse));
-    border: none;
+    border: var(--border-width, 1px) solid var(--prompt-bubble-edge, transparent);
     padding: 10px 16px;
     border-radius: var(--radius-lg);
 
-    /* On the flipped ground the scheme-tuned syntax colours fail contrast —
-       each was picked against the page ground, and this bubble is its
-       inverse. References instead take the site's File-chip grammar: mono on
-       a soft chip of the bubble's own foreground (the site's `bg-fg/8`,
-       mixed from text-inverse here so it flips with the bubble). */
+    /* On the yellow fill the scheme-tuned syntax colours fail contrast —
+       each was picked against the page ground. References take the site's
+       File-chip grammar: mono on a soft chip of the bubble's own ink (the
+       site's `bg-fg/8`), so the chip darkens the yellow slightly and the
+       mono stays black-on-yellow. */
     [data-highlight="file"],
     [data-highlight="agent"] {
       font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
