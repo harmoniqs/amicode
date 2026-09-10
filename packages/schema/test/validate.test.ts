@@ -42,6 +42,9 @@ describe("schema set + exports", () => {
         // the paper record — vault note frontmatter (#405); joins the
         // SCHEMAS-only set (no top-level schema_version)
         "library-paper",
+        // the SKILL.md frontmatter contract (amicode#996); same
+        // SCHEMAS-only registration as library-paper
+        "skill",
       ]),
     );
   });
