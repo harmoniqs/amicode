@@ -233,6 +233,15 @@ export function extractClaims(markdown: string): SkillClaim[] {
   return claims;
 }
 
+/** Drop a trailing `# comment` from a Julia line — the same convention the
+ *  export parser uses. Scope (#1002) must come from the using/import
+ *  statement text only: a comment word (e.g. `using Strumento  # reexports
+ *  Intonato (Piccolo, NamedTrajectories, …)`) must never become a package
+ *  context. */
+function stripJuliaComment(text: string): string {
+  return text.replace(/\s*#.*$/, "");
+}
+
 /** Harvest call-position symbols + qualified names from a collected julia
  *  fence. `using`/`import` statements provide package context; qualified refs
  *  are only claims when their module part is in that context (else they are
@@ -243,10 +252,12 @@ function extractFromJuliaFence(
   fenceLines: { text: string; line: number }[],
   add: (c: SkillClaim) => void,
 ): void {
-  // pass 1: package context from using/import statements
+  // pass 1: package context from using/import statements (#1002: comment-
+  // stripped — a trailing comment on the statement line is never a scope
+  // source)
   const context = new Set<string>();
   for (const { text } of fenceLines) {
-    const m = /^\s*(?:using|import)\s+(.+)$/.exec(text);
+    const m = /^\s*(?:using|import)\s+(.+)$/.exec(stripJuliaComment(text));
     if (!m) continue;
     const statement = m[1];
     const scoped = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(statement);
@@ -260,8 +271,9 @@ function extractFromJuliaFence(
     }
   }
   for (const { text, line } of fenceLines) {
+    const code = stripJuliaComment(text);
     // `using Pkg: a, b` — the named imports are explicit API references
-    const scoped = /^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(text);
+    const scoped = /^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(code);
     if (scoped) {
       for (const name of scoped[2].split(",")) {
         const sym = name.trim();
@@ -271,7 +283,7 @@ function extractFromJuliaFence(
       }
     }
     // `import Pkg.Sym` — qualified reference
-    const imported = /^\s*import\s+([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_!]*)/.exec(text);
+    const imported = /^\s*import\s+([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_!]*)/.exec(code);
     if (imported) {
       add({ kind: "qualified-symbol", text: `${imported[1]}.${imported[2]}`, packages: [imported[1]], line, source: "julia-fence" });
     }

@@ -72,6 +72,26 @@ describe("extractClaims", () => {
     );
   });
 
+  it("using-context false positive (#1002): fence scope comes from the using/import statement only, never from a trailing comment (the hardware-loop shape)", () => {
+    // the live regression: `using Strumento  # reexports Intonato (Piccolo,
+    // NamedTrajectories, …)` scoped every claim in the fence to
+    // NamedTrajectories — a word inside the comment
+    const md = [
+      "```julia",
+      "using Strumento   # reexports Intonato (Piccolo, NamedTrajectories, …)",
+      "soc = MockSoc(sys)",
+      "backend = StrumentoBackend(soc)",
+      "```",
+    ].join("\n");
+    const claims = extractClaims(md);
+    expect(claims.find((c) => c.text === "MockSoc")).toMatchObject({ packages: ["Strumento"] });
+    expect(claims.find((c) => c.text === "StrumentoBackend")).toMatchObject({ packages: ["Strumento"] });
+    // no word that appears only inside the comment ever scopes a claim
+    expect(claims.filter((c) => c.packages.includes("NamedTrajectories"))).toEqual([]);
+    expect(claims.filter((c) => c.packages.includes("Piccolo"))).toEqual([]);
+    expect(claims.filter((c) => c.packages.includes("reexports"))).toEqual([]);
+  });
+
   it("extracts explicit `using Pkg: name` imports as symbol claims scoped to that package", () => {
     const md = "```julia\nusing FixturePkg: Widget, make_widget\nw = Widget(1)\n```\n";
     const claims = extractClaims(md);
