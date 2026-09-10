@@ -149,7 +149,7 @@ export const DialogSettings: Component<{
           <SettingsSkillsV2 />
         </TabsV2.Content>
         <TabsV2.Content value="permissions" class="settings-v2-panel">
-          <SettingsPermissionsV2 />
+          <SettingsPermissionsV2 sessionID={props.sessionID} />
         </TabsV2.Content>
       </TabsV2>
     </Dialog>

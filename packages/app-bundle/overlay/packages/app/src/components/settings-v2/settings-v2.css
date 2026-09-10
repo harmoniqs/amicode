@@ -1122,3 +1122,17 @@ button.settings-v2-permissions-matrix-pattern:focus-visible {
   font-size: 12px;
   color: var(--v2-text-text-warning, #d29922);
 }
+
+.settings-v2-field-info {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--v2-text-text-muted);
+}
+
+/* Applied to a stale error/warning while a new validation round-trip is in
+   flight (#940) — dims the previous result instead of blanking it, so path
+   edits don't flash empty-then-filled on every keystroke's blur. */
+.settings-v2-field-stale {
+  opacity: 0.55;
+}

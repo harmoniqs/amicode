@@ -2,11 +2,15 @@ import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
 import { Tag } from "@opencode-ai/ui/v2/badge-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { SelectV2 } from "@opencode-ai/ui/v2/select-v2"
+import { Switch } from "@opencode-ai/ui/v2/switch-v2"
 import { showToast } from "@/utils/toast"
 import { createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useLanguage } from "@/context/language"
 import { useServerSync } from "@/context/server-sync"
 import { useModels } from "@/context/models"
+import { SettingsListV2 } from "./parts/list"
+import { SettingsRowV2 } from "./parts/row"
+import { createPermissionScopeController, type PermissionScopeController } from "./general-controllers"
 import "./settings-v2.css"
 
 type Effect = "allow" | "deny" | "ask"
@@ -57,10 +61,30 @@ function badgeVariant(summary: string): "danger" | "warning" | "neutral" | "info
   return "warning"
 }
 
-export const SettingsPermissionsV2: Component = () => {
+/** Moved here from the General tab (#940) — auto-accept is a permissions control. */
+const PermissionScopeSetting: Component<{ controller: PermissionScopeController }> = (props) => {
+  const language = useLanguage()
+  return (
+    <SettingsRowV2
+      title={language.t("command.permissions.autoaccept.enable")}
+      description={language.t("toast.permissions.autoaccept.on.description")}
+    >
+      <div data-action="settings-auto-accept-permissions">
+        <Switch
+          checked={props.controller.accepting()}
+          disabled={!props.controller.enabled()}
+          onChange={props.controller.set}
+        />
+      </div>
+    </SettingsRowV2>
+  )
+}
+
+export const SettingsPermissionsV2: Component<{ sessionID?: string }> = (props) => {
   const language = useLanguage()
   const serverSync = useServerSync()
   const modelsCtx = useModels()
+  const permissionScope = createPermissionScopeController(() => props.sessionID)
 
   const rawConfig = createMemo(() => {
     const raw = (serverSync().data.config as Record<string, unknown>).providerPermissions as ProviderPermissionsConfig | undefined
@@ -218,6 +242,10 @@ export const SettingsPermissionsV2: Component = () => {
       </div>
 
       <div class="settings-v2-tab-body settings-v2-permissions" data-component="permissions-tab">
+        <SettingsListV2>
+          <PermissionScopeSetting controller={permissionScope} />
+        </SettingsListV2>
+
         <For each={tiers()}>
           {(tier) => {
             const summary = () => tierSummary(tier)

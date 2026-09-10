@@ -1468,8 +1468,16 @@
 /* ---- Developer Tools rebuild status + buttons ─────────────────────────── */
 .devtools-section-header {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 12px;
+}
+
+/* .settings-v2-section-title carries a padding-bottom sized for sitting
+   above a settings list; inside this flex row it throws off centering
+   against the rebuild status text beside it. Same override as the
+   .settings-v2-providers / .settings-v2-models section titles. */
+.devtools-section-header .settings-v2-section-title {
+  padding-bottom: 0;
 }
 
 .devtools-rebuild-status {

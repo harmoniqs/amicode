@@ -1,6 +1,6 @@
 // amicode developer-mode boot flag: the extension passes
 // `amicode_developer=1` in the iframe URL when `devAssetRoot` is configured
-// (i.e. the user ran "Rebuild from Latest"). The app reads it once at boot
+// (i.e. the user ran "Rebuild from Main"). The app reads it once at boot
 // (same convention as amicode-bug-report / amicode-hide-project) and uses it
 // to auto-enable settings.developer.enabled — without this, ephemeral ports
 // rotate the localStorage origin on every reload and the developer toggle

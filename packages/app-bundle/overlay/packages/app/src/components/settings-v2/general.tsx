@@ -14,13 +14,11 @@ import { SettingsRowV2 } from "./parts/row"
 import { LayoutRetirementNotice, LayoutTransitionToggle } from "./interface-transition"
 import {
   createAppearanceSettingsController,
-  createPermissionScopeController,
   createShellOptions,
   createShellSettingsController,
   createSoundSettingsController,
   soundOptions,
   type AppearanceSettingsController,
-  type PermissionScopeController,
   type ShellSettingsController,
   type SoundSettingsController,
 } from "./general-controllers"
@@ -69,24 +67,6 @@ const soundSettings = {
     description: "settings.general.sounds.errors.description",
   },
 } as const
-
-const PermissionScopeSetting: Component<{ controller: PermissionScopeController }> = (props) => {
-  const language = useLanguage()
-  return (
-    <SettingsRowV2
-      title={language.t("command.permissions.autoaccept.enable")}
-      description={language.t("toast.permissions.autoaccept.on.description")}
-    >
-      <div data-action="settings-auto-accept-permissions">
-        <Switch
-          checked={props.controller.accepting()}
-          disabled={!props.controller.enabled()}
-          onChange={props.controller.set}
-        />
-      </div>
-    </SettingsRowV2>
-  )
-}
 
 const ShellSetting: Component<{ controller: ShellSettingsController }> = (props) => {
   const language = useLanguage()
@@ -257,7 +237,6 @@ export const SettingsGeneralV2: Component<{
   const settings = useSettings()
   const mobile = createMediaQuery("(max-width: 767px)")
   const updater = useUpdaterAction()
-  const permissionScope = createPermissionScopeController(() => props.sessionID)
   const shell = createShellSettingsController()
   const appearance = createAppearanceSettingsController()
   const sounds = createSoundSettingsController()
@@ -305,8 +284,6 @@ export const SettingsGeneralV2: Component<{
     <div class="settings-v2-section">
       <SettingsListV2>
         <LanguageSetting />
-
-        <PermissionScopeSetting controller={permissionScope} />
 
         <ShellSetting controller={shell} />
 
