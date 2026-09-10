@@ -1,17 +1,48 @@
-# Preview becomes a multi-file split-pane workspace; single-file companion model retired
+# Preview becomes a renderer-preserving multi-file split-pane workspace
 
-Status: proposed (2026-09-09)
+Status: amended (2026-09-09)
 
 Tracking: harmoniqs/amicode#940 · Glossary update: `CONTEXT.md` (Preview, Sidebar)
 
-Preview — previously a single-file companion viewer that replaced its content on every sidebar click (#931, landed the same day) — becomes a multi-document workspace: files accumulate as closeable inner tabs, a breadcrumb bar under each pane's tab strip provides project-relative path navigation with sibling dropdowns, and tabs can be dragged to edge drop-zones to create recursive split panes, each with independent zoom and preview/edit controls. The outer side-panel tab bar (Home, Files Changed, Context, Pulse Inspector, Preview) is unaffected — Preview remains one tab there; the new tab-and-pane machinery is entirely contained within it.
+## Decision
 
-**Why:** The single-file companion model (#931) optimized for a different problem — one file at a time, driven externally, no navigation chrome competing with the Sidebar. In practice, researchers comparing two files (a script and its output, a spec and its implementation) lost their place every time a second file replaced the first. The companion model traded away exactly the capability multi-file work needs. Sidebar remains the project-wide file tree; the breadcrumb is a narrower, contextual navigation aid scoped to the currently open file's siblings, not a second file browser.
+Preview remains one outer side-panel tab while becoming a multi-document workspace. Files opened by Sidebar single-click or Chat file pills accumulate as closeable inner tabs. A breadcrumb provides contextual sibling navigation, and dragging an inner tab reorders it, transfers it between panes, or creates a recursive split at a pane edge. The Sidebar remains the project-wide file tree; Preview is not a second file browser.
 
-**Conditions of acceptance:** Files opened via Sidebar single-click or a Chat file pill accumulate as inner tabs in the focused pane rather than replacing the current file; re-opening an already-open file (from any entry point, including breadcrumb sibling navigation) focuses its existing tab instead of duplicating it — enforced workspace-wide, not just within one pane. Tabs close via an explicit control and are drag-reorderable. A breadcrumb bar shows the active file's project-relative path as clickable segments, each expanding to a sibling dropdown. Dragging a tab to a pane's edge splits that pane (horizontal or vertical); splits are recursive, subject to a 150px minimum pane dimension that refuses drops which would violate it and clamps resizes at the same floor. Each pane carries independent zoom and preview/edit-toggle state. The entire workspace — every pane, every tab, all per-tab state including unsaved edits — survives switching to another outer side-panel tab and back. Double-click-to-open-in-VS-Code and the outer tab bar are unchanged.
+The workspace is a thin layout shell over the existing Preview renderers. It owns only tab-to-pane assignment, pane geometry, focused-pane state, pane zoom, dirty indicators, and the eight-tab resource limit. Each open file owns one persistent baseline renderer instance. Switching tabs, moving a tab between panes, or switching away from the outer Preview tab preserves that renderer instance rather than reconstructing its document, CodeMirror state, PDF layout, scroll position, or focus.
 
-**Accepted costs:** The workspace reintroduces navigation surface (the breadcrumb) that #931 deliberately removed — a future reader of #931's history will see this as a partial reversal, not a straight line; the ADR exists so that reversal reads as deliberate. Per-pane state (zoom, mode, scroll, unsaved content) roughly doubles or triples the state `SessionPreviewTab` used to hold for a single file, now split across `PreviewWorkspace`/`PreviewPane`. The workspace store must be lifted into the layout context (above `session-side-panel.tsx`'s `<Show when={activeTab() === SESSION_PREVIEW_TAB}>` gate) rather than owned locally, because SolidJS disposes a `<Show>` branch's reactive scope on every toggle — the single-file `SessionPreviewTab` already loses its local state this way today, and a multi-file, multi-pane workspace makes that loss far more costly if inherited unfixed. At the 330px minimum panel width (`WORK_COLUMN_WIDTH_MIN`), only one horizontal split is practically usable before panes drop below a comfortable reading width — accepted as a constraint of the side-panel form factor. Splitting, cross-pane tab transfer, and pane resizing are pointer/drag-only in this version; there is no keyboard-accessible path for any of the three.
+The outer Preview content remains mounted while another outer tab is selected. It is hidden and inert rather than disposed. The pane canvas may provide CSS-only overflow when recursive minimum geometry exceeds the Work Column, but it does not observe, store, restore, or otherwise control scroll position.
 
-**Considered:** (A) Extend `SessionPreviewTab` in place with tab/breadcrumb/split logic (rejected: the component is 119 lines today, but tab-bar, pane-tree, and breadcrumb logic are three distinct responsibilities that would tangle together as each grows independently — not a current-size problem but a projected-shape one); (B) **new `PreviewWorkspace`/`PreviewPane`/`PreviewBreadcrumb` component tree** (chosen: clean separation, each component independently testable, `SessionPreviewTab` shrinks to a thin shell); (C) a generic `SplitPaneLayout` primitive built first and specialized for Preview (rejected for now: speculative reuse — no other surface has asked for splitting yet — and the abstraction would be guessed at rather than derived from a second real use; extracting it from B later is straightforward if that need materializes).
+## Why
 
-**Flip condition:** If a second surface (e.g. Files Changed) independently needs split-pane viewing, extract the pane-tree logic from `PreviewWorkspace` into the generic primitive considered as option C, rather than duplicating the tree/drag machinery. If the side panel's minimum width increases substantially in a future layout pass, revisit the 150px pane minimum and how many practical splits it should allow.
+The single-file companion model (#931) optimized for externally driven, one-file-at-a-time reading. Researchers comparing a script and its output, or a spec and implementation, lost their place whenever the next selection replaced the first. Multi-file work needs retained documents and panes.
+
+The original form of this ADR chose a lifted workspace state store plus a renderer-state hydration adapter. That duplicated ownership already held by `PreviewFileView`, CodeMirror, and the PDF renderer. It introduced a canvas-scroll feedback loop and renderer lifecycle races that broke ordinary scrolling and Markdown editing. Preserving the working renderer instances makes the layout shell smaller and gives each layer one owner.
+
+## Conditions Of Acceptance
+
+- A path has at most one live inner tab across the workspace; re-opening it focuses its existing pane and tab.
+- At most eight renderer instances are open. The ninth open requires an explicit close; clean tabs are never silently evicted.
+- A live renderer remains intact through inner-tab changes, pane transfer or split, and outer-tab changes. Draft text, local scroll, selection, and loaded content stay with that renderer.
+- Dirty state is tab chrome only. Closing a dirty tab offers save, discard, or cancel; the layout shell never stores draft text.
+- Drag is the primary path for reorder, transfer, and edge split. A Preview-scoped nested-DnD spike must prove non-interference with outer tabs before that interaction ships.
+- Each leaf has a 150px minimum dimension. When the tree exceeds the Work Column, a CSS-only canvas scrolls without persistence or restoration logic.
+- Pane zoom and the existing preview/edit controls are pane-scoped. Breadcrumb navigation is added only after tab, renderer, and pane interaction gates pass.
+- Double-click-to-open-in-VS-Code and the outer side-panel tab bar remain unchanged.
+
+## Rejected Alternatives
+
+1. **Renderer-state hydration adapter** -- rejected. Capturing and restoring drafts, scroll, and focus creates a second owner for state the renderer already owns.
+2. **One active renderer per pane** -- rejected. Inactive tabs lose live editing and view state when their renderer is replaced.
+3. **Generic split-pane primitive first** -- deferred. No second surface currently establishes a real reuse boundary.
+
+## Accepted Costs
+
+Keeping renderer instances mounted consumes more memory and background resources than hydration. The workspace therefore caps live tabs at eight and requires explicit closure. Keeping Preview mounted while inactive also retains its renderer resources, but avoids destructive remounting during ordinary navigation.
+
+## Validation
+
+Browser interaction tests are required before a Dev Host build is vendored. They must prove stable Markdown focus after grammar loading, ordinary Preview scrolling, Cmd+S behavior, persistence across outer-tab switches, renderer identity across drag relocation, dirty-close confirmation, and non-interference between Preview and outer-tab DnD. Unit and type tests support but do not replace these gates.
+
+## Flip Condition
+
+If a second surface needs the same renderer-preserving pane behavior, extract only the layout shell after two real uses establish its interface. If eight retained renderers prove insufficient in measured use, revisit the cap with evidence rather than introducing silent eviction or a state adapter.
