@@ -47,6 +47,9 @@ import amicodeConfigSchema from "../schemas/amicode-config.schema.json" with { t
 // contract — identity, lifecycle, provenance, scoping. NOT filename-kinded
 // (notes are markdown frontmatter, validated as parsed objects).
 import libraryPaperSchema from "../schemas/library-paper.schema.json" with { type: "json" };
+// The SKILL.md frontmatter contract (amicode#996) — the third markdown-
+// frontmatter kind: validated as a parsed object, never filename-kinded.
+import skillSchema from "../schemas/skill.schema.json" with { type: "json" };
 
 // Cross-language ProblemSpec hashing (Plan 2 Task 5) — re-exported at the package
 // root so cross-package consumers (e.g. the extension's ledger_client.ts, Plan 3
@@ -195,6 +198,10 @@ const SCHEMAS = {
 // schema_version (real-data parity with the two production notes), same
 // pattern as problemspec/ledger-record.
   "library-paper": libraryPaperSchema,
+// Registered in SCHEMAS ONLY (not SUPPORTED_VERSIONS_BY_KIND): skill is the
+// SKILL.md frontmatter contract (amicode#996) — frontmatter carries no
+// schema_version, same pattern as library-paper.
+  skill: skillSchema,
 } as const;
 
 export type SchemaKind = keyof typeof SCHEMAS;
@@ -206,17 +213,18 @@ export const SCHEMA_KINDS = Object.keys(SCHEMAS) as SchemaKind[];
  *  run + solvespec carry higher versions (spec C: executor/tier/env/source/hashes;
  *  solvespec v4 also adds problem_spec, the typed ProblemSpec runner target);
  *  the rest remain v1 and bump independently. `finished` (no schema_version),
- *  `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
- *  top-level properties.schema_version), and `library-paper` (vault note
- *  frontmatter — real notes carry no schema_version) are excluded from this
- *  string-version map. */
-export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper">, string[]> =
+ * `problemspec`, and `ledger-record` (both top-level `oneOf` shapes with no
+ * top-level properties.schema_version), `library-paper` (vault note
+ * frontmatter — real notes carry no schema_version), and `skill` (SKILL.md
+ * frontmatter, amicode#996 — frontmatter carries no schema_version) are
+ * excluded from this string-version map. */
+export const SUPPORTED_VERSIONS_BY_KIND: Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]> =
   Object.fromEntries(
     (["run", "result", "lab", "solvespec", "catalog-entry", "spec", "plan", "pack", "amicode-config"] as const).map((kind) => [
       kind,
       (SCHEMAS[kind] as { properties: { schema_version: { enum: string[] } } }).properties.schema_version.enum,
     ]),
-  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record">, string[]>;
+  ) as Record<Exclude<SchemaKind, "finished" | "problemspec" | "ledger-record" | "library-paper" | "skill">, string[]>;
 
 export interface Validation {
   ok: boolean;

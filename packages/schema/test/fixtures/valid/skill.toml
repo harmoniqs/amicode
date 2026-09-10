@@ -1,0 +1,11 @@
+# The `skill` kind's golden fixture (amicode#996) — the SKILL.md frontmatter
+# contract, TOML-expressed so it rides the shared golden corpus like
+# library-paper (frontmatter-shaped, SCHEMAS-only registration, no
+# schema_version).
+name = "atoms"
+description = "Neutral-atom Rydberg qubit physics, Hamiltonian, register geometry, and Piccolo setup."
+surface = "public"
+agents = ["researcher", "experimenter"]
+scenarios = ["rydberg-cz"]
+source = "amicode"
+revision = 1

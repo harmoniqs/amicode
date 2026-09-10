@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://amico.harmoniqs.co/schema/skill/v1",
+  "title": "amico skill frontmatter",
+  "description": "The SKILL.md frontmatter contract (amicode#996): codifies exactly what the extension's skill loader enforces today — a required non-empty name + description — plus typed optional fields the loader or the revision resolver reads (surface, entitlement, revision, source, agents). Deliberately LENIENT on the passthrough extras (scenarios, vault_contract, project_contract, public_refs, provides_helpers) and the opencode-native passthroughs (stub, cli_tool, argument-hint, disable-model-invocation): additionalProperties stays open so the schema never blocks a legitimate extension. The entitlement pairing is enforced here because it is a property of the frontmatter alone: surface: entitled REQUIRES a non-empty entitlement code, and an entitlement code on anything else is flagged. NOT filename-kinded (SKILL.md frontmatter, validated as a parsed object); excluded from the version map — the library-paper precedent for frontmatter-shaped kinds.",
+  "type": "object",
+  "required": ["name", "description"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the skill's identity — must equal its folder name (a structural rule the verb checks; the schema types the field)"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the one-line summary the loader requires and the index renders"
+    },
+    "surface": {
+      "enum": ["public", "entitled", "internal"],
+      "description": "the least-privilege staging tag (spec-20260713-003804): public ships and loads for all; entitled ships but stages only behind its entitlement code; internal never ships. Optional — internal and minimal skills without it must validate."
+    },
+    "entitlement": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the code a session must hold for a surface: entitled skill to stage (ADR-0011); meaningful only paired with surface: entitled"
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "the typed revision contract (spec-20260905-063000 D2): a monotonic non-negative integer, missing = 0"
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the copy's source label (the revision resolver's provenance field)"
+    },
+    "agents": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "the agent roles the skill targets; may be empty (the loader ignores it, opencode tolerates it)"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "surface": { "const": "entitled" } }, "required": ["surface"] },
+      "then": { "required": ["entitlement"] },
+      "$comment": "surface: entitled REQUIRES a non-empty entitlement code — an entitled skill without a code can never stage from any root (the loader drops it). Emptiness is caught by entitlement's own minLength 1."
+    },
+    {
+      "if": { "required": ["entitlement"] },
+      "then": { "required": ["surface"], "properties": { "surface": { "const": "entitled" } } },
+      "$comment": "the converse pairing: an entitlement code on a non-entitled (or untagged) skill is flagged — the code would be dead weight the loaders never read."
+    }
+  ]
+}

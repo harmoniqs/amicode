@@ -29,6 +29,7 @@ import { projectVerb } from "./project_verb.js";
 import { envVerb } from "./env_verb.js";
 import { sessionsVerb } from "./sessions_verb.js";
 import { sotaVerb } from "./sota_verb.js";
+import { skillsVerb } from "./skills_verb.js";
 export interface VerbResult {
   json: unknown; // structured result (stdout as JSON for the CLI; tool content for MCP)
   code: number; // process exit code (0 ok, 64 usage/gate, else failure)
@@ -270,9 +271,24 @@ const sota: Verb = {
 const env: Verb = {
   name: "env",
   summary: "create a scaffolded research environment / register an existing one in the local registry",
-  generalizes: "the amicode research-environment entity lifecycle (PRD #880)",
+  generalizes: "the amicode research-environment lifecycle (PRD #880)",
   slice: "research environments (#881)",
   run: envVerb,
+};
+
+// skills — the SKILL.md validation verb (#996): the shared `skill` schema plus
+// the structural rules no JSON schema can express (name = folder, duplicate
+// names within a root), over caller-supplied roots or the three fleet surfaces.
+// Read-only by construction; SPINE_VERBS registration auto-publishes
+// `amico_skills` as an MCP tool (the catalog/vault pattern — intended, per the
+// issue's key decision).
+const skills: Verb = {
+  name: "skills",
+  summary:
+    "check — validate SKILL.md frontmatter against the skill schema + structural rules (name = folder, no duplicate names), over --roots or the three fleet surfaces",
+  generalizes: "the folklore the drift lint's frontmatter gate replaced — a malformed skill caught at load time only",
+  slice: "skill QA (amicode#996)",
+  run: skillsVerb,
 };
 
 export const SPINE_VERBS: Verb[] = [
@@ -292,4 +308,5 @@ export const SPINE_VERBS: Verb[] = [
   env,
   sessions,
   sota,
+  skills,
 ];
