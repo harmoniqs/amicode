@@ -8,11 +8,13 @@ import { join } from "node:path"
 // fork as authoritative for every file it copies — including files where
 // amicode fixed what the fork never had. ff7b69c8 regressed #929's 3-arg
 // translate callback that way (every non-shell composer render threw "n is
-// not a function"); Aaron hit it live post-cutover 2026-09-10. The sync
-// tooling does not yet carry an amicode-fixes-are-canonical rule, so until
-// it does (#964), this guard asserts the overlay's KNOWN-FIXED hunks are
-// present: if a future sync reverts one, the suite fails naming the fix and
-// the regressing sync.
+// not a function"); Aaron hit it live post-cutover 2026-09-10. The
+// amicode-fixes-are-canonical rule now lives in the shared module
+// packages/app-bundle/scripts/known_fixes.mjs, which overlay-sync.mjs enforces
+// at sync time (#842) and deploy_guard.mjs enforces at deploy time. This test
+// is the SOURCE OF RECORD for the fixture list and still asserts the overlay's
+// KNOWN-FIXED hunks are present: if a future edit or sync reverts one, the
+// suite fails naming the fix and the regressing sync.
 //
 // Extensible as fixes accumulate: add a fixture (file, hunk signature,
 // fix reference). The mirrored fork branch (harmoniqs/opencode 964-mirrors →

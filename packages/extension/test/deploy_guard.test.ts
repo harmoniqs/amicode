@@ -243,9 +243,10 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
     }
   })
 
-  test("the mirrored fixture list matches the #964 guard's source of record", () => {
-    // deploy_guard.mjs mirrors KNOWN_FIXED_HUNKS from
-    // test/overlay_known_fixes_964.test.ts (the source of record). This
+  test("the shared fixture list matches the #964 guard's source of record", () => {
+    // The shared module (packages/app-bundle/scripts/known_fixes.mjs) is the
+    // single machine-usable copy both deploy_guard.mjs and overlay-sync.mjs
+    // consume; overlay_known_fixes_964.test.ts is the source of record. This
     // cross-checks the two lists can't drift silently: same file set.
     const guardSource = readFileSync(
       join(__dirname, "overlay_known_fixes_964.test.ts"),
@@ -253,11 +254,25 @@ describe("#992 the #964 known-fixes check at deploy time", () => {
     )
     const guardFiles = [...guardSource.matchAll(/file: "([^"]+)"/g)].map((m) => m[1])
     const guardSig = [...guardSource.matchAll(/signature: (\/.+\/[a-z]*)/g)].map((m) => m[1])
-    const mirrorSource = readFileSync(join(__dirname, "..", "scripts", "deploy_guard.mjs"), "utf8")
-    const mirrorFiles = [...mirrorSource.matchAll(/file: "([^"]+)"/g)].map((m) => m[1])
-    const mirrorSig = [...mirrorSource.matchAll(/signature: (\/.+\/[a-z]*)/g)].map((m) => m[1])
-    expect(mirrorFiles).toEqual(guardFiles)
-    expect(mirrorSig).toEqual(guardSig)
+    const sharedSource = readFileSync(
+      join(__dirname, "..", "..", "app-bundle", "scripts", "known_fixes.mjs"),
+      "utf8",
+    )
+    const sharedFiles = [...sharedSource.matchAll(/file: "([^"]+)"/g)].map((m) => m[1])
+    const sharedSig = [...sharedSource.matchAll(/signature: (\/.+\/[a-z]*)/g)].map((m) => m[1])
+    expect(sharedFiles).toEqual(guardFiles)
+    expect(sharedSig).toEqual(guardSig)
+  })
+
+  test("the deploy guard does not fork a third copy of the fixture list", () => {
+    // #842: the list lives in the shared module only. If someone re-forks it
+    // into deploy_guard.mjs, this fails (drift would then be possible again).
+    const deploySource = readFileSync(
+      join(__dirname, "..", "scripts", "deploy_guard.mjs"),
+      "utf8",
+    )
+    expect(deploySource).toContain("known_fixes.mjs")
+    expect(deploySource).not.toMatch(/signature: \//)
   })
 })
 
