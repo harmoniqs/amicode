@@ -194,6 +194,23 @@ describe("checkClaims", () => {
     expect(r.evidence).toMatch(/extra\.jl/);
   });
 
+  it("bang-boundary false positive (#1002): a non-exported `!`-function present in a package's src VERIFIES via the source scan, not DRIFTED", () => {
+    // the actual evidence class: `\bfoo!\b` cannot match `reset_widget!(w)` or
+    // `export foo!` — only the pathological `foo!x` — so every non-exported
+    // bang function was a false DRIFTED
+    const [r] = checkClaims([{ kind: "symbol", text: "reset_widget!", packages: ["FixturePkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/extra\.jl/);
+  });
+
+  it("bang-boundary false positive (#1002): an exported bang function still VERIFIES via the export scan", () => {
+    // `export foo!` positions were never broken (the export parse takes whole
+    // names) — pins that the boundary fix does not disturb the export lane
+    const [r] = checkClaims([{ kind: "symbol", text: "helper_fn!", packages: ["OtherPkg"], line: 1, source: "julia-fence" }], [FIXTURE_PACKAGES]);
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/exported by OtherPkg\.jl/);
+  });
+
   it("DRIFTED for a symbol absent from its scoped package", () => {
     const [r] = checkClaims([{ kind: "symbol", text: "PhantomWidget", packages: ["FixturePkg"], line: 7, source: "julia-fence" }], [FIXTURE_PACKAGES]);
     expect(r.verdict).toBe("DRIFTED");
@@ -669,3 +686,22 @@ describe("real public library (packages/extension/skills)", () => {
 function c_verdictShape(claim: SkillClaim): boolean {
   return typeof claim.text === "string" && claim.text.length > 0 && claim.line > 0;
 }
+
+// ---------------------------------------------------------------------------
+// Real-fleet regression evidence (amicode#1002) — the live false-positive
+// shapes the fixtures mirror, pinned against the actual fleet packages.
+// Mount-gated (the realPackagesRoot skip pattern): CI has no private checkouts.
+// ---------------------------------------------------------------------------
+
+describe("real fleet regressions (amicode#1002 lint false positives)", () => {
+  it("bang-boundary: `_wire_learnables!` (non-exported, Intonato src) VERIFIES via the source scan", () => {
+    const root = realPackagesRoot();
+    if (!root) return; // CI / fresh installs — mount-gated skip
+    const [r] = checkClaims(
+      [{ kind: "symbol", text: "_wire_learnables!", packages: ["Intonato"], line: 1, source: "julia-fence" }],
+      [root],
+    );
+    expect(r.verdict).toBe("VERIFIED");
+    expect(r.evidence).toMatch(/Intonato\.jl\/.*\.jl/);
+  });
+});

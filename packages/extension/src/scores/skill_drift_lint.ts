@@ -463,10 +463,16 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Find the first word-boundary occurrence of `symbol` in a package's source.
- *  Returns the package-relative file + 1-based line, or null. */
+/** Find the first occurrence of `symbol` in a package's source, bounded as a
+ *  Julia identifier. The boundary class includes `!` (#1002): `\b` treats `!`
+ *  as a non-word character, so `\bfoo!\b` could only ever match the
+ *  pathological `foo!x` — never the real positions `foo!(x)` or `export foo!`
+ *  — and every non-exported bang function was a false DRIFTED. Lookaround over
+ *  one name-character class `[A-Za-z0-9_!]` fixes all positions with one
+ *  mechanism (no trailing-`!` special case) and also stops a plain `foo` from
+ *  matching inside `foo!` (a different Julia function). */
 function findInSource(scan: PackageScan, pkg: PackageCheckout, symbol: string): { file: string; line: number } | null {
-  const re = new RegExp(`\\b${escapeRegExp(symbol)}\\b`);
+  const re = new RegExp(`(?<![A-Za-z0-9_!])${escapeRegExp(symbol)}(?![A-Za-z0-9_!])`);
   for (const f of scan.juliaFiles) {
     const raw = fs.readFileSync(f, "utf8");
     const idx = re.exec(raw)?.index;
