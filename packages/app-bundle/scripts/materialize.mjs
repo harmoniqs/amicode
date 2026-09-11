@@ -42,7 +42,14 @@ async function fetchUpstream() {
     console.log(`[materialize] upstream ${repo}@${tag} (cached)`);
     return cacheTree;
   }
-  const url = `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
+  // GitHub serves tag archives at /archive/refs/tags/<tag>.tar.gz but commit-
+  // SHA archives at /archive/<sha>.tar.gz (no refs/tags/ prefix). Detect a raw
+  // hex SHA so a future sync:apply that accidentally writes a SHA instead of a
+  // tag name doesn't break CI with a 404 (the ce1877dd regression).
+  const isCommitSha = /^[0-9a-f]{40,}$/i.test(tag);
+  const url = isCommitSha
+    ? `https://github.com/${repo}/archive/${tag}.tar.gz`
+    : `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
   console.log(`[materialize] fetching ${url}`);
   const r = await fetch(url);
   if (!r.ok) throw new Error(`upstream fetch failed: HTTP ${r.status}`);
