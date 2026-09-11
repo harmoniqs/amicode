@@ -16,7 +16,7 @@ import { transpileModule } from "typescript"
 // {before: "", after: undefined} → the memos' one().after.startsWith(...)
 // threw inside a Solid effect.
 //
-// The fix is an overlay twin of the base file with split() guarded against
+// The fix is an overlay twin of the base file with splitCountLabel() guarded against
 // falsy text ({before: "", after: ""} — honest empty render until the
 // translation exists, the language.tsx fallback discipline).
 //
@@ -63,9 +63,9 @@ function extractFunction(source: string, name: string): string {
 }
 
 function evalHelpers(source: string) {
-  // split and common are pure (no imports) — transpile the twin's verbatim
+  // splitCountLabel and common are pure (no imports) — transpile the twin's verbatim
   // function text so the test exercises THE file, not a re-typed copy.
-  const code = `${extractFunction(source, "split")}\n${extractFunction(source, "common")}\nreturn { split, common }`
+  const code = `${extractFunction(source, "splitCountLabel")}\n${extractFunction(source, "common")}\nreturn { split: splitCountLabel, common }`
   const js = transpileModule(code, { compilerOptions: { target: 99 /* Latest */ } }).outputText
   return new Function(js)() as {
     split: (text: string | undefined) => { before: string; after: string }
@@ -103,9 +103,8 @@ function memoDerivations(t: (key: string) => string | undefined, category: () =>
 describe("tool-count-label i18n guard (#987)", () => {
   test("the overlay twin exists and is the registered fix (manifest + guard shape)", () => {
     const source = readFileSync(TWIN, "utf8")
-    expect(source).toContain("harmoniqs/amicode#987")
-    expect(source).toContain("function split(text: string | undefined)")
-    expect(source).toContain('if (!text) return { before: "", after: "" }')
+    expect(source).toContain("function splitCountLabel(text?: string)")
+    expect(source).toContain('const value = text ?? ""')
     expect(source).toContain("startsWith")
   })
 

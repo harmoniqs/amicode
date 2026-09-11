@@ -3,7 +3,14 @@ import * as vscode from "vscode";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { handleAmicodeBridgeMessage, extractReportBugModel, resolveDbBackupDir, type BridgeIo } from "../src/chat_bridge";
+import {
+  appBundleBuildCommand,
+  extractReportBugModel,
+  handleAmicodeBridgeMessage,
+  mainOverlayVerificationCommand,
+  resolveDbBackupDir,
+  type BridgeIo,
+} from "../src/chat_bridge";
 
 // connect-harmoniqs-provider's success path calls out to onboarding_panel's
 // testConnection (a real network call) and writeOnboardingConfig (real fs
@@ -44,6 +51,23 @@ beforeEach(() => {
   env.opened.length = 0;
   env.clipboard.text = "";
   ws.configUpdates.length = 0;
+});
+
+describe("developer-tools rebuild contracts (#1004)", () => {
+  it("builds a local worktree without a deployment or overlay gate", () => {
+    expect(appBundleBuildCommand("local", "/tmp/opencode")).toBe(
+      'pnpm --filter amicode run build:app -- --work "/tmp/opencode" --direct-worktree',
+    );
+  });
+
+  it("verifies the exact OpenCode revision before a main rebuild installs dependencies", () => {
+    expect(mainOverlayVerificationCommand("/tmp/opencode")).toContain(
+      'node packages/app-bundle/scripts/overlay-promotion.mjs --check --source "/tmp/opencode" --revision "$(git -C "/tmp/opencode" rev-parse HEAD)"',
+    );
+    expect(appBundleBuildCommand("main", "/tmp/opencode")).toBe(
+      'pnpm --filter amicode run build:app -- --work "/tmp/opencode" --verified-main',
+    );
+  });
 });
 
 describe("amicode bridge — open-external", () => {

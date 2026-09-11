@@ -41,7 +41,9 @@ import { decode64 } from "@/utils/base64"
 import {
   HARMONIQS_PROVIDER_ID,
   HARMONIQS_PROVIDER_NAME,
+  requestHarmoniqsProviderConnect,
   shouldShowHarmoniqsEntry,
+  isHarmoniqsProviderConnectAck,
 } from "./dialog-connect-provider-harmoniqs"
 
 const CUSTOM_ID = "_custom"
@@ -77,14 +79,22 @@ export const DialogConnectProvider: Component<{
     controller.select(provider)
   }
 
+  // amicode#962: the extension's Harmoniqs handoff panel (Stage-0's onboarding
+  // webview, focused to just this provider) runs independently of this
+  // dialog once opened — its ack is this dialog's cue to get out of the way.
+  onMount(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (isHarmoniqsProviderConnectAck(event.data)) dialog.close()
+    }
+    window.addEventListener("message", onMessage)
+    onCleanup(() => window.removeEventListener("message", onMessage))
+  })
+
   function Content() {
     return (
       <Switch>
         <Match when={controller.selected() === CUSTOM_ID}>
           <CustomProviderForm autofocus={!newLayout()} />
-        </Match>
-        <Match when={controller.selected() === HARMONIQS_PROVIDER_ID}>
-          <HarmoniqsConnection onBack={reset} setBack={(handler) => (back.current = handler)} />
         </Match>
         <Match when={controller.selected() && controller.selected() !== CUSTOM_ID ? controller.selected() : undefined}>
           {(provider) => (
@@ -215,6 +225,10 @@ function ProviderPicker(props: {
       }}
       onSelect={(x) => {
         if (!x) return
+        if (x.id === HARMONIQS_PROVIDER_ID) {
+          requestHarmoniqsProviderConnect()
+          return
+        }
         props.onSelect(x.id)
       }}
     >
@@ -294,6 +308,10 @@ function ProviderPickerV2(props: {
   onMount(() => search?.focus({ preventScroll: true }))
 
   const connect = (provider: string) => {
+    if (provider === HARMONIQS_PROVIDER_ID) {
+      requestHarmoniqsProviderConnect()
+      return
+    }
     props.onPrepare?.()
     props.onSelect(provider)
   }
@@ -399,71 +417,6 @@ function ProviderPickerV2(props: {
           style={{ background: "linear-gradient(to bottom, transparent, var(--v2-background-bg-layer-01))" }}
         />
       </div>
-    </div>
-  )
-}
-
-function HarmoniqsConnection(props: { onBack: () => void; setBack: (handler: () => void) => void }) {
-  const dialog = useDialog()
-  const language = useLanguage()
-  const settings = useSettings()
-  const [store, setStore] = createStore({ key: "", pending: false, error: undefined as string | undefined })
-
-  props.setBack(props.onBack)
-
-  onMount(() => {
-    const receive = (event: MessageEvent) => {
-      const result = event.data as { source?: unknown; kind?: unknown; ok?: unknown; error?: unknown }
-      if (result.source !== "amicode" || result.kind !== "connect-harmoniqs-provider-result") return
-      setStore("pending", false)
-      if (result.ok !== true) {
-        setStore("error", typeof result.error === "string" ? result.error : language.t("common.requestFailed"))
-        return
-      }
-      dialog.close()
-      showToast({
-        variant: "success",
-        icon: "circle-check",
-        title: language.t("provider.connect.toast.connected.title", { provider: HARMONIQS_PROVIDER_NAME }),
-        description: language.t("provider.connect.toast.connected.description", { provider: HARMONIQS_PROVIDER_NAME }),
-      })
-    }
-    window.addEventListener("message", receive)
-    onCleanup(() => window.removeEventListener("message", receive))
-  })
-
-  const submit = (event: SubmitEvent) => {
-    event.preventDefault()
-    const key = store.key.trim()
-    if (!key) {
-      setStore("error", language.t("provider.connect.apiKey.required"))
-      return
-    }
-    setStore({ pending: true, error: undefined })
-    window.parent?.postMessage({ source: "amicode", kind: "connect-harmoniqs-provider", apiKey: key }, "*")
-  }
-
-  return (
-    <div class="flex flex-col gap-5 px-3 text-[13px] font-[440] leading-5 tracking-[-0.04px] text-v2-text-text-muted">
-      <div>Enter an `hqa_...` API key from app.harmoniqs.ai. Harmoniqs AI is chat-only and cannot call tools.</div>
-      <form onSubmit={submit} class="flex flex-col items-start gap-5 self-stretch">
-        <label class="flex w-full flex-col gap-1 font-[530] leading-4 text-v2-text-text-base">
-          {language.t("provider.connect.apiKey.label", { provider: HARMONIQS_PROVIDER_NAME })}
-          <TextInputV2
-            class="!w-full"
-            type="password"
-            autocomplete="off"
-            spellcheck={false}
-            value={store.key}
-            invalid={store.error !== undefined}
-            onInput={(event) => setStore("key", event.currentTarget.value)}
-          />
-        </label>
-        <Show when={store.error}>{(error) => <div role="alert" class="-mt-4 text-xs text-v2-state-fg-danger">{error()}</div>}</Show>
-        <ButtonV2 type="submit" variant="contrast" disabled={store.pending}>
-          {store.pending ? "Testing..." : language.t("common.continue")}
-        </ButtonV2>
-      </form>
     </div>
   )
 }

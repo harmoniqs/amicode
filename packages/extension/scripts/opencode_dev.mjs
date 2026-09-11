@@ -151,13 +151,16 @@ function build() {
   const cloneDir = resolveCloneDir(PKG_ROOT);
   // Warn if the overlay is stale relative to the fork (non-blocking).
   try {
-    execFileSync("node", [join(PKG_ROOT, "..", "app-bundle", "scripts", "overlay-sync.mjs"), "--check"], {
+    execFileSync("node", [
+      join(PKG_ROOT, "..", "app-bundle", "scripts", "overlay-promotion.mjs"),
+      "--check", "--source", cloneDir, "--revision", git(cloneDir, "rev-parse", "HEAD"),
+    ], {
       stdio: ["ignore", "pipe", "pipe"],
     });
   } catch (e) {
     console.warn(
       `[opencode:build] ⚠ overlay drift detected — the overlay does not match the fork.\n` +
-        `  Run: pnpm --filter @amicode/app-bundle sync:apply\n` +
+        `  Run: pnpm --filter @amicode/app-bundle sync:apply -- --source "${cloneDir}" --revision ${git(cloneDir, "rev-parse", "HEAD")} --base <upstream-base>\n` +
         `  Building anyway (the binary uses the fork, not the overlay).\n`,
     );
   }

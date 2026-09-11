@@ -13,10 +13,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - name: Checkout declared OpenCode source for provenance verification
+        uses: actions/checkout@v7
+        with:
+          repository: harmoniqs/opencode
+          path: .opencode-provenance
+          token: ${{ secrets.OPENCODE_FETCH_TOKEN }}
       - uses: actions/setup-node@v7
         with: { node-version: 20 }
       - name: drift gate — overlay/manifest sync (committed state; re-derivation when the fork is reachable)
-        run: node packages/app-bundle/scripts/drift_gate.mjs
+        run: node packages/app-bundle/scripts/drift_gate.mjs --fork "$GITHUB_WORKSPACE/.opencode-provenance"
   bundle-build-gate:
     # #643: the CLI bundles (packages/amico-run/dist/*.js) are gitignored build
     # artifacts — the deployed verb-router bundle sat 46 days stale because

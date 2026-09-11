@@ -52,7 +52,7 @@ export const KNOWN_FIXED_HUNKS = [
 // the tree is not a materializable app source (the caller refuses, uncheckable).
 export function localeDicts(appSrcDir) {
   return readdirSync(join(appSrcDir, "i18n"))
-    .filter((f) => f.endsWith(".ts") && !LOCALE_SKIP.has(f))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !LOCALE_SKIP.has(f))
     .sort();
 }
 
