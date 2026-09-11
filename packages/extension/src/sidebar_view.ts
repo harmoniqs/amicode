@@ -395,9 +395,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
           const uri = vscode.Uri.file(p);
           // Text files open as persistent editable VS Code tabs. Non-text files
           // reject showTextDocument and fall back to their registered viewer.
-          void vscode.window.showTextDocument(uri, { preview: false }).catch(() =>
-            vscode.commands.executeCommand("vscode.open", uri),
-          );
+          void vscode.window
+            .showTextDocument(uri, { preview: false })
+            .then(undefined, () => vscode.commands.executeCommand("vscode.open", uri));
         },
         fileOp: (req) => executeFileOp(req),
         postMessage: (m) => {
