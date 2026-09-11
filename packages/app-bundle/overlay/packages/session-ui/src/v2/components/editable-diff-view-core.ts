@@ -84,6 +84,8 @@ export function createDiffEditor(opts: {
   readOnly: boolean
   theme: Extension
   language?: LanguageSupport | null
+  /** File extension for Shiki highlighting (e.g. "ts", "py", "jl"). */
+  lang?: string
   onChange?: (content: string) => void
 }): DiffEditorHandle {
   let mergeView: MergeView | null = null
@@ -97,6 +99,7 @@ export function createDiffEditor(opts: {
   const base = baseExtensions({
     theme: opts.theme,
     language: opts.language,
+    lang: opts.lang,
   })
 
   if (opts.diffStyle === "split") {
