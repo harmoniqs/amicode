@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v7
         with: { node-version: 20 }
       - name: Fetch the manifest's canonical upstream base
-        run: git -C .opencode-provenance fetch --no-tags https://github.com/anomalyco/opencode.git "$(node -p \"require('./packages/app-bundle/manifest.json').upstream_base_sha\")"
+        run: git -C .opencode-provenance fetch --no-tags https://github.com/anomalyco/opencode.git "$(node -e 'process.stdout.write(require("./packages/app-bundle/manifest.json").upstream_base_sha)')"
       - name: drift gate — overlay/manifest sync (committed state; re-derivation when the fork is reachable)
         run: node packages/app-bundle/scripts/drift_gate.mjs --fork "$GITHUB_WORKSPACE/.opencode-provenance"
   bundle-build-gate:
