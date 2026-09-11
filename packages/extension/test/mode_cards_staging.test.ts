@@ -90,6 +90,33 @@ describe("stageModCards", () => {
     expect(() => stageModCards(fakeExtension, destDir, HERMETIC)).toThrow(/develop\.md/);
   });
 
+  it("removes stale .md files from destDir that are no longer in the source set (#1013)", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-stale-cleanup-"));
+    // simulate a previous staging that left autodev.md and autoresearch.md
+    writeFileSync(join(destDir, "autodev.md"), "# stale autodev card\n");
+    writeFileSync(join(destDir, "autoresearch.md"), "# stale autoresearch card\n");
+    // also leave a non-.md file that must NOT be removed
+    writeFileSync(join(destDir, "notes.txt"), "user notes\n");
+    const r = stageModCards(EXTENSION_PATH, destDir, HERMETIC);
+    // stale .md files are gone
+    expect(existsSync(join(destDir, "autodev.md"))).toBe(false);
+    expect(existsSync(join(destDir, "autoresearch.md"))).toBe(false);
+    // non-.md files are preserved
+    expect(existsSync(join(destDir, "notes.txt"))).toBe(true);
+    // the staging receipt is preserved
+    expect(existsSync(join(destDir, ".staging-receipt.json"))).toBe(true);
+    // removed list reports what was cleaned up
+    expect(r.removed).toEqual(["autodev.md", "autoresearch.md"]);
+    // current cards are all present
+    for (const f of expectedCards()) expect(existsSync(join(destDir, f))).toBe(true);
+  });
+
+  it("removed is empty when destDir has no stale files", () => {
+    const destDir = mkdtempSync(join(tmpdir(), "mode-cards-no-stale-"));
+    const r = stageModCards(EXTENSION_PATH, destDir, HERMETIC);
+    expect(r.removed).toEqual([]);
+  });
+
   it("tripwire: the extension really ships the cards at the source path", () => {
     for (const f of expectedCards())
       expect(existsSync(join(AGENTS_SRC, f)), `missing source ${f}`).toBe(true);
