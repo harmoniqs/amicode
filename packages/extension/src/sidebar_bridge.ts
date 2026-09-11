@@ -69,6 +69,8 @@ export interface FileOpResult {
   message?: string;
   /** Set by move/rename ops — the destination path, for file-op-notify. */
   newPath?: string;
+  /** Host-only: server-owned external tracking succeeded, so do not relay raw paths. */
+  trackedExternally?: boolean;
 }
 
 // ── Host → Webview (down) ────────────────────────────────────────────────────
@@ -331,7 +333,7 @@ export function handleSidebarMessage(
           });
           // Notify the session page about file moves/renames so Files Changed
           // updates the file's path instead of showing a stale ghost entry.
-          if (result.newPath && (req.op === "move" || req.op === "rename")) {
+          if (result.newPath && !result.trackedExternally && (req.op === "move" || req.op === "rename")) {
             handlers.notifyFileMove?.(req.path, result.newPath, req.op);
           }
         }

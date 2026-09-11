@@ -145,4 +145,36 @@ describe("ChatPanel — side-by-side sessions (multi-instance registry)", () => 
     expect(created).toHaveLength(2);
     expect(args[1].title).toBe("Amicode Chat");
   });
+
+  it("snapshots the last focused panel's settled session and clears draft context", () => {
+    const cap = capturePanels();
+    restore = cap.restore;
+    created = cap.created;
+    args = cap.args;
+
+    ChatPanel.openOrReveal(fakeCtx(), BASE, "token");
+    ChatPanel.openNew(fakeCtx(), DRAFT, "token");
+    const primary = created[0] as unknown as {
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    const secondary = created[1] as unknown as {
+      webview: { _simulateMessage(msg: unknown): void };
+      _simulateViewState(active: boolean, visible: boolean): void;
+    };
+    primary.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_primary" });
+    secondary.webview._simulateMessage({ source: "amicode", kind: "session-context", sessionID: "ses_secondary" });
+    primary._simulateViewState(true, true);
+
+    expect(ChatPanel.lastFocusedMutationContext()).toMatchObject({ sessionID: "ses_primary" });
+
+    primary.webview._simulateMessage({ source: "amicode", kind: "session-context", draft: true });
+    expect(ChatPanel.lastFocusedMutationContext()).toBeUndefined();
+  });
+
+  it("relays session context upstream and opaque reassessment invalidations downstream in both iframe shells", () => {
+    const source = require("node:fs").readFileSync(require("node:path").resolve(__dirname, "..", "src", "chat_panel.ts"), "utf8");
+    expect(source.match(/d\.kind === "session-context"/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(source.match(/d\.kind === "assessed-diff-invalidate"/g)?.length).toBeGreaterThanOrEqual(2);
+  });
 });

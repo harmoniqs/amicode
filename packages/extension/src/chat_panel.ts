@@ -5,6 +5,8 @@ import { registerInspectorPoster } from "./inspector_bridge";
 import { getBugReport } from "./bug_report";
 import { FileWatcherBridge } from "./file_watcher_bridge";
 import { resolveExplorerIconTheme } from "./explorer_icon_theme";
+import { ExternalMutationTransport } from "./external_mutation_transport";
+import type { MutationTrackingContext } from "./external_mutation";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -42,6 +44,8 @@ export function tabIconPath(ctx: vscode.ExtensionContext): { light: vscode.Uri; 
 
 export class ChatPanel {
   private static current?: ChatPanel;
+  /** The only panel eligible to attribute a Sidebar mutation. Never primary-by-default. */
+  private static lastFocused?: ChatPanel;
   /** Every live chat tab (primary included) — drives tab-title numbering. */
   private static readonly live = new Set<ChatPanel>();
   /** Callback fired whenever the number of live chat panels changes. */
@@ -72,6 +76,9 @@ export class ChatPanel {
   /** Per-session file watcher (#844): watches every file the session has
    *  touched and posts fs-diff-invalidate when any of them change on disk. */
   private readonly fileWatcher: FileWatcherBridge;
+  /** Session identity reported by this panel's iframe; absent for drafts and closed routes. */
+  private sessionID?: string;
+  private externalMutationTransport?: ExternalMutationTransport;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -136,6 +143,12 @@ export class ChatPanel {
     // identical #163 credential even while the chat SSE is streaming.
     const serverAuth = authToken ? `Basic ${authToken}` : undefined;
     const serverUrl = opencodeUrl.origin;
+    if (serverAuth) {
+      this.externalMutationTransport = new ExternalMutationTransport({
+        url: serverUrl,
+        authorization: serverAuth,
+      });
+    }
     this.panel.webview.onDidReceiveMessage(
       (msg) => {
         // app-ready: the SolidJS app has mounted and is rendering. Fire
@@ -146,6 +159,14 @@ export class ChatPanel {
           for (const cb of cbs) cb();
           // #870: persistent callbacks fire on EVERY app-ready (not drained).
           for (const cb of ChatPanel.appReadyPersistentCallbacks) cb();
+          return;
+        }
+        // The framed app reports its settled route identity. A draft or closed
+        // route deliberately clears it so a Sidebar operation can never borrow
+        // another panel's session.
+        if (msg && msg.source === "amicode" && msg.kind === "session-context") {
+          const sessionID = typeof msg.sessionID === "string" && msg.sessionID !== "" ? msg.sessionID : undefined;
+          this.sessionID = msg.draft === true ? undefined : sessionID;
           return;
         }
         // #844: watch-files — the session page sends the list of absolute file
@@ -188,6 +209,7 @@ export class ChatPanel {
     this.panel.onDidChangeViewState(
       (e) => {
         if (e.webviewPanel.active) {
+          ChatPanel.lastFocused = this;
           ChatPanel.onProjectSelectedCallback?.(this.lastProjectPath, "expand");
         }
       },
@@ -291,6 +313,35 @@ export class ChatPanel {
    *  fallback when the server is mid-restart and no ready URL exists. */
   static peek(): ChatPanel | undefined {
     return ChatPanel.current;
+  }
+
+  /** Snapshot the last focused panel's currently settled session for one host operation. */
+  static lastFocusedMutationContext(): MutationTrackingContext | undefined {
+    const panel = ChatPanel.lastFocused;
+    if (!panel?.sessionID || !panel.externalMutationTransport) return;
+    const sessionID = panel.sessionID;
+    return {
+      sessionID,
+      transport: panel.externalMutationTransport,
+      onCommitted: (committedSessionID) => panel.refreshExternalWatchers(committedSessionID),
+    };
+  }
+
+  /** Fetch canonical descriptors host-side, then relay only opaque invalidations. */
+  private async refreshExternalWatchers(sessionID: string): Promise<void> {
+    const detail = await this.externalMutationTransport?.assessed(sessionID);
+    if (!detail) return;
+    this.fileWatcher.updateExternalWatchSet(
+      detail.assessments.map((assessment) => ({ ...assessment, revision: detail.revision })),
+    );
+    for (const assessment of detail.assessments) {
+      void this.panel.webview.postMessage({
+        source: "amicode",
+        kind: "assessed-diff-invalidate",
+        reference: assessment.reference,
+        revision: detail.revision,
+      });
+    }
   }
 
   /** Broadcast a message to EVERY live chat panel (#870).
@@ -482,6 +533,10 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
+          if (d && d.source === "amicode" && d.kind === "session-context") {
+            vscode.postMessage(d);
+            return;
+          }
           if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request")) {
             vscode.postMessage(d);
           }
@@ -492,6 +547,11 @@ export class ChatPanel {
         // our own envelopes, pinned to the opencode origin. #351 adds
         // run:*/device:* envelopes for the Work Column inspector tabs.
         // #934: preview-file — sidebar/chat file routing to the Preview companion tab.
+        if (d && d.source === "amicode" && d.kind === "assessed-diff-invalidate") {
+          var invalidated = document.querySelector("iframe");
+          if (invalidated && invalidated.contentWindow) invalidated.contentWindow.postMessage(d, ${origin});
+          return;
+        }
         if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
@@ -644,9 +704,18 @@ export class ChatPanel {
             vscode.postMessage({ source: "amicode", kind: "clipboard-image-read", nonce: d.nonce });
             return;
           }
+          if (d && d.source === "amicode" && d.kind === "session-context") {
+            vscode.postMessage(d);
+            return;
+          }
           if (d && d.source === "amicode" && (d.kind === "command" || d.kind === "clipboard-request" || d.kind === "clipboard-write" || d.kind === "open-external" || d.kind === "open-file" || d.kind === "save-file" || d.kind === "set-default-model" || d.kind === "bug-filed" || d.kind === "bug-report-closed" || d.kind === "bug-report-poke" || d.kind === "dev-tools-update" || d.kind === "dev-tools-rebuild" || d.kind === "dev-tools-build-vsix" || d.kind === "data-storage-query" || d.kind === "data-storage-update" || d.kind === "redo-onboarding" || d.kind === "connect-harmoniqs-provider" || d.kind === "device:refresh" || d.kind === "connections-credential" || d.kind === "connections-disconnect" || d.kind === "connections-revalidate" || d.kind === "connections-auth" || d.kind === "connections-choose-project" || d.kind === "connections-add-custom" || d.kind === "connections-remove" || d.kind === "skill-providers-query" || d.kind === "skill-providers-add" || d.kind === "skill-providers-remove" || d.kind === "skill-providers-rename" || d.kind === "skill-providers-autodiscover" || d.kind === "skill-providers-pick-directory" || d.kind === "add-workspace-project" || d.kind === "project-selected" || d.kind === "app-ready" || d.kind === "watch-files" || d.kind === "preview-visible-children-request" || d.kind === "explorer-icon-theme-request")) {
             vscode.postMessage(d);
           }
+          return;
+        }
+        if (d && d.source === "amicode" && d.kind === "assessed-diff-invalidate") {
+          var invalidated = document.querySelector("iframe");
+          if (invalidated && invalidated.contentWindow) invalidated.contentWindow.postMessage(d, origin);
           return;
         }
         if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme")) {
@@ -670,6 +739,7 @@ export class ChatPanel {
     ChatPanel.live.delete(this);
     ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     if (ChatPanel.current === this) ChatPanel.current = undefined;
+    if (ChatPanel.lastFocused === this) ChatPanel.lastFocused = undefined;
   }
 
   /** Close the current singleton chat panel (if one exists). Used by redo-onboarding
