@@ -18,6 +18,7 @@ jobs:
         with:
           repository: harmoniqs/opencode
           path: .opencode-provenance
+          ref: local/amicode
           token: ${{ secrets.OPENCODE_FETCH_TOKEN }}
       - uses: actions/setup-node@v7
         with: { node-version: 20 }
