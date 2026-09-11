@@ -7,57 +7,35 @@
  * @module
  */
 
+import { type Extension } from "@codemirror/state"
 import {
-  type Extension,
-  type Range,
-  StateEffect,
-  StateField,
-} from "@codemirror/state"
-import {
-  Decoration,
-  type DecorationSet,
   EditorView,
   type PluginValue,
   ViewPlugin,
   type ViewUpdate,
 } from "@codemirror/view"
-import type { ShikiTokenizeResult } from "./shiki-highlight-worker"
+import {
+  type ShikiTokenizeResult,
+  setShikiDecorations,
+  shikiDecorationField,
+  tokensToDecorations,
+} from "./shiki-highlight-decorations"
 import { getActiveShikiTheme, getActiveThemeObject, onThemeChange } from "./shiki-theme-state"
-
-// ---------------------------------------------------------------------------
-// Decoration effect — the plugin dispatches this to update the decoration set
-// ---------------------------------------------------------------------------
-
-const setShikiDecorations = StateEffect.define<DecorationSet>()
-
-const shikiDecorationField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(value, tr) {
-    for (const e of tr.effects) {
-      if (e.is(setShikiDecorations)) return e.value
-    }
-    // Map decorations through document changes (shift offsets)
-    return tr.docChanged ? value.map(tr.changes) : value
-  },
-  provide: (f) => EditorView.decorations.from(f),
-})
+import { OpenCodeTheme } from "@opencode-ai/ui/context/marked"
+import ShikiHighlightWorkerUrl from "./shiki-highlight-worker.ts?worker&url"
 
 // ---------------------------------------------------------------------------
 // Worker management — single shared worker for all CM6 instances
 // ---------------------------------------------------------------------------
 
 let sharedWorker: Worker | null = null
-let workerReady = false
 const pendingRequests = new Map<number, (result: ShikiTokenizeResult) => void>()
 let nextRequestId = 1
 
 function getWorker(): Worker | null {
   if (sharedWorker) return sharedWorker
   try {
-    sharedWorker = new Worker(
-      new URL("./shiki-highlight-worker.ts", import.meta.url),
-      { type: "module" },
-    )
+    sharedWorker = new Worker(ShikiHighlightWorkerUrl, { type: "module" })
     sharedWorker.onmessage = (event: MessageEvent<ShikiTokenizeResult>) => {
       if (event.data.type === "tokenize-result") {
         const cb = pendingRequests.get(event.data.id)
@@ -67,7 +45,9 @@ function getWorker(): Worker | null {
         }
       }
     }
-    // Initialize with the current theme
+    // Initialize with the current theme — if a VS Code theme has been
+    // received, use it; otherwise use the full OpenCodeTheme (the same
+    // CSS-variable-based theme the markdown worker uses).
     const themeObj = getActiveThemeObject()
     const themeName = getActiveShikiTheme()
     if (themeObj) {
@@ -77,15 +57,14 @@ function getWorker(): Worker | null {
         name: "vscode-active",
       })
     } else {
-      // For built-in themes, we still need a theme object for init.
-      // The worker will load it by name from Shiki's bundled themes.
+      // Use the actual OpenCodeTheme object — it has 30+ TextMate scope
+      // rules with CSS variable colors that resolve in the DOM context.
       sharedWorker.postMessage({
         type: "init",
-        theme: { name: themeName, tokenColors: [] },
+        theme: OpenCodeTheme,
         name: themeName,
       })
     }
-    workerReady = true
     return sharedWorker
   } catch {
     return null
@@ -95,11 +74,7 @@ function getWorker(): Worker | null {
 function sendThemeUpdate(name: string, theme: string | object): void {
   const worker = sharedWorker
   if (!worker) return
-  worker.postMessage({
-    type: "theme-update",
-    theme,
-    name,
-  })
+  worker.postMessage({ type: "theme-update", theme, name })
 }
 
 function tokenize(
@@ -127,43 +102,6 @@ function tokenize(
 }
 
 // ---------------------------------------------------------------------------
-// Token → Decoration conversion
-// ---------------------------------------------------------------------------
-
-function tokensToDecorations(result: ShikiTokenizeResult, docText: string): DecorationSet {
-  if (result.lines.length === 0) return Decoration.none
-
-  const ranges: Range<Decoration>[] = []
-  let lineStart = 0
-
-  for (let i = 0; i < result.lines.length && lineStart <= docText.length; i++) {
-    const line = result.lines[i]
-    for (const token of line.tokens) {
-      const from = lineStart + token.offset
-      const to = from + token.length
-      if (from >= to || from < 0 || to > docText.length) continue
-      if (!token.color) continue
-
-      let style = `color: ${token.color}`
-      if (token.fontStyle) {
-        if (token.fontStyle & 1) style += "; font-style: italic"
-        if (token.fontStyle & 2) style += "; font-weight: bold"
-        if (token.fontStyle & 4) style += "; text-decoration: underline"
-      }
-      ranges.push(Decoration.mark({ attributes: { style } }).range(from, to))
-    }
-
-    // Move past this line's content + the newline
-    const newlineIdx = docText.indexOf("\n", lineStart)
-    lineStart = newlineIdx >= 0 ? newlineIdx + 1 : docText.length + 1
-  }
-
-  // Decorations must be sorted by from position
-  ranges.sort((a, b) => a.from - b.from || a.to - b.to)
-  return Decoration.set(ranges)
-}
-
-// ---------------------------------------------------------------------------
 // CM6 ViewPlugin
 // ---------------------------------------------------------------------------
 
@@ -180,7 +118,6 @@ class ShikiHighlightPluginValue implements PluginValue {
     this.view = view
     this.lang = lang
 
-    // Subscribe to theme changes
     this.unsubTheme = onThemeChange(() => {
       this.scheduleTokenize()
     })
@@ -216,7 +153,6 @@ class ShikiHighlightPluginValue implements PluginValue {
 
     // Stale check: if another tokenization was started, discard this one
     if (id !== this.currentTokenizeId) return
-    // View may have been destroyed
     if (!this.view) return
 
     const decorations = tokensToDecorations(result, text)
@@ -225,15 +161,12 @@ class ShikiHighlightPluginValue implements PluginValue {
 }
 
 // ---------------------------------------------------------------------------
-// Public API — the CM6 extension to add to baseExtensions()
+// Public API
 // ---------------------------------------------------------------------------
 
 /**
  * Create a CM6 extension that applies Shiki-based syntax highlighting.
  * The `lang` parameter is the file extension (e.g. "ts", "py", "jl").
- *
- * Returns an array of extensions: the StateField (decorations) and the
- * ViewPlugin (tokenization + debounce + worker communication).
  */
 export function shikiHighlightExtension(lang: string): Extension[] {
   return [
@@ -245,15 +178,10 @@ export function shikiHighlightExtension(lang: string): Extension[] {
 }
 
 /**
- * Notify the Shiki worker about a theme change. Called when the
- * shiki-theme-state receives a new theme from the extension bridge.
+ * Notify the Shiki worker about a theme change.
  */
 export function updateWorkerTheme(): void {
   const name = getActiveShikiTheme()
   const obj = getActiveThemeObject()
   sendThemeUpdate(name, obj ?? name)
 }
-
-// Re-export for tests
-export { tokensToDecorations, setShikiDecorations, shikiDecorationField }
-export type { ShikiTokenizeResult }

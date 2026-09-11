@@ -2,12 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { Decoration } from "@codemirror/view"
 import {
   tokensToDecorations,
-  shikiHighlightExtension,
   shikiDecorationField,
   type ShikiTokenizeResult,
-} from "./shiki-highlight-plugin"
+} from "./shiki-highlight-decorations"
 
-describe("shiki-highlight-plugin", () => {
+describe("shiki-highlight-decorations", () => {
   describe("tokensToDecorations", () => {
     test("converts Shiki tokens to CM6 decorations with inline color styles", () => {
       const result: ShikiTokenizeResult = {
@@ -27,7 +26,6 @@ describe("shiki-highlight-plugin", () => {
       const decos = tokensToDecorations(result, docText)
       expect(decos).not.toBe(Decoration.none)
 
-      // Iterate the decoration set to check individual marks
       const marks: Array<{ from: number; to: number }> = []
       const cursor = decos.iter()
       while (cursor.value) {
@@ -46,8 +44,8 @@ describe("shiki-highlight-plugin", () => {
         type: "tokenize-result",
         id: 1,
         lines: [
-          { tokens: [{ offset: 0, length: 3, color: "#FF0000" }] },  // "foo"
-          { tokens: [{ offset: 0, length: 3, color: "#00FF00" }] },  // "bar"
+          { tokens: [{ offset: 0, length: 3, color: "#FF0000" }] },
+          { tokens: [{ offset: 0, length: 3, color: "#00FF00" }] },
         ],
       }
       const docText = "foo\nbar"
@@ -59,7 +57,6 @@ describe("shiki-highlight-plugin", () => {
         marks.push({ from: cursor.from, to: cursor.to })
         cursor.next()
       }
-      // "foo" is at 0-3, "bar" is at 4-7 (after the newline)
       expect(marks).toEqual([
         { from: 0, to: 3 },
         { from: 4, to: 7 },
@@ -99,14 +96,6 @@ describe("shiki-highlight-plugin", () => {
         cursor.next()
       }
       expect(marks.length).toBe(3)
-    })
-  })
-
-  describe("shikiHighlightExtension", () => {
-    test("returns an array with the StateField and ViewPlugin", () => {
-      const exts = shikiHighlightExtension("ts")
-      expect(Array.isArray(exts)).toBe(true)
-      expect(exts.length).toBe(2)
     })
   })
 
