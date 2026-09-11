@@ -42,7 +42,13 @@ const cacheTree = join(cacheDir, "tree");
 async function upstreamTree() {
   if (flag("upstream")) return flag("upstream");
   if (existsSync(join(cacheTree, "package.json"))) return cacheTree;
-  const url = `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
+  // GitHub serves tag archives at /archive/refs/tags/<tag>.tar.gz but commit-
+  // SHA archives at /archive/<sha>.tar.gz (no refs/tags/ prefix) — same fix as
+  // materialize.mjs (ce1877dd / #1012).
+  const isCommitSha = /^[0-9a-f]{40,}$/i.test(tag);
+  const url = isCommitSha
+    ? `https://github.com/${repo}/archive/${tag}.tar.gz`
+    : `https://github.com/${repo}/archive/refs/tags/${tag}.tar.gz`;
   console.log(`[drift-report] fetching ${url}`);
   const r = await fetch(url);
   if (!r.ok) throw new Error(`upstream fetch failed: HTTP ${r.status}`);

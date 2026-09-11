@@ -19,7 +19,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { homedir, tmpdir } from "node:os"
-import { dirname, join } from "node:path"
+import { dirname, join, resolve as resolvePath } from "node:path"
 
 const PKG_ROOT = join(import.meta.dirname, "..")
 const REPO_ROOT = join(PKG_ROOT, "..", "..")
@@ -193,7 +193,11 @@ function verify({ source, revision, target, manifestPath, baseRef }) {
 function promote({ source, revision, baseRef, target, manifestPath, branch, exceptionPaths, exceptionFrom, exceptionReason, exceptionReview }) {
   const guard = sourceGuard(source, branch, revision)
   if (guard) return fail(`refusing promotion: ${guard}`)
-  if (gitText(REPO_ROOT, ["branch", "--show-current"]) === "main") {
+  // Only the real overlay/manifest are promotion targets; a custom --target/--manifest
+  // (e.g. a test fixture) is never the live overlay, so it isn't subject to the
+  // main-branch guard below.
+  const isRealPromotionTarget = resolvePath(target) === resolvePath(DEFAULT_TARGET) && resolvePath(manifestPath) === resolvePath(DEFAULT_MANIFEST)
+  if (isRealPromotionTarget && gitText(REPO_ROOT, ["branch", "--show-current"]) === "main") {
     return fail("refusing to write an overlay-promotion directly on Amicode main; use a review branch")
   }
   if (!baseRef) return fail("--base is required for a promotion")
