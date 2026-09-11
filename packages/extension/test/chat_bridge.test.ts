@@ -132,6 +132,51 @@ describe("amicode bridge — open-file routes to preview-file (#935)", () => {
   });
 });
 
+describe("amicode bridge — preview visible children", () => {
+  it("echoes the requestId with Sidebar-filtered child entries", async () => {
+    const host = io();
+    host.previewVisibleChildren = async (root, relativeDirectory) => {
+      expect(root).toBe("/workspace/project");
+      expect(relativeDirectory).toBe("notes");
+      return [{ name: "README.md", kind: "file", absolute: "/workspace/project/notes/README.md", relative: "notes/README.md" }];
+    };
+
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "preview-visible-children-request", requestId: "request-1", root: "/workspace/project", relativeDirectory: "notes" }, host)).toBe(true);
+    await flush();
+
+    expect(host.posted).toContainEqual({
+      source: "amicode",
+      kind: "preview-visible-children-result",
+      requestId: "request-1",
+      entries: [{ name: "README.md", kind: "file", absolute: "/workspace/project/notes/README.md", relative: "notes/README.md" }],
+    });
+  });
+});
+
+describe("amicode bridge — Explorer icon theme", () => {
+  it("returns the host's opaque icon theme payload only for an explicit request", () => {
+    const host = io();
+    host.explorerIconTheme = () => ({
+      mode: "svg",
+      assets: { "asset-0": { mime: "image/svg+xml", data: "PHN2Zy8+" } },
+      fileExtensions: { md: { kind: "svg", asset: "asset-0" } },
+      fileNames: {},
+    });
+
+    expect(handleAmicodeBridgeMessage({ source: "amicode", kind: "explorer-icon-theme-request" }, host)).toBe(true);
+    expect(host.posted).toEqual([{
+      source: "amicode",
+      kind: "explorer-icon-theme",
+      theme: {
+        mode: "svg",
+        assets: { "asset-0": { mime: "image/svg+xml", data: "PHN2Zy8+" } },
+        fileExtensions: { md: { kind: "svg", asset: "asset-0" } },
+        fileNames: {},
+      },
+    }]);
+  });
+});
+
 describe("amicode bridge — open-file with path (native editor, #934)", () => {
   it("opens absolute path via vscode.open, not preview-file", async () => {
     const host = io();
