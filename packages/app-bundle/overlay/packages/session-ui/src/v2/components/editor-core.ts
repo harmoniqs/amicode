@@ -27,6 +27,8 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language"
 import { tags } from "@lezer/highlight"
+import { shikiHighlightExtension, updateWorkerTheme } from "./shiki-highlight-plugin"
+import { onThemeChange } from "./shiki-theme-state"
 
 // ---------------------------------------------------------------------------
 // External-update annotation — marks programmatic content dispatches so the
@@ -43,7 +45,12 @@ import { tags } from "@lezer/highlight"
 export const externalUpdate = Annotation.define<boolean>()
 
 // ---------------------------------------------------------------------------
-// Language loader — dynamic imports so unused grammars stay out of the bundle.
+// Language loader — uses a manual map for common extensions (with specific
+// options like jsx/typescript flags) and falls back to @codemirror/language-data
+// for broader coverage (~150 languages including Rust, Go, YAML, SQL, etc.).
+// Shiki handles visual highlighting for 200+ languages via TextMate grammars;
+// this loader provides lezer grammars for structural features (bracket
+// matching, code folding, auto-indent).
 // ---------------------------------------------------------------------------
 
 const EXTENSION_MAP: Record<string, () => Promise<LanguageSupport>> = {
@@ -69,19 +76,47 @@ const EXTENSION_MAP: Record<string, () => Promise<LanguageSupport>> = {
 
 /**
  * Dynamically load a CodeMirror language support by file extension.
- * Returns null for unknown extensions.
+ *
+ * Uses the manual EXTENSION_MAP first (covers common extensions with specific
+ * options), then falls back to @codemirror/language-data's LanguageDescription
+ * auto-detection for broader coverage.
+ *
+ * Returns null for extensions with no known lezer grammar. Note: Shiki still
+ * provides visual highlighting for these files via TextMate grammars — only
+ * structural features (bracket matching, folding) degrade to CM6's generic
+ * behavior.
  */
 export async function loadLanguage(
   ext: string,
 ): Promise<LanguageSupport | null> {
   const normalized = ext.replace(/^\./, "").toLowerCase()
+
+  // Fast path: manual map with specific options
   const loader = EXTENSION_MAP[normalized]
-  if (!loader) return null
-  try {
-    return await loader()
-  } catch {
-    return null
+  if (loader) {
+    try {
+      return await loader()
+    } catch {
+      return null
+    }
   }
+
+  // Slow path: @codemirror/language-data auto-detection
+  try {
+    const { languages } = await import("@codemirror/language-data")
+    const filename = `file.${normalized}`
+    const desc = languages.find((lang) =>
+      lang.extensions.some((e) => filename.endsWith(e)) ||
+      lang.filename?.test(filename),
+    )
+    if (desc) {
+      return await desc.load()
+    }
+  } catch {
+    // language-data not available or failed to load — fall through
+  }
+
+  return null
 }
 
 // ---------------------------------------------------------------------------
@@ -193,7 +228,7 @@ export function buildSyntaxHighlightStyle(): Extension {
     { tag: [tags.variableName, tags.definition(tags.variableName)],
       color: "var(--v2-text-text-base, var(--text-strong))" },
     { tag: [tags.function(tags.variableName), tags.function(tags.propertyName)],
-      color: "var(--syntax-function, var(--syntax-property))" },
+      color: "var(--syntax-property)" },
     { tag: [tags.constant(tags.variableName), tags.atom],
       color: "var(--syntax-constant)" },
     { tag: [tags.operator, tags.punctuation, tags.separator],
@@ -252,6 +287,8 @@ export function editableExtensions(opts: {
 export function baseExtensions(opts: {
   theme: Extension
   language?: LanguageSupport | null
+  /** File extension for Shiki highlighting (e.g. "ts", "py", "jl"). */
+  lang?: string
 }): Extension[] {
   return [
     lineNumbers(),
@@ -261,9 +298,10 @@ export function baseExtensions(opts: {
     bracketMatching(),
     keymap.of([...defaultKeymap, ...historyKeymap]),
     EditorView.lineWrapping,
-    buildSyntaxHighlightStyle(),
+    buildSyntaxHighlightStyle(), // first-paint bridge: lezer colors until Shiki responds
     opts.theme,
     ...(opts.language ? [opts.language] : []),
+    ...(opts.lang ? shikiHighlightExtension(opts.lang) : []),
   ]
 }
 
@@ -292,3 +330,9 @@ export function detectMode(): "light" | "dark" {
     return "dark"
   return "light"
 }
+
+// ---------------------------------------------------------------------------
+// Wire theme changes to the Shiki highlight worker
+// ---------------------------------------------------------------------------
+
+onThemeChange(() => updateWorkerTheme())

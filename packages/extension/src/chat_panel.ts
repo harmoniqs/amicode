@@ -128,7 +128,6 @@ export class ChatPanel {
           colorScheme: themeKindToScheme(t.kind),
         });
         this.postExplorerIconTheme();
-        this.postSyntaxTheme();
       },
       null,
       this.disposables,
@@ -136,7 +135,6 @@ export class ChatPanel {
     vscode.workspace.onDidChangeConfiguration(
       (event) => {
         if (event.affectsConfiguration("workbench.iconTheme")) this.postExplorerIconTheme();
-        if (event.affectsConfiguration("workbench.colorTheme") || event.affectsConfiguration("editor.tokenColorCustomizations")) this.postSyntaxTheme();
       },
       null,
       this.disposables,
@@ -227,16 +225,6 @@ export class ChatPanel {
       source: "amicode",
       kind: "explorer-icon-theme",
       theme: resolveExplorerIconTheme(),
-    });
-  }
-
-  private postSyntaxTheme(): void {
-    const theme = resolveSyntaxTheme();
-    if (theme == null) return;
-    void this.panel.webview.postMessage({
-      source: "amicode",
-      kind: "syntax-theme",
-      theme,
     });
   }
 
@@ -566,7 +554,7 @@ export class ChatPanel {
           if (invalidated && invalidated.contentWindow) invalidated.contentWindow.postMessage(d, ${origin});
           return;
         }
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme" || d.kind === "syntax-theme")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, ${origin});
         }
@@ -732,7 +720,7 @@ export class ChatPanel {
           if (invalidated && invalidated.contentWindow) invalidated.contentWindow.postMessage(d, origin);
           return;
         }
-        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme" || d.kind === "syntax-theme")) {
+        if (d && d.source === "amicode" && (d.kind === "theme" || d.kind === "clipboard" || d.kind === "navigate" || d.kind === "open-compute-connect" || d.kind === "open-bug-report" || d.kind === "close-bug-report" || d.kind === "dev-tools-status" || d.kind === "connect-harmoniqs-provider-result" || d.kind === "dev-tools-rebuild-status" || d.kind === "dev-tools-build-vsix-status" || d.kind === "data-storage-defaults" || d.kind === "data-storage-status" || d.kind === "connections-credential-result" || d.kind === "connections-disconnect-result" || d.kind === "connections-revalidate-result" || d.kind === "connections-auth-result" || d.kind === "connections-choose-project-result" || d.kind === "connections-add-custom-result" || d.kind === "connections-remove-result" || d.kind === "skill-providers-data" || d.kind === "skill-providers-discovered" || (typeof d.kind === "string" && (d.kind.indexOf("run:") === 0 || d.kind.indexOf("device:") === 0)) || d.kind === "clipboard-image" || d.kind === "workspace-projects" || d.kind === "file-op-notify" || d.kind === "fs-diff-invalidate" || d.kind === "agent-cycle" || d.kind === "preview-file" || d.kind === "preview-visible-children-result" || d.kind === "explorer-icon-theme")) {
           var f = document.querySelector("iframe");
           if (f && f.contentWindow) f.contentWindow.postMessage(d, origin);
         }

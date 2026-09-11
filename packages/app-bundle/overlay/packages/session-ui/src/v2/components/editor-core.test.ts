@@ -61,6 +61,17 @@ describe("loadLanguage (via editor-core)", () => {
     expect(await loadLanguage("json")).not.toBeNull()
   })
 
+  test("resolves extensions via @codemirror/language-data fallback", async () => {
+    // These are not in the manual EXTENSION_MAP but should be found
+    // by @codemirror/language-data's auto-detection
+    expect(await loadLanguage("rs")).not.toBeNull()    // Rust
+    expect(await loadLanguage("go")).not.toBeNull()    // Go
+    expect(await loadLanguage("yaml")).not.toBeNull()  // YAML
+    expect(await loadLanguage("sql")).not.toBeNull()   // SQL
+    expect(await loadLanguage("sh")).not.toBeNull()    // Shell
+    expect(await loadLanguage("toml")).not.toBeNull()  // TOML
+  })
+
   test("returns null for unknown extensions", async () => {
     expect(await loadLanguage("xyz-unknown")).toBeNull()
   })
