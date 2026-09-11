@@ -8,6 +8,8 @@
 //
 //   node scripts/overlay-sync.mjs --check   exit 0 if in sync, 1 if drifted
 //   node scripts/overlay-sync.mjs --apply   copy fork → overlay + update hashes
+//   node scripts/overlay-sync.mjs --apply --include <path>
+//                                             add one required fork source file
 //
 // Options:
 //   --source <dir>        fork checkout to read from (default: resolved fork)
@@ -190,10 +192,10 @@ function observeSource(dir) {
 
 // ── Apply mode ──────────────────────────────────────────────────────────────
 
-function apply(forkDir, targetDir, manifestPath) {
+function apply(forkDir, targetDir, manifestPath, includedPath) {
   const { drifted, missingInFork } = check(forkDir, targetDir)
 
-  if (drifted.length === 0 && missingInFork.length === 0) {
+  if (drifted.length === 0 && missingInFork.length === 0 && !includedPath) {
     console.log("[overlay-sync] already in sync — nothing to do")
     return 0
   }
@@ -263,6 +265,17 @@ function apply(forkDir, targetDir, manifestPath) {
     updated++
   }
 
+  if (includedPath) {
+    const forkPath = join(forkDir, includedPath)
+    const targetPath = join(targetDir, includedPath)
+    if (!existsSync(forkPath)) throw new Error(`fork source file not found: ${includedPath}`)
+    mkdirSync(dirname(targetPath), { recursive: true })
+    copyFileSync(forkPath, targetPath)
+    if (manifest?.files) manifest.files[includedPath] = sha256(targetPath)
+    console.log(`  added: ${includedPath}`)
+    updated++
+  }
+
   for (const rel of missingInFork) {
     console.log(`  warning: ${rel} exists in overlay but not in fork (class A amicode-only?)`)
   }
@@ -290,6 +303,7 @@ function parseArgs(argv) {
     target: flag("target") ?? DEFAULT_OVERLAY_DIR,
     manifest: flag("manifest") ?? null,
     sourceBranch: flag("source-branch") ?? DEFAULT_SOURCE_BRANCH,
+    include: flag("include"),
   }
 }
 
@@ -320,7 +334,7 @@ function main(argv) {
       return 1
     }
     for (const r of guard.recorded) console.log(`[overlay-sync] ${r}`)
-    return apply(forkDir, targetDir, manifestPath)
+    return apply(forkDir, targetDir, manifestPath, opts.include)
   }
 
   // ── check (never writes) ──

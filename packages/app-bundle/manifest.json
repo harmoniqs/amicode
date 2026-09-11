@@ -6,10 +6,10 @@
   "fork_sha": "d161eb0cfc6d03a53311e083b590005b4161c13a",
   "upstream_base": "v1.18.29",
   "upstream_base_sha": "16747470f976aca3d362ad730bcd3fe82ecc2c9a",
-  "extracted_at": "2026-09-10T22:01:06.041Z",
+  "extracted_at": "2026-09-11T00:45:35.788Z",
   "per_package": {
     "packages/app": {
-      "A": 148,
+      "A": 151,
       "M": 153,
       "D": 0
     },
@@ -40,7 +40,7 @@
     }
   },
   "counts": {
-    "overlay_total": 620,
+    "overlay_total": 622,
     "deletions": 7,
     "server_coupled": 47
   },
@@ -461,6 +461,7 @@
     "packages/app/src/context/command.tsx": "M",
     "packages/app/src/context/directory-sync.ts": "M",
     "packages/app/src/context/language.tsx": "M",
+    "packages/app/src/context/layout-side-panel-tabs.ts": "A",
     "packages/app/src/context/layout-tabs.test.ts": "M",
     "packages/app/src/context/layout-tabs.ts": "M",
     "packages/app/src/context/layout.tsx": "M",
@@ -538,6 +539,7 @@
     "packages/app/src/utils/session-list-conformance.ts": "A",
     "packages/app/src/utils/session-list-state.ts": "A",
     "packages/app/src/utils/start-prompt.ts": "A",
+    "packages/app/src/utils/vscode-explorer-icon-theme.ts": "A",
     "packages/app/src/utils/web-zoom.test.ts": "A",
     "packages/app/src/utils/web-zoom.ts": "A",
     "packages/app/src/utils/webview-context-menu.ts": "A",
@@ -823,6 +825,7 @@
     "packages/app/src/components/session/session-header.tsx": "M",
     "packages/app/src/components/session/session-new-view.tsx": "M",
     "packages/app/src/components/session/session-preview-tab.tsx": "A",
+    "packages/app/src/components/session/session-preview-tree.ts": "A",
     "packages/app/src/components/session/session-sortable-terminal-tab-v2.tsx": "M",
     "packages/app/src/components/session/use-context-warning.ts": "A",
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "A",
@@ -1083,6 +1086,7 @@
     "packages/app/src/context/command.tsx": "388d6cb12b6dc43ecb0827e3fb918370cb9d16d96161a5990dec10fff05af172",
     "packages/app/src/context/directory-sync.ts": "a3921044097f3fbcfb20eaec500f24344f12a43e137417c86f15d39dcc6e4b2b",
     "packages/app/src/context/language.tsx": "cb545e04c128bf981b2b72ac407f9220cf9e80337fe8c87482ffe85407e0cf9a",
+    "packages/app/src/context/layout-side-panel-tabs.ts": "e8426fadbdf9e7c49bf457e00ec92793475b44bcc11548e8b5ef9a9fa461be76",
     "packages/app/src/context/layout-tabs.test.ts": "4d9fdbe963306f164b2f48eac3b6a28c5a703c1758bf14b2cc4796720d8fa72c",
     "packages/app/src/context/layout-tabs.ts": "741506ce165f68cdb0b8f2931a2dad3e26c05880f9286c3daf04ec979bac21c5",
     "packages/app/src/context/layout.tsx": "7767c8b5f64efd63390cbe99128686bec2f1da7e8f2b21530df4c3fd67d171bb",
@@ -1160,6 +1164,7 @@
     "packages/app/src/utils/session-list-conformance.ts": "39af003bae6159761ed5b0ab709fc1ab796194f8c0543dc80f29f3d49f1af4c3",
     "packages/app/src/utils/session-list-state.ts": "3c6ac47f3e73b14e6d5380c5d8500d0df330740e4652e6afac0547c86c9b9ea7",
     "packages/app/src/utils/start-prompt.ts": "809d8ad0ab6de76a97503f8368ade25f771431be3f92eb8f039a2c65244ab20f",
+    "packages/app/src/utils/vscode-explorer-icon-theme.ts": "0d700027004f4a08265682e19364bd931313d0658b3d75d7874397b407ade2ab",
     "packages/app/src/utils/web-zoom.test.ts": "f373618138add504faa44dd6d2c9e3489b6e8dd0093ac6bb4f00f55307864e3d",
     "packages/app/src/utils/web-zoom.ts": "d5119a07e9fc61880b7294fadd23801933d99a9d3dbd0fadcafed1f786bd7d7a",
     "packages/app/src/utils/webview-context-menu.ts": "876b532fc9c00156f722d6424c28476f34b2db1bd0bc3cff3c9866152600e7c3",
@@ -1445,6 +1450,7 @@
     "packages/app/src/components/session/session-header.tsx": "a46591ed1097d0fdcff61fb0c5529396955e8857cbef748747c51e472d5564c5",
     "packages/app/src/components/session/session-new-view.tsx": "9510a4f550a3f0d4791e98e8025666f09d70a60fb66f193e48ee61feddae5a57",
     "packages/app/src/components/session/session-preview-tab.tsx": "8c17771e40a0385b394ea0ea1a6034f475b6f9ca1a348604b6ef507595017d9c",
+    "packages/app/src/components/session/session-preview-tree.ts": "13930fcd8a8ae9df4c37ba9ea306e162fd08f0e429249ddea21d937675d3ad7e",
     "packages/app/src/components/session/session-sortable-terminal-tab-v2.tsx": "08db0e378c3e07d243121f40c77e153bafe897e5e2ececd48a3e00786793032b",
     "packages/app/src/components/session/use-context-warning.ts": "af7a6d0159a5541aa02ad4d08fd694af1cc4853fc1c0a70763bc264a634d1c53",
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "fa5d143cc101f3a3b9d5ad445edddc981e0d02783021d52dbfed6c8d8bf62498",

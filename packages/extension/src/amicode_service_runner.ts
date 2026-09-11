@@ -203,16 +203,19 @@ export async function bootAmicodeServiceRunner(opts: AmicodeServiceRunnerOptions
   log(
     `[service-runner] spawning engine ${opts.engineBin} serve --port=${port} (cwd=${cwd}${dbPin ? `, OPENCODE_DB=${dbPin}` : ", OPENCODE_DB=(host env)"})${unarmed ? " UNARMED (the hub's anonymous boundary posture)" : ""}`,
   );
+  const engineEnv = {
+    ...process.env,
+    ...opts.engineEnv,
+    ...(unarmed ? {} : { OPENCODE_SERVER_PASSWORD: password }),
+  };
+  if (unarmed) delete engineEnv.OPENCODE_SERVER_PASSWORD;
+
   const engine: ChildProcess = spawn(opts.engineBin, ["serve", "--port", String(port)], {
     cwd,
-    env: {
-      ...process.env,
-      // Unarmed = the key is ABSENT, never empty — the fork's route auth only
-      // engages when the var is set, so an empty value would be a dishonest
-      // half-posture.
-      ...(unarmed ? {} : { OPENCODE_SERVER_PASSWORD: password }),
-      ...opts.engineEnv,
-    },
+    // Unarmed = the key is ABSENT, never empty — the fork's route auth only
+    // engages when the var is set, so an empty value would be a dishonest
+    // half-posture.
+    env: engineEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   let engineLog = "";
