@@ -38,6 +38,13 @@ import { useSettings } from "@/context/settings"
 import { popularProviders, useProviders } from "@/hooks/use-providers"
 import { CustomProviderForm } from "./dialog-custom-provider"
 import { decode64 } from "@/utils/base64"
+import {
+  HARMONIQS_PROVIDER_ID,
+  HARMONIQS_PROVIDER_NAME,
+  requestHarmoniqsProviderConnect,
+  shouldShowHarmoniqsEntry,
+  isHarmoniqsProviderConnectAck,
+} from "./dialog-connect-provider-harmoniqs"
 
 const CUSTOM_ID = "_custom"
 type ConnectMethod = Extract<IntegrationMethod, { type: "key" | "oauth" }>
@@ -62,6 +69,7 @@ export const DialogConnectProvider: Component<{
   const language = useLanguage()
   const settings = useSettings()
   const newLayout = settings.general.newLayoutDesigns
+  const dialog = useDialog()
   const reset = controller.back
   const back = { current: reset }
   let focusHost: HTMLDivElement | undefined
@@ -70,6 +78,17 @@ export const DialogConnectProvider: Component<{
     back.current = reset
     controller.select(provider)
   }
+
+  // amicode#962: the extension's Harmoniqs handoff panel (Stage-0's onboarding
+  // webview, focused to just this provider) runs independently of this
+  // dialog once opened — its ack is this dialog's cue to get out of the way.
+  onMount(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (isHarmoniqsProviderConnectAck(event.data)) dialog.close()
+    }
+    window.addEventListener("message", onMessage)
+    onCleanup(() => window.removeEventListener("message", onMessage))
+  })
 
   function Content() {
     return (
@@ -180,13 +199,20 @@ function ProviderPicker(props: {
       key={(x) => x?.id}
       items={() => {
         language.locale()
-        return [{ id: CUSTOM_ID, name: customLabel() }, ...providers.all().values()]
+        const all = providers.all()
+        return [
+          { id: CUSTOM_ID, name: customLabel() },
+          ...(shouldShowHarmoniqsEntry(all) ? [{ id: HARMONIQS_PROVIDER_ID, name: HARMONIQS_PROVIDER_NAME }] : []),
+          ...all.values(),
+        ]
       }}
       filterKeys={["id", "name"]}
       groupBy={(x) => (popularProviders.includes(x.id) ? popularGroup() : otherGroup())}
       sortBy={(a, b) => {
         if (a.id === CUSTOM_ID) return -1
         if (b.id === CUSTOM_ID) return 1
+        if (a.id === HARMONIQS_PROVIDER_ID) return -1
+        if (b.id === HARMONIQS_PROVIDER_ID) return 1
         if (popularProviders.includes(a.id) && popularProviders.includes(b.id))
           return popularProviders.indexOf(a.id) - popularProviders.indexOf(b.id)
         return a.name.localeCompare(b.name)
@@ -199,6 +225,10 @@ function ProviderPicker(props: {
       }}
       onSelect={(x) => {
         if (!x) return
+        if (x.id === HARMONIQS_PROVIDER_ID) {
+          requestHarmoniqsProviderConnect()
+          return
+        }
         props.onSelect(x.id)
       }}
     >
@@ -237,12 +267,23 @@ function ProviderPickerV2(props: {
     active: undefined as string | undefined,
     connecting: undefined as string | undefined,
   })
-  const featured = ["opencode", "opencode-go", "anthropic", "openai", "google", "openrouter", "vercel"]
+  const featured = [
+    "opencode",
+    "opencode-go",
+    "anthropic",
+    "openai",
+    "google",
+    "openrouter",
+    "vercel",
+    HARMONIQS_PROVIDER_ID,
+  ]
   const custom = () => ({ id: CUSTOM_ID, name: language.t("dialog.provider.custom.label") })
+  const harmoniqs = () => ({ id: HARMONIQS_PROVIDER_ID, name: HARMONIQS_PROVIDER_NAME })
   const all = createMemo(() => {
     language.locale()
     const query = store.filter.trim().toLowerCase()
-    const values = [custom(), ...providers.all().values()]
+    const providerMap = providers.all()
+    const values = [custom(), ...(shouldShowHarmoniqsEntry(providerMap) ? [harmoniqs()] : []), ...providerMap.values()]
     if (!query) return values
     return values.filter((provider) => `${provider.id} ${provider.name}`.toLowerCase().includes(query))
   })
@@ -267,6 +308,10 @@ function ProviderPickerV2(props: {
   onMount(() => search?.focus({ preventScroll: true }))
 
   const connect = (provider: string) => {
+    if (provider === HARMONIQS_PROVIDER_ID) {
+      requestHarmoniqsProviderConnect()
+      return
+    }
     props.onPrepare?.()
     props.onSelect(provider)
   }

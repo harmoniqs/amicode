@@ -145,7 +145,16 @@ export function usePromptInputV2Controller(props: PromptInputV2ControllerProps):
       t: (key, params) => language.t(key as Parameters<typeof language.t>[0], params as never),
     }),
   )
-  const designPlaceholder = () => promptDesignPlaceholder(mode(), placeholder())
+  // The design placeholder takes the translate callback: the helper calls it
+  // in the non-shell branch, so the 2-arg form passes undefined there —
+  // minified "n is not a function" on every non-shell composer render.
+  // #929 (59b447e7) fixed this amicode-side; the fork→overlay sync ff7b69c8
+  // regressed it back to the 2-arg call. Mirrored to the sync source per
+  // harmoniqs/amicode#964 so the next sync brings the fix, not the regression.
+  const designPlaceholder = () =>
+    promptDesignPlaceholder(mode(), placeholder(), (key, params) =>
+      language.t(key as Parameters<typeof language.t>[0], params as never),
+    )
 
   const historyComments = () => {
     const byID = new Map(comments.all().map((item) => [`${item.file}\n${item.id}`, item] as const))

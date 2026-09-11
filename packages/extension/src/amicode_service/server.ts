@@ -86,6 +86,15 @@ export class AmicodeServiceServer {
    *  the no-entitlement byte identity structural. */
   private fleetPlane?: FleetPlane;
   readonly password: string;
+  /** #955 (the hub cutover): the auth mode. "credential" (the default) is the
+   *  per-boot-mint posture — every non-public-UI request 401s without a
+   *  valid mint. "open" matches the fork hub's DEPLOYED posture on the
+   *  tunnel/LAN boundary (the canonical /session answers 200 anonymous; the
+   *  SSH mesh is the security boundary, and the fleet clients ride tunnels
+   *  without credentials): authorized() accepts every request. A PRESENT
+   *  mint keeps working — the framed app's engine credential is accepted
+   *  exactly as before; open only stops REQUIRING one. */
+  readonly authMode: "open" | "credential";
   /** #822: the spawned engine's per-boot mint, accepted ALONGSIDE the
    *  service's own — the framed app bootstraps with the ENGINE credential
    *  (its auth machinery is the one that works against the engine today),
@@ -94,9 +103,10 @@ export class AmicodeServiceServer {
    *  single-mint, byte-compatible with the pre-#822 contract). */
   private readonly enginePassword?: string;
 
-  constructor(opts: { password?: string; enginePassword?: string } = {}) {
+  constructor(opts: { password?: string; enginePassword?: string; authMode?: "open" | "credential" } = {}) {
     this.password = opts.password ?? mintServerPassword();
     this.enginePassword = opts.enginePassword;
+    this.authMode = opts.authMode ?? "credential";
   }
 
   get port(): number | undefined {
@@ -172,6 +182,11 @@ export class AmicodeServiceServer {
   }
 
   private authorized(req: http.IncomingMessage, url: URL): boolean {
+    // #955: the open-boundary mode accepts every request — the fork hub's
+    // deployed tunnel/LAN posture (anonymous 200 on the canonical /session;
+    // the SSH mesh is the boundary, not HTTP auth). Present mints keep
+    // working: everything a credential-mode boot would accept, this accepts.
+    if (this.authMode === "open") return true;
     // The anonymous sub-resource surface (fork public-ui parity): GET-only
     // static UI paths a browser cannot credential — exempt BEFORE anything
     // else, exactly like the engine's middleware does for them.
@@ -283,7 +298,14 @@ export class AmicodeServiceServer {
     this.server = server;
     const listenPort = port ?? 0;
     await new Promise<void>((resolve, reject) => {
-      server.on("error", reject);
+      server.on("error", (err) => {
+        // #955: a listen failure (e.g. the fixed port busy) must leave NO
+        // instance state behind — this.server set-before-listen otherwise
+        // wedges the instance, so the caller's own retry (the wiring's and
+        // the runner's busy-port fallback) dies on "already running".
+        this.server = undefined;
+        reject(err);
+      });
       server.listen(listenPort, "127.0.0.1", () => {
         server.removeListener("error", reject);
         resolve();

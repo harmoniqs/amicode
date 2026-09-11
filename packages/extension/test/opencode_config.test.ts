@@ -109,14 +109,11 @@ describe("buildOpencodeConfigContent", () => {
   });
   it("pins default_agent to plan (plan-first posture — the named modes plan → build → develop → research)", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.default_agent).toBe("plan"); // plan first; the picker order is agent_order's, honored app-side
+    expect(cfg.default_agent).toBe("plan");
   });
-  it("writes agent_order: plan → build → develop → research (#868 rev 3 — the fixed picker order, #305's field)", () => {
+  it("omits agent_order for compatibility with pinned engines", () => {
     const cfg = JSON.parse(buildOpencodeConfigContent("/abs/AGENTS.md", TPL, "/home/u/.amico/runs/default"));
-    expect(cfg.agent_order).toEqual(["plan", "build", "develop", "research"]);
-    // `build` is back as a NAMED tile (#868 rev 3) — a named, selectable mode
-    // AND the default posture, not implied-absent
-    expect(cfg.agent_order).toContain("build");
+    expect(cfg.agent_order).toBeUndefined();
   });
   it("grants external_directory on the problems root (default + $AMICODE_PROBLEMS_DIR override), and the MCP server's environment follows BOTH", () => {
     const defGrant = join(homedir(), ".amico", "problems") + "/**";

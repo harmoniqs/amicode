@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 import { findForkedOpencodeBinary } from "./opencode_binary";
+import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
   addSkillProvider,
@@ -31,6 +32,19 @@ import {
 export function resolveDbBackupDir(sessionDatabase: string): string {
   if (sessionDatabase) return path.dirname(sessionDatabase);
   return opencodeDataDir();
+}
+
+export type RebuildMode = "local" | "main";
+
+/** The app build has two intentionally non-interchangeable source contracts. */
+export function appBundleBuildCommand(mode: RebuildMode, opencodePath: string): string {
+  const contract = mode === "local" ? "--direct-worktree" : "--verified-main";
+  return `pnpm --filter amicode run build:app -- --work "${opencodePath}" ${contract}`;
+}
+
+/** Main rebuilds must prove the committed overlay describes the exact fork HEAD. */
+export function mainOverlayVerificationCommand(opencodePath: string): string {
+  return `node packages/app-bundle/scripts/overlay-promotion.mjs --check --source "${opencodePath}" --revision "$(git -C "${opencodePath}" rev-parse HEAD)"`;
 }
 
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
@@ -324,6 +338,40 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
+  // Connect Provider dialog → Harmoniqs AI: keep the user inside the model
+  // picker modal while the extension host validates and stores the secret.
+  if (msg.kind === "connect-harmoniqs-provider") {
+    const apiKey = (msg as { apiKey?: unknown }).apiKey;
+    if (typeof apiKey !== "string" || apiKey.length === 0 || apiKey.length > 500) {
+      io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: "Enter a valid API key" });
+      return true;
+    }
+    void testConnection({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey })
+      .then(async (result) => {
+        if (!result.ok) {
+          io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: result.error });
+          return;
+        }
+        writeOnboardingConfig({ provider: HARMONIQS_PROVIDER_ID, model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, apiKey });
+        // The running server cached its config/provider list before this
+        // write landed (Config.invalidate() only fires from its own
+        // /config/update endpoint) — restart it so Provider.list() picks up
+        // the new credentials, same as the Developer Tools / data-storage
+        // config writes below. Await it (CodeRabbit #971): restartServer's
+        // handler is async, so posting success before it resolves let the
+        // webview re-query Manage Models while the server was still stale.
+        // A restart failure is the registered command's own concern (it logs
+        // there) — the credentials write already succeeded, so it doesn't
+        // turn into a connect failure here.
+        try {
+          await vscode.commands.executeCommand("amicode.restartServer");
+        } catch { /* restart errors are handled by the registered command itself */ }
+        io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: true });
+      })
+      .catch((error) => io.postToWebview({ source: "amicode", kind: "connect-harmoniqs-provider-result", tab: msg.tab, ok: false, error: error instanceof Error ? error.message : "Could not connect Harmoniqs AI" }));
+    return true;
+  }
+
   // Developer Tools settings: validate paths, swap the opencode binary +
   // restart its server as appropriate. The app posts on blur and on toggle.
   // Committing the amicode path is validate-only — no build, no reload; see
@@ -465,10 +513,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Full rebuild: builds both opencode and amicode, then triggers reload.
-  // mode: "local" = build from whatever's on disk; "remote" = git pull first.
+  // Full rebuild: local builds whatever is on disk; main first checks out both
+  // repositories and proves the committed overlay represents the fork revision.
   if (msg.kind === "dev-tools-rebuild") {
-    const mode = (msg as { mode?: string }).mode === "remote" ? "remote" : "local";
+    const mode: RebuildMode = (msg as { mode?: string }).mode === "remote" ? "main" : "local";
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
       ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
       : "";
@@ -534,9 +582,9 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           // DB backup is best-effort
         }
 
-        // ── Git pull (remote mode only) ──
+        // ── Git pull (main mode only) ──
         // opencode: checkout local/amicode, amicode: checkout main
-        if (mode === "remote") {
+        if (mode === "main") {
           const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull --rebase origin local/amicode", opencodePath);
           if (!checkoutOc.ok) {
             io.postToWebview({
@@ -550,6 +598,19 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
               state: "failed", error: `git pull (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+
+          // A main rebuild is allowed only when Amicode's committed tracking
+          // artifact exactly reproduces this checked-out fork revision. This
+          // runs before either dependency install or build and never writes a
+          // source tree; promotion is a separate reviewable operation.
+          const verifyOverlay = await run(mainOverlayVerificationCommand(opencodePath), amicodePath);
+          if (!verifyOverlay.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `main rebuild provenance check failed: ${verifyOverlay.error?.slice(0, 250)}`,
             });
             return;
           }
@@ -600,7 +661,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // ── Build app bundle from the fork tree ──
         // The binary and the app must come from the same source (#822).
         const buildApp = await run(
-          `pnpm --filter amicode run build:app -- --work "${opencodePath}"`,
+          appBundleBuildCommand(mode, opencodePath),
           amicodePath,
         );
         if (!buildApp.ok) {

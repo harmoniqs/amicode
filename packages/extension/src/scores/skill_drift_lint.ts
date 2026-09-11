@@ -88,6 +88,11 @@ export interface SkillsLintReport {
 }
 
 export interface LintOptions {
+  /** Extra search roots for path claims, CALLER-SUPPLIED (#1002: the CLI's
+   *  --search-roots, the orchestrator's SKILL_FRESHNESS_SEARCH_ROOTS) —
+   *  appended after the internal roots (skill dir + its parents). The module
+   *  itself holds no machine paths; roots always arrive as arguments. */
+  searchRoots?: string[];
   /** CI lane: check structure only — link refs resolve against the skill dir,
    *  no package cross-check at all (CI has no private checkouts). */
   structuralOnly?: boolean;
@@ -233,6 +238,15 @@ export function extractClaims(markdown: string): SkillClaim[] {
   return claims;
 }
 
+/** Drop a trailing `# comment` from a Julia line — the same convention the
+ *  export parser uses. Scope (#1002) must come from the using/import
+ *  statement text only: a comment word (e.g. `using Strumento  # reexports
+ *  Intonato (Piccolo, NamedTrajectories, …)`) must never become a package
+ *  context. */
+function stripJuliaComment(text: string): string {
+  return text.replace(/\s*#.*$/, "");
+}
+
 /** Harvest call-position symbols + qualified names from a collected julia
  *  fence. `using`/`import` statements provide package context; qualified refs
  *  are only claims when their module part is in that context (else they are
@@ -243,10 +257,12 @@ function extractFromJuliaFence(
   fenceLines: { text: string; line: number }[],
   add: (c: SkillClaim) => void,
 ): void {
-  // pass 1: package context from using/import statements
+  // pass 1: package context from using/import statements (#1002: comment-
+  // stripped — a trailing comment on the statement line is never a scope
+  // source)
   const context = new Set<string>();
   for (const { text } of fenceLines) {
-    const m = /^\s*(?:using|import)\s+(.+)$/.exec(text);
+    const m = /^\s*(?:using|import)\s+(.+)$/.exec(stripJuliaComment(text));
     if (!m) continue;
     const statement = m[1];
     const scoped = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(statement);
@@ -260,8 +276,9 @@ function extractFromJuliaFence(
     }
   }
   for (const { text, line } of fenceLines) {
+    const code = stripJuliaComment(text);
     // `using Pkg: a, b` — the named imports are explicit API references
-    const scoped = /^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(text);
+    const scoped = /^\s*(?:using|import)\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.+)$/.exec(code);
     if (scoped) {
       for (const name of scoped[2].split(",")) {
         const sym = name.trim();
@@ -271,7 +288,7 @@ function extractFromJuliaFence(
       }
     }
     // `import Pkg.Sym` — qualified reference
-    const imported = /^\s*import\s+([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_!]*)/.exec(text);
+    const imported = /^\s*import\s+([A-Z][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_!]*)/.exec(code);
     if (imported) {
       add({ kind: "qualified-symbol", text: `${imported[1]}.${imported[2]}`, packages: [imported[1]], line, source: "julia-fence" });
     }
@@ -380,6 +397,10 @@ interface PackageCheckout {
 interface PackageScan {
   juliaFiles: string[]; // absolute, sorted
   exports: Set<string>; // names appearing in `export …` lines
+  /** Module names this package `using`/`import`/`@reexport using`s (#1002) —
+   *  the reexport-chain edges, harvested comment-stripped from the same
+   *  scanned files. */
+  usings: Set<string>;
 }
 
 /** Discover `<Pkg>.jl` directories under the roots (sorted, root order). */
@@ -406,13 +427,22 @@ function discoverPackages(packageRoots: string[]): PackageCheckout[] {
 }
 
 /** Read (with cache) a package's julia files + export list. The scan covers
- *  `src/` when present (the API surface), else the whole checkout. */
+ *  `src/` AND `ext/` when present (#1002: package extensions are public API
+ *  in modern Julia — `ext/`-only symbols were invisible); either absent is
+ *  fine; when neither exists the whole checkout is scanned (the fallback).
+ *  `test/` and `benchmark/` stay OUT of the scan by design — a symbol found
+ *  only there is exactly what the report should surface for human judgment
+ *  (precision over recall, the module's stated doctrine). */
 function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): PackageScan {
   const cached = cache.get(pkg.dir);
   if (cached) return cached;
-  const juliaFiles = collectJuliaFiles(path.join(pkg.dir, "src"));
+  const juliaFiles = [
+    ...collectJuliaFiles(path.join(pkg.dir, "src")),
+    ...collectJuliaFiles(path.join(pkg.dir, "ext")),
+  ];
   const files = juliaFiles.length > 0 ? juliaFiles : collectJuliaFiles(pkg.dir);
   const exports = new Set<string>();
+  const usings = new Set<string>();
   for (const f of files) {
     const raw = fs.readFileSync(f, "utf8");
     // Per-line so export lists can carry trailing comments (never names) and
@@ -423,18 +453,30 @@ function scanPackage(pkg: PackageCheckout, cache: Map<string, PackageScan>): Pac
     const lines = raw.split(/\r?\n/);
     for (let li = 0; li < lines.length; li++) {
       const m = /^\s*export\s+(.*)$/.exec(lines[li]);
-      if (!m) continue;
-      let stmt = m[1].replace(/\s*#.*$/, "").trim();
-      while (stmt.endsWith(",") && li + 1 < lines.length) {
-        stmt += " " + lines[++li].replace(/\s*#.*$/, "").trim();
+      if (m) {
+        let stmt = m[1].replace(/\s*#.*$/, "").trim();
+        while (stmt.endsWith(",") && li + 1 < lines.length) {
+          stmt += " " + lines[++li].replace(/\s*#.*$/, "").trim();
+        }
+        for (const name of stmt.split(/[\s,]+/)) {
+          const n = name.trim();
+          if (n !== "") exports.add(n);
+        }
       }
-      for (const name of stmt.split(/[\s,]+/)) {
-        const n = name.trim();
-        if (n !== "") exports.add(n);
+      // #1002 reexport-chain edges: module names from using/import/@reexport
+      // statements, comment-stripped (a trailing comment is never an edge —
+      // same rule as the fence scope extractor).
+      const u = /^\s*(?:@reexport\s+)?(?:using|import)\s+(.+)$/.exec(stripJuliaComment(lines[li]));
+      if (u) {
+        const head = u[1].split(":")[0]; // `using A: x, y` → A; `using A, B` → A, B
+        for (const part of head.split(",")) {
+          const mod = /^[.\s]*([A-Za-z_][A-Za-z0-9_]*)/.exec(part);
+          if (mod) usings.add(mod[1]); // `import A.B` → A (first segment)
+        }
       }
     }
   }
-  const scan = { juliaFiles: files, exports };
+  const scan = { juliaFiles: files, exports, usings };
   cache.set(pkg.dir, scan);
   return scan;
 }
@@ -463,10 +505,16 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Find the first word-boundary occurrence of `symbol` in a package's source.
- *  Returns the package-relative file + 1-based line, or null. */
+/** Find the first occurrence of `symbol` in a package's source, bounded as a
+ *  Julia identifier. The boundary class includes `!` (#1002): `\b` treats `!`
+ *  as a non-word character, so `\bfoo!\b` could only ever match the
+ *  pathological `foo!x` — never the real positions `foo!(x)` or `export foo!`
+ *  — and every non-exported bang function was a false DRIFTED. Lookaround over
+ *  one name-character class `[A-Za-z0-9_!]` fixes all positions with one
+ *  mechanism (no trailing-`!` special case) and also stops a plain `foo` from
+ *  matching inside `foo!` (a different Julia function). */
 function findInSource(scan: PackageScan, pkg: PackageCheckout, symbol: string): { file: string; line: number } | null {
-  const re = new RegExp(`\\b${escapeRegExp(symbol)}\\b`);
+  const re = new RegExp(`(?<![A-Za-z0-9_!])${escapeRegExp(symbol)}(?![A-Za-z0-9_!])`);
   for (const f of scan.juliaFiles) {
     const raw = fs.readFileSync(f, "utf8");
     const idx = re.exec(raw)?.index;
@@ -476,6 +524,46 @@ function findInSource(scan: PackageScan, pkg: PackageCheckout, symbol: string): 
     }
   }
   return null;
+}
+
+/** The using/reexport family of `start` within the discovered package set
+ *  (#1002). The walk treats `using`/`import`/`@reexport` edges as UNDIRECTED:
+ *  the reexport direction flips between package releases (the live case is the
+ *  Strumento/Intonato seam inversion — Intonato reexports Strumento now, and
+ *  the hardware-loop skill still cites `using Strumento`), and a scoped claim
+ *  asserts API-family membership, not an edge's direction. A using of an
+ *  undiscovered package adds nothing and never degrades a verdict; the
+ *  visited set terminates cycles. BFS order, `start` first — deterministic. */
+function packageFamily(
+  start: string,
+  byName: Map<string, PackageCheckout>,
+  cache: Map<string, PackageScan>,
+): string[] {
+  const visited = new Set<string>([start]);
+  const order: string[] = [start];
+  const queue: string[] = [start];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    const neighbors = new Set<string>();
+    if (byName.has(cur)) {
+      for (const u of scanPackage(byName.get(cur)!, cache).usings) {
+        if (byName.has(u)) neighbors.add(u); // out-edge: cur usings u
+      }
+    }
+    for (const [name, pkg] of byName) {
+      if (name !== cur && scanPackage(pkg, cache).usings.has(cur)) {
+        neighbors.add(name); // in-edge: someone usings cur (the flipped seam)
+      }
+    }
+    for (const n of [...neighbors].sort()) {
+      if (!visited.has(n)) {
+        visited.add(n);
+        order.push(n);
+        queue.push(n);
+      }
+    }
+  }
+  return order;
 }
 
 /** Resolve extracted claims against package checkouts (+ optional search
@@ -491,10 +579,19 @@ export function checkClaims(
   const searchRoots: string[] = [];
   if (opts.skillDir) searchRoots.push(opts.skillDir);
   if (opts.searchRoots) searchRoots.push(...opts.searchRoots);
+  const familyCache = new Map<string, string[]>();
+  const family = (name: string): string[] => {
+    let f = familyCache.get(name);
+    if (!f) {
+      f = packageFamily(name, byName, cache);
+      familyCache.set(name, f);
+    }
+    return f;
+  };
 
   return claims.map((claim) => {
     if (claim.kind === "path") return checkPathClaim(claim, packageRoots, packages, searchRoots, opts);
-    return checkSymbolClaim(claim, packages, byName, cache);
+    return checkSymbolClaim(claim, packages, byName, cache, family);
   });
 }
 
@@ -503,6 +600,7 @@ function checkSymbolClaim(
   packages: PackageCheckout[],
   byName: Map<string, PackageCheckout>,
   cache: Map<string, PackageScan>,
+  family: (name: string) => string[],
 ): ClaimResult {
   // a qualified claim ("Piccolo.solve!") asserts the RIGHT-hand symbol in the
   // LEFT-hand package — the lookup name never includes the module prefix
@@ -544,6 +642,29 @@ function checkSymbolClaim(
         verdict: "VERIFIED",
         evidence: `'${claim.text}' found in ${pkg.name}.jl/${hit.file}:${hit.line} (source scan)`,
       };
+    }
+    // #1002: not in the scoped package directly — resolve through the
+    // using/@reexport chain within the discovered set (never degrades: a
+    // miss here falls through to the DRIFTED verdict below)
+    for (const otherName of family(name)) {
+      if (otherName === name) continue;
+      const other = byName.get(otherName)!;
+      const otherScan = scanPackage(other, cache);
+      if (otherScan.exports.has(symbol)) {
+        return {
+          claim,
+          verdict: "VERIFIED",
+          evidence: `'${claim.text}' is exported by ${other.name}.jl (via using/reexport chain from ${pkg.name}.jl)`,
+        };
+      }
+      const otherHit = findInSource(otherScan, other, symbol);
+      if (otherHit) {
+        return {
+          claim,
+          verdict: "VERIFIED",
+          evidence: `'${claim.text}' found in ${other.name}.jl/${otherHit.file}:${otherHit.line} (source scan via using/reexport chain from ${pkg.name}.jl)`,
+        };
+      }
     }
   }
   const scopeLabel =
@@ -741,7 +862,12 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
     // every mode. Everything else is the semantic cross-check (skipped whole
     // under structuralOnly — CI has no private checkouts).
     const toCheck = structuralOnly ? linkClaims : claims;
-    const searchRoots = [skillDir, path.dirname(skillsDir), path.dirname(path.dirname(skillsDir))];
+    const searchRoots = [
+      skillDir,
+      path.dirname(skillsDir),
+      path.dirname(path.dirname(skillsDir)),
+      ...(opts.searchRoots ?? []), // #1002: caller-supplied roots (CLI --search-roots / orchestrator env)
+    ];
     const checked = checkClaims(toCheck, structuralOnly ? [] : packageRoots, { skillDir, searchRoots });
 
     for (const r of checked) {
@@ -792,6 +918,9 @@ export function lintSkillsDir(skillsDir: string, packageRoots: string[], opts: L
 export interface CliLintOptions {
   skillsDir: string;
   packageRoots: string[];
+  /** --search-roots (#1002): extra search roots for path claims, variadic and
+   *  repeatable — the --packages shape. */
+  searchRoots: string[];
   structuralOnly: boolean;
   /** --min-skills floor: fail structurally when fewer skills were linted. */
   minSkills: number;
@@ -805,6 +934,7 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
   const opts: CliLintOptions = {
     skillsDir: defaults.defaultSkillsDir,
     packageRoots: [],
+    searchRoots: [],
     structuralOnly: false,
     minSkills: 0,
     reportFormat: "json",
@@ -822,6 +952,20 @@ export function parseLintArgs(argv: string[], defaults: { defaultSkillsDir: stri
       if (!v) return { error: "--packages requires at least one root path (comma-separated ok)" };
       for (const p of v.split(",")) {
         if (p.trim() !== "") opts.packageRoots.push(p.trim());
+      }
+    } else if (arg === "--search-roots") {
+      // #1002: variadic (consumes values until the next flag) AND repeatable,
+      // comma-separated ok — mirroring --packages
+      const v = value();
+      if (!v) return { error: "--search-roots requires at least one directory path" };
+      const push = (s: string) => {
+        for (const r of s.split(",")) {
+          if (r.trim() !== "") opts.searchRoots.push(r.trim());
+        }
+      };
+      push(v);
+      while (i + 1 < argv.length && !argv[i + 1].startsWith("--")) {
+        push(argv[++i]);
       }
     } else if (arg === "--structural-only") {
       opts.structuralOnly = true;

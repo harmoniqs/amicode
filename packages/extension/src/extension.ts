@@ -38,7 +38,14 @@ import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls"
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
-import { registerOnboardingPanel, onOnboardingCancelled, getOnboardingPanel, releaseOnboardingPanel } from "./onboarding_panel";
+import {
+  registerOnboardingPanel,
+  registerHarmoniqsConnectCommand,
+  reconcileHarmoniqsProviderConfig,
+  onOnboardingCancelled,
+  getOnboardingPanel,
+  releaseOnboardingPanel,
+} from "./onboarding_panel";
 import { registerFleetPanel } from "./fleet_panel";
 import { isModelConfigured } from "./onboarding_routing";
 import { getWorkspaceProjects, type WorkspaceProjectDeps } from "./workspace_projects";
@@ -422,6 +429,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // behavior: "reset" for explicit selection, "expand" for session/tab switch.
   ChatPanel.onProjectSelected((path, mode) => sidebarProvider.setActiveProject(path, mode));
   registerOnboardingPanel(ctx); // #433 — Stage 0 model-setup webview
+  registerHarmoniqsConnectCommand(ctx); // Connect Provider dialog's branded Harmoniqs row
+  // Heals a provider.harmoniqs entry written by an OLDER extension version
+  // whose model shape predates a protocol-safety fix (e.g. limit.output --
+  // without this, every real chat turn 400s forever, since upgrading the
+  // extension alone never rewrites an already-written opencode.json, and
+  // the generic re-auth flow for an existing entry never touches the model
+  // shape either). No-op when there's nothing to heal.
+  reconcileHarmoniqsProviderConfig();
   registerFleetPanel(ctx); // #527 — Fleet & Versions: the view over doctor's JSON
   statusBar = new StatusBarManager();
   ctx.subscriptions.push({ dispose: () => statusBar?.dispose() });

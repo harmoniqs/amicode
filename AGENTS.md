@@ -140,11 +140,14 @@ overlay snapshots.
 
 After editing the fork:
 ```bash
-pnpm --filter @amicode/app-bundle sync:check   # detect overlay ↔ fork drift
-pnpm --filter @amicode/app-bundle sync:apply   # fix: copy fork → overlay + update hashes
+pnpm --filter @amicode/app-bundle sync:check -- --source ../opencode --revision <sha>
+pnpm --filter @amicode/app-bundle sync:apply -- --source ../opencode --revision <sha> --base <upstream-base>
 ```
-`opencode:build` warns on drift but does not block. The `sync:apply` command is one-way
-(fork → overlay) and updates `manifest.json` hashes automatically.
+`opencode:build` warns on drift but does not block. `sync:apply` is an explicit promotion,
+not a rebuild side effect: it requires a clean `local/amicode` checkout, regenerates the
+complete fork-vs-base file and deletion set, and updates manifest provenance atomically on
+the current review branch. `sync:check` is read-only and proves a committed overlay against
+one immutable fork revision.
 
 ## Releasing & publishing (amicode → Marketplace)
 

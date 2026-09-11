@@ -22,7 +22,40 @@ import {
   BEDROCK_PLANTED_PLACEHOLDER,
   type DetectedCredential,
 } from "./credential_scanner";
+import { opencodeDataDir } from "./opencode_xdg";
 import { ChatPanel } from "./chat_panel";
+
+// ─── Harmoniqs AI — branded custom-provider preset ───────────────────────────
+//
+// Harmoniqs AI (app.harmoniqs.ai) is an OpenAI-compatible gateway in front of
+// a single curated model. Unlike the other entries in PROVIDER_MODELS, its
+// provider shape (base URL, npm package, model list) is NOT user-editable —
+// the onboarding form only ever asks for the hqa_... key. See
+// app-harmoniqs-ai/src/worker/routes/chat-completions.ts and
+// inference-auth.ts for the exact backend contract this mirrors.
+export const HARMONIQS_PROVIDER_ID = "harmoniqs";
+export const HARMONIQS_MODEL_ID = "harmoniqs-auto";
+export const HARMONIQS_BASE_URL = "https://app.harmoniqs.ai/v1";
+// Mirrors MIN_OUTPUT_TOKENS in app-harmoniqs-ai/src/worker/routes/chat-completions.ts.
+// The gateway rejects any request below this with a generic 400
+// invalid_request (parseRequest's invalid_max_tokens check falls through to
+// requestError's default branch, same as every other validation failure) --
+// there is no dedicated "max_tokens too low" error code to detect and retry
+// around, so the test request itself must already satisfy the floor.
+export const HARMONIQS_MIN_OUTPUT_TOKENS = 16;
+// Mirrors MAX_OUTPUT_TOKENS in the same file. This entry's models[modelId]
+// MUST declare limit.output = this value -- opencode's own default-model-cap
+// fallback (ProviderTransform.maxOutputTokens in
+// packages/opencode/src/provider/transform.ts) is `Math.min(model.limit.output,
+// 32000) || 32000`. When limit.output is left unset (0, since a provider with
+// no models.dev catalog entry merges to 0), `Math.min(0, 32000)` is 0 and
+// `0 || 32000` evaluates to the 32000 fallback, not "no real cap" -- every
+// real chat turn then sends max_tokens: 32000, which exceeds this gateway's
+// real ceiling and 400s as a generic "Invalid chat completion request"
+// (invalid_max_tokens has no dedicated message, same as the min-side bug
+// this same file already works around). Reproduced live: a plain "hello?"
+// turn failed this exact way before this constant existed.
+export const HARMONIQS_MAX_OUTPUT_TOKENS = 4096;
 
 // ─── Provider → Model data (data-driven, not hard-coded conditionals) ────────
 
@@ -40,6 +73,7 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
     { id: "github-copilot/gpt-5.6", name: "GPT-5.6" },
     { id: "github-copilot/gpt-5.6-luna", name: "GPT-5.6 Luna" },
   ],
+  [HARMONIQS_PROVIDER_ID]: [{ id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" }],
   opencode: [
     { id: "anthropic/claude-opus-5", name: "Claude Opus 5" },
     { id: "anthropic/claude-sonnet-5", name: "Claude Sonnet 5" },
@@ -80,6 +114,7 @@ export const PROVIDER_MODELS: Record<string, ModelEntry[]> = {
 /** Human-readable display names for the provider dropdown. */
 export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   "github-copilot": "GitHub Copilot (Free)",
+  [HARMONIQS_PROVIDER_ID]: "Harmoniqs AI",
   opencode: "OpenCode",
   anthropic: "Anthropic",
   openai: "OpenAI",
@@ -105,7 +140,7 @@ function defaultConfigPath(): string {
 
 /** #602: drop the always-write Bedrock placeholder entry planted by ≤#589, if
  *  present. Exact-match on the planted constant — real keys (including entries
- *  written via the retired internal env override) are never healed. */
+ *  planted via the retired internal env override) are never healed. */
 function healPlantedBedrockEntry(existing: Record<string, unknown>): void {
   const existingProvider = existing.provider as Record<string, unknown> | undefined;
   if (!existingProvider) return;
@@ -114,6 +149,65 @@ function healPlantedBedrockEntry(existing: Record<string, unknown>): void {
     | undefined;
   if (bedrock?.options?.apiKey === BEDROCK_PLANTED_PLACEHOLDER) {
     delete existingProvider["amazon-bedrock"];
+  }
+}
+
+/** Heals a provider.harmoniqs entry written by an older extension version
+ *  whose model shape predates a protocol-safety field this one relies on
+ *  (e.g. limit.output, added to fix every real chat turn 400ing — an
+ *  extension update alone never rewrites an already-written opencode.json,
+ *  and the generic Connect Provider re-auth flow for an EXISTING catalog
+ *  entry only ever touches the API key, never the model shape, so a stale
+ *  entry from an older version stays broken forever without this).
+ *
+ *  Unconditional and idempotent: tool_call/limit are protocol-level facts
+ *  about this specific gateway, not user preferences (the preset's base
+ *  URL and model list are documented as NOT user-editable for the same
+ *  reason) -- always reconcile them to the current constants regardless of
+ *  what's currently written. Runs on every write (called alongside
+ *  healPlantedBedrockEntry, same pattern) AND standalone on extension
+ *  activation via reconcileHarmoniqsProviderConfig, since a user who never
+ *  triggers another onboarding write otherwise never gets healed. Returns
+ *  whether it changed anything, so callers can skip a needless write. */
+function healStaleHarmoniqsModelShape(existing: Record<string, unknown>): boolean {
+  const provider = existing.provider as Record<string, unknown> | undefined;
+  const harmoniqs = provider?.[HARMONIQS_PROVIDER_ID] as { models?: Record<string, unknown> } | undefined;
+  const models = harmoniqs?.models;
+  if (!models) return false;
+
+  let changed = false;
+  for (const modelId of Object.keys(models)) {
+    const model = models[modelId] as Record<string, unknown>;
+    if (model.tool_call !== false) {
+      model.tool_call = false;
+      changed = true;
+    }
+    const limit = model.limit as { output?: unknown } | undefined;
+    if (!limit || limit.output !== HARMONIQS_MAX_OUTPUT_TOKENS) {
+      model.limit = { output: HARMONIQS_MAX_OUTPUT_TOKENS };
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/** Standalone entry point for extension activation (extension.ts) -- heals
+ *  a stale provider.harmoniqs entry with NO user interaction required, so
+ *  upgrading the extension alone is enough to fix a previously-broken
+ *  connection. No-ops cheaply (one file read, no write) when there's
+ *  nothing to fix: no config file, no provider.harmoniqs entry, or an
+ *  already-correct one. Never touches auth.json -- this is a non-secret
+ *  config repair only. */
+export function reconcileHarmoniqsProviderConfig(configPath: string = defaultConfigPath()): void {
+  let existing: Record<string, unknown>;
+  try {
+    if (!fs.existsSync(configPath)) return;
+    existing = JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    return; // Unparseable config is not this function's problem to fix.
+  }
+  if (healStaleHarmoniqsModelShape(existing)) {
+    fs.writeFileSync(configPath, JSON.stringify(existing, null, 2) + "\n");
   }
 }
 
@@ -136,6 +230,7 @@ export function writeOnboardingConfig(
     // If parsing fails, start fresh
   }
   healPlantedBedrockEntry(existing);
+  healStaleHarmoniqsModelShape(existing);
 
    // #602: the always-written Bedrock entry (an unauthenticated placeholder that
    // masked real credentials) is retired — bedrock is written only when selected.
@@ -161,13 +256,10 @@ export function writeOnboardingConfig(
   // Build the provider entry per opencode schema:
   //   provider.<name>.options.apiKey  (NOT provider.<name>.apiKey)
   //   provider.<name>.env = string[]  (NOT a bare string)
-  const providerConfig: Record<string, unknown> = {};
-  if (config.apiKey) {
-    providerConfig.options = { apiKey: config.apiKey };
-  }
-  if (envVarName) {
-    providerConfig.env = [envVarName];
-  }
+  // Harmoniqs AI is the one exception: its key is secret and belongs in
+  // opencode's auth store (auth.json), never in opencode.json — see
+  // buildProviderConfigEntry / writeAuthApiKey below.
+  const providerConfig: Record<string, unknown> = buildProviderConfigEntry(config, envVarName);
 
   const providerEntry: Record<string, unknown> = {
     ...(existing.provider as Record<string, unknown> ?? {}),
@@ -188,6 +280,101 @@ export function writeOnboardingConfig(
   }
 
   fs.writeFileSync(configPath, JSON.stringify(result, null, 2) + "\n");
+
+  // Harmoniqs AI's key is secret-store-only — write it into opencode's auth
+  // store (auth.json) here, never into the opencode.json written above.
+  if (config.provider === HARMONIQS_PROVIDER_ID && config.apiKey) {
+    writeAuthApiKey(HARMONIQS_PROVIDER_ID, config.apiKey);
+  }
+}
+
+/** Build the `provider.<id>` config entry for a single provider.
+ *  Harmoniqs AI is a branded preset: its base URL, npm package, and model
+ *  list are fixed (not user-editable) and its API key is deliberately
+ *  omitted here — it is written to the auth store instead (writeAuthApiKey).
+ *  Every other provider keeps the existing options.apiKey/env shape. */
+function buildProviderConfigEntry(
+  config: OnboardingConfig,
+  envVarName: string | undefined,
+): Record<string, unknown> {
+  if (config.provider === HARMONIQS_PROVIDER_ID) {
+    // Model-id-agnostic by construction: app-harmoniqs-ai is a plain
+    // OpenAI-Chat-Completions-compatible gateway (see chat-completions.ts
+    // parseRequest) — the protocol has no dependency on which model id is
+    // being served. It happens to hard-pin PUBLIC_MODEL="harmoniqs-auto"
+    // server-side TODAY, but this entry must not bake that in: derive the
+    // model key from config.model (whatever PROVIDER_MODELS[harmoniqs]
+    // currently offers), not the HARMONIQS_MODEL_ID constant, so a future
+    // second model id served through the same base URL just works without a
+    // code change here. Falls back to HARMONIQS_MODEL_ID only if config.model
+    // is missing/malformed.
+    const bareModelId = config.model?.includes("/")
+      ? config.model.slice(config.model.indexOf("/") + 1)
+      : config.model;
+    const modelId = bareModelId || HARMONIQS_MODEL_ID;
+    const knownModel = PROVIDER_MODELS[HARMONIQS_PROVIDER_ID]?.find(
+      (m) => m.id === `${HARMONIQS_PROVIDER_ID}/${modelId}`,
+    );
+    return {
+      npm: "@ai-sdk/openai-compatible",
+      name: PROVIDER_DISPLAY_NAMES[HARMONIQS_PROVIDER_ID],
+      options: { baseURL: HARMONIQS_BASE_URL },
+      models: {
+        [modelId]: {
+          name: knownModel?.name ?? modelId,
+          // See HARMONIQS_MAX_OUTPUT_TOKENS's comment -- without this,
+          // opencode's own maxOutputTokens fallback sends 32000 and every
+          // real turn 400s.
+          limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
+          // The app-harmoniqs-ai gateway hard-rejects `tools`, `response_format`,
+          // and n!=1 with a 400 (see chat-completions.ts parseRequest) for
+          // EVERY model it serves — a protocol-level constraint, not a
+          // per-model one. OpenCode agents default to tool calling, so this
+          // model is declared chat-only here; the actual no-tools enforcement
+          // lives in opencode's session/llm/request.ts (isNoToolsProvider,
+          // keyed on providerID — so it already covers any model id under
+          // "harmoniqs"), since this flag alone is descriptive metadata, not
+          // a request-building gate.
+          tool_call: false,
+        },
+      },
+    };
+  }
+
+  const providerConfig: Record<string, unknown> = {};
+  if (config.apiKey) {
+    providerConfig.options = { apiKey: config.apiKey };
+  }
+  if (envVarName) {
+    providerConfig.env = [envVarName];
+  }
+  return providerConfig;
+}
+
+/** Write an API-key credential into opencode's auth store (auth.json),
+ *  merging with any existing entries. Mirrors the `Api` auth shape opencode's
+ *  own Auth service reads/writes (packages/opencode/src/auth/index.ts):
+ *  `{ type: "api", key }`. Never touches opencode.json. The file is created
+ *  (or re-chmod'd) at 0600 — owner read/write only, same as the Auth service. */
+export function writeAuthApiKey(
+  providerID: string,
+  apiKey: string,
+  authJsonPath: string = path.join(opencodeDataDir(), "auth.json"),
+): void {
+  fs.mkdirSync(path.dirname(authJsonPath), { recursive: true });
+
+  let existing: Record<string, unknown> = {};
+  try {
+    if (fs.existsSync(authJsonPath)) {
+      existing = JSON.parse(fs.readFileSync(authJsonPath, "utf8"));
+    }
+  } catch {
+    // Start fresh on a corrupt file — never crash onboarding over it.
+  }
+
+  const next = { ...existing, [providerID]: { type: "api", key: apiKey } };
+  fs.writeFileSync(authJsonPath, JSON.stringify(next, null, 2) + "\n");
+  fs.chmodSync(authJsonPath, 0o600);
 }
 
 /** Map provider id to the conventional env var name for its API key. */
@@ -218,6 +405,7 @@ const PROVIDER_TEST_ENDPOINTS: Record<string, string> = {
   opencode: "https://api.opencode.ai/v1/models",
   openrouter: "https://openrouter.ai/api/v1/chat/completions",
   vercel: "https://api.vercel.ai/v1/chat/completions",
+  [HARMONIQS_PROVIDER_ID]: `${HARMONIQS_BASE_URL}/chat/completions`,
 };
 
 /** Cross-region inference profile prefixes — models with these are already resolved. */
@@ -273,6 +461,10 @@ export async function testConnection(
     const response = await fetchImpl(url, options);
 
     if (!response.ok) {
+      if (config.provider === HARMONIQS_PROVIDER_ID) {
+        const body = await safeJson(response);
+        return { ok: false, error: classifyHarmoniqsError(response.status, response.statusText, body) };
+      }
       return {
         ok: false,
         error: `${response.status} ${response.statusText ?? "Error"}`,
@@ -281,8 +473,53 @@ export async function testConnection(
     return { ok: true };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    if (config.provider === HARMONIQS_PROVIDER_ID) {
+      return { ok: false, error: `Network error — could not reach Harmoniqs AI (${msg})` };
+    }
     return { ok: false, error: msg };
   }
+}
+
+/** Best-effort JSON parse of a fetch Response — never throws. Used to read
+ *  app-harmoniqs-ai's `{ error: { message, type, code } }` body without risking
+ *  an unhandled rejection on a non-JSON or already-consumed response. */
+async function safeJson(response: { json?: () => Promise<unknown> }): Promise<unknown> {
+  try {
+    return await response.json?.();
+  } catch {
+    return undefined;
+  }
+}
+
+/** Classify a Harmoniqs AI chat-completions error into a specific,
+ *  secret-safe message. Mirrors the exact codes app-harmoniqs-ai's
+ *  chat-completions route and inferenceApiKeyAuth middleware emit:
+ *    401 invalid_api_key      — bad or revoked hqa_... key
+ *    403 no_entitlement       — key has no active inference balance
+ *    429 rate_limit_exceeded  — per-key rate limit
+ *    400/404                  — model_not_found / unsupported_feature / invalid_request
+ *    5xx or provider_error    — the upstream model backend failed
+ *  Falls back to a generic "<status> <statusText>" message when the body
+ *  doesn't match the known `{error:{code,message}}` shape (e.g. a CDN error
+ *  page in front of the worker). Never echoes the API key — it isn't in the
+ *  response body to begin with. */
+function classifyHarmoniqsError(status: number, statusText: string | undefined, body: unknown): string {
+  const error = (body as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;
+  const code = typeof error?.code === "string" ? error.code : undefined;
+  const message = typeof error?.message === "string" ? error.message : undefined;
+
+  if (status === 401) return "Invalid API key — check your hqa_... key";
+  if (status === 403 && code === "no_entitlement") {
+    return "No active inference entitlement — this key has no remaining balance";
+  }
+  if (status === 429) return "Rate limit exceeded — try again in a moment";
+  if (status === 400 || status === 404) {
+    return `Model or request configuration error: ${message ?? `${status} ${statusText ?? "Error"}`}`;
+  }
+  if (status >= 500 || code === "provider_error") {
+    return "Harmoniqs AI is temporarily unavailable (upstream error) — try again shortly";
+  }
+  return `${status} ${statusText ?? "Error"}`;
 }
 
 /** Build provider-specific test request. Minimal payload — just enough to validate creds. */
@@ -309,7 +546,35 @@ function buildTestRequest(
     };
   }
 
-  if (config.provider === "openai" || config.provider === "openrouter" || config.provider === "vercel") {
+  // Harmoniqs AI has its own branch, not folded into the generic
+  // OpenAI-compatible case below: its gateway enforces a minimum
+  // max_tokens (HARMONIQS_MIN_OUTPUT_TOKENS) that the other providers in
+  // that branch don't have, and reusing their max_tokens: 1 probe here
+  // guaranteed every real test connection would fail with a generic
+  // "invalid_request" -- reproduced against production before this fix.
+  if (config.provider === HARMONIQS_PROVIDER_ID) {
+    return {
+      url: endpoint,
+      options: {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: config.model.replace(/^[^/]+\//, ""),
+          max_tokens: HARMONIQS_MIN_OUTPUT_TOKENS,
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      },
+    };
+  }
+
+  if (
+    config.provider === "openai" ||
+    config.provider === "openrouter" ||
+    config.provider === "vercel"
+  ) {
     return {
       url: endpoint,
       options: {
@@ -567,198 +832,271 @@ ${fontFace}
 </body></html>`;
 }
 
+/** Options for {@link openOnboardingPanel}. */
+export interface OpenOnboardingPanelOptions {
+  /** Restrict the provider picker to this one provider and skip the welcome
+   *  animation — the focused connect entry point: the generic Connect
+   *  Provider dialog's branded Harmoniqs row hands off here instead of
+   *  duplicating the connect UI. `undefined` (the Stage-0 wizard's own
+   *  `amicode.onboarding.open` command) shows the full picker, unchanged. */
+  focusProvider?: string;
+  /** Whether a successful connection runs the Stage-0 bootstrap side effects
+   *  (queue the post-onboarding greeting, restart the opencode server so a
+   *  not-yet-running server picks up the very first provider). Defaults to
+   *  true, so `amicode.onboarding.open`'s existing behavior is unchanged.
+   *  The focused-connect flow passes false: the chat panel and server are
+   *  already live when this fires, so there's no "get chat ready" splash to
+   *  show and no reason to bounce the running server. */
+  bootstrap?: boolean;
+}
+
+/** Open (or reveal) the onboarding webview panel. Extracted from the
+ *  `amicode.onboarding.open` command body so the focused single-provider
+ *  connect flow ({@link registerHarmoniqsConnectCommand}) can reuse the
+ *  exact same webview, message handling, and config-writing logic instead
+ *  of a second UI surface. */
+export function openOnboardingPanel(
+  ctx: vscode.ExtensionContext,
+  options: OpenOnboardingPanelOptions = {},
+): vscode.WebviewPanel {
+  const { focusProvider, bootstrap = true } = options;
+
+  if (currentPanel) {
+    currentPanel.reveal(vscode.ViewColumn.One);
+    return currentPanel;
+  }
+
+  const panel = vscode.window.createWebviewPanel(
+    "amicode.onboarding",
+    "Welcome to Amicode",
+    vscode.ViewColumn.One,
+    {
+      enableScripts: true,
+      localResourceRoots: [
+        vscode.Uri.joinPath(ctx.extensionUri, "dist"),
+        vscode.Uri.joinPath(ctx.extensionUri, "media"),
+      ],
+    },
+  );
+  currentPanel = panel;
+
+  // Handle messages from the webview
+  let heldCredentials: DetectedCredential[] = [];
+  const testResults = new Map<string, boolean>(); // provider -> passed
+  const validatedModels = new Map<string, string>(); // provider -> validated model ID
+  let scanAborted = false;
+
+  panel.webview.onDidReceiveMessage(
+    async (msg: { type: string; payload?: unknown }) => {
+      if (msg.type === "test-connection") {
+        const payload = msg.payload as OnboardingConfig;
+        const result = await testConnection(payload);
+        panel.webview.postMessage({ type: "test-result", payload: result });
+      } else if (msg.type === "config-success") {
+        const payload = msg.payload as OnboardingConfig;
+        writeOnboardingConfig(payload);
+        // Clear stale model pin — the old provider may no longer be connected.
+        // The server will resolve the new provider's default on its own.
+        void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
+        if (!bootstrap) {
+          // Focused connect: the chat panel + server are already live — just
+          // close the handoff panel. No restart, no greeting, no splash;
+          // those are Stage-0-only (see OpenOnboardingPanelOptions above).
+          panel.dispose();
+          fireOnboardingComplete();
+          return;
+        }
+        // Swap the panel HTML directly to the splash (same as confirm-import)
+        panel.webview.html = splashHtml(
+          panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+          panel.webview.cspSource,
+        );
+        // Signal that the next chat panel open should auto-send the onboarding greeting
+        ChatPanel.setPendingOnboardingGreeting(true);
+        fireOnboardingComplete();
+        // Restart server so it picks up the new provider config.
+        // Chat opens via the onReady-gated listener in extension.ts.
+        void vscode.commands.executeCommand("amicode.restartServer");
+      } else if (msg.type === "cancel") {
+        // User cancelled onboarding — close panel, re-open chat
+        panel.dispose();
+        fireOnboardingCancelled();
+        if (bootstrap) {
+          // Also directly open chat as fallback (in case no listener is wired).
+          // Focused connect: the chat panel this was opened alongside never
+          // went anywhere — nothing to re-open.
+          void vscode.commands.executeCommand("amicode.openChat");
+        }
+      } else if (msg.type === "scan-credentials") {
+        // Auto-import: scan for existing credentials
+        scanAborted = false;
+        heldCredentials = [];
+        panel.webview.postMessage({
+          type: "scan-status",
+          payload: { state: "searching" },
+        });
+
+        try {
+          const scanResult = await scanCredentials(defaultScanOptions());
+          if (scanAborted) return; // Panel was closed mid-scan
+          heldCredentials = scanResult.credentials;
+
+          if (heldCredentials.length === 0) {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "empty" },
+            });
+          } else {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "found", count: heldCredentials.length },
+            });
+            // Send webview-safe results (no key material)
+            panel.webview.postMessage({
+              type: "scan-results",
+              payload: { providers: webviewSafeResults(heldCredentials) },
+            });
+
+            // Run connection tests with model probing in parallel (AC12)
+            // For each provider, probe models in order to find the first accessible one
+            const testPromises = heldCredentials.map(async (cred) => {
+              const validModel = await probeModels(cred.provider, cred.key);
+              const ok = validModel !== undefined;
+              testResults.set(cred.provider, ok);
+              if (validModel) {
+                validatedModels.set(cred.provider, validModel.id);
+              }
+              if (!scanAborted) {
+                panel.webview.postMessage({
+                  type: "test-status-update",
+                  payload: {
+                    provider: cred.provider,
+                    ok,
+                    error: ok ? undefined : "No accessible model found for this provider",
+                    ...(validModel ? { model: validModel.id } : {}),
+                  },
+                });
+              }
+            });
+            // Fire all tests in parallel, don't await sequentially
+            void Promise.allSettled(testPromises);
+          }
+        } catch {
+          if (!scanAborted) {
+            panel.webview.postMessage({
+              type: "scan-status",
+              payload: { state: "failed", error: "Scan failed unexpectedly" },
+            });
+          }
+        }
+      } else if (msg.type === "confirm-import") {
+        // User confirmed the import — write only explicitly selected providers that passed (#455)
+        // Opt-in: if includedProviders is missing or empty, nothing is imported except bedrock infra.
+        const payload = msg.payload as { activeProvider: string; includedProviders?: string[] };
+        const included = payload.includedProviders ? new Set(payload.includedProviders) : new Set<string>();
+        const passedCredentials = heldCredentials.filter(
+          (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
+        );
+        // Use the validated model from probing (if available) instead of the static first entry
+        const modelOverride = validatedModels.get(payload.activeProvider);
+        // Always write batch config — even with zero user providers, bedrock infra is provisioned
+        writeBatchConfig(passedCredentials, payload.activeProvider, undefined, modelOverride);
+        // If user excluded 'opencode', disconnect it from the auth store.
+        // This is the only provider that needs file-level removal (it's a
+        // built-in integration, not in the connections seam).
+        if (!included.has("opencode") && heldCredentials.some((c) => c.provider === "opencode")) {
+          disconnectProviders(["opencode"]);
+        }
+        heldCredentials = [];
+        testResults.clear();
+        validatedModels.clear();
+        // Clear stale model pin — the old provider may no longer be connected.
+        void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
+        // Swap the panel HTML directly to the splash — no webview-side
+        // DOM manipulation, so there's no flash when adopt() fires later
+        // (adopt's overlay uses the exact same SVG + CSS).
+        panel.webview.html = splashHtml(
+          panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
+          panel.webview.cspSource,
+        );
+        if (!bootstrap) {
+          // Focused connect: same reasoning as config-success above — no
+          // live server/chat to bootstrap, just close.
+          panel.dispose();
+          fireOnboardingComplete();
+          return;
+        }
+        // Signal that the next chat panel open should auto-send the onboarding greeting
+        ChatPanel.setPendingOnboardingGreeting(true);
+        fireOnboardingComplete();
+        // Restart server so it picks up the new provider config.
+        // Chat opens via the onReady-gated listener in extension.ts.
+        void vscode.commands.executeCommand("amicode.restartServer");
+      } else if (msg.type === "transition-complete") {
+        // The extension signals that the chat panel is ready — dispose the
+        // splash now. This is posted by the extension host after app-ready.
+        panel.dispose();
+      }
+    },
+    null,
+    ctx.subscriptions,
+  );
+
+  // On panel close, abort scan and drop credentials (AC13, AC14)
+  panel.onDidDispose(
+    () => {
+      scanAborted = true;
+      heldCredentials = [];
+      currentPanel = undefined;
+    },
+    null,
+    ctx.subscriptions,
+  );
+
+  // Render the webview HTML
+  const uri = (...p: string[]) =>
+    panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
+  const nonce = Math.random().toString(36).slice(2);
+
+  panel.webview.html = buildWebviewHtml(panel.webview, uri, nonce, focusProvider);
+  return panel;
+}
+
 /** Register the onboarding panel command. Call from extension.ts activate(). */
 export function registerOnboardingPanel(ctx: vscode.ExtensionContext): void {
   ctx.subscriptions.push(
     vscode.commands.registerCommand("amicode.onboarding.open", () => {
-      if (currentPanel) {
-        currentPanel.reveal(vscode.ViewColumn.One);
-        return;
-      }
-
-      const panel = vscode.window.createWebviewPanel(
-        "amicode.onboarding",
-        "Welcome to Amicode",
-        vscode.ViewColumn.One,
-        {
-          enableScripts: true,
-          localResourceRoots: [
-            vscode.Uri.joinPath(ctx.extensionUri, "dist"),
-            vscode.Uri.joinPath(ctx.extensionUri, "media"),
-          ],
-        },
-      );
-      currentPanel = panel;
-
-      // Handle messages from the webview
-      let heldCredentials: DetectedCredential[] = [];
-      const testResults = new Map<string, boolean>(); // provider -> passed
-      const validatedModels = new Map<string, string>(); // provider -> validated model ID
-      let scanAborted = false;
-
-      panel.webview.onDidReceiveMessage(
-        async (msg: { type: string; payload?: unknown }) => {
-          if (msg.type === "test-connection") {
-            const payload = msg.payload as OnboardingConfig;
-            const result = await testConnection(payload);
-            panel.webview.postMessage({ type: "test-result", payload: result });
-          } else if (msg.type === "config-success") {
-            const payload = msg.payload as OnboardingConfig;
-            writeOnboardingConfig(payload);
-            // Clear stale model pin — the old provider may no longer be connected.
-            // The server will resolve the new provider's default on its own.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash (same as confirm-import)
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
-          } else if (msg.type === "cancel") {
-            // User cancelled onboarding — close panel, re-open chat
-            panel.dispose();
-            fireOnboardingCancelled();
-            // Also directly open chat as fallback (in case no listener is wired)
-            void vscode.commands.executeCommand("amicode.openChat");
-          } else if (msg.type === "scan-credentials") {
-            // Auto-import: scan for existing credentials
-            scanAborted = false;
-            heldCredentials = [];
-            panel.webview.postMessage({
-              type: "scan-status",
-              payload: { state: "searching" },
-            });
-
-            try {
-              const scanResult = await scanCredentials(defaultScanOptions());
-              if (scanAborted) return; // Panel was closed mid-scan
-              heldCredentials = scanResult.credentials;
-
-              if (heldCredentials.length === 0) {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "empty" },
-                });
-              } else {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "found", count: heldCredentials.length },
-                });
-                // Send webview-safe results (no key material)
-                panel.webview.postMessage({
-                  type: "scan-results",
-                  payload: { providers: webviewSafeResults(heldCredentials) },
-                });
-
-                // Run connection tests with model probing in parallel (AC12)
-                // For each provider, probe models in order to find the first accessible one
-                const testPromises = heldCredentials.map(async (cred) => {
-                  const validModel = await probeModels(cred.provider, cred.key);
-                  const ok = validModel !== undefined;
-                  testResults.set(cred.provider, ok);
-                  if (validModel) {
-                    validatedModels.set(cred.provider, validModel.id);
-                  }
-                  if (!scanAborted) {
-                    panel.webview.postMessage({
-                      type: "test-status-update",
-                      payload: {
-                        provider: cred.provider,
-                        ok,
-                        error: ok ? undefined : "No accessible model found for this provider",
-                        ...(validModel ? { model: validModel.id } : {}),
-                      },
-                    });
-                  }
-                });
-                // Fire all tests in parallel, don't await sequentially
-                void Promise.allSettled(testPromises);
-              }
-            } catch {
-              if (!scanAborted) {
-                panel.webview.postMessage({
-                  type: "scan-status",
-                  payload: { state: "failed", error: "Scan failed unexpectedly" },
-                });
-              }
-            }
-          } else if (msg.type === "confirm-import") {
-            // User confirmed the import — write only explicitly selected providers that passed (#455)
-            // Opt-in: if includedProviders is missing or empty, nothing is imported except bedrock infra.
-            const payload = msg.payload as { activeProvider: string; includedProviders?: string[] };
-            const included = payload.includedProviders ? new Set(payload.includedProviders) : new Set<string>();
-            const passedCredentials = heldCredentials.filter(
-              (c) => included.has(c.provider) && testResults.get(c.provider) !== false,
-            );
-            // Use the validated model from probing (if available) instead of the static first entry
-            const modelOverride = validatedModels.get(payload.activeProvider);
-            // Always write batch config — even with zero user providers, bedrock infra is provisioned
-            writeBatchConfig(passedCredentials, payload.activeProvider, undefined, modelOverride);
-            // If user excluded 'opencode', disconnect it from the auth store.
-            // This is the only provider that needs file-level removal (it's a
-            // built-in integration, not in the connections seam).
-            if (!included.has("opencode") && heldCredentials.some((c) => c.provider === "opencode")) {
-              disconnectProviders(["opencode"]);
-            }
-            heldCredentials = [];
-            testResults.clear();
-            validatedModels.clear();
-            // Clear stale model pin — the old provider may no longer be connected.
-            void vscode.workspace.getConfiguration("amicode").update("defaultModel", undefined, vscode.ConfigurationTarget.Global);
-            // Swap the panel HTML directly to the splash — no webview-side
-            // DOM manipulation, so there's no flash when adopt() fires later
-            // (adopt's overlay uses the exact same SVG + CSS).
-            panel.webview.html = splashHtml(
-              panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, "media", "ui", "atoms", "DMSans-Variable.woff2")),
-              panel.webview.cspSource,
-            );
-            // Signal that the next chat panel open should auto-send the onboarding greeting
-            ChatPanel.setPendingOnboardingGreeting(true);
-            fireOnboardingComplete();
-            // Restart server so it picks up the new provider config.
-            // Chat opens via the onReady-gated listener in extension.ts.
-            void vscode.commands.executeCommand("amicode.restartServer");
-          } else if (msg.type === "transition-complete") {
-            // The extension signals that the chat panel is ready — dispose the
-            // splash now. This is posted by the extension host after app-ready.
-            panel.dispose();
-          }
-        },
-        null,
-        ctx.subscriptions,
-      );
-
-      // On panel close, abort scan and drop credentials (AC13, AC14)
-      panel.onDidDispose(
-        () => {
-          scanAborted = true;
-          heldCredentials = [];
-          currentPanel = undefined;
-        },
-        null,
-        ctx.subscriptions,
-      );
-
-      // Render the webview HTML
-      const uri = (...p: string[]) =>
-        panel.webview.asWebviewUri(vscode.Uri.joinPath(ctx.extensionUri, ...p));
-      const nonce = Math.random().toString(36).slice(2);
-
-      panel.webview.html = buildWebviewHtml(panel.webview, uri, nonce);
+      openOnboardingPanel(ctx);
     }),
   );
 }
 
-/** Build the webview HTML with CSP, brand CSS, animation container, and injected data. */
+/** Register the focused Harmoniqs-only connect command: the generic Connect
+ *  Provider dialog's branded "Harmoniqs AI" row hands off to this instead of
+ *  the dialog's own generic key-entry flow, because Harmoniqs is a branded
+ *  preset (fixed base URL/model, key routed to the auth store — see
+ *  writeOnboardingConfig/buildProviderConfigEntry/writeAuthApiKey above)
+ *  that the generic flow cannot express without duplicating that logic.
+ *  Reuses the exact same webview/message-handling as Stage-0 — see
+ *  openOnboardingPanel's `bootstrap: false` for the one behavioral
+ *  difference (no restart, no greeting: the chat panel and server are
+ *  already live). Call from extension.ts activate(). */
+export function registerHarmoniqsConnectCommand(ctx: vscode.ExtensionContext): void {
+  ctx.subscriptions.push(
+    vscode.commands.registerCommand("amicode.connectHarmoniqsProvider", () => {
+      openOnboardingPanel(ctx, { focusProvider: HARMONIQS_PROVIDER_ID, bootstrap: false });
+    }),
+  );
+}
+
+/** Build the webview HTML with CSP, brand CSS, animation container, and injected data.
+ *  `focusProvider`, when set, tells the webview script to skip the welcome
+ *  animation and restrict the picker to that one provider. */
 function buildWebviewHtml(
   webview: vscode.Webview,
   uri: (...p: string[]) => vscode.Uri,
   nonce: string,
+  focusProvider?: string,
 ): string {
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8" />
@@ -803,6 +1141,7 @@ function buildWebviewHtml(
 <script nonce="${nonce}">
 window.__PROVIDERS__ = ${JSON.stringify(PROVIDER_MODELS)};
 window.__PROVIDER_NAMES__ = ${JSON.stringify(PROVIDER_DISPLAY_NAMES)};
+window.__FOCUS_PROVIDER__ = ${JSON.stringify(focusProvider ?? null)};
 </script>
 <script nonce="${nonce}" src="${uri("dist", "onboarding_webview.js")}"></script>
 </body></html>`;

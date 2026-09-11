@@ -29,6 +29,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
+import { parseFrontmatter } from "./frontmatter.js";
 import { TASK_TYPES } from "./ledger.js";
 import { FRONTIER_MODELS, LADDER } from "./ledger_dispatch.js";
 import type { VerbResult } from "./verbs.js";
@@ -164,7 +165,10 @@ function readEntitlements(argv: string[], warnings: string[]): { codes: string[]
 // ── skills ───────────────────────────────────────────────────────────────────────
 /** A skill's `surface:` tag, read from its SKILL.md frontmatter — searched across the
  *  skills roots in order, first hit wins. undefined = the file exists but carries no
- *  tag; null = no such skill in ANY root. */
+ *  tag; null = no such skill in ANY root. The frontmatter is read through the ONE
+ *  shared amico-run reader (frontmatter.ts — amicode#996), the same yaml-between-
+ *  fences rules the extension's loader and the skills verb use, so the surface
+ *  scrape and the loader can never disagree on what parses. */
 function skillSurface(skillsDirs: string[], name: string): string | undefined | null {
   for (const dir of skillsDirs) {
     const file = join(dir, name, "SKILL.md");
@@ -174,19 +178,10 @@ function skillSurface(skillsDirs: string[], name: string): string | undefined | 
   return null;
 }
 function skillSurfaceIn(file: string): string | undefined {
-  const lines = readFileSync(file, "utf8").split("\n");
-  let fences = 0;
-  for (const line of lines) {
-    if (/^---\s*$/.test(line)) {
-      fences++;
-      if (fences === 2) break;
-      continue;
-    }
-    if (fences !== 1) continue;
-    const m = /^surface:\s*(.+?)\s*$/.exec(line);
-    if (m) return m[1].replace(/["']/g, "");
-  }
-  return undefined;
+  const fm = parseFrontmatter(readFileSync(file, "utf8"));
+  if (!fm.ok) return undefined; // malformed frontmatter reads as untagged — an error either way
+  const s = fm.data.surface;
+  return typeof s === "string" ? s : undefined;
 }
 
 /** Is a gate runnable today? Only `status = "available"` counts — a `pending-impl` or

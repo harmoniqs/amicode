@@ -12,13 +12,22 @@ import * as vscode from "vscode";
 
 import {
   registerOnboardingPanel,
+  registerHarmoniqsConnectCommand,
   PROVIDER_MODELS,
   PROVIDER_DISPLAY_NAMES,
+  HARMONIQS_PROVIDER_ID,
+  HARMONIQS_MODEL_ID,
+  HARMONIQS_BASE_URL,
+  HARMONIQS_MIN_OUTPUT_TOKENS,
+  HARMONIQS_MAX_OUTPUT_TOKENS,
   type OnboardingConfig,
   writeOnboardingConfig,
+  reconcileHarmoniqsProviderConfig,
+  writeAuthApiKey,
   testConnection,
   probeModels,
   onOnboardingComplete,
+  onOnboardingCancelled,
   dismissOnboardingPanel,
   getOnboardingPanel,
   releaseOnboardingPanel,
@@ -119,6 +128,7 @@ describe("PROVIDER_MODELS — data-driven provider→model mapping (AC3)", () =>
     const keys = Object.keys(PROVIDER_MODELS);
     expect(keys).toEqual([
       "github-copilot",
+      "harmoniqs",
       "opencode",
       "anthropic",
       "openai",
@@ -371,6 +381,529 @@ describe("testConnection — credential validation (AC4, AC8)", () => {
     expect(url).toContain("googleapis.com");
   });
 });
+
+describe("Harmoniqs AI — branded provider preset", () => {
+  it("is registered as a first-class provider with one locked model", () => {
+    expect(PROVIDER_DISPLAY_NAMES[HARMONIQS_PROVIDER_ID]).toBe("Harmoniqs AI");
+    expect(PROVIDER_MODELS[HARMONIQS_PROVIDER_ID]).toEqual([
+      { id: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`, name: "Harmoniqs Auto" },
+    ]);
+  });
+
+  describe("writeOnboardingConfig — secure credential storage", () => {
+    let tmpDir: string;
+    let prevXdgDataHome: string | undefined;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-harmoniqs-"));
+      prevXdgDataHome = process.env.XDG_DATA_HOME;
+      // writeOnboardingConfig writes the harmoniqs key via the default
+      // opencodeDataDir() path — redirect it into the tmp dir so the test
+      // never touches the real ~/.local/share/opencode/auth.json.
+      process.env.XDG_DATA_HOME = tmpDir;
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      if (prevXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+      else process.env.XDG_DATA_HOME = prevXdgDataHome;
+    });
+
+    it("writes the non-secret provider shape into opencode.json (npm, baseURL, model, tool_call:false)", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      expect(entry.npm).toBe("@ai-sdk/openai-compatible");
+      expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(false);
+      // Regression: without limit.output, opencode's own maxOutputTokens
+      // fallback (Math.min(model.limit.output, 32000) || 32000) treats the
+      // unset 0 as "no cap" and sends max_tokens: 32000 on every real turn --
+      // which exceeds this gateway's real ceiling and 400s generically.
+      // Reproduced live before this fix existed.
+      expect(entry.models[HARMONIQS_MODEL_ID].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
+    });
+
+    it("never writes the API key into opencode.json", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].options.apiKey).toBeUndefined();
+      const raw = fs.readFileSync(configPath, "utf8");
+      expect(raw).not.toContain("hqa_supersecretvalue123456");
+    });
+
+    it("writes the API key into opencode's auth store instead (auth.json, type: api)", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const authPath = path.join(tmpDir, "opencode", "auth.json");
+      const auth = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(auth[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_supersecretvalue123456" });
+    });
+
+    // app-harmoniqs-ai's chat-completions route is a plain OpenAI-Chat-Completions
+    // -compatible gateway (see chat-completions.ts parseRequest) — the protocol
+    // itself has no dependency on which model id is being served; it just happens
+    // to hard-pin PUBLIC_MODEL="harmoniqs-auto" server-side TODAY. These tests use
+    // a SECOND, hypothetical model id ("harmoniqs-fast") that does not exist in
+    // PROVIDER_MODELS or on the real backend, purely to prove the config-writing
+    // wiring is model-id-agnostic rather than a single "harmoniqs-auto" string
+    // baked into buildProviderConfigEntry. This anticipates the gateway exposing
+    // additional model ids later without requiring a code change here — see the
+    // PR #951 review discussion on over-assuming a single hardcoded model id.
+    it("writes an arbitrary (future) model id into provider.harmoniqs.models, not just harmoniqs-auto", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      // The unknown model id must land under its OWN key — not silently
+      // collapsed onto HARMONIQS_MODEL_ID ("harmoniqs-auto").
+      expect(entry.models["harmoniqs-fast"]).toBeDefined();
+      expect(entry.models[HARMONIQS_MODEL_ID]).toBeUndefined();
+      expect(entry.models["harmoniqs-fast"].tool_call).toBe(false);
+      expect(entry.models["harmoniqs-fast"].limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+      // The gateway shape (npm/baseURL) is protocol-level, not model-specific,
+      // and must stay identical regardless of which model was selected.
+      expect(entry.npm).toBe("@ai-sdk/openai-compatible");
+      expect(entry.options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`);
+    });
+
+    it("still resolves the known display name for the current model id", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].name).toBe("Harmoniqs Auto");
+    });
+
+    it("falls back to the bare model id as the display name for an unrecognized model", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"].name).toBe("harmoniqs-fast");
+    });
+  });
+
+  describe("writeAuthApiKey", () => {
+    let tmpDir: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "onboard-authstore-"));
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("writes a { type: 'api', key } entry, creating parent directories", () => {
+      const authPath = path.join(tmpDir, "nested", "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_abc123" });
+    });
+
+    it("merges with existing entries instead of clobbering them", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      fs.writeFileSync(authPath, JSON.stringify({ anthropic: { type: "api", key: "sk-ant-existing" } }));
+
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written.anthropic).toEqual({ type: "api", key: "sk-ant-existing" });
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_abc123" });
+    });
+
+    it("re-writing replaces only that provider's entry", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_old", authPath);
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_new", authPath);
+
+      const written = JSON.parse(fs.readFileSync(authPath, "utf8"));
+      expect(written[HARMONIQS_PROVIDER_ID]).toEqual({ type: "api", key: "hqa_new" });
+    });
+
+    it("sets file permissions to 0600 (owner read/write only)", () => {
+      const authPath = path.join(tmpDir, "auth.json");
+      writeAuthApiKey(HARMONIQS_PROVIDER_ID, "hqa_abc123", authPath);
+
+      const mode = fs.statSync(authPath).mode & 0o777;
+      expect(mode).toBe(0o600);
+    });
+  });
+
+  describe("reconcileHarmoniqsProviderConfig — heals a stale entry from an older extension version", () => {
+    let tmpDir: string;
+    let configPath: string;
+
+    beforeEach(() => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "harmoniqs-reconcile-"));
+      configPath = path.join(tmpDir, "opencode.json");
+    });
+
+    afterEach(() => {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    it("adds the missing limit.output to a pre-fix entry (the exact shape that shipped in alpha.1/alpha.2)", () => {
+      const staleConfig = {
+        $schema: "https://opencode.ai/config.json",
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            name: "Harmoniqs AI",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: {
+              [HARMONIQS_MODEL_ID]: { name: "Harmoniqs Auto", tool_call: false },
+            },
+          },
+        },
+        model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(healed.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
+      // Everything else survives untouched.
+      expect(healed.provider[HARMONIQS_PROVIDER_ID].options.baseURL).toBe(HARMONIQS_BASE_URL);
+      expect(healed.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
+    });
+
+    it("heals a hypothetical second model id too — not hardcoded to harmoniqs-auto", () => {
+      const staleConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: { "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: true } },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      const healed = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const model = healed.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"];
+      expect(model.tool_call).toBe(false);
+      expect(model.limit).toEqual({ output: HARMONIQS_MAX_OUTPUT_TOKENS });
+    });
+
+    it("is a no-op — doesn't touch the file at all — when the entry is already correct", () => {
+      const correctConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: {
+              [HARMONIQS_MODEL_ID]: {
+                name: "Harmoniqs Auto",
+                tool_call: false,
+                limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
+              },
+            },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(correctConfig, null, 2));
+      const mtimeBefore = fs.statSync(configPath).mtimeMs;
+
+      reconcileHarmoniqsProviderConfig(configPath);
+
+      expect(fs.statSync(configPath).mtimeMs).toBe(mtimeBefore);
+    });
+
+    it("no-ops cheaply when there is no config file at all", () => {
+      expect(() => reconcileHarmoniqsProviderConfig(path.join(tmpDir, "does-not-exist.json"))).not.toThrow();
+    });
+
+    it("no-ops when the config file has no provider.harmoniqs entry (nothing to heal)", () => {
+      fs.writeFileSync(configPath, JSON.stringify({ provider: { anthropic: {} } }, null, 2));
+      expect(() => reconcileHarmoniqsProviderConfig(configPath)).not.toThrow();
+      const untouched = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(untouched.provider.harmoniqs).toBeUndefined();
+    });
+
+    it("also heals via writeOnboardingConfig's own merge path (writing a DIFFERENT provider while a stale harmoniqs entry sits untouched)", () => {
+      const staleConfig = {
+        provider: {
+          [HARMONIQS_PROVIDER_ID]: {
+            npm: "@ai-sdk/openai-compatible",
+            options: { baseURL: HARMONIQS_BASE_URL },
+            models: { [HARMONIQS_MODEL_ID]: { name: "Harmoniqs Auto", tool_call: false } },
+          },
+        },
+      };
+      fs.writeFileSync(configPath, JSON.stringify(staleConfig, null, 2));
+
+      writeOnboardingConfig(
+        { provider: "anthropic", model: "anthropic/claude-sonnet-5", apiKey: "sk-test-key-123" },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      expect(written.provider[HARMONIQS_PROVIDER_ID].models[HARMONIQS_MODEL_ID].limit).toEqual({
+        output: HARMONIQS_MAX_OUTPUT_TOKENS,
+      });
+      expect(written.provider.anthropic).toBeDefined();
+    });
+  });
+
+  describe("testConnection — secret-safe error classification (401/403/429/config/network)", () => {
+    const config: OnboardingConfig = {
+      provider: HARMONIQS_PROVIDER_ID,
+      model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+      apiKey: "hqa_supersecretvalue123456",
+    };
+
+    it("sends exactly the expected OpenAI-compatible request", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ choices: [] }) });
+      const result = await testConnection(config, fetchMock);
+
+      expect(result.ok).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
+      expect(options.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
+      const body = JSON.parse(options.body);
+      expect(body.model).toBe(HARMONIQS_MODEL_ID);
+      expect(body.tools).toBeUndefined();
+      // Regression: the test probe must satisfy the gateway's own minimum —
+      // a lower value (the generic openai/openrouter/vercel probe used 1)
+      // guaranteed every real connection test failed with a generic 400
+      // "Invalid chat completion request", reproduced live against
+      // production before this fix (see HARMONIQS_MIN_OUTPUT_TOKENS's
+      // comment for the exact backend constant it mirrors).
+      expect(body.max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
+    });
+
+    // Same OpenAI-Chat-Completions-compatible request shape, but with a SECOND,
+    // hypothetical model id that isn't harmoniqs-auto and doesn't exist on the
+    // real backend today (chat-completions.ts hard-pins PUBLIC_MODEL server-side —
+    // see requestError/parseRequest). Proves testConnection's request-building is
+    // wired off config.model, not a "harmoniqs-auto" string baked into the client,
+    // so it keeps working unchanged if/when the gateway serves more model ids.
+    it("is wired off config.model, not a hardcoded model id — same request shape for a different model", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ choices: [] }) });
+      const otherModelConfig: OnboardingConfig = {
+        provider: HARMONIQS_PROVIDER_ID,
+        model: `${HARMONIQS_PROVIDER_ID}/harmoniqs-fast`,
+        apiKey: config.apiKey,
+      };
+      const result = await testConnection(otherModelConfig, fetchMock);
+
+      expect(result.ok).toBe(true);
+      const [url, options] = fetchMock.mock.calls[0];
+      expect(url).toBe(`${HARMONIQS_BASE_URL}/chat/completions`);
+      const body = JSON.parse(options.body);
+      expect(body.model).toBe("harmoniqs-fast");
+      expect(body.tools).toBeUndefined();
+      expect(body.max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
+    });
+
+    it("401 invalid_api_key — reports an invalid-key message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        statusText: "Unauthorized",
+        json: () =>
+          Promise.resolve({ error: { message: "Invalid API key", type: "authentication_error", code: "invalid_api_key" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Invalid API key");
+    });
+
+    it("403 no_entitlement — distinguishes lack of entitlement from a bad key", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        statusText: "Forbidden",
+        json: () =>
+          Promise.resolve({
+            error: { message: "No active inference entitlement", type: "permission_error", code: "no_entitlement" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("entitlement");
+    });
+
+    it("429 rate_limit_exceeded — reports a rate-limit message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        json: () => Promise.resolve({ error: { message: "Rate limit exceeded", type: "rate_limit_error", code: "rate_limit_exceeded" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error?.toLowerCase()).toContain("rate limit");
+    });
+
+    // Reproduces the exact live-production failure this fix addresses: before
+    // it, EVERY Harmoniqs test connection sent max_tokens below the gateway's
+    // floor, so it always hit this exact response shape and message,
+    // regardless of whether the key/entitlement were valid.
+    it("400 invalid_max_tokens (below the gateway's floor) — surfaces the real backend message, not a generic failure", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: () =>
+          Promise.resolve({
+            error: { message: "Invalid chat completion request", type: "invalid_request_error", code: "invalid_request" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Invalid chat completion request");
+      // The real fix is that this response should never occur in practice
+      // anymore -- assert the outgoing request itself already satisfies the
+      // floor, so this failure mode requires a backend-side change to recur.
+      const [, options] = fetchMock.mock.calls[0];
+      expect(JSON.parse(options.body).max_tokens).toBe(HARMONIQS_MIN_OUTPUT_TOKENS);
+    });
+
+    it("400 unsupported_feature — reports it as a model/config error with the backend's message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        statusText: "Bad Request",
+        json: () =>
+          Promise.resolve({
+            error: {
+              message: "Tools, structured output, and multiple completions are not supported",
+              type: "invalid_request_error",
+              code: "unsupported_feature",
+            },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Tools, structured output");
+    });
+
+    it("404 model_not_found — reports it as a model/config error", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        json: () =>
+          Promise.resolve({
+            error: { message: "The requested model does not exist", type: "invalid_request_error", code: "model_not_found" },
+          }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("does not exist");
+    });
+
+    it("upstream 502/provider_error — reports a distinct temporarily-unavailable message", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: "Bad Gateway",
+        json: () =>
+          Promise.resolve({ error: { message: "Inference provider request failed", type: "api_error", code: "provider_error" } }),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("temporarily unavailable");
+    });
+
+    it("network failure — distinguishes a transport error from an HTTP rejection", async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("getaddrinfo ENOTFOUND app.harmoniqs.ai"));
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("Network error");
+      expect(result.error).toContain("ENOTFOUND");
+    });
+
+    it("tolerates a non-JSON error body (e.g. a CDN error page) without throwing", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+        json: () => Promise.reject(new Error("not json")),
+      });
+      const result = await testConnection(config, fetchMock);
+      expect(result.ok).toBe(false);
+      expect(result.error).toBeTruthy();
+    });
+
+    it("never includes the API key in any classified result", async () => {
+      const responses = [
+        { ok: false, status: 401, statusText: "Unauthorized", json: () => Promise.resolve({ error: { code: "invalid_api_key" } }) },
+        {
+          ok: false,
+          status: 403,
+          statusText: "Forbidden",
+          json: () => Promise.resolve({ error: { code: "no_entitlement" } }),
+        },
+        { ok: false, status: 429, statusText: "Too Many Requests", json: () => Promise.resolve({ error: {} }) },
+      ];
+      for (const response of responses) {
+        const fetchMock = vi.fn().mockResolvedValue(response);
+        const result = await testConnection(config, fetchMock);
+        expect(JSON.stringify(result)).not.toContain(config.apiKey);
+      }
+    });
+  });
+});
+
 
 describe("Credential import — panel message handling (AC2, AC8, AC12, AC14)", () => {
   let ctx: { subscriptions: unknown[]; extensionUri: unknown };
@@ -631,6 +1164,105 @@ describe("Webview HTML generation (AC2, AC9)", () => {
 
     expect(panel.webview.html).toContain("Content-Security-Policy");
     expect(panel.webview.html).toContain("nonce-");
+    spy.mockRestore();
+  });
+});
+
+describe("registerHarmoniqsConnectCommand — focused connect entry point (Connect Provider dialog handoff)", () => {
+  let ctx: { subscriptions: unknown[]; extensionUri: unknown };
+
+  beforeEach(() => {
+    _resetForTesting();
+    ctx = { subscriptions: [], extensionUri: vscode.Uri.file("/ext") } as never;
+    registerOnboardingPanel(ctx as never);
+    registerHarmoniqsConnectCommand(ctx as never);
+  });
+
+  it("opens the SAME onboarding webview panel type as the Stage-0 command", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith(
+      "amicode.onboarding",
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ enableScripts: true }),
+    );
+    spy.mockRestore();
+  });
+
+  it("is a singleton with amicode.onboarding.open — reveals the existing panel rather than opening a second one", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    expect(spy).toHaveBeenCalledTimes(1);
+    const panel = spy.mock.results[0].value as { revealCount: number };
+    expect(panel.revealCount).toBe(1);
+    spy.mockRestore();
+  });
+
+  it("injects window.__FOCUS_PROVIDER__ = 'harmoniqs', restricting the picker", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const panel = spy.mock.results[0].value as { webview: { html: string } };
+    expect(panel.webview.html).toContain("__FOCUS_PROVIDER__");
+    expect(panel.webview.html).toContain(JSON.stringify(HARMONIQS_PROVIDER_ID));
+    spy.mockRestore();
+  });
+
+  it("amicode.onboarding.open still gets a null focusProvider (Stage-0 behavior unchanged)", async () => {
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as { webview: { html: string } };
+    expect(panel.webview.html).toContain("window.__FOCUS_PROVIDER__ = null");
+    spy.mockRestore();
+  });
+
+  // bootstrap:false's one behavioral difference is "no restart, no greeting,
+  // no fallback chat-open" — config-success's write path defaults to the
+  // real ~/.config/opencode path with no configPath override, and os/fs
+  // builtins aren't spyable in this vitest setup for that path, so "cancel"
+  // is the safe proxy: it hits the identical bootstrap branch with zero
+  // filesystem writes (see `cancel` in openOnboardingPanel).
+  it("bootstrap:false — cancel does NOT fall back to amicode.openChat (chat panel is already live)", async () => {
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.connectHarmoniqsProvider");
+    const panel = spy.mock.results[0].value as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+      disposed?: boolean;
+    };
+
+    let cancelled = false;
+    const disposable = onOnboardingCancelled(() => {
+      cancelled = true;
+    });
+
+    panel.webview._simulateMessage({ type: "cancel" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(cancelled).toBe(true); // fireOnboardingCancelled still fires either way
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    expect(executed).not.toContain("amicode.openChat"); // the focused-connect difference
+
+    disposable.dispose();
+    spy.mockRestore();
+  });
+
+  it("bootstrap:true (Stage-0 default) — cancel DOES fall back to amicode.openChat, unchanged", async () => {
+    (vscode.commands as { executed: string[] }).executed = [];
+    const spy = vi.spyOn(vscode.window, "createWebviewPanel");
+    await vscode.commands.executeCommand("amicode.onboarding.open");
+    const panel = spy.mock.results[0].value as {
+      webview: { _simulateMessage: (msg: unknown) => void };
+    };
+
+    panel.webview._simulateMessage({ type: "cancel" });
+    await new Promise((r) => setTimeout(r, 10));
+
+    const executed = (vscode.commands as { executed: string[] }).executed;
+    expect(executed).toContain("amicode.openChat");
+
     spy.mockRestore();
   });
 });
