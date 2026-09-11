@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 import { findForkedOpencodeBinary } from "./opencode_binary";
+import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
   readSkillProviders,
@@ -102,6 +103,9 @@ export interface BridgeIo {
    *  "reset" = expand selected + collapse others, "expand" = expand selected
    *  only, "none" = highlight only. */
   onProjectSelected?: (path: string, mode?: "none" | "expand" | "reset") => void;
+  previewVisibleChildren?: (root: string, relativeDirectory: string) => Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>>;
+  /** Returns the currently-selected Explorer file icon theme as opaque assets. */
+  explorerIconTheme?: () => ExplorerIconTheme;
 }
 
 const isAmicode = (msg: unknown): msg is { source: "amicode"; kind: string; tab?: string } =>
@@ -132,6 +136,39 @@ export function extractReportBugModel(
  *  consumed (hosts log the rest). */
 export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean {
   if (!isAmicode(msg)) return false;
+
+  // The sandboxed app requests its Preview-tab icon data explicitly. The host
+  // owns the only asset reader and returns opaque IDs plus allowlisted bytes.
+  if (msg.kind === "explorer-icon-theme-request") {
+    if (io.explorerIconTheme) {
+      io.postToWebview({
+        source: "amicode",
+        kind: "explorer-icon-theme",
+        theme: io.explorerIconTheme(),
+        ...(typeof msg.tab === "string" ? { tab: msg.tab } : {}),
+      });
+    }
+    return true;
+  }
+
+  if (msg.kind === "preview-visible-children-request") {
+    const requestId = (msg as { requestId?: unknown }).requestId;
+    const root = (msg as { root?: unknown }).root;
+    const relativeDirectory = (msg as { relativeDirectory?: unknown }).relativeDirectory;
+    const tab = typeof msg.tab === "string" ? { tab: msg.tab } : {};
+    if (typeof requestId !== "string" || requestId.length === 0 || requestId.length > 200) return true;
+    if (typeof root !== "string" || root.length === 0 || root.length > 4096) return true;
+    if (typeof relativeDirectory !== "string" || relativeDirectory.length > 4096) return true;
+    if (!io.previewVisibleChildren) {
+      io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, error: "Preview navigation is unavailable", ...tab });
+      return true;
+    }
+    void io.previewVisibleChildren(root, relativeDirectory).then(
+      (entries) => io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, entries, ...tab }),
+      () => io.postToWebview({ source: "amicode", kind: "preview-visible-children-result", requestId, error: "Could not load files", ...tab }),
+    );
+    return true;
+  }
 
   // target=_blank/window.open are dead inside the framed app — open https
   // links via the editor (system browser). https-only; scheme is

@@ -16,6 +16,9 @@ import { SidebarTreeService, type RawDirEntry } from "./sidebar_tree_service";
 import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
 import { invalidateEnvironmentCache, readEnvManifest, resolveEnvironment } from "./project/resolve_environment";
+import { resolvePreviewVisibleChildrenDirectory } from "./preview_visible_children";
+
+export { buildExplorerIconTheme } from "./explorer_icon_theme";
 
 // ── Icon theme resolution ────────────────────────────────────────────────────
 
@@ -317,6 +320,21 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
       getExcludePatterns: () => getExcludePatterns(),
       getWorkspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
     });
+  }
+
+  async previewVisibleChildren(root: string, relativeDirectory: string): Promise<Array<{ name: string; kind: "file" | "directory"; absolute: string; relative: string }>> {
+    const workspaceRoots = this.treeService.getRoots()
+      .filter((entry) => entry.projectType === "research" || entry.projectType === "dev")
+      .map((entry) => entry.path);
+    const resolved = resolvePreviewVisibleChildrenDirectory(root, relativeDirectory, workspaceRoots);
+    if (!resolved.ok) throw new Error("Preview visible-children request is outside a workspace project");
+    const entries = await this.treeService.getChildren(resolved.directory);
+    return entries.map((entry) => ({
+      name: entry.name,
+      kind: entry.type,
+      absolute: entry.path,
+      relative: path.relative(root, entry.path),
+    }));
   }
 
   resolveWebviewView(
