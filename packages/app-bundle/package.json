@@ -6,6 +6,8 @@
   "description": "M2 slice (a): the fork-owned app overlay for canonical opencode — extracted from the opencode fork at a pinned tag, materialized onto a canonical upstream base (#451).",
   "scripts": {
     "extract": "node scripts/extract_overlay.mjs",
-    "materialize": "node scripts/materialize.mjs --out .materialized"
+    "materialize": "node scripts/materialize.mjs --out .materialized",
+    "sync:check": "node scripts/overlay-promotion.mjs --check",
+    "sync:apply": "node scripts/overlay-promotion.mjs --apply"
   }
 }

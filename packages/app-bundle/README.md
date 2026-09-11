@@ -69,16 +69,20 @@ changes.
 ### Usage
 
 ```sh
-# re-extract the overlay from the fork at the pin (updates manifest.json)
-pnpm --filter @amicode/app-bundle extract [--fork <path>] [--tag <tag>]
+# verify that the committed overlay reproduces one immutable fork revision
+pnpm --filter @amicode/app-bundle sync:check -- --source <fork> --revision <sha>
+
+# explicitly promote a clean local/amicode revision on an Amicode review branch
+pnpm --filter @amicode/app-bundle sync:apply -- --source <fork> --revision <sha> --base <upstream-base>
 
 # materialize a full source tree: canonical base + overlay
 node scripts/materialize.mjs --out <dir> [--tag v1.18.12] [--repo anomalyco/opencode]
 ```
 
-The extractor reads files via `git archive` AT the tag (never the working
-tree) and round-trip-verifies every file against `git show TAG:<path>` — the
-manifest hashes are the contract. The materializer fetches the canonical
+Promotion reads files at the immutable revision, never from the working tree,
+and records the complete file hashes and deletion set. It refuses dirty source
+checkouts and refuses to write directly on Amicode `main`; a rebuild only runs
+the read-only verification. The materializer fetches the canonical
 tarball once per tag (`.cache/`, gitignored), applies the overlay
 (adds/overwrites), applies manifest deletions, and verifies every overlay
 file's hash in the output.

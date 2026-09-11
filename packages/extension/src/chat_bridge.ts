@@ -34,6 +34,19 @@ export function resolveDbBackupDir(sessionDatabase: string): string {
   return opencodeDataDir();
 }
 
+export type RebuildMode = "local" | "main";
+
+/** The app build has two intentionally non-interchangeable source contracts. */
+export function appBundleBuildCommand(mode: RebuildMode, opencodePath: string): string {
+  const contract = mode === "local" ? "--direct-worktree" : "--verified-main";
+  return `pnpm --filter amicode run build:app -- --work "${opencodePath}" ${contract}`;
+}
+
+/** Main rebuilds must prove the committed overlay describes the exact fork HEAD. */
+export function mainOverlayVerificationCommand(opencodePath: string): string {
+  return `node packages/app-bundle/scripts/overlay-promotion.mjs --check --source "${opencodePath}" --revision "$(git -C "${opencodePath}" rev-parse HEAD)"`;
+}
+
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
 // the iframe→parent→extension postMessage bridge. STRICT allowlist: the framed
 // app renders LLM output, so we never executeCommand anything outside this set.
@@ -500,10 +513,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Full rebuild: builds both opencode and amicode, then triggers reload.
-  // mode: "local" = build from whatever's on disk; "remote" = git pull first.
+  // Full rebuild: local builds whatever is on disk; main first checks out both
+  // repositories and proves the committed overlay represents the fork revision.
   if (msg.kind === "dev-tools-rebuild") {
-    const mode = (msg as { mode?: string }).mode === "remote" ? "remote" : "local";
+    const mode: RebuildMode = (msg as { mode?: string }).mode === "remote" ? "main" : "local";
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
       ? (msg as unknown as { opencodePath: string }).opencodePath.trim().replace(/^~/, os.homedir())
       : "";
@@ -569,9 +582,9 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           // DB backup is best-effort
         }
 
-        // ── Git pull (remote mode only) ──
+        // ── Git pull (main mode only) ──
         // opencode: checkout local/amicode, amicode: checkout main
-        if (mode === "remote") {
+        if (mode === "main") {
           const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull --rebase origin local/amicode", opencodePath);
           if (!checkoutOc.ok) {
             io.postToWebview({
@@ -585,6 +598,19 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             io.postToWebview({
               source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
               state: "failed", error: `git pull (amicode) failed: ${checkoutAc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+
+          // A main rebuild is allowed only when Amicode's committed tracking
+          // artifact exactly reproduces this checked-out fork revision. This
+          // runs before either dependency install or build and never writes a
+          // source tree; promotion is a separate reviewable operation.
+          const verifyOverlay = await run(mainOverlayVerificationCommand(opencodePath), amicodePath);
+          if (!verifyOverlay.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `main rebuild provenance check failed: ${verifyOverlay.error?.slice(0, 250)}`,
             });
             return;
           }
@@ -635,7 +661,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // ── Build app bundle from the fork tree ──
         // The binary and the app must come from the same source (#822).
         const buildApp = await run(
-          `pnpm --filter amicode run build:app -- --work "${opencodePath}"`,
+          appBundleBuildCommand(mode, opencodePath),
           amicodePath,
         );
         if (!buildApp.ok) {

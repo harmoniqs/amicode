@@ -62,6 +62,10 @@ const fail = (msg, code = 1) => {
   process.exit(code);
 };
 
+const directWorktree = args.includes("--direct-worktree");
+const verifiedMain = args.includes("--verified-main");
+if (directWorktree && verifiedMain) fail("--direct-worktree and --verified-main are mutually exclusive");
+
 const run = (cmd, cmdArgs, cwd, note) => {
   console.log(`[build:app] ${note}: ${cmd} ${cmdArgs.join(" ")} (cwd=${cwd})`);
   const r = spawnSync(cmd, cmdArgs, { cwd, stdio: "inherit" });
@@ -141,6 +145,15 @@ const preflight = () => {
   return { headSha, dirty: dirtyEntries.length > 0, overrideReason: decision.overrideReason };
 };
 
+// Local developer rebuilds intentionally preserve the selected worktrees,
+// including dirty and divergent ones. Capture the stamp without fetching,
+// materializing, or inspecting the overlay.
+const directWorktreeInputs = () => ({
+  headSha: gitOut(["rev-parse", "HEAD"], "rev-parse HEAD"),
+  dirty: gitOut(["status", "--porcelain"], "git status").split("\n").filter(Boolean).length > 0,
+  overrideReason: "direct-worktree rebuild",
+});
+
 const stampDeployManifest = (target, { headSha, dirty, overrideReason }) => {
   const manifest = buildDeployManifest({
     commit: headSha,
@@ -171,16 +184,29 @@ const stageDist = (distDir, manifestInputs) => {
 // ── stage-only mode: an already-built dist (the telaio probe's recipe) ───────
 const prebuilt = flag("dist");
 if (prebuilt) {
-  const manifestInputs = preflight();
+  const manifestInputs = directWorktree ? directWorktreeInputs() : preflight();
   stageDist(prebuilt, manifestInputs);
   process.exit(0);
 }
 
 // ── the full recipe ──────────────────────────────────────────────────────────
-const manifestInputs = preflight();
 const work = flag("work") ?? process.env.AMICODE_APP_BUNDLE_WORK ?? join(BUNDLE_PKG, ".materialized");
+const manifestInputs = directWorktree ? directWorktreeInputs() : preflight();
+
+if (verifiedMain) {
+  if (!existsSync(join(work, ".git"))) fail(`--verified-main requires a git worktree: ${work}`);
+  const revision = spawnSync("git", ["-C", work, "rev-parse", "HEAD"], { encoding: "utf8" });
+  if (revision.status !== 0) fail(`cannot resolve verified main revision: ${revision.stderr?.trim()}`);
+  run(
+    process.execPath,
+    [join(BUNDLE_PKG, "scripts", "overlay-promotion.mjs"), "--check", "--source", work, "--revision", revision.stdout.trim()],
+    REPO_ROOT,
+    "verify committed overlay provenance",
+  );
+}
 
 if (!existsSync(join(work, "package.json"))) {
+  if (directWorktree || verifiedMain) fail(`${directWorktree ? "--direct-worktree" : "--verified-main"} requires an existing --work tree`);
   run("node", [join(BUNDLE_PKG, "scripts", "materialize.mjs"), "--out", work], REPO_ROOT, "materialize (canonical base + overlay)");
 }
 if (!existsSync(join(work, "packages", "app")))

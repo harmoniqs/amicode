@@ -56,7 +56,7 @@ const KNOWN_FIXED_HUNKS: KnownFix[] = [
 
 function localeFiles(): string[] {
   return readdirSync(join(OVERLAY_APP, "i18n"))
-    .filter((f) => f.endsWith(".ts") && !LOCALE_SKIP.has(f))
+    .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && !LOCALE_SKIP.has(f))
     .sort()
 }
 
