@@ -168,6 +168,26 @@ describe("createSessionTabs", () => {
     })
   })
 
+  test("falls back to Home when Files Changed is available but closed", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: [] as string[],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+        review: () => false,
+        hasReview: () => true,
+      })
+
+      expect(result.activeTab()).toBe("home")
+      dispose()
+    })
+  })
+
   test("exposes the Open File tab without treating it as a file tab", () => {
     createRoot((dispose) => {
       const [state] = createStore({
@@ -252,10 +272,7 @@ describe("createSessionTabs", () => {
     })
 
     // Step 3: re-open context — simulates openSessionContext calling tabs.open("context")
-    const afterReopen = openSessionTab(
-      { tabs: afterClose.tabs, preview: afterClose.preview },
-      "context",
-    )
+    const afterReopen = openSessionTab({ tabs: afterClose.tabs, preview: afterClose.preview }, "context")
     expect(afterReopen.tabs.all).toContain("context")
     expect(afterReopen.tabs.active).toBe("context")
 
@@ -277,7 +294,10 @@ describe("createSessionTabs", () => {
 
   test("pulseInspector is closable and reopenable", () => {
     // Step 1: pulseInspector is open and active
-    const initial = { tabs: { all: ["pulseInspector"], active: "pulseInspector" as string | undefined }, preview: undefined }
+    const initial = {
+      tabs: { all: ["pulseInspector"], active: "pulseInspector" as string | undefined },
+      preview: undefined,
+    }
 
     createRoot((dispose) => {
       const tabs = createMemo(() => ({ active: () => initial.tabs.active, all: () => initial.tabs.all }))
@@ -310,10 +330,7 @@ describe("createSessionTabs", () => {
     })
 
     // Step 3: re-open pulseInspector
-    const afterReopen = openSessionTab(
-      { tabs: afterClose.tabs, preview: afterClose.preview },
-      "pulseInspector",
-    )
+    const afterReopen = openSessionTab({ tabs: afterClose.tabs, preview: afterClose.preview }, "pulseInspector")
     expect(afterReopen.tabs.all).toContain("pulseInspector")
     expect(afterReopen.tabs.active).toBe("pulseInspector")
 

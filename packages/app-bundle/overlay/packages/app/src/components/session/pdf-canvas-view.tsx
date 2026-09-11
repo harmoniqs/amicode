@@ -2,7 +2,8 @@
  * pdf-canvas-view — Renders PDF pages to <canvas> elements via PDF.js.
  *
  * Uses pdfjs-dist (Mozilla's PDF renderer) to decode PDF binary data and
- * paint each page onto a canvas. No browser plugin, no iframe, no Chromium
+ * paint each page onto a canvas, with a DOM text layer over the same viewport
+ * for native selection and copy. No browser plugin, no iframe, no Chromium
  * PDF viewer — works in any context including VS Code sandboxed webviews.
  *
  * Worker runs on the main thread via globalThis.pdfjsWorker injection
@@ -45,6 +46,53 @@ interface PdfCanvasViewProps {
 
 // Wrapper padding: p-4 = 16px each side
 const WRAPPER_PADDING = 32
+const ZOOM_RENDER_DEBOUNCE_MS = 100
+
+// PDF.js generates positioned spans but intentionally leaves their layout CSS
+// to its host viewer. Keep the layer transparent so canvas remains authoritative
+// for appearance while the browser can still select and copy its real text.
+const PDF_TEXT_LAYER_STYLE = `
+[data-pdf-text-layer] {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  line-height: 1;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+  z-index: 1;
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+[data-pdf-text-layer] :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+  user-select: text;
+}
+
+[data-pdf-text-layer] > :not(.markedContent),
+[data-pdf-text-layer] .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+[data-pdf-text-layer] ::selection {
+  background: Highlight;
+  color: transparent;
+}
+`
 
 // ---------------------------------------------------------------------------
 // Single page renderer
@@ -56,71 +104,125 @@ function PdfPage(props: {
   zoom: number
   /** Available content width in CSS pixels (container minus padding) */
   containerWidth: number
+  onTextAvailability: (available: boolean) => void
 }) {
+  const [page, setPage] = createSignal<pdfjsLib.PDFPageProxy | null>(null)
   let canvasRef: HTMLCanvasElement | undefined
+  let textLayerRef: HTMLDivElement | undefined
   let activeRender: { cancel(): void } | null = null
+  let activeTextLayer: pdfjsLib.TextLayer | null = null
+  let renderTimer: ReturnType<typeof setTimeout> | undefined
 
-  // Re-render whenever zoom, container width, or page changes
+  // Load the PDF page and text stream once. Zoom and resize retain the text
+  // layer, avoiding a fresh stream read and DOM reconstruction each time.
   createEffect(() => {
     const doc = props.doc
-    const zoom = props.zoom
     const pageNum = props.pageNum
-    const containerWidth = props.containerWidth
-    if (!canvasRef || !doc || containerWidth <= 0) return
+    if (!doc) return
 
-    // Cancel any in-flight render from a previous reactive cycle
-    if (activeRender) {
-      activeRender.cancel()
-      activeRender = null
-    }
+    setPage(null)
+    activeTextLayer?.cancel()
+    activeTextLayer = null
+    textLayerRef?.replaceChildren()
 
     let cancelled = false
 
     doc.getPage(pageNum).then((page) => {
-      if (cancelled || !canvasRef) return
-
-      const dpr = window.devicePixelRatio || 1
-
-      // Get intrinsic page size (PDF points at scale=1)
-      const intrinsic = page.getViewport({ scale: 1 })
-
-      // Base scale: fit the page width to the container at 100% zoom.
-      // User zoom multiplies on top: 200% = twice the container width.
-      const baseScale = containerWidth / intrinsic.width
-      const scale = baseScale * (zoom / 100) * dpr
-      const viewport = page.getViewport({ scale })
-
-      canvasRef.width = viewport.width
-      canvasRef.height = viewport.height
-      // CSS size = physical ÷ dpr so it's crisp on HiDPI
-      canvasRef.style.width = `${viewport.width / dpr}px`
-      canvasRef.style.height = `${viewport.height / dpr}px`
-
-      const ctx = canvasRef.getContext("2d")
-      if (!ctx) return
-
-      const task = page.render({ canvas: null, canvasContext: ctx, viewport })
-      activeRender = task
-      task.promise
-        .then(() => { activeRender = null })
-        .catch(() => { activeRender = null })
+      if (cancelled) return
+      setPage(page)
     })
 
     onCleanup(() => {
       cancelled = true
-      if (activeRender) {
-        activeRender.cancel()
-        activeRender = null
-      }
+      activeTextLayer?.cancel()
+      activeTextLayer = null
+      textLayerRef?.replaceChildren()
+    })
+  })
+
+  // Keep the last painted canvas visible while rapid zoom input settles. The
+  // new high-resolution raster is staged offscreen, then copied in atomically.
+  createEffect(() => {
+    const currentPage = page()
+    const zoom = props.zoom
+    const containerWidth = props.containerWidth
+    if (!canvasRef || !textLayerRef || !currentPage || containerWidth <= 0) return
+
+    const dpr = window.devicePixelRatio || 1
+    const intrinsic = currentPage.getViewport({ scale: 1 })
+    const scale = (containerWidth / intrinsic.width) * (zoom / 100)
+    const viewport = currentPage.getViewport({ scale })
+    const canvasViewport = currentPage.getViewport({ scale: scale * dpr })
+
+    textLayerRef.style.setProperty("--scale-factor", `${scale}`)
+    // Uniform zoom is expressed through the layer's CSS scale variable, so the
+    // existing DOM spans remain valid without a fresh text stream read.
+    if (!activeTextLayer) {
+      const textLayer = new pdfjsLib.TextLayer({
+        textContentSource: currentPage.streamTextContent(),
+        container: textLayerRef,
+        viewport,
+      })
+      activeTextLayer = textLayer
+      void textLayer.render().then(() => {
+        if (activeTextLayer !== textLayer) return
+        props.onTextAvailability(textLayer.textContentItemsStr.some((text) => text.trim().length > 0))
+      }).catch(() => {
+        if (activeTextLayer !== textLayer) return
+        props.onTextAvailability(false)
+      })
+    }
+
+    // Scale the last completed bitmap immediately; it preserves the page's
+    // geometry during the gesture while the crisp replacement is rendered.
+    canvasRef.style.width = `${canvasViewport.width / dpr}px`
+    canvasRef.style.height = `${canvasViewport.height / dpr}px`
+
+    const render = () => {
+      const staging = document.createElement("canvas")
+      staging.width = canvasViewport.width
+      staging.height = canvasViewport.height
+      const ctx = staging.getContext("2d")
+      if (!ctx) return
+
+      const task = currentPage.render({ canvas: null, canvasContext: ctx, viewport: canvasViewport })
+      activeRender = task
+      task.promise
+        .then(() => {
+          if (activeRender !== task || !canvasRef) return
+          canvasRef.width = staging.width
+          canvasRef.height = staging.height
+          canvasRef.getContext("2d")?.drawImage(staging, 0, 0)
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (activeRender === task) activeRender = null
+        })
+    }
+
+    if (canvasRef.width === 0 || canvasRef.height === 0) {
+      render()
+    } else {
+      renderTimer = setTimeout(render, ZOOM_RENDER_DEBOUNCE_MS)
+    }
+
+    onCleanup(() => {
+      if (renderTimer) clearTimeout(renderTimer)
+      renderTimer = undefined
+      activeRender?.cancel()
+      activeRender = null
     })
   })
 
   return (
-    <canvas
-      ref={canvasRef}
-      class="shadow-sm rounded-sm"
-      style={{ background: "white" }}
-    />
+    <div class="relative">
+      <canvas
+        ref={canvasRef}
+        class="block shadow-sm rounded-sm"
+        style={{ background: "white" }}
+      />
+      <div ref={textLayerRef} data-pdf-text-layer />
+    </div>
   )
 }
 
@@ -133,6 +235,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   const [pdfDoc, setPdfDoc] = createSignal<pdfjsLib.PDFDocumentProxy | null>(null)
   const [error, setError] = createSignal(false)
   const [containerWidth, setContainerWidth] = createSignal(0)
+  const [textAvailability, setTextAvailability] = createSignal<Record<number, boolean>>({})
 
   let wrapperRef: HTMLDivElement | undefined
 
@@ -170,6 +273,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
         setError(false)
         setPageCount(0)
         setPdfDoc(null)
+        setTextAvailability({})
 
         try {
           // Decode base64 → Uint8Array
@@ -205,8 +309,23 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     if (doc) doc.cleanup()
   })
 
+  const textAvailabilityMessage = () => {
+    const availability = textAvailability()
+    if (pageCount() === 0 || Object.keys(availability).length !== pageCount()) return null
+    const pagesWithText = Object.values(availability).filter(Boolean).length
+    if (pagesWithText === 0) return "This PDF has no selectable text."
+    if (pagesWithText < pageCount()) return "Text selection is unavailable on some pages."
+    return null
+  }
+
   return (
     <div ref={wrapperRef} class="inline-flex flex-col items-center gap-3 p-4 min-w-full min-h-full">
+      <style>{PDF_TEXT_LAYER_STYLE}</style>
+      {textAvailabilityMessage() && (
+        <p role="status" class="self-start text-12-regular text-text-weak">
+          {textAvailabilityMessage()}
+        </p>
+      )}
       {/* Rendered pages */}
       <For each={Array.from({ length: pageCount() }, (_, i) => i + 1)}>
         {(pageNum) => (
@@ -215,6 +334,9 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
             pageNum={pageNum}
             zoom={props.zoom}
             containerWidth={containerWidth()}
+            onTextAvailability={(available) => {
+              setTextAvailability((current) => ({ ...current, [pageNum]: available }))
+            }}
           />
         )}
       </For>

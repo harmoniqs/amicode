@@ -1,8 +1,20 @@
-import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, on, onCleanup, type JSX } from "solid-js"
+import {
+  For,
+  Match,
+  Show,
+  Switch,
+  createEffect,
+  createMemo,
+  createResource,
+  createSignal,
+  on,
+  onCleanup,
+  type JSX,
+} from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { DragDropProvider as DndKitProvider, PointerSensor } from "@dnd-kit/solid"
-import { isSortable } from "@dnd-kit/solid/sortable"
+import { isSortable, useSortable } from "@dnd-kit/solid/sortable"
 import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
 import { RestrictToHorizontalAxis } from "@dnd-kit/abstract/modifiers"
 import { RestrictToElement } from "@dnd-kit/dom/modifiers"
@@ -52,7 +64,14 @@ import { base64Encode } from "@opencode-ai/core/util/encode"
 const reviewTabID = "session-side-panel-review-tab"
 const reviewTabPanelID = "session-side-panel-review-tabpanel"
 const fileBrowserTabPanelID = "session-side-panel-file-browser-tabpanel"
-import { SessionContextTab, SortableTab, SortableTabV2, FileVisual, SessionPreviewTab, PanelMenu } from "@/components/session"
+import {
+  SessionContextTab,
+  SortableTab,
+  SortableTabV2,
+  FileVisual,
+  SessionPreviewTab,
+  PanelMenu,
+} from "@/components/session"
 import type { PanelMenuItem } from "@/components/session/panel-menu"
 import { OpenInAppV2 } from "@/components/session/open-in-app-v2"
 import { useCommand } from "@/context/command"
@@ -61,6 +80,7 @@ import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useSDK } from "@/context/sdk"
 import { useSettings } from "@/context/settings"
+import type { SidePanelTabID } from "@/context/layout-side-panel-tabs"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import {
@@ -77,6 +97,31 @@ import { floorPanelColumnWidth, WORK_COLUMN_WIDTH_MIN } from "@/pages/session/se
 import { SessionFileBrowserTab, type SessionFileBrowserState } from "@/pages/session/v2/session-file-browser-tab"
 
 type PulseInspectorStage = "optimization" | "calibration" | "compilation"
+
+function SortableSidePanelSurfaceTab(props: {
+  tab: SidePanelTabID
+  index: () => number
+  visible: () => boolean
+  children: JSX.Element
+}) {
+  const sortable = useSortable({
+    get id() {
+      return props.tab
+    },
+    get index() {
+      return props.index()
+    },
+    get disabled() {
+      return props.tab === "home"
+    },
+  })
+
+  return (
+    <div ref={sortable.ref} class="h-full flex items-center" classList={{ hidden: !props.visible() }}>
+      {props.children}
+    </div>
+  )
+}
 
 function PulseInspectorContent() {
   const bridge = useInspectorBridge()
@@ -118,14 +163,18 @@ function PulseInspectorContent() {
           disabled
         >
           <span class="truncate">Calibration</span>
-          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">Soon</span>
+          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">
+            Soon
+          </span>
         </button>
         <button
           class="flex-1 min-w-0 flex items-center justify-center gap-1 rounded px-1.5 py-1 text-11-medium cursor-default truncate border border-transparent text-text-weak"
           disabled
         >
           <span class="truncate">Compilation</span>
-          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">Soon</span>
+          <span class="shrink-0 text-[9px] uppercase tracking-wide border border-border-weak-base text-text-weak rounded px-1 py-0.5">
+            Soon
+          </span>
         </button>
       </div>
 
@@ -203,10 +252,7 @@ function HomeTabContent() {
     if (!conn) return {}
     const out: Record<string, string> = {}
     for (const w of widgetInfos())
-      out[w.id] = new URL(
-        `/amicode/widget-frame?id=${encodeURIComponent(w.id)}&h=${w.hash}`,
-        conn.http.url,
-      ).toString()
+      out[w.id] = new URL(`/amicode/widget-frame?id=${encodeURIComponent(w.id)}&h=${w.hash}`, conn.http.url).toString()
     return out
   })
 
@@ -240,9 +286,7 @@ function HomeTabContent() {
         when={widgetInfos().length > 0 && dashboard()}
         fallback={
           <div class="h-full flex items-center justify-center text-center">
-            <div class="text-12-regular text-text-weak max-w-48">
-              No widgets yet. Ask Amico to create one for you.
-            </div>
+            <div class="text-12-regular text-text-weak max-w-48">No widgets yet. Ask Amico to create one for you.</div>
           </div>
         }
       >
@@ -339,6 +383,12 @@ export function SessionSidePanel(props: {
   // the bridge message handler can set it from outside the side panel.
   const previewFile = createMemo(() => view().previewFile.get())
 
+  createEffect(
+    on(previewFile, (path) => {
+      if (path) tabs().setActive(SESSION_PREVIEW_TAB)
+    }),
+  )
+
   const diffs = createMemo(() => props.diffs().filter(renderDiff))
   const diffFiles = createMemo(() => diffs().map((d) => d.file))
   const kinds = createMemo(() => {
@@ -402,7 +452,7 @@ export function SessionSidePanel(props: {
     tabs,
     pathFromTab: file.pathFromTab,
     normalizeTab,
-    review: reviewTab,
+    review: () => reviewTab() && reviewTabOpen(),
     hasReview: props.canReview,
     fileBrowser: () => !!props.fileBrowserState,
   })
@@ -414,6 +464,17 @@ export function SessionSidePanel(props: {
   const openedTabs = tabState.openedTabs
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
+  // Keep every named trigger mounted. Kobalte validates a controlled value
+  // against its registered collection and otherwise falls back to the first tab.
+  // Unmounting Preview while its preview-file event selects it therefore rewrites
+  // the controlled value to Home before Preview can register.
+  const surfaceTabVisible = (tab: SidePanelTabID) => {
+    if (tab === "home") return true
+    if (tab === "review") return reviewTab() && props.canReview() && reviewTabOpen()
+    if (tab === "context") return contextOpen()
+    if (tab === "pulseInspector") return pulseInspectorOpen()
+    return previewOpen()
+  }
 
   const fileTreeTab = () => layout.fileTree.tab()
 
@@ -460,7 +521,13 @@ export function SessionSidePanel(props: {
   })
   const fileBrowserVisible = createMemo(() => {
     const active = activeTab()
-    return active !== "review" && active !== "context" && active !== "home" && active !== "empty" && active !== SESSION_PREVIEW_TAB
+    return (
+      active !== "review" &&
+      active !== "context" &&
+      active !== "home" &&
+      active !== "empty" &&
+      active !== SESSION_PREVIEW_TAB
+    )
   })
 
   // Markdown files for the Preview tab — check both git diffs and tool-edit history
@@ -542,6 +609,14 @@ export function SessionSidePanel(props: {
 
   const handleDragEnd = () => {
     setStore("activeDraggable", undefined)
+  }
+
+  const handleSurfaceTabDragEnd = (event: any) => {
+    const source = event.operation.source
+    if (event.canceled || !isSortable(source) || source.initialIndex === source.index) return
+
+    const tab = source.id.toString() as SidePanelTabID
+    layout.sidePanelTabs.move(tab, source.index)
   }
 
   createEffect(() => {
@@ -641,7 +716,10 @@ export function SessionSidePanel(props: {
                                 onCleanup(stop)
                               }}
                             >
-                              <Tabs.Trigger value="home">
+                              <Tabs.Trigger
+                                value="home"
+                                style={{ order: layout.sidePanelTabs.order().indexOf("home") }}
+                              >
                                 <div class="flex items-center gap-1.5">
                                   <Icon name="home" size="small" />
                                   <div>Home</div>
@@ -651,6 +729,7 @@ export function SessionSidePanel(props: {
                                 <Tabs.Trigger
                                   value="review"
                                   id={reviewTabID}
+                                  style={{ order: layout.sidePanelTabs.order().indexOf("review") }}
                                   aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
                                 >
                                   <div class="flex items-center gap-1.5">
@@ -667,7 +746,12 @@ export function SessionSidePanel(props: {
                                   docs/adr/0001). Do not re-add a tab here:
                                   two hosts mirrored through two stores was the
                                   desync this column's toggle got blamed for. */}
-                              <div style={{ display: contextOpen() ? undefined : "none" }}>
+                              <div
+                                style={{
+                                  display: contextOpen() ? undefined : "none",
+                                  order: layout.sidePanelTabs.order().indexOf("context"),
+                                }}
+                              >
                                 <Tabs.Trigger
                                   value="context"
                                   closeButton={
@@ -695,7 +779,12 @@ export function SessionSidePanel(props: {
                                   </div>
                                 </Tabs.Trigger>
                               </div>
-                              <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
+                              <div
+                                style={{
+                                  display: pulseInspectorOpen() ? undefined : "none",
+                                  order: layout.sidePanelTabs.order().indexOf("pulseInspector"),
+                                }}
+                              >
                                 <Tabs.Trigger
                                   value="pulseInspector"
                                   closeButton={
@@ -717,13 +806,18 @@ export function SessionSidePanel(props: {
                                   hideCloseButton
                                   onMiddleClick={() => tabs().close("pulseInspector")}
                                 >
-                                   <div class="flex items-center gap-1.5">
-                                     <Icon name="pulse" size="small" />
-                                     <div>Pulse Inspector</div>
-                                   </div>
-                                 </Tabs.Trigger>
+                                  <div class="flex items-center gap-1.5">
+                                    <Icon name="pulse" size="small" />
+                                    <div>Pulse Inspector</div>
+                                  </div>
+                                </Tabs.Trigger>
                               </div>
-                              <div style={{ display: previewOpen() ? undefined : "none" }}>
+                              <div
+                                style={{
+                                  display: previewOpen() ? undefined : "none",
+                                  order: layout.sidePanelTabs.order().indexOf(SESSION_PREVIEW_TAB),
+                                }}
+                              >
                                 <Tabs.Trigger
                                   value={SESSION_PREVIEW_TAB}
                                   closeButton={
@@ -765,10 +859,7 @@ export function SessionSidePanel(props: {
                               </SortableProvider>
                             </Tabs.List>
                             <div class="shrink-0 flex items-center justify-center pl-2 pr-1">
-                              <PanelMenu
-                                items={panelMenuItems()}
-                                onSelect={handlePanelMenuSelect}
-                              />
+                              <PanelMenu items={panelMenuItems()} onSelect={handlePanelMenuSelect} />
                             </div>
                           </div>
 
@@ -813,18 +904,25 @@ export function SessionSidePanel(props: {
                           </Show>
 
                           <Show when={activeTab() === "pulseInspector"}>
-                            <Tabs.Content value="pulseInspector" class="flex flex-col h-full overflow-hidden contain-strict">
+                            <Tabs.Content
+                              value="pulseInspector"
+                              class="flex flex-col h-full overflow-hidden contain-strict"
+                            >
                               <PulseInspectorContent />
                             </Tabs.Content>
                           </Show>
 
-                          <Show when={activeTab() === SESSION_PREVIEW_TAB}>
-                            <Tabs.Content value={SESSION_PREVIEW_TAB} class="flex flex-col h-full overflow-hidden contain-strict">
-                              <div class="relative flex-1 min-h-0 overflow-hidden">
-                                <SessionPreviewTab previewFile={previewFile} />
-                              </div>
-                            </Tabs.Content>
-                          </Show>
+                          <Tabs.Content
+                            value={SESSION_PREVIEW_TAB}
+                            forceMount
+                            class="flex flex-col h-full overflow-hidden contain-strict"
+                            style={{ display: activeTab() === SESSION_PREVIEW_TAB ? undefined : "none" }}
+                            inert={activeTab() !== SESSION_PREVIEW_TAB}
+                          >
+                            <div class="relative flex-1 min-h-0 overflow-hidden">
+                              <SessionPreviewTab previewFile={previewFile} />
+                            </div>
+                          </Tabs.Content>
 
                           <Show when={activeFileTab()} keyed>
                             {(tab) => <FileTabContent tab={tab} />}
@@ -847,196 +945,229 @@ export function SessionSidePanel(props: {
                       </DragDropProvider>
                     }
                   >
-                    <DndKitProvider
-                      sensors={[
-                        PointerSensor.configure({
-                          activationConstraints: [new PointerActivationConstraints.Distance({ value: 4 })],
-                          preventActivation: (event) =>
-                            event.target instanceof Element &&
-                            (!!event.target.closest('[data-slot="tabs-trigger-close-button"]') ||
-                              !!event.target.closest(".session-review-v2-open-in-app-slot")),
-                        }),
-                      ]}
-                      modifiers={[
-                        RestrictToHorizontalAxis,
-                        RestrictToElement.configure({ element: () => tabList ?? null }),
-                      ]}
-                      plugins={(defaults) => [
-                        ...defaults.filter((plugin) => plugin !== Accessibility),
-                        AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
-                        Feedback.configure({ dropAnimation: null }),
-                      ]}
-                      onDragEnd={(event) => {
-                        const source = event.operation.source
-                        if (event.canceled || !isSortable(source) || source.initialIndex === source.index) return
-                        tabs().move(source.id.toString(), source.index)
-                      }}
-                    >
-                      <Tabs value={activeTab()} onChange={activateTab}>
-                        <div class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center">
-                          <Tabs.List
-                            ref={(el: HTMLDivElement) => {
-                              tabList = el
-                              const stop = createFileTabListSync({ el, contextOpen })
-                              onCleanup(stop)
+                    <Tabs value={activeTab()} onChange={activateTab}>
+                      <div class="session-review-v2-tabs-bar sticky top-0 shrink-0 flex items-center">
+                        <Tabs.List
+                          ref={(el: HTMLDivElement) => {
+                            tabList = el
+                            const stop = createFileTabListSync({ el, contextOpen })
+                            onCleanup(stop)
+                          }}
+                        >
+                          <Show when={props.reviewSidebarToggle}>
+                            {(toggle) => (
+                              <div class="session-review-v2-sidebar-toggle-slot h-full shrink-0 sticky left-0 z-10 flex items-center justify-center bg-v2-background-bg-base">
+                                {toggle()(false)}
+                              </div>
+                            )}
+                          </Show>
+                          <DndKitProvider
+                            sensors={[
+                              PointerSensor.configure({
+                                activationConstraints: [new PointerActivationConstraints.Distance({ value: 4 })],
+                                preventActivation: (event) =>
+                                  event.target instanceof Element &&
+                                  !!event.target.closest('[data-slot="tabs-trigger-close-button"]'),
+                              }),
+                            ]}
+                            modifiers={[
+                              RestrictToHorizontalAxis,
+                              RestrictToElement.configure({ element: () => tabList ?? null }),
+                            ]}
+                            plugins={(defaults) => [
+                              ...defaults.filter((plugin) => plugin !== Accessibility),
+                              AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+                              Feedback.configure({ dropAnimation: null }),
+                            ]}
+                            onDragEnd={handleSurfaceTabDragEnd}
+                          >
+                            <For each={layout.sidePanelTabs.order()}>
+                              {(tab, index) => (
+                                <SortableSidePanelSurfaceTab
+                                  tab={tab}
+                                  index={index}
+                                  visible={() => surfaceTabVisible(tab)}
+                                >
+                                  <Switch>
+                                    <Match when={tab === "home"}>
+                                      <Tabs.Trigger value="home">
+                                        <div class="flex items-center gap-1.5">
+                                          <Icon name="home" size="small" />
+                                          <div>Home</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
+                                    <Match when={tab === "review"}>
+                                      <Tabs.Trigger
+                                        value="review"
+                                        id={reviewTabID}
+                                        aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => setReviewTabOpen(false)}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                      >
+                                        <div class="flex items-center gap-1.5">
+                                          <Icon name="review" size="small" />
+                                          <div>
+                                            {props.hasReview() ? "Files Changed" : language.t("session.tab.review")}
+                                          </div>
+                                          <Show when={props.hasReview()}>
+                                            <div>{props.reviewCount()}</div>
+                                          </Show>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
+                                    <Match when={tab === "context"}>
+                                      <Tabs.Trigger
+                                        value="context"
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => tabs().close("context")}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                        hideCloseButton
+                                        onMiddleClick={() => tabs().close("context")}
+                                      >
+                                        <div class="flex items-center gap-2">
+                                          <SessionContextUsage variant="indicator" />
+                                          <div>{language.t("session.tab.context")}</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
+                                    <Match when={tab === "pulseInspector"}>
+                                      <Tabs.Trigger
+                                        value="pulseInspector"
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => tabs().close("pulseInspector")}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                        hideCloseButton
+                                        onMiddleClick={() => tabs().close("pulseInspector")}
+                                      >
+                                        <div class="flex items-center gap-1.5">
+                                          <Icon name="pulse" size="small" />
+                                          <div>Pulse Inspector</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
+                                    <Match when={tab === SESSION_PREVIEW_TAB}>
+                                      <Tabs.Trigger
+                                        value={SESSION_PREVIEW_TAB}
+                                        closeButton={
+                                          <TooltipV2
+                                            value={
+                                              <>
+                                                {language.t("common.closeTab")}
+                                                <Show when={closeTabKeybind().length > 0}>
+                                                  <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
+                                                </Show>
+                                              </>
+                                            }
+                                            placement="bottom"
+                                            gutter={10}
+                                          >
+                                            <IconButton
+                                              icon="close-small"
+                                              variant="ghost"
+                                              class="h-5 w-5"
+                                              onClick={() => tabs().close(SESSION_PREVIEW_TAB)}
+                                              aria-label={language.t("common.closeTab")}
+                                            />
+                                          </TooltipV2>
+                                        }
+                                        hideCloseButton
+                                        onMiddleClick={() => tabs().close(SESSION_PREVIEW_TAB)}
+                                      >
+                                        <div class="flex items-center gap-2">
+                                          <Icon name="eye" size="small" />
+                                          <div>Preview</div>
+                                        </div>
+                                      </Tabs.Trigger>
+                                    </Match>
+                                  </Switch>
+                                </SortableSidePanelSurfaceTab>
+                              )}
+                            </For>
+                          </DndKitProvider>
+                          <DndKitProvider
+                            sensors={[
+                              PointerSensor.configure({
+                                activationConstraints: [new PointerActivationConstraints.Distance({ value: 4 })],
+                                preventActivation: (event) =>
+                                  event.target instanceof Element &&
+                                  (!!event.target.closest('[data-slot="tabs-trigger-close-button"]') ||
+                                    !!event.target.closest(".session-review-v2-open-in-app-slot")),
+                              }),
+                            ]}
+                            modifiers={[
+                              RestrictToHorizontalAxis,
+                              RestrictToElement.configure({ element: () => tabList ?? null }),
+                            ]}
+                            plugins={(defaults) => [
+                              ...defaults.filter((plugin) => plugin !== Accessibility),
+                              AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0 } }),
+                              Feedback.configure({ dropAnimation: null }),
+                            ]}
+                            onDragEnd={(event) => {
+                              const source = event.operation.source
+                              if (event.canceled || !isSortable(source) || source.initialIndex === source.index) return
+                              tabs().move(source.id.toString(), source.index)
                             }}
                           >
-                            <Show when={props.reviewSidebarToggle}>
-                              {(toggle) => (
-                                <div class="session-review-v2-sidebar-toggle-slot h-full shrink-0 sticky left-0 z-10 flex items-center justify-center bg-v2-background-bg-base">
-                                  {toggle()(false)}
-                                </div>
-                              )}
-                            </Show>
-                            <Tabs.Trigger value="home">
-                              <div class="flex items-center gap-1.5">
-                                <Icon name="home" size="small" />
-                                <div>Home</div>
-                              </div>
-                            </Tabs.Trigger>
-                            <Show when={reviewTab() && props.canReview() && reviewTabOpen()}>
-                              <Tabs.Trigger
-                                value="review"
-                                id={reviewTabID}
-                                aria-controls={activeTab() === "review" ? reviewTabPanelID : undefined}
-                                closeButton={
-                                  <TooltipV2
-                                    value={
-                                      <>
-                                        {language.t("common.closeTab")}
-                                        <Show when={closeTabKeybind().length > 0}>
-                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                        </Show>
-                                      </>
-                                    }
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => setReviewTabOpen(false)}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipV2>
-                                }
-                              >
-                                <div class="flex items-center gap-1.5">
-                                  <Icon name="review" size="small" />
-                                  <div>
-                                    {props.hasReview()
-                                       ? "Files Changed"
-                                       : language.t("session.tab.review")}
-                                  </div>
-                                  <Show when={props.hasReview()}>
-                                    <div>{props.reviewCount()}</div>
-                                  </Show>
-                                </div>
-                              </Tabs.Trigger>
-                            </Show>
-                            <div style={{ display: contextOpen() ? undefined : "none" }}>
-                              <Tabs.Trigger
-                                value="context"
-                                closeButton={
-                                  <TooltipV2
-                                    value={
-                                      <>
-                                        {language.t("common.closeTab")}
-                                        <Show when={closeTabKeybind().length > 0}>
-                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                        </Show>
-                                      </>
-                                    }
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close("context")}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipV2>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close("context")}
-                              >
-                                <div class="flex items-center gap-2">
-                                  <SessionContextUsage variant="indicator" />
-                                  <div>{language.t("session.tab.context")}</div>
-                                </div>
-                              </Tabs.Trigger>
-                            </div>
-                            <div style={{ display: pulseInspectorOpen() ? undefined : "none" }}>
-                            <Tabs.Trigger
-                              value="pulseInspector"
-                              closeButton={
-                                <TooltipV2
-                                  value={
-                                    <>
-                                      {language.t("common.closeTab")}
-                                      <Show when={closeTabKeybind().length > 0}>
-                                        <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                      </Show>
-                                    </>
-                                  }
-                                  placement="bottom"
-                                  gutter={10}
-                                >
-                                  <IconButton
-                                    icon="close-small"
-                                    variant="ghost"
-                                    class="h-5 w-5"
-                                    onClick={() => tabs().close("pulseInspector")}
-                                    aria-label={language.t("common.closeTab")}
-                                  />
-                                </TooltipV2>
-                              }
-                              hideCloseButton
-                              onMiddleClick={() => tabs().close("pulseInspector")}
-                            >
-                               <div class="flex items-center gap-1.5">
-                                 <Icon name="pulse" size="small" />
-                                 <div>Pulse Inspector</div>
-                               </div>
-                             </Tabs.Trigger>
-                            </div>
-                            <div style={{ display: previewOpen() ? undefined : "none" }}>
-                              <Tabs.Trigger
-                                value={SESSION_PREVIEW_TAB}
-                                closeButton={
-                                  <TooltipV2
-                                    value={
-                                      <>
-                                        {language.t("common.closeTab")}
-                                        <Show when={closeTabKeybind().length > 0}>
-                                          <KeybindV2 keys={closeTabKeybind()} variant="neutral" />
-                                        </Show>
-                                      </>
-                                    }
-                                    placement="bottom"
-                                    gutter={10}
-                                  >
-                                    <IconButton
-                                      icon="close-small"
-                                      variant="ghost"
-                                      class="h-5 w-5"
-                                      onClick={() => tabs().close(SESSION_PREVIEW_TAB)}
-                                      aria-label={language.t("common.closeTab")}
-                                    />
-                                  </TooltipV2>
-                                }
-                                hideCloseButton
-                                onMiddleClick={() => tabs().close(SESSION_PREVIEW_TAB)}
-                              >
-                                <div class="flex items-center gap-2">
-                                  <Icon name="eye" size="small" />
-                                  <div>Preview</div>
-                                </div>
-                              </Tabs.Trigger>
-                            </div>
                             <For each={panelTabs()}>
                               {(tab) => (
                                 <SortableTabV2
@@ -1048,100 +1179,103 @@ export function SessionSidePanel(props: {
                                 />
                               )}
                             </For>
-                          </Tabs.List>
-                          <div class="shrink-0 flex items-center justify-center pl-2 pr-1">
-                            <PanelMenu
-                              items={panelMenuItems()}
-                              onSelect={handlePanelMenuSelect}
-                              v2
-                            />
-                          </div>
-                          <div
-                            class="session-review-v2-open-in-app-slot shrink-0 flex items-center pr-3"
-                            onPointerDown={(event) => event.stopPropagation()}
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <OpenInAppV2 directory={projectDirectory} />
-                          </div>
+                          </DndKitProvider>
+                        </Tabs.List>
+                        <div class="shrink-0 flex items-center justify-center pl-2 pr-1">
+                          <PanelMenu items={panelMenuItems()} onSelect={handlePanelMenuSelect} v2 />
                         </div>
+                        <div
+                          class="session-review-v2-open-in-app-slot shrink-0 flex items-center pr-3"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          <OpenInAppV2 directory={projectDirectory} />
+                        </div>
+                      </div>
 
-                        <Show when={reviewTab() && props.canReview() && activeTab() === "review"}>
-                          <div
-                            id={reviewTabPanelID}
-                            role="tabpanel"
-                            aria-labelledby={reviewTabID}
-                            tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
-                            data-slot="tabs-content"
-                            class="flex flex-col h-full overflow-hidden contain-strict"
-                          >
-                            {props.reviewPanel()}
-                          </div>
-                        </Show>
+                      <Show when={reviewTab() && props.canReview() && activeTab() === "review"}>
+                        <div
+                          id={reviewTabPanelID}
+                          role="tabpanel"
+                          aria-labelledby={reviewTabID}
+                          tabIndex={props.reviewHasFocusableContent() ? undefined : 0}
+                          data-slot="tabs-content"
+                          class="flex flex-col h-full overflow-hidden contain-strict"
+                        >
+                          {props.reviewPanel()}
+                        </div>
+                      </Show>
 
-                        <Show when={activeTab() === "home"}>
-                          <Tabs.Content value="home" class="flex flex-col h-full overflow-hidden contain-strict">
-                            <HomeTabContent />
-                          </Tabs.Content>
-                        </Show>
+                      <Show when={activeTab() === "home"}>
+                        <Tabs.Content value="home" class="flex flex-col h-full overflow-hidden contain-strict">
+                          <HomeTabContent />
+                        </Tabs.Content>
+                      </Show>
 
-                        <Show when={activeTab() === "empty"}>
-                          <Tabs.Content value="empty" class="flex flex-col h-full overflow-hidden contain-strict">
-                            <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-                              <div class="h-full px-6 pb-42 -mt-4 flex flex-col items-center justify-center text-center gap-6">
-                                <Mark class="w-14 opacity-10" />
-                                <div class="text-14-regular text-text-weak max-w-56">
-                                  {language.t("session.files.selectToOpen")}
-                                </div>
+                      <Show when={activeTab() === "empty"}>
+                        <Tabs.Content value="empty" class="flex flex-col h-full overflow-hidden contain-strict">
+                          <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
+                            <div class="h-full px-6 pb-42 -mt-4 flex flex-col items-center justify-center text-center gap-6">
+                              <Mark class="w-14 opacity-10" />
+                              <div class="text-14-regular text-text-weak max-w-56">
+                                {language.t("session.files.selectToOpen")}
                               </div>
                             </div>
-                          </Tabs.Content>
-                        </Show>
-
-                        <Show when={activeTab() === "context"}>
-                          <Tabs.Content value="context" class="flex flex-col h-full overflow-hidden contain-strict">
-                            <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-                              <SessionContextTab />
-                            </div>
-                          </Tabs.Content>
-                        </Show>
-
-                        <Show when={activeTab() === "pulseInspector"}>
-                          <Tabs.Content value="pulseInspector" class="flex flex-col h-full overflow-hidden contain-strict">
-                            <PulseInspectorContent />
-                          </Tabs.Content>
-                        </Show>
-
-                        <Show when={activeTab() === SESSION_PREVIEW_TAB}>
-                           <Tabs.Content value={SESSION_PREVIEW_TAB} class="flex flex-col h-full overflow-hidden contain-strict">
-                             <div class="relative flex-1 min-h-0 overflow-hidden">
-                               <SessionPreviewTab previewFile={previewFile} />
-                             </div>
-                           </Tabs.Content>
-                        </Show>
-
-                        <Show when={fileBrowserMounted()}>
-                          <div
-                            id={fileBrowserTabPanelID}
-                            role="tabpanel"
-                            data-slot="tabs-content"
-                            class="h-full min-h-0 overflow-hidden"
-                            classList={{ hidden: !fileBrowserVisible() }}
-                            inert={!fileBrowserVisible() || undefined}
-                          >
-                            <SessionFileBrowserTab
-                              tab={browserTab() ?? activeFileTab() ?? ""}
-                              placeholder={!browserTab() && !activeFileTab()}
-                              active={file.pathFromTab(browserTab() ?? activeFileTab() ?? "")}
-                              kinds={kinds()}
-                              state={props.fileBrowserState!}
-                              onSelect={(path) => previewTab(file.tab(path))}
-                              onSelectPermanent={(path) => openTab(file.tab(path))}
-                              filterRef={(element) => (fileFilter = element)}
-                            />
                           </div>
-                        </Show>
-                      </Tabs>
-                    </DndKitProvider>
+                        </Tabs.Content>
+                      </Show>
+
+                      <Show when={activeTab() === "context"}>
+                        <Tabs.Content value="context" class="flex flex-col h-full overflow-hidden contain-strict">
+                          <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
+                            <SessionContextTab />
+                          </div>
+                        </Tabs.Content>
+                      </Show>
+
+                      <Show when={activeTab() === "pulseInspector"}>
+                        <Tabs.Content
+                          value="pulseInspector"
+                          class="flex flex-col h-full overflow-hidden contain-strict"
+                        >
+                          <PulseInspectorContent />
+                        </Tabs.Content>
+                      </Show>
+
+                      <Tabs.Content
+                        value={SESSION_PREVIEW_TAB}
+                        forceMount
+                        class="flex flex-col h-full overflow-hidden contain-strict"
+                        style={{ display: activeTab() === SESSION_PREVIEW_TAB ? undefined : "none" }}
+                        inert={activeTab() !== SESSION_PREVIEW_TAB}
+                      >
+                        <div class="relative flex-1 min-h-0 overflow-hidden">
+                          <SessionPreviewTab previewFile={previewFile} />
+                        </div>
+                      </Tabs.Content>
+
+                      <Show when={fileBrowserMounted()}>
+                        <div
+                          id={fileBrowserTabPanelID}
+                          role="tabpanel"
+                          data-slot="tabs-content"
+                          class="h-full min-h-0 overflow-hidden"
+                          classList={{ hidden: !fileBrowserVisible() }}
+                          inert={!fileBrowserVisible() || undefined}
+                        >
+                          <SessionFileBrowserTab
+                            tab={browserTab() ?? activeFileTab() ?? ""}
+                            placeholder={!browserTab() && !activeFileTab()}
+                            active={file.pathFromTab(browserTab() ?? activeFileTab() ?? "")}
+                            kinds={kinds()}
+                            state={props.fileBrowserState!}
+                            onSelect={(path) => previewTab(file.tab(path))}
+                            onSelectPermanent={(path) => openTab(file.tab(path))}
+                            filterRef={(element) => (fileFilter = element)}
+                          />
+                        </div>
+                      </Show>
+                    </Tabs>
                   </Show>
                 </div>
               </div>
