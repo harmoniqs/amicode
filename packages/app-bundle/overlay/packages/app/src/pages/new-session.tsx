@@ -10,6 +10,7 @@ import { NewSessionStatus, NewSessionView } from "./new-session/new-session-view
 import { createNewSessionWorkspaceController } from "./new-session/new-session-workspace-controller"
 import { useNewSessionCommands } from "./new-session/use-new-session-commands"
 import { postRouteInfo } from "@/utils/amicode-route-info"
+import { sessionContextMessage } from "@/utils/amicode-session-relay"
 import { useAmicodeCommands } from "@/pages/session/use-amicode-commands"
 
 /** The draft-only V2 session page. Submitting promotes the draft into a real session. */
@@ -46,6 +47,7 @@ export default function NewSessionPage() {
   })
 
   onMount(() => {
+    if (window.parent !== window) window.parent.postMessage(sessionContextMessage(), "*")
     // amicode(deck): label the framing pane tab; the draftId rides the search
     // so the shell can rebuild this pane with its draft text intact.
     postRouteInfo(`${location.pathname}${location.search}`, "New session")
@@ -55,6 +57,9 @@ export default function NewSessionPage() {
     }
     window.addEventListener("message", onPreviewFile)
     onCleanup(() => window.removeEventListener("message", onPreviewFile))
+    onCleanup(() => {
+      if (window.parent !== window) window.parent.postMessage(sessionContextMessage(), "*")
+    })
   })
   const ready = Promise.resolve()
   const [suspendUntilPromptReady] = createResource(
