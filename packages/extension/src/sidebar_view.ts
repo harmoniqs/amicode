@@ -393,10 +393,11 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
         },
         openFileEditor: (p) => {
           const uri = vscode.Uri.file(p);
-          // Use vscode.open — delegates to VS Code's file-type detection,
-          // so images open in the built-in preview, PDFs in a PDF viewer, etc.
-          // showTextDocument only works for text files (#934).
-          void vscode.commands.executeCommand("vscode.open", uri);
+          // Text files open as persistent editable VS Code tabs. Non-text files
+          // reject showTextDocument and fall back to their registered viewer.
+          void vscode.window.showTextDocument(uri, { preview: false }).catch(() =>
+            vscode.commands.executeCommand("vscode.open", uri),
+          );
         },
         fileOp: (req) => executeFileOp(req),
         postMessage: (m) => {
