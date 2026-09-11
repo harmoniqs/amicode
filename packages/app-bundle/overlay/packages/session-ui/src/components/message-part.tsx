@@ -655,8 +655,8 @@ function taskSession(
   const agent = taskAgent(input.subagent_type, agents).name
   return (sessions ?? [])
     .filter((session) => session.parentID === parentID && !session.time?.archived)
-    .filter((session) => (description ? session.title.startsWith(description) : true))
-    .filter((session) => (agent ? session.title.includes(`@${agent}`) : true))
+    .filter((session) => (description ? session.title?.startsWith(description) : true))
+    .filter((session) => (agent ? session.title?.includes(`@${agent}`) : true))
     .sort((a, b) => (b.time.created ?? 0) - (a.time.created ?? 0))[0]?.id
 }
 
@@ -713,7 +713,7 @@ function index<T extends { id: string }>(items: readonly T[]) {
 // candidates; everything else (still running, errored, not amicode_*, no/
 // unparseable sentinel) gets `key: undefined` and can never merge.
 function amicodeReceiptCandidateKey(part: PartType | undefined): { key?: ReceiptKey; seq?: number } {
-  if (!part || part.type !== "tool" || !part.tool.startsWith("amicode_")) return {}
+  if (!part || part.type !== "tool" || typeof part.tool !== "string" || !part.tool.startsWith("amicode_")) return {}
   if (part.state.status !== "completed") return {}
   const sentinel = parseDiffSentinel(part.state.output)
   return { key: receiptRunKey(sentinel), seq: sentinel?.seq }
