@@ -3317,6 +3317,42 @@ describe("executeFileOp — external reservation tracking (#976)", () => {
     expect(order).toEqual(["prepare:/outside/new.txt", "write", "commit"]);
     expect(write).toHaveBeenCalledTimes(1);
   });
+
+  it("submits distinct source and destination targets as one tracked move group", async () => {
+    const vs = await import("vscode") as typeof vscode;
+    const { executeFileOp } = await import("../src/sidebar_view");
+    const fs = vs.workspace.fs as any;
+    fs.stat = vi.fn()
+      .mockRejectedValueOnce(new Error("target absent"))
+      .mockResolvedValueOnce({ type: vs.FileType.File });
+    const rename = vi.spyOn(fs, "rename");
+    const prepare = vi.fn(async () => ({
+      id: "group-move",
+      expiresAt: 1234,
+      endpoints: [
+        { reference: "external_source", capability: "source-cap", revision: 0 },
+        { reference: "external_destination", capability: "destination-cap", revision: 0 },
+      ],
+    }));
+    const tracking = {
+      sessionID: "ses_focused",
+      transport: { prepare, commit: vi.fn(async () => true), abort: vi.fn(async () => true) },
+    };
+
+    await expect(executeFileOp(
+      { op: "move", path: "/outside/source.txt", targetDir: "/outside/destination" },
+      tracking,
+    )).resolves.toMatchObject({ ok: true, newPath: "/outside/destination/source.txt", trackedExternally: true });
+
+    expect(prepare).toHaveBeenCalledWith("ses_focused", [
+      "/outside/source.txt",
+      "/outside/destination/source.txt",
+    ]);
+    expect(rename).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: "/outside/source.txt" }),
+      expect.objectContaining({ fsPath: "/outside/destination/source.txt" }),
+    );
+  });
 });
 
 // ── Restore (git checkout) for ghost entries ─────────────────────────────────

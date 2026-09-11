@@ -167,6 +167,7 @@ export class ChatPanel {
         if (msg && msg.source === "amicode" && msg.kind === "session-context") {
           const sessionID = typeof msg.sessionID === "string" && msg.sessionID !== "" ? msg.sessionID : undefined;
           this.sessionID = msg.draft === true ? undefined : sessionID;
+          if (this.panel.active) ChatPanel.lastFocused = this;
           return;
         }
         // #844: watch-files — the session page sends the list of absolute file
