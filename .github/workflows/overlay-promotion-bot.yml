@@ -38,6 +38,13 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # GitHub does not dispatch pull_request/push events for refs
+          # created with the default GITHUB_TOKEN (loop protection) — a PR
+          # opened that way never gets its own CI run (confirmed: PR #1029
+          # sat at action_required/0 jobs). Use the same PAT already granted
+          # cross-repo access (REPO_ACCESS_TOKEN) so the bot's push/PR is a
+          # real identity and ci.yml actually runs on it, same as a human's.
+          token: ${{ secrets.REPO_ACCESS_TOKEN }}
 
       - name: Checkout harmoniqs/opencode (local/amicode)
         uses: actions/checkout@v7
@@ -76,7 +83,7 @@ jobs:
       - name: sync:apply — promote the drifted revision
         if: steps.check.outputs.status != '0'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -92,7 +99,7 @@ jobs:
       - name: Open or update the promotion PR
         if: steps.check.outputs.status != '0'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
           FORK_REV: ${{ steps.rev.outputs.fork_rev }}
         run: |
           set -euo pipefail
