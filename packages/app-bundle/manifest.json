@@ -3,21 +3,32 @@
   "scope": "complete fork-vs-base delta of packages/{app,ui,session-ui,schema,core,sdk}",
   "fork_ref": "local/amicode",
   "fork_tag": "v1.18.29-amicode.30-11-g0667bccd6d",
-  "fork_sha": "656bb12261368131f53d2575add351ef004acea9",
-  "upstream_base": "a9c4bc736a",
-  "upstream_base_sha": "a9c4bc736a288c27fedb63c3131ccea0c0eacd9c",
-  "promoted_at": "2026-09-11T21:19:10.614Z",
+  "fork_sha": "afc0f1c26a15becf4342538564be4b63429e012a",
+  "upstream_base": "6fa55b660a",
+  "upstream_base_sha": "6fa55b660a317357ac30e360e694f65aa7410723",
+  "promoted_at": "2026-09-11T21:30:35.094Z",
   "files": {
-    "packages/session-ui/src/v2/components/editor-core.ts": "c4ee08229b5ddd3c70da00e93f4434fa54069b5f4273af7b662dac7d718d2c1a",
+    "packages/app/src/app.tsx": "c32eae50e48492404aa2057f37fc0ce229e24640d26ce9a81c3b64066483f62f",
+    "packages/session-ui/bunfig.toml": "468114e9b52c3cf926d2385c12d93385992cd70c97ea9e32ed22154617b7799d",
+    "packages/session-ui/package.json": "15edfe2287a76b544bb359c809da056087bf00e71684a34d22cdcc405a77868a",
+    "packages/session-ui/preload-worker-mock.ts": "b53280029a042575734d7bfdf27713f6c5cd6a6665599dc429d839a3e3372bd1",
+    "packages/session-ui/src/components/markdown-shiki.worker.ts": "2748ddbfcd625bf696b27d9b64895e64ee47a3f316c88930010e260b4ba37f4b",
+    "packages/session-ui/src/pierre/worker.ts": "7f210f931777956567eaeea15f2f5478befc7874a64a4b685504c59c66503fee",
+    "packages/session-ui/src/v2/components/editable-diff-view-core.ts": "f01a341c4c1cdb4a9522f9ccd3c856bd3b9b7310c01d87327b3ce777052c8c59",
+    "packages/session-ui/src/v2/components/editable-diff-view.tsx": "f682e398ece864b5b854ca36698581c7e1cc5964eed96e7b45cabfcb64748b24",
+    "packages/session-ui/src/v2/components/editor-core.test.ts": "bd6552c0e7080afd554cb57ad690cc1504555712274c8b02702c64bb09460234",
+    "packages/session-ui/src/v2/components/editor-core.ts": "a03da4863d0dc4333772b8369a63822dd730bfd84dfa876f965cdd594292484b",
+    "packages/session-ui/src/v2/components/preview-editor.tsx": "d356ff168919abc8446c5fac2836791338fb3b9124f558c43ea7d3d5a1bcc5f4",
     "packages/session-ui/src/v2/components/shiki-highlight-decorations.test.ts": "f50e8156b708f3e0ddbc509abf71751778a74923dac9d7e65385b178f6346718",
     "packages/session-ui/src/v2/components/shiki-highlight-decorations.ts": "57fee1804df78c627f7ddfd092a55d71afe041baa153d0d5ed7c7d8781e30206",
     "packages/session-ui/src/v2/components/shiki-highlight-integration.test.ts": "c3f62945f0258d7462bf9936a8b78294c4295f445e2a75fca186432f241443dc",
-    "packages/session-ui/src/v2/components/shiki-highlight-plugin.ts": "bda74036f9291a22d8f6484b9489cfc598af6d9590f1dbf407f3f33ca755a54f"
+    "packages/session-ui/src/v2/components/shiki-highlight-plugin.ts": "bda74036f9291a22d8f6484b9489cfc598af6d9590f1dbf407f3f33ca755a54f",
+    "packages/session-ui/src/v2/components/shiki-highlight-worker.ts": "30f74ae9943a2ff2a6e724c7d095e23970868606850ca02a8a3b055fb9a037bb",
+    "packages/session-ui/src/v2/components/shiki-theme-state.test.ts": "b305c3f669b2083851fb574bacccab4f311228ce842f18465443b7807226e619",
+    "packages/session-ui/src/v2/components/shiki-theme-state.ts": "a98cd2353ea1952481dd917c239ee0d9bd725a96a1681f21283888bad3b2e546"
   },
   "symlinks": [],
-  "deletions": [
-    "packages/session-ui/src/v2/components/shiki-highlight-plugin.test.ts"
-  ],
+  "deletions": [],
   "exceptions": [
     {
       "path": "packages/app/src/components/posture-indicator-view.tsx",

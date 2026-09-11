@@ -27,6 +27,7 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language"
 import { tags } from "@lezer/highlight"
+import { shikiHighlightExtension, updateWorkerTheme } from "./shiki-highlight-plugin"
 import { onThemeChange } from "./shiki-theme-state"
 
 // ---------------------------------------------------------------------------
@@ -300,7 +301,7 @@ export function baseExtensions(opts: {
     buildSyntaxHighlightStyle(), // first-paint bridge: lezer colors until Shiki responds
     opts.theme,
     ...(opts.language ? [opts.language] : []),
-    ...(opts.lang ? [lazyShikiExtension(opts.lang)] : []),
+    ...(opts.lang ? shikiHighlightExtension(opts.lang) : []),
   ]
 }
 
@@ -331,31 +332,7 @@ export function detectMode(): "light" | "dark" {
 }
 
 // ---------------------------------------------------------------------------
-// Lazy Shiki plugin import — the plugin module imports a Vite ?worker&url
-// which breaks non-Vite test runners. Lazy import keeps editor-core testable.
+// Wire theme changes to the Shiki highlight worker
 // ---------------------------------------------------------------------------
 
-let _shikiPlugin: typeof import("./shiki-highlight-plugin") | null = null
-let _shikiPluginLoading = false
-
-function lazyShikiExtension(lang: string): Extension {
-  // Return a compartment-like wrapper that loads the real plugin async
-  // and installs it. In the meantime, the lezer first-paint bridge covers.
-  if (_shikiPlugin) {
-    return _shikiPlugin.shikiHighlightExtension(lang)
-  }
-  // Trigger lazy load (first call); subsequent calls during the same
-  // event loop will hit the check above once the module is cached.
-  if (!_shikiPluginLoading) {
-    _shikiPluginLoading = true
-    import("./shiki-highlight-plugin").then((mod) => {
-      _shikiPlugin = mod
-    }).catch(() => { /* Shiki plugin unavailable — lezer fallback active */ })
-  }
-  return [] // empty extension — lezer first-paint bridge is active
-}
-
-// Wire theme changes to the Shiki highlight worker (lazy — no-op until plugin loads)
-onThemeChange(() => {
-  _shikiPlugin?.updateWorkerTheme()
-})
+onThemeChange(() => updateWorkerTheme())
