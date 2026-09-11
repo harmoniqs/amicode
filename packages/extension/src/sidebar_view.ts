@@ -17,6 +17,7 @@ import { ChatPanel } from "./chat_panel";
 import { detectProjectType } from "./project/detect";
 import { invalidateEnvironmentCache, readEnvManifest, resolveEnvironment } from "./project/resolve_environment";
 import { resolvePreviewVisibleChildrenDirectory } from "./preview_visible_children";
+import { runTrackedMutation, type MutationTrackingContext } from "./external_mutation";
 
 export { buildExplorerIconTheme } from "./explorer_icon_theme";
 
@@ -417,7 +418,9 @@ export class SidebarViewProvider implements vscode.WebviewViewProvider {
             .showTextDocument(uri, { preview: false })
             .then(undefined, () => vscode.commands.executeCommand("vscode.open", uri));
         },
-        fileOp: (req) => executeFileOp(req),
+        // Snapshot before prompts or filesystem I/O: subsequent tab focus,
+        // draft navigation, or disposal must not reattribute this operation.
+        fileOp: (req) => executeFileOp(req, ChatPanel.lastFocusedMutationContext()),
         postMessage: (m) => {
           void webviewView.webview.postMessage(m);
         },
@@ -1478,9 +1481,37 @@ export function propagateGitStatusToDirs(
  * via vscode.window.showInputBox on the host side — window.prompt() does not
  * work in VS Code webview iframes.
  */
-export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
+export async function executeFileOp(
+  req: FileOpRequest,
+  tracking?: MutationTrackingContext,
+): Promise<FileOpResult> {
   try {
     const uri = vscode.Uri.file(req.path);
+    const trackedFileOp = async (
+      files: string[],
+      mutate: () => Promise<FileOpResult>,
+      operationTracking: MutationTrackingContext | undefined = tracking,
+    ): Promise<FileOpResult> => {
+      let committed = false;
+      const trackingSnapshot = operationTracking && {
+        ...operationTracking,
+        onCommitted: async (sessionID: string) => {
+          committed = true;
+          await operationTracking.onCommitted?.(sessionID);
+        },
+      };
+      const result = await runTrackedMutation({ tracking: trackingSnapshot, files, mutate });
+      return committed ? { ...result, trackedExternally: true } : result;
+    };
+    const trackingForExistingFile = async (): Promise<MutationTrackingContext | undefined> => {
+      if (!tracking) return;
+      try {
+        return (await vscode.workspace.fs.stat(uri)).type === vscode.FileType.File ? tracking : undefined;
+      } catch {
+        // Unknown / unavailable is deliberately untracked, not guessed.
+        return;
+      }
+    };
 
     switch (req.op) {
       case "new-file": {
@@ -1490,9 +1521,11 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         });
         if (!name) return { ok: true }; // User cancelled
         const newUri = vscode.Uri.joinPath(uri, name);
-        await vscode.workspace.fs.writeFile(newUri, new Uint8Array());
-        void vscode.window.showTextDocument(newUri);
-        return { ok: true };
+        return trackedFileOp([newUri.fsPath], async () => {
+          await vscode.workspace.fs.writeFile(newUri, new Uint8Array());
+          void vscode.window.showTextDocument(newUri);
+          return { ok: true };
+        });
       }
       case "new-folder": {
         const name = req.name ?? await vscode.window.showInputBox({
@@ -1516,6 +1549,7 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         if (!newName || newName === currentName) return { ok: true };
         const dir = vscode.Uri.file(path.dirname(req.path));
         const newUri = vscode.Uri.joinPath(dir, newName);
+        const newPath = newUri.fsPath;
         // Check for collision
         try {
           await vscode.workspace.fs.stat(newUri);
@@ -1523,13 +1557,21 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         } catch {
           // Target doesn't exist — safe to rename
         }
-        await vscode.workspace.fs.rename(uri, newUri);
-        return { ok: true, newPath: newUri.fsPath };
+        const existingFileTracking = await trackingForExistingFile();
+        return trackedFileOp(
+          [uri.fsPath, newPath],
+          async () => {
+            await vscode.workspace.fs.rename(uri, newUri);
+            return { ok: true, newPath };
+          },
+          existingFileTracking,
+        );
       }
       case "move": {
         if (!req.targetDir) return { ok: false, message: "No target directory" };
         const sourceName = path.basename(req.path);
         const targetUri = vscode.Uri.joinPath(vscode.Uri.file(req.targetDir), sourceName);
+        const newPath = targetUri.fsPath;
         // Check for collision
         try {
           await vscode.workspace.fs.stat(targetUri);
@@ -1537,8 +1579,15 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         } catch {
           // Target doesn't exist — safe to move
         }
-        await vscode.workspace.fs.rename(uri, targetUri);
-        return { ok: true, newPath: targetUri.fsPath };
+        const existingFileTracking = await trackingForExistingFile();
+        return trackedFileOp(
+          [uri.fsPath, newPath],
+          async () => {
+            await vscode.workspace.fs.rename(uri, targetUri);
+            return { ok: true, newPath };
+          },
+          existingFileTracking,
+        );
       }
       case "delete": {
         // Confirmation dialog — same pattern as VS Code's Explorer.
@@ -1550,18 +1599,24 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         );
         if (confirm !== "Move to Trash") return { ok: true };
 
-        // Always trash — the permanent delete path does not exist (#673 invariant)
-        await vscode.workspace.fs.delete(uri, { useTrash: true, recursive: true });
+        const existingFileTracking = await trackingForExistingFile();
+        return trackedFileOp(
+          [uri.fsPath],
+          async () => {
+            // Always trash — the permanent delete path does not exist (#673 invariant)
+            await vscode.workspace.fs.delete(uri, { useTrash: true, recursive: true });
 
-        // If this was a workspace root folder, also remove the workspace entry
-        // so the sidebar doesn't show a broken/empty root.
-        const folders = vscode.workspace.workspaceFolders ?? [];
-        const rootIdx = folders.findIndex((f) => f.uri.fsPath === req.path);
-        if (rootIdx >= 0) {
-          vscode.workspace.updateWorkspaceFolders(rootIdx, 1);
-        }
-
-        return { ok: true };
+            // If this was a workspace root folder, also remove the workspace entry
+            // so the sidebar doesn't show a broken/empty root.
+            const folders = vscode.workspace.workspaceFolders ?? [];
+            const rootIdx = folders.findIndex((f) => f.uri.fsPath === req.path);
+            if (rootIdx >= 0) {
+              vscode.workspace.updateWorkspaceFolders(rootIdx, 1);
+            }
+            return { ok: true };
+          },
+          existingFileTracking,
+        );
       }
       case "copy-path": {
         await vscode.env.clipboard.writeText(uri.fsPath);
@@ -1610,12 +1665,14 @@ export async function executeFileOp(req: FileOpRequest): Promise<FileOpResult> {
         // Restore a git-deleted file by checking it out from HEAD.
         const { execFileSync } = require("node:child_process") as typeof import("node:child_process");
         const dirPath = require("node:path").dirname(req.path);
-        execFileSync("git", ["checkout", "HEAD", "--", req.path], {
-          cwd: dirPath,
-          encoding: "utf8",
-          timeout: 10_000,
+        return trackedFileOp([uri.fsPath], async () => {
+          execFileSync("git", ["checkout", "HEAD", "--", req.path], {
+            cwd: dirPath,
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+          return { ok: true };
         });
-        return { ok: true };
       }
       default:
         return { ok: false, message: `Unknown operation: ${req.op}` };

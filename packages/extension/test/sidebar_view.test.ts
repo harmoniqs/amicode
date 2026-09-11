@@ -612,6 +612,19 @@ describe("sidebar bridge — file operations", () => {
       }),
     );
   });
+
+  it("does not relay raw move paths when the server committed external tracking", async () => {
+    const notifyFileMove = vi.fn();
+    const handlers = makeHandlers({
+      notifyFileMove,
+      fileOp: vi.fn().mockResolvedValue({ ok: true, newPath: "/outside/new.txt", trackedExternally: true }),
+    });
+    await handleSidebarMessage(
+      { kind: "file-op", op: "move", path: "/outside/old.txt", targetDir: "/outside" },
+      handlers,
+    );
+    expect(notifyFileMove).not.toHaveBeenCalled();
+  });
 });
 
 // ── Session-aware highlighting (#677) ────────────────────────────────────────
@@ -3250,6 +3263,95 @@ describe("executeFileOp — delete with confirmation", () => {
     expect(updateFolders).not.toHaveBeenCalled();
 
     (vs.workspace as any).workspaceFolders = [];
+  });
+});
+
+describe("executeFileOp — external reservation tracking (#976)", () => {
+  it("does not prepare when new-file input is cancelled", async () => {
+    const vs = await import("vscode") as typeof vscode;
+    const { executeFileOp } = await import("../src/sidebar_view");
+    vi.spyOn(vs.window, "showInputBox").mockResolvedValue(undefined as any);
+    const prepare = vi.fn();
+    const tracking = {
+      sessionID: "ses_focused",
+      transport: { prepare, commit: vi.fn(), abort: vi.fn() },
+    };
+
+    await expect(executeFileOp({ op: "new-file", path: "/outside" }, tracking)).resolves.toEqual({ ok: true });
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  it("prepares an accepted new file before writing and commits the focused-session group afterwards", async () => {
+    const vs = await import("vscode") as typeof vscode;
+    const { executeFileOp } = await import("../src/sidebar_view");
+    const order: string[] = [];
+    const write = vi.spyOn(vs.workspace.fs, "writeFile").mockImplementation(async () => {
+      order.push("write");
+    });
+    (vs.window as any).showTextDocument = vi.fn().mockResolvedValue({});
+    const reservation = {
+      id: "group-1",
+      expiresAt: 1234,
+      endpoints: [{ reference: "external_1", capability: "cap-1", revision: 0 }],
+    };
+    const tracking = {
+      sessionID: "ses_focused",
+      transport: {
+        prepare: vi.fn(async (_sessionID: string, files: string[]) => {
+          order.push(`prepare:${files.join(",")}`);
+          return reservation;
+        }),
+        commit: vi.fn(async () => {
+          order.push("commit");
+          return true;
+        }),
+        abort: vi.fn(async () => true),
+      },
+    };
+
+    await expect(executeFileOp(
+      { op: "new-file", path: "/outside", name: "new.txt" },
+      tracking,
+    )).resolves.toMatchObject({ ok: true, trackedExternally: true });
+
+    expect(order).toEqual(["prepare:/outside/new.txt", "write", "commit"]);
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits distinct source and destination targets as one tracked move group", async () => {
+    const vs = await import("vscode") as typeof vscode;
+    const { executeFileOp } = await import("../src/sidebar_view");
+    const fs = vs.workspace.fs as any;
+    fs.stat = vi.fn()
+      .mockRejectedValueOnce(new Error("target absent"))
+      .mockResolvedValueOnce({ type: vs.FileType.File });
+    const rename = vi.spyOn(fs, "rename");
+    const prepare = vi.fn(async () => ({
+      id: "group-move",
+      expiresAt: 1234,
+      endpoints: [
+        { reference: "external_source", capability: "source-cap", revision: 0 },
+        { reference: "external_destination", capability: "destination-cap", revision: 0 },
+      ],
+    }));
+    const tracking = {
+      sessionID: "ses_focused",
+      transport: { prepare, commit: vi.fn(async () => true), abort: vi.fn(async () => true) },
+    };
+
+    await expect(executeFileOp(
+      { op: "move", path: "/outside/source.txt", targetDir: "/outside/destination" },
+      tracking,
+    )).resolves.toMatchObject({ ok: true, newPath: "/outside/destination/source.txt", trackedExternally: true });
+
+    expect(prepare).toHaveBeenCalledWith("ses_focused", [
+      "/outside/source.txt",
+      "/outside/destination/source.txt",
+    ]);
+    expect(rename).toHaveBeenCalledWith(
+      expect.objectContaining({ fsPath: "/outside/source.txt" }),
+      expect.objectContaining({ fsPath: "/outside/destination/source.txt" }),
+    );
   });
 });
 

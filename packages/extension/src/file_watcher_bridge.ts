@@ -23,16 +23,32 @@ interface FsInvalidateMessage {
   changeType: string;
 }
 
+/** Server-assessed watch state stays in the extension host; paths never relay. */
+export interface ExternalWatchDescriptor {
+  file: string;
+  reference: string;
+  revision: number;
+}
+
+interface AssessedInvalidateMessage {
+  source: "amicode";
+  kind: "assessed-diff-invalidate";
+  reference: string;
+  revision: number;
+}
+
 export class FileWatcherBridge implements vscode.Disposable {
   /** One watcher per parent directory. */
   private readonly dirWatchers = new Map<string, vscode.FileSystemWatcher>();
   /** The set of absolute file paths we're interested in. */
   private watchedFiles = new Set<string>();
+  /** Canonical server descriptors keyed by host-only file path. */
+  private externalWatchedFiles = new Map<string, ExternalWatchDescriptor>();
   /** Per-file debounce timers (300ms). */
   private readonly debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private disposed = false;
 
-  constructor(private readonly postMessage: (msg: FsInvalidateMessage) => void) {}
+  constructor(private readonly postMessage: (msg: FsInvalidateMessage | AssessedInvalidateMessage) => void) {}
 
   /**
    * Replace the watched file set. Adds watchers for new directories and
@@ -45,10 +61,20 @@ export class FileWatcherBridge implements vscode.Disposable {
     this.watchedFiles = new Set(absolutePaths);
 
     // Group files by parent directory
+    this.refreshDirectoryWatchers();
+  }
+
+  /** Replace externally assessed descriptors; legacy path watching is untouched. */
+  updateExternalWatchSet(descriptors: ExternalWatchDescriptor[]): void {
+    if (this.disposed) return;
+    this.externalWatchedFiles = new Map(descriptors.map((descriptor) => [descriptor.file, descriptor]));
+    this.refreshDirectoryWatchers();
+  }
+
+  private refreshDirectoryWatchers(): void {
     const nextDirs = new Set<string>();
-    for (const f of absolutePaths) {
-      nextDirs.add(path.dirname(f));
-    }
+    for (const file of this.watchedFiles) nextDirs.add(path.dirname(file));
+    for (const file of this.externalWatchedFiles.keys()) nextDirs.add(path.dirname(file));
 
     // Add watchers for new directories
     for (const dir of nextDirs) {
@@ -83,17 +109,28 @@ export class FileWatcherBridge implements vscode.Disposable {
 
   private onFsEvent(uri: vscode.Uri, changeType: string): void {
     const filePath = uri.fsPath;
-    if (!this.watchedFiles.has(filePath)) return;
+    const external = this.externalWatchedFiles.get(filePath);
+    if (!external && !this.watchedFiles.has(filePath)) return;
 
     // Debounce per file (300ms)
-    const existing = this.debounceTimers.get(filePath);
+    const key = external ? `external:${filePath}` : filePath;
+    const existing = this.debounceTimers.get(key);
     if (existing !== undefined) clearTimeout(existing);
 
     this.debounceTimers.set(
-      filePath,
+      key,
       setTimeout(() => {
-        this.debounceTimers.delete(filePath);
+        this.debounceTimers.delete(key);
         if (this.disposed) return;
+        if (external) {
+          this.postMessage({
+            source: "amicode",
+            kind: "assessed-diff-invalidate",
+            reference: external.reference,
+            revision: external.revision,
+          });
+          return;
+        }
         this.postMessage({
           source: "amicode",
           kind: "fs-diff-invalidate",
@@ -111,5 +148,6 @@ export class FileWatcherBridge implements vscode.Disposable {
     this.debounceTimers.forEach((timer) => clearTimeout(timer));
     this.debounceTimers.clear();
     this.watchedFiles.clear();
+    this.externalWatchedFiles.clear();
   }
 }
