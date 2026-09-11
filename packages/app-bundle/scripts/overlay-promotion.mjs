@@ -155,7 +155,7 @@ function verify({ source, revision, target, manifestPath, baseRef }) {
   if (manifest.fork_sha !== revision) {
     return { ok: false, reason: `manifest records OpenCode ${String(manifest.fork_sha).slice(0, 12)}, checked-out local/amicode is ${revision.slice(0, 12)}. Merge the overlay-promotion commit first.` }
   }
-  const base = baseRef ?? manifest.upstream_base
+  const base = baseRef ?? manifest.upstream_base_sha ?? manifest.upstream_base
   if (typeof base !== "string" || !base) return { ok: false, reason: "manifest has no upstream_base" }
 
   let expected
