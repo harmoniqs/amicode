@@ -42,11 +42,22 @@ interface PdfCanvasViewProps {
   zoom: number
   /** The file path — used for the "Open in editor" button */
   filePath: string
+  /** Reports the current PDF page state to the Preview controls. */
+  onPageNavigationChange?: (navigation: PdfPageNavigation | null) => void
+}
+
+type PdfPageNavigation = {
+  currentPage: number
+  pageCount: number
+  canPrevious: boolean
+  canNext: boolean
+  navigate: (page: number) => boolean
 }
 
 // Wrapper padding: p-4 = 16px each side
 const WRAPPER_PADDING = 32
 const ZOOM_RENDER_DEBOUNCE_MS = 100
+const PAGE_CENTER_TIE_TOLERANCE_PX = 0.5
 
 // PDF.js generates positioned spans but intentionally leaves their layout CSS
 // to its host viewer. Keep the layer transparent so canvas remains authoritative
@@ -105,6 +116,7 @@ function PdfPage(props: {
   /** Available content width in CSS pixels (container minus padding) */
   containerWidth: number
   onTextAvailability: (available: boolean) => void
+  onAnchorChange: (anchor: HTMLDivElement | null) => void
 }) {
   const [page, setPage] = createSignal<pdfjsLib.PDFPageProxy | null>(null)
   let canvasRef: HTMLCanvasElement | undefined
@@ -214,8 +226,10 @@ function PdfPage(props: {
     })
   })
 
+  onCleanup(() => props.onAnchorChange(null))
+
   return (
-    <div class="relative">
+    <div ref={props.onAnchorChange} class="relative">
       <canvas
         ref={canvasRef}
         class="block shadow-sm rounded-sm"
@@ -232,12 +246,59 @@ function PdfPage(props: {
 
 export function PdfCanvasView(props: PdfCanvasViewProps) {
   const [pageCount, setPageCount] = createSignal(0)
+  const [currentPage, setCurrentPage] = createSignal(1)
   const [pdfDoc, setPdfDoc] = createSignal<pdfjsLib.PDFDocumentProxy | null>(null)
   const [error, setError] = createSignal(false)
   const [containerWidth, setContainerWidth] = createSignal(0)
+  const [containerHeight, setContainerHeight] = createSignal(0)
   const [textAvailability, setTextAvailability] = createSignal<Record<number, boolean>>({})
+  const [anchorVersion, setAnchorVersion] = createSignal(0)
 
   let wrapperRef: HTMLDivElement | undefined
+  let navigationFrame: number | undefined
+  const pageAnchors = new Map<number, HTMLDivElement>()
+
+  const setPageAnchor = (page: number, anchor: HTMLDivElement | null) => {
+    if (anchor) pageAnchors.set(page, anchor)
+    else pageAnchors.delete(page)
+    setAnchorVersion((version) => version + 1)
+  }
+
+  const updateCurrentPage = () => {
+    if (navigationFrame !== undefined) return
+    navigationFrame = requestAnimationFrame(() => {
+      navigationFrame = undefined
+      const scroll = wrapperRef?.parentElement
+      if (!scroll || pageAnchors.size === 0) return
+
+      const viewportCenter = scroll.getBoundingClientRect().top + scroll.clientHeight / 2
+      let closestPage = 1
+      let closestDistance = Infinity
+      for (const [page, anchor] of pageAnchors) {
+        const bounds = anchor.getBoundingClientRect()
+        const distance = Math.abs((bounds.top + bounds.bottom) / 2 - viewportCenter)
+        if (
+          distance < closestDistance - PAGE_CENTER_TIE_TOLERANCE_PX ||
+          (Math.abs(distance - closestDistance) <= PAGE_CENTER_TIE_TOLERANCE_PX && page < closestPage)
+        ) {
+          closestPage = page
+          closestDistance = distance
+        }
+      }
+      setCurrentPage(closestPage)
+    })
+  }
+
+  const navigateToPage = (page: number) => {
+    const scroll = wrapperRef?.parentElement
+    const anchor = pageAnchors.get(page)
+    if (!scroll || !anchor) return false
+
+    const target = scroll.scrollTop + anchor.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+    setCurrentPage(page)
+    scroll.scrollTo({ top: target, behavior: "smooth" })
+    return true
+  }
 
   // ─── Track container width via ResizeObserver ───────────────────────
   // Observe the PARENT element (the scroll container), not the wrapper.
@@ -252,12 +313,14 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
     // Initial measurement: parentElement (scroll container) has no padding,
     // so clientWidth is its full inner width. Subtract the wrapper's p-4.
     setContainerWidth(parent.clientWidth - WRAPPER_PADDING)
+    setContainerHeight(parent.clientHeight)
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         // contentBoxSize = scroll container's content width (no padding on it).
         // Subtract the wrapper's padding to get available page width.
         setContainerWidth(entry.contentBoxSize[0].inlineSize - WRAPPER_PADDING)
+        setContainerHeight(entry.contentBoxSize[0].blockSize)
       }
     })
     observer.observe(parent)
@@ -272,6 +335,9 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
         if (!b64) return
         setError(false)
         setPageCount(0)
+        setCurrentPage(1)
+        pageAnchors.clear()
+        setAnchorVersion((version) => version + 1)
         setPdfDoc(null)
         setTextAvailability({})
 
@@ -307,6 +373,34 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
   onCleanup(() => {
     const doc = pdfDoc()
     if (doc) doc.cleanup()
+    if (navigationFrame !== undefined) cancelAnimationFrame(navigationFrame)
+    props.onPageNavigationChange?.(null)
+  })
+
+  createEffect(() => {
+    const count = pageCount()
+    const page = currentPage()
+    anchorVersion()
+    props.onPageNavigationChange?.(
+      count > 0 && !error()
+        ? {
+            currentPage: page,
+            pageCount: count,
+            canPrevious: page > 1 && pageAnchors.has(page - 1),
+            canNext: page < count && pageAnchors.has(page + 1),
+            navigate: navigateToPage,
+          }
+        : null,
+    )
+  })
+
+  createEffect(() => {
+    anchorVersion()
+    const scroll = wrapperRef?.parentElement
+    if (!scroll) return
+    scroll.addEventListener("scroll", updateCurrentPage, { passive: true })
+    updateCurrentPage()
+    onCleanup(() => scroll.removeEventListener("scroll", updateCurrentPage))
   })
 
   const textAvailabilityMessage = () => {
@@ -337,6 +431,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
             onTextAvailability={(available) => {
               setTextAvailability((current) => ({ ...current, [pageNum]: available }))
             }}
+            onAnchorChange={(anchor) => setPageAnchor(pageNum, anchor)}
           />
         )}
       </For>
@@ -360,6 +455,7 @@ export function PdfCanvasView(props: PdfCanvasViewProps) {
       >
         Open in editor
       </button>
+      <div aria-hidden="true" style={{ height: `${containerHeight()}px` }} />
     </div>
   )
 }

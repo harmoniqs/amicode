@@ -1,4 +1,4 @@
-import type { SnapshotFileDiff } from "@opencode-ai/sdk/v2"
+import type { SessionAssessedDiffResponse, SnapshotFileDiff } from "@opencode-ai/sdk/v2"
 
 export type ToolEditPart = {
   file: string
@@ -21,6 +21,7 @@ export function toHomePath(p: string, home: string | undefined, prefix: string):
 export interface MergeOpts {
   serverDiffs: SnapshotFileDiff[]
   toolDiffs: Array<SnapshotFileDiff & { file: string }>
+  assessedDiffs?: AssessedExternalDiff[]
   serverResponded: boolean
   directory: string
   home: string | undefined
@@ -31,22 +32,39 @@ export interface MergeOpts {
   externalFileStatus?: Map<string, "deleted">
 }
 
+export type AssessedExternalDiff = SessionAssessedDiffResponse["assessments"][number]
+
 /**
  * Merge server shadow-git diffs with tool-metadata diffs.
  *
- * Server diffs are authoritative for in-project files. Tool-metadata diffs
- * fill in cross-project files (outside the project directory) not covered
- * by the server. In-project tool-metadata diffs that the server excluded
- * (e.g. created + deleted = net zero) are dropped — the server's absence
- * is the authority.
+ * Server diffs are authoritative for in-project files. Server-assessed
+ * external entries are the only external truth once the caller supplies an
+ * assessment result. In-project tool-metadata diffs that the server excluded
+ * (e.g. created + deleted = net zero) are dropped — the server's absence is
+ * the authority.
  *
- * When serverResponded is false (initial load), all tool-metadata diffs
- * are returned as a fallback.
+ * When serverResponded is false (initial load), tool metadata remains a
+ * fallback only for in-project files when assessed external data is supplied.
  */
 export function mergeServerAndToolDiffs(opts: MergeOpts): Array<SnapshotFileDiff & { file: string }> {
-  const { serverDiffs, toolDiffs, serverResponded, directory, home, externalFileStatus } = opts
+  const { serverDiffs, toolDiffs, assessedDiffs, serverResponded, directory, home, externalFileStatus } = opts
   const prefix = home && directory.startsWith(home) ? "~" + directory.slice(home.length) : directory
   const projectPrefix = prefix + "/"
+  const assessedExternal = (assessedDiffs ?? [])
+    .filter((diff) => diff.state === "changed" && diff.patch !== undefined)
+    .map((diff) => {
+      const file = toHomePath(diff.file, home, prefix)
+      const status: "added" | "modified" | "deleted" = diff.status ?? "modified"
+      const additions = typeof diff.additions === "number" ? diff.additions : 0
+      const deletions = typeof diff.deletions === "number" ? diff.deletions : 0
+      return {
+        file,
+        patch: diff.patch,
+        additions,
+        deletions,
+        status,
+      }
+    })
 
   if (serverDiffs.length > 0 || serverResponded) {
     const normalizedServerDiffs = serverDiffs
@@ -57,21 +75,22 @@ export function mergeServerAndToolDiffs(opts: MergeOpts): Array<SnapshotFileDiff
         return override ? { ...normed, status: override } : normed
       })
 
+    if (assessedDiffs) return [...normalizedServerDiffs, ...assessedExternal]
+
+    // Compatibility for callers that have not adopted assessed external data.
     const serverFiles = new Set(normalizedServerDiffs.map((d) => d.file))
-    // Only pass through tool-metadata diffs that are BOTH absent from the
-    // server set AND outside the project directory. In-project files trust
-    // the server's authority — if the server excluded them (created + deleted,
-    // or reverted), they should not leak through as phantom entries.
-    const crossProjectDiffs = toolDiffs
+    const legacyExternal = toolDiffs
       .filter((d) => !serverFiles.has(d.file) && !d.file.startsWith(projectPrefix))
       .map((d) => {
         const override = externalFileStatus?.get(d.file)
         return override ? { ...d, status: override } : d
       })
-
-    return [...normalizedServerDiffs, ...crossProjectDiffs]
+    return [...normalizedServerDiffs, ...legacyExternal]
   }
 
+  // Tool metadata remains the initial fallback for in-worktree files only.
+  // External rows have no current-diff authority until the server assessment settles.
+  if (assessedDiffs) return [...toolDiffs.filter((d) => d.file.startsWith(projectPrefix)), ...assessedExternal]
   return toolDiffs
 }
 

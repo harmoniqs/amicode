@@ -179,6 +179,8 @@ import type {
   QuestionV2Reply,
   SessionAbortErrors,
   SessionAbortResponses,
+  SessionAssessedDiffErrors,
+  SessionAssessedDiffResponses,
   SessionChildrenErrors,
   SessionChildrenResponses,
   SessionCommandErrors,
@@ -191,6 +193,12 @@ import type {
   SessionDeleteResponses,
   SessionDiffErrors,
   SessionDiffResponses,
+  SessionExternalReservationAbortErrors,
+  SessionExternalReservationAbortResponses,
+  SessionExternalReservationCommitErrors,
+  SessionExternalReservationCommitResponses,
+  SessionExternalReservationPrepareErrors,
+  SessionExternalReservationPrepareResponses,
   SessionForkErrors,
   SessionForkResponses,
   SessionGetErrors,
@@ -3739,6 +3747,191 @@ export class Session2 extends HeyApiClient {
       url: "/session/{sessionID}/diff",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Get server-assessed external file diffs
+   *
+   * Get current session-owned external file assessments.
+   */
+  public assessedDiff<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      patch?: "true" | "false"
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "patch" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<SessionAssessedDiffResponses, SessionAssessedDiffErrors, ThrowOnError>({
+      url: "/session/{sessionID}/diff/assessed",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Prepare an external mutation reservation
+   *
+   * Capture server-owned external baselines and return opaque reservation capabilities.
+   */
+  public externalReservationPrepare<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      version?: 1
+      files?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "version" },
+            { in: "body", key: "files" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionExternalReservationPrepareResponses,
+      SessionExternalReservationPrepareErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/external-diff/reservations/prepare",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Commit an external mutation reservation
+   *
+   * Atomically record server-verified endpoint state for an opaque reservation group.
+   */
+  public externalReservationCommit<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      version?: 1
+      reservation?: {
+        id: string
+        expiresAt: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        endpoints: Array<{
+          reference: string
+          capability: string
+          revision: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        }>
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "version" },
+            { in: "body", key: "reservation" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionExternalReservationCommitResponses,
+      SessionExternalReservationCommitErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/external-diff/reservations/commit",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Abort an external mutation reservation
+   *
+   * Conditionally discard a prepared opaque reservation without replacing committed state.
+   */
+  public externalReservationAbort<ThrowOnError extends boolean = false>(
+    parameters: {
+      sessionID: string
+      directory?: string
+      workspace?: string
+      version?: 1
+      reservation?: {
+        id: string
+        expiresAt: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        endpoints: Array<{
+          reference: string
+          capability: string
+          revision: number | "NaN" | "Infinity" | "-Infinity" | "Infinity" | "-Infinity" | "NaN"
+        }>
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "sessionID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "version" },
+            { in: "body", key: "reservation" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      SessionExternalReservationAbortResponses,
+      SessionExternalReservationAbortErrors,
+      ThrowOnError
+    >({
+      url: "/session/{sessionID}/external-diff/reservations/abort",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 
