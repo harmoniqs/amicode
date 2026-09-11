@@ -6,6 +6,11 @@
 import { createEffect, createSignal, For, on, onCleanup, onMount, Show, type Accessor, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Portal } from "solid-js/web"
+import { DragDropProvider, PointerSensor } from "@dnd-kit/solid"
+import { useSortable } from "@dnd-kit/solid/sortable"
+import { Accessibility, AutoScroller, Feedback, PointerActivationConstraints } from "@dnd-kit/dom"
+import { Modifier, type DragEndEvent, type DragMoveEvent, type DragOperation, type DragStartEvent } from "@dnd-kit/abstract"
+import type { DragDropManager } from "@dnd-kit/dom"
 import { Icon } from "@opencode-ai/ui/icon"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { MenuV2 } from "@opencode-ai/ui/v2/menu-v2"
@@ -32,28 +37,19 @@ import {
 
 const MAX_PREVIEW_TABS = 8
 const DROP_EDGE_PX = 32
+const RAIL_CAPTURE_PX = 24
 
 type PreviewDrop = {
   leafID: string
   position: PreviewDropPosition
   targetIndex?: number
-  sourceOffset?: number
   kind: "rail" | "pane"
 }
 
 type PreviewDrag = {
   path: string
   sourceLeafID: string
-  width: number
-  x: number
-  y: number
   drop?: PreviewDrop
-}
-
-type PreviewRailReorder = {
-  direction: "source" | "source-remote" | "left" | "right"
-  width: number
-  offset?: number
 }
 
 type PreviewLeafEdges = {
@@ -61,6 +57,36 @@ type PreviewLeafEdges = {
   right: boolean
   bottom: boolean
   left: boolean
+}
+
+type PreviewSortableSource = {
+  id: string | number
+  sortable: { initialGroup?: string | number; group?: string | number; index: number }
+}
+
+class PreviewRailSnapModifier extends Modifier<DragDropManager, { rails: () => Iterable<HTMLElement> }> {
+  apply(operation: DragOperation) {
+    const source = operation.shape?.initial.boundingRectangle
+    if (!source) return operation.transform
+
+    const sourceCenterY = source.top + source.height / 2 + operation.transform.y
+    let closestRail: DOMRect | undefined
+    let closestDistance = Infinity
+    for (const rail of this.options?.rails() ?? []) {
+      const rect = rail.getBoundingClientRect()
+      const distance = Math.abs(sourceCenterY - (rect.top + rect.height / 2))
+      if (distance < closestDistance) {
+        closestRail = rect
+        closestDistance = distance
+      }
+    }
+    if (!closestRail || closestDistance > closestRail.height / 2 + RAIL_CAPTURE_PX) return operation.transform
+
+    return {
+      ...operation.transform,
+      y: closestRail.top + (closestRail.height - source.height) / 2 - source.top,
+    }
+  }
 }
 
 export function SessionPreviewTab(props: { previewFile: Accessor<string | null> }) {
@@ -71,14 +97,16 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
   const [capacityMessage, setCapacityMessage] = createSignal<string | null>(null)
   const [closingPath, setClosingPath] = createSignal<string | null>(null)
   const [previewDrag, setPreviewDrag] = createSignal<PreviewDrag | null>(null)
-  const [dragProxy, setDragProxy] = createSignal<{ path: string; x: number; y: number; leaving: boolean } | null>(null)
   const [resizingSplitID, setResizingSplitID] = createSignal<string | null>(null)
   const [tabContextMenu, setTabContextMenu] = createSignal<{ path: string; x: number; y: number } | null>(null)
 
   const leafElements = new Map<string, HTMLElement>()
   const [hostMounts, setHostMounts] = createStore<Record<string, HTMLDivElement | undefined>>({})
   let stopPreviewDrag: (() => void) | undefined
-  let dragProxyTimer: ReturnType<typeof setTimeout> | undefined
+  let previewDragDrop: PreviewDrop | undefined
+  let previewDragFocus:
+    | { target: HTMLElement; scroller?: HTMLElement; scrollTop?: number }
+    | undefined
 
   const openedPaths = () => previewLeaves(workspace().tree).flatMap((leaf) => leaf.tabs)
 
@@ -123,7 +151,6 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
   })
   onCleanup(() => {
     stopPreviewDrag?.()
-    if (dragProxyTimer) clearTimeout(dragProxyTimer)
   })
 
   const zoomForPath = (path: string) => previewLeafContaining(workspace().tree, path)?.zoom ?? 100
@@ -163,8 +190,6 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
     clientY: number,
     path: string,
     sourceLeafID: string,
-    sourceStartX: number,
-    sourceGrabOffset: number,
   ): PreviewDrop | undefined => {
     for (const leaf of previewLeaves(workspace().tree)) {
       const element = leafElements.get(leaf.id)
@@ -197,12 +222,10 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
           return clientX < midpoint
         })
         const insertionIndex = targetIndex === -1 ? insertionTabs.length : targetIndex
-        const sourceOffset = sourceLeaf?.id === leaf.id ? clientX - sourceGrabOffset - sourceStartX : undefined
         return {
           leafID: leaf.id,
           position: "center",
           targetIndex: insertionIndex,
-          sourceOffset,
           kind: "rail",
         }
       }
@@ -236,143 +259,121 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
     return undefined
   }
 
-  const startPreviewDrag = (event: PointerEvent, path: string, sourceLeafID: string) => {
-    event.stopPropagation()
-    if (
-      event.button !== 0 ||
-      (event.target instanceof Element && event.target.closest('[data-slot="tabs-trigger-close-button"]'))
-    )
-      return
-
-    const activeElement = document.activeElement
-    const focusTarget =
-      activeElement instanceof HTMLElement &&
-      activeElement.closest("[data-preview-host]")?.getAttribute("data-preview-host") === path
-        ? activeElement
-        : undefined
-    const focusScroller = focusTarget?.closest<HTMLElement>(".cm-scroller")
-    const focusScrollTop = focusScroller?.scrollTop
-    const origin = { x: event.clientX, y: event.clientY }
-    let active = false
-    const source = event.currentTarget as HTMLElement
-    const sourceRect =
-      source.closest<HTMLElement>("[data-preview-tab]")?.getBoundingClientRect() ?? source.getBoundingClientRect()
-    const sourceWidth = sourceRect.width
-    const sourceGrabOffset = event.clientX - sourceRect.left
-    source.setPointerCapture?.(event.pointerId)
-    const setDocumentDrag = (dragging: boolean) =>
-      document.documentElement.toggleAttribute("data-preview-tab-dragging", dragging)
-
-    const clearDragProxy = (fade: boolean) => {
-      const proxy = dragProxy()
-      if (!proxy) return
-      if (!fade) {
-        if (dragProxyTimer) clearTimeout(dragProxyTimer)
-        dragProxyTimer = undefined
-        setDragProxy(null)
-        return
-      }
-      setDragProxy({ ...proxy, leaving: true })
-      if (dragProxyTimer) clearTimeout(dragProxyTimer)
-      dragProxyTimer = setTimeout(() => {
-        setDragProxy(null)
-        dragProxyTimer = undefined
-      }, 160)
-    }
-    const stop = (fadeProxy = false) => {
-      window.removeEventListener("pointermove", onMove)
-      window.removeEventListener("pointerup", onUp)
-      window.removeEventListener("pointercancel", onCancel)
-      if (source.hasPointerCapture?.(event.pointerId)) source.releasePointerCapture(event.pointerId)
-      stopPreviewDrag = undefined
-      setPreviewDrag(null)
-      setDocumentDrag(false)
-      clearDragProxy(fadeProxy)
-    }
-    const onMove = (moveEvent: PointerEvent) => {
-      if (!active) {
-        if (Math.hypot(moveEvent.clientX - origin.x, moveEvent.clientY - origin.y) < 4) return
-        active = true
-        setDocumentDrag(true)
-      }
-      moveEvent.preventDefault()
-      if (dragProxyTimer) clearTimeout(dragProxyTimer)
-      dragProxyTimer = undefined
-      const next = {
-        path,
-        sourceLeafID,
-        width: sourceWidth,
-        x: moveEvent.clientX,
-        y: moveEvent.clientY,
-        drop: dropTargetAt(moveEvent.clientX, moveEvent.clientY, path, sourceLeafID, sourceRect.left, sourceGrabOffset),
-      }
-      setPreviewDrag(next)
-      setDragProxy(next.drop?.kind === "rail" ? null : { path, x: next.x, y: next.y, leaving: false })
-    }
-    const onUp = (upEvent: PointerEvent) => {
-      const drop = active
-        ? dropTargetAt(upEvent.clientX, upEvent.clientY, path, sourceLeafID, sourceRect.left, sourceGrabOffset)
-        : undefined
-      stop(!drop)
-      if (!drop) return
-      setWorkspace((current) =>
-        movePreviewTab(current, {
-          path,
-          targetLeafID: drop.leafID,
-          position: drop.position,
-          targetIndex: drop.targetIndex,
-        }),
-      )
-      requestAnimationFrame(() => {
-        if (focusTarget?.isConnected) focusTarget.focus({ preventScroll: true })
-        requestAnimationFrame(() => {
-          if (focusScroller?.isConnected && focusScrollTop !== undefined) focusScroller.scrollTop = focusScrollTop
-        })
-      })
-    }
-    const onCancel = () => stop(true)
-
-    stopPreviewDrag?.()
-    stopPreviewDrag = stop
-    window.addEventListener("pointermove", onMove)
-    window.addEventListener("pointerup", onUp)
-    window.addEventListener("pointercancel", onCancel)
-  }
-
   const isSelected = (path: string) => previewLeafContaining(workspace().tree, path)?.selectedPath === path
 
-  const railReorder = (leaf: PreviewLeaf, path: string): PreviewRailReorder | undefined => {
-    const drag = previewDrag()
-    const drop = drag?.drop
-    if (!drag || !drop || drop.kind !== "rail") return undefined
-
-    const source = previewLeaves(workspace().tree).find((candidate) => candidate.id === drag.sourceLeafID)
-    if (!source) return undefined
-    const sourceIndex = source.tabs.indexOf(drag.path)
-    if (sourceIndex === -1) return undefined
-
-    if (leaf.id === source.id && path === drag.path) {
-      const direction: PreviewRailReorder["direction"] = drop.leafID === source.id ? "source" : "source-remote"
-      return {
-        direction,
-        width: drag.width,
-        offset: drop.sourceOffset,
-      }
+  const rememberPreviewFocus = (path: string) => {
+    const activeElement = document.activeElement
+    if (activeElement instanceof HTMLElement && activeElement.closest("[data-preview-host]")?.getAttribute("data-preview-host") === path) {
+      const scroller = activeElement.closest<HTMLElement>(".cm-scroller")
+      previewDragFocus = { target: activeElement, scroller: scroller ?? undefined, scrollTop: scroller?.scrollTop }
+      return
     }
+    previewDragFocus = undefined
+  }
 
-    const index = leaf.tabs.indexOf(path)
-    if (index === -1) return undefined
+  const sortableSource = (source: unknown): PreviewSortableSource | undefined => {
+    if (!source || typeof source !== "object" || !("sortable" in source)) return undefined
+    return source as PreviewSortableSource
+  }
 
-    if (source.id === drop.leafID && leaf.id === source.id) {
-      const targetIndex = Math.max(0, Math.min(drop.targetIndex ?? source.tabs.length - 1, source.tabs.length - 1))
-      if (sourceIndex > targetIndex && index >= targetIndex && index < sourceIndex)
-        return { direction: "right" as const, width: drag.width }
-      if (sourceIndex < targetIndex && index > sourceIndex && index <= targetIndex)
-        return { direction: "left" as const, width: drag.width }
-      return undefined
-    }
+  const handlePreviewDragStart = (event: DragStartEvent) => {
+    const source = sortableSource(event.operation.source)
+    if (!source) return
+    document.documentElement.toggleAttribute("data-preview-tab-dragging", true)
+  }
 
-    return undefined
+  const handlePreviewDragMove = (event: DragMoveEvent) => {
+    const source = sortableSource(event.operation.source)
+    if (!source || !(event.nativeEvent instanceof PointerEvent)) return
+    const sourceLeafID = source.sortable.initialGroup?.toString()
+    if (!sourceLeafID) return
+    const drop = dropTargetAt(event.nativeEvent.clientX, event.nativeEvent.clientY, source.id.toString(), sourceLeafID)
+    previewDragDrop = drop
+    setPreviewDrag(drop?.kind === "pane" ? { path: source.id.toString(), sourceLeafID, drop } : null)
+  }
+
+  const restorePreviewDragFocus = () => {
+    const focus = previewDragFocus
+    previewDragFocus = undefined
+    requestAnimationFrame(() => {
+      if (focus?.target.isConnected) focus.target.focus({ preventScroll: true })
+      requestAnimationFrame(() => {
+        if (focus?.scroller?.isConnected && focus.scrollTop !== undefined) focus.scroller.scrollTop = focus.scrollTop
+      })
+    })
+  }
+
+  const handlePreviewDragEnd = (event: DragEndEvent) => {
+    const source = sortableSource(event.operation.source)
+    const sourceLeafID = source?.sortable.initialGroup?.toString()
+    const drop =
+      source &&
+      sourceLeafID &&
+      event.nativeEvent instanceof PointerEvent
+        ? dropTargetAt(event.nativeEvent.clientX, event.nativeEvent.clientY, source.id.toString(), sourceLeafID)
+        : previewDragDrop
+    previewDragDrop = undefined
+    setPreviewDrag(null)
+    document.documentElement.toggleAttribute("data-preview-tab-dragging", false)
+    if (!source || !drop || event.canceled) return
+
+    const path = source.id.toString()
+    const targetLeafID = drop.leafID
+    if (!sourceLeafID || !targetLeafID) return
+    setWorkspace((current) =>
+      movePreviewTab(current, {
+        path,
+        targetLeafID,
+        position: drop.position,
+        targetIndex: drop.targetIndex,
+      }),
+    )
+    restorePreviewDragFocus()
+  }
+
+  const PreviewSortableTab = (tab: { path: string }) => {
+    const leaf = () => previewLeafContaining(workspace().tree, tab.path)
+    const sortable = useSortable({
+      get id() {
+        return tab.path
+      },
+      get index() {
+        return leaf()?.tabs.indexOf(tab.path) ?? -1
+      },
+      get group() {
+        return leaf()?.id
+      },
+    })
+    return (
+      <div ref={sortable.ref} data-preview-tab={tab.path} class="h-full flex items-center">
+        <Tabs.Trigger
+          value={tab.path}
+          onPointerDown={() => rememberPreviewFocus(tab.path)}
+          onContextMenu={(event: MouseEvent) => openTabContextMenu(event, tab.path)}
+          closeButton={
+            <button
+              type="button"
+              class="h-5 w-5 flex items-center justify-center text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
+              aria-label={`Close ${tab.path.split("/").pop()}`}
+              onClick={() => closePath(tab.path)}
+            >
+              <Show when={dirtyPaths[tab.path]} fallback={<Icon name="close-small" size="small" />}>
+                <span
+                  data-preview-unsaved
+                  role="status"
+                  aria-label="Unsaved changes"
+                  class="w-2 h-2 rounded-full bg-v2-text-text-faint"
+                />
+              </Show>
+            </button>
+          }
+          hideCloseButton
+          onMiddleClick={() => closePath(tab.path)}
+        >
+          <FileVisual path={tab.path} active={isSelected(tab.path)} explorerIconTheme />
+        </Tabs.Trigger>
+      </div>
+    )
   }
 
   const startDividerResize = (event: PointerEvent, split: PreviewSplit) => {
@@ -452,24 +453,6 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
       const drop = previewDrag()?.drop
       return drop?.kind === "pane" ? drop : undefined
     }
-    const railGhost = () => {
-      const drag = previewDrag()
-      const drop = drag?.drop
-      if (!drag || !drop || drop.kind !== "rail" || drop.leafID !== leaf.id || drag.sourceLeafID === leaf.id)
-        return undefined
-      return { path: drag.path, index: Math.max(0, Math.min(drop.targetIndex ?? leaf.tabs.length, leaf.tabs.length)) }
-    }
-    const RailGhost = () => {
-      const ghost = railGhost()
-      if (!ghost) return null
-      return (
-        <div data-preview-rail-drag-tab class="h-full flex items-center pointer-events-none" aria-hidden="true">
-          <Tabs.Trigger value={ghost.path} tabIndex={-1}>
-            <FileVisual path={ghost.path} active={false} explorerIconTheme />
-          </Tabs.Trigger>
-        </div>
-      )
-    }
     return (
       <section
         ref={(element) => leafElements.set(leaf.id, element)}
@@ -489,60 +472,8 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
         >
           <Tabs.List aria-label="Open previews">
             <For each={leaf.tabs}>
-              {(path, index) => {
-                const reorder = () => railReorder(leaf, path)
-                return (
-                  <>
-                    <Show when={railGhost()?.index === index()}>
-                      <RailGhost />
-                    </Show>
-                    <div
-                      data-preview-tab={path}
-                      data-preview-reorder={reorder()?.direction}
-                      class="h-full flex items-center"
-                      style={
-                        reorder()
-                          ? {
-                              "--preview-drag-width": `${reorder()!.width}px`,
-                              "--preview-drag-offset": `${reorder()!.offset ?? 0}px`,
-                            }
-                          : undefined
-                      }
-                    >
-                      <Tabs.Trigger
-                        value={path}
-                        onPointerDown={(event) => startPreviewDrag(event, path, leaf.id)}
-                        onContextMenu={(event: MouseEvent) => openTabContextMenu(event, path)}
-                        closeButton={
-                          <button
-                            type="button"
-                            class="h-5 w-5 flex items-center justify-center text-text-weak hover:text-text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-border-focus"
-                            aria-label={`Close ${path.split("/").pop()}`}
-                            onClick={() => closePath(path)}
-                          >
-                            <Show when={dirtyPaths[path]} fallback={<Icon name="close-small" size="small" />}>
-                              <span
-                                data-preview-unsaved
-                                role="status"
-                                aria-label="Unsaved changes"
-                                class="w-2 h-2 rounded-full bg-v2-text-text-faint"
-                              />
-                            </Show>
-                          </button>
-                        }
-                        hideCloseButton
-                        onMiddleClick={() => closePath(path)}
-                      >
-                        <FileVisual path={path} active={leaf.selectedPath === path} explorerIconTheme />
-                      </Tabs.Trigger>
-                    </div>
-                  </>
-                )
-              }}
+              {(path) => <PreviewSortableTab path={path} />}
             </For>
-            <Show when={railGhost()?.index === leaf.tabs.length}>
-              <RailGhost />
-            </Show>
           </Tabs.List>
         </Tabs>
 
@@ -563,24 +494,6 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
   return (
     <>
       <div class="h-full flex flex-col overflow-hidden">
-        <Show when={dragProxy()}>
-          {(proxy) => (
-            <Portal>
-              <div
-                data-preview-tab-drag-proxy
-                data-leaving={proxy().leaving || undefined}
-                class="preview-tab-drag-proxy"
-                aria-hidden="true"
-                style={{
-                  "--preview-drag-x": `${proxy().x}px`,
-                  "--preview-drag-y": `${proxy().y}px`,
-                }}
-              >
-                <FileVisual path={proxy().path} active={false} explorerIconTheme />
-              </div>
-            </Portal>
-          )}
-        </Show>
         <Show when={capacityMessage()}>
           <div class="shrink-0 px-3 py-2 text-12-regular text-text-weak" role="alert">
             {capacityMessage()}
@@ -636,44 +549,70 @@ export function SessionPreviewTab(props: { previewFile: Accessor<string | null> 
               </div>
             }
           >
-            <div class="preview-workspace-canvas" data-preview-dragging={previewDrag()?.path}>
-              <For each={[workspace().tree]}>{(pane) => renderPane(pane)}</For>
-              <For each={openedPaths()}>
-                {(path) => (
-                  <Show when={hostMounts[path]}>
-                    {(mount) => (
-                      <Portal
-                        mount={mount()}
-                        ref={(container) => container.classList.add("preview-pane-renderer-mount")}
-                      >
-                        <div
-                          data-preview-host={path}
-                          class="h-full min-h-0"
-                          hidden={!isSelected(path)}
-                          style={{ display: isSelected(path) ? "flex" : "none" }}
-                          aria-hidden={!isSelected(path)}
-                          inert={!isSelected(path)}
+            <DragDropProvider
+              sensors={[
+                PointerSensor.configure({
+                  activationConstraints: [new PointerActivationConstraints.Distance({ value: 4 })],
+                  preventActivation: (event) =>
+                    event.target instanceof Element && !!event.target.closest('[data-slot="tabs-trigger-close-button"]'),
+                }),
+              ]}
+              plugins={(defaults) => [
+                ...defaults.filter((plugin) => plugin !== Accessibility),
+                AutoScroller.configure({ acceleration: 8, threshold: { x: 0.05, y: 0.05 } }),
+                Feedback.configure({ dropAnimation: null }),
+              ]}
+              modifiers={[
+                PreviewRailSnapModifier.configure({
+                  rails: () =>
+                    Array.from(leafElements.values(), (leaf) => leaf.querySelector<HTMLElement>('[data-slot="tabs-list"]')).filter(
+                      (rail): rail is HTMLElement => !!rail,
+                    ),
+                }),
+              ]}
+              onDragStart={handlePreviewDragStart}
+              onDragMove={handlePreviewDragMove}
+              onDragEnd={handlePreviewDragEnd}
+            >
+              <div class="preview-workspace-canvas" data-preview-dragging={previewDrag()?.path}>
+                <For each={[workspace().tree]}>{(pane) => renderPane(pane)}</For>
+                <For each={openedPaths()}>
+                  {(path) => (
+                    <Show when={hostMounts[path]}>
+                      {(mount) => (
+                        <Portal
+                          mount={mount()}
+                          ref={(container) => container.classList.add("preview-pane-renderer-mount")}
                         >
-                          <PreviewFileView
-                            filePath={path}
-                            onDirtyChange={(dirty) => setDirtyPaths(path, dirty)}
-                            saveRequest={() => saveRequests[path] ?? 0}
-                            onSaveComplete={() => {
-                              removePath(path)
-                              setClosingPath(null)
-                            }}
-                            zoom={() => zoomForPath(path)}
-                            zoomIn={(maximum) => setZoomForPath(path, zoomForPath(path) + 10, maximum)}
-                            zoomOut={() => setZoomForPath(path, zoomForPath(path) - 10)}
-                            onZoomChange={(value, maximum) => setZoomForPath(path, value, maximum)}
-                          />
-                        </div>
-                      </Portal>
-                    )}
-                  </Show>
-                )}
-              </For>
-            </div>
+                          <div
+                            data-preview-host={path}
+                            class="h-full min-h-0"
+                            hidden={!isSelected(path)}
+                            style={{ display: isSelected(path) ? "flex" : "none" }}
+                            aria-hidden={!isSelected(path)}
+                            inert={!isSelected(path)}
+                          >
+                            <PreviewFileView
+                              filePath={path}
+                              onDirtyChange={(dirty) => setDirtyPaths(path, dirty)}
+                              saveRequest={() => saveRequests[path] ?? 0}
+                              onSaveComplete={() => {
+                                removePath(path)
+                                setClosingPath(null)
+                              }}
+                              zoom={() => zoomForPath(path)}
+                              zoomIn={(maximum) => setZoomForPath(path, zoomForPath(path) + 10, maximum)}
+                              zoomOut={() => setZoomForPath(path, zoomForPath(path) - 10)}
+                              onZoomChange={(value, maximum) => setZoomForPath(path, value, maximum)}
+                            />
+                          </div>
+                        </Portal>
+                      )}
+                    </Show>
+                  )}
+                </For>
+              </div>
+            </DragDropProvider>
           </Show>
         </div>
       </div>
