@@ -294,8 +294,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   try {
     const modes = stageModCards(ctx.extensionPath);
     const mergedNote = modes.merges.length > 0 ? `; ${modes.merges.length} overlay merge(s)` : "";
+    const removedNote = modes.removed.length > 0 ? `; removed stale: ${modes.removed.join(", ")}` : "";
     opencodeChannel.appendLine(
-      `[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})${mergedNote}`,
+      `[modes] cards staged: ${modes.dir} (${modes.staged.join(", ")})${mergedNote}${removedNote}`,
     );
     for (const rej of modes.rejections) {
       opencodeChannel.appendLine(

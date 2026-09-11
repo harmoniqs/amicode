@@ -375,6 +375,8 @@ export interface StagedCardRecord {
 export interface StagingResult {
   dir: string;
   staged: string[];
+  /** Stale `.md` files removed from `dir` because they were not in the source set. */
+  removed: string[];
   merges: Array<{ card: string; overlay_id: string; merged_fields: string[] }>;
   rejections: OverlayRejection[];
   receiptPath: string;
@@ -474,9 +476,25 @@ export function stageModCards(
       2,
     ) + "\n",
   );
+
+  // ── cleanup: remove stale .md files no longer in the source set (#1013) ──
+  // After the autodev→develop / autoresearch→research rename, old card files
+  // persisted in destDir because staging never cleaned up. Any .md file in
+  // destDir that was not just staged is stale and must be removed.
+  const stagedSet = new Set(staged);
+  const removed: string[] = [];
+  for (const entry of fs.readdirSync(destDir)) {
+    if (entry.endsWith(".md") && !stagedSet.has(entry)) {
+      fs.unlinkSync(path.join(destDir, entry));
+      removed.push(entry);
+    }
+  }
+  removed.sort();
+
   return {
     dir: destDir,
     staged,
+    removed,
     merges: cardRecords
       .filter((r) => r.overlay_id !== null)
       .map((r) => ({ card: r.card, overlay_id: r.overlay_id!, merged_fields: r.merged_fields })),
