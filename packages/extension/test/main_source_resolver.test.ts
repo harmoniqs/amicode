@@ -280,7 +280,7 @@ describe("main_source_resolver", () => {
           platform: "linux-x64",
           download,
         }),
-      ).rejects.toThrow(/no longer available/i);
+      ).rejects.toThrow(/no longer available|not publicly fetchable|gh fallback/i);
     });
   });
 

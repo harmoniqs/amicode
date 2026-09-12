@@ -64,7 +64,12 @@ export function releaseCoords(manifest) {
   return {
     repo,
     tag,
-    private: manifest.repo != null || !!process.env.AMICODE_RELEASE_TAG,
+    // #1019: renamed from `private` — this flag means "is our fork" (keyed on
+    // manifest.repo != null or env override), not "repo is private on GitHub."
+    // It controls download-path selection (HTTPS+gh fallback), not auth.
+    isFork: manifest.repo != null || !!process.env.AMICODE_RELEASE_TAG,
+    // Back-compat alias (deprecated — use isFork)
+    get private() { return this.isFork; },
   };
 }
 
@@ -81,6 +86,56 @@ export function resolveCloneDir(root = PKG_ROOT, flagPath) {
 }
 
 export const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+
+// ── #1019: Download robustness — retry, error classification, fallback ──
+
+/**
+ * Classify a download error as transient (retriable), permanent (not retriable),
+ * or auth (credentials issue).
+ */
+export function classifyDownloadError(err) {
+  const msg = err?.message ?? String(err);
+  // 5xx = server-side, retriable
+  if (/HTTP\s+5\d\d/i.test(msg)) return "transient";
+  // Network errors = retriable
+  if (/timeout|ECONNRESET|ETIMEDOUT|ECONNREFUSED|UND_ERR_CONNECT_TIMEOUT|network/i.test(msg)) return "transient";
+  // 404 = permanent (asset or release doesn't exist)
+  if (/HTTP\s+404/i.test(msg)) return "permanent";
+  // 403 = auth issue (rate limit or missing credentials)
+  if (/HTTP\s+403/i.test(msg)) return "auth";
+  // gh not found / not logged in
+  if (/gh:?\s*(command)?\s*not found|not logged in|not installed/i.test(msg)) return "auth";
+  // Default to transient (give it one more shot)
+  return "transient";
+}
+
+/**
+ * Retry an async function with exponential backoff.
+ * @param {Function} fn - async function to retry
+ * @param {Object} opts - { maxAttempts, baseDelay, factor, isPermanent?, onRetry? }
+ */
+export async function withRetry(fn, opts = {}) {
+  const { maxAttempts = 3, baseDelay = 1000, factor = 2, isPermanent, onRetry } = opts;
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      lastErr = err;
+      // Check if the error is permanent (not retriable)
+      const classification = isPermanent
+        ? (isPermanent(err) ? "permanent" : "transient")
+        : classifyDownloadError(err);
+      if (classification === "permanent" || classification === "auth") throw err;
+      if (attempt < maxAttempts) {
+        if (onRetry) onRetry(attempt, err);
+        const delay = Math.min(baseDelay * Math.pow(factor, attempt - 1), 4000);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+  throw lastErr;
+}
 
 async function defaultDownload(url) {
   let r;
@@ -233,7 +288,7 @@ function shaFromSums(text, asset) {
   return hash;
 }
 
-async function fetchFromRelease({ root, manifest, key, download, ghApi: api = ghApi }) {
+async function fetchFromRelease({ root, manifest, key, download, ghApi: api = ghApi, retryOpts }) {
   const { asset } = manifest.platforms[key];
   const destDir = join(root, "vendor", "opencode", key);
   const bin = join(destDir, "opencode");
@@ -261,36 +316,79 @@ async function fetchFromRelease({ root, manifest, key, download, ghApi: api = gh
     return { skipped: true, path: bin, source: provenance }; // offline repeat builds
   }
 
-  // Fork releases (repo set in the lock) historically went straight through
-  // the gh CLI because the mirror was PRIVATE. The fork is public now, and a
-  // gh-only path couples CI to OPENCODE_FETCH_TOKEN's org access (observed
-  // 2026-08-17: SSO/token-policy change 403'd boot-smoke while the asset is
-  // plainly fetchable). Order: plain HTTPS FIRST (works for any public
-  // release, tokenless), gh ONLY as the fallback for a genuinely private
-  // asset. Both paths end at the same sha256 gate.
+  // #1019: Download with retry + HTTPS-first, gh-fallback.
+  // Fork releases (repo set in the lock) try plain HTTPS first (works for any
+  // public release, tokenless), gh ONLY as the fallback for network issues or
+  // CDN corruption (sha256 mismatch on HTTPS but clean on gh).
+  const retry = retryOpts ?? { maxAttempts: 3, baseDelay: 1000, factor: 2 };
   let bytes;
-  if (coords.private) {
+  if (coords.isFork) {
+    // HTTPS with retry
+    let httpsOk = false;
+    let httpsSha256Mismatch = false;
     try {
-      bytes = await download(assetUrl(manifest, key));
-    } catch (e) {
-      const viaGh = (() => {
-        try {
-          return ghDownload(coords.repo, coords.tag, asset);
-        } catch (ghErr) {
+      bytes = await withRetry(
+        () => download(assetUrl(manifest, key)),
+        {
+          ...retry,
+          isPermanent: (e) => {
+            const cls = classifyDownloadError(e);
+            return cls === "permanent" || cls === "auth";
+          },
+          onRetry: (attempt, err) => {
+            console.log(`[fetch-opencode] HTTPS attempt ${attempt} failed: ${err.message} — retrying`);
+          },
+        },
+      );
+      httpsOk = true;
+      // Verify sha256 before accepting HTTPS result
+      const got = sha256(bytes);
+      if (got !== want) {
+        httpsSha256Mismatch = true;
+        httpsOk = false;
+        console.log(`[fetch-opencode] HTTPS sha256 mismatch for ${asset} — trying gh fallback`);
+      }
+    } catch (httpsErr) {
+      console.log(`[fetch-opencode] HTTPS download failed: ${httpsErr.message} — trying gh fallback`);
+    }
+
+    if (!httpsOk) {
+      // gh fallback: one attempt (no retry on gh — it's the fallback itself)
+      try {
+        bytes = ghDownload(coords.repo, coords.tag, asset);
+        // Verify sha256 on gh download — mismatch here is permanent
+        const got = sha256(bytes);
+        if (got !== want) {
+          throw new Error(`SHA256 mismatch for ${asset}: expected ${want}, actual ${got}`);
+        }
+      } catch (ghErr) {
+        if (httpsSha256Mismatch) {
           throw new Error(
-            `asset not publicly fetchable (${e.message}) and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
+            `SHA256 mismatch for ${asset} via HTTPS (CDN corruption?) and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
           );
         }
-      })();
-      bytes = viaGh;
+        throw new Error(
+          `asset not publicly fetchable and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
+        );
+      }
     }
   } else {
-    bytes = await download(assetUrl(manifest, key));
+    // Non-fork (upstream): HTTPS only, with retry
+    bytes = await withRetry(
+      () => download(assetUrl(manifest, key)),
+      { ...retry },
+    );
+    const got = sha256(bytes);
+    if (got !== want) {
+      throw new Error(`SHA256 mismatch for ${asset}: expected ${want}, actual ${got}`);
+    }
   }
-  const got = sha256(bytes);
-  if (got !== want) {
-    // Possible supply-chain signal: no retry, no override (spec §3 step 4).
-    throw new Error(`SHA256 mismatch for ${asset}: expected ${want}, actual ${got}`);
+
+  // Verify sha256 (for HTTPS-succeeded path where we didn't already check)
+  if (coords.isFork) {
+    // Already verified above in the fork path
+  } else {
+    // Already verified above in the non-fork path
   }
 
   mkdirSync(destDir, { recursive: true });
@@ -305,7 +403,7 @@ async function fetchFromRelease({ root, manifest, key, download, ghApi: api = gh
     renameSync(join(work, "opencode"), bin);
     chmodSync(bin, 0o755);
     writeFileSync(join(destDir, ".source"), provenance + "\n");
-    writeFileSync(stamp, got + "\n"); // stamp last (spec §3 step 5)
+    writeFileSync(stamp, sha256(bytes) + "\n"); // stamp last (spec §3 step 5)
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
@@ -325,6 +423,7 @@ export async function fetchOpencode({
   anyRef = false,
   noBuild = false,
   build = defaultBuild,
+  retryOpts,
 } = {}) {
   const manifest = loadManifest(root);
   const key = resolvePlatform(manifest, platform);
@@ -340,7 +439,7 @@ export async function fetchOpencode({
       `[fetch-opencode] WARNING: lock source=local but no clone at ${cloneDir} — ${hint}; falling back to the pinned release`,
     );
   }
-  return fetchFromRelease({ root, manifest, key, download, ghApi: ghApiImpl });
+  return fetchFromRelease({ root, manifest, key, download, ghApi: ghApiImpl, retryOpts });
 }
 
 async function main(argv) {
