@@ -34,7 +34,6 @@ export function PreviewEditor(props: {
   let containerRef!: HTMLDivElement
   let editorView: EditorView | null = null
   const [langSupport, setLangSupport] = createSignal<LanguageSupport | null>(null)
-  const [fileExt, setFileExt] = createSignal<string>("txt")
   const editableCompartment = new Compartment()
   const zoomCompartment = new Compartment()
 
@@ -52,7 +51,6 @@ export function PreviewEditor(props: {
     // Extract extension from filepath
     const parts = props.filePath.split(".")
     const ext = parts.length > 1 ? parts[parts.length - 1] : "txt"
-    setFileExt(ext)
     const lang = await loadLanguage(ext)
     setLangSupport(lang)
   })
@@ -88,7 +86,7 @@ export function PreviewEditor(props: {
       state: EditorState.create({
         doc: content,
         extensions: [
-          ...baseExtensions({ theme, language: lang, lang: fileExt() }),
+          ...baseExtensions({ theme, language: lang }),
           editableCompartment.of(
             editableExtensions({
               readOnly: false,

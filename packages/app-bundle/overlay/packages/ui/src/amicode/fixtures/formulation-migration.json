@@ -1,0 +1,105 @@
+{
+  "_source": "CANONICAL. amicode packages/extension/test/fixtures/formulation-migration.json is the source of truth for the legacy->structured Formulation mapping (spec-20260709 §10). The opencode fork copy at packages/ui/src/amicode/fixtures/ is a VERBATIM mirror — edit here, then re-copy. Each `structured` holds ONLY mapped facet fields (no derived primaryKey / synthesized final_fidelity).",
+  "pairs": [
+    {
+      "name": "gate_synthesis basic",
+      "legacy": { "problem": "gate_synthesis", "target": "CZ", "objective": "unitary infidelity", "constraints": ["amplitude bound (drive_max)"] },
+      "structured": {
+        "trajectory_type": "gate",
+        "time_mode": "fixed",
+        "parameterization": "smooth",
+        "robustness": { "kind": "none", "params": {} },
+        "free_phase": false,
+        "leakage": false,
+        "target": "CZ",
+        "objectives": [],
+        "constraints": [{ "kind": "bounds", "params": {}, "label": "amplitude bound (drive_max)" }]
+      }
+    },
+    {
+      "name": "state_prep -> ket",
+      "legacy": { "problem": "state_prep", "target": "|1>", "objective": "ket infidelity", "constraints": [] },
+      "structured": {
+        "trajectory_type": "ket",
+        "time_mode": "fixed",
+        "parameterization": "smooth",
+        "robustness": { "kind": "none", "params": {} },
+        "free_phase": false,
+        "leakage": false,
+        "target": "|1>",
+        "objectives": [],
+        "constraints": []
+      }
+    },
+    {
+      "name": "min_time -> time_mode",
+      "legacy": { "problem": "min_time", "target": "CZ", "objective": "unitary infidelity", "constraints": ["amplitude bound"] },
+      "structured": {
+        "trajectory_type": "gate",
+        "time_mode": "min_time",
+        "parameterization": "smooth",
+        "robustness": { "kind": "none", "params": {} },
+        "free_phase": false,
+        "leakage": false,
+        "target": "CZ",
+        "objectives": [],
+        "constraints": [{ "kind": "bounds", "params": {}, "label": "amplitude bound" }]
+      }
+    },
+    {
+      "name": "custom objective + unknown constraint",
+      "legacy": { "problem": "gate_synthesis", "target": "X", "objective": "custom cost foo", "constraints": ["keep it smooth"] },
+      "structured": {
+        "trajectory_type": "gate",
+        "time_mode": "fixed",
+        "parameterization": "smooth",
+        "robustness": { "kind": "none", "params": {} },
+        "free_phase": false,
+        "leakage": false,
+        "target": "X",
+        "objectives": [{ "kind": "custom", "params": {}, "label": "custom cost foo" }],
+        "constraints": [{ "kind": "custom", "params": {}, "label": "keep it smooth" }]
+      }
+    },
+    {
+      "name": "leakage constraint -> flag",
+      "legacy": { "problem": "gate_synthesis", "target": "CZ", "objective": "unitary infidelity", "constraints": ["leakage suppression"] },
+      "structured": {
+        "trajectory_type": "gate",
+        "time_mode": "fixed",
+        "parameterization": "smooth",
+        "robustness": { "kind": "none", "params": {} },
+        "free_phase": false,
+        "leakage": true,
+        "target": "CZ",
+        "objectives": [],
+        "constraints": []
+      }
+    },
+    {
+      "name": "already structured (idempotent)",
+      "legacy": {
+        "trajectory_type": "gate",
+        "time_mode": "fixed",
+        "parameterization": "cubic_spline",
+        "robustness": { "kind": "ensemble", "params": { "n_systems": 3 } },
+        "free_phase": true,
+        "leakage": false,
+        "target": "CZ",
+        "objectives": [{ "kind": "reg_du", "params": { "R": 0.00001 } }],
+        "constraints": [{ "kind": "bounds", "params": {} }]
+      },
+      "structured": {
+        "trajectory_type": "gate",
+        "time_mode": "fixed",
+        "parameterization": "cubic_spline",
+        "robustness": { "kind": "ensemble", "params": { "n_systems": 3 } },
+        "free_phase": true,
+        "leakage": false,
+        "target": "CZ",
+        "objectives": [{ "kind": "reg_du", "params": { "R": 0.00001 } }],
+        "constraints": [{ "kind": "bounds", "params": {} }]
+      }
+    }
+  ]
+}

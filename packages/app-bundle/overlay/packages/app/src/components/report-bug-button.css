@@ -1,0 +1,49 @@
+/* amicode/opencode#116: report-a-bug — the danger-role state contract.
+   Color comes ONLY from the semantic danger token (red-800 light / red-500
+   dark, defined in packages/ui/src/v2/styles/theme.css) — never a literal
+   hex, and yellow stays the sole accent. Muted at rest → full on hover, the
+   provider-icon opacity pattern. Every selector out-specifies (or follows)
+   icon-button-v2.css's variant rules so the five states hold in both themes;
+   forced states ([data-state]) exist so the story can render the matrix. */
+
+[data-component="icon-button-v2"][data-action="report-bug"] {
+  border-radius: var(--radius-md); /* control radius token (design-polish.css) */
+  color: var(--v2-state-fg-danger);
+  opacity: 0.55;
+  cursor: pointer;
+  transition: opacity 0.16s ease;
+}
+
+[data-component="icon-button-v2"][data-action="report-bug"]:is(:hover, [data-state="hover"]):not(:disabled) {
+  color: var(--v2-state-fg-danger);
+  opacity: 1;
+  background-color: var(--v2-overlay-simple-overlay-hover);
+}
+
+[data-component="icon-button-v2"][data-action="report-bug"]:is(:active, [data-state="pressed"]):not(:disabled) {
+  color: var(--v2-state-fg-danger);
+  opacity: 1;
+  background-color: var(--v2-overlay-simple-overlay-pressed);
+}
+
+/* The visible focus ring itself comes from icon-button-v2.css
+   (2px var(--v2-border-border-focus)) — here the glyph just goes full-strength. */
+[data-component="icon-button-v2"][data-action="report-bug"]:is(:focus-visible, [data-state="focus"]):not(
+    :disabled
+  ) {
+  color: var(--v2-state-fg-danger);
+  opacity: 1;
+}
+
+[data-component="icon-button-v2"][data-action="report-bug"]:is(:disabled, [data-state="disabled"]) {
+  /* clearly deader than the muted rest state (0.55), not just a shade off it */
+  color: var(--v2-state-fg-danger);
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-component="icon-button-v2"][data-action="report-bug"] {
+    transition: none;
+  }
+}

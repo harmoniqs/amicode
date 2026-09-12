@@ -1,0 +1,104 @@
+/* AMICODE — Amico third-actor presence (spec-20260712-014749).
+ * The offset accent lane (Amico's voice in the flow) + the rail wake/settle
+ * motion. New file so it doesn't collide with the actively-edited amicode.css.
+ * All colors are v2 tokens; motion is gated behind prefers-reduced-motion using
+ * the same idiom as amicode.css. Namespaced .amc-* so nothing leaks. */
+
+/* ---- the offset accent lane (Amico rides alongside) ---------------------- */
+/* Amico's in-flow contributions live here: indented, with an accent spine and a
+ * single H-mark head. Attribution by position + accent, never a repeated label. */
+.amc-lane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 8px 12px;
+  padding: 2px 0 2px 12px;
+  border-left: 2px solid color-mix(in srgb, var(--v2-icon-icon-accent) 55%, transparent);
+}
+.amc-lane-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--v2-text-text-muted);
+  font-size: 11px;
+}
+.amc-lane-head .amc-mark {
+  width: 13px;
+  height: 13px;
+  color: var(--v2-icon-icon-accent);
+}
+/* the one-line receipt left behind on settle */
+.amc-receipt {
+  font-size: 12px;
+  color: var(--v2-text-text-base);
+}
+.amc-receipt .amc-receipt-metric {
+  color: var(--v2-text-text-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- rail wake / settle -------------------------------------------------- */
+/* The rail is Amico's body; it wakes when Amico steps in and quiets on settle.
+ * Visibility (dormant => absent) is owned by the rail's own show gate; these
+ * classes only carry the motion + the live/quiet accent treatment. */
+.amc-rail.is-waking { will-change: opacity, transform; }
+.amc-rail.is-live .amc-livedot {
+  background: var(--v2-icon-icon-accent);
+}
+.amc-rail.is-quiet .amc-livedot {
+  background: color-mix(in srgb, var(--v2-icon-icon-accent) 30%, transparent);
+}
+
+/* entity chips: pending (—), live (●, pulsing), settled (✓, steady) */
+.amc-entity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--v2-text-text-muted);
+}
+.amc-entity[data-status="pending"] { color: var(--v2-text-text-faint); }
+.amc-entity[data-status="settled"] { color: var(--v2-text-text-base); }
+.amc-entity-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--v2-border-border-base);
+}
+.amc-entity[data-status="live"] .amc-entity-dot { background: var(--v2-icon-icon-accent); }
+.amc-entity[data-status="settled"] .amc-entity-dot {
+  background: color-mix(in srgb, var(--v2-icon-icon-accent) 70%, transparent);
+}
+
+/* ---- motion (gated) ------------------------------------------------------ */
+@keyframes amc-lane-in {
+  from { opacity: 0; transform: translateX(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes amc-lane-settle {
+  from { opacity: 1; }
+  to   { opacity: 0.72; }
+}
+@keyframes amc-rail-wake {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes amc-livedot-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--v2-icon-icon-accent) 30%, transparent); }
+  50%      { opacity: 0.5; box-shadow: 0 0 0 4px color-mix(in srgb, var(--v2-icon-icon-accent) 10%, transparent); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .amc-lane.is-stepping-in { animation: amc-lane-in 260ms ease-out both; }
+  .amc-lane.is-settling    { animation: amc-lane-settle 400ms ease-out both; }
+  .amc-rail.is-waking      { animation: amc-rail-wake 240ms ease-out both; }
+  /* the real rail is session-sticky (mounts once when Amico first engages) — so
+     targeting it directly plays the wake exactly once, on entry, with no edit to
+     entity-rail.tsx (keeps that hot file out of this change). */
+  [data-component="amicode-entity-rail"] { animation: amc-rail-wake 260ms ease-out both; }
+  .amc-rail.is-live .amc-livedot,
+  .amc-entity[data-status="live"] .amc-entity-dot {
+    animation: amc-livedot-pulse 1.4s ease-in-out infinite;
+  }
+}

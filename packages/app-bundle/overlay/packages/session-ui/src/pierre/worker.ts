@@ -1,6 +1,5 @@
 import { WorkerPoolManager } from "@pierre/diffs/worker"
 import ShikiWorkerUrl from "@pierre/diffs/worker/worker.js?worker&url"
-import { getActiveShikiTheme, onThemeChange } from "../v2/components/shiki-theme-state"
 
 export type WorkerPoolStyle = "unified" | "split"
 
@@ -9,8 +8,6 @@ export function workerFactory(): Worker {
 }
 
 function createPool(lineDiffType: "none" | "word-alt") {
-  // Use the active VS Code theme if available; falls back to "OpenCode"
-  const theme = getActiveShikiTheme()
   const pool = new WorkerPoolManager(
     {
       workerFactory,
@@ -22,7 +19,7 @@ function createPool(lineDiffType: "none" | "word-alt") {
       poolSize: 2,
     },
     {
-      theme,
+      theme: "OpenCode",
       lineDiffType,
       preferredHighlighter: "shiki-wasm",
     },
@@ -34,14 +31,6 @@ function createPool(lineDiffType: "none" | "word-alt") {
 
 let unified: WorkerPoolManager | undefined
 let split: WorkerPoolManager | undefined
-
-// When the theme changes, recreate the pools so @pierre/diffs picks up the
-// new theme. The pools are lazy-created, so if they haven't been used yet
-// this is a no-op.
-onThemeChange(() => {
-  if (unified) { unified.terminate(); unified = undefined }
-  if (split) { split.terminate(); split = undefined }
-})
 
 export function getWorkerPool(style: WorkerPoolStyle | undefined): WorkerPoolManager | undefined {
   if (typeof window === "undefined") return

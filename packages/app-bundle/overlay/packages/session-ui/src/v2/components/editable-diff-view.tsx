@@ -116,7 +116,6 @@ export function EditableDiffView(props: EditableDiffViewProps): JSX.Element {
       readOnly,
       theme,
       language: lang,
-      lang: props.language,
       onChange: readOnly ? undefined : onChange,
     })
 
