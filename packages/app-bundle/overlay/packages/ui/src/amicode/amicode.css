@@ -1520,6 +1520,66 @@
   padding: 16px 0 4px;
 }
 
+/* ---- Structured rebuild error panel (#1022) ──────────────────────────── */
+.devtools-error-panel {
+  margin: 8px 0 4px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--surface-danger-strong, #e5484d) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--surface-danger-strong, #e5484d) 20%, transparent);
+}
+.devtools-error-message {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-danger-base, #e5484d);
+  line-height: 1.4;
+}
+.devtools-error-message .devtools-status-dot {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.devtools-error-fix-steps {
+  margin: 6px 0 0;
+  padding-left: 22px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-secondary-base, #8b8b8b);
+  list-style: decimal;
+}
+.devtools-error-fix-steps li {
+  padding-left: 4px;
+}
+.devtools-error-detail-toggle {
+  margin-top: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 11px;
+  color: var(--text-secondary-base, #8b8b8b);
+  cursor: pointer;
+  font-family: inherit;
+}
+.devtools-error-detail-toggle:hover {
+  color: var(--text-primary-base, #ededed);
+}
+.devtools-error-detail {
+  margin-top: 4px;
+  padding: 8px;
+  border-radius: 4px;
+  background: var(--surface-secondary-base, rgba(0,0,0,0.15));
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary-base, #8b8b8b);
+  font-family: var(--font-mono, monospace);
+  overflow-x: auto;
+  max-height: 200px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 /* ─────────────────────────────────────────────────────────────────────────────
    APPROVAL CARD — [data-component="amicode-approval-card"] (approval-card.tsx)
    The capability-warrant card (spec-20260727-164748 §9.5). Sibling of the ask
