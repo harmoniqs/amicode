@@ -150,6 +150,7 @@ describe("ChatPanel — Preview bridge relays", () => {
       expect(html).toContain("preview-visible-children-result");
       expect(html).toContain("explorer-icon-theme-request");
       expect(html).toContain("explorer-icon-theme");
+      expect(html).toContain("syntax-theme");
       expect(html).toContain("connect-harmoniqs-provider");
       expect(html).toContain("connect-harmoniqs-provider-result");
     }
@@ -171,6 +172,42 @@ describe("ChatPanel — Preview bridge relays", () => {
     (vscode.window as unknown as { _fireActiveColorTheme(kind: number): void })._fireActiveColorTheme(vscode.ColorThemeKind.Light);
     expect(messages).toContainEqual({ source: "amicode", kind: "theme", colorScheme: "light" });
     expect(messages).toContainEqual(expect.objectContaining({ kind: "explorer-icon-theme" }));
+  });
+
+  it("posts the syntax theme after the iframe declares app-ready", () => {
+    const cap = capturePanel();
+    restore = cap.restore;
+    created = cap.created;
+    const originalGetConfiguration = (vscode.workspace as unknown as { getConfiguration: unknown }).getConfiguration;
+    (vscode.workspace as unknown as { getConfiguration: (section?: string) => unknown }).getConfiguration = (section?: string) => ({
+      get: (key: string, defaultValue?: unknown) => {
+        if (section === "workbench" && key === "colorTheme") return "Default Dark+";
+        return defaultValue;
+      },
+      update: () => Promise.resolve(),
+    });
+
+    try {
+      ChatPanel.openOrReveal(fakeCtx(), new URL("http://127.0.0.1:43117/"));
+      const messages: unknown[] = [];
+      const panel = created[0] as unknown as {
+        webview: {
+          postMessage: (message: unknown) => Promise<boolean>;
+          _simulateMessage(message: unknown): void;
+        };
+      };
+      panel.webview.postMessage = (message) => { messages.push(message); return Promise.resolve(true); };
+
+      panel.webview._simulateMessage({ source: "amicode", kind: "app-ready" });
+
+      expect(messages).toContainEqual({
+        source: "amicode",
+        kind: "syntax-theme",
+        theme: "dark-plus",
+      });
+    } finally {
+      (vscode.workspace as unknown as { getConfiguration: unknown }).getConfiguration = originalGetConfiguration;
+    }
   });
 });
 
