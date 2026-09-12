@@ -7,6 +7,7 @@ import { DialogProvider } from "@opencode-ai/ui/context/dialog"
 import { FileComponentProvider } from "@opencode-ai/ui/context/file"
 import { MarkedProvider } from "@opencode-ai/ui/context/marked"
 import { File } from "@opencode-ai/session-ui/file"
+import { handleSyntaxThemeMessage } from "@opencode-ai/session-ui/v2/shiki-theme-state"
 import { Font } from "@opencode-ai/ui/font"
 import { Splash } from "@opencode-ai/ui/logo"
 import { ThemeProvider, useTheme } from "@opencode-ai/ui/theme/context"
@@ -449,6 +450,10 @@ function AmicodeThemeBridge() {
     }
     if (d.kind === "explorer-icon-theme") {
       adoptExplorerIconTheme(d.theme)
+      return
+    }
+    if (d.kind === "syntax-theme") {
+      handleSyntaxThemeMessage((d as { theme?: string | object }).theme ?? "")
       return
     }
     if (d.kind !== "theme") return
