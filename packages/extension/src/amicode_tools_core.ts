@@ -142,6 +142,16 @@ import {
 // the same directory, so a tool call lands in the inventory end-to-end
 // without an HTTP hop and without touching the harness server.
 import { authorWidget } from "./amicode_service/widgets";
+import { readCredential } from "./amicode_service/credentials";
+import {
+  slackPreCheck,
+  slackFetch,
+  resolveTarget,
+  formatMessages,
+  resolveHandles,
+  UserCache,
+  ChannelCache,
+} from "./amicode_service/slack_api";
 
 /** The shipped role cards' directory, for the S3 routing resolver (#860):
  *  the suggestion source + the hand-set `model:` tier. The bundled core
@@ -2192,6 +2202,232 @@ export const AMICODE_TOOLS: Record<string, AmicodeToolDef> = {
         } catch (err) {
           return `Cannot set veloce: ${err instanceof Error ? err.message : String(err)}`;
         }
+      },
+    },
+
+    // ── Slack MCP tools (#1040) — bridge the Connections-panel credential to
+    // agent-usable Slack operations. Each tool gates on slackPreCheck (the
+    // credential-existence check) and uses the shared slack_api.ts HTTP layer.
+    // NOT quantum-control-specific, NOT problem-stage tools: UNGATED.
+    amicode_slack_list: {
+      description:
+        "List Slack channels or workspace members visible to the connected bot. " +
+        'kind="channels" returns public and private channels; kind="users" returns active ' +
+        "(non-deleted, non-bot) members. Pass query to filter by name (case-insensitive " +
+        "substring match). Returns at most one page (200 items); if more exist, the response " +
+        "notes truncation.",
+      args: {
+        kind: {
+          type: "string",
+          description: '"channels" or "users".',
+        },
+        query: {
+          type: ["string", "null"],
+          description: "Optional name/handle filter (case-insensitive substring). Null for all.",
+        },
+      },
+      async execute(a: { kind: string; query?: string | null }) {
+        const pre = slackPreCheck(() => readCredential("slack"));
+        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
+
+        if (a.kind === "channels") {
+          const result = await slackFetch(pre.token, "conversations.list", {
+            types: "public_channel,private_channel",
+            limit: "200",
+          });
+          if (!result.ok) return JSON.stringify(result);
+
+          const raw = ((result as Record<string, unknown>).channels as Array<{
+            id: string; name: string; topic?: { value?: string }; num_members?: number;
+          }>) ?? [];
+          let channels = raw;
+          if (a.query) {
+            const q = a.query.toLowerCase();
+            channels = channels.filter((c) => c.name?.toLowerCase().includes(q));
+          }
+          const lines = channels.map(
+            (c) => `#${c.name} — ${c.topic?.value || "(no topic)"} (${c.num_members ?? "?"} members)`,
+          );
+          let text = lines.join("\n") || "(no channels found)";
+          const cursor = (result as Record<string, unknown>).response_metadata as { next_cursor?: string } | undefined;
+          if (cursor?.next_cursor) text += `\n\n(truncated — showing first page of ${raw.length} results)`;
+          return text;
+        }
+
+        if (a.kind === "users") {
+          const result = await slackFetch(pre.token, "users.list", { limit: "200" });
+          if (!result.ok) return JSON.stringify(result);
+
+          const raw = ((result as Record<string, unknown>).members as Array<{
+            id: string; name: string; real_name?: string; deleted?: boolean; is_bot?: boolean;
+            profile?: { display_name?: string; status_text?: string };
+          }>) ?? [];
+          let members = raw.filter((m) => !m.deleted && !m.is_bot);
+          if (a.query) {
+            const q = a.query.toLowerCase();
+            members = members.filter(
+              (m) =>
+                m.name?.toLowerCase().includes(q) ||
+                m.real_name?.toLowerCase().includes(q) ||
+                m.profile?.display_name?.toLowerCase().includes(q),
+            );
+          }
+          const lines = members.map((m) => {
+            const display = m.profile?.display_name || m.real_name || m.name;
+            const status = m.profile?.status_text || "";
+            return `@${m.name} (${display})${status ? ` — ${status}` : ""}`;
+          });
+          let text = lines.join("\n") || "(no users found)";
+          const cursor = (result as Record<string, unknown>).response_metadata as { next_cursor?: string } | undefined;
+          if (cursor?.next_cursor) text += `\n\n(truncated — showing first page of ${raw.length} results)`;
+          return text;
+        }
+
+        return JSON.stringify({ ok: false, reason: "invalid_kind", hint: 'kind must be "channels" or "users"' });
+      },
+    },
+
+    amicode_slack_read: {
+      description:
+        "Read messages from a Slack channel, DM, or thread. target accepts #channel, @user, " +
+        'a raw channel ID, or "dms" (default) for a DM overview. Pass thread_ts to read a ' +
+        "specific thread's replies. limit defaults to 20, max 100. Returns formatted message " +
+        "history.",
+      args: {
+        target: {
+          type: ["string", "null"],
+          description: '#channel, @user, raw channel ID, or "dms" (default). Null defaults to "dms".',
+        },
+        limit: {
+          type: ["number", "null"],
+          description: "Max messages to retrieve (default 20, max 100). Null for default.",
+        },
+        thread_ts: {
+          type: ["string", "null"],
+          description: "Thread timestamp — read replies to this message. Null for channel-level messages.",
+        },
+      },
+      async execute(a: { target?: string | null; limit?: number | null; thread_ts?: string | null }) {
+        const pre = slackPreCheck(() => readCredential("slack"));
+        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
+
+        const target = a.target?.trim() || "dms";
+        const limit = Math.min(Math.max(typeof a.limit === "number" ? a.limit : 20, 1), 100);
+        const userCache = new UserCache(pre.token);
+        const channelCache = new ChannelCache(pre.token);
+        const caches = { users: userCache, channels: channelCache };
+
+        // "dms" → list DM overview
+        if (target.toLowerCase() === "dms") {
+          const resolved = await resolveTarget(pre.token, "dms", caches);
+          if (!resolved.ok) return JSON.stringify(resolved);
+          const dms = ((resolved as Record<string, unknown>).channels as Array<{
+            id: string; name: string; user?: string;
+          }>) ?? [];
+          const lines: string[] = [];
+          for (const dm of dms) {
+            const userName = dm.user ? await userCache.resolve(dm.user) : dm.name;
+            lines.push(`DM with ${userName} (${dm.id})`);
+          }
+          return lines.join("\n") || "(no DMs found)";
+        }
+
+        // Resolve the target channel
+        const resolved = await resolveTarget(pre.token, target, caches);
+        if (!resolved.ok) return JSON.stringify(resolved);
+        const channelId = (resolved as Record<string, unknown>).channel_id as string;
+
+        // Thread replies
+        if (a.thread_ts) {
+          const result = await slackFetch(pre.token, "conversations.replies", {
+            channel: channelId,
+            ts: a.thread_ts,
+            limit: String(limit),
+          });
+          if (!result.ok) return JSON.stringify(result);
+          const messages = ((result as Record<string, unknown>).messages as Array<Record<string, unknown>>) ?? [];
+          return await formatMessages(messages, userCache);
+        }
+
+        // Channel history
+        const result = await slackFetch(pre.token, "conversations.history", {
+          channel: channelId,
+          limit: String(limit),
+        });
+        if (!result.ok) return JSON.stringify(result);
+        const messages = ((result as Record<string, unknown>).messages as Array<Record<string, unknown>>) ?? [];
+        return await formatMessages(messages, userCache);
+      },
+    },
+
+    amicode_slack_send: {
+      description:
+        "Send a message to a Slack channel or user. target accepts #channel or @user. " +
+        "text is the message body in Slack mrkdwn; @handle mentions in text are resolved " +
+        "to Slack user IDs automatically. Pass thread_ts to reply in a thread. Returns " +
+        "{ ok: true, ts } on success or a structured error.",
+      args: {
+        target: {
+          type: "string",
+          description: "#channel or @user — where to send.",
+        },
+        text: {
+          type: "string",
+          description: "Message body in Slack mrkdwn. @handle mentions are auto-resolved.",
+        },
+        thread_ts: {
+          type: ["string", "null"],
+          description: "Reply in this thread (message timestamp). Null for a top-level message.",
+        },
+      },
+      async execute(a: { target: string; text: string; thread_ts?: string | null }) {
+        const pre = slackPreCheck(() => readCredential("slack"));
+        if (!pre.ok) return JSON.stringify({ ok: false, reason: pre.reason, hint: pre.hint });
+
+        if (!a.target || a.target.trim() === "") {
+          return JSON.stringify({ ok: false, reason: "missing_target", hint: "target is required (#channel or @user)" });
+        }
+        if (!a.text || a.text.trim() === "") {
+          return JSON.stringify({ ok: false, reason: "missing_text", hint: "text is required" });
+        }
+
+        const userCache = new UserCache(pre.token);
+        const channelCache = new ChannelCache(pre.token);
+        const caches = { users: userCache, channels: channelCache };
+
+        // Resolve @handle patterns in message text
+        const resolvedText = await resolveHandles(a.text, userCache, globalThis.fetch);
+
+        // Resolve the target channel/DM
+        const resolved = await resolveTarget(pre.token, a.target, caches);
+        if (!resolved.ok) return JSON.stringify(resolved);
+        const channelId = (resolved as Record<string, unknown>).channel_id as string;
+        if (!channelId) {
+          return JSON.stringify({
+            ok: false,
+            reason: "invalid_target",
+            hint: "target must resolve to a channel or DM, not a list",
+          });
+        }
+
+        // Post the message
+        const params: Record<string, string> = { channel: channelId, text: resolvedText };
+        if (a.thread_ts) params.thread_ts = a.thread_ts;
+        const result = await slackFetch(pre.token, "chat.postMessage", params);
+
+        if (!result.ok) {
+          // Override hint for not_in_channel
+          if ((result as Record<string, unknown>).reason === "not_in_channel") {
+            return JSON.stringify({
+              ok: false,
+              reason: "not_in_channel",
+              hint: `Invite the bot to ${a.target} first`,
+            });
+          }
+          return JSON.stringify(result);
+        }
+
+        return JSON.stringify({ ok: true, ts: (result as Record<string, unknown>).ts ?? null });
       },
     },
 

@@ -43,6 +43,9 @@ const EXPECTED_TOOLS = [
   "amicode_report_fallback",
   "amicode_session",
   "amicode_veloce",
+  "amicode_slack_list",
+  "amicode_slack_read",
+  "amicode_slack_send",
 ];
 
 describe("AMICODE_TOOLS (the core tool table)", () => {
