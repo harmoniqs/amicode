@@ -11,6 +11,8 @@ const sessionID = "ses_preview_baseline_contract"
 const title = "Preview baseline contract"
 const markdownFile = "notes/baseline.md"
 const secondMarkdownFile = "notes/second.md"
+const juliaFile = "scripts/preview.jl"
+const juliaContent = "function evolve(state)\n  return state + 1\nend\n"
 const imageFile = "assets/preview.png"
 const server = `http://${process.env.PLAYWRIGHT_SERVER_HOST ?? "127.0.0.1"}:${process.env.PLAYWRIGHT_SERVER_PORT ?? "4096"}`
 const markdownContent = ["# Baseline Preview", "", "The renderer must keep focus."]
@@ -48,6 +50,32 @@ test("keeps Markdown typing in CodeMirror after its language support loads", asy
   await expect(editor).toContainText("Typed after language loading.")
   await expect(editor).toBeFocused()
   await expect(page.locator('[data-component="prompt-input"]')).toHaveText("")
+})
+
+test("applies the bridged VS Code token color to a Julia Preview editor", async ({ page }) => {
+  await openPreview(page)
+
+  // A distinctive color makes this an end-to-end check of the full chain:
+  // host message -> theme state -> Shiki Worker -> CM6 Decoration.mark.
+  await page.evaluate(() => {
+    window.postMessage({
+      source: "amicode",
+      kind: "syntax-theme",
+      theme: {
+        name: "Preview E2E Theme",
+        tokenColors: [{ scope: "keyword", settings: { foreground: "#ff00aa" } }],
+      },
+    }, "*")
+  })
+  await openPreviewFile(page, juliaFile)
+
+  const editor = page.locator(`#review-panel [data-preview-host="${juliaFile}"] .cm-content`)
+  await expect(editor).toBeVisible()
+  const functionToken = editor.locator("span").filter({ hasText: "function" }).first()
+  await expect(functionToken).toBeVisible()
+  await expect
+    .poll(() => functionToken.evaluate((element) => getComputedStyle(element).color))
+    .toBe("rgb(255, 0, 170)")
 })
 
 test("keeps the default cursor while a Preview tab crosses an editable file", async ({ page }) => {
@@ -1505,6 +1533,7 @@ async function openPreview(page: Parameters<typeof mockOpenCodeServer>[0]) {
     fileContent: (path) => {
       if (path === markdownFile) return { type: "text", content: markdownContent }
       if (path === secondMarkdownFile) return { type: "text", content: secondMarkdownContent }
+      if (path === juliaFile) return { type: "text", content: juliaContent }
       if (path === imageFile)
         return { type: "binary", content: imageContent, encoding: "base64", mimeType: "image/png" }
       if (path === pdfFile)
