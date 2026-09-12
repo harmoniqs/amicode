@@ -16,7 +16,6 @@
  */
 
 import * as path from "node:path";
-import * as fs from "node:fs";
 
 import { classifyHost, detectWSLVersion, gateKeeperClear } from "./host_matrix";
 import { checkDependencies, isBlocked, buildProvisionPlan } from "./dependency_resolver";
@@ -108,7 +107,6 @@ export async function runRebuild(opts: RebuildCoordinatorOpts): Promise<RebuildC
   const deps = await checkDependencies(opts.mode, exec);
   if (isBlocked(deps)) {
     const plan = buildProvisionPlan(deps);
-    const blockerList = plan.blockers.map((b) => `${b.tool}: ${b.guidance}`).join("; ");
     return {
       ok: false,
       error: {

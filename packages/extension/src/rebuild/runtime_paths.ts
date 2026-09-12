@@ -11,7 +11,7 @@
  * - Developer mode: dedicated setting > marker file > false
  */
 
-import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Types ──
