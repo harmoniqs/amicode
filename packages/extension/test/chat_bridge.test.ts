@@ -70,6 +70,59 @@ describe("developer-tools rebuild contracts (#1004)", () => {
   });
 });
 
+describe("developer-tools rebuild from main (#1018)", () => {
+  it("main mode requires only amicodePath, not opencodePath", async () => {
+    const host = io();
+    // Main mode with amicodePath but no opencodePath should not fail with
+    // "Both repo paths must be set" — only amicodePath is required.
+    const handled = handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-rebuild",
+      mode: "remote",
+      opencodePath: "",
+      amicodePath: "/tmp/amicode",
+    }, host);
+    expect(handled).toBe(true);
+    // Should NOT get "Both repo paths must be set" error
+    const failMsg = host.posted.find(
+      (m: any) => m.kind === "dev-tools-rebuild-status" && m.state === "failed" && m.error?.includes("Both repo paths"),
+    );
+    expect(failMsg).toBeUndefined();
+  });
+
+  it("main mode fails when amicodePath is empty", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-rebuild",
+      mode: "remote",
+      opencodePath: "",
+      amicodePath: "",
+    }, host);
+    const failMsg = host.posted.find(
+      (m: any) => m.kind === "dev-tools-rebuild-status" && m.state === "failed",
+    );
+    expect(failMsg).toBeDefined();
+    expect(failMsg!.error).toContain("Amicode repo path");
+  });
+
+  it("local mode still requires both repo paths", async () => {
+    const host = io();
+    handleAmicodeBridgeMessage({
+      source: "amicode",
+      kind: "dev-tools-rebuild",
+      mode: "local",
+      opencodePath: "",
+      amicodePath: "/tmp/amicode",
+    }, host);
+    const failMsg = host.posted.find(
+      (m: any) => m.kind === "dev-tools-rebuild-status" && m.state === "failed",
+    );
+    expect(failMsg).toBeDefined();
+    expect(failMsg!.error).toContain("Both repo paths");
+  });
+});
+
 describe("amicode bridge — open-external", () => {
   it("opens https URLs and nothing else", () => {
     const host = io();
