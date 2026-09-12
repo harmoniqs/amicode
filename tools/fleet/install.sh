@@ -22,10 +22,12 @@ say() { echo "[fleet] $*"; }
 # --- read fleet config ---
 ROLE="standalone"
 FLEET_PORT=4096
+SSH_ALIAS=""
 if [[ -f "$FLEET_CONFIG" ]]; then
   ROLE="$(grep -o '"role"[[:space:]]*:[[:space:]]*"[^"]*"' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*"role"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || echo standalone)"
   PORT_PARSED="$(grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*:[[:space:]]*//' || echo 4096)"
   if [[ -n "$PORT_PARSED" ]]; then FLEET_PORT="$PORT_PARSED"; fi
+  SSH_ALIAS="$(grep -o '"sshAlias"[[:space:]]*:[[:space:]]*"[^"]*"' "$FLEET_CONFIG" 2>/dev/null | head -1 | sed 's/.*"sshAlias"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/' || true)"
 fi
 
 # Standalone: nothing to install — the guard/tunnel are irrelevant.
@@ -107,18 +109,23 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   else
     if [[ $CHECK -eq 1 ]]; then
       if [[ ! -f "$PLIST_DST" ]]; then echo "[fleet] FAIL tunnel plist missing at $PLIST_DST"; exit 1; fi
+      if grep -q "FLEET_SSH_ALIAS" "$PLIST_DST"; then echo "[fleet] FAIL tunnel plist still carries the FLEET_SSH_ALIAS placeholder (alias was never substituted — ssh loops on an unresolvable hostname)"; exit 1; fi
       if ! grep -q "ServerAliveInterval=15" "$PLIST_DST"; then echo "[fleet] FAIL tunnel ServerAliveInterval 15 missing"; exit 1; fi
       if ! grep -q "ServerAliveCountMax=2" "$PLIST_DST"; then echo "[fleet] FAIL tunnel ServerAliveCountMax 2 missing"; exit 1; fi
       if ! grep -q "TCPKeepAlive=yes" "$PLIST_DST"; then echo "[fleet] FAIL tunnel TCPKeepAlive yes missing"; exit 1; fi
       if ! grep -q "127.0.0.1:${FLEET_PORT}:127.0.0.1:${FLEET_PORT}" "$PLIST_DST"; then echo "[fleet] FAIL tunnel LocalForward ${FLEET_PORT} missing"; exit 1; fi
-      say "ok tunnel $PLIST_DST (15/2 + TCPKeepAlive, port $FLEET_PORT)"
+      if [[ -n "$SSH_ALIAS" ]] && ! grep -q "<string>${SSH_ALIAS}</string>" "$PLIST_DST"; then echo "[fleet] FAIL tunnel alias is not ${SSH_ALIAS}"; exit 1; fi
+      say "ok tunnel $PLIST_DST (15/2 + TCPKeepAlive, port $FLEET_PORT, alias ${SSH_ALIAS:-unspecified})"
     else
+      if [[ -z "$SSH_ALIAS" ]]; then
+        die "no sshAlias in $FLEET_CONFIG — refusing to install a tunnel that cannot resolve its host (add canonical.sshAlias)"
+      fi
       mkdir -p "$(dirname "$PLIST_DST")"
-      cp "$PLIST_SRC" "$PLIST_DST"
+      sed -e "s/FLEET_SSH_ALIAS/${SSH_ALIAS}/g" -e "s/127\.0\.0\.1:4096:127\.0\.0\.1:4096/127.0.0.1:${FLEET_PORT}:127.0.0.1:${FLEET_PORT}/g" "$PLIST_SRC" > "$PLIST_DST"
       # reload
       launchctl unload "$PLIST_DST" 2>/dev/null || true
       launchctl load "$PLIST_DST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST_DST" 2>/dev/null || true
-      say "installed tunnel $PLIST_DST and (re)loaded"
+      say "installed tunnel $PLIST_DST and (re)loaded (alias ${SSH_ALIAS}, port ${FLEET_PORT})"
     fi
   fi
 fi

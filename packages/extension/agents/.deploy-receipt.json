@@ -1,17 +1,42 @@
 {
   "receipt_version": 1,
-  "deployed_at": "2026-08-23T12:56:11.089Z",
+  "deployed_at": "2026-09-12T14:20:11.336Z",
   "dry_run": false,
   "sources": [
     {
-      "card": "autodev.md",
-      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/autodev.md",
-      "sha256": "sha256:5094b3938f845b769898ae452c8a55f743eb9dfa4e1c2ee6993837efd58110cb"
+      "card": "analyzer.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/analyzer.md",
+      "sha256": "sha256:13314049129ad4f9dbcadd961b0cbfc05fba01e3800380aad500b530411139ce"
     },
     {
-      "card": "autoresearch.md",
-      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/autoresearch.md",
-      "sha256": "sha256:c3238c7b395fe6b9ab9d065c2c5fab18017e4b1e83c64ce1cfc99f2546b1f828"
+      "card": "develop.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/develop.md",
+      "sha256": "sha256:adefb7d5d630e614989ba4ea5affa141edd52ff5bf3d9073e8e9d66bc1aa8b50"
+    },
+    {
+      "card": "experimenter.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/experimenter.md",
+      "sha256": "sha256:1bed34b410c31e00489360b1ed750b1edb27668b49bcce8ff8c61198b7321abf"
+    },
+    {
+      "card": "hypothesizer.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/hypothesizer.md",
+      "sha256": "sha256:f6864945d5f1b737a9503aa5466f3026ecc39fc7901883a7d85c03857f0bb2b8"
+    },
+    {
+      "card": "implementer.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/implementer.md",
+      "sha256": "sha256:4c27b6ff55b13f6680293a59160479cfc29dea256fd4ef8b29ce22508e4478ac"
+    },
+    {
+      "card": "librarian.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/librarian.md",
+      "sha256": "sha256:f1fd27021e088e02d2eb0a05f6909a963dfaa9243a65f55e3fd5ef6250bab48a"
+    },
+    {
+      "card": "research.md",
+      "path": "/Users/aaron/armonia/repos/amicode/packages/extension/agents/research.md",
+      "sha256": "sha256:ae870c2fab0c35239c8506d85a82b84d03c0fd1cd1b702485327b4f2442cc45c"
     }
   ],
   "destinations": [
