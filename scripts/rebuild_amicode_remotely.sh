@@ -1,12 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Rebuild both opencode and amicode after pulling latest from remote.
-# Use this when the extension isn't running or you want a terminal-based rebuild.
-# The in-app "Rebuild Remotely" button does the same thing via the extension bridge.
+# Rebuild amicode from main — the terminal fallback for the "Rebuild from Main"
+# button. Use this when the extension UI is broken.
+#
+# What this does (matching the button's behavior since #1016):
+# 1. Pull amicode main (--ff-only, not --rebase)
+# 2. Download the fork binary from the GitHub Release pinned in opencode.lock.json
+#    (NO fork clone, NO bun — the binary comes from the release)
+# 3. pnpm install + build the amicode extension
+# 4. Build the app bundle from the committed overlay (no fork worktree needed)
+# 5. Back up the installed extension, then atomic-swap the new build in
+#
+# No settings.json writes — the extension discovers its paths at runtime (#1022).
 
-OPENCODE_ROOT="${OPENCODE_ROOT:-$HOME/harmoniqs/opencode}"
 AMICODE_ROOT="${AMICODE_ROOT:-$HOME/harmoniqs/amicode}"
+EXT_PKG="$AMICODE_ROOT/packages/extension"
+
+# ── Pre-flight ─────────────────────────────────────────────────────────────────
+command -v node >/dev/null 2>&1 || { echo "ERROR: node not found. Install Node >= 20."; exit 1; }
+NODE_MAJOR=$(node -e 'console.log(process.versions.node.split(".")[0])')
+[ "$NODE_MAJOR" -ge 20 ] || { echo "ERROR: Node >= 20 required (found v$(node --version))."; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "ERROR: git not found."; exit 1; }
 
 # ── Session DB backup ──────────────────────────────────────────────────────────
 DBDIR="${XDG_DATA_HOME:-$HOME/.local/share}/opencode"
@@ -22,8 +37,9 @@ if ls "$DBDIR"/opencode*.db 1>/dev/null 2>&1; then
   MAX_BACKUPS=3
   BACKUP_COUNT=$(find "$DBDIR" -maxdepth 1 -name '.backup-*' -type d | wc -l | tr -d ' ')
   if [ "$BACKUP_COUNT" -gt "$MAX_BACKUPS" ]; then
-    find "$DBDIR" -maxdepth 1 -name '.backup-*' -type d -exec stat -f '%m %N' {} \; \
-      | sort -rn | tail -n +"$((MAX_BACKUPS + 1))" | awk '{print $2}' \
+    find "$DBDIR" -maxdepth 1 -name '.backup-*' -type d -print0 \
+      | xargs -0 ls -dt \
+      | tail -n +"$((MAX_BACKUPS + 1))" \
       | while read -r old; do
           rm -rf "$old"
           echo "==> Pruned old backup: $(basename "$old")"
@@ -33,73 +49,87 @@ else
   echo "==> No session DBs found to back up (first install?)"
 fi
 
-# ── Pull sources ───────────────────────────────────────────────────────────────
-echo ""
-echo "==> Pulling opencode (local/amicode)..."
-cd "$OPENCODE_ROOT"
-git fetch origin
-git checkout local/amicode
-git pull --rebase origin local/amicode
-
+# ── Pull amicode main (--ff-only) ─────────────────────────────────────────────
 echo ""
 echo "==> Pulling amicode (main)..."
 cd "$AMICODE_ROOT"
 git fetch origin
 git checkout main
-git pull --rebase origin main
+git pull --ff-only origin main
 
-# ── Build opencode binary ──────────────────────────────────────────────────────
+# ── Download fork binary from the pinned release ──────────────────────────────
 echo ""
-echo "==> Building opencode binary..."
-cd "$OPENCODE_ROOT/packages/opencode"
-bun run script/build.ts --single --skip-install
+echo "==> Downloading fork binary from pinned release..."
+cd "$EXT_PKG"
+node scripts/fetch_opencode.mjs --release
+echo "==> Binary downloaded and verified."
 
-# ── Build amicode extension ────────────────────────────────────────────────────
+# ── Install amicode dependencies ──────────────────────────────────────────────
+echo ""
+echo "==> Installing amicode dependencies..."
+cd "$AMICODE_ROOT"
+pnpm install
+
+# ── Build amicode extension ───────────────────────────────────────────────────
 echo ""
 echo "==> Building amicode extension..."
 cd "$AMICODE_ROOT"
-bun run build
+pnpm -r build
 
-# ── Build app bundle from the fork (#822: shelf serves the app dist) ───────────
+# ── Build app bundle (materializes from overlay — no fork checkout needed) ────
 echo ""
-echo "==> Building app bundle from fork tree..."
+echo "==> Building app bundle from overlay..."
 cd "$AMICODE_ROOT"
-pnpm --filter amicode run build:app -- --work "$OPENCODE_ROOT"
+pnpm --filter amicode run build:app
 
-# ── Codesign the built binary (macOS) ──────────────────────────────────────────
-BUILT="$OPENCODE_ROOT/packages/opencode/dist/opencode-darwin-arm64/bin/opencode"
-if [ -f "$BUILT" ]; then
-  codesign --sign - --force "$BUILT" 2>/dev/null || true
-  echo "==> Codesigned: $BUILT"
-  echo "    ($("$BUILT" --version 2>/dev/null || echo 'version unknown'))"
-else
-  echo "==> WARNING: built binary not found at $BUILT"
+# ── Deploy into installed extension (backup + atomic swap) ────────────────────
+INSTALLED_EXT="$(find "${VSCODE_EXT_DIR:-$HOME/.vscode/extensions}" -maxdepth 1 -name 'harmoniqs.amicode-*' -type d | sort -V | tail -1)"
+if [ -z "$INSTALLED_EXT" ]; then
+  # Try vscode-server (WSL/Remote-SSH) and Insiders
+  for candidate in "$HOME/.vscode-server/extensions" "$HOME/.vscode-insiders/extensions"; do
+    found="$(find "$candidate" -maxdepth 1 -name 'harmoniqs.amicode-*' -type d 2>/dev/null | sort -V | tail -1)"
+    [ -n "$found" ] && { INSTALLED_EXT="$found"; break; }
+  done
 fi
 
-# ── Copy built extension into the installed extension dir ──────────────────────
-INSTALLED_EXT="$(find "$HOME/.vscode/extensions" -maxdepth 1 -name 'harmoniqs.amicode-*' -type d | sort -V | tail -1)"
 if [ -n "$INSTALLED_EXT" ] && [ -d "$INSTALLED_EXT/dist" ]; then
-  BUILT_DIST="$AMICODE_ROOT/packages/extension/dist"
-  BACKUP_DIST="$INSTALLED_EXT/dist.marketplace-backup"
-  if [ ! -d "$BACKUP_DIST" ]; then
-    cp -R "$INSTALLED_EXT/dist" "$BACKUP_DIST"
-    echo "==> Backed up marketplace extension dist to $BACKUP_DIST"
+  BUILT_DIST="$EXT_PKG/dist"
+  PARENT_DIR="$(dirname "$INSTALLED_EXT")"
+  BACKUP_EXT="$PARENT_DIR/.amicode-backup-$(date +%Y%m%d-%H%M%S)"
+
+  # Back up the installed extension
+  cp -R "$INSTALLED_EXT" "$BACKUP_EXT"
+  echo "==> Backed up installed extension to $BACKUP_EXT"
+
+  # Prune excess extension backups (keep 3)
+  find "$PARENT_DIR" -maxdepth 1 -name '.amicode-backup-*' -type d -print0 \
+    | xargs -0 ls -dt 2>/dev/null \
+    | tail -n +4 \
+    | while read -r old; do rm -rf "$old"; done
+
+  # Atomic swap: rename old dist out, rename new dist in
+  OLD_DIST="$INSTALLED_EXT/dist.pre-swap"
+  mv "$INSTALLED_EXT/dist" "$OLD_DIST"
+  if cp -R "$BUILT_DIST" "$INSTALLED_EXT/dist"; then
+    rm -rf "$OLD_DIST"
+    echo "==> Deployed new dist to $INSTALLED_EXT/dist/"
+  else
+    # Rollback
+    mv "$OLD_DIST" "$INSTALLED_EXT/dist"
+    echo "==> ERROR: Deploy failed — rolled back to previous dist."
+    exit 1
   fi
-  copied=0
-  for f in "$BUILT_DIST"/*.js "$BUILT_DIST"/*.js.map; do
-    [ -f "$f" ] || continue
-    cp -f "$f" "$INSTALLED_EXT/dist/"
-    copied=$((copied + 1))
+
+  # Sync content directories + markdown + package.json
+  for dir in skills scores templates exemplars opencode-plugin julia tools; do
+    [ -d "$EXT_PKG/$dir" ] && cp -R "$EXT_PKG/$dir" "$INSTALLED_EXT/$dir"
   done
-  # Copy the app bundle dist (#822: shelf serves from dist/app/)
-  if [ -d "$BUILT_DIST/app" ]; then
-    rm -rf "$INSTALLED_EXT/dist/app"
-    cp -R "$BUILT_DIST/app" "$INSTALLED_EXT/dist/app"
-    echo "==> Copied app bundle dist to $INSTALLED_EXT/dist/app/"
-  fi
-  echo "==> Copied $copied file(s) to installed extension at $INSTALLED_EXT/dist/"
+  for f in AGENTS.md DISTILLER.md CONTRACT.md package.json; do
+    [ -f "$EXT_PKG/$f" ] && cp -f "$EXT_PKG/$f" "$INSTALLED_EXT/$f"
+  done
+  echo "==> Synced content dirs + package.json to installed extension"
 else
-  echo "==> WARNING: could not find installed amicode extension to copy into"
+  echo "==> WARNING: could not find installed amicode extension to deploy into"
 fi
 
 # ── Restore session DBs if they were zeroed ────────────────────────────────────
@@ -122,29 +152,5 @@ if [ -d "$BACKUP" ]; then
   fi
 fi
 
-# ── Re-apply VS Code settings to point at the dev build ────────────────────────
-VSCODE_SETTINGS="$HOME/Library/Application Support/Code/User/settings.json"
-if [ -f "$VSCODE_SETTINGS" ] && command -v python3 &>/dev/null; then
-  python3 -c "
-import json, sys
-path = sys.argv[1]
-with open(path) as f:
-    settings = json.load(f)
-settings['amicode.opencodeBinary'] = sys.argv[2]
-settings['amicode.devAssetRoot'] = sys.argv[3]
-settings['amicode.appBundleDir'] = sys.argv[3] + '/dist/app'
-with open(path, 'w') as f:
-    json.dump(settings, f, indent=2)
-    f.write('\n')
-" "$VSCODE_SETTINGS" "$BUILT" "$AMICODE_ROOT/packages/extension"
-  echo "==> VS Code settings updated: amicode.opencodeBinary + amicode.devAssetRoot"
-else
-  echo "==> WARNING: could not update VS Code settings automatically."
-  echo "   Set amicode.opencodeBinary to: $BUILT"
-  echo "   Set amicode.devAssetRoot to: $AMICODE_ROOT/packages/extension"
-fi
-
 echo ""
 echo "Done. Reload the VS Code window (Cmd+Shift+P → Developer: Reload Window) to pick up changes."
-echo ""
-echo "Tip: The in-app Developer Tools settings can do this for you — flip the toggle and click 'Rebuild Remotely'."
