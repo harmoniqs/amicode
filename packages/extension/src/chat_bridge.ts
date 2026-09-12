@@ -4,6 +4,8 @@ import * as os from "node:os";
 import * as fs from "node:fs";
 import { opencodeDataDir, opencodeConfigDir } from "./opencode_xdg";
 import { findForkedOpencodeBinary } from "./opencode_binary";
+import { rebuildFromMain, type ExecFn, type ExecResult } from "./rebuild/main_source_resolver";
+import { classifyError, type RebuildError } from "./rebuild_errors";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
@@ -550,8 +552,8 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
     return true;
   }
 
-  // Full rebuild: local builds whatever is on disk; main first checks out both
-  // repositories and proves the committed overlay represents the fork revision.
+   // Full rebuild: local builds whatever is on disk; main downloads the promoted
+   // fork binary from the GitHub Release pinned in opencode.lock.json (#1018).
   if (msg.kind === "dev-tools-rebuild") {
     const mode: RebuildMode = (msg as { mode?: string }).mode === "remote" ? "main" : "local";
     const opencodePath = typeof (msg as { opencodePath?: unknown }).opencodePath === "string"
@@ -561,10 +563,18 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
       ? (msg as unknown as { amicodePath: string }).amicodePath.trim().replace(/^~/, os.homedir())
       : "";
 
-    if (!opencodePath || !amicodePath) {
+    // Main mode needs only amicodePath; local mode needs both
+    if (mode === "local" && (!opencodePath || !amicodePath)) {
       io.postToWebview({
         source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
         state: "failed", error: "Both repo paths must be set",
+      });
+      return true;
+    }
+    if (mode === "main" && !amicodePath) {
+      io.postToWebview({
+        source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+        state: "failed", error: "Amicode repo path must be set",
       });
       return true;
     }
@@ -619,9 +629,42 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           // DB backup is best-effort
         }
 
-        // ── Git pull (main mode only) ──
-        // opencode: checkout local/amicode, amicode: checkout main
+        // ── Git pull + binary download (main mode) / fork build (local mode) ──
+        let resolvedBinary = "";
         if (mode === "main") {
+          // #1018: Main rebuild uses the promoted manifest — no fork clone needed.
+          // rebuildFromMain handles: dirty-tree check, platform detection, git pull
+          // (--ff-only), lock-file read, and binary download via fetchFromRelease.
+          const mainResult = await rebuildFromMain({
+            amicodePath,
+            onPhase: (phase, detail) => {
+              io.postToWebview({
+                source: "amicode", kind: "dev-tools-rebuild-status",
+                tab: (msg as { tab?: string }).tab, state: "rebuilding",
+                phase, detail,
+              });
+            },
+          });
+          if (!mainResult.ok) {
+            const classified = classifyError(mainResult.error ?? "Unknown error");
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status",
+              tab: (msg as { tab?: string }).tab, state: "failed",
+              error: classified.message,
+            });
+            return;
+          }
+          resolvedBinary = mainResult.binaryPath ?? "";
+
+          // Surface pending promotion info (display-only, non-blocking)
+          if (mainResult.pendingPromotion?.pending) {
+            console.log(
+              `[amicode/bridge] pending promotion: local/amicode HEAD ${mainResult.pendingPromotion.remoteHead?.slice(0, 12)} ` +
+              `is ahead of lock ref — run opencode:pin to update`,
+            );
+          }
+        } else {
+          // ── Local mode: fork checkout + bun build (unchanged) ──
           const checkoutOc = await run("git fetch origin && git checkout local/amicode && git pull --rebase origin local/amicode", opencodePath);
           if (!checkoutOc.ok) {
             io.postToWebview({
@@ -639,10 +682,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             return;
           }
 
-          // A main rebuild is allowed only when Amicode's committed tracking
-          // artifact exactly reproduces this checked-out fork revision. This
-          // runs before either dependency install or build and never writes a
-          // source tree; promotion is a separate reviewable operation.
+          // A local rebuild must prove the committed overlay matches the fork HEAD
           const verifyOverlay = await run(mainOverlayVerificationCommand(opencodePath), amicodePath);
           if (!verifyOverlay.ok) {
             io.postToWebview({
@@ -651,28 +691,34 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
             });
             return;
           }
-        }
 
-        // ── Install opencode dependencies ──
-        const installOc = await run("bun install", opencodePath);
-        if (!installOc.ok) {
-          io.postToWebview({
-            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-            state: "failed", error: `opencode install failed: ${installOc.error?.slice(0, 150)}`,
-          });
-          return;
-        }
+          // ── Install opencode dependencies ──
+          const installOc = await run("bun install", opencodePath);
+          if (!installOc.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `opencode install failed: ${installOc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
 
-        // ── Build opencode ──
-        // Pass buildEnv so OPENCODE_CHANNEL=dev is set — see note at `run()`.
-        const ocBuildDir = path.join(opencodePath, "packages", "opencode");
-        const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir, buildEnv);
-        if (!buildOc.ok) {
-          io.postToWebview({
-            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-            state: "failed", error: `opencode build failed: ${buildOc.error?.slice(0, 150)}`,
-          });
-          return;
+          // ── Build opencode ──
+          const ocBuildDir = path.join(opencodePath, "packages", "opencode");
+          const buildOc = await run("bun run script/build.ts --single --skip-install", ocBuildDir, buildEnv);
+          if (!buildOc.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `opencode build failed: ${buildOc.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+
+          // Resolve the built fork binary
+          const resolution = findForkedOpencodeBinary(opencodePath);
+          resolvedBinary = resolution.found ? resolution.path : "";
+          if (resolvedBinary) {
+            await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
+          }
         }
 
         // ── Install amicode dependencies ──
@@ -695,25 +741,19 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           return;
         }
 
-        // ── Build app bundle from the fork tree ──
-        // The binary and the app must come from the same source (#822).
-        const buildApp = await run(
-          appBundleBuildCommand(mode, opencodePath),
-          amicodePath,
-        );
+        // ── Build app bundle ──
+        // Main mode: materialize from overlay (no fork checkout needed).
+        // Local mode: use the fork worktree directly (#822).
+        const appBuildCmd = mode === "main"
+          ? "pnpm --filter amicode run build:app"  // materializes from overlay
+          : appBundleBuildCommand(mode, opencodePath);
+        const buildApp = await run(appBuildCmd, amicodePath);
         if (!buildApp.ok) {
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
             state: "failed", error: `app bundle build failed: ${buildApp.error?.slice(0, 150)}`,
           });
           return;
-        }
-
-        // ── Resolve and codesign the built binary ──
-        const resolution = findForkedOpencodeBinary(opencodePath);
-        const resolvedBinary = resolution.found ? resolution.path : "";
-        if (resolvedBinary) {
-          await run(`codesign --sign - --force "${resolvedBinary}"`, opencodePath).catch(() => {});
         }
 
         // ── Copy built extension into the installed extension dir ──
