@@ -15,6 +15,16 @@ export interface DevToolsStatus {
 
 export type RebuildState = "idle" | "rebuilding" | "rebuilt" | "failed"
 
+/** Structured rebuild error from the catalog (rebuild_errors.ts). */
+export interface RebuildErrorInfo {
+  /** One-line error message. */
+  message: string
+  /** Numbered fix steps. */
+  fix: string[]
+  /** Raw stderr / stack trace (collapsible). */
+  detail?: string
+}
+
 /** Default repo paths autofilled when the toggle is turned ON with empty fields. */
 const DEFAULT_OPENCODE_PATH = "~/harmoniqs/opencode"
 const DEFAULT_AMICODE_PATH = "~/harmoniqs/amicode"
@@ -24,7 +34,7 @@ export function createDeveloperToolsController() {
   const [status, setStatus] = createSignal<DevToolsStatus | undefined>(undefined)
   const [pending, setPending] = createSignal(false)
   const [rebuildState, setRebuildState] = createSignal<RebuildState>("idle")
-  const [rebuildError, setRebuildError] = createSignal<string | undefined>(undefined)
+  const [rebuildError, setRebuildError] = createSignal<RebuildErrorInfo | undefined>(undefined)
   const [vsixBuildState, setVsixBuildState] = createSignal<RebuildState>("idle")
   const [vsixBuildError, setVsixBuildError] = createSignal<string | undefined>(undefined)
   const [vsixPath, setVsixPath] = createSignal<string | undefined>(undefined)
@@ -50,7 +60,14 @@ export function createDeveloperToolsController() {
           if (rebuildState() === "rebuilding") {
             applyRebuildFlagMutation(rebuildFlagMutation("failed"))
             setRebuildState("failed")
-            setRebuildError("Rebuild timed out")
+            setRebuildError({
+              message: "Rebuild timed out",
+              fix: [
+                "Close the Settings dialog and check the 'Amicode — opencode' output channel.",
+                "Try the rebuild again.",
+                "If it keeps timing out, report the issue.",
+              ],
+            })
           }
         }, 300_000)
       } else if (didFinish) {
@@ -101,7 +118,20 @@ export function createDeveloperToolsController() {
       } else if (d.state === "failed") {
         applyRebuildFlagMutation(rebuildFlagMutation("failed"))
         setRebuildState("failed")
-        setRebuildError(d.error ?? "Unknown error")
+        // Accept structured errors (new) or flat strings (legacy bridge compat).
+        if (d.error && typeof d.error === "object" && typeof d.error.message === "string") {
+          setRebuildError({
+            message: d.error.message,
+            fix: Array.isArray(d.error.fix) ? d.error.fix : [],
+            detail: typeof d.error.detail === "string" ? d.error.detail : undefined,
+          })
+        } else {
+          setRebuildError({
+            message: typeof d.error === "string" ? d.error : "Unknown error",
+            fix: [],
+            detail: undefined,
+          })
+        }
       } else if (d.state === "done") {
         // The extension host confirmed the build finished — set the
         // "rebuilt" flag now (not at rebuild-start) so a dialog reopened

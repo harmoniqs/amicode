@@ -1,4 +1,4 @@
-import { Component, Match, Show, Switch } from "solid-js"
+import { Component, For, Match, Show, Switch, createSignal } from "solid-js"
 import { Switch as ToggleSwitch } from "@opencode-ai/ui/v2/switch-v2"
 import { TextInputV2 } from "@opencode-ai/ui/v2/text-input-v2"
 import { ButtonV2 } from "@opencode-ai/ui/v2/button-v2"
@@ -11,8 +11,8 @@ import {
   type DeveloperToolsController,
 } from "./developer-tools-controller"
 
-/** Status indicator shown below the section title during/after rebuilds. */
-const RebuildStatusIndicator: Component<{ controller: DeveloperToolsController }> = (props) => {
+/** Inline status dot shown next to the heading during/after rebuilds. */
+const RebuildStatusBadge: Component<{ controller: DeveloperToolsController }> = (props) => {
   const language = useLanguage()
   return (
     <Switch>
@@ -31,10 +31,43 @@ const RebuildStatusIndicator: Component<{ controller: DeveloperToolsController }
       <Match when={props.controller.rebuildState() === "failed"}>
         <div class="devtools-rebuild-status devtools-rebuild-status--failed">
           <span class="devtools-status-dot devtools-status-dot--red" />
-          <span>{props.controller.rebuildError() ?? "Build failed"}</span>
+          <span>Failed</span>
         </div>
       </Match>
     </Switch>
+  )
+}
+
+/** Block error panel shown below the rebuild buttons when a rebuild fails. */
+const RebuildErrorPanel: Component<{ controller: DeveloperToolsController }> = (props) => {
+  const [detailOpen, setDetailOpen] = createSignal(false)
+  const err = () => props.controller.rebuildError()
+
+  return (
+    <Show when={props.controller.rebuildState() === "failed" && err()}>
+      <div class="devtools-error-panel">
+        <div class="devtools-error-message">
+          <span class="devtools-status-dot devtools-status-dot--red" />
+          <span>{err()!.message}</span>
+        </div>
+        <Show when={err()!.fix.length > 0}>
+          <ol class="devtools-error-fix-steps">
+            <For each={err()!.fix}>{(step) => <li>{step}</li>}</For>
+          </ol>
+        </Show>
+        <Show when={err()!.detail}>
+          <button
+            class="devtools-error-detail-toggle"
+            onClick={() => setDetailOpen(!detailOpen())}
+          >
+            {detailOpen() ? "▾ Hide details" : "▸ Show details"}
+          </button>
+          <Show when={detailOpen()}>
+            <pre class="devtools-error-detail">{err()!.detail}</pre>
+          </Show>
+        </Show>
+      </div>
+    </Show>
   )
 }
 
@@ -76,6 +109,7 @@ const DeveloperToolsContent: Component<{ controller: DeveloperToolsController }>
             {language.t("settings.general.row.devTools.rebuildRemotely")}
           </ButtonV2>
         </div>
+        <RebuildErrorPanel controller={props.controller} />
       </Show>
       <Show when={props.controller.devcontainerMode()}>
         <div class="devtools-rebuild-row">
@@ -235,7 +269,7 @@ export const DeveloperToolsSection: Component = () => {
         <h3 class="settings-v2-section-title">
           {language.t("settings.general.section.developerTools")}
         </h3>
-        <RebuildStatusIndicator controller={controller} />
+        <RebuildStatusBadge controller={controller} />
       </div>
       <DeveloperToolsContent controller={controller} />
 
