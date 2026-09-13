@@ -22,6 +22,12 @@ install -m 0755 "$SRC/hunt.sh"                  "$DEST/hunt.sh"
 install -m 0755 "$SRC/skill-freshness/run-skill-freshness.sh" "$DEST/skill-freshness/run-skill-freshness.sh"
 install -m 0755 "$SRC/role-parity/run-role-parity-check.sh"   "$DEST/role-parity/run-role-parity-check.sh"
 
+# Plant the Slack CLI (packages/amico-run/launcher/amico-slack) into ~/.local/bin —
+# it is NOT a repo-external dependency: hub migrations lose the planted copy
+# (#753), so the deploy step re-plants it from the checkout every run.
+mkdir -p "$HOME/.local/bin"
+install -m 0755 "$SRC/../packages/amico-run/launcher/amico-slack" "$HOME/.local/bin/amico-slack"
+
 echo "deployed to $DEST:"
 echo "  fleet-status.sh   (launchd co.harmoniqs.fleet-status, every 5 min)"
 echo "  fleet-alert.sh    (launchd co.harmoniqs.fleet-alert, every 15 min)"
