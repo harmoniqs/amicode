@@ -228,5 +228,11 @@ export function classifyError(raw: string): RebuildError {
   if (raw.includes("git pull") || raw.includes("git fetch")) return GIT_PULL_FAILED(raw);
   if (raw.includes("pnpm install")) return PNPM_INSTALL_FAILED(raw);
   if (raw.includes("bun install") || raw.includes("bun run")) return EXTENSION_BUILD_FAILED(raw);
+  // Lock file errors (#1018) — wire the defined templates into the classifier
+  if (raw.includes("opencode.lock.json not found")) {
+    const lockPath = raw.match(/not found at (.+?)\./)?.[1] ?? "unknown";
+    return LOCK_FILE_MISSING(lockPath);
+  }
+  if (raw.includes("opencode.lock.json")) return LOCK_FILE_MALFORMED(raw);
   return UNKNOWN_ERROR(raw);
 }

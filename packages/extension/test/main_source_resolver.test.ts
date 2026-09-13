@@ -10,7 +10,8 @@ function tmpRoot(): string {
 }
 
 function writeLock(root: string, lock: unknown): void {
-  writeFileSync(join(root, "opencode.lock.json"), JSON.stringify(lock));
+  mkdirSync(join(root, "packages", "extension"), { recursive: true });
+  writeFileSync(join(root, "packages", "extension", "opencode.lock.json"), JSON.stringify(lock));
 }
 
 const VALID_LOCK = {
@@ -97,7 +98,8 @@ describe("main_source_resolver", () => {
       const { readLockFile } = await importModule();
       const root = tmpRoot();
       cleanup.push(root);
-      writeFileSync(join(root, "opencode.lock.json"), "not json{");
+      mkdirSync(join(root, "packages", "extension"), { recursive: true });
+      writeFileSync(join(root, "packages", "extension", "opencode.lock.json"), "not json{");
 
       expect(() => readLockFile(root)).toThrow();
     });

@@ -59,7 +59,7 @@ export class LockFileError extends Error {
  * and at least one platform entry.
  */
 export function readLockFile(amicodePath: string): LockFile {
-  const lockPath = join(amicodePath, "opencode.lock.json");
+  const lockPath = join(amicodePath, "packages", "extension", "opencode.lock.json");
   if (!existsSync(lockPath)) {
     throw new LockFileError(
       `opencode.lock.json not found at ${lockPath}. ` +

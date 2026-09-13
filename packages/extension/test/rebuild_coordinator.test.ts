@@ -21,8 +21,9 @@ function tmpRoot(): string {
 }
 
 function writeLock(root: string): void {
+  mkdirSync(join(root, "packages", "extension"), { recursive: true });
   writeFileSync(
-    join(root, "opencode.lock.json"),
+    join(root, "packages", "extension", "opencode.lock.json"),
     JSON.stringify({
       version: "1.18.29",
       source: "release",
