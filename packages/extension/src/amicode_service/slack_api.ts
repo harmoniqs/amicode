@@ -248,7 +248,7 @@ function formatTimestamp(ts: string): string {
 export async function formatMessages(
   messages: Array<Record<string, unknown>>,
   userCache: UserCache,
-  fetchImpl?: FetchImpl,
+  _fetchImpl?: FetchImpl,
 ): Promise<string> {
   const lines: string[] = []
   for (const msg of messages) {
