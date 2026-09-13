@@ -369,20 +369,156 @@ function readFleetStatus(statusPath?: string): FleetStatusSummary | undefined {
   };
 }
 
+/** Fleet posture state, written by the EXTENSION on attach-state transitions
+ *  (#780). This plugin is a READ-ONLY consumer — no network probes, file
+ *  reads only. Schema lives in src/fleet_attach_state.ts (single writer);
+ *  this strict reader must stay in sync with it. */
+function fleetAttachStateFile(override?: string): string {
+  if (override) return override;
+  const env = process.env.AMICO_FLEET_ATTACH_STATE;
+  if (env && env.trim() !== "") return env.trim();
+  return path.join(os.homedir(), ".amico", "ops", "fleet", "attach-state.json");
+}
+
+/** Stale beyond this → posture claims degrade to timestamped history, never
+ *  current-tense. Kept in step with the issue's suggested 10 min. */
+const ATTACH_STATE_TTL_MS = 10 * 60_000;
+
+interface FleetAttachState {
+  hostname: string;
+  mode: "fleet" | "standalone" | "degraded";
+  hubName?: string;
+  hubBaseUrl?: string;
+  reachable: boolean;
+  lastOkAt?: string;
+  lastRttMs?: number;
+  since: string;
+  updatedAt: string;
+}
+
+type AttachStateRead =
+  | { state: FleetAttachState; fresh: boolean }
+  | { corrupt: true }
+  | undefined;
+
+function readAttachState(override?: string): AttachStateRead {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(fs.readFileSync(fleetAttachStateFile(override), "utf8"));
+  } catch {
+    return undefined; // missing file — the honest fallback is the role line
+  }
+  if (typeof raw !== "object" || raw === null) return { corrupt: true };
+  const o = raw as Record<string, unknown>;
+  const mode = o.mode;
+  if (mode !== "fleet" && mode !== "standalone" && mode !== "degraded") return { corrupt: true };
+  if (typeof o.hostname !== "string" || o.hostname === "") return { corrupt: true };
+  if (typeof o.reachable !== "boolean") return { corrupt: true };
+  if (typeof o.updatedAt !== "string" || Number.isNaN(Date.parse(o.updatedAt))) return { corrupt: true };
+  const updatedAt = o.updatedAt;
+  const state: FleetAttachState = {
+    hostname: o.hostname,
+    mode,
+    hubName: typeof o.hubName === "string" ? o.hubName : undefined,
+    hubBaseUrl: typeof o.hubBaseUrl === "string" ? o.hubBaseUrl : undefined,
+    reachable: o.reachable,
+    lastOkAt: typeof o.lastOkAt === "string" ? o.lastOkAt : undefined,
+    lastRttMs: typeof o.lastRttMs === "number" ? o.lastRttMs : undefined,
+    since: typeof o.since === "string" && !Number.isNaN(Date.parse(o.since)) ? o.since : updatedAt,
+    updatedAt,
+  };
+  return { state, fresh: Date.now() - Date.parse(updatedAt) <= ATTACH_STATE_TTL_MS };
+}
+
+function ageMinOf(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return undefined;
+  return Math.max(0, Math.round((Date.now() - t) / 60000));
+}
+
+function ageStr(min: number): string {
+  if (min < 60) return `${min} min`;
+  if (min < 60 * 48) return `${Math.round(min / 60)} h`;
+  return `${Math.round(min / 1440)} d`;
+}
+
+/** Posture lines appended to the fleet section. Every claim is timestamped or
+ *  explicitly unknown (constraint: never render "healthy" from stale data). */
+function buildPostureLines(read: AttachStateRead): string[] {
+  if (!read) return [];
+  if ("corrupt" in read) {
+    return [
+      "- ⚠ Machine posture unknown: `attach-state.json` is corrupt/unreadable — treat any attached-to-hub claim as unverified.",
+    ];
+  }
+  const { state, fresh } = read;
+  const hub =
+    [state.hubName, state.hubBaseUrl ? `\`${state.hubBaseUrl}\`` : ""].filter(Boolean).join(" ") ||
+    "(hub unspecified)";
+  if (!fresh) {
+    const updAge = ageMinOf(state.updatedAt);
+    const lastVerified =
+      state.mode === "fleet"
+        ? `hub ${hub} reachable as of ${ageStr(updAge ?? 0)} ago`
+        : state.mode === "degraded"
+          ? `hub ${hub} UNREACHABLE since ${ageStr(ageMinOf(state.since) ?? 0)} ago` +
+            (state.lastOkAt ? ` (last ok ${ageStr(ageMinOf(state.lastOkAt) ?? 0)} ago)` : "")
+          : `standalone since ${ageStr(ageMinOf(state.since) ?? 0)} ago`;
+    return [
+      `- ⚠ Machine posture is STALE (updated ${ageStr(updAge ?? 0)} ago, beyond the ${Math.round(ATTACH_STATE_TTL_MS / 60000)} min TTL) — current reachability UNKNOWN; the extension may not be running.`,
+      `- Last verified: ${lastVerified}.`,
+    ];
+  }
+  const updAge = ageMinOf(state.updatedAt) ?? 0;
+  if (state.mode === "fleet") {
+    const rtt = state.lastRttMs !== undefined ? `, RTT ${state.lastRttMs} ms` : "";
+    return [
+      `- Posture: machine **${state.hostname}** attached to hub ${hub} — reachable ✓ — last ok ${ageStr(ageMinOf(state.lastOkAt) ?? updAge)} ago${rtt}, updated ${ageStr(updAge)} ago.`,
+    ];
+  }
+  if (state.mode === "degraded") {
+    const lastOk = state.lastOkAt ? `; last ok ${ageStr(ageMinOf(state.lastOkAt) ?? 0)} ago` : "";
+    return [
+      `- Posture: machine **${state.hostname}** — hub ${hub} UNREACHABLE since ${ageStr(ageMinOf(state.since) ?? 0)} ago — degraded${lastOk}. Do not treat the hub as up.`,
+    ];
+  }
+  return [
+    `- Posture: machine **${state.hostname}** — STANDALONE (no hub), went standalone ${ageStr(ageMinOf(state.since) ?? 0)} ago — sessions run locally; do not treat this machine as fleet-attached.`,
+  ];
+}
+
 /** Lean fleet line + on-demand pointers (the reader's choice: detail loads
  *  from fleet-status.json / the fleet skill only when relevant). Absent
- *  fleet.json (standalone or no fleet tooling) → "" — nothing to say. */
-function buildFleetSection(opts: { configPath?: string; statusPath?: string } = {}): string {
+ *  fleet.json (standalone or no fleet tooling) → "" — nothing to say, unless
+ *  a posture state file exists (#780: a standalone machine says so
+ *  explicitly even with no role config). */
+function buildFleetSection(opts: { configPath?: string; statusPath?: string; statePath?: string } = {}): string {
   const role = readFleetRole(opts.configPath);
-  if (role === null) return "";
+  const posture = readAttachState(opts.statePath);
+  if (role === null && !posture) return "";
 
-  const roleText =
-    role === "server"
-      ? "**server** — this machine is the canonical Amicode server"
-      : role === "client"
-        ? "**client** — rides the tunnel to the canonical server"
-        : `**${role}**`;
-  const lines = [`## Fleet (live)`, `Role: ${roleText} (\`~/.amico/ops/fleet/fleet.json\`).`];
+  // Live truth wins: a fresh attach-state saying standalone overrides a stale
+  // "client" role line — never render a machine as attached when it is not.
+  let roleText: string | null;
+  if (posture && "state" in posture && posture.fresh && posture.state.mode === "standalone") {
+    roleText =
+      `**standalone** — NOT fleet-attached (attach-state.json overrides` +
+      (role ? ` fleet.json's "${role}" role line)` : " absent fleet.json)");
+  } else if (role !== null) {
+    roleText =
+      role === "server"
+        ? "**server** — this machine is the canonical Amicode server"
+        : role === "client"
+          ? "**client** — rides the tunnel to the canonical server"
+          : `**${role}**`;
+  } else {
+    roleText = null;
+  }
+
+  const lines = [`## Fleet (live)`];
+  if (roleText !== null) lines.push(`Role: ${roleText} (\`~/.amico/ops/fleet/fleet.json\`).`);
+  lines.push(...buildPostureLines(posture));
 
   const status = readFleetStatus(opts.statusPath);
   if (status) {
