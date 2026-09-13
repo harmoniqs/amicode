@@ -106,7 +106,7 @@ lint is TS run directly under node):
 |---|---|---|---|
 | `public` | `packages/extension/skills` (repo checkout) | `--structural-only` | 20 |
 | `internal` | `~/.amico/vaults/armonissima/skills` | full (package cross-check) | 50 |
-| `staging` | `~/.amico/server/opencode-project-staging/opencode-project/skills` | full (package cross-check) | 45 |
+| `staging` | `~/.amico/server/opencode-project-staging/opencode-project/skills` | full (package cross-check) | 46 |
 
 Every real run appends ONE JSON line to the upgrade-receipts journal
 (`~/.amico/server/upgrade-receipts/upgrade-receipts.jsonl`,
