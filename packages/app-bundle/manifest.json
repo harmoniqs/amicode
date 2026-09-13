@@ -4,7 +4,7 @@
   "fork_ref": "local/amicode",
   "fork_tag": "v1.18.29-amicode.30-11-g0667bccd6d",
   "fork_sha": "2c3da73281aaf80290a461d02279bb90859659a0",
-  "upstream_base": "7fe993879f98",
+  "upstream_base": "7fe993879f98aa17cecc70f70d3f40d6f0f11689",
   "upstream_base_sha": "7fe993879f98aa17cecc70f70d3f40d6f0f11689",
   "promoted_at": "2026-09-12T16:29:45.041Z",
   "files": {
