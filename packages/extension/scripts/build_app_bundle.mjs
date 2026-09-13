@@ -36,7 +36,7 @@
 // app-shelf-boot-proof CI lane runs the env-gated probe, which skips with the
 // reason printed until a dist is built there.
 import { spawnSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -205,9 +205,43 @@ if (verifiedMain) {
   );
 }
 
+// ── overlay staleness check: re-materialize when the overlay has changed ─────
+// The manifest's fork_sha + promoted_at identify the overlay version. A stamp
+// file inside .materialized records what was last materialized. When they
+// differ, the cached tree is stale — wipe it and re-materialize, otherwise the
+// build silently ships an old bundle (the startsWith-undefined-title trap,
+// 2026-09-13). The --direct-worktree and --verified-main modes skip this:
+// they manage their own trees.
+const OVERLAY_STAMP = join(work, ".overlay-stamp");
+const overlayVersion = (() => {
+  try {
+    const m = JSON.parse(readFileSync(join(BUNDLE_PKG, "manifest.json"), "utf8"));
+    return `${m.fork_sha ?? ""}:${m.promoted_at ?? ""}`;
+  } catch { return null; }
+})();
+const cachedVersion = (() => {
+  try { return readFileSync(OVERLAY_STAMP, "utf8").trim(); }
+  catch { return null; }
+})();
+const cacheExists = existsSync(join(work, "package.json"));
+const cacheStale = cacheExists && overlayVersion && cachedVersion !== overlayVersion;
+
+if (cacheStale && !directWorktree && !verifiedMain) {
+  console.log(`[build:app] overlay changed (manifest fork_sha differs from cached stamp) — clearing stale .materialized`);
+  console.log(`[build:app]   cached:  ${cachedVersion ?? "(none)"}`);
+  console.log(`[build:app]   current: ${overlayVersion}`);
+  rmSync(work, { recursive: true, force: true });
+}
+
 if (!existsSync(join(work, "package.json"))) {
   if (directWorktree || verifiedMain) fail(`${directWorktree ? "--direct-worktree" : "--verified-main"} requires an existing --work tree`);
   run("node", [join(BUNDLE_PKG, "scripts", "materialize.mjs"), "--out", work], REPO_ROOT, "materialize (canonical base + overlay)");
+  // Stamp the materialized tree so the next build can detect staleness.
+  if (overlayVersion) writeFileSync(OVERLAY_STAMP, overlayVersion + "\n");
+} else if (cacheExists && !cachedVersion && overlayVersion) {
+  // Backfill stamp for trees materialized before this check existed.
+  writeFileSync(OVERLAY_STAMP, overlayVersion + "\n");
+  console.log("[build:app] backfilled .overlay-stamp for existing .materialized tree");
 }
 if (!existsSync(join(work, "packages", "app")))
   fail(`${work} has no packages/app — not a materialized app tree (pass --work to point at one)`);
