@@ -24,7 +24,16 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+// When bundled as CJS by esbuild, import.meta.url is undefined and
+// fileURLToPath throws.  Guard so the module initialises; callers from the
+// bundle always pass an explicit `root` so the fallback is never used for
+// real manifest reads — only for the gh-download temp dir.
+let PKG_ROOT;
+try {
+  PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+} catch {
+  PKG_ROOT = process.cwd();
+}
 
 export function loadManifest(root = PKG_ROOT) {
   const m = JSON.parse(readFileSync(join(root, "opencode.lock.json"), "utf8"));
