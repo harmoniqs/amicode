@@ -19,8 +19,9 @@ reparents to `launchd`/init when the extension host tears down. `deactivate()` *
 kills it** — it detaches (disposes the SSE client and log-tail, stops the keepalive) and
 leaves the process running. The next activation reads a **Server handshake** record and,
 if an adoption gate passes, **adopts** the live server instead of spawning a new one. A
-detached server self-exits only when a **grace window** elapses with no re-adoption **and**
-no **active-work pin** (zero in-flight agent turns) — the one foundational change to the
+detached server self-exits only when a **grace window** (default 30 s, configurable via
+`amicode.server.graceSeconds`) elapses with no re-adoption **and** no **active-work pin**
+(zero in-flight agent turns) — the one foundational change to the
 vendored engine: a self-shutdown timer driven by an authenticated `/keepalive` the extension
 pings while alive.
 
@@ -42,8 +43,10 @@ with* — the engine binary **or** the `buildOpencodeConfigContent` output (stag
 instructions, MCP) — only applies on a deliberate restart; a rebuilt binary cannot run inside
 an already-running turn, and pretending otherwise would be a lie. Adoption detects this via a
 `binaryHash`/`configHash` mismatch and surfaces a non-blocking **stale-engine** notice with a
-**Restart engine** action, which is the single deliberate turn-killer and is gated (it warns
-when in-flight turns exist before stopping and cold-spawning on the new build). This is
+**Restart engine** action that is gated — it warns when in-flight turns exist before stopping
+and cold-spawning on the new build. **Restart** and an explicit **Stop** are the two
+*deliberate* kills (Restart swaps the build; Stop shuts the server down); both warn when turns
+are in flight, and the grace-window self-exit is the only *non-deliberate* stop. This is
 standalone `Server mode` only; fleet `server`/`client` keep the Canonical Server unchanged.
 
 **The handshake and its at-rest secret (this amends ADR 0002).** Adoption needs the
@@ -54,11 +57,12 @@ password, `binaryHash`, `configHash`, `protocolVersion`), rotated on every cold 
 reused only on adopt. This is a real amendment to ADR 0002's threat model, mitigated exactly
 as ADR 0005's Fleet token is (loopback-only binding, `0600`, rotation on genuine spawn).
 Adoption is refused unless four checks all pass — health `200`, PID alive, password
-challenge, protocol compatible — so a foreign or dead process on port `43117` is never
-adopted (and never killed — it is not ours; we surface an actionable error instead). The
-keepalive is a machine-wide liveness signal refreshed by any live window, so closing one
-window while another is open keeps the server pinned; one server per machine on the fixed
-port, consistent with the Canonical Server's "only one" invariant scoped to standalone.
+challenge, and protocol compatible (exact `protocolVersion` match) — so a foreign or dead
+process on port `43117` is never adopted (and never killed — it is not ours; we surface an
+actionable error instead). The keepalive is a machine-wide liveness signal refreshed by any
+live window, so closing one window while another is open keeps the server alive; one server
+per machine on the fixed port, consistent with the Canonical Server's "only one" invariant
+scoped to standalone.
 
 **Alternatives considered.** *Promote the standalone server to a launchd service* like the
 Canonical Server — rejected: it over-serves a survive-a-reload requirement with a
@@ -89,10 +93,12 @@ reads as continuing rather than lost.
 now persisted at rest for adoption). Relates to **ADR 0005** (Managed Fleet — this is the
 standalone sibling of the headless Canonical Server, a detached child rather than a launchd
 service, single-machine rather than fleet; ADR 0005 explicitly rejected an editor-owned
-canonical server, and this design keeps the two distinct). Extends **ADR 0018** (Rebuild
-button semantics — the reload a Rebuild triggers becomes non-fatal, the stale-engine restart
-UX is added, and `build:binary` is skipped when the overlay tree is unchanged so an
-extension-only rebuild neither slows down nor spuriously flips the engine hash).
+canonical server, and this design keeps the two distinct). Relates to **ADR 0018** (Rebuild
+button semantics): the Rebuild handler's build-then-reload flow (in the chat bridge) is
+unchanged, but this ADR adds a property 0018 never addressed — the reload it triggers is now
+non-fatal to the server — plus the stale-engine restart UX, and skips `build:binary` when the
+overlay tree is unchanged so an extension-only rebuild neither slows down nor spuriously flips
+the engine hash.
 
 **Flip condition.** Revisit toward a launchd-managed standalone service if "survive across a
 full OS reboot / no editor ever open" becomes a standalone requirement (today that is the
