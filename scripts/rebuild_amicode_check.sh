@@ -106,7 +106,7 @@ fi
 if [ -f "$UNIFIED" ]; then
   tmp="$(mktemp -d)"
   (
-    cd "$tmp"
+    cd "$tmp" || exit 1
     git init -q
     git config user.email t@t; git config user.name t
     echo a > a.txt; git add a.txt; git commit -qm init

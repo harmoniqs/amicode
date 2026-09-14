@@ -247,9 +247,12 @@ backup_session_dbs() {
 
 prune_backups() {
   # Keep the 3 most recent, selected by the embedded timestamp in the name.
-  local keep=3 entries
+  local keep=3 entries=()
   # List only our script-owned prefix; sort by the sortable name suffix.
-  mapfile -t entries < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "${BACKUP_PREFIX}*" -exec basename {} \; 2>/dev/null | sort)
+  # (while-read, not `mapfile`: macOS ships bash 3.2, which has no mapfile.)
+  local _line
+  while IFS= read -r _line; do entries+=("$_line"); done \
+    < <(find "$BACKUP_ROOT" -maxdepth 1 -type d -name "${BACKUP_PREFIX}*" -exec basename {} \; 2>/dev/null | sort)
   local count=${#entries[@]}
   [ "$count" -le "$keep" ] && return 0
   local drop=$((count - keep)) i
@@ -481,7 +484,10 @@ deploy_into_installed_ext() {
   backup_ext="$parent/.amicode-backup-$TS"
   cp -R "$ext" "$backup_ext" && echo "==> Backed up installed extension to $backup_ext"
   # Prune extension backups (keep 3), by name.
-  mapfile -t ext_backups < <(find "$parent" -maxdepth 1 -type d -name '.amicode-backup-*' -exec basename {} \; 2>/dev/null | sort)
+  # (while-read, not `mapfile`: macOS ships bash 3.2, which has no mapfile.)
+  local ext_backups=() _eb
+  while IFS= read -r _eb; do ext_backups+=("$_eb"); done \
+    < <(find "$parent" -maxdepth 1 -type d -name '.amicode-backup-*' -exec basename {} \; 2>/dev/null | sort)
   if [ "${#ext_backups[@]}" -gt 3 ]; then
     local drop=$(( ${#ext_backups[@]} - 3 )) i
     for ((i = 0; i < drop; i++)); do
