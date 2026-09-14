@@ -87,9 +87,10 @@ else
 fi
 
 # The #823 bootstrap seam's engine side: the ?auth_token= carrier the framed
-# path authenticates credential-less GETs with (fork AND stock middleware
-# both name AUTH_TOKEN_QUERY = "auth_token"). `if`, not a bare grep: under
-# `set -e` a non-matching grep in an AND-list aborts silently.
+# path authenticates credential-less GETs with (the overlay-built engine's
+# stock authorization middleware names AUTH_TOKEN_QUERY = "auth_token"). `if`,
+# not a bare grep: under `set -e` a non-matching grep in an AND-list aborts
+# silently.
 if grep -aq "auth_token" "$BIN"; then
   echo "OK: engine carries the ?auth_token= carrier (the #823 framed bootstrap seam)"
 else

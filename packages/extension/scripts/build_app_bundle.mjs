@@ -206,7 +206,7 @@ if (verifiedMain) {
 }
 
 // ── overlay staleness check: re-materialize when the overlay has changed ─────
-// The manifest's fork_sha + promoted_at identify the overlay version. A stamp
+// The manifest's overlay_sha + promoted_at identify the overlay version. A stamp
 // file inside .materialized records what was last materialized. When they
 // differ, the cached tree is stale — wipe it and re-materialize, otherwise the
 // build silently ships an old bundle (the startsWith-undefined-title trap,
@@ -216,7 +216,7 @@ const OVERLAY_STAMP = join(work, ".overlay-stamp");
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(join(BUNDLE_PKG, "manifest.json"), "utf8"));
-    return `${m.fork_sha ?? ""}:${m.promoted_at ?? ""}`;
+    return `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
   } catch { return null; }
 })();
 const cachedVersion = (() => {
@@ -227,7 +227,7 @@ const cacheExists = existsSync(join(work, "package.json"));
 const cacheStale = cacheExists && overlayVersion && cachedVersion !== overlayVersion;
 
 if (cacheStale && !directWorktree && !verifiedMain) {
-  console.log(`[build:app] overlay changed (manifest fork_sha differs from cached stamp) — clearing stale .materialized`);
+  console.log(`[build:app] overlay changed (manifest overlay_sha differs from cached stamp) — clearing stale .materialized`);
   console.log(`[build:app]   cached:  ${cachedVersion ?? "(none)"}`);
   console.log(`[build:app]   current: ${overlayVersion}`);
   rmSync(work, { recursive: true, force: true });

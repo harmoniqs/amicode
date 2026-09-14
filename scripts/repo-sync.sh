@@ -68,7 +68,7 @@ fi
 
 # 2b. overlay health: the app-bundle manifest must exist
 if [[ -f "$ROOT/packages/app-bundle/manifest.json" ]]; then
-  OVERLAY_VER="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT/packages/app-bundle/manifest.json','utf8')).fork_sha || 'unknown'" 2>/dev/null || echo "unknown")"
+  OVERLAY_VER="$(node -p "JSON.parse(require('fs').readFileSync('$ROOT/packages/app-bundle/manifest.json','utf8')).overlay_sha || 'unknown'" 2>/dev/null || echo "unknown")"
   ok "overlay manifest present (base sha ${OVERLAY_VER:0:12})"
 else
   fail "overlay manifest missing (packages/app-bundle/manifest.json) — run pnpm --filter @amicode/app-bundle sync:apply"

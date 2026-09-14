@@ -8,7 +8,7 @@
 //
 // Recomputes: files (hashes), classification (A/M vs upstream base),
 // per_package counts, counts, deletions (dropped when stale upstream).
-// Preserves: schema, slices, scope, fork_tag/fork_sha (extraction origin).
+// Preserves: schema, slices, scope, overlay_tag/overlay_sha (extraction origin).
 // Bumps: extracted_at.
 import { createHash } from "node:crypto";
 import { readlinkSync } from "node:fs";

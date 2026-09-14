@@ -12,7 +12,6 @@
  * Auto-provisionable:
  * - pnpm: corepack enable → corepack prepare, fallback to npm exec
  * - bun: curl -fsSL https://bun.sh/install | bash (local mode only)
- * - fork clone: gh repo clone harmoniqs/opencode (local mode only)
  */
 
 import type { ExecResult } from "./exec_types";

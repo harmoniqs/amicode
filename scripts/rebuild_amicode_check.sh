@@ -227,11 +227,11 @@ fi
 # ── AC9: real --mode local --yes build → binary + .source == overlay <sha> ──
 if [ "${RUN_FULL_BUILD:-0}" = "1" ]; then
   key="$(node -e 'process.stdout.write(process.platform+"-"+process.arch)')"
-  fork_sha="$(node -e 'process.stdout.write((require("'"$REPO_ROOT"'/packages/app-bundle/manifest.json").fork_sha)||"")')"
+  overlay_sha="$(node -e 'process.stdout.write((require("'"$REPO_ROOT"'/packages/app-bundle/manifest.json").overlay_sha)||"")')"
   bash "$SHIM_LOCAL" --yes; brc=$?
   bin="$REPO_ROOT/packages/extension/vendor/opencode/$key/opencode"
   src="$REPO_ROOT/packages/extension/vendor/opencode/$key/.source"
-  if [ "$brc" -eq 0 ] && [ -x "$bin" ] && [ "$(cat "$src" 2>/dev/null)" = "overlay $fork_sha" ]; then
+  if [ "$brc" -eq 0 ] && [ -x "$bin" ] && [ "$(cat "$src" 2>/dev/null)" = "overlay $overlay_sha" ]; then
     pass "AC9 real local build produced binary + .source"
   else
     fail "AC9 real local build" "rc=$brc bin=$bin exists=$([ -x "$bin" ] && echo y || echo n) source='$(cat "$src" 2>/dev/null)'"

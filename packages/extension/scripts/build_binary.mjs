@@ -85,7 +85,7 @@ const manifestPath = join(BUNDLE_PKG, "manifest.json");
 let manifestSha = "unknown";
 if (existsSync(manifestPath)) {
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  manifestSha = manifest.fork_sha ?? "unknown";
+  manifestSha = manifest.overlay_sha ?? "unknown";
 } else {
   console.warn("[build:binary] WARNING: no app-bundle manifest.json — provenance will say 'unknown'");
 }
@@ -98,7 +98,7 @@ const OVERLAY_STAMP = join(work, ".overlay-stamp");
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(manifestPath, "utf8"));
-    return `${m.fork_sha ?? ""}:${m.promoted_at ?? ""}`;
+    return `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
   } catch { return null; }
 })();
 const cachedVersion = (() => {
@@ -109,7 +109,7 @@ const cacheExists = existsSync(join(work, "package.json"));
 const cacheStale = cacheExists && overlayVersion && cachedVersion !== overlayVersion;
 
 if (cacheStale) {
-  console.log("[build:binary] overlay changed (manifest fork_sha differs from cached stamp) — clearing stale .materialized");
+  console.log("[build:binary] overlay changed (manifest overlay_sha differs from cached stamp) — clearing stale .materialized");
   console.log(`[build:binary]   cached:  ${cachedVersion ?? "(none)"}`);
   console.log(`[build:binary]   current: ${overlayVersion}`);
   rmSync(work, { recursive: true, force: true });

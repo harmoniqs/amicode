@@ -58,18 +58,11 @@ export function resolvePlatform(_manifest, flag) {
   return key;
 }
 
-/** Release coordinates: upstream anomalyco/opencode at v<version>.
- *  AMICODE_RELEASE_TAG / AMICODE_RELEASE_REPO override the pinned tag/repo —
- *  used by release.yml on a clean tag. */
+/** Release coordinates: upstream anomalyco/opencode at v<version>. */
 export function releaseCoords(manifest) {
-  const repo = process.env.AMICODE_RELEASE_REPO || "anomalyco/opencode";
-  const tag = process.env.AMICODE_RELEASE_TAG || `v${manifest.version}`;
-  return {
-    repo,
-    tag,
-    isFork: !!process.env.AMICODE_RELEASE_TAG,
-    get private() { return this.isFork; },
-  };
+  const repo = "anomalyco/opencode";
+  const tag = `v${manifest.version}`;
+  return { repo, tag };
 }
 
 export function assetUrl(manifest, platform) {
@@ -132,136 +125,19 @@ async function defaultDownload(url) {
   return Buffer.from(await r.arrayBuffer());
 }
 
-/** Private-release download via the gh CLI. */
-function ghDownload(repo, tag, asset) {
-  const work = mkdtempSync(join(PKG_ROOT, ".ghdl-"));
-  try {
-    execFileSync("gh", ["release", "download", tag, "--repo", repo, "--pattern", asset, "--dir", work], {
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-    return readFileSync(join(work, asset));
-  } catch (e) {
-    throw new Error(
-      `gh release download failed for ${repo}@${tag} ${asset}: ${e.message} — is \`gh\` installed and authed for ${repo}?`,
-    );
-  } finally {
-    rmSync(work, { recursive: true, force: true });
-  }
-}
-
-/** Channel assertion (fail-closed backstop). */
-export async function assertReleaseChannel(coords, channel, api = ghApi) {
-  const BADGE = channel === "beta" ? "BETA" : "DEV";
-  let body;
-  try {
-    body = api(coords.repo, `releases/tags/${coords.tag}`, ".body");
-  } catch (e) {
-    throw new Error(
-      `cannot read release notes for ${coords.repo}@${coords.tag}: ${e.message} — is \`gh\` installed and authed for ${coords.repo}?`,
-    );
-  }
-  const m = body.match(/OPENCODE_CHANNEL=(\S+)/);
-  if (!m || m[1] !== channel)
-    throw new Error(
-      `release ${coords.tag} was NOT built with OPENCODE_CHANNEL=${channel} (body says ${m ? m[1] : "nothing"}) — refusing to vendor it into a promoted release`,
-    );
-  if (!body.includes(`Badge: ${BADGE}`))
-    throw new Error(`release ${coords.tag} does not declare Badge: ${BADGE} — refusing to vendor it into a promoted release`);
-}
-
-function ghApi(repo, path, jq) {
-  return execFileSync("gh", ["api", `repos/${repo}/${path}`, "--jq", jq], { encoding: "utf8" });
-}
-
-/** Hash authority when AMICODE_RELEASE_TAG overrides the pin. */
-function shaFromSums(text, asset) {
-  const line = text.split("\n").find((l) => l.trimEnd().endsWith(asset));
-  if (!line) throw new Error(`SHA256SUMS.txt has no entry for ${asset}`);
-  const hash = line.trim().split(/\s+/)[0];
-  if (!/^[0-9a-f]{64}$/.test(hash)) throw new Error(`SHA256SUMS.txt entry for ${asset} is not a sha256: ${line.trim()}`);
-  return hash;
-}
-
-async function fetchFromRelease({ root, manifest, key, download, ghApi: api = ghApi, retryOpts }) {
+async function fetchFromRelease({ root, manifest, key, download, retryOpts }) {
   const asset = assetForPlatform(key);
   const destDir = join(root, "vendor", "opencode", key);
   const bin = join(destDir, "opencode");
   const stamp = join(destDir, ".sha256");
   const coords = releaseCoords(manifest);
-  const override = process.env.AMICODE_RELEASE_TAG || null;
-  const channel = process.env.AMICODE_REQUIRE_CHANNEL || (override ? "beta" : null);
-  const provenance = `release ${coords.repo}@${coords.tag}` + (channel ? ` channel=${channel}` : "");
-  let want = null; // no committed hashes post-absorption — verify from SHA256SUMS.txt when overriding
-  if (channel) await assertReleaseChannel(coords, channel, api);
-  if (override) {
-    want = shaFromSums(
-      (await download(`https://github.com/${coords.repo}/releases/download/${coords.tag}/SHA256SUMS.txt`)).toString("utf8"),
-      asset,
-    );
-  }
-
-  // When we have no committed hash, use the stamp to check if already installed
-  if (want && existsSync(bin) && existsSync(stamp) && readFileSync(stamp, "utf8").trim() === want) {
-    return { skipped: true, path: bin, source: provenance };
-  }
+  const provenance = `release ${coords.repo}@${coords.tag}`;
 
   const url = `https://github.com/${coords.repo}/releases/download/${coords.tag}/${asset}`;
   const retry = retryOpts ?? { maxAttempts: 3, baseDelay: 1000, factor: 2 };
-  let bytes;
 
-  if (coords.isFork) {
-    // Override path: HTTPS-first, gh fallback
-    let httpsOk = false;
-    let httpsSha256Mismatch = false;
-    try {
-      bytes = await withRetry(() => download(url), {
-        ...retry,
-        isPermanent: (e) => {
-          const cls = classifyDownloadError(e);
-          return cls === "permanent" || cls === "auth";
-        },
-        onRetry: (attempt, err) => {
-          console.log(`[fetch-opencode] HTTPS attempt ${attempt} failed: ${err.message} — retrying`);
-        },
-      });
-      httpsOk = true;
-      if (want) {
-        const got = sha256(bytes);
-        if (got !== want) {
-          httpsSha256Mismatch = true;
-          httpsOk = false;
-          console.log(`[fetch-opencode] HTTPS sha256 mismatch for ${asset} — trying gh fallback`);
-        }
-      }
-    } catch (httpsErr) {
-      console.log(`[fetch-opencode] HTTPS download failed: ${httpsErr.message} — trying gh fallback`);
-    }
-    if (!httpsOk) {
-      try {
-        bytes = ghDownload(coords.repo, coords.tag, asset);
-        if (want) {
-          const got = sha256(bytes);
-          if (got !== want) throw new Error(`SHA256 mismatch for ${asset}: expected ${want}, actual ${got}`);
-        }
-      } catch (ghErr) {
-        if (httpsSha256Mismatch) {
-          throw new Error(
-            `SHA256 mismatch for ${asset} via HTTPS (CDN corruption?) and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
-          );
-        }
-        throw new Error(
-          `asset not publicly fetchable and the gh fallback failed: ${ghErr.message} — is \`gh\` installed and authed for ${coords.repo}?`,
-        );
-      }
-    }
-  } else {
-    // Upstream: HTTPS only, with retry
-    bytes = await withRetry(() => download(url), { ...retry });
-    if (want) {
-      const got = sha256(bytes);
-      if (got !== want) throw new Error(`SHA256 mismatch for ${asset}: expected ${want}, actual ${got}`);
-    }
-  }
+  // Upstream stock-canonical download: HTTPS only, with retry.
+  const bytes = await withRetry(() => download(url), { ...retry });
 
   mkdirSync(destDir, { recursive: true });
   const work = mkdtempSync(join(destDir, ".unpack-"));
@@ -286,13 +162,12 @@ export async function fetchOpencode({
   root = PKG_ROOT,
   platform,
   download = defaultDownload,
-  ghApi: ghApiImpl,
   mode,
   retryOpts,
 } = {}) {
   const manifest = loadManifest(root);
   const key = resolvePlatform(manifest, platform);
-  return fetchFromRelease({ root, manifest, key, download, ghApi: ghApiImpl, retryOpts });
+  return fetchFromRelease({ root, manifest, key, download, retryOpts });
 }
 
 async function main(argv) {
