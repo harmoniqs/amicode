@@ -1,74 +1,64 @@
 ---
 name: amico-slack
-description: Interacting with Slack — sending updates, reading channel discussions/threads, formatting equations into Slack Unicode/mrkdwn, and managing Slack messages on Aaron's behalf.
+description: Interacting with Slack — reading channels, sending messages, searching, and managing reactions via the slack-mcp-server MCP tools.
 agents: [researcher, librarian]
 surface: public
-cli_tool: ~/.local/bin/amico-slack
 ---
 
 # Slack Interaction Skill (`amico-slack`)
 
-Use this skill when reading channel discussions, sending updates to Harmoniqs Slack, formatting messages, or posting updates on Aaron's behalf.
+Use this skill when reading channel discussions, sending updates to Slack, formatting messages, or searching conversation history. The tools come from [`slack-mcp-server`](https://github.com/korotovsky/slack-mcp-server), an MCP server spawned automatically when a Slack credential is stored.
+
+## Connection
+
+If Slack is not connected, the tools will not be available. Guide the user to authenticate:
+
+```
+amico slack login
+```
+
+This opens a browser to Slack's OAuth consent screen, authenticates the user, and stores the token. Messages are sent **as the user** (not a bot). After login, restart the Amicode server to pick up the new credential.
 
 ## Core Rules & Best Practices
 
-1. **User Mentions & Tagging (MANDATORY)**:
-   - **Always write `@handle` or `@FirstName`** (e.g. `@jackson`, `@kate`, `@nguyen`, `@jack`, `@boyar`, `@jj`) when addressing or notifying a teammate.
-   - `amico-slack` automatically resolves `@handles` and `@FirstNames` into Slack's `<@UserID>` format to trigger notifications.
-   - **Never write bare names like "Jackson"** when pinging someone — write `@jackson` so they actually get tagged!
-   - To search or verify handles/IDs, use `amico-slack whois [name]`.
+1. **Soft preview norm (IMPORTANT)**: Always show the user the message text before calling `conversations_add_message`. This is a conversational norm — present a draft, get confirmation, then send.
 
-2. **Hyperlinks in Slack mrkdwn (MANDATORY)**:
-   - Standard markdown links `[text](url)` **DO NOT WORK** in Slack!
-   - **Always use Slack mrkdwn link format:** `<URL|display text>`
-     - Example: `<https://github.com/harmoniqs/amicode/pull/391|PR #391>`
-     - Example: `<https://news.fnal.gov/...|Fermilab press release>`
-   - For raw URLs without labels: `<https://example.com>`
+2. **User mentions & tagging**: Write `@handle` or `@FirstName` when addressing a teammate. The `slack-mcp-server` resolves handles to Slack user IDs automatically. Use `users_search` to find handles by name or email.
 
-3. **Slack mrkdwn & LaTeX Formatting**:
-   - Slack **does not** render LaTeX math (`$...$` or `$$...$$`).
-   - Use `amico-slack` CLI which converts LaTeX equations to clean Unicode & mrkdwn automatically:
-     - `$F = 0.99995$` $\to$ `F = 0.99995`
-     - `$1.17 \times 10^{-6}$` $\to$ `1.17 × 10⁻⁶`
-     - `$\gamma = 3 \times 10^{-3}$` $\to$ `γ = 3 × 10⁻³`
-     - `$\Omega$`, `$\delta$`, `$\hbar$` $\to$ `Ω`, `δ`, `ℏ`
-   - Bold uses single asterisks `*bold*` (NOT `**bold**`).
-   - Italics uses single underscores `_italics_` (NOT `*italics*`).
-   - Strikethrough uses tildes `~strikethrough~`.
-   - Code blocks use triple backticks ` ```code``` `.
+3. **Formatting — standard Markdown, NOT Slack mrkdwn**: The `slack-mcp-server` uses `text/markdown` format:
+   - Bold: `**bold**` (not `*bold*`)
+   - Italics: `*italics*` (not `_italics_`)
+   - Strikethrough: `~~strike~~` (not `~strike~`)
+   - Code blocks: triple backticks
+   - Hyperlinks: `[display text](URL)` (standard Markdown — not `<URL|display text>`)
 
-4. **Subtext Attribution & File Passing (sender identity)**:
-   - `amico-slack send` **defaults to Aaron** — it posts with Aaron's profile (`--as-user` behavior) and appends a subtle `_Authored by Amico_` context block. Pass `--as-bot` only when you intentionally want the bot identity without the footer. `--as-user` is still accepted for backwards-compat but is no longer required.
-   - The footer is **idempotent** — if the message text already ends with `_Authored by Amico_` the CLI strips the duplicate before appending, so do NOT manually add the footer in the message file; let the CLI do it. Manually adding it was the source of the double-footer bug.
-   - Requires `chat:write.customize` on the Slack app (reinstall after adding the scope) or the `username` override is silently ignored and the message appears as `amicobot`.
-   - For long/multiline text or text containing backticks/quotes, **always pass the message via a temporary file** (`--file /tmp/msg.txt`) to avoid shell backtick/quote expansion bugs.
-   - Example:
-     ```bash
-     amico-slack send "#calibration" --file /tmp/cal_update.txt
-     # --as-bot only when you want the bot:
-     # amico-slack send "#calibration" --file /tmp/cal_update.txt --as-bot
-     ```
+4. **LaTeX-to-Unicode conversion (MANDATORY)**: Slack does not render LaTeX. Convert equations to Unicode before sending:
+   - `$F = 0.99995$` → `F = 0.99995`
+   - `$1.17 \times 10^{-6}$` → `1.17 × 10⁻⁶`
+   - `$\gamma = 3 \times 10^{-3}$` → `γ = 3 × 10⁻³`
+   - `$\Omega$`, `$\delta$`, `$\hbar$` → `Ω`, `δ`, `ℏ`
 
-5. **Threaded Discussions**:
-   - When replying to an existing conversation, pass `--thread <ts>` to reply in-thread and avoid cluttering the main channel.
-   - Read threads: `amico-slack read "#channel" --thread <ts>`
+5. **Threaded discussions**: When replying to an existing conversation, use the `thread_ts` parameter to reply in-thread and avoid cluttering the main channel.
 
-6. **Bot Status**:
-   - Check Slack daemon connection:
-     ```bash
-     amico-slack status
-     ```
+## MCP Tool Reference
 
-## CLI Reference Table
+| Task | Tool | Key parameters |
+|------|------|----------------|
+| Read channel history | `conversations_history` | `channel_id`, `limit` |
+| Read thread replies | `conversations_replies` | `channel_id`, `thread_ts`, `limit` |
+| Send a message | `conversations_add_message` | `channel_id`, `text`, `thread_ts` (optional) |
+| Search messages | `conversations_search_messages` | `query`, `sort` |
+| List channels | `channels_list` | `limit` |
+| Find users | `users_search` | `query` |
+| Get unread messages | `conversations_unreads` | — |
+| Add reaction | `reactions_add` | `channel`, `timestamp`, `name` |
+| Remove reaction | `reactions_remove` | `channel`, `timestamp`, `name` |
+| Mark as read | `conversations_mark` | `channel_id`, `ts` |
+| List saved items | `saved_list` | — |
 
-| Task | Command |
-|---|---|
-| Send update as Aaron (from file) | `amico-slack send "<channel>" --file <file>` |
-| Send update as Aaron (text) | `amico-slack send "<channel>" "<message>"` |
-| Send update in thread | `amico-slack send "<channel>" --file <file> --thread <ts>` |
-| Send update as Bot | `amico-slack send "<channel>" "<message>" --as-bot` |
-| Read channel history | `amico-slack read "<channel>" [limit]` |
-| Read thread replies | `amico-slack read "<channel>" --thread <ts>` |
-| Search / verify team users | `amico-slack whois [name]` |
-| Delete message | `amico-slack delete "<channel>" <ts> [--as-user]` |
-| Check status | `amico-slack status` |
+## Notes
+
+- Messages are sent as the authenticated user, not a bot
+- Channel IDs can be found via `channels_list` — the agent resolves `#channel-name` to an ID
+- DM targets require finding the user via `users_search` first, then opening a conversation
+- The `slack-mcp-server` handles pagination, caching, and structured error responses internally
