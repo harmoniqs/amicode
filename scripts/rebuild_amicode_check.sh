@@ -172,6 +172,58 @@ else
   fail "AC8 deploy self-test" "$UNIFIED missing"
 fi
 
+# ── AC10: running-server interlock is lsof-scoped + warn-by-default (#1138) ──
+# The interlock (OB12) must NOT block on unrelated opencode processes (the old
+# pgrep 'opencode.*serve' false-positived on the chat server). Contract:
+#   (a) a process holding THIS rebuild's target DB → WARN, exit 0 (default);
+#   (b) same, with --strict-live-check → non-zero REFUSE;
+#   (c) an unrelated 'opencode…serve'-named process holding NO target DB → pass;
+#   (d) no lsof on PATH → silent pass (degraded-honest).
+# Driven in isolation via --check-live-only against a temp XDG_DATA_HOME.
+if [ -f "$UNIFIED" ]; then
+  live_ok=1; live_detail=""
+  dbroot="$(mktemp -d)"
+  mkdir -p "$dbroot/opencode"
+  # A valid-enough SQLite-headered target DB.
+  printf 'SQLite format 3\000' > "$dbroot/opencode/opencode.db"
+
+  # Holder process: keep the target DB open (fd) in the background.
+  holder_db="$dbroot/opencode/opencode.db"
+  ( exec 9<"$holder_db"; sleep 30 ) &
+  holder_pid=$!
+  sleep 0.3
+
+  # (a) default → warn + exit 0
+  out="$(XDG_DATA_HOME="$dbroot" bash "$UNIFIED" --mode local --check-live-only 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then live_ok=0; live_detail+="(a) default should warn+pass but rc=$rc out=$out; "; fi
+  if ! printf '%s' "$out" | grep -qiE 'warn|live|holding|open'; then
+    live_ok=0; live_detail+="(a) expected a warning mention; out=$out; "; fi
+
+  # (b) --strict-live-check → refuse (non-zero)
+  out="$(XDG_DATA_HOME="$dbroot" bash "$UNIFIED" --mode local --strict-live-check --check-live-only 2>&1)"; rc=$?
+  if [ "$rc" -eq 0 ]; then live_ok=0; live_detail+="(b) --strict should refuse but rc=0 out=$out; "; fi
+
+  kill "$holder_pid" 2>/dev/null; wait "$holder_pid" 2>/dev/null
+
+  # (c) unrelated 'opencode serve'-named process holding NO target DB → pass
+  ( exec -a "opencode-serve-decoy" sleep 30 ) &
+  decoy_pid=$!
+  sleep 0.2
+  emptyroot="$(mktemp -d)"; mkdir -p "$emptyroot/opencode"
+  out="$(XDG_DATA_HOME="$emptyroot" bash "$UNIFIED" --mode local --strict-live-check --check-live-only 2>&1)"; rc=$?
+  if [ "$rc" -ne 0 ]; then live_ok=0; live_detail+="(c) unrelated named proc tripped the check rc=$rc out=$out; "; fi
+  kill "$decoy_pid" 2>/dev/null; wait "$decoy_pid" 2>/dev/null
+
+  rm -rf "$dbroot" "$emptyroot"
+  if [ "$live_ok" -eq 1 ]; then
+    pass "AC10 interlock lsof-scoped + warn-by-default (--strict opts into refuse)"
+  else
+    fail "AC10 interlock lsof-scoped + warn-by-default" "$live_detail"
+  fi
+else
+  fail "AC10 interlock" "$UNIFIED missing"
+fi
+
 # ── AC9: real --mode local --yes build → binary + .source == overlay <sha> ──
 if [ "${RUN_FULL_BUILD:-0}" = "1" ]; then
   key="$(node -e 'process.stdout.write(process.platform+"-"+process.arch)')"

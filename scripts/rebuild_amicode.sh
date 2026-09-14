@@ -47,6 +47,9 @@ ALLOW_BUN_INSTALL=0
 DRY_RUN=0
 CHECK_GIT_ONLY=0
 CHECK_DEPS_ONLY=0
+CHECK_LIVE_ONLY=0
+STRICT_LIVE_CHECK=0
+ALLOW_LIVE_SERVER=0
 SELF_TEST_DEPLOY=0
 
 usage() {
@@ -56,6 +59,11 @@ Usage: rebuild_amicode.sh --mode local|main [--yes] [--allow-bun-install]
   --mode main           sync to origin/main first, then rebuild (refuses if dirty)
   --yes                 non-interactive (pnpm via corepack; NOT the bun installer)
   --allow-bun-install   permit the 'curl | bash' bun install (never implied by --yes)
+  --strict-live-check   REFUSE if a process holds the target session DB open
+                        (default is a non-blocking warning — the old scripts and
+                        the in-app path never blocked, and db_is_zeroed already
+                        guards a torn backup)
+  --allow-live-server   silence the live-server warning entirely
 EOF
 }
 
@@ -81,6 +89,9 @@ while [ $# -gt 0 ]; do
     --dry-run) DRY_RUN=1 ;;
     --check-git-only) CHECK_GIT_ONLY=1 ;;
     --check-deps-only) CHECK_DEPS_ONLY=1 ;;
+    --check-live-only) CHECK_LIVE_ONLY=1 ;;
+    --strict-live-check) STRICT_LIVE_CHECK=1 ;;
+    --allow-live-server) ALLOW_LIVE_SERVER=1 ;;
     --self-test-deploy) SELF_TEST_DEPLOY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) usage; die "unknown argument: $1" ;;
@@ -328,15 +339,57 @@ find_installed_ext() {
   echo "$found"
 }
 
-# ── Running-server interlock (OB12) ─────────────────────────────────────────
-# Refuse the destructive phase if an opencode server / Extension Dev Host is
-# holding the DB open. Best-effort: pgrep for a live opencode process.
+# ── Running-server interlock (OB12) — lsof-scoped, warn-by-default (#1138) ──
+# The concern: a server actively writing the session DB during the backup could
+# tear it. But this is belt-and-suspenders — db_is_zeroed + WAL-checkpoint +
+# restore-only-if-zeroed already handle a torn/locked backup. Neither the old
+# rebuild scripts nor the in-app path ever blocked on a live server, so the
+# DEFAULT here is a non-blocking warning; --strict-live-check opts into a refuse.
+#
+# The check is scoped to processes actually holding THIS rebuild's target DB
+# files (lsof on "$DBDIR"/opencode*.db), NOT a process-name grep — the old
+# `pgrep -f 'opencode.*serve'` false-positived on the chat server and any other
+# opencode process. The current shell (and its process group) is excluded so it
+# can never trip on the session running the rebuild. No lsof → silent pass.
 check_no_live_server() {
-  if command -v pgrep >/dev/null 2>&1; then
-    if pgrep -f 'opencode.*serve' >/dev/null 2>&1; then
-      die "A live opencode server appears to be running — close the Extension Dev Host / opencode server before rebuilding (it holds the session DB open)."
-    fi
+  [ "$ALLOW_LIVE_SERVER" -eq 1 ] && return 0
+  command -v lsof >/dev/null 2>&1 || return 0   # can't tell → don't block
+
+  # Collect the target DB files (+ -wal/-shm). Nothing to hold → pass.
+  local dbs=() f
+  for f in "$DBDIR"/opencode*.db; do
+    [ -e "$f" ] || continue
+    dbs+=("$f")
+    [ -e "$f-wal" ] && dbs+=("$f-wal")
+    [ -e "$f-shm" ] && dbs+=("$f-shm")
+  done
+  [ "${#dbs[@]}" -gt 0 ] || return 0
+
+  # PIDs holding any target DB open, excluding this script's own process tree
+  # (self + parent). We do NOT exclude the whole process group: a `&` job in a
+  # non-interactive script shares the parent's pgid, so a pgid filter would hide
+  # real holders. A genuine live server runs in its OWN process group launched
+  # independently of this rebuild, so excluding just self+parent is sufficient
+  # to never trip on the session running the rebuild.
+  local self_pid=$$ ppid holders
+  ppid="$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')"
+  holders="$(lsof -t -- "${dbs[@]}" 2>/dev/null \
+    | while IFS= read -r pid; do
+        [ -n "$pid" ] || continue
+        [ "$pid" = "$self_pid" ] && continue
+        [ -n "$ppid" ] && [ "$pid" = "$ppid" ] && continue
+        echo "$pid"
+      done | sort -u | tr '\n' ' ' | sed 's/ $//')"
+
+  [ -n "$holders" ] || return 0   # nobody else holds it → pass
+
+  if [ "$STRICT_LIVE_CHECK" -eq 1 ]; then
+    die "A process is holding the session DB open (PIDs: $holders). Close the Extension Dev Host / opencode server, or drop --strict-live-check to proceed with a warning."
   fi
+  echo "==> WARNING: a process is holding the session DB open (PIDs: $holders)." >&2
+  echo "    Proceeding anyway (default) — the backup+restore guard covers a torn DB." >&2
+  echo "    Use --strict-live-check to make this a hard refuse, or --allow-live-server to silence." >&2
+  return 0
 }
 
 # ── Atomic-swap deploy + binary copy (OB4, OB7) ─────────────────────────────
@@ -548,7 +601,8 @@ main() {
   local head_sha branch dirty_count
   head_sha="$(git -C "$AMICODE_ROOT" rev-parse --short HEAD 2>/dev/null || echo '?')"
   branch="$(git -C "$AMICODE_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
-  dirty_count="$(git -C "$AMICODE_ROOT" status --porcelain 2>/dev/null | grep -c . || echo 0)"
+  dirty_count="$(git -C "$AMICODE_ROOT" status --porcelain 2>/dev/null | grep -c . || true)"
+  [ -n "$dirty_count" ] || dirty_count=0
   echo ""
   echo "Done — deployed: branch=$branch HEAD=$head_sha dirty-files=$dirty_count (mode=$MODE)."
   echo "Reload the VS Code window (Cmd/Ctrl+Shift+P → Developer: Reload Window) to pick up changes."
@@ -568,6 +622,14 @@ case "$MODE" in
   "") usage; die "no --mode given (expected local or main)" ;;
   *) usage; die "unknown mode '$MODE' (expected local or main)" ;;
 esac
+
+# Live-server interlock in isolation (used by the acceptance harness). Runs the
+# same check main() runs; exit reflects it (0 = pass/warn, non-zero = strict refuse).
+if [ "$CHECK_LIVE_ONLY" -eq 1 ]; then
+  check_no_live_server
+  echo "==> live-server check OK"
+  exit 0
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "mode=$MODE (dry-run: argument parse OK, no work performed)"
