@@ -49,6 +49,9 @@ export interface AdoptOrSpawnResult {
   password: string;
   /** Present on error outcomes — describes what went wrong. */
   error?: string;
+  /** Present on "adopted" — the server's recorded hashes for stale-engine
+   *  detection (#1148). The caller compares these against on-disk hashes. */
+  adoptedHashes?: { binaryHash: string; configHash: string };
 }
 
 /**
@@ -90,6 +93,10 @@ export async function adoptOrSpawn(
         port: record.port,
         pid: record.pid,
         password: record.password,
+        adoptedHashes: {
+          binaryHash: record.binaryHash,
+          configHash: record.configHash,
+        },
       };
 
     case "stale":
@@ -186,4 +193,69 @@ export function buildLiveDeps(
     protocolVersion: PROTOCOL_VERSION,
     coldSpawn,
   };
+}
+
+
+// ============================================================================
+// Stale-engine detection (#1148, ADR 0020)
+// ============================================================================
+
+export interface StaleEngineResult {
+  stale: boolean;
+  binaryChanged: boolean;
+  configChanged: boolean;
+}
+
+export function detectStaleEngine(
+  adoptedHashes: { binaryHash: string; configHash: string },
+  onDiskHashes: { binaryHash: string; configHash: string },
+): StaleEngineResult {
+  const binaryChanged = adoptedHashes.binaryHash !== onDiskHashes.binaryHash;
+  const configChanged = adoptedHashes.configHash !== onDiskHashes.configHash;
+  return { stale: binaryChanged || configChanged, binaryChanged, configChanged };
+}
+
+export interface StaleNoticeDeps {
+  showInformationMessage: (message: string, ...items: string[]) => Thenable<string | undefined>;
+  onRestartRequested: () => Promise<void>;
+}
+
+export function surfaceStaleNotice(
+  result: StaleEngineResult,
+  deps: StaleNoticeDeps,
+): void {
+  if (!result.stale) return;
+  const detail = result.binaryChanged && result.configChanged
+    ? "engine binary and config"
+    : result.binaryChanged
+      ? "engine binary"
+      : "config";
+  void deps.showInformationMessage(
+    `Amicode: the running server's ${detail} differs from the current build.`,
+    "Restart Engine",
+  ).then((choice) => {
+    if (choice === "Restart Engine") void deps.onRestartRequested();
+  });
+}
+
+export interface RestartEngineDeps {
+  hasInflightTurns: () => boolean;
+  showWarningMessage: (message: string, ...items: string[]) => Thenable<string | undefined>;
+  stopServer: () => Promise<void>;
+  deleteHandshake: () => void;
+  coldSpawn: () => Promise<void>;
+}
+
+export async function restartEngine(deps: RestartEngineDeps): Promise<void> {
+  if (deps.hasInflightTurns()) {
+    const choice = await deps.showWarningMessage(
+      "Amicode: there are in-flight turns — restarting the engine will interrupt them.",
+      "Restart anyway",
+      "Cancel",
+    );
+    if (choice !== "Restart anyway") return;
+  }
+  await deps.stopServer();
+  deps.deleteHandshake();
+  await deps.coldSpawn();
 }

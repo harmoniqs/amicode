@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { homedir } from "node:os";
 
 // ============================================================================
@@ -218,4 +218,37 @@ export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): void {
     },
     opts.filePath,
   );
+}
+
+
+export async function hashDirectoryTree(dirPath: string): Promise<string> {
+  const entries: Array<{ relPath: string; contentHash: string }> = [];
+  function walk(dir: string): void {
+    let dirEntries: Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>;
+    try { dirEntries = readdirSync(dir, { withFileTypes: true }) as unknown as typeof dirEntries; }
+    catch { return; }
+    for (const entry of dirEntries) {
+      const fullPath = join(dir, entry.name);
+      if (entry.isDirectory()) { walk(fullPath); }
+      else if (entry.isFile()) {
+        const fileContent = readFileSync(fullPath, "utf8");
+        const contentHash = createHash("sha256").update(fileContent).digest("hex");
+        entries.push({ relPath: relative(dirPath, fullPath), contentHash });
+      }
+    }
+  }
+  walk(dirPath);
+  entries.sort((a, b) => a.relPath.localeCompare(b.relPath));
+  const hash = createHash("sha256");
+  for (const { relPath, contentHash } of entries) {
+    hash.update(relPath + "\0" + contentHash + "\0");
+  }
+  return hash.digest("hex");
+}
+
+export function shouldSkipBinaryBuild(
+  currentOverlayHash: string,
+  cachedOverlayHash: string | null,
+): boolean {
+  return cachedOverlayHash !== null && currentOverlayHash === cachedOverlayHash;
 }

@@ -10,7 +10,12 @@ import {
 import {
   adoptOrSpawn,
   isPidAlive,
+  detectStaleEngine,
+  surfaceStaleNotice,
+  restartEngine,
   type AdoptOrSpawnDeps,
+  type StaleNoticeDeps,
+  type RestartEngineDeps,
 } from "../src/server_lifecycle";
 
 // ============================================================================
@@ -205,5 +210,178 @@ describe("isPidAlive — production PID probe", () => {
   it("returns false for a PID that cannot exist", () => {
     // PID 2^30 is extremely unlikely to be alive on any real system
     expect(isPidAlive(2 ** 30)).toBe(false);
+  });
+});
+
+
+describe("adoptOrSpawn — adopted result includes adoptedHashes (#1148)", () => {
+  it("adoption result carries the server recorded binary + config hashes", async () => {
+    const fp = tmpHandshakePath();
+    const record = sampleRecord({ binaryHash: "bin-aaa", configHash: "cfg-bbb" });
+    writeHandshake(record, fp);
+    const result = await adoptOrSpawn(fp, adoptableDeps());
+    expect(result.outcome).toBe("adopted");
+    expect(result.adoptedHashes).toEqual({ binaryHash: "bin-aaa", configHash: "cfg-bbb" });
+  });
+  it("cold-spawned result does not carry adoptedHashes", async () => {
+    const fp = join(mkdtempSync(join(tmpdir(), "lifecycle-test-")), "absent.json");
+    const result = await adoptOrSpawn(fp, adoptableDeps());
+    expect(result.outcome).toBe("cold-spawned");
+    expect(result.adoptedHashes).toBeUndefined();
+  });
+});
+
+describe("detectStaleEngine — pure hash comparison (#1148)", () => {
+  it("returns not-stale when both hashes match", () => {
+    const r = detectStaleEngine({ binaryHash: "abc", configHash: "def" }, { binaryHash: "abc", configHash: "def" });
+    expect(r.stale).toBe(false);
+    expect(r.binaryChanged).toBe(false);
+    expect(r.configChanged).toBe(false);
+  });
+  it("detects binary-only change", () => {
+    const r = detectStaleEngine({ binaryHash: "old", configHash: "same" }, { binaryHash: "new", configHash: "same" });
+    expect(r.stale).toBe(true);
+    expect(r.binaryChanged).toBe(true);
+    expect(r.configChanged).toBe(false);
+  });
+  it("detects config-only change (stale-config notice even when overlay unchanged)", () => {
+    const r = detectStaleEngine({ binaryHash: "same", configHash: "old" }, { binaryHash: "same", configHash: "new" });
+    expect(r.stale).toBe(true);
+    expect(r.binaryChanged).toBe(false);
+    expect(r.configChanged).toBe(true);
+  });
+  it("detects both changed", () => {
+    const r = detectStaleEngine({ binaryHash: "old1", configHash: "old2" }, { binaryHash: "new1", configHash: "new2" });
+    expect(r.stale).toBe(true);
+    expect(r.binaryChanged).toBe(true);
+    expect(r.configChanged).toBe(true);
+  });
+});
+
+describe("surfaceStaleNotice — non-blocking informational notice (#1148)", () => {
+  it("shows an info message mentioning the changed component when stale", async () => {
+    const shown: string[] = [];
+    const deps: StaleNoticeDeps = {
+      showInformationMessage: async (msg: string) => { shown.push(msg); return undefined; },
+      onRestartRequested: async () => {},
+    };
+    surfaceStaleNotice({ stale: true, binaryChanged: true, configChanged: false }, deps);
+    await new Promise(r => setTimeout(r, 0));
+    expect(shown).toHaveLength(1);
+    expect(shown[0]).toContain("binary");
+  });
+  it("does nothing when not stale", () => {
+    let called = false;
+    const deps: StaleNoticeDeps = {
+      showInformationMessage: async () => { called = true; return undefined; },
+      onRestartRequested: async () => {},
+    };
+    surfaceStaleNotice({ stale: false, binaryChanged: false, configChanged: false }, deps);
+    expect(called).toBe(false);
+  });
+  it("returns immediately — does not await the message (turn keeps advancing)", () => {
+    let resolved = false;
+    const deps: StaleNoticeDeps = {
+      showInformationMessage: () => new Promise<string | undefined>(resolve => {
+        setTimeout(() => { resolved = true; resolve(undefined); }, 100);
+      }),
+      onRestartRequested: async () => {},
+    };
+    surfaceStaleNotice({ stale: true, binaryChanged: true, configChanged: false }, deps);
+    expect(resolved).toBe(false);
+  });
+  it("calls onRestartRequested when Restart Engine is clicked", async () => {
+    let restarted = false;
+    const deps: StaleNoticeDeps = {
+      showInformationMessage: async (_msg: string, ..._items: string[]) => "Restart Engine" as string | undefined,
+      onRestartRequested: async () => { restarted = true; },
+    };
+    surfaceStaleNotice({ stale: true, binaryChanged: false, configChanged: true }, deps);
+    await new Promise(r => setTimeout(r, 0));
+    expect(restarted).toBe(true);
+  });
+  it("mentions config when only config changed", async () => {
+    const shown: string[] = [];
+    const deps: StaleNoticeDeps = {
+      showInformationMessage: async (msg: string) => { shown.push(msg); return undefined; },
+      onRestartRequested: async () => {},
+    };
+    surfaceStaleNotice({ stale: true, binaryChanged: false, configChanged: true }, deps);
+    await new Promise(r => setTimeout(r, 0));
+    expect(shown[0]).toContain("config");
+  });
+});
+
+describe("restartEngine — gated restart (#1148)", () => {
+  it("warns when in-flight turns exist and proceeds on confirm (AC2)", async () => {
+    let warningShown = false, stopped = false, handshakeDeleted = false, coldSpawned = false;
+    await restartEngine({
+      hasInflightTurns: () => true,
+      showWarningMessage: async () => { warningShown = true; return "Restart anyway"; },
+      stopServer: async () => { stopped = true; },
+      deleteHandshake: () => { handshakeDeleted = true; },
+      coldSpawn: async () => { coldSpawned = true; },
+    });
+    expect(warningShown).toBe(true);
+    expect(stopped).toBe(true);
+    expect(handshakeDeleted).toBe(true);
+    expect(coldSpawned).toBe(true);
+  });
+  it("aborts when user cancels the in-flight warning", async () => {
+    let stopped = false;
+    await restartEngine({
+      hasInflightTurns: () => true,
+      showWarningMessage: async () => "Cancel",
+      stopServer: async () => { stopped = true; },
+      deleteHandshake: () => {},
+      coldSpawn: async () => {},
+    });
+    expect(stopped).toBe(false);
+  });
+  it("proceeds directly when no in-flight turns — no warning shown", async () => {
+    let warningShown = false, stopped = false, coldSpawned = false;
+    await restartEngine({
+      hasInflightTurns: () => false,
+      showWarningMessage: async () => { warningShown = true; return undefined; },
+      stopServer: async () => { stopped = true; },
+      deleteHandshake: () => {},
+      coldSpawn: async () => { coldSpawned = true; },
+    });
+    expect(warningShown).toBe(false);
+    expect(stopped).toBe(true);
+    expect(coldSpawned).toBe(true);
+  });
+  it("clears the handshake before cold-spawn — deliberate-kill ordering (AC5)", async () => {
+    const order: string[] = [];
+    await restartEngine({
+      hasInflightTurns: () => false,
+      showWarningMessage: async () => undefined,
+      stopServer: async () => { order.push("stop"); },
+      deleteHandshake: () => { order.push("deleteHandshake"); },
+      coldSpawn: async () => { order.push("coldSpawn"); },
+    });
+    expect(order).toEqual(["stop", "deleteHandshake", "coldSpawn"]);
+  });
+  it("a failed cold-spawn leaves no handshake pointing at the killed PID (AC5)", async () => {
+    let handshakeDeleted = false;
+    await expect(restartEngine({
+      hasInflightTurns: () => false,
+      showWarningMessage: async () => undefined,
+      stopServer: async () => {},
+      deleteHandshake: () => { handshakeDeleted = true; },
+      coldSpawn: async () => { throw new Error("spawn failed"); },
+    })).rejects.toThrow("spawn failed");
+    expect(handshakeDeleted).toBe(true);
+  });
+  it("post-Restart cold-spawn writes a fresh handshake (AC4 — verified via ordering)", async () => {
+    const events: string[] = [];
+    await restartEngine({
+      hasInflightTurns: () => false,
+      showWarningMessage: async () => undefined,
+      stopServer: async () => { events.push("stop"); },
+      deleteHandshake: () => { events.push("delete"); },
+      coldSpawn: async () => { events.push("spawn"); },
+    });
+    expect(events.indexOf("delete")).toBeLessThan(events.indexOf("spawn"));
   });
 });

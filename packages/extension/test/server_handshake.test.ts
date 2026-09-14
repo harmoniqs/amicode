@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,8 @@ import {
   classifyGate,
   hashFile,
   hashString,
+  hashDirectoryTree,
+  shouldSkipBinaryBuild,
   mintHandshakePassword,
   handshakePath,
   writeColdSpawnHandshake,
@@ -351,5 +353,52 @@ describe("handshakePath", () => {
   it("accepts a custom ops root", () => {
     const p = handshakePath("/custom/ops");
     expect(p).toBe(join("/custom/ops", "server", "standalone.json"));
+  });
+});
+
+
+describe("hashDirectoryTree — deterministic overlay hash (#1148)", () => {
+  it("produces a stable hash for a known directory tree", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "overlay-hash-test-"));
+    mkdirSync(join(dir, "sub"), { recursive: true });
+    writeFileSync(join(dir, "a.txt"), "alpha");
+    writeFileSync(join(dir, "sub", "b.txt"), "beta");
+    const h1 = await hashDirectoryTree(dir);
+    const h2 = await hashDirectoryTree(dir);
+    expect(h1).toBe(h2);
+    expect(h1).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it("changes when a file content changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "overlay-hash-test-"));
+    writeFileSync(join(dir, "file.txt"), "version1");
+    const h1 = await hashDirectoryTree(dir);
+    writeFileSync(join(dir, "file.txt"), "version2");
+    const h2 = await hashDirectoryTree(dir);
+    expect(h1).not.toBe(h2);
+  });
+  it("changes when a file is added", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "overlay-hash-test-"));
+    writeFileSync(join(dir, "a.txt"), "alpha");
+    const h1 = await hashDirectoryTree(dir);
+    writeFileSync(join(dir, "b.txt"), "beta");
+    const h2 = await hashDirectoryTree(dir);
+    expect(h1).not.toBe(h2);
+  });
+  it("returns a consistent hash for an empty directory", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "overlay-hash-test-"));
+    const h = await hashDirectoryTree(dir);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("shouldSkipBinaryBuild — overlay-unchanged shortcut (#1148)", () => {
+  it("skips when current overlay hash matches the cached hash", () => {
+    expect(shouldSkipBinaryBuild("abc123", "abc123")).toBe(true);
+  });
+  it("does not skip when hashes differ", () => {
+    expect(shouldSkipBinaryBuild("abc123", "def456")).toBe(false);
+  });
+  it("does not skip when there is no cached hash (first build)", () => {
+    expect(shouldSkipBinaryBuild("abc123", null)).toBe(false);
   });
 });
