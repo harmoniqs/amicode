@@ -16,7 +16,12 @@ const FORBIDDEN = [/--gate\b/, /--system\b/, /--pulse\b/, /modelcontextprotocol/
 // API is its entire job. The S31 ban (no ambient HTTP in the orchestrator)
 // stays for everything else; remote_executor.ts lost this exemption WITH the
 // fetches (it makes no network calls at all now).
-const EXEMPT = new Set(["cloud_client.ts"]);
+//
+// slack_verb.ts (#1156): the OAuth PKCE login flow — a temporary HTTP
+// callback server (node:http) + fetch for Slack's oauth.v2.access token
+// exchange and users.info name resolution. Same class of sanctioned edge as
+// the cloud client.
+const EXEMPT = new Set(["cloud_client.ts", "slack_verb.ts"]);
 
 describe("S31 grep rule", () => {
   it("src/ contains no forbidden tool-layer patterns", () => {

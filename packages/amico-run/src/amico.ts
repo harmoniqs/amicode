@@ -36,6 +36,7 @@ function usage(): string {
       "cloud submit <s.jl> | status | mirror | abort | run",
       "thin cloud solve client — submit→poll→mirror without the launch path (#460)",
     ],
+    ["slack login", "Slack OAuth PKCE login — browser flow, writes ~/.amico/slack.json (#1156)"],
     ...SPINE_VERBS.map(
       (v) => [`${v.name} …`, v.stub ? `${v.summary} [stub → ${v.slice}]` : v.summary] as [string, string],
     ),
@@ -133,6 +134,15 @@ export async function main(argv: string[]): Promise<number> {
       const { json, code } = await cloudVerb(rest);
       console.log(JSON.stringify(json));
       return code;
+    }
+
+    // ── Slack OAuth PKCE login (#1156): `amico slack login` starts a
+    // temporary HTTP server, opens the browser to Slack's authorize endpoint,
+    // exchanges the callback code for a user token, and writes it to
+    // ~/.amico/slack.json (atomic, 0600). No client_secret — PKCE only. ──
+    case "slack": {
+      const { slackVerb } = await import("./slack_verb.js");
+      return (await slackVerb(rest)).code;
     }
 
     case "mcp-serve":
