@@ -199,6 +199,74 @@ describe("adoptOrSpawn — no handshake file", () => {
 });
 
 // ============================================================================
+// #1178 — reclaim an orphaned port on the no-handshake path
+// ============================================================================
+
+describe("adoptOrSpawn — orphaned-port reclaim (no handshake)", () => {
+  it("reclaims our orphaned server on the configured port, then cold-spawns", async () => {
+    const fp = join(mkdtempSync(join(tmpdir(), "lifecycle-test-")), "absent.json");
+    let reclaimed = false;
+    let spawnCalled = false;
+    const result = await adoptOrSpawn(fp, adoptableDeps({
+      configuredPort: 43117,
+      probePort: async () => ({ occupied: true, isOurServer: true, pid: 4242 }),
+      reclaimPort: async () => { reclaimed = true; return true; },
+      coldSpawn: async () => { spawnCalled = true; return { port: 43117, pid: 5555, password: "fresh" }; },
+    }));
+
+    expect(reclaimed).toBe(true);
+    expect(spawnCalled).toBe(true);
+    expect(result.outcome).toBe("cold-spawned");
+    expect(result.reclaimed).toBe(true);
+    expect(result.pid).toBe(5555);
+  });
+
+  it("does NOT reclaim or spawn when the port holder is foreign", async () => {
+    const fp = join(mkdtempSync(join(tmpdir(), "lifecycle-test-")), "absent.json");
+    let reclaimCalled = false;
+    let spawnCalled = false;
+    const result = await adoptOrSpawn(fp, adoptableDeps({
+      configuredPort: 43117,
+      probePort: async () => ({ occupied: true, isOurServer: false, pid: 8888 }),
+      reclaimPort: async () => { reclaimCalled = true; return true; },
+      coldSpawn: async () => { spawnCalled = true; return { port: 1, pid: 1, password: "x" }; },
+    }));
+
+    expect(result.outcome).toBe("foreign-error");
+    expect(result.error).toContain("43117");
+    expect(result.error).toContain("8888");
+    expect(reclaimCalled).toBe(false); // never kill a foreign process
+    expect(spawnCalled).toBe(false);   // never spawn on the occupied port
+  });
+
+  it("surfaces an error and does not spawn when reclaim fails", async () => {
+    const fp = join(mkdtempSync(join(tmpdir(), "lifecycle-test-")), "absent.json");
+    let spawnCalled = false;
+    const result = await adoptOrSpawn(fp, adoptableDeps({
+      configuredPort: 43117,
+      probePort: async () => ({ occupied: true, isOurServer: true, pid: 4242 }),
+      reclaimPort: async () => false, // stubborn — could not free
+      coldSpawn: async () => { spawnCalled = true; return { port: 1, pid: 1, password: "x" }; },
+    }));
+
+    expect(result.outcome).toBe("foreign-error");
+    expect(result.error).toContain("reclaim");
+    expect(spawnCalled).toBe(false);
+  });
+
+  it("cold-spawns normally when the configured port is free (no orphan)", async () => {
+    const fp = join(mkdtempSync(join(tmpdir(), "lifecycle-test-")), "absent.json");
+    const result = await adoptOrSpawn(fp, adoptableDeps({
+      configuredPort: 43117,
+      probePort: async () => ({ occupied: false, isOurServer: false }),
+    }));
+
+    expect(result.outcome).toBe("cold-spawned");
+    expect(result.reclaimed).toBeFalsy();
+  });
+});
+
+// ============================================================================
 // isPidAlive — production PID probe
 // ============================================================================
 

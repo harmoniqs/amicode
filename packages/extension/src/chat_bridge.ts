@@ -9,6 +9,8 @@ import { deployBuild } from "./rebuild/coordinator";
 import { classifyHost, detectWSLVersion } from "./rebuild/host_matrix";
 import { checkDependencies, isBlocked, buildProvisionPlan } from "./rebuild/dependency_resolver";
 import { stopSurvivingServer } from "./rebuild/server_teardown";
+import { hashDirectoryTree, shouldSkipBinaryBuild } from "./server_handshake";
+import { readCachedOverlayHash, writeCachedOverlayHash } from "./rebuild/overlay_cache";
 import type { ExplorerIconTheme } from "./explorer_icon_theme";
 import { HARMONIQS_MODEL_ID, HARMONIQS_PROVIDER_ID, testConnection, writeOnboardingConfig } from "./onboarding_panel";
 import {
@@ -757,19 +759,47 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           return;
         }
 
+        // ── Overlay-change gate (#1178) — decide ONCE whether the engine
+        // genuinely changed. An unchanged overlay skips BOTH the binary build
+        // and the server teardown, so an extension-only rebuild is kill-free:
+        // the surviving server stays alive and the reload re-adopts it. ──
+        const overlayDir = path.join(amicodePath, "packages", "app-bundle", "overlay");
+        let skipEngine = false;
+        let currentOverlayHash = "";
+        try {
+          currentOverlayHash = await hashDirectoryTree(overlayDir);
+          skipEngine = shouldSkipBinaryBuild(currentOverlayHash, readCachedOverlayHash());
+        } catch {
+          // If we can't hash the overlay, fail safe: rebuild + teardown as usual.
+          skipEngine = false;
+        }
+
         // ── Build binary from overlay tree (replaces fork build + fork download) ──
-        io.postToWebview({
-          source: "amicode", kind: "dev-tools-rebuild-status",
-          tab: (msg as { tab?: string }).tab, state: "rebuilding",
-          phase: "building-binary", detail: "Building binary from overlay...",
-        });
-        const buildBinary = await run("pnpm --filter amicode run build:binary", amicodePath);
-        if (!buildBinary.ok) {
+        if (skipEngine) {
           io.postToWebview({
-            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-            state: "failed", error: `build:binary failed (bun required): ${buildBinary.error?.slice(0, 150)}`,
+            source: "amicode", kind: "dev-tools-rebuild-status",
+            tab: (msg as { tab?: string }).tab, state: "rebuilding",
+            phase: "building-binary", detail: "Overlay unchanged — skipping engine build (server stays alive).",
           });
-          return;
+        } else {
+          io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status",
+            tab: (msg as { tab?: string }).tab, state: "rebuilding",
+            phase: "building-binary", detail: "Building binary from overlay...",
+          });
+          const buildBinary = await run("pnpm --filter amicode run build:binary", amicodePath);
+          if (!buildBinary.ok) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed", error: `build:binary failed (bun required): ${buildBinary.error?.slice(0, 150)}`,
+            });
+            return;
+          }
+          // Record the overlay hash the freshly-built binary was built from, so
+          // the next extension-only rebuild can skip the engine build.
+          if (currentOverlayHash) {
+            try { writeCachedOverlayHash(currentOverlayHash); } catch { /* best-effort */ }
+          }
         }
 
         // Resolve the built binary
@@ -801,20 +831,42 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           return;
         }
 
-        // ── Stop surviving detached server (#1146, ADR 0020 lifecycle gap) ──
+        // ── Stop surviving detached server (#1146, ADR 0020; hardened #1178) ──
         // The detached-spawn model lets the opencode server survive the host's
-        // exit. A rebuild swaps the binary underneath it; on reload, the new
-        // extension hits a ServeError (port occupied) + 401 (wrong password).
-        // Stop it BEFORE deploying so the new extension cold-spawns cleanly.
-        const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
-        await stopSurvivingServer({
-          log: (line) => io.postToWebview({
-            source: "amicode", kind: "dev-tools-rebuild-status",
-            tab: (msg as { tab?: string }).tab, state: "rebuilding",
-            phase: "server-teardown", detail: line,
-          }),
-          fallbackPort: configuredPort > 0 ? configuredPort : 43117,
-        });
+        // exit. When the ENGINE changed, a rebuild swaps the binary underneath
+        // it; on reload the new extension would hit a ServeError (port occupied)
+        // + 401 (wrong password). Stop it BEFORE deploying so the new extension
+        // cold-spawns cleanly. When the overlay is UNCHANGED (skipEngine), the
+        // running server IS the new engine — leave it alive (kill-free reload).
+        //
+        // #1178: teardown is confirm-before-delete. If it CANNOT free the port
+        // it reports failed (handshake preserved, no orphan) — we must abort the
+        // rebuild rather than deploy over a server we couldn't stop.
+        if (!skipEngine) {
+          const configuredPort = vscode.workspace.getConfiguration("amicode").get<number>("opencodePort", 0);
+          const teardown = await stopSurvivingServer({
+            log: (line) => io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status",
+              tab: (msg as { tab?: string }).tab, state: "rebuilding",
+              phase: "server-teardown", detail: line,
+            }),
+            fallbackPort: configuredPort > 0 ? configuredPort : 43117,
+          });
+          if (teardown.failed) {
+            io.postToWebview({
+              source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+              state: "failed",
+              error: {
+                message: "Could not stop the surviving server — rebuild aborted to avoid orphaning it.",
+                fix: [
+                  teardown.error ?? `Port ${teardown.port} is still held.`,
+                  `Manually stop the process on port ${teardown.port}, then rebuild again.`,
+                ],
+              },
+            });
+            return;
+          }
+        }
 
         // ── Deploy build via atomic swap (#1021) ──
         const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");

@@ -34,6 +34,16 @@ export interface AdoptOrSpawnDeps {
   protocolVersion: string;
   /** Cold-spawn a new server — returns the new server's port, PID, and password. */
   coldSpawn: () => Promise<{ port: number; pid: number; password: string }>;
+  // ── Reclaim seam (#1178) — only used on the NO-handshake path ──
+  /** The port a cold-spawn would bind. When set (with probePort), the
+   *  no-handshake path checks it for an orphaned survivor before spawning. */
+  configuredPort?: number;
+  /** Probe the configured port: is it occupied, and is the occupant one of
+   *  OUR opencode servers (an orphan we may reclaim) vs. a foreign process? */
+  probePort?: (port: number) => Promise<{ occupied: boolean; isOurServer: boolean; pid?: number }>;
+  /** Free an orphaned port (kill the opencode server holding it). Returns
+   *  whether the port was actually freed. Never called for a foreign holder. */
+  reclaimPort?: (port: number) => Promise<boolean>;
 }
 
 export type AdoptOrSpawnOutcome =
@@ -52,6 +62,9 @@ export interface AdoptOrSpawnResult {
   /** Present on "adopted" — the server's recorded hashes for stale-engine
    *  detection (#1148). The caller compares these against on-disk hashes. */
   adoptedHashes?: { binaryHash: string; configHash: string };
+  /** Present on "cold-spawned" — true when an orphaned port was reclaimed
+   *  before the cold-spawn (#1178). */
+  reclaimed?: boolean;
 }
 
 /**
@@ -66,8 +79,42 @@ export async function adoptOrSpawn(
   // Step 1: read the handshake
   const hs = readHandshake(handshakePath);
 
-  // No handshake or invalid → cold-spawn (fresh install)
+  // No handshake or invalid → cold-spawn (fresh install) — but first check the
+  // configured port for an ORPHANED survivor (#1178): a server we spawned that
+  // outlived its handshake. Without this, the cold-spawn ServeErrors on the
+  // occupied port forever (the stuck state). We reclaim ours; we never touch a
+  // foreign holder.
   if (hs.status === "absent" || hs.status === "invalid") {
+    if (deps.configuredPort !== undefined && deps.probePort) {
+      const probe = await deps.probePort(deps.configuredPort);
+      if (probe.occupied) {
+        if (!probe.isOurServer) {
+          return {
+            outcome: "foreign-error",
+            port: deps.configuredPort,
+            pid: probe.pid ?? -1,
+            password: "",
+            error: `Port ${deps.configuredPort} is occupied by a foreign process` +
+              (probe.pid ? ` (PID ${probe.pid})` : "") +
+              ` and there is no handshake to adopt it. Not reclaiming — choose a different port or stop that process.`,
+          };
+        }
+        // Our orphan (no handshake, but our server holds the port) → reclaim.
+        const freed = deps.reclaimPort ? await deps.reclaimPort(deps.configuredPort) : false;
+        if (!freed) {
+          return {
+            outcome: "foreign-error",
+            port: deps.configuredPort,
+            pid: probe.pid ?? -1,
+            password: "",
+            error: `Could not reclaim orphaned server on port ${deps.configuredPort}` +
+              (probe.pid ? ` (PID ${probe.pid})` : "") + `.`,
+          };
+        }
+        const spawned = await deps.coldSpawn();
+        return { outcome: "cold-spawned", ...spawned, reclaimed: true };
+      }
+    }
     const spawned = await deps.coldSpawn();
     return { outcome: "cold-spawned", ...spawned };
   }
@@ -182,9 +229,12 @@ export async function challengePassword(port: number, password: string): Promise
   }
 }
 
-/** Build the production deps for adoptOrSpawn. */
+/** Build the production deps for adoptOrSpawn.
+ *  When `configuredPort` is given, the reclaim seam (#1178) is wired so the
+ *  no-handshake path can recover an orphaned port instead of ServeError-looping. */
 export function buildLiveDeps(
   coldSpawn: () => Promise<{ port: number; pid: number; password: string }>,
+  configuredPort?: number,
 ): AdoptOrSpawnDeps {
   return {
     healthCheck: probeHealth,
@@ -192,7 +242,59 @@ export function buildLiveDeps(
     passwordChallenge: challengePassword,
     protocolVersion: PROTOCOL_VERSION,
     coldSpawn,
+    configuredPort,
+    probePort: configuredPort !== undefined ? probePortOccupant : undefined,
+    reclaimPort: configuredPort !== undefined ? reclaimOrphanPort : undefined,
   };
+}
+
+/** Which PID (if any) holds the port, via lsof. */
+function pidHoldingPort(port: number): number | undefined {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const out = execSync(`lsof -ti :${port}`, { timeout: 5000 }).toString().trim();
+    const first = out.split("\n")[0]?.trim();
+    return first && /^\d+$/.test(first) ? parseInt(first, 10) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Is this PID one of OUR opencode servers? Reads its command line. */
+function isOpencodeServer(pid: number): boolean {
+  try {
+    const { execSync } = require("node:child_process") as typeof import("node:child_process");
+    const cmd = execSync(`ps -o command= -p ${pid}`, { timeout: 5000 }).toString().trim();
+    return /opencode/.test(cmd) && /serve/.test(cmd);
+  } catch {
+    return false;
+  }
+}
+
+/** Production probe: is the port occupied, and is the occupant our server? */
+export async function probePortOccupant(
+  port: number,
+): Promise<{ occupied: boolean; isOurServer: boolean; pid?: number }> {
+  const pid = pidHoldingPort(port);
+  if (pid === undefined) return { occupied: false, isOurServer: false };
+  return { occupied: true, isOurServer: isOpencodeServer(pid), pid };
+}
+
+/** Production reclaim: SIGTERM then SIGKILL the port holder; verify freed.
+ *  Only ever called by adoptOrSpawn AFTER probePort confirms the holder is
+ *  our opencode server — never against a foreign process. */
+export async function reclaimOrphanPort(port: number): Promise<boolean> {
+  const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const pid = pidHoldingPort(port);
+  if (pid === undefined) return true; // already free
+  try { process.kill(pid, "SIGTERM"); } catch { /* re-probe decides */ }
+  for (let i = 0; i < 6; i++) {
+    if (pidHoldingPort(port) === undefined) return true;
+    await sleep(250);
+  }
+  try { process.kill(pid, "SIGKILL"); } catch { /* re-probe decides */ }
+  await sleep(500);
+  return pidHoldingPort(port) === undefined;
 }
 
 
