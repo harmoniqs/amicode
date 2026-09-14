@@ -95,6 +95,8 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
+import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
+import { handshakePath } from "./server_handshake";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -642,11 +644,16 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
   // logged. ONE value for the whole activation: respawns (solver switch, vault
   // refresh, restart) reuse it, because the open chat iframe carries the boot
   // credential and a mid-session rotation would strand it on 401s.
-  const serverPassword = mintServerPassword();
+  // #1145 (ADR 0020): adoption replaces this with the RECORDED password from
+  // the handshake — the surviving server was spawned with it, so it's the
+  // credential the SSE client + chat iframe must carry. The fresh mint is
+  // still the fallback for cold-spawn.
+  let serverPassword = mintServerPassword();
   // The extension's own calls to the server (health probe aside — ServerManager
   // derives its own from the spawn env) authenticate with the matching Basic
   // credential: SSE /event, the /config* signal probes, and the chat iframe
   // (via the app's ?auth_token= bootstrap).
+  // #1145: the object is mutated on adopt to carry the RECORDED password.
   const serverAuthHeaders = { Authorization: serverAuthHeader(serverPassword) };
 
   /** #823 (the M3 cutover consumer flip): the origin every engine-origin UI
@@ -829,6 +836,48 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     if (configuredPort > 0) {
       opencodeChannel.appendLine(`[boot] amicode.opencodePort = ${configuredPort} (static)`);
     }
+
+    // #1145 (ADR 0020): adopt-or-spawn decision — read the handshake and run
+    // the four-check gate BEFORE creating a ServerManager. On adopt, reuse the
+    // recorded password and wire the event stream; on cold-spawn, proceed as
+    // before; on error, surface it and skip server creation entirely.
+    let adopted = false;
+    try {
+      const lifecycleResult = await adoptOrSpawn(
+        handshakePath(),
+        buildLiveDeps(async () => {
+          // The cold-spawn callback is a no-op here — we handle the actual
+          // spawn below via ServerManager. Return a sentinel so the lifecycle
+          // function knows to proceed, but the real spawn is in the next block.
+          return { port: configuredPort || 0, pid: 0, password: serverPassword };
+        }),
+      );
+      if (lifecycleResult.outcome === "adopted") {
+        adopted = true;
+        // Replace the minted password with the recorded one — the surviving
+        // server was spawned with it, so every auth surface must carry it.
+        serverPassword = lifecycleResult.password;
+        serverAuthHeaders.Authorization = serverAuthHeader(serverPassword);
+        opencodeReadyUrl = new URL(`http://127.0.0.1:${lifecycleResult.port}`);
+        opencodeChannel.appendLine(
+          `[boot] ADOPTED surviving server on port ${lifecycleResult.port} (PID ${lifecycleResult.pid}) — no new spawn`,
+        );
+      } else if (lifecycleResult.outcome === "foreign-error" || lifecycleResult.outcome === "incompatible-error") {
+        opencodeChannel.appendLine(`[boot] ${lifecycleResult.error}`);
+        void vscode.window.showErrorMessage(`Amicode: ${lifecycleResult.error}`);
+        // Do NOT spawn on the occupied port — fall through to the rest of
+        // activation with no server. The user must fix the conflict.
+      } else {
+        // "cold-spawned" from the lifecycle's perspective — proceed to the
+        // real ServerManager spawn below.
+        opencodeChannel.appendLine(`[boot] no surviving server to adopt — cold-spawning`);
+      }
+    } catch (e) {
+      // Adoption check failed — non-fatal, proceed to cold-spawn.
+      opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
+    }
+
+    if (!adopted) {
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -1092,6 +1141,30 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       vscode.window.showErrorMessage(`Amicode: opencode failed to start — ${err.message}`);
       opencodeChannel.appendLine(`[boot] start failed: ${err.stack ?? err.message}`);
     });
+    } // end if (!adopted)
+
+    // #1145: adopted path — the server is already running, wire the event
+    // stream + chat to the adopted server's URL with the recorded password.
+    if (adopted && opencodeReadyUrl) {
+      sseClient = new OpencodeEventClient({
+        channel: opencodeChannel,
+        statusBar,
+        authorization: serverAuthHeaders.Authorization,
+      });
+      ctx.subscriptions.push(sseClient);
+      statusBar?.setServerReady(true);
+      sseClient.connect(opencodeReadyUrl);
+      if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
+        ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
+      }
+      void fetchProviderSignal(opencodeReadyUrl.toString(), { headers: serverAuthHeaders }).then((sig) => {
+        opencodeChannel.appendLine(
+          sig.ok
+            ? `[boot] LLM provider: configured (${sig.provider}${sig.source ? ` via ${sig.source}` : ""})`
+            : `[boot] LLM provider: ${sig.reason} → ${sig.fix}`,
+        );
+      });
+    }
   }
 
   // ── #663: workspace-projects bridge ──────────────────────────────────────
