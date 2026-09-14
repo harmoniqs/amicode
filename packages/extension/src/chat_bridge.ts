@@ -64,6 +64,29 @@ export function rebuildGitCommand(mode: RebuildMode): string | null {
   return null;
 }
 
+/**
+ * The `build:app` step a rebuild runs, keyed on the button pressed (#1135
+ * parity with scripts/rebuild_amicode.sh's build_amicode()). The #992 deploy
+ * guard in build_app_bundle.mjs refuses (exit 1) whenever HEAD ≠ origin/main
+ * or the working tree is dirty — so a plain `build:app` fails for the LOCAL
+ * button, which by design builds a feature branch / dirty working tree.
+ *
+ * `local` therefore passes `--direct-worktree` (skips the guard, stamps an
+ * honest direct-worktree deploy.json) plus a recorded AMICODE_DEPLOY_OVERRIDE
+ * reason; `main` has just synced to a clean origin/main, so it builds plain
+ * (guard active, no override). This mirrors the shell script's local-vs-main
+ * divergence exactly, so the button and the script deploy identically.
+ */
+export function rebuildAppBundleStep(mode: RebuildMode, branch: string): { cmd: string; overrideReason?: string } {
+  if (mode === "main") {
+    return { cmd: "pnpm --filter amicode run build:app" };
+  }
+  return {
+    cmd: "pnpm --filter amicode run build:app -- --direct-worktree",
+    overrideReason: `local rebuild: ${branch} working tree`,
+  };
+}
+
 // Commands the in-app palette (opencode "Amico" command group) may trigger via
 // the iframe→parent→extension postMessage bridge. STRICT allowlist: the framed
 // app renders LLM output, so we never executeCommand anything outside this set.
@@ -708,7 +731,22 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         const resolvedBinaryPath = resolvedBinary.found ? resolvedBinary.path : "";
 
         // ── Build app bundle from overlay ──
-        const buildApp = await run("pnpm --filter amicode run build:app", amicodePath);
+        // Parity with scripts/rebuild_amicode.sh (#1135): the LOCAL button
+        // builds a feature branch / dirty tree, which the #992 deploy guard in
+        // build_app_bundle.mjs refuses — so local mode passes --direct-worktree
+        // with a recorded override reason; main mode (clean origin/main) builds
+        // plain. rebuildAppBundleStep centralizes that divergence (unit-tested).
+        const appStepBranch = await new Promise<string>((resolve) => {
+          exec("git rev-parse --abbrev-ref HEAD", { cwd: amicodePath, timeout: 10_000 }, (_e, stdout) =>
+            resolve(stdout?.toString().trim() || "(unknown)"),
+          );
+        });
+        const appStep = rebuildAppBundleStep(mode, appStepBranch);
+        const buildApp = await run(
+          appStep.cmd,
+          amicodePath,
+          appStep.overrideReason ? { ...process.env, AMICODE_DEPLOY_OVERRIDE: appStep.overrideReason } : undefined,
+        );
         if (!buildApp.ok) {
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
