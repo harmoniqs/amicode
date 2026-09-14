@@ -125,7 +125,7 @@ _Avoid_: ledger blob, session attachment
 ### Fleet & serving
 
 **Server mode**:
-The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Determined by `~/.amico/ops/fleet/fleet.json` (no file = standalone). Machine-scoped, never synced.
+The per-machine stance for where Sessions are served from, in three values. `standalone` — this machine spawns and owns its own chat server, detached and survivable so it outlives an extension-host reload and is re-adopted rather than dying with the editor (the default; the only mode that ever spawns). `server` — this machine runs the Canonical Server as a system service and the panel attaches to it. `client` — this machine never serves; the panel attaches to the Canonical Server through a Managed Tunnel. Determined by `~/.amico/ops/fleet/fleet.json` (no file = standalone). Machine-scoped, never synced.
 _Avoid_: profile, spawn vs attach (as concept names)
 
 **Fleet config**:
@@ -151,6 +151,22 @@ _Avoid_: API key, password
 **Managed Tunnel**:
 The self-healing SSH local-forward a `client` uses to reach the Canonical Server — one component with two launchers. The extension spawns and supervises it for interactive panels (reconnect with backoff, address candidates probed LAN-before-overlay, health surfaced in the status bar); a headless launcher (`amico fleet tunnel`) serves panel-less consumers such as scheduled jobs. Failures are always visible to its consumer — never an invisible external service.
 _Avoid_: port forward (as a concept name), launchd tunnel
+
+**Server handshake**:
+The `0600` record at `~/.amico/ops/server/standalone.json` that lets a re-activating extension discover, authenticate to, and adopt the surviving standalone server — port, PID, start time, the per-boot password, and `binaryHash`/`configHash`/`protocolVersion`. The single-machine sibling of the Fleet token and the per-boot server password (ADR 0002/0005): written once per cold spawn, its password rotated on each cold spawn and reused only on adoption.
+_Avoid_: session token, lock file, pid file
+
+**Server adoption**:
+A re-activating extension attaching to the surviving standalone server instead of spawning a new one, gated on four checks — health, PID alive, password challenge, protocol compatible. Distinct from fleet attach (which reaches a remote Canonical Server through a Managed Tunnel); adoption is same-machine, same-process, over loopback.
+_Avoid_: reconnect, reuse, fleet attach
+
+**Active-work pin**:
+The condition that keeps a detached standalone server alive past the grace window — one or more in-flight agent turns. A Run does not pin the server (a Julia solve is detached and survives independently, re-attached by the Run Inspector on the next activation); only a turn, which lives in server memory, does.
+_Avoid_: keepalive, lock, busy flag
+
+**Grace window**:
+The interval after an extension-host teardown during which a detached standalone server stays alive awaiting re-adoption. On expiry with no adoption and no active-work pin the server self-exits and deletes its handshake; a reload re-adopts well within it, a genuine quit does not.
+_Avoid_: timeout, linger period
 
 ### Surfaces
 
