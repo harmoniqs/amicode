@@ -36,6 +36,12 @@ export interface AmicodeTerminalDeps {
    *  machine can probe the port directly (curl
    *  $AMICODE_SERVICE_URL/amicode/profile with the auth header). */
   getAmicodeService?: () => { url: string; authHeader: string } | undefined;
+  /** #1149 (ADR 0020): read the server password from the handshake record —
+   *  the universally-readable adoption record, not the stale spawn environment.
+   *  A terminal opened after a reload gets the surviving server's actual
+   *  password. Returns undefined when no handshake exists (fallback to spawn
+   *  env). The password is NEVER logged or echoed. */
+  getHandshakePassword?: () => string | undefined;
 }
 
 export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: AmicodeTerminalDeps): void {
@@ -76,7 +82,12 @@ export function registerAmicodeTerminal(ctx: vscode.ExtensionContext, deps: Amic
     if (pathParts.length) env.PATH = pathParts.join(path.delimiter);
 
     if (configContent) env.OPENCODE_CONFIG_CONTENT = configContent;
-    if (spawnEnv.OPENCODE_SERVER_PASSWORD) env.OPENCODE_SERVER_PASSWORD = spawnEnv.OPENCODE_SERVER_PASSWORD;
+    // #1149 (ADR 0020): prefer the handshake password (the surviving server's
+    // actual credential) over the spawn env (which may be stale after a reload).
+    // The password NEVER appears in logs, terminal echo, or error messages.
+    const handshakePassword = deps.getHandshakePassword?.();
+    const serverPassword = handshakePassword ?? spawnEnv.OPENCODE_SERVER_PASSWORD;
+    if (serverPassword) env.OPENCODE_SERVER_PASSWORD = serverPassword;
     if (spawnEnv.OPENCODE_SERVER_USERNAME) env.OPENCODE_SERVER_USERNAME = spawnEnv.OPENCODE_SERVER_USERNAME;
     // Amicode service (#823, the framed origin): URL + auth for direct probing.
     const svc = deps.getAmicodeService?.();

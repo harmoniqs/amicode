@@ -96,7 +96,7 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
-import { handshakePath, deleteHandshake, serverLogPath } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
@@ -1596,6 +1596,14 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     getSpawnEnv: () => currentSpawnEnv,
     channel: opencodeChannel,
     getAmicodeService: () => amicodeService,
+    // #1149 (ADR 0020): the terminal reads the server password from the
+    // handshake (the surviving server's actual credential), not the stale
+    // spawn environment. After a window reload the spawn env carries the OLD
+    // boot's password; the handshake carries the LIVE server's.
+    getHandshakePassword: () => {
+      const hs = readHandshake();
+      return hs.status === "ok" ? hs.record.password : undefined;
+    },
   });
 
   // Canonical-opencode runtime updater (#451 M4): managed install under
