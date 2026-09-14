@@ -29,6 +29,7 @@ import {
   consumeDevtoolsRestoreMarker,
 } from "./substrate/vault_store";
 import { resolveMountStack, personalMount, type Mount, type MountStack } from "./substrate/mount_store";
+import { readCredential } from "./amicode_service/credentials";
 
 // ============================================================================
 // Prepare a per-session opencode project directory.
@@ -517,6 +518,26 @@ export function buildOpencodeConfigContent(
           ...(process.env.AMICODE_ENTITIES_DIR ? { AMICODE_ENTITIES_DIR: process.env.AMICODE_ENTITIES_DIR } : {}),
         },
       },
+      // Slack MCP server (#1037 revised, #1157): when a Slack credential
+      // exists, spawn slack-mcp-server with the stored token. The token is
+      // threaded as SLACK_MCP_XOXP_TOKEN — minimal-env graft per ADR 0002
+      // (never a full env spread). No credential → no entry → tools invisible.
+      ...(() => {
+        const slackCred = readCredential("slack");
+        return slackCred?.token
+          ? {
+              slack: {
+                type: "local",
+                command: ["npx", "-y", "slack-mcp-server"],
+                enabled: true,
+                environment: {
+                  SLACK_MCP_XOXP_TOKEN: slackCred.token,
+                  SLACK_MCP_ADD_MESSAGE_TOOL: "true",
+                },
+              },
+            }
+          : {};
+      })(),
     },
     ...(skills ? { skills } : {}),
     // Enable AI-SDK span generation ONLY behind the telemetry gate — deep-merges
