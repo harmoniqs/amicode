@@ -141,6 +141,7 @@ export function applyDirectoryEvent(input: {
       input.setStore("session", reconcile(trimmed, { key: "id" }))
       cleanupDroppedSessionCaches(input.store, input.setStore, trimmed, input.setSessionTodo)
       if (!info.parentID) input.setStore("sessionTotal", (value) => value + 1)
+      if (info.parentID) input.setStore("parent_of", info.id, info.parentID)
       break
     }
     case "session.updated": {
@@ -186,6 +187,12 @@ export function applyDirectoryEvent(input: {
         )
       }
       cleanupSessionCaches(input.setStore, sessionID, input.setSessionTodo)
+      input.setStore(
+        "parent_of",
+        produce((draft) => {
+          delete draft[sessionID]
+        }),
+      )
       if (info?.parentID) break
       input.setStore("sessionTotal", (value) => Math.max(0, value - 1))
       break
@@ -321,6 +328,12 @@ export function applyDirectoryEvent(input: {
         (part.state as { metadata?: Record<string, unknown> }).metadata?.filediff
       ) {
         input.setStore("diff_version", part.sessionID, (v) => (v ?? 0) + 1)
+        // Propagate up the parent chain so parent sessions refetch their diff
+        let ancestor = input.store.parent_of[part.sessionID]
+        while (ancestor) {
+          input.setStore("diff_version", ancestor, (v) => (v ?? 0) + 1)
+          ancestor = input.store.parent_of[ancestor]
+        }
       }
       input.setStore(
         produce((draft) => {

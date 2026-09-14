@@ -54,6 +54,9 @@ export type State = {
   diff_version: {
     [sessionID: string]: number
   }
+  parent_of: {
+    [childSessionID: string]: string
+  }
   todo: {
     [sessionID: string]: Todo[]
   }

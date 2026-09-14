@@ -1459,6 +1459,46 @@ describe("Session.diff — subagent (task_spawn) edit rollup (#1136)", () => {
   )
 
   it.instance(
+    "register() auto-creates lineage for a legacy parent and preserves edgeKind (Bug A fix)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const database = yield* Database.Service
+
+        // Create a parent, then delete its lineage row to simulate legacy
+        const parent = yield* withSession({ title: "legacy-parent-fix" })
+        const { SessionLineageTable } = yield* Effect.promise(() => import("@opencode-ai/core/session/sql"))
+        const { eq } = yield* Effect.promise(() => import("drizzle-orm"))
+        yield* database.db
+          .delete(SessionLineageTable)
+          .where(eq(SessionLineageTable.session_id, parent.id))
+          .run()
+          .pipe(Effect.orDie)
+
+        // Now create a task_spawn child — this should trigger Bug A fix
+        yield* fs.writeWithDirs(path.join(test.directory, "parent.ts"), "orig")
+        yield* fs.writeWithDirs(path.join(test.directory, "child.ts"), "orig")
+        const { userMsgID } = yield* recordStart(parent.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "parent.ts"), "changed")
+        yield* recordToolEdit(parent.id, userMsgID, path.join(test.directory, "parent.ts"), "parent.ts")
+
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "child.ts"), "changed")
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "child.ts"), "child.ts")
+
+        // The parent should now have a proper lineage row, and the child's
+        // edit should roll up into the parent's diff
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        const files = diffs.map((d) => d.file)
+        expect(files).toContain("parent.ts")
+        expect(files).toContain("child.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
     "a file edited only by a since-deleted subagent is dropped from Files Changed (lineage cascade)",
     () =>
       Effect.gen(function* () {

@@ -1,6 +1,6 @@
 import { Database } from "@opencode-ai/core/database/database"
 import { SessionLineageOriginTable, SessionLineageTable, SessionTable } from "@opencode-ai/core/session/sql"
-import { and, eq, isNull } from "drizzle-orm"
+import { and, eq, isNull, isNotNull, sql } from "drizzle-orm"
 import { Effect } from "effect"
 import { SessionID } from "./schema"
 
@@ -52,16 +52,44 @@ export namespace SessionLineage {
         .get()
         .pipe(Effect.orDie)
       if (!parent) {
+        // Auto-create a lineage row for the legacy parent (idempotent)
+        yield* database.db
+          .insert(SessionLineageTable)
+          .values({ session_id: input.parentID, root_id: input.parentID, mode: "full" })
+          .onConflictDoNothing()
+          .run()
+          .pipe(Effect.orDie)
+
+        // Register child normally — edge_kind preserved
         yield* database.db
           .insert(SessionLineageTable)
           .values({
             session_id: input.sessionID,
-            root_id: input.sessionID,
+            root_id: input.parentID,
+            parent_id: input.parentID,
+            edge_kind: input.edgeKind ?? "session_spawn",
             mode: "full",
-            legacy_parent_id: input.parentID,
           })
           .run()
           .pipe(Effect.orDie)
+
+        // Self-heal existing orphaned siblings under the same legacy parent
+        yield* database.db
+          .update(SessionLineageTable)
+          .set({
+            root_id: input.parentID,
+            parent_id: input.parentID,
+            edge_kind: sql`COALESCE(${SessionLineageTable.edge_kind}, 'task_spawn')`,
+          })
+          .where(
+            and(
+              eq(SessionLineageTable.legacy_parent_id, input.parentID),
+              isNull(SessionLineageTable.parent_id),
+            ),
+          )
+          .run()
+          .pipe(Effect.orDie)
+
         return
       }
       if (parent.mode === "legacy")
@@ -207,6 +235,60 @@ export namespace SessionLineage {
         .onConflictDoNothing()
         .run()
         .pipe(Effect.orDie)
+    })
+  }
+
+  /** One-time repair for orphaned lineage entries created before the Bug A fix. */
+  export function repairOrphanedEntries(database: Database.Interface) {
+    return Effect.gen(function* () {
+      // Find all orphaned entries (have legacy_parent_id but no parent_id)
+      const orphans = yield* database.db
+        .select({
+          legacy_parent_id: SessionLineageTable.legacy_parent_id,
+        })
+        .from(SessionLineageTable)
+        .where(
+          and(
+            isNull(SessionLineageTable.parent_id),
+            isNotNull(SessionLineageTable.legacy_parent_id),
+          ),
+        )
+        .all()
+        .pipe(Effect.orDie)
+
+      // Get unique parent IDs
+      const parentIDs = [...new Set(
+        orphans
+          .map((row) => row.legacy_parent_id)
+          .filter((id): id is string => id != null),
+      )]
+
+      for (const parentID of parentIDs) {
+        // Ensure the parent has a lineage row
+        yield* database.db
+          .insert(SessionLineageTable)
+          .values({ session_id: parentID, root_id: parentID, mode: "full" })
+          .onConflictDoNothing()
+          .run()
+          .pipe(Effect.orDie)
+
+        // Repair orphaned children
+        yield* database.db
+          .update(SessionLineageTable)
+          .set({
+            root_id: parentID,
+            parent_id: parentID,
+            edge_kind: sql`COALESCE(${SessionLineageTable.edge_kind}, 'task_spawn')`,
+          })
+          .where(
+            and(
+              eq(SessionLineageTable.legacy_parent_id, parentID),
+              isNull(SessionLineageTable.parent_id),
+            ),
+          )
+          .run()
+          .pipe(Effect.orDie)
+      }
     })
   }
 }

@@ -220,6 +220,7 @@ export function createServerSession(
   const orphanParts = new Map<string, Set<string>>()
   const removedMessages = new Map<string, Set<string>>()
   const deltaBases = new Map<string, { base: string; sessionID: string }>()
+  const parentOf = new Map<string, string>()
   const deleteMessageParts = (
     cache: { part: Record<string, Part[] | undefined>; part_text_accum_delta: Record<string, string | undefined> },
     messageID: string,
@@ -1001,6 +1002,10 @@ export function createServerSession(
     switch (event.type) {
       case "session.created":
         remember((event.properties as { info: Session }).info)
+        {
+          const info = (event.properties as { info: Session }).info
+          if (info.parentID) parentOf.set(info.id, info.parentID)
+        }
         return
       case "session.updated": {
         const info = (event.properties as { info: Session }).info
@@ -1012,6 +1017,7 @@ export function createServerSession(
         const properties = event.properties as { sessionID?: string; info?: Session }
         const sessionID = properties.info?.id ?? properties.sessionID
         if (!sessionID) return
+        parentOf.delete(sessionID)
         infoSeen.delete(sessionID)
         setData(
           "info",
@@ -1160,6 +1166,12 @@ export function createServerSession(
           (part.state as { metadata?: Record<string, unknown> }).metadata?.filediff
         ) {
           setData("diff_version", part.sessionID, (v = 0) => v + 1)
+          // Propagate up the parent chain
+          let ancestor = parentOf.get(part.sessionID)
+          while (ancestor) {
+            setData("diff_version", ancestor, (v = 0) => v + 1)
+            ancestor = parentOf.get(ancestor)
+          }
         }
         return
       }

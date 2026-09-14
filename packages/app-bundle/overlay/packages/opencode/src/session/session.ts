@@ -1179,6 +1179,9 @@ const layer: Layer.Layer<
       return Option.none<SessionV1.WithParts>()
     })
 
+    // One-time repair of orphaned lineage entries from the legacy→full transition
+    yield* SessionLineage.repairOrphanedEntries(database).pipe(Effect.orDie)
+
     return Service.of({
       list,
       listGlobal,
