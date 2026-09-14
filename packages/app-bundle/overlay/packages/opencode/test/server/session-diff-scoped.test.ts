@@ -10,6 +10,7 @@
  */
 import { afterEach, describe, expect } from "bun:test"
 import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { Database } from "@opencode-ai/core/database/database"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import path from "path"
 import { Effect, Layer } from "effect"
@@ -29,7 +30,7 @@ import { httpApiLayer, requestInDirectory } from "./httpapi-layer"
 
 const it = testEffect(
   Layer.mergeAll(
-    LayerNode.compile(LayerNode.group([Session.node, Snapshot.node, Storage.node, FSUtil.node])),
+    LayerNode.compile(LayerNode.group([Session.node, Snapshot.node, Storage.node, FSUtil.node, Database.node])),
     httpApiLayer,
   ),
 )
@@ -1089,6 +1090,396 @@ describe("Session.diff — session-scoped agent diffs (#174)", () => {
         )
         expect(response.status).toBe(200)
         const diffs = (yield* response.json) as Array<{ file: string }>
+        expect(diffs).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+})
+
+// ── #1136: subagent (task_spawn) edit rollup into the viewed session's diff ──
+//
+// Foreground Task subagents run in child sessions but mutate the *same*
+// worktree, so their bytes are already in the parent's session-start → live
+// snapshot range. The only thing scoping them out was the eligible-file set,
+// which was built from the viewed session's own tool parts. These tests pin
+// the widened set: reachable via `task_spawn` edges, transitively, from the
+// VIEWED session (a subtree walk — never a root-flat union that would fold in
+// sibling subtrees and reopen the #742 contamination guarantee).
+describe("Session.diff — subagent (task_spawn) edit rollup (#1136)", () => {
+  // Record a session-start snapshot + step-start part on `sessionID`, and
+  // return the start hash for later reference. Mirrors the harness at ~684.
+  const recordStart = (sessionID: string) =>
+    Effect.gen(function* () {
+      const snapshot = yield* Snapshot.Service
+      const startHash = yield* snapshot.track()
+      const userMsgID = MessageID.ascending()
+      yield* Session.use.updateMessage({
+        id: userMsgID,
+        sessionID: sessionID as any,
+        role: "user",
+        time: { created: Date.now() },
+        agent: "build",
+        model: { providerID: ProviderV2.ID.make("test"), modelID: ModelV2.ID.make("model") },
+      } satisfies SessionV1.User)
+      yield* Session.use.updatePart({
+        id: PartID.ascending(),
+        sessionID: sessionID as any,
+        messageID: userMsgID,
+        type: "step-start",
+        snapshot: startHash!,
+      })
+      return { startHash: startHash!, userMsgID }
+    })
+
+  // Record a completed edit/write tool part with filediff metadata on
+  // `sessionID` (this is the ONLY thing that feeds the agent-touched filter
+  // after #742). Files are absolute worktree paths.
+  let toolCounter = 0
+  const recordToolEdit = (sessionID: string, messageID: string, absFile: string, title: string) =>
+    Session.use.updatePart({
+      id: PartID.ascending(),
+      sessionID: sessionID as any,
+      messageID: messageID as any,
+      type: "tool",
+      callID: `call_${toolCounter++}`,
+      tool: "edit",
+      state: {
+        status: "completed",
+        input: {},
+        output: "",
+        title,
+        metadata: { filediff: { file: absFile } },
+        time: { start: Date.now(), end: Date.now() },
+      },
+    } as any)
+
+  const diffFiles = (sessionID: string, directory: string) =>
+    Effect.gen(function* () {
+      const response = yield* requestInDirectory(pathFor(SessionPaths.diff, { sessionID }), directory)
+      expect(response.status).toBe(200)
+      const diffs = (yield* response.json) as Array<{ file: string; additions?: number; deletions?: number }>
+      return diffs
+    })
+
+  it.instance(
+    "rolls a task_spawn child's edit into the parent's diff (both files, once each)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-rollup" })
+        // Seed files before session-start snapshot
+        yield* fs.writeWithDirs(path.join(test.directory, "main.ts"), "orig main")
+        yield* fs.writeWithDirs(path.join(test.directory, "sub.ts"), "orig sub")
+        const { userMsgID } = yield* recordStart(parent.id)
+
+        // Parent edits main.ts
+        yield* fs.writeWithDirs(path.join(test.directory, "main.ts"), "changed main")
+        yield* recordToolEdit(parent.id, userMsgID, path.join(test.directory, "main.ts"), "main.ts")
+
+        // task_spawn child edits sub.ts (same worktree)
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "sub" })
+        const childStart = yield* recordStart(child.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "sub.ts"), "changed sub")
+        yield* recordToolEdit(child.id, childStart.userMsgID, path.join(test.directory, "sub.ts"), "sub.ts")
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        const files = diffs.map((d) => d.file).sort()
+        expect(files).toEqual(["main.ts", "sub.ts"])
+        // once each (dedup)
+        expect(diffs.length).toBe(2)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "rolls a depth-2 grandchild edit into the root's diff (full-tree, not direct-children-only)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const root = yield* withSession({ title: "root-depth2" })
+        yield* fs.writeWithDirs(path.join(test.directory, "deep.ts"), "orig deep")
+        yield* recordStart(root.id)
+
+        const child = yield* Session.use.create({ parentID: root.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const grandchild = yield* Session.use.create({
+          parentID: child.id,
+          lineageEdgeKind: "task_spawn",
+          title: "grandchild",
+        })
+        const gStart = yield* recordStart(grandchild.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "deep.ts"), "changed deep")
+        yield* recordToolEdit(grandchild.id, gStart.userMsgID, path.join(test.directory, "deep.ts"), "deep.ts")
+
+        const diffs = yield* diffFiles(root.id, test.directory)
+        expect(diffs.map((d) => d.file)).toContain("deep.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "mid-tree subagent with a sibling subtree returns ONLY its own + its descendants (sibling excluded)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        // Topology:  root
+        //             ├── A (task_spawn)  ── A1 (task_spawn) edits a1.ts ; A edits a.ts
+        //             └── B (task_spawn)  edits b.ts   ← sibling subtree, MUST be excluded
+        const root = yield* withSession({ title: "root-midtree" })
+        yield* fs.writeWithDirs(path.join(test.directory, "a.ts"), "orig a")
+        yield* fs.writeWithDirs(path.join(test.directory, "a1.ts"), "orig a1")
+        yield* fs.writeWithDirs(path.join(test.directory, "b.ts"), "orig b")
+        yield* recordStart(root.id)
+
+        const A = yield* Session.use.create({ parentID: root.id, lineageEdgeKind: "task_spawn", title: "A" })
+        const aStart = yield* recordStart(A.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "a.ts"), "changed a")
+        yield* recordToolEdit(A.id, aStart.userMsgID, path.join(test.directory, "a.ts"), "a.ts")
+
+        const A1 = yield* Session.use.create({ parentID: A.id, lineageEdgeKind: "task_spawn", title: "A1" })
+        const a1Start = yield* recordStart(A1.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "a1.ts"), "changed a1")
+        yield* recordToolEdit(A1.id, a1Start.userMsgID, path.join(test.directory, "a1.ts"), "a1.ts")
+
+        const B = yield* Session.use.create({ parentID: root.id, lineageEdgeKind: "task_spawn", title: "B" })
+        const bStart = yield* recordStart(B.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "b.ts"), "changed b")
+        yield* recordToolEdit(B.id, bStart.userMsgID, path.join(test.directory, "b.ts"), "b.ts")
+
+        // View A (mid-tree): must see a.ts (own) + a1.ts (its task_spawn descendant),
+        // and MUST NOT see b.ts (sibling subtree).
+        const diffs = yield* diffFiles(A.id, test.directory)
+        const files = diffs.map((d) => d.file).sort()
+        expect(files).toEqual(["a.ts", "a1.ts"])
+        expect(files).not.toContain("b.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a file edited at two depths appears exactly once (dedup across depth)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const root = yield* withSession({ title: "root-dedup" })
+        yield* fs.writeWithDirs(path.join(test.directory, "shared.ts"), "orig")
+        const rStart = yield* recordStart(root.id)
+
+        const child = yield* Session.use.create({ parentID: root.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        const grandchild = yield* Session.use.create({
+          parentID: child.id,
+          lineageEdgeKind: "task_spawn",
+          title: "grandchild",
+        })
+        const gStart = yield* recordStart(grandchild.id)
+
+        // Both child and grandchild "touch" shared.ts; disk ends changed once.
+        yield* fs.writeWithDirs(path.join(test.directory, "shared.ts"), "changed")
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "shared.ts"), "shared.ts")
+        yield* recordToolEdit(grandchild.id, gStart.userMsgID, path.join(test.directory, "shared.ts"), "shared.ts")
+        void rStart
+
+        const diffs = yield* diffFiles(root.id, test.directory)
+        expect(diffs.filter((d) => d.file === "shared.ts").length).toBe(1)
+        expect(diffs.length).toBe(1)
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a session_spawn child's edit does NOT appear in the parent's diff",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-tab" })
+        yield* fs.writeWithDirs(path.join(test.directory, "tab.ts"), "orig tab")
+        yield* recordStart(parent.id)
+
+        const tab = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "session_spawn", title: "tab" })
+        const tabStart = yield* recordStart(tab.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "tab.ts"), "changed tab")
+        yield* recordToolEdit(tab.id, tabStart.userMsgID, path.join(test.directory, "tab.ts"), "tab.ts")
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        expect(diffs.map((d) => d.file)).not.toContain("tab.ts")
+        expect(diffs).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a task_spawn subagent under a session_spawn tab rolls into the TAB's diff, not the tab's parent's",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        // root ──session_spawn──► tab ──task_spawn──► worker (edits worker.ts)
+        const root = yield* withSession({ title: "root-tab-parent" })
+        yield* fs.writeWithDirs(path.join(test.directory, "worker.ts"), "orig worker")
+        yield* recordStart(root.id)
+
+        const tab = yield* Session.use.create({ parentID: root.id, lineageEdgeKind: "session_spawn", title: "tab" })
+        yield* recordStart(tab.id)
+        const worker = yield* Session.use.create({
+          parentID: tab.id,
+          lineageEdgeKind: "task_spawn",
+          title: "worker",
+        })
+        const wStart = yield* recordStart(worker.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "worker.ts"), "changed worker")
+        yield* recordToolEdit(worker.id, wStart.userMsgID, path.join(test.directory, "worker.ts"), "worker.ts")
+
+        // Viewing the tab: worker is reachable via task_spawn → rolled up.
+        const tabDiffs = yield* diffFiles(tab.id, test.directory)
+        expect(tabDiffs.map((d) => d.file)).toContain("worker.ts")
+
+        // Viewing root: reachability is task_spawn-only; the session_spawn edge
+        // to `tab` is NOT traversed, so worker.ts must NOT appear.
+        const rootDiffs = yield* diffFiles(root.id, test.directory)
+        expect(rootDiffs.map((d) => d.file)).not.toContain("worker.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a subagent edit reverted to session-start content is filtered (net-zero, incl. diffFromDisk fallback)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-revert" })
+        yield* fs.writeWithDirs(path.join(test.directory, "revert.ts"), "original")
+        yield* recordStart(parent.id)
+
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        // Child records a filediff for revert.ts, but disk is back to original
+        // → net-zero. Must be filtered, including through the per-file
+        // diffFromDisk (Fallback A) path.
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "revert.ts"), "revert.ts")
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        expect(diffs).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a file created then deleted by a subagent is absent (no net change on disk)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-create-delete" })
+        yield* recordStart(parent.id)
+
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        const created = path.join(test.directory, "ephemeral.ts")
+        yield* fs.writeWithDirs(created, "temp content")
+        yield* recordToolEdit(child.id, cStart.userMsgID, created, "ephemeral.ts")
+        // Delete it again — net-zero vs the (absent) session-start state.
+        yield* fs.remove(created).pipe(Effect.ignore)
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        expect(diffs.map((d) => d.file)).not.toContain("ephemeral.ts")
+        expect(diffs).toEqual([])
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a legacy session (no lineage row) with a parent_id-only child returns only its own files (no rollup)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const database = yield* Database.Service
+        // Legacy parent: create normally, then DELETE its lineage row so
+        // SessionLineage.get returns mode "legacy".
+        const parent = yield* withSession({ title: "legacy-parent" })
+        yield* fs.writeWithDirs(path.join(test.directory, "own.ts"), "orig own")
+        yield* fs.writeWithDirs(path.join(test.directory, "childfile.ts"), "orig child")
+        const { userMsgID } = yield* recordStart(parent.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "own.ts"), "changed own")
+        yield* recordToolEdit(parent.id, userMsgID, path.join(test.directory, "own.ts"), "own.ts")
+
+        // A parent_id-only child edits childfile.ts
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "childfile.ts"), "changed child")
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "childfile.ts"), "childfile.ts")
+
+        // Force the parent into legacy mode: remove its lineage row.
+        const { SessionLineageTable } = yield* Effect.promise(() => import("@opencode-ai/core/session/sql"))
+        const { eq } = yield* Effect.promise(() => import("drizzle-orm"))
+        yield* database.db
+          .delete(SessionLineageTable)
+          .where(eq(SessionLineageTable.session_id, parent.id))
+          .run()
+          .pipe(Effect.orDie)
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        const files = diffs.map((d) => d.file)
+        expect(files).toContain("own.ts")
+        expect(files).not.toContain("childfile.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "an external file touched by no session's tools stays excluded even with a subagent present (#742 holds)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-external" })
+        yield* fs.writeWithDirs(path.join(test.directory, "sub.ts"), "orig sub")
+        yield* recordStart(parent.id)
+
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        yield* fs.writeWithDirs(path.join(test.directory, "sub.ts"), "changed sub")
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "sub.ts"), "sub.ts")
+
+        // A worktree file touched by NO session's tools (no filediff anywhere).
+        yield* fs.writeWithDirs(path.join(test.directory, "external.ts"), "external change")
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        const files = diffs.map((d) => d.file)
+        expect(files).toContain("sub.ts")
+        expect(files).not.toContain("external.ts")
+      }),
+    { git: true, config: { formatter: false, lsp: false } },
+  )
+
+  it.instance(
+    "a file edited only by a since-deleted subagent is dropped from Files Changed (lineage cascade)",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* TestInstance
+        const fs = yield* FSUtil.Service
+        const parent = yield* withSession({ title: "parent-deleted-sub" })
+        yield* fs.writeWithDirs(path.join(test.directory, "gone.ts"), "orig gone")
+        yield* recordStart(parent.id)
+
+        const child = yield* Session.use.create({ parentID: parent.id, lineageEdgeKind: "task_spawn", title: "child" })
+        const cStart = yield* recordStart(child.id)
+        // Change remains on disk...
+        yield* fs.writeWithDirs(path.join(test.directory, "gone.ts"), "changed gone")
+        yield* recordToolEdit(child.id, cStart.userMsgID, path.join(test.directory, "gone.ts"), "gone.ts")
+
+        // ...but the subagent session is deleted (its lineage row cascades away).
+        yield* Session.use.remove(child.id)
+
+        const diffs = yield* diffFiles(parent.id, test.directory)
+        // No surviving lineage session claims gone.ts → dropped (honest drop-on-delete).
+        expect(diffs.map((d) => d.file)).not.toContain("gone.ts")
         expect(diffs).toEqual([])
       }),
     { git: true, config: { formatter: false, lsp: false } },
