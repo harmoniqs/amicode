@@ -104,3 +104,41 @@ describe("ServerManager — health probe under the per-boot password (#163)", ()
     for (const p of probes) expect(p.authorization).toBeNull();
   }, 15_000);
 });
+
+// ============================================================================
+// #1144 (ADR 0020): the afterHealthy hook fires after health passes, BEFORE
+// onReady — cold-spawn handshake writes hook in here.
+// ============================================================================
+
+describe("ServerManager — afterHealthy hook (#1144)", () => {
+  it("fires after health passes with the correct port and pid", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sm-hook-"));
+    const captureFile = join(dir, "requests.jsonl");
+    const { channel } = captureChannel();
+    let hookPort: number | undefined;
+    let hookPid: number | undefined;
+    let hookFired = false;
+    const manager = new ServerManager({
+      binary: fakeOpencodeBinary(dir, captureFile),
+      cwd: dir,
+      env: { PATH: process.env.PATH ?? "" },
+      channel,
+      afterHealthy: (info) => {
+        hookFired = true;
+        hookPort = info.port;
+        hookPid = info.pid;
+      },
+    });
+    try {
+      await manager.start();
+    } finally {
+      await manager.stop();
+    }
+    // afterHealthy fired
+    expect(hookFired).toBe(true);
+    // port and pid are real
+    expect(hookPort).toBeGreaterThan(0);
+    expect(hookPid).toBeGreaterThan(0);
+    expect(hookPort).toBe(manager.port);
+  }, 15_000);
+});

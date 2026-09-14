@@ -30,6 +30,10 @@ export interface ServerOptions {
   channel: vscode.OutputChannel;
   /** Fixed port to serve on. 0 (default) picks a free ephemeral port each start. */
   port?: number;
+  /** Called after the health probe succeeds and BEFORE onReady fires — the
+   *  cold-spawn handshake write hooks in here (#1144, ADR 0020). Receives
+   *  the port and the child PID so the handshake record can be stamped. */
+  afterHealthy?: (info: { port: number; pid: number }) => void;
 }
 
 export class ServerManager {
@@ -97,6 +101,12 @@ export class ServerManager {
       throw new Error("opencode failed to start within 30s — check the 'Amicode — opencode' output channel");
     }
     this._ready = true;
+    // #1144 (ADR 0020): cold-spawn handshake write — the callback runs AFTER
+    // health passes and BEFORE onReady fires, so the handshake record is on
+    // disk before any consumer (SSE client, chat panel) touches the server.
+    if (this.opts.afterHealthy && this.child?.pid) {
+      this.opts.afterHealthy({ port, pid: this.child.pid });
+    }
     const url = new URL(`http://127.0.0.1:${port}`);
     this.opts.channel.appendLine(`[server] ready at ${url}`);
     this._onReady.fire(url);

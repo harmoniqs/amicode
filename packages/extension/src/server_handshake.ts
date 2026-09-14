@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync, unlinkSync, statSync, constants } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -181,4 +181,34 @@ export function hashString(content: string): string {
  *  per cold spawn, never reused across spawns. */
 export function mintHandshakePassword(): string {
   return randomBytes(32).toString("base64url");
+}
+
+// ── Cold-spawn integration ──────────────────────────────────────────────────
+
+export interface ColdSpawnHandshakeOpts {
+  port: number;
+  pid: number;
+  password: string;
+  binaryHash: string;
+  configHash: string;
+  /** Override the handshake file path (tests). */
+  filePath?: string;
+}
+
+/** Write the handshake record after a cold spawn completes its health probe.
+ *  Called from the server manager's onReady handler — NEVER before health
+ *  passes. Generates startedAt and stamps PROTOCOL_VERSION automatically. */
+export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): void {
+  writeHandshake(
+    {
+      port: opts.port,
+      pid: opts.pid,
+      startedAt: new Date().toISOString(),
+      password: opts.password,
+      binaryHash: opts.binaryHash,
+      configHash: opts.configHash,
+      protocolVersion: PROTOCOL_VERSION,
+    },
+    opts.filePath,
+  );
 }

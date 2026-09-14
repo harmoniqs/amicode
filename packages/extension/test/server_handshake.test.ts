@@ -11,6 +11,7 @@ import {
   hashString,
   mintHandshakePassword,
   handshakePath,
+  writeColdSpawnHandshake,
   PROTOCOL_VERSION,
   type HandshakeRecord,
   type GateInputs,
@@ -289,6 +290,50 @@ describe("cold-spawn write ordering", () => {
     if (r1.status === "ok" && r2.status === "ok") {
       expect(r1.record.password).not.toBe(r2.record.password);
     }
+  });
+});
+
+// ============================================================================
+// writeColdSpawnHandshake convenience function
+// ============================================================================
+
+describe("writeColdSpawnHandshake", () => {
+  it("writes a complete handshake with protocol version and startedAt", () => {
+    const fp = tmpHandshakePath();
+    writeColdSpawnHandshake({
+      port: 43117,
+      pid: 99999,
+      password: "the-password",
+      binaryHash: "binhash",
+      configHash: "cfghash",
+      filePath: fp,
+    });
+    const result = readHandshake(fp);
+    expect(result.status).toBe("ok");
+    if (result.status === "ok") {
+      expect(result.record.port).toBe(43117);
+      expect(result.record.pid).toBe(99999);
+      expect(result.record.password).toBe("the-password");
+      expect(result.record.binaryHash).toBe("binhash");
+      expect(result.record.configHash).toBe("cfghash");
+      expect(result.record.protocolVersion).toBe(PROTOCOL_VERSION);
+      // startedAt is a valid ISO date
+      expect(new Date(result.record.startedAt).toISOString()).toBe(result.record.startedAt);
+    }
+  });
+
+  it("file has mode 0600", () => {
+    const fp = tmpHandshakePath();
+    writeColdSpawnHandshake({
+      port: 1234,
+      pid: 1,
+      password: "pw",
+      binaryHash: "bh",
+      configHash: "ch",
+      filePath: fp,
+    });
+    const mode = statSync(fp).mode & 0o777;
+    expect(mode).toBe(0o600);
   });
 });
 
