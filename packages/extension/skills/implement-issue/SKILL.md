@@ -45,13 +45,27 @@ Orchestrated mode is dispatched by `develop` (one slice per worktree, via the En
 
 ### Worktree contract (orchestrated mode)
 
-When the session was spawned with `workspace: "create"`, the implementer operates in an isolated worktree. Three rules:
+When the session was spawned with `workspace: "create"`, the implementer operates in an isolated worktree. Four rules:
 
 1. **Bootstrap first.** The worktree is a fresh checkout — dependencies are not installed. The implementer's first action before any build or test is project bootstrap: `pnpm install` (or the project's package manager equivalent — `npm install`, `yarn`, `pip install -e .`, `julia --project=. -e 'using Pkg; Pkg.instantiate()'`, etc.). Detect the package manager from the lock file present in the worktree root.
 
 2. **Stay on the worktree branch.** Commits land on the worktree's `opencode/<slug>` branch — the branch created by the worktree API and already checked out. **Do not** create new branches, switch branches, or check out other refs. The parent `develop` session owns branch topology; the implementer only commits to what is already checked out.
 
 3. **`index.lock` retry.** Concurrent worktrees sharing the same `.git` directory may contend on `.git/index.lock`. If `git add` or `git commit` fails with `Unable to create '…/.git/index.lock': File exists`, **retry once** after a 2-second wait. If the retry also fails, report the lock contention error — do not delete the lock file.
+
+4. **Engine-overlay slices bootstrap and test differently.** When a slice edits the engine overlay (any path under `packages/app-bundle/overlay/...`), rules 1 and the develop loop's default verify command (`pnpm --filter amicode test`) are **misleading** — the overlay is not part of the outer pnpm workspace, so that filter finds zero tests and exits 0 (it runs the *extension's* vitest suite, a different surface). A false "no tests ran, exit 0" pass is the trap. Instead:
+
+   - **Bootstrap + test through the materialize path**, not the pnpm filter:
+
+     ```
+     node packages/app-bundle/scripts/materialize.mjs --out packages/app-bundle/.materialized
+     cd packages/app-bundle/.materialized && bun install --ignore-scripts
+     cd packages/opencode && bun test test/<path>/<file>.test.ts
+     ```
+
+     The `bun test` **must** run from within `packages/opencode` — a `do-not-run-tests-from-root` guard blocks the materialized root (`Failed to scan non-existent root directory for tests`). `.materialized` is a gitignored build artifact; only the committed `overlay/` files are the source of truth.
+
+   - **Refresh the manifest hash after editing a manifest-tracked overlay file.** `build-binary` CI runs `materialize.mjs`, which `exit 1`s when a listed file's sha256 diverges from `packages/app-bundle/manifest.json` (locally it may only WARN, so the failure first surfaces in CI). Fix by patching **only the changed file's hash** in the manifest's `files` (or its `exceptions`) entry. **Never full-refresh** with `refresh_manifest.mjs` for a targeted edit — it is not exceptions-aware and folds the quarantined `exceptions` entries into `files`, duplicating them and reddening `app-bundle-gate` (`drift_gate.mjs`).
 
 ---
 
