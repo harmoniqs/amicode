@@ -26,6 +26,26 @@ vi.mock("../src/onboarding_panel", async () => {
   };
 });
 
+// The clipboard-image-read handler spawns up to three sequential osascript
+// calls (file-url check → PNG → TIFF), each with a 3 s timeout. On a machine
+// with no image on the clipboard all three error out, easily exceeding vitest's
+// 5 s default. Mock execFile so the clipboard path resolves instantly — the
+// test verifies wiring (dispatch + reply shape), not the real clipboard.
+// execFile is the only child_process API used by the clipboard path; exec
+// (used by the rebuild handler) is left untouched via the spread.
+vi.mock("node:child_process", async () => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  return {
+    ...actual,
+    execFile: vi.fn(
+      (_cmd: unknown, _args: unknown, _opts: unknown, cb: (...a: unknown[]) => void) => {
+        cb(new Error("mocked: no clipboard image"), null, null);
+        return { kill: vi.fn(), pid: 0 } as unknown;
+      },
+    ),
+  };
+});
+
 // ============================================================================
 // The shared iframe⇄extension bridge: strict allowlists, https-only externals,
 // visibility-gated clipboard, and the pane `tab` tag echoed on replies so the
