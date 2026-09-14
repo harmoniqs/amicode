@@ -101,6 +101,7 @@ export function stageExtensionBuild(
   const contentDirs = [
     "skills", "scores", "templates", "exemplars",
     "opencode-plugin", "julia", "tools",
+    "bin", "packs",
   ];
   for (const dir of contentDirs) {
     const src = join(buildDir, dir);

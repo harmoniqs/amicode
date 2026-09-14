@@ -39,6 +39,51 @@ export function resolveDbBackupDir(sessionDatabase: string): string {
   return opencodeDataDir();
 }
 
+/**
+ * Rehome stale worktree sessions in the opencode DB (#1152).
+ *
+ * After a rebuild, worktree directories (used by subagent task_spawn sessions)
+ * may have been deleted while the DB still references them. On server restart
+ * the engine bootstraps instances for ALL session directories — hitting ENOENT
+ * for stale ones, which cascades into MCP failures and blocks the chat panel.
+ *
+ * Instead of deleting (which loses history), repoint each stale session to its
+ * parent project's main directory (project.worktree). The session messages are
+ * preserved and the server can bootstrap the session without errors.
+ *
+ * Best-effort: failures are silently ignored.
+ */
+export function rehomeStaleWorktreeSessions(dbDir: string): number {
+  const { execSync } = require("node:child_process") as typeof import("node:child_process");
+  const dbPath = path.join(dbDir, "opencode.db");
+  if (!fs.existsSync(dbPath)) return 0;
+
+  const worktreeRoot = path.join(dbDir, "worktree");
+
+  try {
+    const raw = execSync(
+      `sqlite3 "${dbPath}" "SELECT DISTINCT directory FROM session WHERE directory LIKE '${worktreeRoot}/%';"`,
+      { encoding: "utf8", timeout: 10_000 },
+    ).trim();
+    if (!raw) return 0;
+
+    let rehomed = 0;
+    for (const dir of raw.split("\n")) {
+      if (!dir || fs.existsSync(dir)) continue;
+      const escaped = dir.replace(/'/g, "''");
+      // Repoint to the parent project's main directory (project.worktree).
+      execSync(
+        `sqlite3 "${dbPath}" "UPDATE session SET directory = (SELECT p.worktree FROM project p WHERE p.id = session.project_id) WHERE directory = '${escaped}' AND project_id IN (SELECT id FROM project);"`,
+        { encoding: "utf8", timeout: 10_000 },
+      );
+      rehomed++;
+    }
+    return rehomed;
+  } catch {
+    return 0; // best-effort
+  }
+}
+
 export type RebuildMode = "local" | "main";
 
 /**
@@ -792,6 +837,10 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         }
 
         // ── Auto-reload ──
+        // Rehome stale worktree sessions before reloading (#1152) — the server
+        // restart after reload will try to bootstrap ALL session directories;
+        // stale worktree refs cause cascading ENOENT → MCP failures.
+        try { rehomeStaleWorktreeSessions(dbDir); } catch { /* best-effort */ }
         io.postToWebview({
           source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
           state: "done",

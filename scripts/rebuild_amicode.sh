@@ -295,6 +295,48 @@ restore_session_dbs() {
   return 0
 }
 
+# ── Rehome stale worktree sessions (#1152) ──────────────────────────────────
+# After a rebuild, worktree directories (used by subagent task_spawn sessions)
+# may have been deleted while the DB still references them. On server restart,
+# the engine tries to bootstrap instances for ALL session directories — hitting
+# ENOENT for the stale ones, which cascades into MCP server failures and blocks
+# the chat panel entirely. Instead of deleting (which loses history), repoint
+# each stale session to its parent project's main directory so the session is
+# still visible in the history and the server can bootstrap it without errors.
+rehome_stale_worktree_sessions() {
+  command -v sqlite3 >/dev/null 2>&1 || { echo "==> sqlite3 not found; skipping worktree session rehome"; return 0; }
+  local db="$DBDIR/opencode.db"
+  [ -f "$db" ] || return 0
+
+  local worktree_root="$DBDIR/worktree"
+
+  # Collect all distinct worktree directories referenced by sessions.
+  local dirs
+  dirs="$(sqlite3 "$db" "SELECT DISTINCT directory FROM session WHERE directory LIKE '${worktree_root}/%';" 2>/dev/null)" || return 0
+  [ -n "$dirs" ] || return 0
+
+  local dir rehomed=0
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    if [ ! -d "$dir" ]; then
+      # Escape single quotes for SQL safety.
+      local escaped="${dir//\'/\'\'}"
+      # Repoint sessions to the parent project's main directory (project.worktree).
+      # The session's project_id matches the project table's id; project.worktree
+      # holds the main repo path (e.g. /Users/jj/harmoniqs/amicode).
+      sqlite3 "$db" "
+        UPDATE session
+        SET directory = (SELECT p.worktree FROM project p WHERE p.id = session.project_id)
+        WHERE directory = '${escaped}'
+          AND project_id IN (SELECT id FROM project);
+      " 2>/dev/null || true
+      rehomed=$((rehomed + 1))
+    fi
+  done <<< "$dirs"
+
+  [ "$rehomed" -gt 0 ] && echo "==> Rehomed sessions from $rehomed stale worktree director(y/ies) to their main project path"
+}
+
 # ── Build recipe (shared) — mirrors the in-app handler order ────────────────
 build_amicode() {
   echo ""
@@ -559,7 +601,7 @@ deploy_into_installed_ext() {
 
   # Sync content dirs + package.json (non-atomic; partial update tolerable).
   local dir f
-  for dir in skills scores templates exemplars opencode-plugin julia tools; do
+  for dir in skills scores templates exemplars opencode-plugin julia tools bin packs; do
     [ -d "$EXT_PKG/$dir" ] && cp -R "$EXT_PKG/$dir" "$ext/" 2>/dev/null || true
   done
   for f in AGENTS.md DISTILLER.md CONTRACT.md package.json; do
@@ -596,6 +638,9 @@ main() {
 
   # Restore DBs if the build zeroed them.
   restore_session_dbs
+
+  # Clean stale worktree sessions (#1152) — must run AFTER DB restore.
+  rehome_stale_worktree_sessions
 
   # Deploy transparency (OB13): surface what overwrote the install.
   local head_sha branch dirty_count
