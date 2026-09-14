@@ -814,7 +814,8 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
+    "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -982,7 +983,7 @@
     },
     "packages/opencode": {
       "A": 68,
-      "M": 73,
+      "M": 74,
       "D": 0
     },
     "packages/schema": {
@@ -1007,7 +1008,7 @@
     }
   },
   "counts": {
-    "overlay_total": 807,
+    "overlay_total": 808,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1818,6 +1819,7 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
-    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
+    "packages/opencode/src/session/reminders.ts": "M"
   }
 }
