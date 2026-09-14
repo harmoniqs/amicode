@@ -96,7 +96,7 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
-import { handshakePath } from "./server_handshake";
+import { handshakePath, deleteHandshake, serverLogPath } from "./server_handshake";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -919,8 +919,11 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
       }),
       channel: opencodeChannel,
+      // #1146 (ADR 0020): detached spawn — stdio goes to the log file;
+      // the output channel tails it. The server survives the host's exit.
+      logFile: serverLogPath(),
     });
-    ctx.subscriptions.push({ dispose: () => void serverManager?.stop() });
+    ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 
     // Amicode service (#451 M1; #822 added the shelf + the engine proxy; #823
     // is the M3 cutover): the extension-host owner of the 31 ported amicode
@@ -1032,10 +1035,13 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
               telemetryOpen(), // gate → experimental.openTelemetry (span generation)
               // Context plugin: injects live stack state per system-prompt build.
               [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
-            ),
-          }),
-          channel: opencodeChannel,
-        });
+        ),
+      }),
+      channel: opencodeChannel,
+      // #1146 (ADR 0020): detached spawn — stdio goes to the log file;
+      // the output channel tails it. The server survives the host's exit.
+      logFile: serverLogPath(),
+    });
         serverManager.onReady((url) => {
           opencodeReadyUrl = url;
         });
@@ -1260,6 +1266,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         ),
       }),
       channel: opencodeChannel,
+      logFile: serverLogPath(),
     });
     serverManager.onReady((url) => {
       opencodeReadyUrl = url;
@@ -1697,9 +1704,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           ),
         }),
         channel: opencodeChannel,
+        logFile: serverLogPath(),
       });
       serverManager = freshManager;
-      ctx.subscriptions.push({ dispose: () => void freshManager.stop() });
+      ctx.subscriptions.push({ dispose: () => freshManager.detach() });
       freshManager.onReady((url) => {
         opencodeReadyUrl = url;
         statusBar?.setServerReady(true);
@@ -2223,6 +2231,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         return;
       }
       await serverManager?.stop();
+      // #1146 (ADR 0020): Restart is the deliberate kill — delete the
+      // handshake so the next activation cold-spawns instead of adopting
+      // the (now-dead) old server.
+      deleteHandshake();
       statusBar?.setServerReady(false);
       opencodeReadyUrl = undefined;
       try {
@@ -2321,7 +2333,10 @@ export function deactivate(): void {
   // shutdown; the next activation or trigger drains the queue.
   if (distillerSetup) triggerSweep(distillerSetup, false);
   sseClient?.dispose();
-  serverManager?.stop();
+  // #1146 (ADR 0020): detach, not kill — the server survives the extension
+  // host's exit and is re-adopted on the next activation (#1145).
+  // Deliberate kills come from Restart (#1146) or Stop (#1149).
+  serverManager?.detach();
   runsManager?.dispose();
   statusBar?.dispose();
 }

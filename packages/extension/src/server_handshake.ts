@@ -49,6 +49,13 @@ export function handshakePath(opsRoot?: string): string {
   return join(opsRoot ?? join(homedir(), ".amico", "ops"), "server", "standalone.json");
 }
 
+/** Default server log path: ~/.amico/ops/server/server.log (#1146, ADR 0020).
+ *  The detached server's stdout/stderr are redirected here; the output channel
+ *  tails this file. */
+export function serverLogPath(opsRoot?: string): string {
+  return join(opsRoot ?? join(homedir(), ".amico", "ops"), "server", "server.log");
+}
+
 // ── Write ───────────────────────────────────────────────────────────────────
 
 /** Write (or rewrite) the handshake record atomically with mode 0600. */

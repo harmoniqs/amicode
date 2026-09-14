@@ -1,20 +1,28 @@
 import * as vscode from "vscode";
 import * as cp from "node:child_process";
 import * as net from "node:net";
-import type { Readable } from "node:stream";
+import * as fs from "node:fs";
+import { dirname } from "node:path";
 import { serverAuthHeader } from "./server_auth";
 
 // ============================================================================
-// ServerManager — spawn `opencode serve --port=N`, wait for it to come up,
-// expose readiness + URL to the rest of the extension. Pattern adapted from
-// the opencode-v2 decompiled extension (handover §6).
+// ServerManager — spawn `opencode serve`, wait for it to come up, expose
+// readiness + URL to the rest of the extension.
+//
+// #1146 (ADR 0020): when a `logFile` is provided the server is spawned
+// **detached** with stdout/stderr redirected to that file.  The process
+// survives the extension host's exit (reparented to init/launchd).
+// `detach()` disposes the log tail without killing; `stop()` is the
+// deliberate kill (for Restart / solver-mode switch).
 //
 // Lifecycle:
 //   1. use the configured port, or acquire a free TCP port if none was given
-//   2. spawn `opencode serve --port=<port>` with env injected
-//   3. poll http://127.0.0.1:<port>/health until 200 (max 30s)
-//   4. report ready; expose .url + .port + .child
-//   5. on dispose: SIGTERM the child, wait briefly, SIGKILL fallback
+//   2. spawn `opencode serve --hostname 127.0.0.1 --port <port>` with env
+//   3. poll http://127.0.0.1:<port>/ until 200 (max 30s)
+//   4. start tailing the log file into the output channel (detached path)
+//   5. report ready; expose .url + .port + .pid
+//   6. on detach: stop tail, forget child (leave running)
+//   7. on stop:   SIGTERM, wait, SIGKILL fallback
 // ============================================================================
 
 export interface ServerOptions {
@@ -34,19 +42,31 @@ export interface ServerOptions {
    *  cold-spawn handshake write hooks in here (#1144, ADR 0020). Receives
    *  the port and the child PID so the handshake record can be stamped. */
   afterHealthy?: (info: { port: number; pid: number }) => void;
+  /** Log file path for the detached server's stdout/stderr (#1146, ADR 0020).
+   *  When set, the server is spawned detached + unreferenced and its stdio is
+   *  redirected to this file. The output channel tails the file. When unset,
+   *  the legacy piped-stdio path is used (backward compat for tests). */
+  logFile?: string;
 }
 
 export class ServerManager {
-  private child?: cp.ChildProcessByStdio<null, Readable, Readable>;
+  private child?: cp.ChildProcess;
   private _port?: number;
+  private _pid?: number;
   private _ready = false;
   private readonly _onReady = new vscode.EventEmitter<URL>();
   readonly onReady = this._onReady.event;
+  private tailTimer?: ReturnType<typeof setInterval>;
+  private tailOffset = 0;
 
   constructor(private readonly opts: ServerOptions) {}
 
   get port(): number | undefined {
     return this._port;
+  }
+  /** The child process PID (undefined when detached or stopped). */
+  get pid(): number | undefined {
+    return this._pid;
   }
   get url(): URL | undefined {
     return this._port ? new URL(`http://127.0.0.1:${this._port}`) : undefined;
@@ -70,19 +90,48 @@ export class ServerManager {
     // "browser doesn't launch" failure is diagnosable from the output channel.
     // Google token path (like Claude): paste a token into the connections panel
     // as with Slack/GitHub — no browser needed when a token is available.
-    const browserEnv = process.env.BROWSER ? `BROWSER=${process.env.BROWSER}` : "BROWSER=(unset)"
-    const ipcEnv = process.env.VSCODE_IPC_HOOK_CLI ? "VSCODE_IPC_HOOK_CLI=present" : "VSCODE_IPC_HOOK_CLI=(unset)"
-    this.opts.channel.appendLine(`[server] browser env: ${browserEnv}, ${ipcEnv}`)
-    this.opts.channel.appendLine(`[server] google connector supports token paste (like Claude) + browser OAuth`)
-    const child = cp.spawn(this.opts.binary, ["serve", "--port", String(port)], {
-      cwd: this.opts.cwd,
-      env: { ...process.env, ...this.opts.env },
-      stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
-    });
-    this.child = child;
+    const browserEnv = process.env.BROWSER ? `BROWSER=${process.env.BROWSER}` : "BROWSER=(unset)";
+    const ipcEnv = process.env.VSCODE_IPC_HOOK_CLI ? "VSCODE_IPC_HOOK_CLI=present" : "VSCODE_IPC_HOOK_CLI=(unset)";
+    this.opts.channel.appendLine(`[server] browser env: ${browserEnv}, ${ipcEnv}`);
+    this.opts.channel.appendLine(`[server] google connector supports token paste (like Claude) + browser OAuth`);
 
-    child.stdout.on("data", (b: Buffer) => this.opts.channel.append(`[opencode] ${b.toString()}`));
-    child.stderr.on("data", (b: Buffer) => this.opts.channel.append(`[opencode!] ${b.toString()}`));
+    // #1146 (ADR 0020): --hostname 127.0.0.1 enforces loopback-only binding.
+    // The at-rest-password threat model depends on the server being unreachable
+    // from off-host.
+    const args = ["serve", "--hostname", "127.0.0.1", "--port", String(port)];
+    const logFile = this.opts.logFile;
+    let child: cp.ChildProcess;
+
+    if (logFile) {
+      // ── Detached path (#1146) ────────────────────────────────────────
+      // Spawn detached so the process survives the extension host's exit.
+      // Stdio goes to the log file; the output channel tails it.
+      fs.mkdirSync(dirname(logFile), { recursive: true });
+      const logFd = fs.openSync(logFile, "a");
+      child = cp.spawn(this.opts.binary, args, {
+        cwd: this.opts.cwd,
+        env: { ...process.env, ...this.opts.env },
+        stdio: ["ignore", logFd, logFd],
+        detached: true,
+      });
+      child.unref();
+      fs.closeSync(logFd); // parent's fd — child inherited its own copy
+      this.opts.channel.appendLine(`[server] detached spawn (pid=${child.pid}, log=${logFile})`);
+    } else {
+      // ── Legacy piped path (tests without logFile) ────────────────────
+      const piped = cp.spawn(this.opts.binary, args, {
+        cwd: this.opts.cwd,
+        env: { ...process.env, ...this.opts.env },
+        stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+      });
+      piped.stdout.on("data", (b: Buffer) => this.opts.channel.append(`[opencode] ${b.toString()}`));
+      piped.stderr.on("data", (b: Buffer) => this.opts.channel.append(`[opencode!] ${b.toString()}`));
+      child = piped;
+    }
+
+    this.child = child;
+    this._pid = child.pid;
+
     child.on("exit", (code, signal) => {
       this.opts.channel.appendLine(`[server] opencode exited code=${code} signal=${signal}`);
       this._ready = false;
@@ -101,11 +150,19 @@ export class ServerManager {
       throw new Error("opencode failed to start within 30s — check the 'Amicode — opencode' output channel");
     }
     this._ready = true;
+
+    // #1146: start tailing the log file into the output channel AFTER health
+    // passes — the initial read catches up on all startup output, then the
+    // poll handles subsequent lines.
+    if (logFile) {
+      this.startTailing(logFile);
+    }
+
     // #1144 (ADR 0020): cold-spawn handshake write — the callback runs AFTER
     // health passes and BEFORE onReady fires, so the handshake record is on
     // disk before any consumer (SSE client, chat panel) touches the server.
-    if (this.opts.afterHealthy && this.child?.pid) {
-      this.opts.afterHealthy({ port, pid: this.child.pid });
+    if (this.opts.afterHealthy && child.pid) {
+      this.opts.afterHealthy({ port, pid: child.pid });
     }
     const url = new URL(`http://127.0.0.1:${port}`);
     this.opts.channel.appendLine(`[server] ready at ${url}`);
@@ -113,10 +170,58 @@ export class ServerManager {
     return url;
   }
 
-  /** Resolves once the child has actually exited (bounded by the SIGKILL fallback) —
-   *  callers restarting onto a fixed port must await this or the new spawn can race
-   *  the old process for the socket. */
+  // ── Log tailing (#1146) ────────────────────────────────────────────────
+
+  private startTailing(logFile: string) {
+    // Catch-up: read everything the server has written so far
+    try {
+      const existing = fs.readFileSync(logFile, "utf8");
+      this.tailOffset = Buffer.byteLength(existing, "utf8");
+      if (existing.length > 0) {
+        this.opts.channel.append(`[opencode] ${existing}`);
+      }
+    } catch { /* file may not exist yet */ }
+
+    // Poll for new content
+    this.tailTimer = setInterval(() => {
+      try {
+        const stat = fs.statSync(logFile);
+        if (stat.size > this.tailOffset) {
+          const buf = Buffer.alloc(stat.size - this.tailOffset);
+          const fd = fs.openSync(logFile, "r");
+          fs.readSync(fd, buf, 0, buf.length, this.tailOffset);
+          fs.closeSync(fd);
+          this.tailOffset = stat.size;
+          this.opts.channel.append(`[opencode] ${buf.toString("utf8")}`);
+        }
+      } catch { /* file not ready yet */ }
+    }, 200);
+  }
+
+  private stopTailing(): void {
+    if (this.tailTimer) {
+      clearInterval(this.tailTimer);
+      this.tailTimer = undefined;
+    }
+  }
+
+  // ── Lifecycle ──────────────────────────────────────────────────────────
+
+  /** Detach from the server process without killing it (#1146, ADR 0020).
+   *  Stops the log tailer and clears the child reference. The server process
+   *  continues running (spawned detached + unref'd). For use in `deactivate()`. */
+  detach(): void {
+    this.stopTailing();
+    this.child = undefined;
+    this._ready = false;
+  }
+
+  /** Kill the server process — for deliberate Restart/Stop and solver-mode
+   *  switches. Resolves once the child has actually exited (bounded by the
+   *  SIGKILL fallback) — callers restarting onto a fixed port must await this
+   *  or the new spawn can race the old process for the socket. */
   stop(): Promise<void> {
+    this.stopTailing();
     if (!this.child) return Promise.resolve();
     this.opts.channel.appendLine(`[server] stopping opencode (pid=${this.child.pid})`);
     const c = this.child;
