@@ -877,11 +877,36 @@ const layer: Layer.Layer<
       const session = yield* get(sessionID).pipe(Effect.orDie)
       const sessionStartTime = session.time.created
 
+      // Collect the completed-tool filediff files for a GIVEN session id. This
+      // is the #742-safe eligible-file source: only completed edit/write tool
+      // parts' `filediff.file`, never patch-part file lists. Works for any
+      // session (used for the viewed session AND its task_spawn descendants).
+      const collectAgentFiles = (targetSessionID: SessionID) =>
+        Effect.gen(function* () {
+          const files = new Set<string>()
+          const msgs = yield* messages({ sessionID: targetSessionID }).pipe(Effect.orDie)
+          for (const msg of msgs) {
+            for (const part of msg.parts) {
+              if (part.type !== "tool") continue
+              const toolPart = part as { tool?: string; state?: { status?: string; metadata?: Record<string, unknown> } }
+              if (toolPart.state?.status !== "completed") continue
+              const filediff = toolPart.state?.metadata?.filediff as { file?: string } | undefined
+              if (filediff?.file) files.add(filediff.file)
+            }
+          }
+          return files
+        })
+
       // Find the first step-start snapshot hash (session-start ref)
       // and the last step-finish snapshot hash (session-end ref)
       let from: string | undefined
       let lastStepFinish: string | undefined
-      // Collect all agent-touched files from PatchParts and completed tool parts (absolute paths)
+      // Collect all agent-touched files (absolute paths). The set unions the
+      // viewed session's own completed-tool filediff files with those of every
+      // subagent reachable through `task_spawn` edges (#1136). The net-diff
+      // computation below is UNCHANGED — foreground subagents share the
+      // worktree, so their bytes are already in the parent's `to` snapshot;
+      // only which files are ELIGIBLE widens.
       const agentFilesAbsolute = new Set<string>()
 
       for (const msg of all) {
@@ -908,6 +933,38 @@ const layer: Layer.Layer<
           }
         }
       }
+
+      // #1136: roll up subagent (task_spawn) edits. Walk the lineage subtree
+      // from the VIEWED session, following ONLY task_spawn edges transitively
+      // via parent pointers — NOT a flat filter of all root descendants (that
+      // would fold sibling subtrees in and reopen #742 cross-session
+      // contamination). Legacy sessions (no lineage row) get no rollup.
+      const lineage = yield* SessionLineage.get(database, sessionID).pipe(Effect.orDie)
+      if (lineage.mode !== "legacy") {
+        const reachable = new Set<string>([sessionID])
+        // Fixpoint: add any descendant whose parent is already reachable and
+        // whose edge to that parent is task_spawn. Bounded by descendant count.
+        let grew = true
+        while (grew) {
+          grew = false
+          for (const d of lineage.descendants) {
+            if (d.edgeKind !== "task_spawn") continue
+            if (reachable.has(d.sessionID)) continue
+            if (reachable.has(d.parentID)) {
+              reachable.add(d.sessionID)
+              grew = true
+            }
+          }
+        }
+        // The viewed session's own files are already in agentFilesAbsolute;
+        // union each reachable subagent's files (dedup across depth is free).
+        for (const subagentID of reachable) {
+          if (subagentID === sessionID) continue
+          const subFiles = yield* collectAgentFiles(subagentID as SessionID)
+          for (const f of subFiles) agentFilesAbsolute.add(f)
+        }
+      }
+
 
       // If we have snapshot hashes and agent-touched files, compute the real diff
       if (from && agentFilesAbsolute.size > 0) {
