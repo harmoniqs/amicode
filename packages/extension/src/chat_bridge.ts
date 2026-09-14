@@ -721,10 +721,18 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         const installedExt = vscode.extensions.getExtension("harmoniqs.amicode");
         if (installedExt) {
           const buildDir = path.join(amicodePath, "packages", "extension");
+          // Copy the freshly built binary into the installed vendor tree too
+          // (#1135), UNLESS an opencodeBinary override is active — the runtime
+          // resolves the binary via the override in that case, so a copy is
+          // dead work. platformKey mirrors the runtime resolver / build:binary.
+          const overrideActive =
+            (vscode.workspace.getConfiguration("amicode").get<string>("opencodeBinary", "") ?? "").trim() !== "";
           const deployResult = await deployBuild({
             extensionPath: installedExt.extensionPath,
             buildDir,
             binaryPath: resolvedBinaryPath || undefined,
+            platformKey: `${process.platform}-${process.arch}`,
+            overrideActive,
             onPhase: (phase, detail) => {
               io.postToWebview({
                 source: "amicode", kind: "dev-tools-rebuild-status",

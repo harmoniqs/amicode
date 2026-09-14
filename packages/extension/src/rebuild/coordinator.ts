@@ -46,7 +46,11 @@ function defaultExec(cmd: string, cwd?: string): Promise<ExecResult> {
 export interface DeployOpts {
   extensionPath: string;      // installed extension dir
   buildDir: string;           // packages/extension in the amicode repo
-  binaryPath?: string;        // resolved binary for codesign
+  binaryPath?: string;        // resolved freshly-built binary (codesign + copy source)
+  platformKey?: string;       // e.g. "darwin-arm64" — vendor/opencode/<key>/opencode
+  overrideActive?: boolean;   // an opencodeBinary config override is set → runtime
+                              // resolves the binary via the override, so copying it
+                              // into the installed vendor tree is dead work (skip it)
   exec?: ExecFn;
   onPhase?: (phase: string, detail?: string) => void;
 }
@@ -76,10 +80,24 @@ export async function deployBuild(opts: DeployOpts): Promise<RebuildCoordinatorR
   }
 
   // ── Stage the build output (#1021) ──
+  // Parity with the shell rebuild scripts (#1135): when this is a plain install
+  // (no opencodeBinary override), stage the freshly built binary too, so the
+  // atomic swap updates dist AND the engine together — otherwise the installed
+  // extension self-discovers a STALE vendor binary against fresh dist.
+  // The built binary is opts.binaryPath when given, else derived from the
+  // buildDir's vendor tree (what build:binary writes).
+  const builtBinary = opts.binaryPath
+    ?? (opts.platformKey
+      ? path.join(opts.buildDir, "vendor", "opencode", opts.platformKey, "opencode")
+      : undefined);
+  const copyBinary = !!builtBinary && !!opts.platformKey && !opts.overrideActive;
   onPhase("stage", "Staging build output...");
   let stagingDir: string;
   try {
-    stagingDir = stageExtensionBuild(opts.extensionPath, opts.buildDir);
+    stagingDir = stageExtensionBuild(opts.extensionPath, opts.buildDir, {
+      binarySource: copyBinary ? builtBinary : undefined,
+      platformKey: copyBinary ? opts.platformKey : undefined,
+    });
   } catch (e) {
     return {
       ok: false,
@@ -113,6 +131,7 @@ export async function deployBuild(opts: DeployOpts): Promise<RebuildCoordinatorR
     extensionDir: opts.extensionPath,
     stagingDir,
     backupDir,
+    platformKey: copyBinary ? opts.platformKey : undefined,
   });
 
   if (!swapResult.ok) {

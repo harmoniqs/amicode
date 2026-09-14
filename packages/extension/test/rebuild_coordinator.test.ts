@@ -57,6 +57,26 @@ function makeBuildDir(root: string): string {
   return buildDir;
 }
 
+const TEST_KEY = "test-plat-x64";
+
+/** Give an ext dir a pre-existing bundled binary at vendor/opencode/<key>/opencode. */
+function seedExtBinary(extDir: string, content: string): string {
+  const vdir = join(extDir, "vendor", "opencode", TEST_KEY);
+  mkdirSync(vdir, { recursive: true });
+  const p = join(vdir, "opencode");
+  writeFileSync(p, content);
+  return p;
+}
+
+/** Put a freshly-built binary in the buildDir's vendor tree. */
+function seedBuiltBinary(buildDir: string, content: string): string {
+  const vdir = join(buildDir, "vendor", "opencode", TEST_KEY);
+  mkdirSync(vdir, { recursive: true });
+  const p = join(vdir, "opencode");
+  writeFileSync(p, content);
+  return p;
+}
+
 // ── Tests ──
 
 describe("rebuild coordinator (#1016 integration)", () => {
@@ -133,6 +153,78 @@ describe("rebuild coordinator (#1016 integration)", () => {
         c.includes("settings.json") || c.includes("update") || c.includes("devAssetRoot") || c.includes("opencodeBinary"),
       );
       expect(settingsCmds).toHaveLength(0);
+    });
+  });
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Binary-copy parity with the shell scripts (#1135) — deploy the freshly
+  // built binary into the installed ext's vendor tree, atomic with dist, so a
+  // plain install (no opencodeBinary override) does not run a stale engine.
+  // ════════════════════════════════════════════════════════════════════════
+  describe("deployBuild — binary copy into installed ext", () => {
+    it("copies the built binary into vendor/opencode/<key>/opencode alongside dist", async () => {
+      const root = tmpRoot();
+      cleanup.push(root);
+      const extDir = makeExtDir(root);
+      seedExtBinary(extDir, "OLD_BIN");
+      const buildDir = makeBuildDir(root);
+      seedBuiltBinary(buildDir, "NEW_BIN");
+
+      const result = await deployBuild({
+        extensionPath: extDir,
+        buildDir,
+        platformKey: TEST_KEY,
+        exec: happyExec(),
+      });
+      expect(result.ok).toBe(true);
+
+      // dist updated AND the installed binary is the freshly built one.
+      expect(readFileSync(join(extDir, "dist", "extension.js"), "utf8")).toBe("// new");
+      expect(readFileSync(join(extDir, "vendor", "opencode", TEST_KEY, "opencode"), "utf8")).toBe("NEW_BIN");
+    });
+
+    it("restores BOTH old dist and old binary on swap failure — no version skew", async () => {
+      const root = tmpRoot();
+      cleanup.push(root);
+      const extDir = makeExtDir(root);
+      seedExtBinary(extDir, "OLD_BIN");
+      // Empty build dir → staging has no dist → swap fails → must roll back.
+      const emptyBuild = join(root, "empty-build");
+      mkdirSync(emptyBuild, { recursive: true });
+      seedBuiltBinary(emptyBuild, "NEW_BIN"); // a fresh binary exists but must NOT land
+
+      const result = await deployBuild({
+        extensionPath: extDir,
+        buildDir: emptyBuild,
+        platformKey: TEST_KEY,
+        exec: happyExec(),
+      });
+      expect(result.ok).toBe(false);
+      // Original dist AND original binary preserved — never a new binary on old dist.
+      expect(readFileSync(join(extDir, "dist", "extension.js"), "utf8")).toBe("// old");
+      expect(readFileSync(join(extDir, "vendor", "opencode", TEST_KEY, "opencode"), "utf8")).toBe("OLD_BIN");
+    });
+
+    it("does NOT copy the binary when an opencodeBinary override is active", async () => {
+      const root = tmpRoot();
+      cleanup.push(root);
+      const extDir = makeExtDir(root);
+      seedExtBinary(extDir, "OLD_BIN");
+      const buildDir = makeBuildDir(root);
+      seedBuiltBinary(buildDir, "NEW_BIN");
+
+      const result = await deployBuild({
+        extensionPath: extDir,
+        buildDir,
+        platformKey: TEST_KEY,
+        overrideActive: true, // runtime resolves the binary via config override → copy is dead work
+        exec: happyExec(),
+      });
+      expect(result.ok).toBe(true);
+
+      // dist still updates, but the installed vendor binary is left untouched.
+      expect(readFileSync(join(extDir, "dist", "extension.js"), "utf8")).toBe("// new");
+      expect(readFileSync(join(extDir, "vendor", "opencode", TEST_KEY, "opencode"), "utf8")).toBe("OLD_BIN");
     });
   });
 });

@@ -13,6 +13,7 @@
  */
 
 import {
+  chmodSync,
   cpSync,
   existsSync,
   mkdirSync,
@@ -84,6 +85,7 @@ export function pruneBackups(parentDir: string, keep: number = 3): void {
 export function stageExtensionBuild(
   extensionDir: string,
   buildDir: string,
+  opts?: { binarySource?: string; platformKey?: string },
 ): string {
   const parent = dirname(extensionDir);
   const stagingDir = join(parent, `.amicode-staging-${Date.now()}`);
@@ -116,6 +118,23 @@ export function stageExtensionBuild(
     }
   }
 
+  // Stage the freshly-built binary (#1135) into the vendor tree so the swap can
+  // adopt it atomically with dist. Only when a source + platformKey are given
+  // (plain install, no override). vendor/ is NOT copied by the generic loop
+  // above — the binary is swapped explicitly by atomicSwap so a partial copy
+  // can never leave a new dist against a half-written binary.
+  if (opts?.binarySource && opts?.platformKey && existsSync(opts.binarySource)) {
+    const stagedBinDir = join(stagingDir, "vendor", "opencode", opts.platformKey);
+    mkdirSync(stagedBinDir, { recursive: true });
+    cpSync(opts.binarySource, join(stagedBinDir, "opencode"));
+    // Carry provenance sidecars if present.
+    const srcDir = dirname(opts.binarySource);
+    for (const sidecar of [".source", ".sha256"]) {
+      const s = join(srcDir, sidecar);
+      if (existsSync(s)) cpSync(s, join(stagedBinDir, sidecar));
+    }
+  }
+
   return stagingDir;
 }
 
@@ -130,8 +149,9 @@ export async function atomicSwap(opts: {
   extensionDir: string;
   stagingDir: string;
   backupDir: string;
+  platformKey?: string;
 }): Promise<SwapResult> {
-  const { extensionDir, stagingDir, backupDir } = opts;
+  const { extensionDir, stagingDir, backupDir, platformKey } = opts;
 
   try {
     // Verify staging has the expected structure
@@ -159,15 +179,48 @@ export async function atomicSwap(opts: {
       return { ok: false, error: `Atomic swap failed: ${e instanceof Error ? e.message : String(e)}` };
     }
 
+    // Binary swap (#1135) — adopt the staged binary into the installed vendor
+    // tree, COUPLED to the dist swap: if it fails, revert BOTH dist and binary
+    // so a plain install never ends up with fresh dist on a stale/half binary.
+    const stagedBin = platformKey
+      ? join(stagingDir, "vendor", "opencode", platformKey, "opencode")
+      : "";
+    if (platformKey && stagedBin && existsSync(stagedBin)) {
+      const destDir = join(extensionDir, "vendor", "opencode", platformKey);
+      const dest = join(destDir, "opencode");
+      const destTmp = join(destDir, ".opencode.new");
+      try {
+        mkdirSync(destDir, { recursive: true });
+        cpSync(stagedBin, destTmp);
+        chmodSync(destTmp, 0o755);
+        renameSync(destTmp, dest); // atomic on same fs; only now does it take effect
+        // Sidecars are best-effort provenance, not part of the atomic guarantee.
+        for (const sidecar of [".source", ".sha256"]) {
+          const s = join(stagingDir, "vendor", "opencode", platformKey, sidecar);
+          if (existsSync(s)) { try { cpSync(s, join(destDir, sidecar)); } catch { /* non-critical */ } }
+        }
+      } catch (e) {
+        // Revert the tmp, then roll dist back from backup — dist + binary revert
+        // together (no version skew). rollback() restores dist from backupDir;
+        // the installed binary was never renamed over, so it stays original.
+        try { if (existsSync(destTmp)) rmSync(destTmp, { force: true }); } catch { /* ignore */ }
+        if (existsSync(distDir)) rmSync(distDir, { recursive: true, force: true });
+        return rollback(extensionDir, backupDir,
+          `Binary adoption failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
     // Clean up the old dist
     if (existsSync(distOld)) {
       rmSync(distOld, { recursive: true, force: true });
     }
 
     // Copy non-dist content from staging (these are not atomically swapped —
-    // they're less critical and a partial update is tolerable)
+    // they're less critical and a partial update is tolerable). `vendor` is
+    // excluded: the binary was already adopted atomically above (#1135).
     for (const entry of readdirSync(stagingDir)) {
       if (entry === "dist") continue;
+      if (entry === "vendor") continue;
       const src = join(stagingDir, entry);
       const dest = join(extensionDir, entry);
       try {
@@ -200,6 +253,15 @@ function rollback(extensionDir: string, backupDir: string, reason: string): Swap
       if (existsSync(backupDist)) {
         rmSync(targetDist, { recursive: true, force: true });
         cpSync(backupDist, targetDist, { recursive: true });
+      }
+      // Restore vendor/ (the binary) from backup too — dist and binary revert
+      // together so a failed swap never leaves version skew (#1135). The backup
+      // is a full snapshot of the ext dir, so vendor/ is present when it existed.
+      const backupVendor = join(backupDir, "vendor");
+      const targetVendor = join(extensionDir, "vendor");
+      if (existsSync(backupVendor)) {
+        rmSync(targetVendor, { recursive: true, force: true });
+        cpSync(backupVendor, targetVendor, { recursive: true });
       }
     }
     return { ok: false, error: reason, rolledBack: true };
