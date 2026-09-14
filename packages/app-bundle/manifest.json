@@ -669,7 +669,7 @@
     "packages/core/src/database/migration/20260828201050_normal_stryfe.ts": "cbf63b27785b76d64d83e4c7fea341278c736985a6e21e4bd6cc816360a84154",
     "packages/core/src/database/migration/20260913205004_session-lineage.ts": "f0db98f72e9c1e32257113a033247be69a71ad786bc4bfd71dd719e2536a151a",
     "packages/core/src/database/migration/20260913212936_session-receipt-storage.ts": "cc9570ff52caf718dc517f65c48b2f185cebaefcbf723eb2f74d02eee4d5e0cb",
-    "packages/core/src/database/migration/20260913221452_session-receipt-budget-reservation.ts": "aa0463b140d71c18e1acb7babaf15f89a9294029f7ec0e3e3aecf5f80f28cac6",
+    "packages/core/src/database/migration/20260913221452_session-receipt-budget-reservation.ts": "a09f5e22bbbd6bdc38f39860e2521bd9ccd338c4d2f15fe20cc78badd5ca893b",
     "packages/core/src/session/runner/llm.ts": "e1c9da5f568cab64ebd49a467bff8e11a685306240b3faf672127663f1b02444",
     "packages/core/src/v1/config/config.ts": "6eece12da68ac65a2c8b2fe19b1f2509f397cb63d004dca3998cf6dcc772293e",
     "packages/core/src/v1/config/migrate.ts": "6c960e1245db9a4bb830f0c1ebd6174e50570b4282d4ce5d7bff3333277abcf4",
