@@ -178,8 +178,8 @@ function healStaleHarmoniqsModelShape(existing: Record<string, unknown>): boolea
   let changed = false;
   for (const modelId of Object.keys(models)) {
     const model = models[modelId] as Record<string, unknown>;
-    if (model.tool_call !== false) {
-      model.tool_call = false;
+    if (model.tool_call !== true) {
+      model.tool_call = true;
       changed = true;
     }
     const limit = model.limit as { output?: unknown } | undefined;
@@ -326,16 +326,10 @@ function buildProviderConfigEntry(
           // opencode's own maxOutputTokens fallback sends 32000 and every
           // real turn 400s.
           limit: { output: HARMONIQS_MAX_OUTPUT_TOKENS },
-          // The app-harmoniqs-ai gateway hard-rejects `tools`, `response_format`,
-          // and n!=1 with a 400 (see chat-completions.ts parseRequest) for
-          // EVERY model it serves — a protocol-level constraint, not a
-          // per-model one. OpenCode agents default to tool calling, so this
-          // model is declared chat-only here; the actual no-tools enforcement
-          // lives in opencode's session/llm/request.ts (isNoToolsProvider,
-          // keyed on providerID — so it already covers any model id under
-          // "harmoniqs"), since this flag alone is descriptive metadata, not
-          // a request-building gate.
-          tool_call: false,
+          // The gateway accepts OpenAI-compatible tool calls and returns the
+          // model's tool-call IDs unchanged, so OpenCode executes local
+          // tools and continues the session on the next provider turn.
+          tool_call: true,
         },
       },
     };
