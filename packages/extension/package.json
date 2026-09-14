@@ -304,6 +304,11 @@
           "default": 43117,
           "description": "Fixed port for the spawned opencode server. Set to 0 to pick a free ephemeral port on each start instead."
         },
+        "amicode.server.graceSeconds": {
+          "type": "number",
+          "default": 30,
+          "description": "Grace window (in seconds) before a detached server self-exits after the last keepalive ping. The server stays alive as long as any window is pinging it. Minimum 10, default 30."
+        },
         "amicode.sessionDatabase": {
           "type": "string",
           "default": "",

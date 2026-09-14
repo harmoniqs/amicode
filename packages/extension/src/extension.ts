@@ -97,6 +97,7 @@ import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
 import { handshakePath, deleteHandshake, serverLogPath } from "./server_handshake";
+import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import type { QueueView } from "./qick_job_server";
 import { postDeviceStatus, postDeviceActions, postDeviceActivate } from "./inspector_bridge";
 
@@ -877,6 +878,29 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeChannel.appendLine(`[boot] adopt-or-spawn check failed: ${(e as Error).message} — cold-spawning`);
     }
 
+    // #1147 (ADR 0020): keepalive helper — starts the ping loop for the
+    // given port/password. Called from BOTH the cold-spawn onReady and the
+    // adoption path so every active window pings the detached server.
+    const wireKeepalive = (keepalivePort: number, pw: string) => {
+      const graceSeconds = readGraceSeconds(vscode.workspace.getConfiguration("amicode"));
+      startKeepalive({
+        port: keepalivePort,
+        password: pw,
+        graceSeconds,
+        deps: {
+          pingServer: pingKeepalive,
+          onServerGone: () => {
+            opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
+            deleteHandshake();
+            statusBar?.setServerReady(false);
+            opencodeReadyUrl = undefined;
+          },
+          log: (line) => opencodeChannel.appendLine(line),
+        },
+      });
+      opencodeChannel.appendLine(`[keepalive] started (port=${keepalivePort}, grace=${graceSeconds}s)`);
+    };
+
     if (!adopted) {
     serverManager = new ServerManager({
       binary,
@@ -1096,6 +1120,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       opencodeReadyUrl = url;
       statusBar?.setServerReady(true);
       sseClient?.connect(url);
+      // #1147: start keepalive after cold-spawn health passes
+      const readyPort = parseInt(url.port || "0", 10);
+      if (readyPort > 0) wireKeepalive(readyPort, serverPassword);
       // Onboarding gate: if no model is configured, open the Stage 0 webview
       // instead of chat. The webview will fire onOnboardingComplete when done,
       // which then opens chat.
@@ -1160,6 +1187,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       ctx.subscriptions.push(sseClient);
       statusBar?.setServerReady(true);
       sseClient.connect(opencodeReadyUrl);
+      // #1147: start keepalive after adoption
+      const adoptedPort = parseInt(opencodeReadyUrl.port || "0", 10);
+      if (adoptedPort > 0) wireKeepalive(adoptedPort, serverPassword);
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
@@ -2332,6 +2362,10 @@ export function deactivate(): void {
   // Distill trigger 2 (session close): queue-only — a drain must not delay
   // shutdown; the next activation or trigger drains the queue.
   if (distillerSetup) triggerSweep(distillerSetup, false);
+  // #1147 (ADR 0020): stop the keepalive ping loop — the server's self-shutdown
+  // timer will handle exit after the grace window expires (if no other window
+  // is still pinging).
+  stopKeepalive();
   sseClient?.dispose();
   // #1146 (ADR 0020): detach, not kill — the server survives the extension
   // host's exit and is re-adopted on the next activation (#1145).
