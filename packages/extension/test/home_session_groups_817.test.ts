@@ -9,8 +9,8 @@ import { describe, expect, test } from "vitest"
 import {
   buildHomeSessionRecords,
   resolveSessionProject,
-} from "../../app-bundle/overlay/packages/app/src/pages/home/home-session-groups"
-import type { LocalProject } from "../../app-bundle/overlay/packages/app/src/context/layout"
+} from "../../app-bundle/.materialized/packages/app/src/pages/home/home-session-groups"
+import type { LocalProject } from "../../app-bundle/.materialized/packages/app/src/context/layout"
 
 const session = (id: string, directory: string, projectID = "p-git", updated = 100) => ({
   id,

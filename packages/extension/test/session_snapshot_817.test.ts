@@ -5,7 +5,7 @@
 // bootCurrencyDecision takes the server-reported version instead of a server
 // currency field.
 import { describe, expect, test } from "vitest"
-import { bootCurrencyDecision, toSnapshot, type SessionSnapshot } from "../../app-bundle/overlay/packages/app/src/context/global-sync/session-snapshot"
+import { bootCurrencyDecision, toSnapshot, type SessionSnapshot } from "../../app-bundle/.materialized/packages/app/src/context/global-sync/session-snapshot"
 
 const session = (id: string, updated = 1) => ({
   id,

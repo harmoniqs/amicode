@@ -5,7 +5,7 @@
 // version as the stamp. No server field exists to depend on; the property
 // tests are the enforcement of "derived, never hand-bumped".
 import { describe, expect, test } from "vitest"
-import { deriveCurrencyToken, projectionOf } from "../../app-bundle/overlay/packages/app/src/context/global-sync/session-currency"
+import { deriveCurrencyToken, projectionOf } from "../../app-bundle/.materialized/packages/app/src/context/global-sync/session-currency"
 
 const session = (id: string, updated: number) => ({
   id,

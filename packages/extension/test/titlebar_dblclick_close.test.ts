@@ -16,7 +16,7 @@ import * as path from "node:path";
 describe("titlebar tab interactions (.18 pin: dblclick renames, middle-click closes)", () => {
   const file = path.resolve(
     __dirname,
-    "../../app-bundle/overlay/packages/app/src/components/titlebar-tab-nav.tsx",
+    "../../app-bundle/.materialized/packages/app/src/components/titlebar-tab-nav.tsx",
   );
 
   it("double-click on the tab title opens the rename flow, not close", () => {

@@ -598,7 +598,7 @@ describe("File-title container overflow constraint", () => {
   const path = require("path") as typeof import("path")
   const cssPath = path.resolve(
     __dirname,
-    "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-v2.css",
+    "../../app-bundle/.materialized/packages/session-ui/src/v2/components/session-review-v2.css",
   )
   const cssExists = fs.existsSync(cssPath)
   const cssContent = cssExists ? fs.readFileSync(cssPath, "utf-8") : ""
@@ -618,7 +618,7 @@ describe("File-title container overflow constraint", () => {
     // Read the TSX to verify no inline overflow: hidden on the file-title trigger
     const tsxPath = path.resolve(
       __dirname,
-      "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx",
+      "../../app-bundle/.materialized/packages/session-ui/src/v2/components/session-review-file-preview-v2.tsx",
     )
     if (!fs.existsSync(tsxPath)) {
       console.warn("Overlay TSX not found — skipping inline overflow test")
@@ -662,7 +662,7 @@ describe("Filename gradient-fade truncation", () => {
   const path = require("path") as typeof import("path")
   const cssPath = path.resolve(
     __dirname,
-    "../../app-bundle/overlay/packages/session-ui/src/v2/components/session-review-v2.css",
+    "../../app-bundle/.materialized/packages/session-ui/src/v2/components/session-review-v2.css",
   )
   const cssExists = fs.existsSync(cssPath)
   const cssContent = cssExists ? fs.readFileSync(cssPath, "utf-8") : ""

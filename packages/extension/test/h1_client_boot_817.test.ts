@@ -3,7 +3,7 @@
 // client's session-list layer against a seeded hub and asserts on the hub's
 // request log — the same evidence that diagnosed #293.
 import { describe, expect, test } from "vitest"
-import { bootClient, createSeededHub, memorySessionStorage } from "../../app-bundle/overlay/packages/app/src/context/global-sync/h1-client-boot"
+import { bootClient, createSeededHub, memorySessionStorage } from "../../app-bundle/.materialized/packages/app/src/context/global-sync/h1-client-boot"
 
 const session = (id: string, updated: number) => ({
   id,

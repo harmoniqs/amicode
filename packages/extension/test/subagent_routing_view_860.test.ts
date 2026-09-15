@@ -7,7 +7,7 @@
 import { describe, expect, test } from "vitest"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { provenanceKey, routingBodyView, rowDisplay, type RoutingBodyView } from "../../app-bundle/overlay/packages/app/src/components/subagent-routing"
+import { provenanceKey, routingBodyView, rowDisplay, type RoutingBodyView } from "../../app-bundle/.materialized/packages/app/src/components/subagent-routing"
 
 const body = (over: Record<string, unknown> = {}) => ({
   ok: true,
@@ -123,8 +123,8 @@ describe("provenance chips + the drift display tuple", () => {
 // The i18n parity gate, extension-side so CI runs it (the app-bundle parity
 // test is bun:tesst + skipIf(CI)): every settings.subagents.* key in en.ts
 // exists in all 17 other app locales, and no locale carries extras.
-const EN_PATH = join(__dirname, "../../app-bundle/overlay/packages/app/src/i18n/en.ts")
-const I18N_DIR = join(__dirname, "../../app-bundle/overlay/packages/app/src/i18n")
+const EN_PATH = join(__dirname, "../../app-bundle/.materialized/packages/app/src/i18n/en.ts")
+const I18N_DIR = join(__dirname, "../../app-bundle/.materialized/packages/app/src/i18n")
 const APP_LOCALES = ["ar", "br", "bs", "da", "de", "es", "fr", "ja", "ko", "no", "pl", "ru", "uk", "th", "tr", "zh", "zht"]
 
 const keysOf = (file: string): Set<string> => {

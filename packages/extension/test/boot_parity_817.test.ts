@@ -10,7 +10,7 @@ import {
   checkParity,
   recordBootParity,
   fetchCanonicalReleaseChannel,
-} from "../../app-bundle/overlay/packages/app/src/utils/boot-parity"
+} from "../../app-bundle/.materialized/packages/app/src/utils/boot-parity"
 
 describe("parityOutcome (the comparison core)", () => {
   test("a server version matching the channel is parity-ok", () => {

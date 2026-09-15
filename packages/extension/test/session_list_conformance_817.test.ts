@@ -11,7 +11,7 @@ import {
   CANONICAL_SESSION_LIST_SEMANTICS,
   runSessionListConformance,
   type ConformanceSession,
-} from "../../app-bundle/overlay/packages/app/src/utils/session-list-conformance"
+} from "../../app-bundle/.materialized/packages/app/src/utils/session-list-conformance"
 
 const session = (id: string, updated: number, extra: Partial<ConformanceSession> = {}): ConformanceSession => ({
   id,

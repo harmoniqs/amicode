@@ -20,7 +20,7 @@ import {
   fleetProjectionView,
   fleetSessionsListState,
   fleetStatusView,
-} from "../../app-bundle/overlay/packages/app/src/pages/home/fleet-sessions"
+} from "../../app-bundle/.materialized/packages/app/src/pages/home/fleet-sessions"
 
 const status = (posture: Record<string, unknown> | undefined, mode = "fleet") => ({
   ok: true,

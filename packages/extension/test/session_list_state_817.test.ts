@@ -4,7 +4,7 @@
 // canonical v1.18.29. Pure and vscode/solid-free so it unit-tests headless
 // (the consumers wire it to the sync stores).
 import { describe, expect, test } from "vitest"
-import { classifyResetTarget, panelResetTouches, sessionListState } from "../../app-bundle/overlay/packages/app/src/utils/session-list-state"
+import { classifyResetTarget, panelResetTouches, sessionListState } from "../../app-bundle/.materialized/packages/app/src/utils/session-list-state"
 
 describe("sessionListState (D2: honest states)", () => {
   test("renders 'not yet fetched' while the list fetch is in flight", () => {

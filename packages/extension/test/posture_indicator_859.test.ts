@@ -14,7 +14,7 @@ import {
   resolveIndicatorModeId,
   switchDecision,
   switchEffect,
-} from "../../app-bundle/overlay/packages/app/src/components/posture-indicator"
+} from "../../app-bundle/.materialized/packages/app/src/components/posture-indicator"
 
 const body = (over: Record<string, unknown> = {}) => ({
   ok: true,

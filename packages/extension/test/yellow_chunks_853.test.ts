@@ -1,6 +1,6 @@
 // Issue #853 — the yellow-chunks port's durable docket token helpers.
 import { describe, expect, test } from "vitest"
-import { contextDocket, editDocket, shellDocket, type DocketPart } from "../../app-bundle/overlay/packages/ui/src/amicode/docket"
+import { contextDocket, editDocket, shellDocket, type DocketPart } from "../../app-bundle/.materialized/packages/ui/src/amicode/docket"
 
 function part(tool: string, input: Record<string, unknown> = {}, status = "done", metadata: Record<string, unknown> = {}): DocketPart {
   return { tool, state: { status, input, metadata } }

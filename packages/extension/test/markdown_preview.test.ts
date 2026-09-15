@@ -11,7 +11,7 @@ import { describe, expect, test } from "vitest"
 // preprocessMarkdown — canonical version from markdown-utils.ts
 // Uses newlines + trim: $$\n<trimmed body>\n$$
 // After overlay sync, replace this with:
-//   import { preprocessMarkdown } from "../../app-bundle/overlay/packages/session-ui/src/v2/components/markdown-utils"
+//   import { preprocessMarkdown } from "../../app-bundle/.materialized/packages/session-ui/src/v2/components/markdown-utils"
 // ---------------------------------------------------------------------------
 
 /**
