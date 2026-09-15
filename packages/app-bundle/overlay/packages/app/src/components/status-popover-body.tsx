@@ -719,6 +719,10 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
   // polling the panel only updates when the user closes and reopens it.
   // SCOPED: tracks which connection id started the auth so the poll stops as
   // soon as THAT connection settles — not every 2s for 2 minutes.
+  // NOTE: the main connections resource only fetches when the popover is
+  // shown (line 621). During browser OAuth the popover is likely closed, so
+  // refetchConnections() is a no-op. This poll fetches independently and
+  // force-refreshes when the OAuth completes.
   let authPollTimer: ReturnType<typeof setInterval> | undefined
   let authPollTargetId: string | undefined
   const stopAuthPoll = () => {
@@ -729,36 +733,36 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
 
   const onStartAuth = (payload: import("@opencode-ai/ui/amicode-connections-tab").StartAuthPayload) => {
     void runConnectionAction(payload.id, "/amicode/connections/auth", payload).then((result) => {
-      // The server's BrowserOpenFailed event carries the URL when the helper fails;
-      // as a belt-and-suspenders, if the action response itself carries a URL,
-      // open it here via the browser. The status-popover runs in the main app
-      // (not the chat iframe), so window.open is not blocked.
       const maybeUrl = (result as unknown as { url?: string })?.url
       if (maybeUrl && typeof maybeUrl === "string" && /^https:\/\//i.test(maybeUrl)) {
         try { window.open(maybeUrl, "_blank", "noopener") } catch {}
       }
-      // Start polling for the browser-auth completion — scoped to this connection
+      // Start polling for the browser-auth completion — scoped to this connection.
+      // Polls independently of the resource (which pauses when popover closes).
       stopAuthPoll()
       authPollTargetId = payload.id
       let pollCount = 0
-      authPollTimer = setInterval(() => {
+      authPollTimer = setInterval(async () => {
         pollCount++
-        // Stop after 2 minutes (60 polls × 2s)
         if (pollCount > 60) { stopAuthPoll(); return }
-        refetchConnections()
+        // Independent fetch — works even when the popover is closed
+        const conn = server.current
+        if (!conn) return
+        try {
+          const res = await fetch(new URL("/amicode/connections", conn.http.url), { headers: amicodeHeaders(conn) })
+          if (!res.ok) return
+          const data = parseConnectionsResponse(await res.json() as unknown)
+          if (!data.ok) return
+          const target = data.connections.find((c) => c.id === authPollTargetId)
+          if (target && target.state === "connected") {
+            stopAuthPoll()
+            // Force the main resource to refresh so the UI updates when the popover reopens
+            refetchConnections()
+          }
+        } catch { /* network error — keep polling */ }
       }, 2_000)
     })
   }
-  // Stop polling once the TARGET connection reaches a terminal state
-  createEffect(() => {
-    const view = connectionsView()
-    if (!view?.ok || !authPollTimer || !authPollTargetId) return
-    const target = view.connections.find((c) => c.id === authPollTargetId)
-    // Target settled: connected, invalid, needs-key (disconnected), or gone entirely
-    if (!target || (target.state !== "waiting-browser" && target.state !== "validating")) {
-      stopAuthPoll()
-    }
-  })
   const connectionsLabels = createMemo(() => ({
     empty: language.t("dialog.connections.empty"),
     retry: language.t("dialog.connections.retry"),
