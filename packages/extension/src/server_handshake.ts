@@ -220,6 +220,48 @@ export function writeColdSpawnHandshake(opts: ColdSpawnHandshakeOpts): void {
   );
 }
 
+export interface ColdSpawnHookOpts {
+  /** SHA-256 of the engine binary (precompute via hashFile — the hook is sync). */
+  binaryHash: string;
+  /** SHA-256 of the injected config content (hashString). */
+  configHash: string;
+  /** The password the server was spawned with — reused verbatim on adopt. */
+  password: string;
+  /** Override the handshake path (tests). */
+  filePath?: string;
+  /** Optional log sink for the best-effort write. */
+  log?: (line: string) => void;
+}
+
+/**
+ * Build the `afterHealthy` hook that records the cold-spawn handshake (#1181).
+ *
+ * This is the activation seam #1144 designed and deferred: `ServerManager`
+ * fires `afterHealthy({ port, pid })` once the server is healthy, and this hook
+ * writes the durable record a later reload adopts. Hashes are precomputed so
+ * the hook is synchronous. The write is BEST-EFFORT — a failure logs and never
+ * throws, so a handshake problem degrades to "no adoption", never a boot crash.
+ */
+export function coldSpawnHandshakeHook(
+  opts: ColdSpawnHookOpts,
+): (info: { port: number; pid: number }) => void {
+  return ({ port, pid }) => {
+    try {
+      writeColdSpawnHandshake({
+        port,
+        pid,
+        password: opts.password,
+        binaryHash: opts.binaryHash,
+        configHash: opts.configHash,
+        filePath: opts.filePath,
+      });
+      opts.log?.(`[handshake] recorded cold-spawn server (port ${port}, pid ${pid})`);
+    } catch (e) {
+      opts.log?.(`[handshake] write failed (non-fatal): ${(e as Error).message}`);
+    }
+  };
+}
+
 
 export async function hashDirectoryTree(dirPath: string): Promise<string> {
   const entries: Array<{ relPath: string; contentHash: string }> = [];

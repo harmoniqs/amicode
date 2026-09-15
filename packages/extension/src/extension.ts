@@ -96,7 +96,7 @@ import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
 import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
-import { handshakePath, readHandshake, deleteHandshake, serverLogPath } from "./server_handshake";
+import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { stopServer } from "./stop_server";
 import type { QueueView } from "./qick_job_server";
@@ -852,7 +852,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // spawn below via ServerManager. Return a sentinel so the lifecycle
           // function knows to proceed, but the real spawn is in the next block.
           return { port: configuredPort || 0, pid: 0, password: serverPassword };
-        }),
+        }, configuredPort > 0 ? configuredPort : 43117),
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
@@ -903,6 +903,39 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     };
 
     if (!adopted) {
+    // #1181 (ADR 0020): hoist the config content so we can both inject it AND
+    // hash it for the handshake record the afterHealthy hook writes.
+    const configContent = buildOpencodeConfigContent(
+      opencodeProject.agentsPath,
+      opencodeProject.templatePath,
+      runsRoot,
+      undefined,
+      undefined,
+      opencodeProject.skillPaths,
+      opencodeProject.skillsStageDir,
+      opencodeProject.vaultDir,
+      // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
+      opencodeProject.mounts,
+      // Model pin. ONLY an explicit `amicode.defaultModel` pins config.model
+      // (which is authoritative — it outranks the user's recent pick). Empty
+      // → resolveModelPin() is undefined (NO forced pin), so opencode uses
+      // the user's recent selection, else the provider default. A hardcoded
+      // fallback here used to override the user's own choice. The in-chat
+      // picker still overrides per session.
+      // Validate: don't inject a pin that references an unconnected provider —
+      // it causes 500s when the server tries to resolve it.
+      validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
+      // Telemetry gate → experimental.openTelemetry (span generation), coupled
+      // to the exporter env this same spawnEnv resolves.
+      telemetryOpen(),
+      // Context plugin: injects live stack state (solver mode, routing,
+      // active problem, live runs) per system-prompt build.
+      [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
+    );
+    // #1181: the hashes the handshake records (computed once, so the hook is sync).
+    // hashFile is best-effort — an unreadable binary yields "" (treated as changed).
+    const coldSpawnBinaryHash = await hashFile(binary).catch(() => "");
+    const coldSpawnConfigHash = hashString(configContent);
     serverManager = new ServerManager({
       binary,
       cwd: opencodeProject.projectDir,
@@ -915,38 +948,21 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
         // config, so the model/provider are preserved. This is what makes the
         // chat actually author + run solves instead of behaving like vanilla
         // opencode (the session cwd is the workspace, not opencodeProject.projectDir).
-        configContent: buildOpencodeConfigContent(
-          opencodeProject.agentsPath,
-          opencodeProject.templatePath,
-          runsRoot,
-          undefined,
-          undefined,
-          opencodeProject.skillPaths,
-          opencodeProject.skillsStageDir,
-          opencodeProject.vaultDir,
-          // Armonia mount stack (spec-20260707-002846 C1): per-mount read grants.
-          opencodeProject.mounts,
-          // Model pin. ONLY an explicit `amicode.defaultModel` pins config.model
-          // (which is authoritative — it outranks the user's recent pick). Empty
-          // → resolveModelPin() is undefined (NO forced pin), so opencode uses
-          // the user's recent selection, else the provider default. A hardcoded
-          // fallback here used to override the user's own choice. The in-chat
-          // picker still overrides per session.
-          // Validate: don't inject a pin that references an unconnected provider —
-          // it causes 500s when the server tries to resolve it.
-          validatedModelPin(vscode.workspace.getConfiguration("amicode").get<string>("defaultModel", "").trim() || resolveModelPin()),
-          // Telemetry gate → experimental.openTelemetry (span generation), coupled
-          // to the exporter env this same spawnEnv resolves.
-          telemetryOpen(),
-          // Context plugin: injects live stack state (solver mode, routing,
-          // active problem, live runs) per system-prompt build.
-          [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
-        ),
+        configContent,
       }),
       channel: opencodeChannel,
       // #1146 (ADR 0020): detached spawn — stdio goes to the log file;
       // the output channel tails it. The server survives the host's exit.
       logFile: serverLogPath(),
+      // #1181 (ADR 0020): write the handshake once the server is healthy — the
+      // durable record a later reload adopts (the linchpin the feature was
+      // missing). Best-effort; a failed write logs and never blocks boot.
+      afterHealthy: coldSpawnHandshakeHook({
+        binaryHash: coldSpawnBinaryHash,
+        configHash: coldSpawnConfigHash,
+        password: serverPassword,
+        log: (l) => opencodeChannel.appendLine(l),
+      }),
     });
     ctx.subscriptions.push({ dispose: () => serverManager?.detach() });
 
