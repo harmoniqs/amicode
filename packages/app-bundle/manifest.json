@@ -427,7 +427,7 @@
     "packages/ui/src/amicode/card.stories.tsx": "b1591abb4af426b0eb08588ea1585336a392d755b5d308cb31f17cb65acf5a3e",
     "packages/ui/src/amicode/card.tsx": "e5198e40923a77c3ed6a7aa235401bdeb20db6fbdb81f1ffeb847962dd1122e1",
     "packages/ui/src/amicode/connection-icon.tsx": "2b36c05209a3b5091c6407d59add58fb51ec34724ae6411af85c3dcc797a9987",
-    "packages/ui/src/amicode/connection-picker.tsx": "5e6f3f7ea4064a385503b6f637e7d9be8b800372f1877faa6e22ddc3a510bac4",
+    "packages/ui/src/amicode/connection-picker.tsx": "40a8f65d84a150f0abec51e896dacac8ca829e2a93953d4893529a1fb2537dd4",
     "packages/ui/src/amicode/connections-paths.test.ts": "07c86e8e04700cdbd55bff8db342a8400d85114d76bc73fee8205e9162953f2a",
     "packages/ui/src/amicode/connections-tab.tsx": "06489a47bbd6d482ba4d2dc2cf4e9e8e9c648be774f78cd76e2abc87451116e5",
     "packages/ui/src/amicode/connections.stories.tsx": "fda54a41c4b46f5cab5278278f92c01d1fea70610f7b8641fa5855be6bd9d486",
@@ -999,7 +999,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:35.805Z",
+  "extracted_at": "2026-09-15T19:28:35.995Z",
   "per_package": {
     "packages/app": {
       "A": 181,
