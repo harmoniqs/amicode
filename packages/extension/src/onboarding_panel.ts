@@ -261,9 +261,27 @@ export function writeOnboardingConfig(
   // buildProviderConfigEntry / writeAuthApiKey below.
   const providerConfig: Record<string, unknown> = buildProviderConfigEntry(config, envVarName);
 
+  const existingProviderMap = existing.provider as Record<string, unknown> ?? {};
+  // Harmoniqs AI: merge onto whatever is already there instead of replacing
+  // the entry outright — a wholesale replace would drop any other model
+  // already recorded under `models` (or other fields) the moment onboarding
+  // re-runs, keeping only the model just selected.
+  const existingHarmoniqsEntry = existingProviderMap[HARMONIQS_PROVIDER_ID] as Record<string, unknown> | undefined;
+  const mergedProviderConfig: Record<string, unknown> =
+    config.provider === HARMONIQS_PROVIDER_ID && existingHarmoniqsEntry
+      ? {
+          ...existingHarmoniqsEntry,
+          ...providerConfig,
+          models: {
+            ...(existingHarmoniqsEntry.models as Record<string, unknown> ?? {}),
+            ...(providerConfig.models as Record<string, unknown> ?? {}),
+          },
+        }
+      : providerConfig;
+
   const providerEntry: Record<string, unknown> = {
-    ...(existing.provider as Record<string, unknown> ?? {}),
-    [config.provider]: providerConfig,
+    ...existingProviderMap,
+    [config.provider]: mergedProviderConfig,
   };
 
   const result: Record<string, unknown> = {

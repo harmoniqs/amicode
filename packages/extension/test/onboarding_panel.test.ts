@@ -530,6 +530,48 @@ describe("Harmoniqs AI — branded provider preset", () => {
       const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
       expect(written.provider[HARMONIQS_PROVIDER_ID].models["harmoniqs-fast"].name).toBe("harmoniqs-fast");
     });
+
+    // Regression: re-running onboarding (e.g. switching the selected model)
+    // used to replace the whole harmoniqs entry with the freshly built one,
+    // silently dropping any other model already recorded under `models`.
+    it("merges onto an existing harmoniqs entry instead of replacing it wholesale", () => {
+      const configPath = path.join(tmpDir, "config", "opencode.json");
+      fs.mkdirSync(path.dirname(configPath), { recursive: true });
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({
+          $schema: "https://opencode.ai/config.json",
+          provider: {
+            [HARMONIQS_PROVIDER_ID]: {
+              npm: "@ai-sdk/openai-compatible",
+              name: "Harmoniqs AI",
+              options: { baseURL: HARMONIQS_BASE_URL },
+              models: {
+                "harmoniqs-fast": { name: "harmoniqs-fast", tool_call: true },
+              },
+            },
+          },
+        }),
+      );
+
+      writeOnboardingConfig(
+        {
+          provider: HARMONIQS_PROVIDER_ID,
+          model: `${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`,
+          apiKey: "hqa_supersecretvalue123456",
+        },
+        configPath,
+      );
+
+      const written = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const entry = written.provider[HARMONIQS_PROVIDER_ID];
+      // The previously-recorded model survives the re-run...
+      expect(entry.models["harmoniqs-fast"]).toBeDefined();
+      // ...alongside the newly selected one.
+      expect(entry.models[HARMONIQS_MODEL_ID]).toBeDefined();
+      expect(entry.models[HARMONIQS_MODEL_ID].tool_call).toBe(true);
+      expect(written.model).toBe(`${HARMONIQS_PROVIDER_ID}/${HARMONIQS_MODEL_ID}`);
+    });
   });
 
   describe("writeAuthApiKey", () => {
