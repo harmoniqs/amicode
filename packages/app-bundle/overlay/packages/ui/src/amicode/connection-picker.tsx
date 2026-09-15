@@ -200,13 +200,35 @@ export function ConnectionPicker(props: {
               </form>
             </Show>
           }>
-            {/* Slack: browser OAuth with setup guidance for Slack App client_id */}
+            {/* Slack: Client ID + OAuth flow */}
             <div class="flex flex-col gap-1.5" data-slot="amicode-picker-slack-form">
               <span class="text-12-regular text-text-base">{picked()}</span>
-              <span class="text-11-regular text-text-weaker">Sign in with your browser to connect Slack.</span>
+              <span class="text-11-regular text-text-weaker">Ask your Slack workspace admin for your Client ID.</span>
+              <details class="text-11-regular text-text-weaker">
+                <summary class="cursor-pointer hover:text-text-base">Don't have a Client ID?</summary>
+                <div class="flex flex-col gap-1.5 mt-1.5 pl-1">
+                  <span>Your Slack admin can create one at <a href="https://api.slack.com/apps" target="_blank" rel="noopener" class="underline text-text-base">api.slack.com/apps</a> → Create from Manifest.</span>
+                </div>
+              </details>
+              <input
+                type="text"
+                placeholder="Slack App Client ID"
+                aria-label="Slack App Client ID"
+                value={slackClientId()}
+                onInput={(e) => setSlackClientId(e.currentTarget.value)}
+                class="amc-input amc-input--compact"
+              />
               <div class="flex gap-2">
-                <Button type="button" variant="primary" size="small" onClick={startBrowser} data-slot="amicode-picker-browser-start">
-                  Connect with Slack
+                <Button type="button" variant="primary" size="small" onClick={async (e) => {
+                  e.preventDefault()
+                  const cid = slackClientId().trim()
+                  if (!cid) return
+                  await props.onSubmitToken("slack-app-client-id", cid)
+                  setSlackClientId("")
+                  if (props.onStartBrowser) props.onStartBrowser("slack")
+                  setPicked(undefined)
+                }}>
+                  Save &amp; Connect
                 </Button>
                 <Button type="button" variant="ghost" size="small" onClick={() => setPicked(undefined)}>
                   Back
@@ -226,28 +248,6 @@ export function ConnectionPicker(props: {
                   Connect with token
                 </Button>
               </form>
-              <details class="text-11-regular text-text-weaker">
-                <summary class="cursor-pointer hover:text-text-base">Slack App not set up?</summary>
-                <div class="flex flex-col gap-1.5 mt-1.5 pl-1">
-                  <span>Ask your Slack admin to create an Amicode app at <a href="https://api.slack.com/apps" target="_blank" rel="noopener" class="underline text-text-base">api.slack.com/apps</a> → Create from Manifest, then share the Client ID.</span>
-                  <input
-                    type="text"
-                    placeholder="Paste Slack App Client ID"
-                    aria-label="Slack App Client ID"
-                    value={slackClientId()}
-                    onInput={(e) => setSlackClientId(e.currentTarget.value)}
-                    class="amc-input amc-input--compact"
-                  />
-                  <Button type="button" variant="secondary" size="small" onClick={async () => {
-                    const cid = slackClientId().trim()
-                    if (!cid) return
-                    await props.onSubmitToken("slack-app-client-id", cid)
-                    setSlackClientId("")
-                  }}>
-                    Save Client ID
-                  </Button>
-                </div>
-              </details>
             </div>
           </Show>
         }>
