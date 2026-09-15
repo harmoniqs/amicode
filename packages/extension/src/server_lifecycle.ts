@@ -182,15 +182,24 @@ export async function adoptOrSpawn(
 // Production implementations of the four live checks
 // ============================================================================
 
-/** Health probe: HTTP GET to 127.0.0.1:<port>/, 2xx/3xx = healthy.
- *  Short timeout — we're probing loopback, so any answer is fast. */
+/** Reachability probe: HTTP GET to 127.0.0.1:<port>/. ANY HTTP response —
+ *  including a 401 — means a server is up on this port; only a connection
+ *  refused / timeout means nothing is there. The password challenge, not this
+ *  probe, decides whether the server is OURS.
+ *
+ *  #1185: this used to return `r.ok || 2xx–3xx`, but every server is spawned
+ *  with OPENCODE_SERVER_PASSWORD armed (#163), so an anonymous GET / gets a 401.
+ *  That made `healthy` false for every real survivor, so classifyGate could
+ *  never reach `adoptable` and adopt-on-reload never fired. Reachability is the
+ *  question here — answer it honestly and let challengePassword do ownership. */
 export async function probeHealth(port: number): Promise<boolean> {
   try {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 2000);
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/`, { signal: ctrl.signal });
-      return r.ok || (r.status >= 200 && r.status < 400);
+      // Resolving (no throw) means the server answered — 200 or 401, it's up.
+      await fetch(`http://127.0.0.1:${port}/`, { signal: ctrl.signal });
+      return true;
     } finally {
       clearTimeout(timer);
     }
