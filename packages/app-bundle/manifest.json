@@ -270,6 +270,7 @@
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
+    "packages/opencode/src/mcp/index.ts": "8e527fcda497c48d752d9958f2f4a00eaabd25ef6c6802c626ce9544de6211f0",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
@@ -840,10 +841,12 @@
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "85c200797fed41c0cd08e7aa699ce13aeb8a3d23aa2b9eddc4d72e72b8b5082c",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "944a0aee215a917e867fd9482f3c2bd40f49082bd3174c8a7d967ca40e34ec15",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "ed165131c62eeb29375db39edf89db8f87488e24ef99fc6f2cf19705ba35751a",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "048efa7b74d43c4ad4a75d0f8421c808760c8c0dcd593f0051a87044e40487d6",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "34c6f1ab1a085d1b047c220bbff32a36032dc5e924784e9272cda166cf0ec84b",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "1421f8c07948b121c7e2005bd9b0fcd6b2c456565ddd1da32d8e6c35d03fac9c",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "69ca3dd48d95157fc822e1f76eb42ac873df50f22616b85194619ca658613867",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "7da08d58765cdf2b6ce4648fc70de371402949f5bb7b75696f674d43f2d5365b",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f"
   },
@@ -999,7 +1002,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:36.593Z",
+  "extracted_at": "2026-09-15T19:28:36.787Z",
   "per_package": {
     "packages/app": {
       "A": 181,
@@ -1018,7 +1021,7 @@
     },
     "packages/opencode": {
       "A": 68,
-      "M": 77,
+      "M": 80,
       "D": 0
     },
     "packages/schema": {
@@ -1043,7 +1046,7 @@
     }
   },
   "counts": {
-    "overlay_total": 838,
+    "overlay_total": 841,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1310,6 +1313,7 @@
     "packages/llm/test/provider/bedrock-converse.test.ts": "M",
     "packages/opencode/src/agent/agent.ts": "M",
     "packages/opencode/src/mcp/browser.ts": "M",
+    "packages/opencode/src/mcp/index.ts": "M",
     "packages/opencode/src/project/instance-context.ts": "M",
     "packages/opencode/src/project/instance-store.ts": "M",
     "packages/opencode/src/provider/auth.ts": "M",
@@ -1880,10 +1884,12 @@
     "packages/opencode/src/server/routes/instance/httpapi/server.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/file.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/groups/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/groups/session.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/experimental.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
+    "packages/opencode/src/server/routes/instance/httpapi/handlers/mcp.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M"
   }

@@ -2,12 +2,10 @@ import * as fs from "node:fs";
 import { slackFile } from "./amicode_service/credentials";
 
 // ============================================================================
-// Slack credential watcher (#1204 / #1037): the Slack MCP entry in
-// OPENCODE_CONFIG_CONTENT is baked at server spawn time — credential changes
-// (connect / disconnect in the Connections panel) have no effect until the
-// server restarts and rebuilds the config. This watcher detects changes to
-// ~/.amico/slack.json (create / delete / modify) and fires a callback so the
-// extension can trigger a server restart.
+// Slack credential watcher (#1204 / #1037 v2): detects changes to
+// ~/.amico/slack.json (create / delete / modify) and fires a callback with
+// { exists: boolean } so the extension can dynamically add/remove the
+// slack-mcp-server via the engine's MCP API — no server restart needed.
 //
 // Pattern: poll-based (same as watchSolverMode — fs.watch is unreliable for
 // rewrite-in-place on macOS). OAuth writes the file atomically (write tmp +
@@ -25,9 +23,11 @@ function readMtimeMs(filePath: string): number | undefined {
 
 /** Poll-based watcher for the Slack credential file. Fires `onChange` (at
  *  most once per debounce window) when the file is created, deleted, or
- *  modified. Returns a disposable that stops the polling. */
+ *  modified. The callback receives `{ exists: boolean }` — true when the
+ *  credential file now exists, false when it was deleted. Returns a
+ *  disposable that stops the polling. */
 export function watchSlackCredential(
-  onChange: () => void,
+  onChange: (state: { exists: boolean }) => void,
   filePath: string = slackFile(),
   pollIntervalMs = 1000,
   debounceMs = 500,
@@ -48,7 +48,7 @@ export function watchSlackCredential(
     debounceTimer = setTimeout(() => {
       busy = true;
       try {
-        onChange();
+        onChange({ exists: currentMtimeMs !== undefined });
       } finally {
         busy = false;
       }
