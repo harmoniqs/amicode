@@ -1570,7 +1570,7 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
     const { dirname, join } = await import("node:path")
     const { homedir } = await import("node:os")
 
-    const AMICODE_SLACK_CLIENT_ID = "AMICODE_SLACK_CLIENT_ID" // placeholder — fill after Slack App registration
+    const AMICODE_SLACK_CLIENT_ID = process.env.AMICODE_SLACK_CLIENT_ID?.trim() || "AMICODE_SLACK_CLIENT_ID" // env override → shipped default
     const CALLBACK_PORT = 54213
     const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`
     const SLACK_USER_SCOPES = "channels:history,channels:read,groups:history,groups:read,im:history,im:read,im:write,mpim:history,mpim:read,mpim:write,users:read,chat:write,search:read"

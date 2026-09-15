@@ -17,8 +17,10 @@ import { dirname, join } from "node:path";
 // ── constants ─────────────────────────────────────────────────────────────────
 
 /** The Slack App's client ID — PKCE flow, no client_secret.
- *  Placeholder until the real Slack App is registered. */
-export const AMICODE_SLACK_CLIENT_ID = "AMICODE_SLACK_CLIENT_ID";
+ *  Reads from AMICODE_SLACK_CLIENT_ID env var, falls back to the shipped default.
+ *  The env var lets users bring their own Slack App if needed. */
+export const AMICODE_SLACK_CLIENT_ID =
+  process.env.AMICODE_SLACK_CLIENT_ID?.trim() || "AMICODE_SLACK_CLIENT_ID"; // placeholder — fill after Slack App registration
 
 const CALLBACK_PORT = 54213;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
