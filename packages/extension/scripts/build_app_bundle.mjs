@@ -249,6 +249,18 @@ if (!existsSync(join(work, "package.json"))) {
 if (!existsSync(join(work, "packages", "app")))
   fail(`${work} has no packages/app — not a materialized app tree (pass --work to point at one)`);
 
+// ── clear stale vite build output ────────────────────────────────────────────
+// When build:binary runs first it materializes fresh source into the tree, but
+// a previous build:app's vite output (packages/app/dist) survives because the
+// staleness check only wipes when the STAMP differs — not on every run. Vite's
+// incremental cache can miss the changed source files (mtime race), so we
+// always clear the previous dist + vite cache before building. The 14s vite
+// build is cheap compared to shipping a stale UI.
+const appDist = join(work, "packages", "app", "dist");
+const viteCache = join(work, "packages", "app", "node_modules", ".vite");
+if (existsSync(appDist)) { rmSync(appDist, { recursive: true, force: true }); console.log("[build:app] cleared stale packages/app/dist"); }
+if (existsSync(viteCache)) { rmSync(viteCache, { recursive: true, force: true }); console.log("[build:app] cleared vite cache"); }
+
 const bun = spawnSync("which", ["bun"], { encoding: "utf8" });
 if (bun.status !== 0 || !bun.stdout.trim())
   fail("bun is not on PATH — the app-bundle README's recipe installs with bun (https://bun.sh)");
