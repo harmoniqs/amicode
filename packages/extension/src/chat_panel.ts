@@ -8,6 +8,7 @@ import { resolveExplorerIconTheme } from "./explorer_icon_theme";
 import { resolveSyntaxTheme } from "./syntax_theme_bridge";
 import { ExternalMutationTransport } from "./external_mutation_transport";
 import type { MutationTrackingContext } from "./external_mutation";
+import { shouldReframe } from "./amicode_service_wiring";
 
 // ============================================================================
 // ChatPanel — a WebviewPanel that iframes opencode's SolidJS chat at
@@ -80,6 +81,13 @@ export class ChatPanel {
   /** Session identity reported by this panel's iframe; absent for drafts and closed routes. */
   private sessionID?: string;
   private externalMutationTransport?: ExternalMutationTransport;
+  /** #1188: the origin this panel's iframe is currently framed at, plus the
+   *  boot credential + hide-dir it was rendered with — retained so reframe()
+   *  can re-render to a new origin (the service shelf) when the panel came up
+   *  on the engine fallback before the amicode service was ready. */
+  private frameOrigin!: URL;
+  private frameAuthToken?: string;
+  private frameHideProjectDir?: string;
 
   /** Subscribe to live-panel count changes. Used by the workspace tree to mute the chat button. */
   static onLiveChange(cb: (count: number) => void): void {
@@ -106,6 +114,11 @@ export class ChatPanel {
     this.panel.webview.html = withSplash
       ? this.renderTransitionHtml(opencodeUrl, authToken, hideProjectDir)
       : this.renderHtml(opencodeUrl, authToken, hideProjectDir);
+    // #1188: retain the frame origin + render inputs so reframe() can re-point
+    // the iframe at the service shelf if this panel came up on the engine fallback.
+    this.frameOrigin = opencodeUrl;
+    this.frameAuthToken = authToken;
+    this.frameHideProjectDir = hideProjectDir;
     ChatPanel.live.add(this);
     ChatPanel.onLiveChangeCallback?.(ChatPanel.live.size);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
@@ -368,6 +381,34 @@ export class ChatPanel {
     for (const panel of ChatPanel.live) {
       void panel.panel.webview.postMessage(msg);
     }
+  }
+
+  /** #1188: when the amicode service becomes available, re-frame any live panel
+   *  still on the engine fallback origin (stock opencode) to the service shelf.
+   *  No-op for panels already on the service origin or when no service exists. */
+  static reframeAll(serviceUrl: string | undefined): void {
+    if (!serviceUrl) return;
+    let url: URL;
+    try {
+      url = new URL(serviceUrl);
+    } catch {
+      return;
+    }
+    for (const panel of ChatPanel.live) panel.reframe(url);
+  }
+
+  /** The origin this panel's iframe is currently framed at (the re-frame decision input). */
+  frameHref(): string {
+    return this.frameOrigin.toString();
+  }
+
+  /** #1188: re-point this panel's iframe at `newUrl` (the service shelf) when it
+   *  is currently on a different origin (the engine fallback). Re-renders the
+   *  webview HTML; a no-op when the origin already matches. */
+  reframe(newUrl: URL): void {
+    if (!shouldReframe(this.frameHref(), newUrl.toString())) return;
+    this.frameOrigin = newUrl;
+    this.panel.webview.html = this.renderHtml(newUrl, this.frameAuthToken, this.frameHideProjectDir);
   }
 
   /** DOWN lane for the bug-report dock (amicode#250): open-bug-report /

@@ -251,3 +251,23 @@ export function frameOriginUrl(
   if (service !== undefined) return new URL(service.url);
   return engineUrl;
 }
+
+/**
+ * #1188: decide whether a live chat panel currently framed at `currentHref`
+ * should re-frame to the service shelf. On a reload a panel can come up on the
+ * ENGINE origin (stock opencode) before the amicode service is ready; once the
+ * service is up, re-frame it. Comparison is by ORIGIN (path/query differences
+ * don't matter). No service → false (honest degraded stays degraded); nothing
+ * framed yet or a malformed href → false.
+ */
+export function shouldReframe(
+  currentHref: string | undefined,
+  serviceUrl: string | undefined,
+): boolean {
+  if (!serviceUrl || !currentHref) return false;
+  try {
+    return new URL(currentHref).origin !== new URL(serviceUrl).origin;
+  } catch {
+    return false;
+  }
+}
