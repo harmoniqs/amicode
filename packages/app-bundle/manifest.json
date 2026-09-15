@@ -124,7 +124,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "a78d557256283fd05657d999b2a6babc0bcb5ae3dcfa2cb07f770ebb602a94a1",
+    "packages/app/src/components/status-popover-body.tsx": "60b765fe829a9b4ffc8f1c0541ce36e5dc8c99b39d4317697b14fcf0aec191dd",
     "packages/app/src/components/status-popover-indicator.test.ts": "9afc7b49d9021a94d74f3f777178230ae13bd26e5749da0cee4d3378eacacacd",
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -999,7 +999,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:36.181Z",
+  "extracted_at": "2026-09-15T19:28:36.386Z",
   "per_package": {
     "packages/app": {
       "A": 181,

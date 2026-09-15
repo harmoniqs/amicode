@@ -713,6 +713,14 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
   // Fallback to window.open when the server does not return a URL (e.g. token-based
   // google probe that already has a cached URL). The overlay tracks validating state
   // while the round-trip is in flight so the card shows the waiting-browser copy.
+  // ── browser-auth polling: after a browser OAuth flow starts (Slack, Google),
+  // poll /amicode/connections every 2s until the state settles. The OAuth
+  // callback writes the credential on a background HTTP server, so without
+  // polling the panel only updates when the user closes and reopens it.
+  let authPollTimer: ReturnType<typeof setInterval> | undefined
+  const stopAuthPoll = () => { if (authPollTimer) { clearInterval(authPollTimer); authPollTimer = undefined } }
+  onCleanup(stopAuthPoll)
+
   const onStartAuth = (payload: import("@opencode-ai/ui/amicode-connections-tab").StartAuthPayload) => {
     void runConnectionAction(payload.id, "/amicode/connections/auth", payload).then((result) => {
       // The server's BrowserOpenFailed event carries the URL when the helper fails;
@@ -723,8 +731,26 @@ export function createAmicodeConnectionsState(shown: Accessor<boolean>) {
       if (maybeUrl && typeof maybeUrl === "string" && /^https:\/\//i.test(maybeUrl)) {
         try { window.open(maybeUrl, "_blank", "noopener") } catch {}
       }
+      // Start polling for the browser-auth completion
+      stopAuthPoll()
+      let pollCount = 0
+      authPollTimer = setInterval(() => {
+        pollCount++
+        // Stop after 2 minutes (60 polls × 2s)
+        if (pollCount > 60) { stopAuthPoll(); return }
+        refetchConnections()
+      }, 2_000)
     })
   }
+  // Stop polling once the connection reaches a terminal state
+  createEffect(() => {
+    const view = connectionsView()
+    if (!view?.ok || !authPollTimer) return
+    const settled = view.connections.every(
+      (c) => c.state !== "waiting-browser" && c.state !== "validating",
+    )
+    if (settled) stopAuthPoll()
+  })
   const connectionsLabels = createMemo(() => ({
     empty: language.t("dialog.connections.empty"),
     retry: language.t("dialog.connections.retry"),
