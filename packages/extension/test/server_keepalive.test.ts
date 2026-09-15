@@ -13,6 +13,9 @@ import {
 function fakeDeps(overrides?: Partial<KeepaliveDeps>): KeepaliveDeps {
   return {
     pingServer: vi.fn<[number, string, number], Promise<boolean>>().mockResolvedValue(true),
+    // #1187: default the recorded PID to DEAD, so a sustained-failure test
+    // reaches onServerGone unless it overrides pidAlive to true.
+    pidAlive: vi.fn<[number], boolean>().mockReturnValue(false),
     onServerGone: vi.fn(),
     log: vi.fn(),
     ...overrides,
@@ -106,10 +109,13 @@ describe("readGraceSeconds — config reading", () => {
 });
 
 // ============================================================================
-// AC4: Server-gone (connection refused) triggers handshake cleanup
+// AC4 (#1187): server-gone requires SUSTAINED failure AND a dead PID.
+// A single transient blip must NOT delete the handshake — doing so strands the
+// still-alive daemonized server and forces a cold-spawn (ServeError storm) on
+// the next reload. This is the bug #1185's live test surfaced.
 // ============================================================================
 
-describe("startKeepalive — server-gone detection", () => {
+describe("startKeepalive — server-gone detection (#1187 confirm-dead-before-delete)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -118,17 +124,48 @@ describe("startKeepalive — server-gone detection", () => {
     vi.useRealTimers();
   });
 
-  it("calls onServerGone when the ping fails (connection refused)", async () => {
+  it("does NOT call onServerGone on a single transient failure that then recovers", async () => {
+    const pingServer = vi
+      .fn<[number, string, number], Promise<boolean>>()
+      .mockResolvedValueOnce(false) // one blip
+      .mockResolvedValue(true); // healthy again
+    const deps = fakeDeps({ pingServer });
+    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, pid: 4242, deps });
+
+    await vi.advanceTimersByTimeAsync(0); // immediate ping fails
+    await vi.advanceTimersByTimeAsync(10_000); // next ping recovers
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(deps.onServerGone).not.toHaveBeenCalled();
+  });
+
+  it("does NOT call onServerGone while pings fail but the recorded PID is ALIVE (server up, unreachable)", async () => {
     const deps = fakeDeps({
       pingServer: vi.fn<[number, string, number], Promise<boolean>>().mockResolvedValue(false),
+      pidAlive: vi.fn<[number], boolean>().mockReturnValue(true), // process is alive
     });
-    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, deps });
+    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, pid: 4242, failureThreshold: 3, deps });
 
-    // Let the immediate ping fire and settle
     await vi.advanceTimersByTimeAsync(0);
-    // Allow the promise to resolve
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(60_000); // many failures, PID stays alive
 
+    expect(deps.onServerGone).not.toHaveBeenCalled();
+    expect(deps.pidAlive).toHaveBeenCalledWith(4242);
+  });
+
+  it("calls onServerGone only after sustained failures AND the PID is dead", async () => {
+    const deps = fakeDeps({
+      pingServer: vi.fn<[number, string, number], Promise<boolean>>().mockResolvedValue(false),
+      pidAlive: vi.fn<[number], boolean>().mockReturnValue(false), // process is gone
+    });
+    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, pid: 4242, failureThreshold: 3, deps });
+
+    await vi.advanceTimersByTimeAsync(0); // failure 1
+    expect(deps.onServerGone).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000); // failure 2
+    expect(deps.onServerGone).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10_000); // failure 3 → threshold + PID dead
+    await vi.advanceTimersByTimeAsync(1);
     expect(deps.onServerGone).toHaveBeenCalledTimes(1);
   });
 
@@ -136,7 +173,7 @@ describe("startKeepalive — server-gone detection", () => {
     const deps = fakeDeps({
       pingServer: vi.fn<[number, string, number], Promise<boolean>>().mockResolvedValue(true),
     });
-    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, deps });
+    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, pid: 4242, deps });
 
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(1);
@@ -147,16 +184,17 @@ describe("startKeepalive — server-gone detection", () => {
   it("stops pinging after server-gone is detected", async () => {
     const deps = fakeDeps({
       pingServer: vi.fn<[number, string, number], Promise<boolean>>().mockResolvedValue(false),
+      pidAlive: vi.fn<[number], boolean>().mockReturnValue(false),
     });
-    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, deps });
+    startKeepalive({ port: 43117, password: "pw", graceSeconds: 30, pid: 4242, failureThreshold: 1, deps });
 
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(1);
     expect(deps.onServerGone).toHaveBeenCalledTimes(1);
 
-    // Advance many intervals — no further pings or onServerGone calls
+    const pingsAtGone = (deps.pingServer as ReturnType<typeof vi.fn>).mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(deps.pingServer).toHaveBeenCalledTimes(1);
+    expect((deps.pingServer as ReturnType<typeof vi.fn>).mock.calls.length).toBe(pingsAtGone);
     expect(deps.onServerGone).toHaveBeenCalledTimes(1);
   });
 });

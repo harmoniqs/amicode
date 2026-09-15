@@ -95,7 +95,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { stopServer } from "./stop_server";
@@ -884,12 +884,20 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // adoption path so every active window pings the detached server.
     const wireKeepalive = (keepalivePort: number, pw: string) => {
       const graceSeconds = readGraceSeconds(vscode.workspace.getConfiguration("amicode"));
+      // #1187: pass the recorded server PID so the keepalive confirms the server
+      // is genuinely dead (isPidAlive) before deleting the handshake — a transient
+      // ping blip must not strand a still-alive daemonized server (which would
+      // force the next reload to cold-spawn onto the occupied port).
+      const hs = readHandshake(handshakePath());
+      const recordedPid = hs.status === "ok" ? hs.record.pid : undefined;
       startKeepalive({
         port: keepalivePort,
         password: pw,
         graceSeconds,
+        pid: recordedPid,
         deps: {
           pingServer: pingKeepalive,
+          pidAlive: isPidAlive,
           onServerGone: () => {
             opencodeChannel.appendLine(`[keepalive] server gone — deleting handshake`);
             deleteHandshake();
@@ -899,7 +907,9 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           log: (line) => opencodeChannel.appendLine(line),
         },
       });
-      opencodeChannel.appendLine(`[keepalive] started (port=${keepalivePort}, grace=${graceSeconds}s)`);
+      opencodeChannel.appendLine(
+        `[keepalive] started (port=${keepalivePort}, grace=${graceSeconds}s, pid=${recordedPid ?? "?"})`,
+      );
     };
 
     if (!adopted) {

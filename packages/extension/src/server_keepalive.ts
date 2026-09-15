@@ -21,6 +21,10 @@
 /** Default keepalive interval in milliseconds (10s — well under the 30s default grace). */
 const KEEPALIVE_INTERVAL_MS = 10_000;
 
+/** #1187: consecutive ping failures required before the server is considered
+ *  gone. A single transient blip must never delete the handshake. */
+const DEFAULT_FAILURE_THRESHOLD = 3;
+
 /**
  * Injected dependencies for testability — every side effect is a seam.
  */
@@ -28,6 +32,12 @@ export interface KeepaliveDeps {
   /** POST to the server's /keepalive route. Returns true if the server is
    *  reachable (any HTTP response), false on connection refused / timeout. */
   pingServer: (port: number, password: string, graceSeconds: number) => Promise<boolean>;
+  /** #1187: confirm the recorded server PID is ACTUALLY dead before treating a
+   *  ping failure as server-gone. A daemonized server that is briefly
+   *  unreachable is still alive — deleting its handshake would strand it and
+   *  force a cold-spawn on the next reload. Injected (prod = isPidAlive). When
+   *  absent, the PID guard is skipped (back-compat). */
+  pidAlive?: (pid: number) => boolean;
   /** Called when the server is detected as gone (connection refused).
    *  The extension should delete the handshake file here. */
   onServerGone: () => void;
@@ -39,6 +49,12 @@ export interface KeepaliveOptions {
   port: number;
   password: string;
   graceSeconds: number;
+  /** #1187: the recorded server PID — used with deps.pidAlive to confirm the
+   *  server is genuinely dead before deleting the handshake. */
+  pid?: number;
+  /** #1187: consecutive ping failures required before the server is considered
+   *  gone. A single transient blip must never delete the handshake. Default 3. */
+  failureThreshold?: number;
   deps: KeepaliveDeps;
 }
 
@@ -56,26 +72,54 @@ export function startKeepalive(opts: KeepaliveOptions): void {
   stopKeepalive();
   stopped = false;
 
-  const { port, password, graceSeconds, deps } = opts;
+  const { port, password, graceSeconds, pid, deps } = opts;
+  const threshold = Math.max(1, opts.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD);
+  let consecutiveFailures = 0;
+
+  // #1187: a ping failure is NOT proof the server is gone. Delete the handshake
+  // (via onServerGone) only after SUSTAINED failures AND a confirmation that the
+  // recorded PID is actually dead. A daemonized server that is briefly
+  // unreachable (busy under a long turn, momentary blip) is still alive —
+  // deleting its handshake strands it, so the next reload cold-spawns onto the
+  // occupied port (ServeError storm) instead of adopting it.
+  const considerGone = (): void => {
+    if (stopped) return;
+    if (consecutiveFailures < threshold) {
+      deps.log(`[keepalive] ping failed (${consecutiveFailures}/${threshold}) — not deleting handshake yet`);
+      return;
+    }
+    if (pid !== undefined && deps.pidAlive?.(pid)) {
+      deps.log(
+        `[keepalive] ${consecutiveFailures} pings failed but PID ${pid} is alive — server unreachable, NOT deleting handshake`,
+      );
+      return;
+    }
+    deps.log(
+      `[keepalive] server gone (port ${port}${pid !== undefined ? `, PID ${pid} not alive` : ""}) ` +
+        `after ${consecutiveFailures} failed pings — cleaning up handshake`,
+    );
+    deps.onServerGone();
+    stopKeepalive();
+  };
 
   const ping = async (): Promise<void> => {
     if (stopped) return;
+    let ok = false;
     try {
-      const ok = await deps.pingServer(port, password, graceSeconds);
-      if (!ok && !stopped) {
-        deps.log(`[keepalive] server gone (port ${port}) — cleaning up handshake`);
-        deps.onServerGone();
-        stopKeepalive();
-      }
+      ok = await deps.pingServer(port, password, graceSeconds);
     } catch (err) {
-      // Defensive: pingServer should never throw, but if it does, treat as
-      // server-gone rather than crashing the extension.
-      if (!stopped) {
-        deps.log(`[keepalive] ping error: ${(err as Error).message} — treating as server-gone`);
-        deps.onServerGone();
-        stopKeepalive();
-      }
+      // Defensive: pingServer should never throw; treat as a failure (not an
+      // immediate server-gone — the same threshold + PID guard applies).
+      ok = false;
+      deps.log(`[keepalive] ping error: ${(err as Error).message}`);
     }
+    if (stopped) return;
+    if (ok) {
+      consecutiveFailures = 0;
+      return;
+    }
+    consecutiveFailures++;
+    considerGone();
   };
 
   // Immediate first ping
