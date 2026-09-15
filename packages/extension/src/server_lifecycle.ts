@@ -44,6 +44,8 @@ export interface AdoptOrSpawnDeps {
   /** Free an orphaned port (kill the opencode server holding it). Returns
    *  whether the port was actually freed. Never called for a foreign holder. */
   reclaimPort?: (port: number) => Promise<boolean>;
+  /** Optional log sink for adoption diagnostics. */
+  log?: (line: string) => void;
 }
 
 export type AdoptOrSpawnOutcome =
@@ -121,17 +123,45 @@ export async function adoptOrSpawn(
 
   const record = hs.record;
 
-  // Step 2: run the four live checks
-  const pidAlive = deps.pidAlive(record.pid);
-  const healthy = pidAlive ? await deps.healthCheck(record.port) : false;
-  const passwordChallengePass = healthy
-    ? await deps.passwordChallenge(record.port, record.password)
-    : false;
-  const protocolCompatible = record.protocolVersion === deps.protocolVersion;
+  // Step 2: run the four live checks (with one retry for transient failures).
+  // A window reload can leave the server briefly unreachable while it flushes
+  // dying connections; retrying once after a short wait covers that gap.
+  const runChecks = async () => {
+    const pidAlive = deps.pidAlive(record.pid);
+    const healthy = pidAlive ? await deps.healthCheck(record.port) : false;
+    const passwordChallengePass = healthy
+      ? await deps.passwordChallenge(record.port, record.password)
+      : false;
+    const protocolCompatible = record.protocolVersion === deps.protocolVersion;
+    return { pidAlive, healthy, passwordChallengePass, protocolCompatible };
+  };
 
-  // Step 3: classify
-  const inputs: GateInputs = { healthy, pidAlive, passwordChallengePass, protocolCompatible };
-  const verdict = classifyGate(inputs);
+  let checks = await runChecks();
+
+  // Step 3: classify — log the inputs so a failed adoption is diagnosable.
+  let inputs: GateInputs = checks;
+  deps.log?.(
+    `[adopt] gate inputs: pid=${record.pid} pidAlive=${checks.pidAlive} healthy=${checks.healthy} ` +
+    `passwordOk=${checks.passwordChallengePass} proto=${checks.protocolCompatible} (${record.protocolVersion}/${deps.protocolVersion})`,
+  );
+  let verdict = classifyGate(inputs);
+  deps.log?.(`[adopt] verdict: ${verdict}`);
+
+  // Retry once if the verdict is "stale" but the PID is alive — likely a
+  // transient unreachable moment (the server is flushing connections from the
+  // dying extension host during a window reload).
+  if (verdict === "stale" && checks.pidAlive) {
+    deps.log?.(`[adopt] stale but PID alive — retrying in 1 s`);
+    await new Promise((r) => setTimeout(r, 1000));
+    checks = await runChecks();
+    inputs = checks;
+    deps.log?.(
+      `[adopt] retry gate inputs: pidAlive=${checks.pidAlive} healthy=${checks.healthy} ` +
+      `passwordOk=${checks.passwordChallengePass} proto=${checks.protocolCompatible}`,
+    );
+    verdict = classifyGate(inputs);
+    deps.log?.(`[adopt] retry verdict: ${verdict}`);
+  }
 
   switch (verdict) {
     case "adoptable":
@@ -151,7 +181,7 @@ export async function adoptOrSpawn(
       // is incompatible, that's OUR server at the wrong version — do not spawn
       // on the occupied port. classifyGate lumps this into "stale", but the
       // lifecycle must treat it as an error.
-      if (healthy && passwordChallengePass && !protocolCompatible) {
+      if (checks.healthy && checks.passwordChallengePass && !checks.protocolCompatible) {
         return {
           outcome: "incompatible-error",
           port: record.port,
@@ -195,7 +225,7 @@ export async function adoptOrSpawn(
 export async function probeHealth(port: number): Promise<boolean> {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
       // Resolving (no throw) means the server answered — 200 or 401, it's up.
       await fetch(`http://127.0.0.1:${port}/`, { signal: ctrl.signal });
@@ -223,7 +253,7 @@ export function isPidAlive(pid: number): boolean {
 export async function challengePassword(port: number, password: string): Promise<boolean> {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 2000);
+    const timer = setTimeout(() => ctrl.abort(), 5000);
     try {
       const r = await fetch(`http://127.0.0.1:${port}/`, {
         signal: ctrl.signal,
@@ -244,6 +274,7 @@ export async function challengePassword(port: number, password: string): Promise
 export function buildLiveDeps(
   coldSpawn: () => Promise<{ port: number; pid: number; password: string }>,
   configuredPort?: number,
+  log?: (line: string) => void,
 ): AdoptOrSpawnDeps {
   return {
     healthCheck: probeHealth,
@@ -254,6 +285,7 @@ export function buildLiveDeps(
     configuredPort,
     probePort: configuredPort !== undefined ? probePortOccupant : undefined,
     reclaimPort: configuredPort !== undefined ? reclaimOrphanPort : undefined,
+    log,
   };
 }
 

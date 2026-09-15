@@ -785,7 +785,7 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
           io.postToWebview({
             source: "amicode", kind: "dev-tools-rebuild-status",
             tab: (msg as { tab?: string }).tab, state: "rebuilding",
-            phase: "building-binary", detail: "Building binary from overlay...",
+            phase: "building-binary", detail: "Overlay changed — rebuilding engine binary (server will restart).",
           });
           const buildBinary = await run("pnpm --filter amicode run build:binary", amicodePath);
           if (!buildBinary.ok) {
@@ -909,10 +909,20 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // restart after reload will try to bootstrap ALL session directories;
         // stale worktree refs cause cascading ENOENT → MCP failures.
         try { rehomeStaleWorktreeSessions(dbDir); } catch { /* best-effort */ }
-        io.postToWebview({
-          source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
-          state: "done",
-        });
+        // Await the "done" delivery so the controller's localStorage mutation
+        // (rebuildFlagMutation("done")) lands BEFORE the window reload. Without
+        // this the reload can race the two-hop message path (extension → shell
+        // webview → iframe) and the flag never lands — leaving the dialog stuck
+        // on "Rebuilding..." after the reload.
+        try {
+          // postToWebview wraps panel.webview.postMessage which returns
+          // Thenable<boolean>; the interface types it as void for callers that
+          // fire-and-forget, but here we need to confirm delivery.
+          await (io.postToWebview({
+            source: "amicode", kind: "dev-tools-rebuild-status", tab: (msg as { tab?: string }).tab,
+            state: "done",
+          }) as unknown as Promise<boolean>);
+        } catch { /* best-effort — the reload is the primary delivery */ }
         await new Promise(r => setTimeout(r, 300));
         void vscode.commands.executeCommand("workbench.action.reloadWindow");
       } catch (e: unknown) {

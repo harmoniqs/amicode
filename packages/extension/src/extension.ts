@@ -856,7 +856,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
           // spawn below via ServerManager. Return a sentinel so the lifecycle
           // function knows to proceed, but the real spawn is in the next block.
           return { port: configuredPort || 0, pid: 0, password: serverPassword };
-        }, configuredPort > 0 ? configuredPort : 43117),
+        }, configuredPort > 0 ? configuredPort : 43117, (l) => opencodeChannel.appendLine(l)),
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
