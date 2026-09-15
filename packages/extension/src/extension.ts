@@ -1129,55 +1129,65 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // slack-mcp-server via the engine's MCP API when the credential file
     // (~/.amico/slack.json) is created or deleted. No server restart needed.
     // Falls back to a full restart if the API call fails (server not ready).
+    // Retries up to 5 times (1s apart) if the server isn't ready yet — the
+    // token write often happens right after a restart or window reload, before
+    // opencodeReadyUrl is set.
     ctx.subscriptions.push(
       watchSlackCredential(({ exists }) => {
-        if (!opencodeReadyUrl) {
-          opencodeChannel.appendLine("[slack] credential changed but server not ready — skipping");
-          return;
-        }
-        const baseUrl = opencodeReadyUrl.toString().replace(/\/$/, "");
-        if (exists) {
-          const slackCred = readCredential("slack");
-          if (!slackCred?.token) {
-            opencodeChannel.appendLine("[slack] credential file exists but unreadable — skipping");
+        const attempt = (retries: number) => {
+          if (!opencodeReadyUrl) {
+            if (retries > 0) {
+              setTimeout(() => attempt(retries - 1), 1000);
+              return;
+            }
+            opencodeChannel.appendLine("[slack] credential changed but server not ready after retries — skipping");
             return;
           }
-          opencodeChannel.appendLine("[slack] credential file created — adding MCP server dynamically");
-          fetch(`${baseUrl}/mcp`, {
-            method: "POST",
-            headers: { ...serverAuthHeaders, "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: "slack",
-              config: {
-                type: "local",
-                command: ["npx", "-y", "slack-mcp-server"],
-                enabled: true,
-                environment: {
-                  SLACK_MCP_XOXP_TOKEN: slackCred.token,
-                  SLACK_MCP_ADD_MESSAGE_TOOL: "true",
+          const baseUrl = opencodeReadyUrl.toString().replace(/\/$/, "");
+          if (exists) {
+            const slackCred = readCredential("slack");
+            if (!slackCred?.token) {
+              opencodeChannel.appendLine("[slack] credential file exists but unreadable — skipping");
+              return;
+            }
+            opencodeChannel.appendLine("[slack] credential file created — adding MCP server dynamically");
+            fetch(`${baseUrl}/mcp`, {
+              method: "POST",
+              headers: { ...serverAuthHeaders, "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: "slack",
+                config: {
+                  type: "local",
+                  command: ["npx", "-y", "slack-mcp-server"],
+                  enabled: true,
+                  environment: {
+                    SLACK_MCP_XOXP_TOKEN: slackCred.token,
+                    SLACK_MCP_ADD_MESSAGE_TOOL: "true",
+                  },
                 },
-              },
-            }),
-          }).then((r) => {
-            if (r.ok) opencodeChannel.appendLine("[slack] MCP server added successfully");
-            else throw new Error(`HTTP ${r.status}`);
-          }).catch((err) => {
-            opencodeChannel.appendLine(`[slack] dynamic add failed (${err}) — falling back to restart`);
-            void vscode.commands.executeCommand("amicode.restartServer");
-          });
-        } else {
-          opencodeChannel.appendLine("[slack] credential file deleted — removing MCP server dynamically");
-          fetch(`${baseUrl}/mcp/slack`, {
-            method: "DELETE",
-            headers: serverAuthHeaders,
-          }).then((r) => {
-            if (r.ok) opencodeChannel.appendLine("[slack] MCP server removed successfully");
-            else throw new Error(`HTTP ${r.status}`);
-          }).catch((err) => {
-            opencodeChannel.appendLine(`[slack] dynamic remove failed (${err}) — falling back to restart`);
-            void vscode.commands.executeCommand("amicode.restartServer");
-          });
-        }
+              }),
+            }).then((r) => {
+              if (r.ok) opencodeChannel.appendLine("[slack] MCP server added successfully");
+              else throw new Error(`HTTP ${r.status}`);
+            }).catch((err) => {
+              opencodeChannel.appendLine(`[slack] dynamic add failed (${err}) — falling back to restart`);
+              void vscode.commands.executeCommand("amicode.restartServer");
+            });
+          } else {
+            opencodeChannel.appendLine("[slack] credential file deleted — removing MCP server dynamically");
+            fetch(`${baseUrl}/mcp/slack`, {
+              method: "DELETE",
+              headers: serverAuthHeaders,
+            }).then((r) => {
+              if (r.ok) opencodeChannel.appendLine("[slack] MCP server removed successfully");
+              else throw new Error(`HTTP ${r.status}`);
+            }).catch((err) => {
+              opencodeChannel.appendLine(`[slack] dynamic remove failed (${err}) — falling back to restart`);
+              void vscode.commands.executeCommand("amicode.restartServer");
+            });
+          }
+        };
+        attempt(5);
       }),
     );
 
