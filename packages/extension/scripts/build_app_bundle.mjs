@@ -36,6 +36,7 @@
 // app-shelf-boot-proof CI lane runs the env-gated probe, which skips with the
 // reason printed until a dist is built there.
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, userInfo } from "node:os";
 import { dirname, join } from "node:path";
@@ -206,17 +207,19 @@ if (verifiedMain) {
 }
 
 // ── overlay staleness check: re-materialize when the overlay has changed ─────
-// The manifest's overlay_sha + promoted_at identify the overlay version. A stamp
-// file inside .materialized records what was last materialized. When they
-// differ, the cached tree is stale — wipe it and re-materialize, otherwise the
-// build silently ships an old bundle (the startsWith-undefined-title trap,
-// 2026-09-13). The --direct-worktree and --verified-main modes skip this:
-// they manage their own trees.
+// The manifest's overlay_sha + promoted_at identify the extraction version, but
+// local edits to overlay files don't change those fields. For dev builds, we
+// also hash the manifest.files object (which refresh_manifest.mjs updates on
+// every overlay edit via the auto-refresh in materialize.mjs). When either the
+// extraction version OR the file hashes differ, the cached tree is stale.
 const OVERLAY_STAMP = join(work, ".overlay-stamp");
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(join(BUNDLE_PKG, "manifest.json"), "utf8"));
-    return `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    const base = `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    // Include a hash of the file-hashes so local overlay edits invalidate the cache
+    const filesHash = m.files ? createHash("sha256").update(JSON.stringify(m.files)).digest("hex").slice(0, 12) : "";
+    return `${base}:${filesHash}`;
   } catch { return null; }
 })();
 const cachedVersion = (() => {

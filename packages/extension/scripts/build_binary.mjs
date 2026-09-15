@@ -93,12 +93,16 @@ if (existsSync(manifestPath)) {
 // ── materialized tree (reuse build:app's tree or create one) ────────────────
 const work = flag("work") ?? process.env.AMICODE_APP_BUNDLE_WORK ?? join(BUNDLE_PKG, ".materialized");
 
-// Overlay staleness check — same mechanism as build_app_bundle.mjs
+// Overlay staleness check — same mechanism as build_app_bundle.mjs.
+// Includes a hash of manifest.files so local overlay edits invalidate the cache
+// (overlay_sha/promoted_at alone don't change on local edits).
 const OVERLAY_STAMP = join(work, ".overlay-stamp");
 const overlayVersion = (() => {
   try {
     const m = JSON.parse(readFileSync(manifestPath, "utf8"));
-    return `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    const base = `${m.overlay_sha ?? ""}:${m.promoted_at ?? ""}`;
+    const filesHash = m.files ? createHash("sha256").update(JSON.stringify(m.files)).digest("hex").slice(0, 12) : "";
+    return `${base}:${filesHash}`;
   } catch { return null; }
 })();
 const cachedVersion = (() => {
