@@ -370,3 +370,66 @@ export async function restartEngine(deps: RestartEngineDeps): Promise<void> {
   deps.deleteHandshake();
   await deps.coldSpawn();
 }
+
+
+// ============================================================================
+// Stale-engine wiring onto the adopted path (#1190, parent #1142)
+// ============================================================================
+//
+// The adoption gate (classifyGate) keys on protocolVersion only — NOT on the
+// binary/config hashes. So a reload will adopt a live survivor running an OLD
+// build whenever the protocol string is unchanged. #1148 designed the fix as
+// adopt-then-notice (keep in-flight turns alive, THEN offer a restart) but left
+// detectStaleEngine/surfaceStaleNotice unwired. These two helpers are the
+// wireable, unit-testable core that closes that gap.
+
+export interface AuditAdoptedEngineDeps {
+  hashFile: (path: string) => Promise<string>;
+  hashString: (s: string) => string;
+  notify: StaleNoticeDeps;
+}
+
+/** Compare the ADOPTED server's recorded hashes against the on-disk binary +
+ *  config, and surface the (non-blocking) stale notice when they diverge.
+ *  Returns the comparison, or undefined when there is nothing to compare (no
+ *  recorded hashes). Adopt-then-notice, never a hard gate — the survivor's
+ *  in-flight turns are preserved; the user chooses whether to restart. */
+export async function auditAdoptedEngine(
+  adoptedHashes: { binaryHash: string; configHash: string } | undefined,
+  onDisk: { binaryPath: string; configContent: string },
+  deps: AuditAdoptedEngineDeps,
+): Promise<StaleEngineResult | undefined> {
+  if (!adoptedHashes) return undefined;
+  const onDiskHashes = {
+    binaryHash: await deps.hashFile(onDisk.binaryPath).catch(() => ""),
+    configHash: deps.hashString(onDisk.configContent),
+  };
+  const result = detectStaleEngine(adoptedHashes, onDiskHashes);
+  surfaceStaleNotice(result, deps.notify);
+  return result;
+}
+
+export interface RestartAdoptedEngineDeps {
+  /** Port the adopted (surviving) server is listening on. */
+  port: number;
+  /** SIGTERM→SIGKILL the port holder and verify freed (reclaimOrphanPort). */
+  reclaimPort: (port: number) => Promise<boolean>;
+  deleteHandshake: () => void;
+  reloadWindow: () => void | Promise<void>;
+  log?: (line: string) => void;
+}
+
+/** Restart an ADOPTED server — the case amicode.restartServer cannot handle,
+ *  because on the adopted path there is no local ServerManager to stop()/start().
+ *  Free the survivor's port (kill the recorded process), delete the handshake so
+ *  the next activation cannot re-adopt the dead record, then reload the window —
+ *  the reload's own adopt-or-spawn gate cold-spawns the CURRENT build on the
+ *  freed port. Order matters (reclaim → delete → reload); delete + reload run
+ *  even if the reclaim could not confirm the port free (the gate re-probes). */
+export async function restartAdoptedEngine(deps: RestartAdoptedEngineDeps): Promise<void> {
+  deps.log?.(`[stale-engine] restart requested — reclaiming adopted server on port ${deps.port}`);
+  const freed = await deps.reclaimPort(deps.port).catch(() => false);
+  deps.log?.(`[stale-engine] port ${deps.port} freed=${freed} — deleting handshake + reloading window`);
+  deps.deleteHandshake();
+  await deps.reloadWindow();
+}

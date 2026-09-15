@@ -95,7 +95,7 @@ import { loadGraph } from "./calibration_graph";
 import { parseStateJson } from "./device_registry";
 import { buildDeviceStatus, nextActions, capabilityHint, type DriveLine } from "./device_status";
 import { SchusterJobServer } from "./qick_client";
-import { adoptOrSpawn, buildLiveDeps, isPidAlive } from "./server_lifecycle";
+import { adoptOrSpawn, buildLiveDeps, isPidAlive, reclaimOrphanPort, auditAdoptedEngine, restartAdoptedEngine } from "./server_lifecycle";
 import { handshakePath, readHandshake, deleteHandshake, serverLogPath, coldSpawnHandshakeHook, hashFile, hashString } from "./server_handshake";
 import { startKeepalive, stopKeepalive, readGraceSeconds, pingKeepalive } from "./server_keepalive";
 import { stopServer } from "./stop_server";
@@ -844,6 +844,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
     // recorded password and wire the event stream; on cold-spawn, proceed as
     // before; on error, surface it and skip server creation entirely.
     let adopted = false;
+    // #1190: the adopted survivor's recorded binary/config hashes (from the
+    // handshake) — captured here so the adopted path can compare them against
+    // the on-disk build and surface a stale-engine notice.
+    let adoptedHashes: { binaryHash: string; configHash: string } | undefined;
     try {
       const lifecycleResult = await adoptOrSpawn(
         handshakePath(),
@@ -856,6 +860,7 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       );
       if (lifecycleResult.outcome === "adopted") {
         adopted = true;
+        adoptedHashes = lifecycleResult.adoptedHashes;
         // Replace the minted password with the recorded one — the surviving
         // server was spawned with it, so every auth surface must carry it.
         serverPassword = lifecycleResult.password;
@@ -912,9 +917,10 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       );
     };
 
-    if (!adopted) {
-    // #1181 (ADR 0020): hoist the config content so we can both inject it AND
-    // hash it for the handshake record the afterHealthy hook writes.
+    // #1181/#1190 (ADR 0020): compute the config content ABOVE the adopt/
+    // cold-spawn split so BOTH paths can hash it — cold-spawn records it in the
+    // handshake, and the adopted path compares it against the survivor's
+    // recorded hash (auditAdoptedEngine) to detect a stale engine.
     const configContent = buildOpencodeConfigContent(
       opencodeProject.agentsPath,
       opencodeProject.templatePath,
@@ -942,6 +948,8 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // active problem, live runs) per system-prompt build.
       [path.resolve(ctx.extensionPath, "opencode-plugin", "amicode_context.ts")],
     );
+
+    if (!adopted) {
     // #1181: the hashes the handshake records (computed once, so the hook is sync).
     // hashFile is best-effort — an unreadable binary yields "" (treated as changed).
     const coldSpawnBinaryHash = await hashFile(binary).catch(() => "");
@@ -1226,6 +1234,31 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
       // #1147: start keepalive after adoption
       const adoptedPort = parseInt(opencodeReadyUrl.port || "0", 10);
       if (adoptedPort > 0) wireKeepalive(adoptedPort, serverPassword);
+      // #1190 (ADR 0020): the gate matched only protocolVersion, so the adopted
+      // survivor may be running a DIFFERENT build than what is now on disk.
+      // Compare hashes and, if they diverge, surface a non-blocking notice that
+      // offers a restart onto the current build (kill survivor → drop handshake
+      // → reload → clean cold-spawn). Adopt-then-notice keeps in-flight turns.
+      if (binary && adoptedHashes && adoptedPort > 0) {
+        void auditAdoptedEngine(
+          adoptedHashes,
+          { binaryPath: binary, configContent },
+          {
+            hashFile,
+            hashString,
+            notify: {
+              showInformationMessage: (m, ...items) => vscode.window.showInformationMessage(m, ...items),
+              onRestartRequested: () => restartAdoptedEngine({
+                port: adoptedPort,
+                reclaimPort: reclaimOrphanPort,
+                deleteHandshake,
+                reloadWindow: () => void vscode.commands.executeCommand("workbench.action.reloadWindow"),
+                log: (l) => opencodeChannel.appendLine(l),
+              }),
+            },
+          },
+        );
+      }
       if (vscode.workspace.getConfiguration("amicode").get<boolean>("chat.autoOpen", true)) {
         ChatPanel.openOrReveal(ctx, frameUrl() ?? opencodeReadyUrl, serverAuthToken(serverPassword), opencodeProject.projectDir);
       }
