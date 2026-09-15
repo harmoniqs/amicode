@@ -816,7 +816,13 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "10bcb79b117beebee04184fb48c1ad789e782e2f7ae4b0c68603edc00f03aee9",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "8baf16cad0992c5351b61b0c0fb27903bb25b17e1b25fc7c5d77f807c24413a6",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "b37ff4136c4aea85b23083bf441f03e09820e3e4cdd95e4118ca570d8435b94f",
-    "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c"
+    "packages/opencode/src/session/reminders.ts": "abcd602de7f8ab8ab1a0364d30d28f1eb04fe81bf7cd837db9e926ffecf2dc6c",
+    "packages/llm/src/cache-policy.ts": "04c1fb5d3d061cfa95d04e54df0a1c2cdaafac921224242446eaa2968bff7857",
+    "packages/llm/src/protocols/bedrock-converse.ts": "834a415fa8ddf9ad1224133f8352d0a926694f19f0954201d182111c171ec03b",
+    "packages/opencode/src/provider/transform.ts": "2ae62827a8190531a3244dc890a02297f8bd84bb90926dc1f685453c367e05de",
+    "packages/llm/test/cache-policy.test.ts": "e921095c4301440c786105063439e49b2fedbaf6d46f30457e0a96388d268f4b",
+    "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
+    "packages/opencode/test/provider/transform.test.ts": "670656f51402d5c242856b3bd41cd15957065364d6cb724efd4f9cac0dda400e"
   },
   "symlinks": [
     "packages/app/public/amico.svg"
@@ -1009,7 +1015,7 @@
     }
   },
   "counts": {
-    "overlay_total": 808,
+    "overlay_total": 815,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1822,6 +1828,12 @@
     "packages/opencode/src/server/routes/instance/httpapi/handlers/file.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/provider.ts": "M",
     "packages/opencode/src/server/routes/instance/httpapi/handlers/session.ts": "M",
-    "packages/opencode/src/session/reminders.ts": "M"
+    "packages/opencode/src/session/reminders.ts": "M",
+    "packages/llm/src/cache-policy.ts": "M",
+    "packages/llm/src/protocols/bedrock-converse.ts": "M",
+    "packages/opencode/src/provider/transform.ts": "M",
+    "packages/llm/test/cache-policy.test.ts": "M",
+    "packages/llm/test/provider/bedrock-converse.test.ts": "M",
+    "packages/opencode/test/provider/transform.test.ts": "M"
   }
 }
