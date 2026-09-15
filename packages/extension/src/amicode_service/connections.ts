@@ -1240,9 +1240,23 @@ export async function submitCredentialResponse(rawBody: string, deps: MutationDe
   const body = parseMutationBody(rawBody)
   if (!body) return synthesizeConnection("bad_request", "body must be JSON with an id and that id's credential fields")
   if (body.id === "pasqal-cloud") return submitPasqalCredential(body, deps)
-  // Slack App client_id setup — save to ~/.amico/slack-app.json so the OAuth flow can read it
-  if (body.id === "slack-app-client-id") {
-    const clientId = typeof body.token === "string" ? body.token.trim() : ""
+  // Slack App credentials setup — save client_id + client_secret to ~/.amico/slack-app.json
+  if (body.id === "slack-app-credentials" || body.id === "slack-app-client-id") {
+    let clientId = ""
+    let clientSecret = ""
+    if (body.id === "slack-app-credentials") {
+      // New flow: token field is JSON { client_id, client_secret }
+      try {
+        const parsed = JSON.parse(typeof body.token === "string" ? body.token : "")
+        clientId = typeof parsed.client_id === "string" ? parsed.client_id.trim() : ""
+        clientSecret = typeof parsed.client_secret === "string" ? parsed.client_secret.trim() : ""
+      } catch {
+        return synthesizeConnection("bad_request", "invalid Slack App credentials payload")
+      }
+    } else {
+      // Legacy flow: token field is the client_id string
+      clientId = typeof body.token === "string" ? body.token.trim() : ""
+    }
     if (!clientId) return synthesizeConnection("bad_request", "non-empty Client ID is required")
     try {
       const { mkdirSync, writeFileSync } = await import("node:fs")
@@ -1250,9 +1264,11 @@ export async function submitCredentialResponse(rawBody: string, deps: MutationDe
       const { homedir } = await import("node:os")
       const dir = join(homedir(), ".amico")
       mkdirSync(dir, { recursive: true })
-      writeFileSync(join(dir, "slack-app.json"), JSON.stringify({ client_id: clientId }, null, 2) + "\n", { mode: 0o600 })
+      const payload: Record<string, string> = { client_id: clientId }
+      if (clientSecret) payload.client_secret = clientSecret
+      writeFileSync(join(dir, "slack-app.json"), JSON.stringify(payload, null, 2) + "\n", { mode: 0o600 })
     } catch {
-      return synthesizeConnection("write_failed", "could not save Slack App Client ID")
+      return synthesizeConnection("write_failed", "could not save Slack App credentials")
     }
     return JSON.stringify({ ok: true, connection: { id: "slack", state: "needs-key", validated_at: null, stale: false }, error: null })
   }
@@ -1599,6 +1615,17 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
       return ""; // empty = not configured
     })();
 
+    const AMICODE_SLACK_CLIENT_SECRET = (() => {
+      const env = process.env.AMICODE_SLACK_CLIENT_SECRET?.trim();
+      if (env) return env;
+      try {
+        const appFile = join(homedir(), ".amico", "slack-app.json");
+        const data = JSON.parse(readFileSync(appFile, "utf8"));
+        if (typeof data.client_secret === "string" && data.client_secret.trim()) return data.client_secret.trim();
+      } catch {}
+      return "";
+    })();
+
     if (!AMICODE_SLACK_CLIENT_ID) {
       return synthesizeConnection("slack_app_not_configured",
         "No Slack App configured. Ask your Slack workspace admin to create an Amicode Slack App " +
@@ -1650,6 +1677,7 @@ export async function startAuthResponse(rawBody: string, deps: MutationDeps = {}
           headers: { "Content-Type": "application/x-www-form-urlencoded" },
           body: new URLSearchParams({
             client_id: AMICODE_SLACK_CLIENT_ID,
+            client_secret: AMICODE_SLACK_CLIENT_SECRET,
             code,
             redirect_uri: REDIRECT_URI,
             code_verifier: codeVerifier,

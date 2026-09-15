@@ -4,10 +4,38 @@
 // (v1.18.10-amicode.11), so the recorded binary serves the SPA catch-all for
 // them. These tests pin the ported SOURCE behavior; both join the golden arc
 // at the next pin bump.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { startAuthResponse } from "../src/amicode_service/connections";
 
+const SLACK_APP_FILE = join(homedir(), ".amico", "slack-app.json");
+const SLACK_APP_BAK = SLACK_APP_FILE + ".test-bak";
+
 describe("startAuthResponse — refusal shapes (post-pin route, source-level parity)", () => {
+  let savedEnvId: string | undefined;
+  let savedEnvSecret: string | undefined;
+  let hadFile = false;
+
+  beforeEach(() => {
+    // Isolate from real Slack App config on the test machine
+    savedEnvId = process.env.AMICODE_SLACK_CLIENT_ID;
+    savedEnvSecret = process.env.AMICODE_SLACK_CLIENT_SECRET;
+    delete process.env.AMICODE_SLACK_CLIENT_ID;
+    delete process.env.AMICODE_SLACK_CLIENT_SECRET;
+    hadFile = existsSync(SLACK_APP_FILE);
+    if (hadFile) renameSync(SLACK_APP_FILE, SLACK_APP_BAK);
+  });
+
+  afterEach(() => {
+    if (savedEnvId !== undefined) process.env.AMICODE_SLACK_CLIENT_ID = savedEnvId;
+    else delete process.env.AMICODE_SLACK_CLIENT_ID;
+    if (savedEnvSecret !== undefined) process.env.AMICODE_SLACK_CLIENT_SECRET = savedEnvSecret;
+    else delete process.env.AMICODE_SLACK_CLIENT_SECRET;
+    if (hadFile && existsSync(SLACK_APP_BAK)) renameSync(SLACK_APP_BAK, SLACK_APP_FILE);
+  });
+
   it("slack browser auth without client_id returns setup instructions", async () => {
     const body = await startAuthResponse(JSON.stringify({ id: "slack", method: "browser" }));
     const parsed = JSON.parse(body);

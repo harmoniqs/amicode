@@ -40,6 +40,7 @@ export function ConnectionPicker(props: {
   }
   const isSlackEntry = () => pickedEntry()?.id === "slack"
   const [slackClientId, setSlackClientId] = createSignal("")
+  const [slackClientSecret, setSlackClientSecret] = createSignal("")
 
   const submitCustom = async (e: Event) => {
     e.preventDefault()
@@ -207,33 +208,43 @@ export function ConnectionPicker(props: {
               </form>
             </Show>
           }>
-             {/* Slack: Client ID + OAuth flow */}
+             {/* Slack: Client ID + Client Secret + OAuth flow */}
             <div class="flex flex-col gap-1.5" data-slot="amicode-picker-slack-form">
               <div class="flex items-center gap-2">
                 <span class="w-[18px] h-[18px] flex items-center justify-center" innerHTML={CONNECTION_ICONS.slack ?? ""} />
                 <span class="text-12-regular text-text-base font-medium">Slack</span>
               </div>
               <details class="text-11-regular text-text-weaker">
-                <summary class="cursor-pointer hover:text-text-base">Don't have a Client ID?</summary>
+                <summary class="cursor-pointer hover:text-text-base">Where do I find these?</summary>
                 <div class="flex flex-col gap-1.5 mt-1.5 pl-1">
-                  <span>Ask your Slack workspace admin, or create one at <span class="underline text-text-base cursor-pointer" onClick={() => openExternal("https://api.slack.com/apps")}>api.slack.com/apps</span> → Create from Manifest.</span>
+                  <span>Go to <span class="underline text-text-base cursor-pointer" onClick={() => openExternal("https://api.slack.com/apps")}>api.slack.com/apps</span> → your app → Basic Information → App Credentials. Or ask your Slack workspace admin.</span>
                 </div>
               </details>
               <input
                 type="text"
-                placeholder="Slack App Client ID"
+                placeholder="Client ID"
                 aria-label="Slack App Client ID"
                 value={slackClientId()}
                 onInput={(e) => setSlackClientId(e.currentTarget.value)}
+                class="amc-input amc-input--compact"
+              />
+              <input
+                type="password"
+                placeholder="Client Secret"
+                aria-label="Slack App Client Secret"
+                value={slackClientSecret()}
+                onInput={(e) => setSlackClientSecret(e.currentTarget.value)}
                 class="amc-input amc-input--compact"
               />
               <div class="flex gap-2">
                 <Button type="button" variant="primary" size="small" onClick={async (e) => {
                   e.preventDefault()
                   const cid = slackClientId().trim()
-                  if (!cid) return
-                  await props.onSubmitToken("slack-app-client-id", cid)
+                  const csecret = slackClientSecret().trim()
+                  if (!cid || !csecret) return
+                  await props.onSubmitToken("slack-app-credentials", JSON.stringify({ client_id: cid, client_secret: csecret }))
                   setSlackClientId("")
+                  setSlackClientSecret("")
                   if (props.onStartBrowser) props.onStartBrowser("slack")
                   setPicked(undefined)
                 }}>

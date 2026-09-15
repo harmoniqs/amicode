@@ -16,22 +16,33 @@ import { dirname, join } from "node:path";
 
 // ── constants ─────────────────────────────────────────────────────────────────
 
-/** The Slack App's client ID — PKCE flow, no client_secret.
- *  Priority: AMICODE_SLACK_CLIENT_ID env var → ~/.amico/slack-app.json → empty.
- *  The env var lets users bring their own Slack App; the file is written by the
- *  Connections panel's setup flow. */
-export const AMICODE_SLACK_CLIENT_ID = (() => {
-  const env = process.env.AMICODE_SLACK_CLIENT_ID?.trim();
-  if (env) return env;
+/** Read the Slack App credentials from env / ~/.amico/slack-app.json.
+ *  Priority: env vars → JSON file → empty. Both are needed for the OAuth
+ *  exchange — Slack's oauth.v2.access requires client_secret even with PKCE. */
+function readSlackAppCredentials(): { clientId: string; clientSecret: string } {
+  const envId = process.env.AMICODE_SLACK_CLIENT_ID?.trim();
+  const envSecret = process.env.AMICODE_SLACK_CLIENT_SECRET?.trim();
+  if (envId) return { clientId: envId, clientSecret: envSecret ?? "" };
   try {
     const { readFileSync } = require("node:fs");
     const { join } = require("node:path");
     const { homedir } = require("node:os");
     const data = JSON.parse(readFileSync(join(homedir(), ".amico", "slack-app.json"), "utf8"));
-    if (typeof data.client_id === "string" && data.client_id.trim()) return data.client_id.trim();
+    const id = typeof data.client_id === "string" ? data.client_id.trim() : "";
+    const secret = typeof data.client_secret === "string" ? data.client_secret.trim() : "";
+    return { clientId: id, clientSecret: secret };
   } catch {}
-  return "";
-})();
+  return { clientId: "", clientSecret: "" };
+}
+
+/** Re-read on every call so the Connections panel's save is picked up without
+ *  restarting the amico process. Exported for the config bridge's guard. */
+export function getSlackClientId(): string {
+  return readSlackAppCredentials().clientId;
+}
+
+/** @deprecated Use getSlackClientId() — kept for existing import sites. */
+export const AMICODE_SLACK_CLIENT_ID = (() => readSlackAppCredentials().clientId)();
 
 const CALLBACK_PORT = 54213;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
@@ -153,10 +164,14 @@ interface SlackOAuthResponse {
   };
 }
 
-/** Exchange the authorization code for a user token via Slack's oauth.v2.access. */
+/** Exchange the authorization code for a user token via Slack's oauth.v2.access.
+ *  Slack requires client_secret even with PKCE — the code_verifier is additive
+ *  security, not a replacement for the secret. */
 async function exchangeCode(code: string, codeVerifier: string): Promise<SlackOAuthResponse> {
+  const creds = readSlackAppCredentials();
   const body = new URLSearchParams({
-    client_id: AMICODE_SLACK_CLIENT_ID,
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     code,
     redirect_uri: REDIRECT_URI,
     code_verifier: codeVerifier,
@@ -199,15 +214,27 @@ function loginUsage(): void {
 }
 
 async function slackLogin(): Promise<{ code: number }> {
-  if (!AMICODE_SLACK_CLIENT_ID) {
+  const creds = readSlackAppCredentials();
+  if (!creds.clientId) {
     console.error(
       "No Slack App configured.\n\n" +
       "Ask your Slack workspace admin to create an Amicode Slack App:\n" +
       "  1. Go to https://api.slack.com/apps → Create New App → From an app manifest\n" +
       "  2. Use the Amicode Slack App manifest (see docs)\n" +
-      "  3. Copy the Client ID from Basic Information\n\n" +
+      "  3. Copy the Client ID and Client Secret from Basic Information → App Credentials\n\n" +
       "Then either:\n" +
-      "  • Set AMICODE_SLACK_CLIENT_ID=<client-id> in your environment, or\n" +
+      "  • Set AMICODE_SLACK_CLIENT_ID and AMICODE_SLACK_CLIENT_SECRET in your environment, or\n" +
+      "  • Connect via Settings → Connections → Slack in Amicode\n",
+    );
+    return { code: 1 };
+  }
+  if (!creds.clientSecret) {
+    console.error(
+      "Slack App Client ID is configured, but Client Secret is missing.\n\n" +
+      "Slack's OAuth requires both. Find the Client Secret at:\n" +
+      "  https://api.slack.com/apps → Your App → Basic Information → App Credentials\n\n" +
+      "Then either:\n" +
+      "  • Set AMICODE_SLACK_CLIENT_SECRET in your environment, or\n" +
       "  • Connect via Settings → Connections → Slack in Amicode\n",
     );
     return { code: 1 };
@@ -331,9 +358,11 @@ async function slackLogin(): Promise<{ code: number }> {
     });
 
     server.listen(CALLBACK_PORT, () => {
-      // Build the authorize URL
+      // Build the authorize URL — re-read credentials so the Connections panel
+      // save is picked up without process restart
+      const creds = readSlackAppCredentials();
       const params = new URLSearchParams({
-        client_id: AMICODE_SLACK_CLIENT_ID,
+        client_id: creds.clientId,
         user_scope: USER_SCOPES,
         redirect_uri: REDIRECT_URI,
         state,

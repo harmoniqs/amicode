@@ -427,7 +427,7 @@
     "packages/ui/src/amicode/card.stories.tsx": "b1591abb4af426b0eb08588ea1585336a392d755b5d308cb31f17cb65acf5a3e",
     "packages/ui/src/amicode/card.tsx": "e5198e40923a77c3ed6a7aa235401bdeb20db6fbdb81f1ffeb847962dd1122e1",
     "packages/ui/src/amicode/connection-icon.tsx": "2b36c05209a3b5091c6407d59add58fb51ec34724ae6411af85c3dcc797a9987",
-    "packages/ui/src/amicode/connection-picker.tsx": "40a8f65d84a150f0abec51e896dacac8ca829e2a93953d4893529a1fb2537dd4",
+    "packages/ui/src/amicode/connection-picker.tsx": "1d963cbd8af1087ba0e09d3edffc0618ef8061cd6f26dd7d049451b670d1a475",
     "packages/ui/src/amicode/connections-paths.test.ts": "07c86e8e04700cdbd55bff8db342a8400d85114d76bc73fee8205e9162953f2a",
     "packages/ui/src/amicode/connections-tab.tsx": "06489a47bbd6d482ba4d2dc2cf4e9e8e9c648be774f78cd76e2abc87451116e5",
     "packages/ui/src/amicode/connections.stories.tsx": "fda54a41c4b46f5cab5278278f92c01d1fea70610f7b8641fa5855be6bd9d486",
@@ -705,7 +705,7 @@
     "packages/core/src/v1/config/config.ts": "6eece12da68ac65a2c8b2fe19b1f2509f397cb63d004dca3998cf6dcc772293e",
     "packages/core/src/v1/config/migrate.ts": "6c960e1245db9a4bb830f0c1ebd6174e50570b4282d4ce5d7bff3333277abcf4",
     "packages/opencode/src/plugin/openai/codex.ts": "7f4342ee6a25eca6b66a47732a154449fbf318f6ce70ed446cf3e6788833954b",
-    "packages/opencode/src/server/amicode/connections.ts": "d05a6e5a27219f7b65d59f813babf1925089ab42e785ff8a5309932cf8a44024",
+    "packages/opencode/src/server/amicode/connections.ts": "dcfeeeddb380e11d8653c77e0dffa4ac3acabed4091f07f88b6ce0c7ae5772b3",
     "packages/opencode/src/server/amicode/credentials.ts": "f3a15c82496f9a3b6e8c1006a6a4ab419a02156e9a93a43c6c2319632c30063f",
     "packages/opencode/src/server/amicode/dashboard.ts": "031a4f40bfdc847984a1deecfefbe0fd27f42cbd1caf8823dc43c7eb5bcb9af0",
     "packages/opencode/src/server/amicode/file-resolve.ts": "3f0548fc97aad431d3f7707fd0b911e66fb4fd68ac4f643da71a2f00a73beffe",
@@ -999,7 +999,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:35.995Z",
+  "extracted_at": "2026-09-15T19:28:36.181Z",
   "per_package": {
     "packages/app": {
       "A": 181,
