@@ -154,13 +154,13 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
   )
 
   const tools = resolveTools(input)
-  // Harmoniqs AI custom provider: the app-harmoniqs-ai gateway hard-rejects any
-  // request carrying a `tools` field (400 unsupported_feature — see
-  // app-harmoniqs-ai/src/worker/routes/chat-completions.ts). Agents default to
-  // tool calling, so without this every turn against this provider would 400
-  // instead of just failing to use tools. Strip resolved tools here rather than
-  // relying on `capabilities.toolcall` alone, which is descriptive metadata and
-  // is not currently consulted by resolveTools.
+  // No-tools gate: some providers' backends hard-reject any request carrying
+  // a `tools` field (400 unsupported_feature) rather than merely ignoring
+  // it. Harmoniqs AI used to be one of these (see app-harmoniqs-ai/src/worker/
+  // routes/chat-completions.ts) but the gateway now translates `tools` into a
+  // Bedrock Converse toolConfig, so it was removed from NO_TOOLS_PROVIDERS
+  // below — this block is currently a no-op and exists for the next provider
+  // that genuinely needs it.
   if (isNoToolsProvider(input.model.providerID)) {
     for (const key of Object.keys(tools)) delete tools[key]
   }
@@ -234,8 +234,10 @@ function resolveTools(input: Pick<PrepareInput, "tools" | "agent" | "permission"
 /** Provider IDs whose backend rejects `tools` outright (400 unsupported_feature
  *  style responses) rather than merely ignoring them. Chat-only/no-tools
  *  providers belong here so resolveTools' output is stripped before it ever
- *  reaches the wire, instead of failing on the first request. */
-const NO_TOOLS_PROVIDERS = new Set(["harmoniqs"])
+ *  reaches the wire, instead of failing on the first request. Empty today —
+ *  Harmoniqs AI was the only member until its gateway gained Bedrock Converse
+ *  tool-calling support (app-harmoniqs-ai PR #78). */
+const NO_TOOLS_PROVIDERS = new Set<string>([])
 
 export function isNoToolsProvider(providerID: string): boolean {
   return NO_TOOLS_PROVIDERS.has(providerID)
