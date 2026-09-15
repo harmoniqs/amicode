@@ -4,6 +4,7 @@ import * as net from "node:net";
 import * as fs from "node:fs";
 import { dirname } from "node:path";
 import { serverAuthHeader } from "./server_auth";
+import { daemonizeSpawn, freePortIfOurs } from "./server_daemonize";
 
 // ============================================================================
 // ServerManager — spawn `opencode serve`, wait for it to come up, expose
@@ -54,6 +55,8 @@ export class ServerManager {
   private _port?: number;
   private _pid?: number;
   private _ready = false;
+  private _running = false;    // #1183: a daemonized server is running (we hold no ChildProcess handle)
+  private _daemonized = false; // #1183: that server was double-forked → stop by PID/port, never by handle
   private readonly _onReady = new vscode.EventEmitter<URL>();
   readonly onReady = this._onReady.event;
   private tailTimer?: ReturnType<typeof setInterval>;
@@ -76,7 +79,7 @@ export class ServerManager {
   }
 
   async start(): Promise<URL> {
-    if (this.child) {
+    if (this.child || this._running) {
       throw new Error("opencode server already running");
     }
     const port = this.opts.port ?? (await pickFreePort());
@@ -100,25 +103,38 @@ export class ServerManager {
     // from off-host.
     const args = ["serve", "--hostname", "127.0.0.1", "--port", String(port)];
     const logFile = this.opts.logFile;
-    let child: cp.ChildProcess;
+    let pidForHook: number | undefined;
 
     if (logFile) {
-      // ── Detached path (#1146) ────────────────────────────────────────
-      // Spawn detached so the process survives the extension host's exit.
-      // Stdio goes to the log file; the output channel tails it.
+      // ── Daemonized path (#1183, ADR 0020) ────────────────────────────────
+      // Double-fork: a short-lived launcher spawns the server detached and
+      // exits at once, so the server reparents to launchd/init (PPID 1) and
+      // escapes the extension-host process subtree. A bare `detached:true`
+      // does NOT — VS Code reaps the subtree by PID on a window reload
+      // (confirmed live: setsid held, the server still died). The launcher
+      // REPORTS the server pid (its own child); the launcher pid is never kept.
       fs.mkdirSync(dirname(logFile), { recursive: true });
-      const logFd = fs.openSync(logFile, "a");
-      child = cp.spawn(this.opts.binary, args, {
-        cwd: this.opts.cwd,
-        env: { ...process.env, ...this.opts.env },
-        stdio: ["ignore", logFd, logFd],
-        detached: true,
-      });
-      child.unref();
-      fs.closeSync(logFd); // parent's fd — child inherited its own copy
-      this.opts.channel.appendLine(`[server] detached spawn (pid=${child.pid}, log=${logFile})`);
+      let serverPid: number;
+      try {
+        const res = await daemonizeSpawn({
+          binary: this.opts.binary,
+          args,
+          cwd: this.opts.cwd,
+          env: this.opts.env,
+          logFile,
+        });
+        serverPid = res.serverPid;
+      } catch (e) {
+        this.opts.channel.appendLine(`[server] daemonize failed: ${(e as Error).message}`);
+        throw new Error("opencode failed to daemonize — check the 'Amicode — opencode' output channel");
+      }
+      this._pid = serverPid;
+      this._running = true;
+      this._daemonized = true;
+      pidForHook = serverPid;
+      this.opts.channel.appendLine(`[server] daemonized spawn (server pid=${serverPid}, log=${logFile})`);
     } else {
-      // ── Legacy piped path (tests without logFile) ────────────────────
+      // ── Legacy piped path (tests without logFile) — unchanged ─────────────
       const piped = cp.spawn(this.opts.binary, args, {
         cwd: this.opts.cwd,
         env: { ...process.env, ...this.opts.env },
@@ -126,17 +142,15 @@ export class ServerManager {
       });
       piped.stdout.on("data", (b: Buffer) => this.opts.channel.append(`[opencode] ${b.toString()}`));
       piped.stderr.on("data", (b: Buffer) => this.opts.channel.append(`[opencode!] ${b.toString()}`));
-      child = piped;
+      this.child = piped;
+      this._pid = piped.pid;
+      pidForHook = piped.pid;
+      piped.on("exit", (code, signal) => {
+        this.opts.channel.appendLine(`[server] opencode exited code=${code} signal=${signal}`);
+        this._ready = false;
+        this.child = undefined;
+      });
     }
-
-    this.child = child;
-    this._pid = child.pid;
-
-    child.on("exit", (code, signal) => {
-      this.opts.channel.appendLine(`[server] opencode exited code=${code} signal=${signal}`);
-      this._ready = false;
-      this.child = undefined;
-    });
 
     // The probe authenticates with the credential WE injected (#163): with
     // OPENCODE_SERVER_PASSWORD armed, the fork 401s an anonymous `GET /`, and
@@ -146,7 +160,7 @@ export class ServerManager {
     const ready = await waitForHealth(`http://127.0.0.1:${port}/`, 30_000, password ? serverAuthHeader(password) : undefined);
     if (!ready) {
       this.opts.channel.appendLine(`[server] opencode did not become healthy within 30s`);
-      this.stop();
+      await this.stop();
       throw new Error("opencode failed to start within 30s — check the 'Amicode — opencode' output channel");
     }
     this._ready = true;
@@ -161,8 +175,8 @@ export class ServerManager {
     // #1144 (ADR 0020): cold-spawn handshake write — the callback runs AFTER
     // health passes and BEFORE onReady fires, so the handshake record is on
     // disk before any consumer (SSE client, chat panel) touches the server.
-    if (this.opts.afterHealthy && child.pid) {
-      this.opts.afterHealthy({ port, pid: child.pid });
+    if (this.opts.afterHealthy && pidForHook) {
+      this.opts.afterHealthy({ port, pid: pidForHook });
     }
     const url = new URL(`http://127.0.0.1:${port}`);
     this.opts.channel.appendLine(`[server] ready at ${url}`);
@@ -207,44 +221,71 @@ export class ServerManager {
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
 
-  /** Detach from the server process without killing it (#1146, ADR 0020).
-   *  Stops the log tailer and clears the child reference. The server process
-   *  continues running (spawned detached + unref'd). For use in `deactivate()`. */
+  /** Detach from the server without killing it (#1146/#1183, ADR 0020).
+   *  Stops the log tailer and drops our references. A daemonized server is
+   *  already reparented to launchd and outlives us by construction — this is
+   *  the deactivate/reload path, so it must NEVER kill. */
   detach(): void {
     this.stopTailing();
     this.child = undefined;
+    this._running = false;
+    this._daemonized = false;
+    this._pid = undefined;
     this._ready = false;
   }
 
-  /** Kill the server process — for deliberate Restart/Stop and solver-mode
-   *  switches. Resolves once the child has actually exited (bounded by the
-   *  SIGKILL fallback) — callers restarting onto a fixed port must await this
-   *  or the new spawn can race the old process for the socket. */
-  stop(): Promise<void> {
+  /** Kill the server — for deliberate Restart/Stop and solver-mode switches.
+   *  Resolves once the server is actually gone (SIGKILL-bounded) so a caller
+   *  restarting onto a fixed port does not race the old process for the socket.
+   *  #1183: a daemonized server has no owned handle — kill the discovered PID,
+   *  then free the port IFF our server still holds it (covers a not-yet-known
+   *  PID or a missed kill, and never touches a foreign holder). */
+  async stop(): Promise<void> {
     this.stopTailing();
-    if (!this.child) return Promise.resolve();
+
+    if (this._daemonized) {
+      const pid = this._pid;
+      const port = this._port;
+      this._ready = false;
+      this._running = false;
+      this._daemonized = false;
+      this._pid = undefined;
+      if (pid !== undefined) {
+        this.opts.channel.appendLine(`[server] stopping daemonized opencode (pid=${pid})`);
+        try { process.kill(pid, "SIGTERM"); } catch { /* already gone */ }
+        for (let i = 0; i < 12; i++) {
+          if (!pidIsAlive(pid)) break;
+          await sleep(250);
+        }
+        if (pidIsAlive(pid)) {
+          try { process.kill(pid, "SIGKILL"); } catch {}
+          await sleep(300);
+        }
+      }
+      if (port !== undefined) {
+        try { await freePortIfOurs(port); } catch { /* best-effort */ }
+      }
+      return;
+    }
+
+    if (!this.child) return;
     this.opts.channel.appendLine(`[server] stopping opencode (pid=${this.child.pid})`);
     const c = this.child;
     this.child = undefined;
     this._ready = false;
-    return new Promise((resolve) => {
+    await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {
-        try {
-          c.kill("SIGKILL");
-        } catch {}
+        try { c.kill("SIGKILL"); } catch {}
       }, 3_000);
-      c.once("exit", () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
-      try {
-        c.kill("SIGTERM");
-      } catch {
-        clearTimeout(killTimer);
-        resolve();
-      }
+      c.once("exit", () => { clearTimeout(killTimer); resolve(); });
+      try { c.kill("SIGTERM"); } catch { clearTimeout(killTimer); resolve(); }
     });
   }
+}
+
+/** PID existence check (signal 0 = existence probe, no signal delivered). */
+function pidIsAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
 function pickFreePort(): Promise<number> {
