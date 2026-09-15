@@ -36,6 +36,7 @@ import { RunsManager } from "./runs_manager";
 import { stageDemoRun } from "./demo_replay";
 import { writeStopFile, stopPlan, forceStop, runLogMtime } from "./run_controls";
 import { watchSolverMode, applyEntitlementForMode, readSolverModeState } from "./solver_mode";
+import { watchSlackCredential } from "./slack_watcher";
 import { runSetCloudKeyCommand } from "./cloud_key";
 import { amicodeOpsDir } from "./substrate/vault_store";
 import {
@@ -1120,6 +1121,19 @@ export async function activate(ctx: vscode.ExtensionContext): Promise<void> {
             ? "Amicode: High-Performance + Cloud active (Piccolissimo + Altissimo — solves run in the cloud; connect an API key if you haven't)."
             : "Amicode: back on the Piccolo stack (free, local).",
         );
+      }),
+    );
+
+    // Slack credential watcher (#1204 / #1037): the slack-mcp-server MCP entry
+    // is baked into OPENCODE_CONFIG_CONTENT at server spawn. When the user
+    // connects or disconnects Slack in the Connections panel, the credential
+    // file (~/.amico/slack.json) is created / deleted / modified — but the
+    // running server still has the old config. Watch the file and restart so
+    // buildOpencodeConfigContent picks up the change.
+    ctx.subscriptions.push(
+      watchSlackCredential(() => {
+        opencodeChannel.appendLine("[slack] credential file changed — restarting server");
+        void vscode.commands.executeCommand("amicode.restartServer");
       }),
     );
 
