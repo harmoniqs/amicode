@@ -2410,6 +2410,130 @@ describe("ProviderTransform.message - anthropic empty content filtering", () => 
   })
 })
 
+describe("ProviderTransform.message - final empty content guard", () => {
+  const bedrockModel = {
+    id: "amazon-bedrock/anthropic.claude-opus-4-8",
+    providerID: "amazon-bedrock",
+    api: {
+      id: "anthropic.claude-opus-4-8",
+      url: "https://bedrock-runtime.us-east-1.amazonaws.com",
+      npm: "@ai-sdk/amazon-bedrock",
+    },
+    name: "Claude Opus 4.8",
+    capabilities: {
+      temperature: true,
+      reasoning: true,
+      attachment: true,
+      toolcall: true,
+      input: { text: true, audio: false, image: true, video: false, pdf: true },
+      output: { text: true, audio: false, image: false, video: false, pdf: false },
+      interleaved: false,
+    },
+    cost: { input: 0.015, output: 0.075, cache: { read: 0.0015, write: 0.01875 } },
+    limit: { context: 200000, output: 16384 },
+    status: "active",
+    options: {},
+    headers: {},
+  } as any
+
+  test("drops bedrock assistant message whose content array is empty after reasoning parts are stripped", () => {
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "" },
+        ],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    // The reasoning-only message with empty text should be dropped entirely
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
+  test("drops assistant message where all non-reasoning parts are empty text", () => {
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "" },
+          { type: "reasoning", text: "" },
+        ],
+      },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
+  test("guard is provider-agnostic — drops empty array content for non-anthropic providers", () => {
+    const genericModel = {
+      ...bedrockModel,
+      id: "custom/my-model",
+      providerID: "custom",
+      api: {
+        id: "my-model",
+        url: "https://api.custom.com",
+        npm: "@ai-sdk/openai-compatible",
+      },
+    }
+
+    // Directly construct a message with empty content array — simulates the
+    // result of upstream transforms that strip all parts
+    const msgs = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: [] },
+      { role: "user", content: "World" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, genericModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[0].content).toBe("Hello")
+    expect(result[1].content).toBe("World")
+  })
+
+  test("preserves messages with non-empty array content", () => {
+    const msgs = [
+      { role: "user", content: "Hello" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I'm here" },
+        ],
+      },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[1].content).toHaveLength(1)
+    expect(result[1].content[0]).toEqual({ type: "text", text: "I'm here" })
+  })
+
+  test("preserves messages with string content (not array)", () => {
+    const msgs = [
+      { role: "user", content: "Hello" },
+      { role: "assistant", content: "I'm here" },
+    ] as any[]
+
+    const result = ProviderTransform.message(msgs, bedrockModel, {})
+
+    expect(result).toHaveLength(2)
+    expect(result[1].content).toBe("I'm here")
+  })
+})
+
 describe("ProviderTransform.message - strip openai metadata when store=false", () => {
   const openaiModel = {
     id: "openai/gpt-5",

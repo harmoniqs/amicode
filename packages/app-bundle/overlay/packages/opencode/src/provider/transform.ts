@@ -542,6 +542,13 @@ export function message(msgs: ModelMessage[], model: Provider.Model, options: Re
     })
   }
 
+  // Final guard: no provider accepts a message with an empty content array.
+  // Provider-specific filters above (Anthropic, Bedrock) catch most cases, but
+  // edge cases slip through — e.g. reasoning-only turns whose parts are all
+  // stripped, or cross-provider history replay. Drop them here so no downstream
+  // SDK or API sees content: [].
+  msgs = msgs.filter((msg) => !Array.isArray(msg.content) || msg.content.length > 0)
+
   return msgs
 }
 
