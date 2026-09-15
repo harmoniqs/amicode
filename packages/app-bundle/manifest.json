@@ -124,7 +124,7 @@
     "packages/app/src/components/settings-providers.tsx": "c86c9bf4a6f6e198dc7b0995a69d5b76e851144987bbe601802b1b0120ee4ac4",
     "packages/app/src/components/solver-switch-banner.tsx": "ec7edeec6dc05a4a06b39241b4f3a8e7534da97722dd8ec6f26ff782025802e9",
     "packages/app/src/components/split-frame.tsx": "44c53737f72027b461097c03df48a4f411d04a82d02b1fce4901813c73dfcc72",
-    "packages/app/src/components/status-popover-body.tsx": "60b765fe829a9b4ffc8f1c0541ce36e5dc8c99b39d4317697b14fcf0aec191dd",
+    "packages/app/src/components/status-popover-body.tsx": "a742cc481efa3e5a08ab4763949eb821b6b7ae339c152a60dde50fbea6465863",
     "packages/app/src/components/status-popover-indicator.test.ts": "9afc7b49d9021a94d74f3f777178230ae13bd26e5749da0cee4d3378eacacacd",
     "packages/app/src/components/status-popover-indicator.ts": "887b3e659ff49fd0d2a8715fad6562dc7e9402b80d06442058502306bdb108f5",
     "packages/app/src/components/status-popover-model.test.ts": "10634035bab0f31de24564e0d6c8413a0f7434fb2c08ac3ef722981a69dd08e7",
@@ -633,7 +633,7 @@
     "packages/app/src/components/session/vscode-explorer-file-icon.tsx": "b5ba0cafe61594dd2afe45ef6e070e512861162933c85e9545db2ec697d50f17",
     "packages/app/src/components/settings-v2/data-storage-controller.ts": "fa5d143cc101f3a3b9d5ad445edddc981e0d02783021d52dbfed6c8d8bf62498",
     "packages/app/src/components/settings-v2/data-storage.tsx": "a56b423b32c952c4379688d88d13a9f43b163a4169b9393f8c35b18a763a1180",
-    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "33445822be653d644eb49e3c463fc69db8dbf761513fe13397baa2f8e969a4c6",
+    "packages/app/src/components/settings-v2/developer-tools-controller.ts": "afa7d83099db8066093a7fff73072ee0a03229384f4e8bf18d942f977276eec4",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.test.ts": "4d11815fe5acfa930bc418d0be82602f03821997300d0deef0aa2da2a743b3b0",
     "packages/app/src/components/settings-v2/developer-tools-rebuild-flags.ts": "561a75fa456b832d4af6f782c7ecf5269ce768fc2adc59c15a79197a2dde84c0",
     "packages/app/src/components/settings-v2/developer-tools-request-state.test.ts": "29711b3bc17fddbb8d046e104bc78e775a9ec7c5aa0ee2e181fbcd8b2b5e2135",
@@ -999,7 +999,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:36.386Z",
+  "extracted_at": "2026-09-15T19:28:36.593Z",
   "per_package": {
     "packages/app": {
       "A": 181,

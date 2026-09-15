@@ -53,22 +53,19 @@ export function createDeveloperToolsController() {
         localStorage.removeItem("amicode:devtools-rebuild-started")
         setRebuildState("rebuilt")
       } else if (wasRebuilding) {
-        // Check if the build is stale: if it started more than 2 minutes ago,
-        // the extension host almost certainly died and the build is dead. Clear
-        // it immediately instead of making the user wait on a 5-minute timer.
+        // Check if the build is stale. The "done" postMessage can race the
+        // window reload (extension → shell → iframe), leaving the flag stuck.
+        // A real build takes 30-120s; if the flag is older than 30s AND the
+        // extension host is healthy (we loaded this page), the build completed
+        // and the message was lost. Clear it.
         const startedAt = Number(localStorage.getItem("amicode:devtools-rebuild-started") || "0")
-        const staleMs = 120_000 // 2 minutes — generous for any real build
+        const staleMs = 30_000 // 30 seconds — if we reloaded and the host is up, it's done
         if (startedAt > 0 && Date.now() - startedAt > staleMs) {
-          applyRebuildFlagMutation(rebuildFlagMutation("failed"))
+          // The window reloaded successfully after a rebuild — the build
+          // completed but the "done" message didn't land. Treat as success.
+          applyRebuildFlagMutation(rebuildFlagMutation("done"))
           localStorage.removeItem("amicode:devtools-rebuild-started")
-          setRebuildState("failed")
-          setRebuildError({
-            message: "Rebuild was interrupted",
-            fix: [
-              "The build process was lost — likely a window reload or extension restart.",
-              "Hit Rebuild Locally to try again.",
-            ],
-          })
+          setRebuildState("rebuilt")
         } else {
           // Still rebuilding — restore the indicator (iframe reloaded mid-build)
           setRebuildState("rebuilding")

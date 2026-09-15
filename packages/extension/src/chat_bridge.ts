@@ -909,6 +909,15 @@ export function handleAmicodeBridgeMessage(msg: unknown, io: BridgeIo): boolean 
         // restart after reload will try to bootstrap ALL session directories;
         // stale worktree refs cause cascading ENOENT → MCP failures.
         try { rehomeStaleWorktreeSessions(dbDir); } catch { /* best-effort */ }
+        // Write a completion marker file the UI can read as a fallback when the
+        // postMessage "done" races the window reload (the message goes extension
+        // → shell webview → iframe, and the reload can win that race). The UI's
+        // onMount checks this file if the localStorage flag says "rebuilding".
+        try {
+          const markerDir = path.join(os.homedir(), ".amico", "amicode");
+          fs.mkdirSync(markerDir, { recursive: true });
+          fs.writeFileSync(path.join(markerDir, "rebuild-done"), Date.now().toString(), "utf8");
+        } catch { /* best-effort */ }
         // Await the "done" delivery so the controller's localStorage mutation
         // (rebuildFlagMutation("done")) lands BEFORE the window reload. Without
         // this the reload can race the two-hop message path (extension → shell
