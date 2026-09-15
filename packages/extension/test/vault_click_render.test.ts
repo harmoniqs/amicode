@@ -25,7 +25,7 @@ import { vaultFileBody } from "../src/amicode_service/vault_browser"
 // inlined into vault-browser.tsx's `mount` memo (chosen ?? mounts[0], with
 // membership validation). The extension pins the surviving seam: path →
 // vault ref, and the drawer's fetch rendering markdown.
-import { vaultRefFromPath } from "../../app-bundle/.materialized/packages/ui/src/amicode/context-tree-data"
+import { vaultRefFromPath } from "../../app-bundle/overlay/packages/ui/src/amicode/context-tree-data"
 
 const NOTE_PATH = "/Users/aaron/.amico/vaults/armonia-aaron-trowbridge/amicode/memory/MEMORY.md"
 
