@@ -270,7 +270,7 @@
     "packages/llm/test/provider/bedrock-converse.test.ts": "e8e14d60e8502e928f170f8ac5b406c44bf16d2dd34996ddc2fb7b9261decf85",
     "packages/opencode/src/agent/agent.ts": "512372a4c62997e9565266638ada19b9dc0a3685b0c0483fd28fede2abdb5c9b",
     "packages/opencode/src/mcp/browser.ts": "ecdda42cbd55a97b8d14050aa15c6e6450a1d63b0a641c8c8e5b81e50f957c87",
-    "packages/opencode/src/mcp/index.ts": "8e527fcda497c48d752d9958f2f4a00eaabd25ef6c6802c626ce9544de6211f0",
+    "packages/opencode/src/mcp/index.ts": "da45165e6791a5b30c8962c7fd0ea391bb8e1931cc2357c6b90e9fd090cdeb0d",
     "packages/opencode/src/project/instance-context.ts": "65a35792e50e96a50ea14cd9f928045c0e2fc15eb49506f5bbceee38c4af1457",
     "packages/opencode/src/project/instance-store.ts": "c22d3e2499e63dd8d9395d58189df75444d306774df833e746f22e327edcf2ab",
     "packages/opencode/src/provider/auth.ts": "b0ab1322c1039e27176bf9e3500603eae27506065ac141a69710220f3361f6b8",
@@ -1002,7 +1002,7 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:36.979Z",
+  "extracted_at": "2026-09-15T19:28:37.174Z",
   "per_package": {
     "packages/app": {
       "A": 181,
