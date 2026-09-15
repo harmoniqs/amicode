@@ -32,6 +32,7 @@ export function ConnectionPicker(props: {
     return entry?.id === "google" || entry?.id === "google-drive"
   }
   const isSlackEntry = () => pickedEntry()?.id === "slack"
+  const [slackClientId, setSlackClientId] = createSignal("")
 
   const submitCustom = async (e: Event) => {
     e.preventDefault()
@@ -199,7 +200,7 @@ export function ConnectionPicker(props: {
               </form>
             </Show>
           }>
-            {/* Slack: browser-first (OAuth), token fallback for power users */}
+            {/* Slack: browser OAuth with setup guidance for Slack App client_id */}
             <div class="flex flex-col gap-1.5" data-slot="amicode-picker-slack-form">
               <span class="text-12-regular text-text-base">{picked()}</span>
               <span class="text-11-regular text-text-weaker">Sign in with your browser to connect Slack.</span>
@@ -225,6 +226,28 @@ export function ConnectionPicker(props: {
                   Connect with token
                 </Button>
               </form>
+              <details class="text-11-regular text-text-weaker">
+                <summary class="cursor-pointer hover:text-text-base">Slack App not set up?</summary>
+                <div class="flex flex-col gap-1.5 mt-1.5 pl-1">
+                  <span>Ask your Slack admin to create an Amicode app at <a href="https://api.slack.com/apps" target="_blank" rel="noopener" class="underline text-text-base">api.slack.com/apps</a> → Create from Manifest, then share the Client ID.</span>
+                  <input
+                    type="text"
+                    placeholder="Paste Slack App Client ID"
+                    aria-label="Slack App Client ID"
+                    value={slackClientId()}
+                    onInput={(e) => setSlackClientId(e.currentTarget.value)}
+                    class="amc-input amc-input--compact"
+                  />
+                  <Button type="button" variant="secondary" size="small" onClick={async () => {
+                    const cid = slackClientId().trim()
+                    if (!cid) return
+                    await props.onSubmitToken("slack-app-client-id", cid)
+                    setSlackClientId("")
+                  }}>
+                    Save Client ID
+                  </Button>
+                </div>
+              </details>
             </div>
           </Show>
         }>
