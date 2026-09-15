@@ -109,7 +109,6 @@
     "packages/app/src/components/external-link.tsx": "7130044026ad3ec417de4ba7389cc6059de46f21b370047046269c772aa7a4bb",
     "packages/app/src/components/help-button.tsx": "780d533f776a784660cfed072a131198bc6fcc8e8fe332e8e1a220d516c9684e",
     "packages/app/src/components/pane-bridge.tsx": "756b3306b51c963fac6778716f6c6c4626f0f3bf75c93b7cb4cab58ea0bf3d4e",
-    "packages/app/src/components/posture-indicator-view.tsx": "1bd7903838926b21609c08460ff06683c6e0f378ae968e8b497de041d0f09bdd",
     "packages/app/src/components/posture-indicator.ts": "f546413e0e1f8296a7a444d1c07da724d67a160657888273110d06cb6789933d",
     "packages/app/src/components/profile-popover.tsx": "eff742e90544455f13234a9351bb1b82189663cba2cd3172bdcea1a8a37284e8",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "946b718c2164da394602f26e4d9919d752da0d0b9bee714f345ba16c274542da",
@@ -864,12 +863,6 @@
   ],
   "exceptions": [
     {
-      "path": "packages/app/src/components/posture-indicator-view.tsx",
-      "sha256": "1bd7903838926b21609c08460ff06683c6e0f378ae968e8b497de041d0f09bdd",
-      "reason": "Retained legacy overlay module pending its successor test migration",
-      "review": "harmoniqs/amicode#1004"
-    },
-    {
       "path": "packages/app/src/components/posture-indicator.ts",
       "sha256": "f546413e0e1f8296a7a444d1c07da724d67a160657888273110d06cb6789933d",
       "reason": "Retained legacy overlay module pending its successor test migration",
@@ -1002,10 +995,10 @@
       "review": "harmoniqs/amicode#1004"
     }
   ],
-  "extracted_at": "2026-09-15T19:28:37.174Z",
+  "extracted_at": "2026-09-15T19:28:37.376Z",
   "per_package": {
     "packages/app": {
-      "A": 181,
+      "A": 180,
       "M": 157,
       "D": 0
     },
@@ -1046,7 +1039,7 @@
     }
   },
   "counts": {
-    "overlay_total": 841,
+    "overlay_total": 840,
     "deletions": 7,
     "server_coupled": 0
   },
@@ -1152,7 +1145,6 @@
     "packages/app/src/components/external-link.tsx": "M",
     "packages/app/src/components/help-button.tsx": "M",
     "packages/app/src/components/pane-bridge.tsx": "A",
-    "packages/app/src/components/posture-indicator-view.tsx": "A",
     "packages/app/src/components/posture-indicator.ts": "A",
     "packages/app/src/components/profile-popover.tsx": "A",
     "packages/app/src/components/prompt-input-clipboard-structure.test.ts": "A",
